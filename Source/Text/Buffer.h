@@ -26,6 +26,7 @@
 #include <utility>
 #include <vector>
 
+#include "AnchorSet.h"
 #include "EditJournal.h"
 #include "ITextStorage.h"
 #include "LineEnding.h"
@@ -529,6 +530,33 @@ class Buffer {
     // against the version the server was told about and are carried forward
     // through this.
     [[nodiscard]] const EditJournal& Edits() const;
+
+    // Anchors: a position in this buffer's content, held by something
+    // outside it, that survives editing by construction.
+    //
+    // This is the seam that stops a new feature from meaning a new tracked
+    // field here. Anything that describes a span of text used to need its own
+    // member plus its own relocation rule repeated at every mutation site;
+    // an anchor needs neither -- the holder keeps the handle, this class
+    // moves it and never learns what it meant. See AnchorSet.h for the
+    // model, and for why it sits beside the rope rather than in it.
+    //
+    // The offset comes back as nullopt once the anchor is gone: destroyed, or
+    // dropped by an edit its own policy said it could not survive (a barrier
+    // always drops every anchor -- a reload replaces the document these
+    // positions described). A holder finds out on read, which is the only
+    // moment it could act on the news.
+    [[nodiscard]] AnchorId                                           CreateAnchor(std::size_t offset, AnchorPolicy policy = {});
+    [[nodiscard]] AnchorRange                                        CreateAnchorRange(std::size_t start, std::size_t end);
+    [[nodiscard]] AnchorRange                                        CreateAnchorRange(std::size_t start, std::size_t end, AnchorPolicy startPolicy,
+                                                                                       AnchorPolicy endPolicy);
+    void                                                             DestroyAnchor(AnchorId id);
+    void                                                             DestroyAnchor(AnchorRange range);
+    [[nodiscard]] std::optional<std::size_t>                         AnchorOffset(AnchorId id) const;
+    [[nodiscard]] std::optional<std::pair<std::size_t, std::size_t>> AnchorRangeOffsets(AnchorRange range) const;
+    // Live anchors, for a holder's own leak check and for tests. Not a count
+    // of handles ever issued.
+    [[nodiscard]] std::size_t LiveAnchorCount() const;
 
     // A process-wide-unique value assigned once, at construction, and never
     // reassigned -- unlike ContentGeneration() above, this identifies the
@@ -1078,10 +1106,45 @@ class Buffer {
     // CommitBarrier is for the wholesale content replacements -- a load, a
     // revert, an external merge -- where there is no edit to describe and
     // nothing a holder's offsets could honestly survive.
+    //
+    // CommitInsert/CommitDelete additionally move this class's own tracked
+    // positions through the edit (RelocateTrackedState below), so an editing
+    // entry point relocates by committing rather than by repeating the list.
+    // CommitReplace does not: the only caller is the undo/redo restore path,
+    // which recovers its span from a diff of two whole versions and composes
+    // a delete half with an insert half -- a different answer from one
+    // replacement op for any offset the change spanned. See
+    // ApplyUndoTreeNavigation.
     void CommitInsert(std::size_t offset, std::size_t length);
     void CommitDelete(std::size_t rangeStart, std::size_t rangeEnd);
     void CommitReplace(std::size_t offset, std::size_t oldLength, std::size_t newLength);
     void CommitBarrier();
+
+    // Every tracked position in this class, moved across one edit: Point_,
+    // Mark_, NarrowedRange_, FoldMarkers_, SecondaryCursors_, SnippetRanges_,
+    // ExcerptRanges_, Diagnostics_ and UnsavedChangeRanges_.
+    //
+    // The five content-mutation entry points used to repeat this list
+    // verbatim, so a ninth tracked field meant a ninth edit in five places
+    // and an omission showed up only as an annotation drawn in the wrong
+    // column (which is how diagnostics came to be wired at five sites and not
+    // at the sixth). One edit, one call.
+    //
+    // Expressed as a replacement -- the bytes [offset, offset + oldLength)
+    // became newLength bytes -- and applied as a delete half then an insert
+    // half, so the one shape covers a pure insert and a pure delete as well.
+    void RelocateTrackedState(std::size_t offset, std::size_t oldLength, std::size_t newLength);
+
+    // An ordinary edit, start to finish: every tracked position moved through
+    // it, then the edit itself published. The five content-mutation entry
+    // points are these two plus their own storage mutation and undo record.
+    //
+    // AppendHugeLoadChunk deliberately commits without going through these:
+    // content still arriving from disk is not a change to the document, so it
+    // must not mark the buffer modified, and nothing is anchored in a file
+    // that has not finished loading.
+    void ApplyInsert(std::size_t offset, std::size_t length);
+    void ApplyDelete(std::size_t rangeStart, std::size_t rangeEnd);
 
     // The one relocation rule every tracked position in this class follows
     // across an edit -- Point_, Mark_, both ends of NarrowedRange_, and
@@ -1122,10 +1185,9 @@ class Buffer {
     void MarkUnsavedRangeInserted(std::size_t insertOffset, std::size_t length);
     void MarkUnsavedRangeDeleted(std::size_t rangeStart, std::size_t rangeEnd);
 
-    // Multi-cursor phase: SecondaryCursors_'s own leg of the relocation
-    // every mutator already gives Point_/Mark_/NarrowedRange_/FoldMarkers_
-    // -- called right beside RelocateFoldMarkersForInsert/Delete at each of
-    // the five content-mutation sites.
+    // SecondaryCursors_'s own leg of the relocation every edit gives
+    // Point_/Mark_/NarrowedRange_/FoldMarkers_, driven from
+    // RelocateTrackedState above.
     void RelocateSecondaryCursorsForInsert(std::size_t insertOffset, std::size_t length);
     void RelocateSecondaryCursorsForDelete(std::size_t rangeStart, std::size_t rangeEnd);
     // Diagnostics are relocated across edits like every other tracked field
@@ -1133,18 +1195,15 @@ class Buffer {
     // than being suppressed while stale, unlike the sibling LSP results.
     void RelocateDiagnosticsForInsert(std::size_t insertOffset, std::size_t length);
     void RelocateDiagnosticsForDelete(std::size_t rangeStart, std::size_t rangeEnd);
-    // Snippet-expansion follow-up: SnippetRanges_'s own leg of the same
-    // per-field relocation, called beside the two above at each of the five
-    // content-mutation sites. The insert half implements the active-aware
+    // SnippetRanges_'s own leg of the same per-field relocation. The
+    // insert half implements the active-aware
     // gravity described at SnippetRange's own doc comment rather than
     // RelocateForInsert's uniform at-or-after rule; the delete half is both
     // endpoints through RelocateForDelete unchanged.
     void RelocateSnippetRangesForInsert(std::size_t insertOffset, std::size_t length);
     void RelocateSnippetRangesForDelete(std::size_t rangeStart, std::size_t rangeEnd);
-    // Editable-multibuffer follow-up: ExcerptRanges_' own leg of the same
-    // per-field relocation, called beside RelocateSnippetRangesForInsert/
-    // Delete at each of the five content-mutation sites. Every range (not
-    // just an "active" one -- there's no such concept here, see
+    // ExcerptRanges_' own leg of the same per-field relocation. Every range
+    // (not just an "active" one -- there's no such concept here, see
     // ExcerptRange's own doc comment) grows on an insert at either of its
     // own edges; the delete half is both endpoints through
     // RelocateForDelete unchanged, kept degenerate rather than dropped.
@@ -1298,6 +1357,10 @@ class Buffer {
     std::optional<std::size_t>        GoalColumn_;
     std::size_t                       ContentGeneration_ = 0; // see ContentGeneration()
     EditJournal                       Edits_;                 // see Edits(); advanced with ContentGeneration_ by the Commit* helpers
+    // Fed by the Commit* helpers, so every anchor moves exactly once per
+    // edit and a path that forgets to relocate one cannot exist -- the same
+    // feed is what publishes the generation a caller sees.
+    AnchorSet                         Anchors_;
     std::size_t                       InstanceId_;            // see InstanceId(), assigned in the constructor
     std::map<std::size_t, FoldMarker> FoldMarkers_;           // see FoldMarker's own doc comment above
     std::size_t                       FoldGeneration_ = 0;    // see FoldGeneration()

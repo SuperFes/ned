@@ -995,21 +995,58 @@ const EditJournal& Buffer::Edits() const {
 void Buffer::CommitInsert(std::size_t offset, std::size_t length) {
     ++ContentGeneration_;
     Edits_.Record(EditOp::Inserted(ContentGeneration_, offset, length));
+    Anchors_.ApplyEdit(offset, /*oldLength=*/0, /*newLength=*/length);
 }
 
 void Buffer::CommitDelete(std::size_t rangeStart, std::size_t rangeEnd) {
     ++ContentGeneration_;
     Edits_.Record(EditOp::Deleted(ContentGeneration_, rangeStart, rangeEnd));
+    Anchors_.ApplyEdit(rangeStart, /*oldLength=*/rangeEnd - rangeStart, /*newLength=*/0);
 }
 
 void Buffer::CommitReplace(std::size_t offset, std::size_t oldLength, std::size_t newLength) {
     ++ContentGeneration_;
     Edits_.Record(EditOp::Replaced(ContentGeneration_, offset, oldLength, newLength));
+    Anchors_.ApplyEdit(offset, oldLength, newLength);
 }
 
 void Buffer::CommitBarrier() {
     ++ContentGeneration_;
     Edits_.Record(EditOp::Barrier(ContentGeneration_));
+    Anchors_.ApplyBarrier();
+}
+
+AnchorId Buffer::CreateAnchor(std::size_t offset, AnchorPolicy policy) {
+    return Anchors_.Create(offset, policy);
+}
+
+AnchorRange Buffer::CreateAnchorRange(std::size_t start, std::size_t end) {
+    return Anchors_.CreateRange(start, end);
+}
+
+AnchorRange Buffer::CreateAnchorRange(std::size_t start, std::size_t end, AnchorPolicy startPolicy,
+                                      AnchorPolicy endPolicy) {
+    return Anchors_.CreateRange(start, end, startPolicy, endPolicy);
+}
+
+void Buffer::DestroyAnchor(AnchorId id) {
+    Anchors_.Destroy(id);
+}
+
+void Buffer::DestroyAnchor(AnchorRange range) {
+    Anchors_.Destroy(range);
+}
+
+std::optional<std::size_t> Buffer::AnchorOffset(AnchorId id) const {
+    return Anchors_.Offset(id);
+}
+
+std::optional<std::pair<std::size_t, std::size_t>> Buffer::AnchorRangeOffsets(AnchorRange range) const {
+    return Anchors_.Range(range);
+}
+
+std::size_t Buffer::LiveAnchorCount() const {
+    return Anchors_.LiveCount();
 }
 
 std::size_t Buffer::InstanceId() const {
@@ -1321,6 +1358,63 @@ std::size_t Buffer::DiagnosticsGeneration() const {
     return DiagnosticsGeneration_;
 }
 
+void Buffer::RelocateTrackedState(std::size_t offset, std::size_t oldLength, std::size_t newLength) {
+    if (oldLength > 0) {
+        const std::size_t rangeEnd = offset + oldLength;
+        Point_                     = RelocateForDelete(Point_, offset, rangeEnd);
+        if (Mark_) {
+            *Mark_ = RelocateForDelete(*Mark_, offset, rangeEnd);
+        }
+        if (NarrowedRange_) {
+            auto& [narrowStart, narrowEnd] = *NarrowedRange_;
+            narrowStart                    = RelocateForDelete(narrowStart, offset, rangeEnd);
+            narrowEnd                      = RelocateForDelete(narrowEnd, offset, rangeEnd);
+            // A delete that consumes the narrowed range's entire content
+            // leaves nothing meaningful to stay narrowed to -- auto-widen
+            // rather than leaving the editor in a broken, everything-hidden
+            // state.
+            if (narrowStart >= narrowEnd) {
+                NarrowedRange_.reset();
+            }
+        }
+        RelocateFoldMarkersForDelete(offset, rangeEnd);
+        RelocateSecondaryCursorsForDelete(offset, rangeEnd);
+        RelocateSnippetRangesForDelete(offset, rangeEnd);
+        RelocateExcerptRangesForDelete(offset, rangeEnd);
+        RelocateDiagnosticsForDelete(offset, rangeEnd);
+        MarkUnsavedRangeDeleted(offset, rangeEnd);
+    }
+    if (newLength > 0) {
+        Point_ = RelocateForInsert(Point_, offset, newLength);
+        if (Mark_) {
+            *Mark_ = RelocateForInsert(*Mark_, offset, newLength);
+        }
+        if (NarrowedRange_) {
+            // No degenerate-range check to match the delete half's: an insert
+            // only ever grows what it touches.
+            auto& [narrowStart, narrowEnd] = *NarrowedRange_;
+            narrowStart                    = RelocateForInsert(narrowStart, offset, newLength);
+            narrowEnd                      = RelocateForInsert(narrowEnd, offset, newLength);
+        }
+        RelocateFoldMarkersForInsert(offset, newLength);
+        RelocateSecondaryCursorsForInsert(offset, newLength);
+        RelocateSnippetRangesForInsert(offset, newLength);
+        RelocateExcerptRangesForInsert(offset, newLength);
+        RelocateDiagnosticsForInsert(offset, newLength);
+        MarkUnsavedRangeInserted(offset, newLength);
+    }
+}
+
+void Buffer::ApplyInsert(std::size_t offset, std::size_t length) {
+    RelocateTrackedState(offset, /*oldLength=*/0, /*newLength=*/length);
+    CommitInsert(offset, length);
+}
+
+void Buffer::ApplyDelete(std::size_t rangeStart, std::size_t rangeEnd) {
+    RelocateTrackedState(rangeStart, /*oldLength=*/rangeEnd - rangeStart, /*newLength=*/0);
+    CommitDelete(rangeStart, rangeEnd);
+}
+
 std::size_t Buffer::RelocateForInsert(std::size_t offset, std::size_t insertOffset, std::size_t length) {
     return offset >= insertOffset ? offset + length : offset;
 }
@@ -1619,26 +1713,10 @@ void Buffer::InsertAtPoint(std::string_view text) {
 
     const std::size_t insertOffset = Point_;
     Storage_                       = Storage_->Inserted(insertOffset, text);
-    Point_                         = RelocateForInsert(Point_, insertOffset, text.size());
-
-    if (Mark_) {
-        *Mark_ = RelocateForInsert(*Mark_, insertOffset, text.size());
-    }
-    if (NarrowedRange_) {
-        auto& [narrowStart, narrowEnd] = *NarrowedRange_;
-        narrowStart                    = RelocateForInsert(narrowStart, insertOffset, text.size());
-        narrowEnd                      = RelocateForInsert(narrowEnd, insertOffset, text.size());
-    }
-    RelocateFoldMarkersForInsert(insertOffset, text.size());
-    RelocateSecondaryCursorsForInsert(insertOffset, text.size());
-    RelocateSnippetRangesForInsert(insertOffset, text.size());
-    RelocateExcerptRangesForInsert(insertOffset, text.size());
-    RelocateDiagnosticsForInsert(insertOffset, text.size());
-    MarkUnsavedRangeInserted(insertOffset, text.size());
+    ApplyInsert(insertOffset, text.size());
 
     RecordOrAmendUndo(/*canAmend=*/true);
     GoalColumn_.reset();
-    CommitInsert(insertOffset, text.size());
 }
 
 void Buffer::DeleteBackwardAtPoint() {
@@ -1656,28 +1734,10 @@ void Buffer::DeleteBackwardAtPoint() {
     }
     Storage_ = Storage_->Erased(start, end - start);
 
-    Point_ = RelocateForDelete(Point_, start, end);
-    if (Mark_) {
-        *Mark_ = RelocateForDelete(*Mark_, start, end);
-    }
-    if (NarrowedRange_) {
-        auto& [narrowStart, narrowEnd] = *NarrowedRange_;
-        narrowStart                    = RelocateForDelete(narrowStart, start, end);
-        narrowEnd                      = RelocateForDelete(narrowEnd, start, end);
-        if (narrowStart >= narrowEnd) {
-            NarrowedRange_.reset();
-        }
-    }
-    RelocateFoldMarkersForDelete(start, end);
-    RelocateSecondaryCursorsForDelete(start, end);
-    RelocateSnippetRangesForDelete(start, end);
-    RelocateExcerptRangesForDelete(start, end);
-    RelocateDiagnosticsForDelete(start, end);
-    MarkUnsavedRangeDeleted(start, end);
+    ApplyDelete(start, end);
 
     RecordOrAmendUndo(/*canAmend=*/false);
     GoalColumn_.reset();
-    CommitDelete(start, end);
 }
 
 void Buffer::DeleteForwardAtPoint() {
@@ -1695,28 +1755,10 @@ void Buffer::DeleteForwardAtPoint() {
     }
     Storage_ = Storage_->Erased(start, end - start);
 
-    Point_ = RelocateForDelete(Point_, start, end);
-    if (Mark_) {
-        *Mark_ = RelocateForDelete(*Mark_, start, end);
-    }
-    if (NarrowedRange_) {
-        auto& [narrowStart, narrowEnd] = *NarrowedRange_;
-        narrowStart                    = RelocateForDelete(narrowStart, start, end);
-        narrowEnd                      = RelocateForDelete(narrowEnd, start, end);
-        if (narrowStart >= narrowEnd) {
-            NarrowedRange_.reset();
-        }
-    }
-    RelocateFoldMarkersForDelete(start, end);
-    RelocateSecondaryCursorsForDelete(start, end);
-    RelocateSnippetRangesForDelete(start, end);
-    RelocateExcerptRangesForDelete(start, end);
-    RelocateDiagnosticsForDelete(start, end);
-    MarkUnsavedRangeDeleted(start, end);
+    ApplyDelete(start, end);
 
     RecordOrAmendUndo(/*canAmend=*/false);
     GoalColumn_.reset();
-    CommitDelete(start, end);
 }
 
 std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) {
@@ -1737,33 +1779,10 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
     std::string deleted = Storage_->Substring(byteOffset, byteLength);
     Storage_            = Storage_->Erased(byteOffset, byteLength);
 
-    Point_ = RelocateForDelete(Point_, byteOffset, rangeEnd);
-    if (Mark_) {
-        *Mark_ = RelocateForDelete(*Mark_, byteOffset, rangeEnd);
-    }
-
-    if (NarrowedRange_) {
-        auto& [narrowStart, narrowEnd] = *NarrowedRange_;
-        narrowStart                    = RelocateForDelete(narrowStart, byteOffset, rangeEnd);
-        narrowEnd                      = RelocateForDelete(narrowEnd, byteOffset, rangeEnd);
-        // A delete that consumes the narrowed range's entire content
-        // (narrowStart no longer strictly before narrowEnd) leaves nothing
-        // meaningful to stay narrowed to -- auto-widen rather than leaving
-        // the editor in a broken, everything-hidden state.
-        if (narrowStart >= narrowEnd) {
-            NarrowedRange_.reset();
-        }
-    }
-    RelocateFoldMarkersForDelete(byteOffset, rangeEnd);
-    RelocateSecondaryCursorsForDelete(byteOffset, rangeEnd);
-    RelocateSnippetRangesForDelete(byteOffset, rangeEnd);
-    RelocateExcerptRangesForDelete(byteOffset, rangeEnd);
-    RelocateDiagnosticsForDelete(byteOffset, rangeEnd);
-    MarkUnsavedRangeDeleted(byteOffset, rangeEnd);
+    ApplyDelete(byteOffset, rangeEnd);
 
     RecordOrAmendUndo(/*canAmend=*/false);
     GoalColumn_.reset();
-    CommitDelete(byteOffset, rangeEnd);
     return deleted;
 }
 
@@ -1793,25 +1812,10 @@ void Buffer::InsertAtImpl(std::size_t byteOffset, std::string_view text) {
 
     Storage_ = Storage_->Inserted(byteOffset, text);
 
-    Point_ = RelocateForInsert(Point_, byteOffset, text.size());
-    if (Mark_) {
-        *Mark_ = RelocateForInsert(*Mark_, byteOffset, text.size());
-    }
-    if (NarrowedRange_) {
-        auto& [narrowStart, narrowEnd] = *NarrowedRange_;
-        narrowStart                    = RelocateForInsert(narrowStart, byteOffset, text.size());
-        narrowEnd                      = RelocateForInsert(narrowEnd, byteOffset, text.size());
-    }
-    RelocateFoldMarkersForInsert(byteOffset, text.size());
-    RelocateSecondaryCursorsForInsert(byteOffset, text.size());
-    RelocateSnippetRangesForInsert(byteOffset, text.size());
-    RelocateExcerptRangesForInsert(byteOffset, text.size());
-    RelocateDiagnosticsForInsert(byteOffset, text.size());
-    MarkUnsavedRangeInserted(byteOffset, text.size());
+    ApplyInsert(byteOffset, text.size());
 
     RecordOrAmendUndo(/*canAmend=*/false);
     GoalColumn_.reset();
-    CommitInsert(byteOffset, text.size());
 }
 
 void Buffer::MoveForward() {
