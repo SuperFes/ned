@@ -546,7 +546,7 @@ class Buffer {
     // always drops every anchor -- a reload replaces the document these
     // positions described). A holder finds out on read, which is the only
     // moment it could act on the news.
-    [[nodiscard]] AnchorId                                           CreateAnchor(std::size_t offset, AnchorPolicy policy = {});
+    [[nodiscard]] AnchorId                                           CreateAnchor(std::size_t offset, AnchorPolicy policy = AnchorSet::kDefaultPolicy);
     [[nodiscard]] AnchorRange                                        CreateAnchorRange(std::size_t start, std::size_t end);
     [[nodiscard]] AnchorRange                                        CreateAnchorRange(std::size_t start, std::size_t end, AnchorPolicy startPolicy,
                                                                                        AnchorPolicy endPolicy);
