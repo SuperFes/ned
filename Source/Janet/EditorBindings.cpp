@@ -1118,6 +1118,13 @@ namespace {
         editor::lsp::SetLspSyncDebounceMs(static_cast<int>(milliseconds));
     }
 
+    // Same "just forward to the process-wide setter" shape again, for the
+    // window Manager::RequestViewportFeatures throttles a moving viewport
+    // down to.
+    void NedSetLspRequestIdle(std::int64_t milliseconds) {
+        editor::lsp::SetLspRequestIdleMs(static_cast<int>(milliseconds));
+    }
+
     // toolchain-include-paths follow-up: same "just forward to the
     // process-wide setter" shape as NedSetLspCompletionDebounce above.
     void NedSetIncludePathCacheTtlSeconds(std::int64_t seconds) {
@@ -2412,6 +2419,13 @@ void InstallEditorBindings(Environment& env) {
         "block the UI if a server can't drain its input fast enough. Keep this shorter than "
         "set-lsp-completion-debounce (default 500) or completion/hover/etc. requests may race ahead of a server "
         "that doesn't have the latest content yet. Non-positive values are clamped to 1.");
+    env.Register<&NedSetLspRequestIdle>(
+        "ned", "set-lsp-request-idle",
+        "Set the shortest gap, in milliseconds, between two rounds of semantic-token, inlay-hint and code-lens "
+        "requests for one buffer (default 150). A discrete move -- a PageDown, opening a file -- still asks "
+        "immediately; only a visible range that keeps changing inside the window is held back, and then one request "
+        "covers wherever it ended up, so a held scroll costs a round trip per window instead of one per frame. Raise "
+        "it for a slow server, lower it for highlighting that keeps up mid-scroll. Non-positive values are clamped to 1.");
     env.Register<&NedSetIncludePathCacheTtlSeconds>(
         "ned", "set-include-path-cache-ttl-seconds",
         "Set how long (in seconds) a compiler-derived default include-path result stays cached before "

@@ -924,30 +924,17 @@ void BufferView::SyncLspForFrame() {
         const std::size_t viewportStartByte = content.LineToByteOffset(viewportTop);
         const std::size_t viewportEndByte   = std::min(content.LineToByteOffset(viewportBottom) + 1, content.ByteLength());
 
-        // semanticTokens follow-up, extended by the range/delta follow-up:
-        // same per-frame, active-buffer-only cadence as SyncBuffer just
-        // above, deliberately called from here (BufferView's own per-frame
-        // decision point) rather than from inside Manager::SyncToServer
-        // -- see RequestSemanticTokens' own doc comment in Manager.h for
-        // why keeping it out of that hot path matters (a real lesson from
-        // pull-diagnostics' own test-regression fix), and for how it
-        // chooses among range/full-delta/full internally. No-ops
-        // internally when disabled, unopened, or the exact same request
-        // would already be in flight.
-        lspManager_->RequestSemanticTokens(buffer, viewportStartByte, viewportEndByte, editor::LanguageKeyForMode(mode_));
-
-        // inlayHint follow-up: same per-frame cadence as the calls above,
-        // scoped to the currently visible line range -- unlike
-        // semanticTokens' original whole-document request, inlayHint's own
-        // "range" param exists specifically so a client only asks for
-        // what's on screen.
-        lspManager_->RequestInlayHints(buffer, viewportStartByte, viewportEndByte, editor::LanguageKeyForMode(mode_));
-
-        // codeLens follow-up: same per-frame cadence as the calls above,
-        // whole-document scope (codeLens has no "range" param, unlike
-        // inlayHint) -- see RequestCodeLenses' own doc comment in
-        // Manager.h for the dedup/learn-once gating this no-ops behind.
-        lspManager_->RequestCodeLenses(buffer, editor::LanguageKeyForMode(mode_));
+        // semanticTokens/inlayHint/codeLens, the three recurring background
+        // requests driven straight off this frame. Deliberately driven from
+        // here (BufferView's own per-frame decision point) rather than from
+        // inside Manager::SyncToServer -- see RequestSemanticTokens' own doc
+        // comment in Manager.h for why keeping them out of that hot path
+        // matters (a real lesson from pull-diagnostics' own test-regression
+        // fix). What this frame contributes is the (content, viewport) pair;
+        // RequestViewportFeatures decides when that pair has settled long
+        // enough to be worth a round trip, so a held scroll costs one
+        // request per settled viewport instead of one per frame.
+        lspManager_->RequestViewportFeatures(buffer, viewportStartByte, viewportEndByte, editor::LanguageKeyForMode(mode_));
 
         // embedded-language-documents follow-up: computes/caches this
         // buffer's embedded documents (currently just html-mode's

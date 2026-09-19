@@ -86,6 +86,29 @@ void              SetLspDiagnosticsDebounceMs(int milliseconds); // default 500
 void              SetLspSyncDebounceMs(int milliseconds); // default 150
 [[nodiscard]] int SyncDebounceMs();
 
+// The shortest gap Manager::RequestViewportFeatures allows between two
+// rounds of the semanticTokens/inlayHint/codeLens requests a buffer's
+// (content generation, viewport) pair implies. These three are the only
+// recurring background requests driven straight off Paint(), and a viewport
+// that moves every frame (a held scroll, a wheel spin) made each frame its
+// own round trip, of which only the last one's answer was ever looked at.
+// Collapsing them is only safe because a late or missing response costs
+// nothing visible any more: every one of the three carries its result
+// forward on the buffer's own edit journal (Manager::CarryForward), so the
+// last good set stays correct under typing instead of going stale within one
+// keystroke.
+//
+// A window, not a debounce delay: the first pair change after a quiet window
+// is sent immediately, and only a pair that changes again inside the window
+// waits (see RequestViewportFeatures' own doc comment for why a discrete
+// jump must not pay it). Deliberately independent of SyncDebounceMs() rather
+// than derived from it -- the requests gate on the sync having landed anyway
+// (each checks lastSyncedGeneration itself), so this governs how often they
+// may repeat, not how long they wait for content to settle. Same
+// non-positive-clamped-to-1ms convention as the other debounces above.
+void              SetLspRequestIdleMs(int milliseconds); // default 150
+[[nodiscard]] int RequestIdleMs();
+
 // signature-help-auto-trigger follow-up. Same shape as
 // SetLspAutoCompleteEnabled/AutoCompleteEnabled above -- a single
 // editor-wide toggle, not per-language. Reuses CompletionDebounceMs()

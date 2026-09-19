@@ -1499,6 +1499,10 @@ void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     diagnosticsBySource_.erase(&buffer);
     diagnosticsDebounceTimers_.erase(&buffer); // cancels a pending timer before it can fire against a dead buffer
     syncDebounceTimers_.erase(&buffer);        // sync-debounce follow-up: same rationale, for a pending didChange send
+    viewportRequestTimers_.erase(&buffer);     // same rationale again, for a pending throttled viewport request
+    armedViewportRequests_.erase(&buffer);
+    viewportRequestPending_.erase(&buffer);
+    lastViewportRequestAt_.erase(&buffer);
     primaryServerKey_.erase(&buffer);
     bufferResolvedRoot_.erase(&buffer); // LSP multi-root follow-up
     embeddedServerKeys_.erase(&buffer);
@@ -1811,6 +1815,74 @@ void Manager::ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vector
     semanticTokenSpans_[&buffer]                  = std::move(spans);
     semanticTokenSpansContentGeneration_[&buffer] = buffer.ContentGeneration();
     ++semanticTokensGeneration_[&buffer];
+}
+
+bool Manager::SendViewportFeatures(text::Buffer& buffer, const ArmedViewportRequest& request) {
+    // The same gate all three requests apply individually, hoisted so the
+    // caller knows whether anything was actually sent: a pair the buffer has
+    // moved off, or a generation the server hasn't been sent yet, must leave
+    // nothing armed behind, or the frame that follows would compare equal to
+    // it and never retry.
+    const BufferSyncState* state = ResolveSyncState(buffer, request.serverKey);
+    if (!state || !state->opened || request.generation != buffer.ContentGeneration() ||
+        state->lastSyncedGeneration != buffer.ContentGeneration()) {
+        return false;
+    }
+    RequestSemanticTokens(buffer, request.viewportStartByte, request.viewportEndByte, request.serverKey);
+    RequestInlayHints(buffer, request.viewportStartByte, request.viewportEndByte, request.serverKey);
+    RequestCodeLenses(buffer, request.serverKey);
+    return true;
+}
+
+void Manager::RequestViewportFeatures(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
+                                      const std::string& serverKey) {
+    const ArmedViewportRequest desired{.serverKey         = serverKey,
+                                       .generation        = buffer.ContentGeneration(),
+                                       .viewportStartByte = viewportStartByte,
+                                       .viewportEndByte   = viewportEndByte};
+    if (const auto it = armedViewportRequests_.find(&buffer); it != armedViewportRequests_.end() && it->second == desired) {
+        return; // this pair was already sent, or a pending fire is already carrying it
+    }
+    armedViewportRequests_[&buffer] = desired;
+
+    const auto window   = std::chrono::milliseconds(RequestIdleMs());
+    const auto now      = std::chrono::steady_clock::now();
+    const auto sentIt   = lastViewportRequestAt_.find(&buffer);
+    const bool inWindow = sentIt != lastViewportRequestAt_.end() && now - sentIt->second < window;
+    if (!inWindow) {
+        // Leading edge: a discrete jump (a PageDown, a click into a new
+        // file) is one pair change with nothing before it, and paying the
+        // window for that would make every such jump feel slow for no
+        // saving at all.
+        if (SendViewportFeatures(buffer, desired)) {
+            lastViewportRequestAt_[&buffer] = now;
+        }
+        else {
+            armedViewportRequests_.erase(&buffer);
+        }
+        return;
+    }
+    if (!viewportRequestPending_.insert(&buffer).second) {
+        return; // a fire is already on its way, and it reads whatever pair is armed when it lands -- re-arming per frame is what would cost a thread per frame
+    }
+    viewportRequestTimers_[&buffer].Arm(
+        eventLoop_, std::chrono::duration_cast<std::chrono::milliseconds>(window - (now - sentIt->second)),
+        [this, bufferPtr = &buffer] {
+            viewportRequestPending_.erase(bufferPtr);
+            // Nothing dereferences bufferPtr before this lookup, deliberately:
+            // a fire already Post()ed when NotifyBufferClosed ran still arrives,
+            // and the erased entry is what tells it the buffer is gone.
+            const auto it = armedViewportRequests_.find(bufferPtr);
+            if (it == armedViewportRequests_.end()) {
+                return;
+            }
+            if (SendViewportFeatures(*bufferPtr, it->second)) {
+                lastViewportRequestAt_[bufferPtr] = std::chrono::steady_clock::now();
+            }
+            else {
+                armedViewportRequests_.erase(it);
+            }
+        });
 }
 
 void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
