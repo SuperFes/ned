@@ -70,12 +70,17 @@ struct AnchorRange {
 
 class AnchorSet {
   public:
-    // Policy defaults to {Right, Clamp}: the offset keeps naming the same
-    // byte of content across an insert at its own position, and collapses to
-    // the deletion point when the bytes it named are removed. That is the
-    // rule every position `Buffer` already tracked by hand follows, and the
-    // right default for a cursor-like anchor.
-    [[nodiscard]] AnchorId Create(std::size_t offset, AnchorPolicy policy = {});
+    // The offset keeps naming the same byte of content across an insert at
+    // its own position, and collapses to the deletion point when the bytes it
+    // named are removed. That is the rule every position `Buffer` already
+    // tracked by hand follows (`RelocateForInsert` shifts on `>=`), and the
+    // right default for a cursor-like anchor. Spelled out here rather than
+    // left to `AnchorPolicy`'s own member defaults, which are Left: that
+    // struct is also the parameter type of the bare `RelocateThrough`
+    // functions, where a range end is as ordinary a caller as a point.
+    static constexpr AnchorPolicy kDefaultPolicy{.gravity = Gravity::Right, .insideDelete = InsideDelete::Clamp};
+
+    [[nodiscard]] AnchorId Create(std::size_t offset, AnchorPolicy policy = kDefaultPolicy);
 
     // A span that grows when text lands at either of its own edges -- the
     // rule a snippet field being typed into or an excerpt body needs. Pass

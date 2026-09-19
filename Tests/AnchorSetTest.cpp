@@ -41,6 +41,20 @@ TEST_CASE("An anchor ignores an edit entirely after it", "[AnchorSet]") {
     REQUIRE(set.Offset(anchor) == 5);
 }
 
+TEST_CASE("The default policy shifts past an insert at its own offset", "[AnchorSet]") {
+    AnchorSet      set;
+    const AnchorId anchor = set.Create(8);
+
+    // The documented default is {Right, Clamp}, not AnchorPolicy's own
+    // member defaults -- a bare Create() must follow the content, matching
+    // every position Buffer relocates by hand.
+    set.ApplyEdit(/*offset=*/8, /*oldLength=*/0, /*newLength=*/4);
+    REQUIRE(set.Offset(anchor) == 12);
+
+    set.ApplyEdit(/*offset=*/10, /*oldLength=*/6, /*newLength=*/0);
+    REQUIRE(set.Offset(anchor) == 10); // clamped to the deletion point, not dropped
+}
+
 TEST_CASE("Gravity decides an insert landing exactly on an anchor", "[AnchorSet]") {
     AnchorSet set;
     // Right keeps naming the same byte of content, so it moves past text
