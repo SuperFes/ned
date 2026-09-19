@@ -43,11 +43,13 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "Editor/ProcessTimeouts.h"
+#include "Text/Buffer.h"
 #include "UI/EventLoop.h"
 
 #include "Client.h"
@@ -89,6 +91,12 @@ class Manager {
     // "verified"/"message" fields -- see SendBreakpointsForFile.
     struct Breakpoint {
         std::size_t line = 0;
+        // dap-anchored-breakpoints follow-up: identity that survives this breakpoint
+        // moving, so the anchor tracking its position (see TrackBuffer) can be matched
+        // back to it after `line` itself has changed. Assigned once, never reused,
+        // never persisted -- a restored breakpoint gets a fresh one, exactly like
+        // verified/actualLine.
+        std::uint64_t id = 0;
         std::string condition;
         std::string logMessage;
         // DAP round 3: DAP's own `hitCondition` -- an adapter-evaluated
@@ -279,6 +287,29 @@ class Manager {
     // path once (cached per buffer) and compare keys against
     // CurrentStopKeyAndLine/BreakpointLinesForKey.
     [[nodiscard]] static std::string NormalizePathKey(const std::filesystem::path& path);
+
+    // dap-anchored-breakpoints follow-up: offers a live buffer as the authority on
+    // where this file's breakpoints actually are. A breakpoint is stored as a line
+    // number -- the only form that means anything for a file nothing has open, and the
+    // only form the adapter takes -- and a line number stops being true the moment
+    // anything above it is edited: the gutter dot stays where it was while the code
+    // slides out from under it, and the next setBreakpoints tells the adapter to break
+    // somewhere the user never asked for. While a buffer for the file is open, each of
+    // its breakpoints gets an anchor (Text/AnchorSet.h) instead, and this call resolves
+    // them back to line numbers.
+    //
+    // Cheap and idempotent: BufferView calls it from the gutter's own per-frame path,
+    // so "a buffer that is being looked at is current" needs no separate invalidation
+    // rule. Anything that sends breakpoints to an adapter re-runs it first for every
+    // tracked buffer, which covers a file edited while some other pane had focus.
+    // Buffers with no path, and buffers whose file holds no breakpoints, cost nothing.
+    void TrackBuffer(text::Buffer& buffer);
+
+    // The anchors above live in the buffer, so they must be released while it is still
+    // alive -- the same contract, and the same two call sites in WindowManager, as
+    // lsp::Manager::NotifyBufferClosed. The breakpoints themselves stay, as the line
+    // numbers they were last resolved to.
+    void NotifyBufferClosed(text::Buffer& buffer);
 
     // session-persistence slice 2: the whole store, in its own shape
     // (normalized path key -> sorted-by-line PersistedBreakpoints), for
@@ -560,11 +591,37 @@ class Manager {
 
     std::map<std::string, std::vector<Breakpoint>> breakpoints_; // normalized path -> sorted-by-line breakpoints
 
+    // dap-anchored-breakpoints follow-up: one entry per buffer offered to TrackBuffer,
+    // holding an anchor per breakpoint of that buffer's file, keyed by Breakpoint::id
+    // (which survives the breakpoint moving; its line does not). `key` is the path key
+    // the anchors were built against, so a buffer saved under a new name rebuilds
+    // rather than relocating the old file's breakpoints.
+    struct TrackedSource {
+        std::string                                       key;
+        std::unordered_map<std::uint64_t, text::AnchorId> anchors;
+    };
+    std::unordered_map<text::Buffer*, TrackedSource> trackedSources_;
+    std::uint64_t                                    nextBreakpointId_ = 1;
+
+    // Creates anchors for breakpoints that have none, resolves the ones that do back
+    // onto `breakpoints_`, and releases anchors whose breakpoint is gone. Returns true
+    // if any line actually moved.
+    bool ReconcileAnchors(text::Buffer& buffer, TrackedSource& source);
+    // Runs ReconcileAnchors for every tracked buffer -- what anything about to send
+    // breakpoints calls so a buffer edited outside the painted pane is still current.
+    // pushToAdapter sends each moved file itself; a caller that is about to send every
+    // file anyway (HandleInitializedEvent) passes false.
+    void ReconcileAllTrackedSources(bool pushToAdapter);
+    void ReleaseAnchors(text::Buffer& buffer, TrackedSource& source);
+
     // Run-to-cursor's own temporary breakpoint, when RunToCursor had to
-    // create one (normalized key, line) -- unset when the current/last
+    // create one (normalized key, Breakpoint::id) -- unset when the current/last
     // run-to-cursor landed on an already-existing breakpoint, since there's
     // nothing temporary to clear afterward. See RunToCursor/ClearPendingRunToCursor.
-    std::optional<std::pair<std::string, std::size_t>> pendingRunToCursor_;
+    // Held by id rather than by line (dap-anchored-breakpoints): an edit while the
+    // debuggee is stopped moves the line, and a temporary breakpoint that can't be
+    // found afterwards is one that never goes away.
+    std::optional<std::pair<std::string, std::uint64_t>> pendingRunToCursor_;
 
     // DAP round 3: sorted+deduped function-breakpoint names -- see
     // ToggleFunctionBreakpoint.

@@ -12,6 +12,7 @@
 #include "Editor/Dap/Config.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/Lsp/Transport.h"
+#include "Text/Buffer.h"
 #include "UI/EventLoop.h"
 
 using ned::editor::dap::Client;
@@ -165,6 +166,137 @@ TEST_CASE("ToggleBreakpoint sets, sorts, and removes breakpoints per normalized 
     REQUIRE(manager.BreakpointsForFile(path) == std::vector<std::size_t>{3});
     REQUIRE_FALSE(manager.ToggleBreakpoint(path, 3));
     REQUIRE(manager.BreakpointsForFile(path).empty());
+}
+
+// dap-anchored-breakpoints follow-up. A breakpoint is stored as a line number, which
+// stops being true the moment anything above it is edited -- these pin the property
+// that makes it true again while a buffer for the file is open.
+namespace {
+
+// A real buffer for `path`, with content, that TrackBuffer will accept.
+ned::text::Buffer BufferFor(const std::filesystem::path& path, const std::string& text) {
+    ned::text::Buffer buffer(path.filename().string());
+    buffer.InsertAtPoint(text);
+    buffer.SetPoint(0);
+    buffer.SetPath(path);
+    return buffer;
+}
+
+} // namespace
+
+TEST_CASE("A breakpoint follows its line when text is inserted above it", "[Dap]") {
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(eventLoop);
+
+    const std::filesystem::path path   = std::filesystem::current_path() / "dap-anchored.c";
+    ned::text::Buffer           buffer = BufferFor(path, "one\ntwo\nthree\nfour\n");
+
+    REQUIRE(manager.ToggleBreakpoint(path, 3)); // on "three"
+    manager.TrackBuffer(buffer);                // anchors it
+
+    buffer.InsertAt(0, "zero\n");
+    manager.TrackBuffer(buffer);
+
+    REQUIRE(manager.BreakpointsForFile(path) == std::vector<std::size_t>{4});
+}
+
+TEST_CASE("A breakpoint whose line is deleted lands where the code went", "[Dap]") {
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(eventLoop);
+
+    const std::filesystem::path path   = std::filesystem::current_path() / "dap-anchored-delete.c";
+    ned::text::Buffer           buffer = BufferFor(path, "one\ntwo\nthree\nfour\n");
+
+    REQUIRE(manager.ToggleBreakpoint(path, 3));
+    manager.TrackBuffer(buffer);
+
+    buffer.DeleteRange(4, 8); // "two\n" goes
+    manager.TrackBuffer(buffer);
+
+    REQUIRE(manager.BreakpointsForFile(path) == std::vector<std::size_t>{2});
+}
+
+TEST_CASE("Two breakpoints relocating onto one line collapse to one", "[Dap]") {
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(eventLoop);
+
+    const std::filesystem::path path   = std::filesystem::current_path() / "dap-anchored-collapse.c";
+    ned::text::Buffer           buffer = BufferFor(path, "one\ntwo\nthree\nfour\n");
+
+    REQUIRE(manager.ToggleBreakpoint(path, 2));
+    REQUIRE(manager.ToggleBreakpoint(path, 3));
+    manager.TrackBuffer(buffer);
+
+    buffer.DeleteRange(4, 14); // both "two\n" and "three\n" go
+    manager.TrackBuffer(buffer);
+
+    REQUIRE(manager.BreakpointsForFile(path) == std::vector<std::size_t>{2});
+}
+
+TEST_CASE("An untracked file's breakpoints are left exactly as stored", "[Dap]") {
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(eventLoop);
+
+    const std::filesystem::path path   = std::filesystem::current_path() / "dap-anchored-other.c";
+    ned::text::Buffer           buffer = BufferFor(path, "one\ntwo\nthree\n");
+
+    const std::filesystem::path elsewhere = std::filesystem::current_path() / "dap-anchored-elsewhere.c";
+    REQUIRE(manager.ToggleBreakpoint(elsewhere, 9));
+    manager.TrackBuffer(buffer); // a different file's buffer
+
+    buffer.InsertAt(0, "zero\n");
+    manager.TrackBuffer(buffer);
+
+    REQUIRE(manager.BreakpointsForFile(elsewhere) == std::vector<std::size_t>{9});
+}
+
+TEST_CASE("Closing a buffer keeps the breakpoint where its anchor had reached", "[Dap]") {
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(eventLoop);
+
+    const std::filesystem::path path   = std::filesystem::current_path() / "dap-anchored-close.c";
+    ned::text::Buffer           buffer = BufferFor(path, "one\ntwo\nthree\nfour\n");
+
+    REQUIRE(manager.ToggleBreakpoint(path, 3));
+    manager.TrackBuffer(buffer);
+    buffer.InsertAt(0, "zero\n");
+
+    manager.NotifyBufferClosed(buffer);
+    REQUIRE(buffer.LiveAnchorCount() == 0); // released while the buffer was still alive
+    REQUIRE(manager.BreakpointsForFile(path) == std::vector<std::size_t>{4});
+}
+
+TEST_CASE("Toggling a breakpoint off releases the anchor that tracked it", "[Dap]") {
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(eventLoop);
+
+    const std::filesystem::path path   = std::filesystem::current_path() / "dap-anchored-toggle.c";
+    ned::text::Buffer           buffer = BufferFor(path, "one\ntwo\nthree\n");
+
+    REQUIRE(manager.ToggleBreakpoint(path, 2));
+    manager.TrackBuffer(buffer);
+    REQUIRE(buffer.LiveAnchorCount() == 1);
+
+    REQUIRE_FALSE(manager.ToggleBreakpoint(path, 2));
+    manager.TrackBuffer(buffer);
+    REQUIRE(buffer.LiveAnchorCount() == 0);
+}
+
+TEST_CASE("A reload re-anchors a breakpoint to its stored line rather than dropping it", "[Dap]") {
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(eventLoop);
+
+    const std::filesystem::path path   = std::filesystem::current_path() / "dap-anchored-reload.c";
+    ned::text::Buffer           buffer = BufferFor(path, "one\ntwo\nthree\nfour\n");
+
+    REQUIRE(manager.ToggleBreakpoint(path, 3));
+    manager.TrackBuffer(buffer);
+
+    buffer.ReplaceContentForLoad(ned::text::Rope("one\ntwo\nthree\nfour\nfive\n")); // a barrier
+    manager.TrackBuffer(buffer);
+
+    REQUIRE(manager.BreakpointsForFile(path) == std::vector<std::size_t>{3});
+    REQUIRE(buffer.LiveAnchorCount() == 1); // re-anchored, not abandoned
 }
 
 TEST_CASE("StartOrContinue refuses to start without a launch configuration", "[Dap]") {

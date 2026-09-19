@@ -11,6 +11,14 @@ namespace ned::editor::dap {
 
 namespace {
 
+    // dap-anchored-breakpoints follow-up: a 1-based DAP line as a byte offset in the
+    // buffer, clamped -- a breakpoint restored from a session file can name a line the
+    // file no longer has.
+    std::size_t LineStartOffset(const text::Buffer& buffer, std::size_t dapLine) {
+        const std::size_t index = dapLine > 0 ? dapLine - 1 : 0;
+        return buffer.Content().LineToByteOffset(std::min(index, buffer.Content().LineCount() - 1));
+    }
+
     // Debugging wishlist: watch-history sparkline -- caps how many recent
     // stops' values are kept per watch, matching Editor/Sparkline.h's own
     // default maxWidth so a full history renders one glyph per point with
@@ -104,7 +112,7 @@ bool Manager::ToggleBreakpoint(const std::filesystem::path& path, std::size_t li
         }
     }
     else {
-        breakpoints.push_back(Breakpoint{.line = line});
+        breakpoints.push_back(Breakpoint{.line = line, .id = nextBreakpointId_++});
         std::sort(breakpoints.begin(), breakpoints.end(), [](const Breakpoint& a, const Breakpoint& b) { return a.line < b.line; });
         nowSet = true;
     }
@@ -119,7 +127,7 @@ std::string Manager::SetBreakpointCondition(const std::filesystem::path& path, s
     std::vector<Breakpoint>& lines = breakpoints_[key];
     auto                     it    = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     if (it == lines.end()) {
-        lines.push_back(Breakpoint{.line = line});
+        lines.push_back(Breakpoint{.line = line, .id = nextBreakpointId_++});
         std::sort(lines.begin(), lines.end(), [](const Breakpoint& a, const Breakpoint& b) { return a.line < b.line; });
         it = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     }
@@ -140,7 +148,7 @@ std::string Manager::SetBreakpointLogMessage(const std::filesystem::path& path, 
     std::vector<Breakpoint>& lines = breakpoints_[key];
     auto                     it    = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     if (it == lines.end()) {
-        lines.push_back(Breakpoint{.line = line});
+        lines.push_back(Breakpoint{.line = line, .id = nextBreakpointId_++});
         std::sort(lines.begin(), lines.end(), [](const Breakpoint& a, const Breakpoint& b) { return a.line < b.line; });
         it = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     }
@@ -161,7 +169,7 @@ std::string Manager::SetBreakpointHitCondition(const std::filesystem::path& path
     std::vector<Breakpoint>& lines = breakpoints_[key];
     auto                     it    = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     if (it == lines.end()) {
-        lines.push_back(Breakpoint{.line = line});
+        lines.push_back(Breakpoint{.line = line, .id = nextBreakpointId_++});
         std::sort(lines.begin(), lines.end(), [](const Breakpoint& a, const Breakpoint& b) { return a.line < b.line; });
         it = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     }
@@ -261,6 +269,11 @@ void Manager::RestoreBreakpoints(std::map<std::string, std::vector<PersistedBrea
     // verified/actualLine are NOT restored (see PersistedBreakpoint) --
     // every entry starts exactly like a freshly-toggled breakpoint.
     breakpoints_.clear();
+    // Every anchor was keyed by an id in the store just discarded; the buffers stay
+    // tracked and rebuild their anchors from the restored lines on the next reconcile.
+    for (auto& [buffer, source] : trackedSources_) {
+        ReleaseAnchors(*buffer, source);
+    }
     for (auto& [key, entries] : breakpoints) {
         std::sort(entries.begin(), entries.end(),
                   [](const PersistedBreakpoint& a, const PersistedBreakpoint& b) { return a.line < b.line; });
@@ -274,6 +287,7 @@ void Manager::RestoreBreakpoints(std::map<std::string, std::vector<PersistedBrea
         for (const PersistedBreakpoint& entry : entries) {
             converted.push_back(Breakpoint{
                 .line         = entry.line,
+                .id           = nextBreakpointId_++,
                 .condition    = entry.condition,
                 .logMessage   = entry.logMessage,
                 .hitCondition = entry.hitCondition,
@@ -286,6 +300,124 @@ void Manager::RestoreBreakpoints(std::map<std::string, std::vector<PersistedBrea
         affectedKeys.erase(std::unique(affectedKeys.begin(), affectedKeys.end()), affectedKeys.end());
         for (const std::string& key : affectedKeys) {
             SendBreakpointsForFile(key);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------
+// Anchored breakpoint positions (dap-anchored-breakpoints)
+// ---------------------------------------------------------------------------------
+
+void Manager::TrackBuffer(text::Buffer& buffer) {
+    if (!buffer.Path()) {
+        return; // nothing to key breakpoints by
+    }
+    const std::string key      = NormalizePathKey(*buffer.Path());
+    const auto        existing = trackedSources_.find(&buffer);
+    if (existing == trackedSources_.end() && !breakpoints_.contains(key)) {
+        return; // nothing to anchor and nothing held: don't grow the map per painted buffer
+    }
+    TrackedSource& source = existing != trackedSources_.end() ? existing->second : trackedSources_[&buffer];
+    if (source.key != key) {
+        // First sight of this buffer, or it was saved under a different name -- the old
+        // file's breakpoints are not this one's.
+        ReleaseAnchors(buffer, source);
+        source.key = key;
+    }
+    if (ReconcileAnchors(buffer, source) && client_ && state_ != SessionState::Inactive) {
+        SendBreakpointsForFile(key);
+    }
+}
+
+void Manager::NotifyBufferClosed(text::Buffer& buffer) {
+    const auto it = trackedSources_.find(&buffer);
+    if (it == trackedSources_.end()) {
+        return;
+    }
+    // One last resolve first: the lines the breakpoints keep, now that nothing is open
+    // to anchor them to, should be where the anchors had got to rather than where they
+    // were when the buffer was opened.
+    (void)ReconcileAnchors(buffer, it->second);
+    ReleaseAnchors(buffer, it->second);
+    trackedSources_.erase(it);
+}
+
+void Manager::ReleaseAnchors(text::Buffer& buffer, TrackedSource& source) {
+    for (const auto& [id, anchor] : source.anchors) {
+        buffer.DestroyAnchor(anchor);
+    }
+    source.anchors.clear();
+}
+
+bool Manager::ReconcileAnchors(text::Buffer& buffer, TrackedSource& source) {
+    const auto fileIt = breakpoints_.find(source.key);
+    if (fileIt == breakpoints_.end()) {
+        ReleaseAnchors(buffer, source);
+        return false;
+    }
+    std::vector<Breakpoint>& breakpoints = fileIt->second;
+
+    bool moved = false;
+    for (Breakpoint& bp : breakpoints) {
+        const auto anchorIt = source.anchors.find(bp.id);
+        if (anchorIt == source.anchors.end()) {
+            // A breakpoint toggled since the last reconcile: its line is the truth, and
+            // this is where it stops being one.
+            source.anchors.emplace(bp.id, buffer.CreateAnchor(LineStartOffset(buffer, bp.line)));
+            continue;
+        }
+        const std::optional<std::size_t> offset = buffer.AnchorOffset(anchorIt->second);
+        if (!offset) {
+            // A barrier (a revert, a reload, an external merge) dropped it. The stored
+            // line is all that is left to believe, so re-anchor to it rather than
+            // guessing the breakpoint away.
+            buffer.DestroyAnchor(anchorIt->second);
+            anchorIt->second = buffer.CreateAnchor(LineStartOffset(buffer, bp.line));
+            continue;
+        }
+        const std::size_t line = buffer.Content().ByteOffsetToLine(*offset) + 1; // DAP lines are 1-based
+        if (line != bp.line) {
+            bp.line       = line;
+            bp.actualLine = 0; // the adapter's snapped location described the old line
+            moved         = true;
+        }
+    }
+
+    if (moved) {
+        std::sort(breakpoints.begin(), breakpoints.end(), [](const Breakpoint& a, const Breakpoint& b) { return a.line < b.line; });
+        // Two breakpoints can land on one line (the lines between them were deleted, so
+        // both anchors clamped to the same point). Collapse to the first, the same rule
+        // RestoreBreakpoints applies to a duplicate, and drop the loser's anchor.
+        const auto duplicate = std::unique(breakpoints.begin(), breakpoints.end(),
+                                           [](const Breakpoint& a, const Breakpoint& b) { return a.line == b.line; });
+        for (auto it = duplicate; it != breakpoints.end(); ++it) {
+            if (const auto anchorIt = source.anchors.find(it->id); anchorIt != source.anchors.end()) {
+                buffer.DestroyAnchor(anchorIt->second);
+                source.anchors.erase(anchorIt);
+            }
+        }
+        breakpoints.erase(duplicate, breakpoints.end());
+    }
+
+    // Anchors whose breakpoint is gone (toggled off, or collapsed above).
+    for (auto it = source.anchors.begin(); it != source.anchors.end();) {
+        const bool stillSet = std::any_of(breakpoints.begin(), breakpoints.end(),
+                                          [id = it->first](const Breakpoint& bp) { return bp.id == id; });
+        if (stillSet) {
+            ++it;
+            continue;
+        }
+        buffer.DestroyAnchor(it->second);
+        it = source.anchors.erase(it);
+    }
+    return moved;
+}
+
+void Manager::ReconcileAllTrackedSources(bool pushToAdapter) {
+    for (auto& [buffer, source] : trackedSources_) {
+        const bool moved = ReconcileAnchors(*buffer, source);
+        if (moved && pushToAdapter && client_ && state_ != SessionState::Inactive) {
+            SendBreakpointsForFile(source.key);
         }
     }
 }
@@ -460,6 +592,9 @@ void Manager::WireClient(Client& client) {
 }
 
 void Manager::HandleInitializedEvent() {
+    // Anything edited since the last reconcile (a buffer in an unfocused pane, a
+    // project-wide replace) is caught here, before a single line goes out.
+    ReconcileAllTrackedSources(/*pushToAdapter=*/false);
     for (const auto& [pathKey, lines] : breakpoints_) {
         (void)lines;
         SendBreakpointsForFile(pathKey);
@@ -713,7 +848,14 @@ std::string Manager::RunToCursor(const std::filesystem::path& path, std::size_t 
                                    std::any_of(it->second.begin(), it->second.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     if (!alreadySet) {
         ToggleBreakpoint(path, line); // pushes setBreakpoints immediately (state_ != Inactive)
-        pendingRunToCursor_ = std::make_pair(key, line);
+        const auto created = breakpoints_.find(key);
+        if (created != breakpoints_.end()) {
+            const auto bp = std::find_if(created->second.begin(), created->second.end(),
+                                         [line](const Breakpoint& candidate) { return candidate.line == line; });
+            if (bp != created->second.end()) {
+                pendingRunToCursor_ = std::make_pair(key, bp->id);
+            }
+        }
     }
     client_->SendRequest("continue", Json{{"threadId", CurrentThreadId()}},
                          [this](bool success, const Json&, const std::string& message) {
@@ -731,13 +873,13 @@ void Manager::ClearPendingRunToCursor(bool pushToAdapter) {
     if (!pendingRunToCursor_) {
         return;
     }
-    const auto [key, line] = *pendingRunToCursor_;
+    const auto [key, id] = *pendingRunToCursor_;
     pendingRunToCursor_.reset();
     const auto it = breakpoints_.find(key);
     if (it == breakpoints_.end()) {
         return; // toggled off some other way already
     }
-    const auto lineIt = std::find_if(it->second.begin(), it->second.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    const auto lineIt = std::find_if(it->second.begin(), it->second.end(), [id](const Breakpoint& bp) { return bp.id == id; });
     if (lineIt == it->second.end()) {
         return;
     }
