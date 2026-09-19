@@ -2843,7 +2843,16 @@ std::optional<Point> BufferView::CursorPosition() const {
     // by the same amount first, or a point that's genuinely still on screen
     // (just pushed down by the pinned rows) would be wrongly reported as
     // off-screen.
-    const std::size_t visibleRow = viewport_.VisibleRowCountBetween(viewport_.TopLine(), pointLine) + rowWithinLine;
+    // LeadingAnnotationRowsForLine(pointLine) is point's OWN line's leading
+    // row, which VisibleRowCountBetween cannot contribute: it sums whole
+    // lines strictly before pointLine, and this row belongs to pointLine
+    // itself while being drawn above its text. Every other row-math consumer
+    // wants the line's first row and is right to stop there; this one wants
+    // its first *content* row. Omitting it put the terminal cursor on the
+    // code lens instead of on the character being edited, one row up
+    // (live-reported 2026-09-19 against fish-lsp).
+    const std::size_t visibleRow =
+        viewport_.VisibleRowCountBetween(viewport_.TopLine(), pointLine) + LeadingAnnotationRowsForLine(pointLine) + rowWithinLine;
     if (sizeIsKnown && visibleRow + static_cast<std::size_t>(stickyRowCount_) >= static_cast<std::size_t>(sizeNow.height)) {
         return std::nullopt;
     }
