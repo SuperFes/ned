@@ -1092,14 +1092,15 @@ class Manager {
     void RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
                            const std::string& serverKey);
 
-    // The most recently applied inlay hints for buffer, sorted by
-    // byteOffset -- empty if never requested, not yet answered, or the
-    // server has no hints for the last-requested range at all.
+    // Every retained inlay hint for buffer, sorted by byteOffset -- empty
+    // if never requested, not yet answered, or the server has no hints
+    // anywhere that has been asked about.
     //
-    // Carried forward on read across edits, not suppressed wholesale:
-    // blanking every hint in the buffer on every keystroke (the original fix
-    // here) traded one flicker for a louder one, reflowing every annotated
-    // line's visible text on every edit anywhere in the buffer.
+    // Retained, not last-response-only: a response replaces the hints inside
+    // the range it answered for and leaves the rest alone, so scrolling away
+    // from a region and back does not blank it and then re-ask for it. The
+    // positions are anchors the buffer has already moved, so this is a
+    // projection, not a relocation -- see anchors_/view_ below.
     //
     // A hint is virtual text occupying real columns before the byte it
     // annotates, which is why it gets the strictest anchor policy of any
@@ -1799,7 +1800,7 @@ class Manager {
     // four erased together in NotifyBufferClosed. requestedGeneration_ is
     // only consulted by the full/delta path (generation alone is enough to
     // dedup a whole-document request); range mode has its own
-    // requestedRange_ triple just below, mirroring inlayHintsRequestedRange_.
+    // requestedRange_ triple just below.
     std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensRequestedGeneration_;
     std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensRequestCounter_;
     mutable std::unordered_map<text::Buffer*, std::vector<editor::HighlightSpan>> semanticTokenSpans_;
@@ -1812,11 +1813,14 @@ class Manager {
     mutable std::unordered_map<text::Buffer*, std::size_t>                semanticTokenSpansContentGeneration_;
     std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensGeneration_;
 
-    // semanticTokens range/delta follow-up. requestedRange_ mirrors
-    // inlayHintsRequestedRange_ exactly (same (generation, viewportStart,
-    // viewportEnd) dedup triple, same rationale) -- only populated/consulted
-    // when RequestSemanticTokens is actually using the range path for this
-    // buffer. rangeUnsupported_/fullDeltaUnsupported_ are the same
+    // semanticTokens range/delta follow-up. requestedRange_ is the
+    // (generation, viewportStart, viewportEnd) triple last requested --
+    // only populated/consulted when RequestSemanticTokens is actually using
+    // the range path for this buffer. Still the last-range-only gate inlay
+    // hints have since outgrown (inlayHintCoverage_): tokens are replaced
+    // wholesale per response rather than retained, so suppressing a re-ask
+    // here would suppress the only thing that puts them back. Lifting that
+    // is the same two-part change, storage half first. rangeUnsupported_/fullDeltaUnsupported_ are the same
     // "learned once from a real error response, stop asking" latches
     // inlayHintsUnsupported_/pullDiagnosticsUnsupported_/codeLensUnsupported_
     // already establish, keyed by serverKey, erased in ClientDisconnected
@@ -1897,28 +1901,106 @@ class Manager {
     [[nodiscard]] static bool RelocateRange(std::size_t& startByte, std::size_t& endByte,
                                             const std::vector<text::EditOp>& ops, text::InsideDelete insideDelete);
 
+    // One retained inlay hint. The label is the flattened display text
+    // (ResolvedInlayHint's own doc comment above); the position is an anchor
+    // the buffer relocates through every edit, so nothing here replays a
+    // journal to find out where the hint went.
+    struct AnchoredInlayHint {
+        text::AnchorId anchor;
+        std::string    label;
+    };
+
+    // What has actually been asked about, so it is never asked about twice.
+    //
+    // This replaces a gate that remembered only the single most recent
+    // (generation, start, end) triple, which made scrolling away from a
+    // region and back a fresh round trip for an answer already in hand --
+    // the request half of the same bug retention fixes on the storage half.
+    //
+    // Ranges are sorted, disjoint and merged, and live entirely within one
+    // content generation: an edit anywhere can change a hint anywhere, so a
+    // generation that has moved discards coverage wholesale rather than
+    // trying to relocate it. inFlight is the range of the one outstanding
+    // request, counted as covered so consecutive frames do not re-ask while
+    // it is on the wire, and cleared without being promoted if that request
+    // is dropped -- coverage is claimed by answers, never by questions, or a
+    // lost response would leave a region permanently unasked.
+    struct InlayHintCoverage {
+        std::size_t                                        generation = 0;
+        std::vector<std::pair<std::size_t, std::size_t>>   ranges;
+        std::optional<std::pair<std::size_t, std::size_t>> inFlight;
+    };
+
+    // The projection InlayHintSpans hands out, and the two stamps that say
+    // whether it is still the truth.
+    struct InlayHintView {
+        std::vector<ResolvedInlayHint> hints;
+        std::size_t                    builtAtGeneration = 0;
+        std::size_t                    builtAtRevision   = 0;
+        bool                           valid             = false;
+    };
+
+    // Ceiling on the retained set. Every live anchor is visited by
+    // AnchorSet::ApplyEdit on every edit, and that store is shared with the
+    // buffer's other anchor tenants, so an unbounded set would make one
+    // keystroke's cost a function of how much of the file has been scrolled
+    // past. Sized well above any plausible screenful-times-margin and far
+    // below where the linear scan is measurable.
+    static constexpr std::size_t kMaxRetainedInlayHints = 4096;
+
+    // Folds one response into the retained set: hints inside
+    // [rangeStart, rangeEnd) -- the range the server actually answered for,
+    // carried onto live content -- are replaced, and everything outside it
+    // is left exactly where it is. That is the whole difference between
+    // scrolling past a region and forgetting it.
+    void MergeInlayHints(text::Buffer& buffer, std::vector<ResolvedInlayHint> resolved, std::size_t rangeStart,
+                         std::size_t rangeEnd);
+
+    // Closes out the one outstanding inlayHint request: the in-flight range
+    // is released either way, and promoted to answered coverage only when
+    // the response actually carried hints onto live content. A response the
+    // content has moved past settles nothing -- that generation's coverage
+    // is already gone.
+    void SettleInlayHintRequest(text::Buffer& buffer, std::size_t requestedGeneration, bool answered,
+                                std::size_t rangeStart, std::size_t rangeEnd);
+
+    // Drops the retained hints furthest from anchorByte once the set is over
+    // kMaxRetainedInlayHints, destroying their anchors. Distance from the
+    // range just answered for is the proxy for "least likely to be scrolled
+    // back to".
+    void EvictInlayHintsBeyondCap(text::Buffer& buffer, std::vector<AnchoredInlayHint>& hints, std::size_t anchorByte);
+
     // inlayHint follow-up. requestedRange_ is the (contentGeneration,
     // viewportStartByte, viewportEndByte) triple last requested for a
     // buffer -- the dedup gate (same role semanticTokensRequestedGeneration_
     // plays, just keyed on viewport too, since scrolling to reveal new
     // content is worth a fresh request even when content itself hasn't
     // changed). requestCounter_ is the same plain per-buffer staleness
-    // guard semanticTokensRequestCounter_ is. spans_ is the applied,
-    // byte-resolved, sorted-by-byteOffset result BufferView reads.
-    // unsupported_ is the same "learned once from a real error response,
-    // stop asking" set pullDiagnosticsUnsupported_ already establishes.
-    // All four erased together in NotifyBufferClosed (unsupported_ instead
-    // cleared in ClientDisconnected, same as the others of its kind).
+    // guard semanticTokensRequestCounter_ is. unsupported_ is the same
+    // "learned once from a real error response, stop asking" set
+    // pullDiagnosticsUnsupported_ already establishes. All erased together
+    // in NotifyBufferClosed (unsupported_ instead cleared in
+    // ClientDisconnected, same as the others of its kind).
     //
-    // spans_ carries a mix of freshly-requested and lazily-carried-forward
-    // entries rather than being wholesale-replaced or wholesale-blanked, and
-    // spansGeneration_ is the generation they are currently resolved against
-    // -- both the cheap did-it-change gate (a same-generation read is a pure
-    // cache hit) and the point CarryForward replays the buffer's edits from.
-    std::unordered_map<text::Buffer*, std::tuple<std::size_t, std::size_t, std::size_t>> inlayHintsRequestedRange_;
+    // anchors_ is the retained set, and it is the only tenant here that
+    // stores its positions as anchors rather than as byte offsets stamped
+    // with the generation they were resolved against. A result that is
+    // *kept across a whole session* cannot ride the journal: OpsSince stops
+    // reaching back past EditJournal::kCapacity ops, and CarryForward's
+    // answer to that is to drop everything it holds -- correct for a result
+    // in flight (which never waits that long) and wrong for a set meant to
+    // survive as long as the buffer. An anchor has no such window.
+    //
+    // view_ is the byte-resolved, sorted-by-byteOffset projection
+    // BufferView reads, rebuilt only when the buffer's generation moved
+    // (anchors relocated) or revision_ moved (a response merged). The
+    // rebuild is a linear copy, never a re-sort: relocation is monotonic, so
+    // anchors sorted at merge time stay sorted.
+    std::unordered_map<text::Buffer*, InlayHintCoverage>                                 inlayHintCoverage_;
     std::unordered_map<text::Buffer*, std::size_t>                                       inlayHintsRequestCounter_;
-    mutable std::unordered_map<text::Buffer*, std::vector<ResolvedInlayHint>>            inlayHintSpans_;
-    mutable std::unordered_map<text::Buffer*, std::size_t>                               inlayHintSpansGeneration_;
+    std::unordered_map<text::Buffer*, std::vector<AnchoredInlayHint>>                    inlayHintAnchors_;
+    std::unordered_map<text::Buffer*, std::size_t>                                       inlayHintRevision_;
+    mutable std::unordered_map<text::Buffer*, InlayHintView>                             inlayHintView_;
     std::unordered_set<std::string>                                                      inlayHintsUnsupported_;
 
     // An inlay hint's own anchor policy. Right gravity because a hint renders

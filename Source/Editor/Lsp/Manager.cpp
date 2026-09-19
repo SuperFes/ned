@@ -317,6 +317,45 @@ namespace {
         return Json{{"uri", PathToUri(root)}, {"name", name}};
     }
 
+    // Is [start, end) entirely inside a sorted, disjoint, merged range list?
+    bool RangeIsCovered(const std::vector<std::pair<std::size_t, std::size_t>>& ranges, std::size_t start, std::size_t end) {
+        if (start >= end) {
+            return true; // an empty range asks nothing
+        }
+        for (const auto& range : ranges) {
+            if (range.first > start) {
+                return false; // a gap before the next covered range
+            }
+            if (range.second >= end) {
+                return true;
+            }
+            if (range.second > start) {
+                start = range.second; // partial cover; keep walking from here
+            }
+        }
+        return false;
+    }
+
+    // Adds [start, end), keeping the list sorted, disjoint and merged.
+    void AddCoveredRange(std::vector<std::pair<std::size_t, std::size_t>>& ranges, std::size_t start, std::size_t end) {
+        if (start >= end) {
+            return;
+        }
+        std::vector<std::pair<std::size_t, std::size_t>> merged;
+        merged.reserve(ranges.size() + 1);
+        for (const auto& range : ranges) {
+            if (range.second < start || range.first > end) {
+                merged.push_back(range); // disjoint, and not even touching
+                continue;
+            }
+            start = std::min(start, range.first); // overlaps or abuts -- absorb it
+            end   = std::max(end, range.second);
+        }
+        merged.emplace_back(start, end);
+        std::sort(merged.begin(), merged.end());
+        ranges = std::move(merged);
+    }
+
 } // namespace
 
 Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json& initializationOptions) {
@@ -1515,10 +1554,19 @@ void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     semanticTokensGeneration_.erase(&buffer);
     semanticTokensRequestedRange_.erase(&buffer);
     previousSemanticTokens_.erase(&buffer);
-    inlayHintsRequestedRange_.erase(&buffer);
+    inlayHintCoverage_.erase(&buffer);
     inlayHintsRequestCounter_.erase(&buffer);
-    inlayHintSpans_.erase(&buffer);
-    inlayHintSpansGeneration_.erase(&buffer);
+    if (const auto anchorsIt = inlayHintAnchors_.find(&buffer); anchorsIt != inlayHintAnchors_.end()) {
+        // Released explicitly rather than left to the buffer's own teardown:
+        // an abandoned anchor is a slot this store keeps relocating forever,
+        // and a buffer outlives any one server's interest in it.
+        for (const AnchoredInlayHint& hint : anchorsIt->second) {
+            buffer.DestroyAnchor(hint.anchor);
+        }
+        inlayHintAnchors_.erase(anchorsIt);
+    }
+    inlayHintRevision_.erase(&buffer);
+    inlayHintView_.erase(&buffer);
     codeLensRequestedGeneration_.erase(&buffer);
     codeLensRequestCounter_.erase(&buffer);
     codeLensSpans_.erase(&buffer);
@@ -2126,21 +2174,39 @@ void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartB
     if (state->lastSyncedGeneration != buffer.ContentGeneration()) {
         return;
     }
-    const auto requestedRange = std::make_tuple(buffer.ContentGeneration(), viewportStartByte, viewportEndByte);
-    if (const auto it = inlayHintsRequestedRange_.find(&buffer); it != inlayHintsRequestedRange_.end() && it->second == requestedRange) {
-        return; // already requested for this exact (content, viewport) -- a cursor-blink/scroll-into-the-same-view repaint
+    InlayHintCoverage& coverage = inlayHintCoverage_[&buffer];
+    if (coverage.generation != buffer.ContentGeneration()) {
+        // An edit anywhere can change a hint anywhere, so nothing answered
+        // about the old content is still an answer about this one.
+        coverage.generation = buffer.ContentGeneration();
+        coverage.ranges.clear();
+        coverage.inFlight.reset();
     }
+    if (RangeIsCovered(coverage.ranges, viewportStartByte, viewportEndByte) ||
+        (coverage.inFlight && coverage.inFlight->first <= viewportStartByte && coverage.inFlight->second >= viewportEndByte)) {
+        return; // already answered, or already on the wire -- asking again buys nothing
+    }
+
+    // Asked for a screenful either side of what is actually visible, so the
+    // next wheel notch in either direction lands on ground already covered
+    // and sends nothing at all. The viewport's own byte span is the unit
+    // because it is exactly one screenful by construction, with no viewport
+    // height to plumb down here to say so.
+    const std::size_t margin       = viewportEndByte - viewportStartByte;
+    const std::size_t requestStart = viewportStartByte > margin ? viewportStartByte - margin : 0;
+    const std::size_t requestEnd   = std::min(viewportEndByte + margin, buffer.Content().ByteLength());
+
     Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
         return;
     }
 
-    inlayHintsRequestedRange_[&buffer] = requestedRange;
-    const std::size_t requestId        = ++inlayHintsRequestCounter_[&buffer];
+    coverage.inFlight           = std::pair{requestStart, requestEnd};
+    const std::size_t requestId = ++inlayHintsRequestCounter_[&buffer];
 
     const text::ITextStorage& content       = buffer.Content();
-    const Position            start         = BytePositionToLsp(content, viewportStartByte);
-    const Position            end           = BytePositionToLsp(content, viewportEndByte);
+    const Position            start         = BytePositionToLsp(content, requestStart);
+    const Position            end           = BytePositionToLsp(content, requestEnd);
     text::Buffer* const       bufferPtr     = &buffer;
     const std::string         connectionKey = state->connectionKey; // per-connection latch, see RequestSemanticTokens
     // Captured so the response handler can convert the server's
@@ -2157,8 +2223,9 @@ void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartB
     };
     client->SendRequest(
         "textDocument/inlayHint", params,
-        [this, bufferPtr, requestId, connectionKey, requestedContent,
-         requestedGeneration](std::optional<Json> result, std::optional<Json> error) {
+        [this, bufferPtr, requestId, connectionKey, requestedContent, requestedGeneration,
+         requestedStartByte = requestStart,
+         requestedEndByte   = requestEnd](std::optional<Json> result, std::optional<Json> error) {
             const auto counterIt = inlayHintsRequestCounter_.find(bufferPtr);
             if (counterIt == inlayHintsRequestCounter_.end() || counterIt->second != requestId) {
                 return; // superseded by a newer request for this buffer
@@ -2169,9 +2236,11 @@ void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartB
                 // of this connection's lifetime rather than re-erroring on
                 // every viewport change.
                 inlayHintsUnsupported_.insert(connectionKey);
+                SettleInlayHintRequest(*bufferPtr, requestedGeneration, /*answered=*/false, requestedStartByte, requestedEndByte);
                 return;
             }
             if (!result) {
+                SettleInlayHintRequest(*bufferPtr, requestedGeneration, /*answered=*/false, requestedStartByte, requestedEndByte);
                 return;
             }
             // Positions are resolved against *requestedContent -- exactly the
@@ -2239,8 +2308,25 @@ void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartB
                     }
                 }
             }
-            inlayHintSpans_[bufferPtr]           = std::move(resolved);
-            inlayHintSpansGeneration_[bufferPtr] = bufferPtr->ContentGeneration();
+            if (!carried) {
+                // The journal could not reach back to the generation this
+                // response was computed against, so there is no honest place
+                // to put these hints -- and no honest range to clear either.
+                // Leaving the retained set alone keeps whatever is on screen
+                // rather than punching a hole in it.
+                SettleInlayHintRequest(*bufferPtr, requestedGeneration, /*answered=*/false, requestedStartByte, requestedEndByte);
+                return;
+            }
+            // The answered range travels the same path its hints did: it is
+            // stated in the requested document's coordinates, and the merge
+            // below compares it against anchors that live in the present.
+            std::size_t rangeStart = requestedStartByte;
+            std::size_t rangeEnd   = requestedEndByte;
+            if (const auto ops = bufferPtr->Edits().OpsSince(requestedGeneration)) {
+                RelocateRange(rangeStart, rangeEnd, *ops, text::InsideDelete::Clamp);
+            }
+            MergeInlayHints(*bufferPtr, std::move(resolved), rangeStart, rangeEnd);
+            SettleInlayHintRequest(*bufferPtr, requestedGeneration, /*answered=*/true, requestedStartByte, requestedEndByte);
         });
 }
 
@@ -2272,24 +2358,101 @@ bool Manager::RelocateRange(std::size_t& startByte, std::size_t& endByte, const 
 
 const std::vector<Manager::ResolvedInlayHint>& Manager::InlayHintSpans(const text::Buffer& buffer) const {
     static const std::vector<ResolvedInlayHint> kEmpty;
-    text::Buffer* const                         key = const_cast<text::Buffer*>(&buffer);
-    const auto                                  it  = inlayHintSpans_.find(key);
-    if (it == inlayHintSpans_.end()) {
+    text::Buffer* const                         key       = const_cast<text::Buffer*>(&buffer);
+    const auto                                  anchorsIt = inlayHintAnchors_.find(key);
+    if (anchorsIt == inlayHintAnchors_.end()) {
         return kEmpty;
     }
 
-    // Lazy catch-up: done here on read rather than at each edit, because
-    // Manager has no hook into Buffer's own edits -- and it stays cheap
-    // because replaying a handful of ops is bounded by how many edits have
-    // happened since, not by document size.
-    const auto generationIt = inlayHintSpansGeneration_.find(key);
-    if (generationIt != inlayHintSpansGeneration_.end()) {
-        CarryForward(it->second, generationIt->second, buffer,
-                     [](ResolvedInlayHint& hint, const std::vector<text::EditOp>& ops) {
-                         return RelocatePoint(hint.byteOffset, ops, kInlayHintAnchor);
-                     });
+    const std::size_t generation = buffer.ContentGeneration();
+    const auto        revisionIt = inlayHintRevision_.find(key);
+    const std::size_t revision   = revisionIt != inlayHintRevision_.end() ? revisionIt->second : 0;
+
+    InlayHintView& view = inlayHintView_[key];
+    if (view.valid && view.builtAtGeneration == generation && view.builtAtRevision == revision) {
+        return view.hints; // nothing moved and nothing merged since -- a pure cache hit
     }
-    return it->second;
+
+    // A rebuild, not a relocation: the buffer moved these anchors when the
+    // edit happened. A hint whose anchor is gone is one whose own text an
+    // edit rewrote (kInlayHintAnchor invalidates rather than clamps), and it
+    // is dropped here -- the slot itself is reclaimed at the next merge,
+    // which is the next moment a non-const buffer is in hand.
+    view.hints.clear();
+    view.hints.reserve(anchorsIt->second.size());
+    for (const AnchoredInlayHint& hint : anchorsIt->second) {
+        if (const std::optional<std::size_t> offset = buffer.AnchorOffset(hint.anchor)) {
+            view.hints.push_back(ResolvedInlayHint{.byteOffset = *offset, .label = hint.label});
+        }
+    }
+    view.builtAtGeneration = generation;
+    view.builtAtRevision   = revision;
+    view.valid             = true;
+    return view.hints;
+}
+
+void Manager::MergeInlayHints(text::Buffer& buffer, std::vector<ResolvedInlayHint> resolved, std::size_t rangeStart,
+                              std::size_t rangeEnd) {
+    std::vector<AnchoredInlayHint>& retained = inlayHintAnchors_[&buffer];
+    std::vector<AnchoredInlayHint>  kept;
+    kept.reserve(retained.size() + resolved.size());
+    for (AnchoredInlayHint& hint : retained) {
+        const std::optional<std::size_t> offset = buffer.AnchorOffset(hint.anchor);
+        // Superseded two ways: the anchor is gone (an edit rewrote the text
+        // it named), or it sits inside the range this response just answered
+        // for and the response is now the better answer for that region --
+        // including when the response has no hint there at all, which is how
+        // a hint the server withdrew actually disappears.
+        if (!offset || (*offset >= rangeStart && *offset < rangeEnd)) {
+            buffer.DestroyAnchor(hint.anchor);
+            continue;
+        }
+        kept.push_back(std::move(hint));
+    }
+    for (ResolvedInlayHint& hint : resolved) {
+        kept.push_back(AnchoredInlayHint{.anchor = buffer.CreateAnchor(hint.byteOffset, kInlayHintAnchor),
+                                         .label  = std::move(hint.label)});
+    }
+    EvictInlayHintsBeyondCap(buffer, kept, rangeStart);
+    // Sorted here, once, so the read path stays a linear copy: anchor
+    // relocation is monotonic, so an ordering established now survives every
+    // edit until the next merge disturbs it.
+    std::sort(kept.begin(), kept.end(), [&buffer](const AnchoredInlayHint& a, const AnchoredInlayHint& b) {
+        return buffer.AnchorOffset(a.anchor).value_or(0) < buffer.AnchorOffset(b.anchor).value_or(0);
+    });
+    retained = std::move(kept);
+    ++inlayHintRevision_[&buffer];
+}
+
+void Manager::SettleInlayHintRequest(text::Buffer& buffer, std::size_t requestedGeneration, bool answered,
+                                     std::size_t rangeStart, std::size_t rangeEnd) {
+    const auto it = inlayHintCoverage_.find(&buffer);
+    if (it == inlayHintCoverage_.end() || it->second.generation != requestedGeneration) {
+        return; // coverage for that generation is already gone, in-flight entry with it
+    }
+    it->second.inFlight.reset();
+    if (answered) {
+        AddCoveredRange(it->second.ranges, rangeStart, rangeEnd);
+    }
+}
+
+void Manager::EvictInlayHintsBeyondCap(text::Buffer& buffer, std::vector<AnchoredInlayHint>& hints,
+                                       std::size_t anchorByte) {
+    if (hints.size() <= kMaxRetainedInlayHints) {
+        return;
+    }
+    const auto distance = [&buffer, anchorByte](const AnchoredInlayHint& hint) {
+        const std::size_t offset = buffer.AnchorOffset(hint.anchor).value_or(0);
+        return offset > anchorByte ? offset - anchorByte : anchorByte - offset;
+    };
+    std::nth_element(hints.begin(), hints.begin() + static_cast<std::ptrdiff_t>(kMaxRetainedInlayHints), hints.end(),
+                     [&distance](const AnchoredInlayHint& a, const AnchoredInlayHint& b) {
+                         return distance(a) < distance(b);
+                     });
+    for (auto it = hints.begin() + static_cast<std::ptrdiff_t>(kMaxRetainedInlayHints); it != hints.end(); ++it) {
+        buffer.DestroyAnchor(it->anchor);
+    }
+    hints.erase(hints.begin() + static_cast<std::ptrdiff_t>(kMaxRetainedInlayHints), hints.end());
 }
 
 void Manager::RequestCodeLenses(text::Buffer& buffer, const std::string& serverKey) {
