@@ -26,6 +26,7 @@
 #include <utility>
 #include <vector>
 
+#include "EditJournal.h"
 #include "ITextStorage.h"
 #include "LineEnding.h"
 #include "PieceTable.h"
@@ -510,6 +511,24 @@ class Buffer {
     // Not meaningful across different Buffer instances or process runs, only as
     // a before/after comparison on the same instance.
     [[nodiscard]] std::size_t ContentGeneration() const;
+
+    // The edits behind those generation bumps, for a holder that needs to
+    // carry byte offsets resolved against an older one onto current content.
+    //
+    // The generation counter above says *that* content changed; this says
+    // what changed, which is what an exact relocation needs and a snapshot
+    // diff can only approximate (see EditJournal.h for why one contiguous
+    // changed region is the wrong model past a single edit). Every generation
+    // bump has exactly one op here -- the two are advanced together by one
+    // set of private helpers, so a caller can treat a generation it has seen
+    // as a valid starting point without checking.
+    //
+    // Consumed by anything holding results computed against a document
+    // version that has since moved: an LSP server's diagnostics, inlay hints,
+    // code lenses, semantic tokens and document highlights all arrive stamped
+    // against the version the server was told about and are carried forward
+    // through this.
+    [[nodiscard]] const EditJournal& Edits() const;
 
     // A process-wide-unique value assigned once, at construction, and never
     // reassigned -- unlike ContentGeneration() above, this identifies the
@@ -1048,6 +1067,22 @@ class Buffer {
     // says why.
     [[nodiscard]] std::string ReadOnlyErrorMessage() const;
 
+    // The four ways this class ends a content mutation. Each bumps
+    // ContentGeneration_ and appends the matching op to Edits_, which is the
+    // reason they exist rather than a bare `++ContentGeneration_` at each
+    // site: a generation bump with no op behind it silently breaks every
+    // holder that trusts a generation it has seen to be a valid starting
+    // point, and does so in a way nothing would notice until an annotation
+    // landed in the wrong column.
+    //
+    // CommitBarrier is for the wholesale content replacements -- a load, a
+    // revert, an external merge -- where there is no edit to describe and
+    // nothing a holder's offsets could honestly survive.
+    void CommitInsert(std::size_t offset, std::size_t length);
+    void CommitDelete(std::size_t rangeStart, std::size_t rangeEnd);
+    void CommitReplace(std::size_t offset, std::size_t oldLength, std::size_t newLength);
+    void CommitBarrier();
+
     // The one relocation rule every tracked position in this class follows
     // across an edit -- Point_, Mark_, both ends of NarrowedRange_, and
     // FoldMarkers_' keys -- factored out once FoldMarkers_ was about to
@@ -1262,6 +1297,7 @@ class Buffer {
     // point-moving or editing call -- see their doc comment above.
     std::optional<std::size_t>        GoalColumn_;
     std::size_t                       ContentGeneration_ = 0; // see ContentGeneration()
+    EditJournal                       Edits_;                 // see Edits(); advanced with ContentGeneration_ by the Commit* helpers
     std::size_t                       InstanceId_;            // see InstanceId(), assigned in the constructor
     std::map<std::size_t, FoldMarker> FoldMarkers_;           // see FoldMarker's own doc comment above
     std::size_t                       FoldGeneration_ = 0;    // see FoldGeneration()

@@ -723,7 +723,7 @@ const LoadProgress* Buffer::CurrentLoadProgress() const {
 
 void Buffer::ReplaceContentForLoad(Rope content) {
     Storage_ = std::make_unique<RopeStorage>(std::move(content));
-    ++ContentGeneration_;
+    CommitBarrier();
 }
 
 void Buffer::FinishLoad(Rope content, std::optional<LineEnding> detectedEnding) {
@@ -736,7 +736,7 @@ void Buffer::FinishLoad(Rope content, std::optional<LineEnding> detectedEnding) 
     }
     Loading_ = false;
     LoadProgress_.reset();
-    ++ContentGeneration_;
+    CommitBarrier();
     // Stat-after-read here, unlike FromFile's stat-before -- the async
     // loader read the content on its own thread well before this call, so
     // there's no pre-read stat available to use; a write landing in that
@@ -753,7 +753,7 @@ void Buffer::ReplaceContentForHugeLoad(PieceTable content) {
     // placeholder ever had (it was an empty RopeStorage until now).
     Storage_       = std::make_unique<PieceTableStorage>(content);
     SavedSnapshot_ = std::make_unique<PieceTableStorage>(std::move(content));
-    ++ContentGeneration_;
+    CommitBarrier();
 }
 
 void Buffer::AppendHugeLoadChunk(PieceTable fragment) {
@@ -762,10 +762,14 @@ void Buffer::AppendHugeLoadChunk(PieceTable fragment) {
     // Only ever called on a buffer that came through ReplaceContentForHugeLoad
     // first -- see Buffer.h's own doc comment on the call sequence.
     assert(current != nullptr && saved != nullptr);
-    Storage_       = std::make_unique<PieceTableStorage>(current->Value().Concatenated(fragment));
-    SavedSnapshot_ = std::make_unique<PieceTableStorage>(saved->Value().Concatenated(fragment));
+    const std::size_t appendOffset = current->ByteLength();
+    Storage_                       = std::make_unique<PieceTableStorage>(current->Value().Concatenated(fragment));
+    SavedSnapshot_                 = std::make_unique<PieceTableStorage>(saved->Value().Concatenated(fragment));
     RecordOrAmendLoadAppend();
-    ++ContentGeneration_;
+    // A pure append, so a holder's offsets all sit strictly before it and
+    // survive unchanged -- no reason to make a progressive load look like a
+    // barrier when it isn't one.
+    CommitInsert(appendOffset, Storage_->ByteLength() - appendOffset);
 }
 
 void Buffer::FinishHugeLoad() {
@@ -773,7 +777,10 @@ void Buffer::FinishHugeLoad() {
     LineEnding_ = LineEnding::LF; // always true for this path -- see FromHugeFile's own doc comment
     Loading_    = false;
     LoadProgress_.reset();
-    ++ContentGeneration_;
+    // Content is already whatever the last AppendHugeLoadChunk left; this
+    // bump only publishes the flag changes above, so the op behind it is the
+    // identity one rather than a barrier that would drop results needlessly.
+    CommitReplace(0, 0, 0);
     CaptureDiskTimestamp();
 
     // disk-space-safety follow-up: same soft, overridable downgrade
@@ -846,7 +853,7 @@ void Buffer::Revert() {
 
     RecordOrAmendUndo(/*canAmend=*/false); // one normal, undoable step
     GoalColumn_.reset();
-    ++ContentGeneration_;
+    CommitBarrier();
 
     // The buffer now matches disk by definition.
     SavedSnapshot_ = Storage_->Clone();
@@ -877,7 +884,7 @@ std::size_t Buffer::MergeExternalChanges() {
 
     RecordOrAmendUndo(/*canAmend=*/false); // one normal, undoable step
     GoalColumn_.reset();
-    ++ContentGeneration_;
+    CommitBarrier();
 
     // Unlike Revert(), the buffer does NOT match disk now -- it combines
     // local edits with the external change, one unsaved range against the
@@ -950,7 +957,7 @@ void Buffer::RestoreContent(std::string_view content) {
 
     RecordOrAmendUndo(/*canAmend=*/false); // one normal, undoable step
     GoalColumn_.reset();
-    ++ContentGeneration_;
+    CommitBarrier();
 
     // Unlike Revert(), the buffer does NOT match disk now -- the whole
     // restored content is one unsaved range (an empty restore over a
@@ -979,6 +986,30 @@ bool Buffer::Modified() const {
 
 std::size_t Buffer::ContentGeneration() const {
     return ContentGeneration_;
+}
+
+const EditJournal& Buffer::Edits() const {
+    return Edits_;
+}
+
+void Buffer::CommitInsert(std::size_t offset, std::size_t length) {
+    ++ContentGeneration_;
+    Edits_.Record(EditOp::Inserted(ContentGeneration_, offset, length));
+}
+
+void Buffer::CommitDelete(std::size_t rangeStart, std::size_t rangeEnd) {
+    ++ContentGeneration_;
+    Edits_.Record(EditOp::Deleted(ContentGeneration_, rangeStart, rangeEnd));
+}
+
+void Buffer::CommitReplace(std::size_t offset, std::size_t oldLength, std::size_t newLength) {
+    ++ContentGeneration_;
+    Edits_.Record(EditOp::Replaced(ContentGeneration_, offset, oldLength, newLength));
+}
+
+void Buffer::CommitBarrier() {
+    ++ContentGeneration_;
+    Edits_.Record(EditOp::Barrier(ContentGeneration_));
 }
 
 std::size_t Buffer::InstanceId() const {
@@ -1607,7 +1638,7 @@ void Buffer::InsertAtPoint(std::string_view text) {
 
     RecordOrAmendUndo(/*canAmend=*/true);
     GoalColumn_.reset();
-    ++ContentGeneration_;
+    CommitInsert(insertOffset, text.size());
 }
 
 void Buffer::DeleteBackwardAtPoint() {
@@ -1646,7 +1677,7 @@ void Buffer::DeleteBackwardAtPoint() {
 
     RecordOrAmendUndo(/*canAmend=*/false);
     GoalColumn_.reset();
-    ++ContentGeneration_;
+    CommitDelete(start, end);
 }
 
 void Buffer::DeleteForwardAtPoint() {
@@ -1685,7 +1716,7 @@ void Buffer::DeleteForwardAtPoint() {
 
     RecordOrAmendUndo(/*canAmend=*/false);
     GoalColumn_.reset();
-    ++ContentGeneration_;
+    CommitDelete(start, end);
 }
 
 std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) {
@@ -1732,7 +1763,7 @@ std::string Buffer::DeleteRange(std::size_t byteOffset, std::size_t byteLength) 
 
     RecordOrAmendUndo(/*canAmend=*/false);
     GoalColumn_.reset();
-    ++ContentGeneration_;
+    CommitDelete(byteOffset, rangeEnd);
     return deleted;
 }
 
@@ -1780,7 +1811,7 @@ void Buffer::InsertAtImpl(std::size_t byteOffset, std::string_view text) {
 
     RecordOrAmendUndo(/*canAmend=*/false);
     GoalColumn_.reset();
-    ++ContentGeneration_;
+    CommitInsert(byteOffset, text.size());
 }
 
 void Buffer::MoveForward() {
@@ -2086,7 +2117,20 @@ void Buffer::ApplyUndoTreeNavigation(const ITextStorage& oldStorage) {
     CanAmend_           = false;
     CanAmendLoadAppend_ = false;
     GoalColumn_.reset();
-    ++ContentGeneration_;
+    // The one mutation with no offset/length of its own: a restore swaps in a
+    // whole prior snapshot rather than replaying an edit, so the op behind it
+    // is recovered from the two versions' own diff -- the same recovery
+    // UpdateUnsavedRangesForRestore just below has always done. One
+    // contiguous changed region is exact here, unlike across a run of
+    // independent edits, because a restore genuinely is a single hop between
+    // two versions.
+    const std::optional<ChangedSpan> restored = ChangedByteRange(oldStorage, *Storage_);
+    if (restored) {
+        CommitReplace(restored->oldStart, restored->oldEnd - restored->oldStart, restored->newEnd - restored->newStart);
+    }
+    else {
+        CommitReplace(0, 0, 0); // byte-identical: pure point/mark motion undone
+    }
     UpdateUnsavedRangesForRestore(oldStorage);
     // Exact first, diff-relocation only as a fallback -- see
     // SnapshotExcerptRangeOffsets' own doc comment. NOT cleared either way,

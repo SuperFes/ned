@@ -275,6 +275,19 @@ class Screen {
         }
     }
 
+    // The text grid's counterpart, and deliberately NOT called per frame: the
+    // whole text layer is supposed to be repainted in full every frame (see
+    // main.cpp's render callback), so clearing it first would be pure waste.
+    // That is an unenforced invariant, though, and a painter that leaves part
+    // of its own box untouched shows last frame's glyphs there instead --
+    // which looks exactly like a flush that failed to transmit. Exists so
+    // NED_DEBUG_CLEAR_CANVAS can tell those two apart.
+    void ClearCells() {
+        for (Cell& cell : cells_) {
+            cell = Cell{};
+        }
+    }
+
     // Writes every cell in this Screen out to the given ncplane (which must
     // be at least Width() x Height()) and requests a real terminal
     // repaint -- the one place fg/bg Color and the bold/italic/underline/

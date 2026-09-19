@@ -3038,8 +3038,38 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
         // widget repaints in full. So last frame's rows have to go first,
         // or a highlight leaves a trail behind the cursor as it moves.
         screenBuffer.ClearBacking();
+        // NED_DEBUG_CLEAR_CANVAS=1 blanks the text grid too, so every cell on
+        // screen is one some painter wrote this frame. A rendering fault that
+        // disappears under it is a painter not covering its own box -- the
+        // unenforced half of the "every widget repaints in full" rule above --
+        // rather than anything in Screen::Flush. See ClearCells' own comment.
+        static const bool clearCanvasEachFrame = [] {
+            const char* value = std::getenv("NED_DEBUG_CLEAR_CANVAS");
+            return value != nullptr && *value != '\0' && *value != '0';
+        }();
+        if (clearCanvasEachFrame) {
+            screenBuffer.ClearCells();
+        }
         head.Paint(Canvas(screenBuffer, head.Box_()));
         overlays.Paint(screenBuffer);
+        // NED_DEBUG_DUMP_SCREEN=<path> rewrites that file with the glyphs of
+        // the frame just painted, before it reaches any plane. Whatever it
+        // holds is what this process decided to draw, so a fault visible on
+        // screen but absent from the dump is below the Canvas, and one
+        // present in the dump is a painter's -- with the file naming the row
+        // and column to look at.
+        static const char* const dumpScreenPath = std::getenv("NED_DEBUG_DUMP_SCREEN");
+        if (dumpScreenPath != nullptr && *dumpScreenPath != '\0') {
+            if (std::ofstream dump{dumpScreenPath, std::ios::trunc}) {
+                for (int y = 0; y < screenBuffer.Height(); ++y) {
+                    for (int x = 0; x < screenBuffer.Width(); ++x) {
+                        const std::string& glyph = screenBuffer.PixelAt(x, y).character;
+                        dump << (glyph.empty() ? "\xe2\x90\x80" : glyph); // U+2400 for a cell with no glyph at all
+                    }
+                    dump << '\n';
+                }
+            }
+        }
         screenBuffer.Flush(eventLoop.StdPlane(), eventLoop.BackingPlane());
         emitTitleIfChanged();
 

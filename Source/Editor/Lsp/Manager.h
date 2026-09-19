@@ -1071,23 +1071,19 @@ class Manager {
     // byteOffset -- empty if never requested, not yet answered, or the
     // server has no hints for the last-requested range at all.
     //
-    // perf/parallel-highlighting-round-1 follow-up (region-scoped
-    // relocation): relocated on read across edits, not suppressed
-    // wholesale -- CodeLensSpans' own lazy-catch-up shape, and for the same
-    // reason: blanking every hint in the buffer on every keystroke (the
-    // original fix here) traded one flicker for a louder one, reflowing
-    // every annotated line's visible text on every edit anywhere in the
-    // buffer. A hint is virtual text that occupies real columns before the
-    // byte it annotates, though, which code lenses are not -- a stale
-    // offset does not merely misplace it, it renders *inside* whatever
-    // token now sits there, which is how a keystroke could visibly garble
-    // lines far below the edit (live-reported 2026-09-10: "writfd:ten",
-    // "static_casbuf:t"). So relocation here is asymmetric: a hint whose
-    // byte offset falls outside the single changed region is unaffected
-    // content and safe to carry forward, shifted by the edit's own length
-    // delta (RemapInlayHintSpans); one whose offset falls *inside* it was
-    // anchored to text the edit just rewrote and is dropped outright rather
-    // than clamped, since clamping is exactly the garbling case above.
+    // Carried forward on read across edits, not suppressed wholesale:
+    // blanking every hint in the buffer on every keystroke (the original fix
+    // here) traded one flicker for a louder one, reflowing every annotated
+    // line's visible text on every edit anywhere in the buffer.
+    //
+    // A hint is virtual text occupying real columns before the byte it
+    // annotates, which is why it gets the strictest anchor policy of any
+    // result kind here (kInlayHintAnchor): a stale offset does not merely
+    // misplace it, it renders *inside* whatever token now sits there, which
+    // is how a keystroke could visibly garble lines far below the edit
+    // (live-reported 2026-09-10: "writfd:ten", "static_casbuf:t"). A hint
+    // anchored to text an edit rewrote is dropped rather than clamped, since
+    // clamping is that same garbling reached a different way.
     [[nodiscard]] const std::vector<ResolvedInlayHint>& InlayHintSpans(const text::Buffer& buffer) const;
 
     // codeLens follow-up. One applied lens, already resolved to byte
@@ -1384,13 +1380,14 @@ class Manager {
     // ITextStorage::Clone() is O(1) (structural sharing), so a snapshot per
     // publish costs a pointer, not a copy of the file.
     struct DiagnosticSlice {
-        std::vector<text::Buffer::Diagnostic>     diagnostics;
-        std::shared_ptr<const text::ITextStorage> resolvedAgainst;
-        // What resolvedAgainst's ContentGeneration() was. The diff itself is
-        // O(edit size), but proving two documents byte-identical is not --
-        // it has to read both in full -- and "nothing changed" is the common
-        // case on a push. This is the same generation stamp every other cache
-        // in this codebase compares instead of the content itself.
+        std::vector<text::Buffer::Diagnostic> diagnostics;
+        // The buffer generation these offsets are resolved against -- both
+        // the cheap did-anything-change gate and the point CarryForward
+        // replays the buffer's own edits from. For a publish that is the
+        // generation the server was last synced to
+        // (BufferSyncState::lastSyncedGeneration), which is what its
+        // positions were actually computed against; for a pull it is the
+        // generation at request time.
         std::size_t resolvedAtGeneration = 0;
     };
 
@@ -1403,18 +1400,25 @@ class Manager {
     //
     // debounce-window-drift follow-up: also the single point where a slice's
     // offsets are brought onto the buffer as it is *now*. Each slice records
-    // the document it was resolved against (DiagnosticSlice::resolvedAgainst),
-    // and this remaps through Text/OffsetRemap.h and rebases the slice onto
-    // the live content before merging -- so the debounce delay, and any
-    // number of edits made by another source's timer firing first, move the
-    // underlines with the text instead of pinning them where they were parsed.
+    // the generation it was resolved against, and this carries it forward
+    // through the buffer's own edits before merging -- so the debounce delay,
+    // and any number of edits made by another source's timer firing first,
+    // move the underlines with the text instead of pinning them where they
+    // were parsed.
     void PushMergedDiagnostics(text::Buffer& buffer);
 
-    // PushMergedDiagnostics' per-slice half: moves slice's offsets from the
-    // document they were resolved against onto buffer's live content and
-    // makes that the slice's new baseline. A no-op for a slice with no
-    // snapshot (nothing to diff from) or no diagnostics.
+    // PushMergedDiagnostics' per-slice half: carries slice's offsets from the
+    // generation they were resolved against onto buffer's live content and
+    // makes that the slice's new baseline.
     void RebaseSliceOntoLiveContent(const text::Buffer& buffer, DiagnosticSlice& slice) const;
+
+    // A diagnostic's own anchor policy. Clamp rather than invalidate because
+    // an underline collapsing onto the edit point is a smaller lie than an
+    // error silently disappearing while the user is still looking at the code
+    // that caused it -- and unlike an inlay hint, a diagnostic occupies no
+    // columns of its own, so a clamped one misplaces an underline rather than
+    // garbling the text.
+    static constexpr text::InsideDelete kDiagnosticInsideDelete = text::InsideDelete::Clamp;
 
     // semanticTokens range/delta follow-up. Shared tail of all three
     // RequestSemanticTokens response branches (range/full-delta/full):
@@ -1423,7 +1427,22 @@ class Manager {
     // bumping semanticTokensGeneration_ -- the exact loop
     // RequestSemanticTokensFull used to do inline, pulled out so all three
     // branches share one implementation instead of three copies.
-    void ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vector<SemanticToken>& tokens, const SemanticTokensLegend& legend);
+    //
+    // resolvedContent/resolvedGeneration are the document the server actually
+    // answered about, captured at request time: positions convert against
+    // that and are then carried onto live content. Both branches used to
+    // guard on "generation still matches" and discard otherwise, which during
+    // continuous typing discarded essentially every response.
+    void ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vector<SemanticToken>& tokens,
+                                    const SemanticTokensLegend& legend, const text::ITextStorage& resolvedContent,
+                                    std::size_t resolvedGeneration);
+
+    // A semantic token's own anchor policy. Invalidate rather than clamp: a
+    // token recolours real characters, so one whose own text an edit rewrote
+    // would paint whatever moved into its place -- and unlike a diagnostic,
+    // dropping it costs nothing visible, because the grammar's own
+    // highlighting underneath is a complete answer on its own.
+    static constexpr text::InsideDelete kSemanticTokenInsideDelete = text::InsideDelete::Invalidate;
 
     // pull-diagnostics follow-up. Called from SyncTextToServer right after
     // each real didOpen/didChange it sends -- no separate debounce timer,
@@ -1730,14 +1749,14 @@ class Manager {
     // requestedRange_ triple just below, mirroring inlayHintsRequestedRange_.
     std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensRequestedGeneration_;
     std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensRequestCounter_;
-    std::unordered_map<text::Buffer*, std::vector<editor::HighlightSpan>> semanticTokenSpans_;
-    // The content generation semanticTokenSpans_ above was resolved against.
-    // Distinct from semanticTokensGeneration_ right below, which is a cache
-    // *invalidation* counter for BufferView's highlight cache; this one is a
-    // validity stamp, and SemanticTokenSpans refuses to hand out a set the
-    // buffer has since edited past. See that accessor for why a stale set is
-    // worse than none.
-    std::unordered_map<text::Buffer*, std::size_t>                        semanticTokenSpansContentGeneration_;
+    mutable std::unordered_map<text::Buffer*, std::vector<editor::HighlightSpan>> semanticTokenSpans_;
+    // The content generation semanticTokenSpans_ above is resolved against --
+    // both the cheap did-anything-change gate and the point CarryForward
+    // replays the buffer's edits from. Distinct from semanticTokensGeneration_
+    // right below, which is a cache *invalidation* counter for BufferView's
+    // highlight cache: this one moves with the content, that one only when a
+    // real response lands.
+    mutable std::unordered_map<text::Buffer*, std::size_t>                semanticTokenSpansContentGeneration_;
     std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensGeneration_;
 
     // semanticTokens range/delta follow-up. requestedRange_ mirrors
@@ -1770,6 +1789,61 @@ class Manager {
     };
     std::unordered_map<text::Buffer*, PreviousSemanticTokens> previousSemanticTokens_;
 
+    // buffer-anchored-lsp-results follow-up. The one translation layer every
+    // positional result this class holds goes through, replacing the
+    // per-kind snapshot diffs that came before it.
+    //
+    // `items` were resolved to byte offsets against `resolvedAtGeneration`;
+    // this carries them onto whatever the buffer is now by replaying the
+    // buffer's own edits, drops the ones that did not survive, and advances
+    // `resolvedAtGeneration` so the next carry starts from here. Returns
+    // false when the journal no longer reaches back that far -- the whole set
+    // is cleared, which is the "a stale set is wrong, blank it" behaviour
+    // this replaced, demoted to a rare fallback.
+    //
+    // `relocateOne(T&, const std::vector<text::EditOp>&) -> bool` is where
+    // each kind's own gravity lives: an inlay hint anchored inside a deletion
+    // is dropped where a code lens is clamped, a range's start moves where
+    // its end stays. Those are per-kind facts and stay at the call sites
+    // rather than being parameterised into one policy struct nobody could
+    // read.
+    template <class T, class RelocateOne>
+    static bool CarryForward(std::vector<T>& items, std::size_t& resolvedAtGeneration, const text::Buffer& buffer,
+                             RelocateOne relocateOne) {
+        if (resolvedAtGeneration == buffer.ContentGeneration()) {
+            return true; // nothing has changed since; a pure cache hit
+        }
+        const std::optional<std::vector<text::EditOp>> ops = buffer.Edits().OpsSince(resolvedAtGeneration);
+        if (!ops) {
+            items.clear();
+            return false;
+        }
+        if (!items.empty()) {
+            std::vector<T> kept;
+            kept.reserve(items.size());
+            for (T& item : items) {
+                if (relocateOne(item, *ops)) {
+                    kept.push_back(std::move(item));
+                }
+            }
+            items = std::move(kept);
+        }
+        resolvedAtGeneration = buffer.ContentGeneration();
+        return true;
+    }
+
+    // The two anchor shapes every result kind here is built from.
+    //
+    // A point anchor is one byte offset with its own gravity. A range is two,
+    // and the pairing is what keeps it from growing under typing: the start
+    // has right gravity (text typed at a flagged token's first byte was not
+    // part of what the server flagged) and the end has left gravity (text
+    // typed just past it isn't either), so a range only ever shrinks.
+    [[nodiscard]] static bool RelocatePoint(std::size_t& offset, const std::vector<text::EditOp>& ops,
+                                            text::AnchorPolicy policy);
+    [[nodiscard]] static bool RelocateRange(std::size_t& startByte, std::size_t& endByte,
+                                            const std::vector<text::EditOp>& ops, text::InsideDelete insideDelete);
+
     // inlayHint follow-up. requestedRange_ is the (contentGeneration,
     // viewportStartByte, viewportEndByte) triple last requested for a
     // buffer -- the dedup gate (same role semanticTokensRequestedGeneration_
@@ -1783,31 +1857,26 @@ class Manager {
     // All four erased together in NotifyBufferClosed (unsupported_ instead
     // cleared in ClientDisconnected, same as the others of its kind).
     //
-    // region-scoped-relocation follow-up: spans_/spansGeneration_ (plus the
-    // new spansContent_ below) are now mutable and CodeLensSpans-shaped --
-    // spans_ carries a mix of freshly-requested and lazily-relocated
-    // entries rather than being wholesale-replaced or wholesale-blanked.
-    // spansContent_ is the document spans_ is currently valid against (what
-    // the next relocation diffs from); spansGeneration_ stays the cheap
-    // did-it-change gate so a same-generation read is a pure cache hit.
+    // spans_ carries a mix of freshly-requested and lazily-carried-forward
+    // entries rather than being wholesale-replaced or wholesale-blanked, and
+    // spansGeneration_ is the generation they are currently resolved against
+    // -- both the cheap did-it-change gate (a same-generation read is a pure
+    // cache hit) and the point CarryForward replays the buffer's edits from.
     std::unordered_map<text::Buffer*, std::tuple<std::size_t, std::size_t, std::size_t>> inlayHintsRequestedRange_;
     std::unordered_map<text::Buffer*, std::size_t>                                       inlayHintsRequestCounter_;
     mutable std::unordered_map<text::Buffer*, std::vector<ResolvedInlayHint>>            inlayHintSpans_;
-    mutable std::unordered_map<text::Buffer*, std::shared_ptr<const text::ITextStorage>> inlayHintSpansContent_;
-    // The content generation inlayHintSpans_ above was resolved against --
-    // see InlayHintSpans and RemapInlayHintSpans for how a mismatch here no
-    // longer means "blank it," just "relocate it first."
-    mutable std::unordered_map<text::Buffer*, std::size_t> inlayHintSpansGeneration_;
-    std::unordered_set<std::string>                        inlayHintsUnsupported_;
+    mutable std::unordered_map<text::Buffer*, std::size_t>                               inlayHintSpansGeneration_;
+    std::unordered_set<std::string>                                                      inlayHintsUnsupported_;
 
-    // Carries a resolved inlay-hint set from the document it was resolved
-    // against onto a newer one -- shared by the receipt path (request-time
-    // document -> live) and by InlayHintSpans' own lazy catch-up
-    // (last-known document -> live). See InlayHintSpans' own doc comment
-    // for why this drops a hint inside the changed region instead of
-    // clamping it the way RemapCodeLensSpans does.
-    static void RemapInlayHintSpans(std::vector<ResolvedInlayHint>& hints, const text::ITextStorage& from,
-                                    const text::ITextStorage& to);
+    // An inlay hint's own anchor policy. Right gravity because a hint renders
+    // immediately before the byte it names, so text typed at that byte
+    // belongs after the hint, not before it -- get this backwards and the
+    // hint draws two columns early, inside whatever identifier the user just
+    // extended. Invalidate rather than clamp because a hint occupies real
+    // columns inline: clamping it to a deletion point is exactly that same
+    // garbling, just reached a different way.
+    static constexpr text::AnchorPolicy kInlayHintAnchor{.gravity      = text::Gravity::Right,
+                                                         .insideDelete = text::InsideDelete::Invalidate};
 
     // codeLens follow-up. requestedGeneration_ is the same
     // dedup-by-content-generation gate semanticTokensRequestedGeneration_
@@ -1815,17 +1884,10 @@ class Manager {
     // requestCounter_/spans_/unsupported_ mirror the same three fields'
     // roles for semanticTokens/inlayHint. All erased in NotifyBufferClosed
     // (unsupported_ instead cleared in ClientDisconnected).
-    // Mutable because CodeLensSpans is a const accessor that relocates its
-    // own cached set forward on read -- see its definition for why the
-    // catch-up lives there rather than at each edit. Manager is main-thread
-    // only, so there is no synchronisation question behind this.
-    // Carries a resolved lens set from the document it was resolved against
-    // onto a newer one; shared by the receipt path and the lazy catch-up in
-    // CodeLensSpans.
-    static void RemapCodeLensSpans(std::vector<ResolvedCodeLens>& lenses, const text::ITextStorage& from,
-                                   const text::ITextStorage& to);
-
-    mutable std::unordered_map<text::Buffer*, std::shared_ptr<const text::ITextStorage>> codeLensSpansContent_;
+    // Mutable because CodeLensSpans is a const accessor that carries its own
+    // cached set forward on read -- see its definition for why the catch-up
+    // lives there rather than at each edit. Manager is main-thread only, so
+    // there is no synchronisation question behind this.
     mutable std::unordered_map<text::Buffer*, std::size_t>                               codeLensSpansGeneration_;
     std::unordered_map<text::Buffer*, std::size_t>                                       codeLensRequestedGeneration_;
     std::unordered_map<text::Buffer*, std::size_t>                                       codeLensRequestCounter_;

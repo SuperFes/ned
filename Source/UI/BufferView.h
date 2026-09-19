@@ -4292,6 +4292,16 @@ class BufferView : public Widget {
     // after the buffer switched or was edited; ranges are byte [start,end)
     // resolved against the buffer's content at the moment the response
     // arrived.
+    //
+    // buffer-anchored-lsp-results: deliberately NOT carried forward through
+    // the buffer's edit journal the way the Manager-held result kinds
+    // (diagnostics, inlay hints, code lenses, semantic tokens) now are. The
+    // difference is what the set is *about*: those describe text, and survive
+    // an edit elsewhere unchanged, while this describes the symbol under
+    // point. Typing inside that symbol makes it a different symbol, which no
+    // amount of relocation fixes -- and any edit moves point, which re-arms
+    // the debounce and asks again within one window. Suppress-and-re-request
+    // is the correct model here, not a gap in the translation layer.
     struct DocumentHighlightState {
         text::Buffer*                                    buffer            = nullptr;
         std::size_t                                      contentGeneration = 0;

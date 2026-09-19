@@ -12,6 +12,7 @@ add_library(ned_lib STATIC
         Text/RopeStorage.cpp
         Text/MappedFile.cpp
         Text/OffsetRemap.cpp
+        Text/EditJournal.cpp
         Text/PieceTable.cpp
         Text/PieceTableStorage.cpp
         Text/DiskSpace.cpp

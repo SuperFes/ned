@@ -1615,6 +1615,56 @@ TEST_CASE("Edits made during the diagnostics debounce move the pending publish w
     ned::editor::lsp::SetLspDiagnosticsDebounceMs(originalDebounceMs);
 }
 
+// buffer-anchored-lsp-results: the third case the same debounce window
+// produces and a snapshot diff could not express. Two edits either side of a
+// flagged token are one contiguous changed region to a diff, so the token
+// looks like it sits inside the change and the underline clamps to the edit
+// point. Replaying the buffer's own edits has no such blind spot.
+TEST_CASE("A pending publish survives edits on both sides of what it flags", "[Lsp]") {
+    const int originalDebounceMs = ned::editor::lsp::DiagnosticsDebounceMs();
+    ned::editor::lsp::SetLspDiagnosticsDebounceMs(300);
+
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-two-sided-edit-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int alpha = 1;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    client->DispatchFrame(Json{
+        {"jsonrpc", "2.0"},
+        {"method", "textDocument/publishDiagnostics"},
+        {"params",
+         {{"uri", "file://" + path.string()},
+          {"diagnostics",
+           Json::array({{{"range", {{"start", {{"line", 0}, {"character", 4}}}, {"end", {{"line", 0}, {"character", 9}}}}},
+                         {"severity", 2},
+                         {"message", "unused variable alpha"}}})}}},
+    }
+                              .dump());
+
+    // One edit before the flagged token, one after, both inside the debounce
+    // window and neither touching "alpha" itself.
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("yy");
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint("zz");
+    REQUIRE(buffer.Text() == "yyint alpha = 1;\nzz");
+
+    WaitForDiagnosticCount(eventLoop, buffer, 1);
+
+    REQUIRE(buffer.Diagnostics().size() == 1);
+    const Buffer::Diagnostic& diagnostic = buffer.Diagnostics()[0];
+    REQUIRE(buffer.Text().substr(diagnostic.startByte, diagnostic.endByte - diagnostic.startByte) == "alpha");
+
+    ned::editor::lsp::SetLspDiagnosticsDebounceMs(originalDebounceMs);
+}
+
 TEST_CASE("A publishDiagnostics notification is not applied until the debounce delay elapses", "[Lsp]") {
     const int originalDebounceMs = ned::editor::lsp::DiagnosticsDebounceMs();
     ned::editor::lsp::SetLspDiagnosticsDebounceMs(100);
@@ -3729,9 +3779,25 @@ TEST_CASE("Code lenses land on the right line however far the buffer has moved",
     buffer.SetPoint(0);
     buffer.InsertAtPoint("xx");
     REQUIRE(lineOf(manager.CodeLensSpans(buffer)[0].startByte) == 3);
+
+    // Two edits either side of the lens, with no read in between -- one
+    // contiguous changed region to a diff, two independent ops to the journal.
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("// third header\n");
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint("// trailer\n");
+    REQUIRE(manager.CodeLensSpans(buffer).size() == 1);
+    REQUIRE(lineOf(manager.CodeLensSpans(buffer)[0].startByte) == 4);
 }
 
-TEST_CASE("Semantic token spans stop being served once the buffer has moved on", "[Lsp]") {
+// buffer-anchored-lsp-results: this used to assert that the whole set was
+// withheld once the buffer moved -- the honest answer while nothing could
+// relocate the spans, and one that meant the server's contribution blinked
+// out on every keystroke and came back a round trip later. Carrying them
+// forward through the buffer's own edits keeps them on the characters they
+// describe instead; only a token whose own text an edit rewrote is dropped,
+// which is the case the old blanket suppression existed to prevent.
+TEST_CASE("Semantic token spans stay on the text they describe as the buffer moves", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
     Manager                     manager(bufferList, eventLoop);
@@ -3755,21 +3821,37 @@ TEST_CASE("Semantic token spans stop being served once the buffer has moved on",
     }
                               .dump());
 
-    REQUIRE(manager.SemanticTokenSpans(buffer).size() == 2); // "int" and "x", against this content
+    const auto textOf = [&](const ned::editor::HighlightSpan& span) {
+        return buffer.Text().substr(span.startByte, span.endByte - span.startByte);
+    };
+    REQUIRE(manager.SemanticTokenSpans(buffer).size() == 2);
+    REQUIRE(textOf(manager.SemanticTokenSpans(buffer)[0]) == "int");
+    REQUIRE(textOf(manager.SemanticTokenSpans(buffer)[1]) == "x");
 
-    // Type ahead of both spans. Their offsets now name different bytes, and
-    // nothing here can know which -- so they must not be served at all. Empty
-    // is the right answer rather than a lossy one: the tree-sitter
-    // highlighting underneath is a complete answer on its own, and is what the
-    // buffer showed before the server ever replied.
+    // Type ahead of both spans: they name different bytes now, and both must
+    // come with the text they colour rather than recolouring whatever moved
+    // into their place.
     buffer.SetPoint(0);
     buffer.InsertAtPoint("yy");
-    REQUIRE(manager.SemanticTokenSpans(buffer).empty());
+    REQUIRE(manager.SemanticTokenSpans(buffer).size() == 2);
+    REQUIRE(textOf(manager.SemanticTokenSpans(buffer)[0]) == "int");
+    REQUIRE(textOf(manager.SemanticTokenSpans(buffer)[1]) == "x");
 
-    // Recovery is the ordinary request path and is deliberately not asserted
-    // here: SyncToServer's didChange is debounced, so driving it from a test
-    // means waiting on a real timer, and the first version of this test hung
-    // on exactly that. What matters is that a stale set is never served.
+    // Two edits either side of "x", with no read in between -- the case one
+    // contiguous changed region cannot express.
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("z");
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint(" // tail");
+    REQUIRE(manager.SemanticTokenSpans(buffer).size() == 2);
+    REQUIRE(textOf(manager.SemanticTokenSpans(buffer)[1]) == "x");
+
+    // A token whose own text is rewritten is dropped, not left recolouring
+    // whatever now sits there. "x" is at byte 7 of "zyyint x = 1; // tail".
+    REQUIRE(buffer.Text().substr(7, 1) == "x");
+    buffer.DeleteRange(6, 3); // eats " x " -- strictly containing the token
+    REQUIRE(manager.SemanticTokenSpans(buffer).size() == 1);
+    REQUIRE(textOf(manager.SemanticTokenSpans(buffer)[0]) == "int");
 }
 
 TEST_CASE("RequestSemanticTokens sends a plain full request when a legend is set and applies decoded, byte-resolved "
@@ -4139,6 +4221,113 @@ TEST_CASE("InlayHintSpans relocates hints outside the edited region instead of b
     REQUIRE(hints.size() == 2);
     REQUIRE(hints[0].byteOffset == 2);  // unmoved: strictly before the insertion point
     REQUIRE(hints[1].byteOffset == 18); // 10 + 8: shifted by the insert's own length
+}
+
+// buffer-anchored-lsp-results: the live phpantom_lsp symptom (2026-09-18).
+// Typing at a hint's own anchor left the hint behind, so it rendered two
+// columns early -- inside the identifier the keystrokes had just extended.
+// The snapshot-diff path had no vocabulary for this: its one relocation rule
+// left an offset sitting exactly on the change unmoved, which is right for a
+// range's end and wrong for anything that precedes what it annotates.
+TEST_CASE("A hint anchored at the insertion point follows the text it annotates", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-gravity-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("ab = 1;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    manager.RequestInlayHints(buffer, 0, buffer.Size(), "test-lang");
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const auto        response = Json{
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"position", {{"line", 0}, {"character", 2}}}, {"label", ": int"}}})}, // byte 2, right after "ab"
+    };
+    client->DispatchFrame(response.dump());
+    REQUIRE(manager.InlayHintSpans(buffer).size() == 1);
+
+    // "ab" becomes "abcd" -- the hint annotates the identifier, so it has to
+    // come with it.
+    buffer.SetPoint(2);
+    buffer.InsertAtPoint("cd");
+
+    const std::vector<Manager::ResolvedInlayHint>& hints = manager.InlayHintSpans(buffer);
+    REQUIRE(hints.size() == 1);
+    REQUIRE(hints[0].byteOffset == 4);
+}
+
+// The other half of the same fix: a diff between two versions recovers one
+// contiguous changed region, so two edits either side of a hint read as one
+// span containing it and the whole set was dropped. Replaying the buffer's
+// own edits has no such blind spot -- which is what a multi-cursor edit, a
+// replace-all, or any burst of typing between two reads actually produces.
+TEST_CASE("A hint between two separate edits survives both", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-two-edits-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("aa = 1;\nbb = 2;\ncc = 3;\n"); // lines start at 0, 8, 16
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    manager.RequestInlayHints(buffer, 0, buffer.Size(), "test-lang");
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const auto        response = Json{
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"position", {{"line", 1}, {"character", 2}}}, {"label", ": int"}}})}, // byte 10, the middle line
+    };
+    client->DispatchFrame(response.dump());
+    REQUIRE(manager.InlayHintSpans(buffer).size() == 1);
+
+    // Two edits either side of the hint's own line, with no read in between.
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("x");
+    buffer.SetPoint(24);
+    buffer.InsertAtPoint("y");
+
+    const std::vector<Manager::ResolvedInlayHint>& hints = manager.InlayHintSpans(buffer);
+    REQUIRE(hints.size() == 1);
+    REQUIRE(hints[0].byteOffset == 11); // shifted by the first edit only
+}
+
+// A whole-content swap has no edit to relocate through, so the set is
+// dropped rather than left pointing into a document that no longer exists.
+TEST_CASE("A wholesale content replacement drops the hint set", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hints-barrier-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("ab = 1;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    manager.RequestInlayHints(buffer, 0, buffer.Size(), "test-lang");
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const auto        response = Json{
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"position", {{"line", 0}, {"character", 2}}}, {"label", ": int"}}})},
+    };
+    client->DispatchFrame(response.dump());
+    REQUIRE(manager.InlayHintSpans(buffer).size() == 1);
+
+    buffer.RestoreContent("something else entirely\n");
+    REQUIRE(manager.InlayHintSpans(buffer).empty());
 }
 
 // The complementary case: a hint anchored INSIDE the edited region can't be
