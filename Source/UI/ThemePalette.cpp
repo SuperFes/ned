@@ -90,7 +90,14 @@ Theme ThemeFromPalette(std::string name, const ThemePalette& p) {
         // lens is an affordance, so it borrows the same cyan a link does --
         // already contrast-checked, and already means "you can act on this"
         // everywhere else in the UI.
-        .inlayHintForeground           = p.subtleForeground,
+        .inlayHintForeground = p.subtleForeground,
+        // A step further toward the background than the base hint colour: a
+        // parameter name repeats what the signature already says. Only a
+        // step, though -- a palette whose subtleForeground already sits near
+        // the contrast floor (nord) has very little room before this stops
+        // being readable at all, and ThemeTestSupport's floor is what says
+        // where that is.
+        .inlayHintParameterForeground  = Color::Interpolate(0.20F, p.subtleForeground, p.background),
         .codeLensForeground            = Color::Interpolate(0.35F, p.cyan, p.background),
         .linkForeground                = p.cyan,
         .truncationIndicatorForeground = p.accent,

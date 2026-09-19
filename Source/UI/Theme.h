@@ -223,6 +223,13 @@ struct Theme {
     // on, and reads as such. Both honour alpha exactly as
     // ghostTextForeground does (see GhostForegroundOver).
     Color inlayHintForeground;
+    // Parameter-name hints specifically (InlayHintKind 2, `name:` before an
+    // argument you already wrote). Separated from the base because it is the
+    // noisiest and least informative kind -- a type hint tells you something
+    // you could not otherwise see, a parameter name repeats the signature --
+    // so a theme wants to be able to push these back without dimming type
+    // hints with them.
+    Color inlayHintParameterForeground;
     Color codeLensForeground;
 
     // Foreground for a collapsed Org link's own displayText (links

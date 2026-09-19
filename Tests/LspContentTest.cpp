@@ -1219,6 +1219,25 @@ TEST_CASE("ApplySemanticTokensDeltaEdits clamps an out-of-range edit rather than
     REQUIRE(result == std::vector<std::uint32_t>{1, 2, 3, 9});
 }
 
+TEST_CASE("ExtractInlayHints keeps the hint kind, and treats a missing or malformed one as unspecified", "[Lsp]") {
+    const Json                                     result = Json::array({
+        Json{{"position", {{"line", 0}, {"character", 1}}}, {"label", ": int"}, {"kind", 1}},
+        Json{{"position", {{"line", 0}, {"character", 4}}}, {"label", "count:"}, {"kind", 2}},
+        Json{{"position", {{"line", 0}, {"character", 7}}}, {"label", "plain"}},
+        Json{{"position", {{"line", 0}, {"character", 9}}}, {"label", "bogus"}, {"kind", "type"}},
+    });
+    const std::vector<ned::editor::lsp::InlayHint> hints  = ExtractInlayHints(result);
+    REQUIRE(hints.size() == 4);
+    REQUIRE(hints[0].kind == 1); // Type
+    REQUIRE(hints[1].kind == 2); // Parameter
+    // The spec allows a hint with no kind, and a non-integer one is still a
+    // renderable hint -- the kind only picks a colour, so neither is a
+    // reason to drop the hint.
+    REQUIRE(hints[2].kind == 0);
+    REQUIRE(hints[3].kind == 0);
+    REQUIRE(hints[3].label == "bogus");
+}
+
 TEST_CASE("ExtractInlayHints parses a bare-string label", "[Lsp]") {
     const Json result = Json::array({{{"position", {{"line", 2}, {"character", 5}}}, {"label", ": int"}}});
     const auto hints  = ExtractInlayHints(result);

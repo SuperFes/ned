@@ -3124,6 +3124,8 @@ class BufferView : public Widget {
     // real alpha against whatever is actually behind the cell. An opaque
     // theme_.ghostTextForeground -- every bundled theme today -- comes back
     // untouched.
+    // The virtual-text colour for one inlay hint, by its LSP kind.
+    [[nodiscard]] Color InlayHintForeground(int kind) const;
     [[nodiscard]] Color GhostForegroundOver(const Color& beneath) const;
     // The same resolution against an explicitly-chosen virtual-text colour
     // (theme_.inlayHintForeground, theme_.codeLensForeground) rather than

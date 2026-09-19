@@ -1072,6 +1072,7 @@ class Manager {
     struct ResolvedInlayHint {
         std::size_t byteOffset;
         std::string label;
+        int         kind = 0; // lsp::InlayHint::kind, carried through for styling only
     };
 
     // Called once per Paint() for the active buffer (BufferView.cpp,
@@ -1943,6 +1944,7 @@ class Manager {
     struct AnchoredInlayHint {
         text::AnchorId anchor;
         std::string    label;
+        int            kind = 0;
     };
 
     // The projection InlayHintSpans hands out, and the two stamps that say

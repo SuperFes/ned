@@ -34,6 +34,7 @@ struct RenderedLink {
 struct RenderedInlayHint {
     std::size_t byteOffset;
     std::string label;
+    int         kind = 0; // lsp::InlayHint::kind -- chooses the colour, nothing else
 };
 
 // The [startByte, endByte) content range one wrapped canvas row draws. There is
