@@ -1459,9 +1459,15 @@ class Manager {
     // that and are then carried onto live content. Both branches used to
     // guard on "generation still matches" and discard otherwise, which during
     // continuous typing discarded essentially every response.
+    // answeredRange is the byte range the server was asked about, in the
+    // requested document's coordinates -- set for a semanticTokens/range
+    // response, which describes only that slice and must leave the spans
+    // outside it alone, and nullopt for full/full-delta, which describes the
+    // whole document and replaces everything.
     void ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vector<SemanticToken>& tokens,
                                     const SemanticTokensLegend& legend, const text::ITextStorage& resolvedContent,
-                                    std::size_t resolvedGeneration);
+                                    std::size_t                                        resolvedGeneration,
+                                    std::optional<std::pair<std::size_t, std::size_t>> answeredRange = std::nullopt);
 
     // A semantic token's own anchor policy. Invalidate rather than clamp: a
     // token recolours real characters, so one whose own text an edit rewrote
@@ -1813,19 +1819,48 @@ class Manager {
     mutable std::unordered_map<text::Buffer*, std::size_t>                semanticTokenSpansContentGeneration_;
     std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensGeneration_;
 
-    // semanticTokens range/delta follow-up. requestedRange_ is the
-    // (generation, viewportStart, viewportEnd) triple last requested --
-    // only populated/consulted when RequestSemanticTokens is actually using
-    // the range path for this buffer. Still the last-range-only gate inlay
-    // hints have since outgrown (inlayHintCoverage_): tokens are replaced
-    // wholesale per response rather than retained, so suppressing a re-ask
-    // here would suppress the only thing that puts them back. Lifting that
-    // is the same two-part change, storage half first. rangeUnsupported_/fullDeltaUnsupported_ are the same
+    // What has actually been asked about, so it is never asked about twice.
+    // Shared by the two viewport-ranged requests (inlayHint,
+    // semanticTokens/range); codeLens and the semanticTokens full/delta path
+    // are whole-document and have no viewport to track.
+    //
+    // This replaces a gate that remembered only the single most recent
+    // (generation, start, end) triple, which made scrolling away from a
+    // region and back a fresh round trip for an answer already in hand --
+    // the request half of the same bug retention fixes on the storage half.
+    //
+    // Ranges are sorted, disjoint and merged, and live entirely within one
+    // content generation: an edit anywhere can change a hint anywhere, so a
+    // generation that has moved discards coverage wholesale rather than
+    // trying to relocate it. inFlight is the range of the one outstanding
+    // request, counted as covered so consecutive frames do not re-ask while
+    // it is on the wire, and cleared without being promoted if that request
+    // is dropped -- coverage is claimed by answers, never by questions, or a
+    // lost response would leave a region permanently unasked.
+    struct ViewportCoverage {
+        std::size_t                                        generation = 0;
+        std::vector<std::pair<std::size_t, std::size_t>>   ranges;
+        std::optional<std::pair<std::size_t, std::size_t>> inFlight;
+    };
+
+    // semanticTokens range/delta follow-up. coverage_ is the same
+    // answered-ranges gate inlayHintCoverage_ is, and is only
+    // populated/consulted when RequestSemanticTokens is actually using the
+    // range path for this buffer -- the full/delta path is whole-document
+    // and dedups on generation alone.
+    //
+    // Tokens keep byte offsets carried forward on the journal rather than
+    // anchors, unlike inlay hints: there are one to two orders of magnitude
+    // more of them, and every live anchor is visited on every edit by a
+    // store the buffer's other tenants share. The journal's reach-back limit
+    // that made retention unsound for hints is survivable here -- a set of
+    // tokens dropped wholesale falls back to the grammar's own highlighting
+    // until the next response, where a dropped hint would reflow the text. rangeUnsupported_/fullDeltaUnsupported_ are the same
     // "learned once from a real error response, stop asking" latches
     // inlayHintsUnsupported_/pullDiagnosticsUnsupported_/codeLensUnsupported_
     // already establish, keyed by serverKey, erased in ClientDisconnected
     // (a respawned server gets one fresh attempt at both).
-    std::unordered_map<text::Buffer*, std::tuple<std::size_t, std::size_t, std::size_t>> semanticTokensRequestedRange_;
+    std::unordered_map<text::Buffer*, ViewportCoverage>                                  semanticTokensCoverage_;
     std::unordered_set<std::string>                                                      semanticTokensRangeUnsupported_;
     std::unordered_set<std::string>                                                      semanticTokensFullDeltaUnsupported_;
 
@@ -1910,27 +1945,6 @@ class Manager {
         std::string    label;
     };
 
-    // What has actually been asked about, so it is never asked about twice.
-    //
-    // This replaces a gate that remembered only the single most recent
-    // (generation, start, end) triple, which made scrolling away from a
-    // region and back a fresh round trip for an answer already in hand --
-    // the request half of the same bug retention fixes on the storage half.
-    //
-    // Ranges are sorted, disjoint and merged, and live entirely within one
-    // content generation: an edit anywhere can change a hint anywhere, so a
-    // generation that has moved discards coverage wholesale rather than
-    // trying to relocate it. inFlight is the range of the one outstanding
-    // request, counted as covered so consecutive frames do not re-ask while
-    // it is on the wire, and cleared without being promoted if that request
-    // is dropped -- coverage is claimed by answers, never by questions, or a
-    // lost response would leave a region permanently unasked.
-    struct InlayHintCoverage {
-        std::size_t                                        generation = 0;
-        std::vector<std::pair<std::size_t, std::size_t>>   ranges;
-        std::optional<std::pair<std::size_t, std::size_t>> inFlight;
-    };
-
     // The projection InlayHintSpans hands out, and the two stamps that say
     // whether it is still the truth.
     struct InlayHintView {
@@ -1956,11 +1970,24 @@ class Manager {
     void MergeInlayHints(text::Buffer& buffer, std::vector<ResolvedInlayHint> resolved, std::size_t rangeStart,
                          std::size_t rangeEnd);
 
-    // Closes out the one outstanding inlayHint request: the in-flight range
-    // is released either way, and promoted to answered coverage only when
-    // the response actually carried hints onto live content. A response the
+    // The range a viewport-ranged request should actually ask for, or
+    // nullopt when every byte of it is already answered or already on the
+    // wire. Discards coverage first if the content generation moved, then
+    // widens the viewport by a screenful either side -- see the definition
+    // for why the viewport's own span is the unit.
+    [[nodiscard]] std::optional<std::pair<std::size_t, std::size_t>>
+    UncoveredRequestRange(ViewportCoverage& coverage, const text::Buffer& buffer, std::size_t viewportStartByte,
+                          std::size_t viewportEndByte);
+
+    // Closes out one outstanding viewport-ranged request: the in-flight
+    // range is released either way, and promoted to answered coverage only
+    // when the response actually landed on live content. A response the
     // content has moved past settles nothing -- that generation's coverage
     // is already gone.
+    static void SettleCoverage(ViewportCoverage& coverage, std::size_t requestedGeneration, bool answered,
+                               std::size_t rangeStart, std::size_t rangeEnd);
+
+    // SettleCoverage against this buffer's inlayHint coverage.
     void SettleInlayHintRequest(text::Buffer& buffer, std::size_t requestedGeneration, bool answered,
                                 std::size_t rangeStart, std::size_t rangeEnd);
 
@@ -1996,7 +2023,7 @@ class Manager {
     // (anchors relocated) or revision_ moved (a response merged). The
     // rebuild is a linear copy, never a re-sort: relocation is monotonic, so
     // anchors sorted at merge time stay sorted.
-    std::unordered_map<text::Buffer*, InlayHintCoverage>                                 inlayHintCoverage_;
+    std::unordered_map<text::Buffer*, ViewportCoverage>                                  inlayHintCoverage_;
     std::unordered_map<text::Buffer*, std::size_t>                                       inlayHintsRequestCounter_;
     std::unordered_map<text::Buffer*, std::vector<AnchoredInlayHint>>                    inlayHintAnchors_;
     std::unordered_map<text::Buffer*, std::size_t>                                       inlayHintRevision_;

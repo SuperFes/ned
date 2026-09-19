@@ -128,6 +128,27 @@ the window is deferred, and the single fire at the window's end carries whatever
 is armed by then, so a held scroll is one request per window and the frames in between
 arm nothing at all.
 
+The other half of that payoff, slug for `git log --grep=`: `viewport-answer-retention`
+(the inlay hint half is commit 7eb3a81, which predates the slug). The throttle cut how
+often the viewport was asked about; this cut asking about the same viewport twice. A
+response used to replace the whole store with just the slice it answered for, so
+scrolling deleted the region scrolled away from, and the gate remembered only the most
+recent `(generation, start, end)` triple, so scrolling back re-asked for an answer
+already given and thrown away -- visibly, the code reflowing sideways on every wheel
+notch while inlay hints came and went. Both viewport-ranged requests now merge per
+answered range and share one `ViewportCoverage` gate (answered ranges plus the one
+in-flight range, discarded whenever the content generation moves, since an edit anywhere
+can change an answer anywhere), and both ask for a screenful of margin either side so an
+ordinary scroll lands on covered ground. Coverage is claimed by answers, never by
+questions: a dropped response leaves its region askable rather than permanently blank.
+Inlay hints moved to `AnchorSet` in the process -- not tidiness, a correctness
+requirement, since a set meant to live as long as the buffer cannot ride `EditJournal`,
+whose reach-back stops at `kCapacity` and whose answer to that is to drop everything the
+holder has. Semantic tokens deliberately stayed on the journal: there are one to two
+orders of magnitude more of them, every live anchor is visited on every edit, and a set
+of tokens dropped wholesale falls back to the grammar's own highlighting where a dropped
+hint would reflow the text.
+
 - [ ] The throttle is per buffer and per window, not per request kind: a viewport-scoped
       `semanticTokens/range` and a whole-document `codeLens` share one window even though
       only the first has any reason to move with the viewport. Harmless today (codeLens

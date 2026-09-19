@@ -1552,7 +1552,7 @@ void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     semanticTokenSpans_.erase(&buffer);
     semanticTokenSpansContentGeneration_.erase(&buffer);
     semanticTokensGeneration_.erase(&buffer);
-    semanticTokensRequestedRange_.erase(&buffer);
+    semanticTokensCoverage_.erase(&buffer);
     previousSemanticTokens_.erase(&buffer);
     inlayHintCoverage_.erase(&buffer);
     inlayHintsRequestCounter_.erase(&buffer);
@@ -1831,7 +1831,8 @@ void Manager::RequestPullDiagnostics(text::Buffer& buffer, const std::string& se
 
 void Manager::ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vector<SemanticToken>& tokens,
                                          const SemanticTokensLegend& legend, const text::ITextStorage& resolvedContent,
-                                         std::size_t resolvedGeneration) {
+                                         std::size_t                                        resolvedGeneration,
+                                         std::optional<std::pair<std::size_t, std::size_t>> answeredRange) {
     const text::ITextStorage&          content = resolvedContent;
     std::vector<editor::HighlightSpan> spans;
     spans.reserve(tokens.size());
@@ -1857,9 +1858,38 @@ void Manager::ApplyDecodedSemanticTokens(text::Buffer& buffer, const std::vector
     // dropped rather than left recolouring whatever now sits there -- that
     // mis-colouring is the whole symptom this family of fixes exists for.
     std::size_t resolvedAt = resolvedGeneration;
-    CarryForward(spans, resolvedAt, buffer, [](editor::HighlightSpan& span, const std::vector<text::EditOp>& ops) {
-        return RelocateRange(span.startByte, span.endByte, ops, kSemanticTokenInsideDelete);
-    });
+    const bool  carried    = CarryForward(spans, resolvedAt, buffer,
+                                          [](editor::HighlightSpan& span, const std::vector<text::EditOp>& ops) {
+                                          return RelocateRange(span.startByte, span.endByte, ops, kSemanticTokenInsideDelete);
+                                          });
+
+    if (answeredRange && carried) {
+        // A range response describes its own slice and nothing else, so the
+        // spans outside it are still the best answer anyone has for those
+        // bytes -- replacing them is what made a scroll recolour the whole
+        // screen and then have to ask for it all back. The answered range
+        // travels the same path its spans did, from the requested document's
+        // coordinates onto the present.
+        std::size_t rangeStart = answeredRange->first;
+        std::size_t rangeEnd   = answeredRange->second;
+        if (const auto ops = buffer.Edits().OpsSince(resolvedGeneration)) {
+            RelocateRange(rangeStart, rangeEnd, *ops, text::InsideDelete::Clamp);
+        }
+        std::vector<editor::HighlightSpan>& existing = semanticTokenSpans_[&buffer];
+        CarryForward(existing, semanticTokenSpansContentGeneration_[&buffer], buffer,
+                     [](editor::HighlightSpan& span, const std::vector<text::EditOp>& ops) {
+                         return RelocateRange(span.startByte, span.endByte, ops, kSemanticTokenInsideDelete);
+                     });
+        for (editor::HighlightSpan& span : existing) {
+            if (span.startByte < rangeStart || span.startByte >= rangeEnd) {
+                spans.push_back(span); // outside what this response spoke about
+            }
+        }
+        std::sort(spans.begin(), spans.end(), [](const editor::HighlightSpan& a, const editor::HighlightSpan& b) {
+            return a.startByte < b.startByte;
+        });
+    }
+
     semanticTokenSpans_[&buffer]                  = std::move(spans);
     semanticTokenSpansContentGeneration_[&buffer] = buffer.ContentGeneration();
     ++semanticTokensGeneration_[&buffer];
@@ -1971,33 +2001,42 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
     // doesn't actually honor it -- see RequestSemanticTokens' own header
     // doc comment for the full three-way decision this mirrors.
     if (legendCopy.rangeSupported && !semanticTokensRangeUnsupported_.contains(state->connectionKey)) {
-        const auto requestedRange = std::make_tuple(buffer.ContentGeneration(), viewportStartByte, viewportEndByte);
-        if (const auto it = semanticTokensRequestedRange_.find(&buffer);
-            it != semanticTokensRequestedRange_.end() && it->second == requestedRange) {
-            return; // already requested for this exact (content, viewport) -- a cursor-blink/scroll-into-the-same-view repaint
+        ViewportCoverage&                                        coverage = semanticTokensCoverage_[&buffer];
+        const std::optional<std::pair<std::size_t, std::size_t>> request =
+            UncoveredRequestRange(coverage, buffer, viewportStartByte, viewportEndByte);
+        if (!request) {
+            return; // already answered, or already on the wire
         }
-        semanticTokensRequestedRange_[&buffer] = requestedRange;
-        const std::size_t requestId            = ++semanticTokensRequestCounter_[&buffer];
-        const std::size_t requestedGeneration  = buffer.ContentGeneration();
+        const std::size_t requestStart = request->first;
+        const std::size_t requestEnd   = request->second;
+
+        coverage.inFlight                     = std::pair{requestStart, requestEnd};
+        const std::size_t requestId           = ++semanticTokensRequestCounter_[&buffer];
+        const std::size_t requestedGeneration = buffer.ContentGeneration();
         // The document the server will answer about, kept so its positions
         // convert against the right text however long the round trip takes.
         std::shared_ptr<const text::ITextStorage> requestedContent = buffer.Content().Clone();
 
         const text::ITextStorage& content = buffer.Content();
-        const Position         start   = BytePositionToLsp(content, viewportStartByte);
-        const Position         end     = BytePositionToLsp(content, viewportEndByte);
+        const Position            start   = BytePositionToLsp(content, requestStart);
+        const Position            end     = BytePositionToLsp(content, requestEnd);
         const Json                params  = {
             {"textDocument", {{"uri", state->uri}}},
             {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
         };
         client->SendRequest(
             "textDocument/semanticTokens/range", params,
-            [this, bufferPtr, requestId, requestedGeneration, requestedContent, legendCopy,
-             connectionKey](std::optional<Json> result, std::optional<Json> error) {
+            [this, bufferPtr, requestId, requestedGeneration, requestedContent, legendCopy, connectionKey, requestStart,
+             requestEnd](std::optional<Json> result, std::optional<Json> error) {
                 const auto counterIt = semanticTokensRequestCounter_.find(bufferPtr);
                 if (counterIt == semanticTokensRequestCounter_.end() || counterIt->second != requestId) {
                     return; // superseded by a newer request for this buffer
                 }
+                const auto settle = [this, bufferPtr, requestedGeneration, requestStart, requestEnd](bool answered) {
+                    if (const auto it = semanticTokensCoverage_.find(bufferPtr); it != semanticTokensCoverage_.end()) {
+                        SettleCoverage(it->second, requestedGeneration, answered, requestStart, requestEnd);
+                    }
+                };
                 if (error) {
                     // A real error response is this server's own proof it
                     // doesn't actually honor a capability it advertised --
@@ -2006,13 +2045,17 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
                     // change. The next request for this buffer falls
                     // through to the full/delta path below instead.
                     semanticTokensRangeUnsupported_.insert(connectionKey);
+                    settle(/*answered=*/false);
                     return;
                 }
                 if (!result) {
+                    settle(/*answered=*/false);
                     return;
                 }
                 ApplyDecodedSemanticTokens(*bufferPtr, DecodeSemanticTokenData(ExtractSemanticTokensRawData(*result)),
-                                           legendCopy, *requestedContent, requestedGeneration);
+                                           legendCopy, *requestedContent, requestedGeneration,
+                                           std::pair{requestStart, requestEnd});
+                settle(/*answered=*/true);
             });
         return;
     }
@@ -2174,27 +2217,14 @@ void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartB
     if (state->lastSyncedGeneration != buffer.ContentGeneration()) {
         return;
     }
-    InlayHintCoverage& coverage = inlayHintCoverage_[&buffer];
-    if (coverage.generation != buffer.ContentGeneration()) {
-        // An edit anywhere can change a hint anywhere, so nothing answered
-        // about the old content is still an answer about this one.
-        coverage.generation = buffer.ContentGeneration();
-        coverage.ranges.clear();
-        coverage.inFlight.reset();
+    ViewportCoverage&                                        coverage = inlayHintCoverage_[&buffer];
+    const std::optional<std::pair<std::size_t, std::size_t>> request =
+        UncoveredRequestRange(coverage, buffer, viewportStartByte, viewportEndByte);
+    if (!request) {
+        return; // already answered, or already on the wire
     }
-    if (RangeIsCovered(coverage.ranges, viewportStartByte, viewportEndByte) ||
-        (coverage.inFlight && coverage.inFlight->first <= viewportStartByte && coverage.inFlight->second >= viewportEndByte)) {
-        return; // already answered, or already on the wire -- asking again buys nothing
-    }
-
-    // Asked for a screenful either side of what is actually visible, so the
-    // next wheel notch in either direction lands on ground already covered
-    // and sends nothing at all. The viewport's own byte span is the unit
-    // because it is exactly one screenful by construction, with no viewport
-    // height to plumb down here to say so.
-    const std::size_t margin       = viewportEndByte - viewportStartByte;
-    const std::size_t requestStart = viewportStartByte > margin ? viewportStartByte - margin : 0;
-    const std::size_t requestEnd   = std::min(viewportEndByte + margin, buffer.Content().ByteLength());
+    const std::size_t requestStart = request->first;
+    const std::size_t requestEnd   = request->second;
 
     Client* client = ExistingClientForLanguage(state->connectionKey);
     if (!client) {
@@ -2424,15 +2454,48 @@ void Manager::MergeInlayHints(text::Buffer& buffer, std::vector<ResolvedInlayHin
     ++inlayHintRevision_[&buffer];
 }
 
-void Manager::SettleInlayHintRequest(text::Buffer& buffer, std::size_t requestedGeneration, bool answered,
-                                     std::size_t rangeStart, std::size_t rangeEnd) {
-    const auto it = inlayHintCoverage_.find(&buffer);
-    if (it == inlayHintCoverage_.end() || it->second.generation != requestedGeneration) {
+std::optional<std::pair<std::size_t, std::size_t>> Manager::UncoveredRequestRange(ViewportCoverage&   coverage,
+                                                                                  const text::Buffer& buffer,
+                                                                                  std::size_t         viewportStartByte,
+                                                                                  std::size_t         viewportEndByte) {
+    if (coverage.generation != buffer.ContentGeneration()) {
+        // An edit anywhere can change an answer anywhere, so nothing said
+        // about the old content is still an answer about this one.
+        coverage.generation = buffer.ContentGeneration();
+        coverage.ranges.clear();
+        coverage.inFlight.reset();
+    }
+    if (RangeIsCovered(coverage.ranges, viewportStartByte, viewportEndByte) ||
+        (coverage.inFlight && coverage.inFlight->first <= viewportStartByte &&
+         coverage.inFlight->second >= viewportEndByte)) {
+        return std::nullopt;
+    }
+
+    // Asked for a screenful either side of what is actually visible, so the
+    // next wheel notch in either direction lands on ground already covered
+    // and sends nothing at all. The viewport's own byte span is the unit
+    // because it is exactly one screenful by construction, with no viewport
+    // height to plumb down here to say so.
+    const std::size_t margin = viewportEndByte - viewportStartByte;
+    return std::pair{viewportStartByte > margin ? viewportStartByte - margin : 0,
+                     std::min(viewportEndByte + margin, buffer.Content().ByteLength())};
+}
+
+void Manager::SettleCoverage(ViewportCoverage& coverage, std::size_t requestedGeneration, bool answered,
+                             std::size_t rangeStart, std::size_t rangeEnd) {
+    if (coverage.generation != requestedGeneration) {
         return; // coverage for that generation is already gone, in-flight entry with it
     }
-    it->second.inFlight.reset();
+    coverage.inFlight.reset();
     if (answered) {
-        AddCoveredRange(it->second.ranges, rangeStart, rangeEnd);
+        AddCoveredRange(coverage.ranges, rangeStart, rangeEnd);
+    }
+}
+
+void Manager::SettleInlayHintRequest(text::Buffer& buffer, std::size_t requestedGeneration, bool answered,
+                                     std::size_t rangeStart, std::size_t rangeEnd) {
+    if (const auto it = inlayHintCoverage_.find(&buffer); it != inlayHintCoverage_.end()) {
+        SettleCoverage(it->second, requestedGeneration, answered, rangeStart, rangeEnd);
     }
 }
 
