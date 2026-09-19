@@ -1211,6 +1211,20 @@ Ideas worth remembering but not worth scoping yet — too undecided for "Open It
 not disliked enough for "Won't do". Promote or delete on revisit rather than letting
 these accumulate detail in place.
 
+- [ ] **A gutter indicator for available code actions** -- the classic 💡, and the one
+      genuinely *missing* LSP signal rather than a restyled existing one: today there is
+      no way to know a line has a quick fix without asking for one. Scoped honestly
+      (2026-09-19, while adding glyphs and colours to everything that already had data to
+      show): this is a feature, not a styling change. It needs a recurring
+      `textDocument/codeAction` request per viewport, which **must** ride
+      `Manager::UncoveredRequestRange`/`SettleCoverage` -- sending one per frame would
+      reintroduce exactly the per-frame polling `viewport-answer-retention` removed, and
+      codeAction is the more expensive request of the two. Plus a new gutter column with
+      the width plumbing in `GutterModel`, a theme colour, and an enable/disable setting
+      on the `ned/set-lsp-code-lens` pattern. Unresolved before committing to it: whether
+      a per-viewport codeAction is cheap enough on a real server to run continuously at
+      all, or whether the indicator has to be demand-driven (on idle, or on the current
+      line only) to be worth having.
 - [ ] **Jank replaces Janet** — swapping the scripting layer for
       [jank](https://github.com/jank-lang/jank), a Clojure dialect on LLVM. Full
       measured feasibility record: `Docs/JankFeasibility.md` (investigated 2026-09-08
