@@ -3964,17 +3964,19 @@ TEST_CASE("RequestSemanticTokens sends nothing when semantic highlighting is dis
     REQUIRE(NoFrameArrives(server.serverStdinRead));
 }
 
-TEST_CASE("RequestSemanticTokens prefers textDocument/semanticTokens/range when the server advertises range support, "
-          "and dedups on (content, viewport) not generation alone",
+TEST_CASE("RequestSemanticTokens prefers textDocument/semanticTokens/range and asks only about ranges not already "
+          "covered",
           "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;
-    Manager                  manager(bufferList, eventLoop);
+    Manager                     manager(bufferList, eventLoop);
     const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-range-test.txt";
     Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
-    buffer.InsertAtPoint("int x = 1;\nint y = 2;\n");
+    for (int line = 0; line < 10; ++line) {
+        buffer.InsertAtPoint("int x = 1;\n"); // 11 bytes a line, 110 total
+    }
 
-    Client* client = nullptr;
+    Client*    client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
     manager.SetSemanticTokensLegendForTesting(
         "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}, .rangeSupported = true});
@@ -3986,6 +3988,7 @@ TEST_CASE("RequestSemanticTokens prefers textDocument/semanticTokens/range when 
     const auto        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
     REQUIRE(request["method"] == "textDocument/semanticTokens/range");
     REQUIRE(request["params"]["range"]["start"]["line"] == 0);
+    REQUIRE(request["params"]["range"]["end"]["line"] == 2); // a screenful of margin either side
 
     const auto response = Json{
         {"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"result", {{"data", Json::array({0, 0, 3, 0, 0})}}}};
@@ -3996,11 +3999,58 @@ TEST_CASE("RequestSemanticTokens prefers textDocument/semanticTokens/range when 
     manager.RequestSemanticTokens(buffer, 0, 11, "test-lang");
     REQUIRE(NoFrameArrives(server.serverStdinRead));
 
-    // Scrolled to reveal new content -- same generation, different
-    // viewport, must resend.
+    // Scrolled a line, still inside what was asked about. This used to be a
+    // resend; the margin is what makes an ordinary scroll free.
     manager.RequestSemanticTokens(buffer, 11, 22, "test-lang");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+
+    // Past the margin -- genuinely new ground, so one request.
+    manager.RequestSemanticTokens(buffer, 44, 55, "test-lang");
     const std::string thirdRaw = ReadRawFrame(server.serverStdinRead);
     REQUIRE(Json::parse(thirdRaw.substr(thirdRaw.find("\r\n\r\n") + 4))["method"] == "textDocument/semanticTokens/range");
+}
+
+// The colour half of the same bug the inlay hint retention tests cover: a
+// range response describes its own slice only, so replacing the whole span
+// set with it recoloured every line the response said nothing about.
+TEST_CASE("A semanticTokens/range response leaves the spans outside its own range alone", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-tokens-retain-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    for (int line = 0; line < 10; ++line) {
+        buffer.InsertAtPoint("int x = 1;\n");
+    }
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting(
+        "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}, .rangeSupported = true});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestSemanticTokens(buffer, 0, 11, "test-lang");
+    const std::string firstRaw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(firstRaw)},
+                               {"result", {{"data", Json::array({0, 0, 3, 0, 0})}}}}
+                              .dump()); // "int" on line 0
+    REQUIRE(manager.SemanticTokenSpans(buffer).size() == 1);
+
+    // Scrolled well past the first request's margin, so this is a real
+    // request about ground the first response never described.
+    manager.RequestSemanticTokens(buffer, 55, 66, "test-lang");
+    const std::string secondRaw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(secondRaw)},
+                               {"result", {{"data", Json::array({5, 0, 3, 0, 0})}}}}
+                              .dump()); // "int" on line 5
+
+    const std::vector<ned::editor::HighlightSpan>& spans = manager.SemanticTokenSpans(buffer);
+    REQUIRE(spans.size() == 2);
+    REQUIRE(spans[0].startByte == 0);  // line 0, kept across a scroll that never asked about it again
+    REQUIRE(spans[1].startByte == 55); // line 5
 }
 
 // RequestViewportFeatures is what BufferView actually calls per frame; the
@@ -4059,11 +4109,13 @@ TEST_CASE("RequestViewportFeatures sends the first viewport at once and collapse
     const std::vector<Json> deferred = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 2));
     REQUIRE(deferred.size() >= 2);
     REQUIRE(deferred[0]["method"] == "textDocument/semanticTokens/range");
-    REQUIRE(deferred[0]["params"]["range"]["start"]["line"] == 2); // the last viewport, never the middle one
+    // Line 1, not 2: both viewport-ranged requests take a screenful of
+    // margin either side, so the next scroll lands on covered ground
+    // (clamped to the buffer's end on the far side). Still the *last*
+    // viewport's neighbourhood, never the middle one's -- which is what
+    // this case is really asserting.
+    REQUIRE(deferred[0]["params"]["range"]["start"]["line"] == 1);
     REQUIRE(deferred[1]["method"] == "textDocument/inlayHint");
-    // One line earlier than the viewport, and than semanticTokens just
-    // above: hints are asked for a screenful either side so the next scroll
-    // lands on covered ground (clamped to the buffer's end on this side).
     REQUIRE(deferred[1]["params"]["range"]["start"]["line"] == 1);
 
     // A further frame at the settled pair arms nothing and sends nothing.
