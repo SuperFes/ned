@@ -15,15 +15,36 @@ namespace ned::editor {
 
 namespace {
 
+    // A tabstop written inside another tabstop's placeholder text. Offsets
+    // are relative to the placeholder that contains it, never to the body,
+    // so the emitting pass only ever adds the containing run's own start --
+    // and a stop's own `nested` is relative to *its* placeholder in turn.
+    struct NestedStop {
+        int                             index;
+        std::size_t                     start;
+        std::size_t                     end;
+        bool                            hasPlaceholder;
+        std::optional<SnippetTransform> transform;
+        std::vector<NestedStop>         nested;
+    };
+
     // One tokenized tabstop marker, before substitution.
     struct RawStop {
         int                             index;
-        std::string                     placeholder; // nested markers already stripped
+        std::string                     placeholder; // nested markers substituted into it
         bool                            hasPlaceholder;
         std::optional<SnippetTransform> transform; // set only for `${N/regex/format/flags}`
+        std::vector<NestedStop>         nested;    // offsets into `placeholder`
     };
 
-    std::optional<RawStop>                  ParseTabstopAt(std::string_view body, std::size_t& pos);
+    // A body nested past this is treated as ill-formed and falls through as
+    // literal text. The parse is mutually recursive (a placeholder can hold
+    // a tabstop whose placeholder holds another), so without a cap an
+    // adversarial body is a stack overflow rather than the visible text the
+    // header promises.
+    constexpr int kMaxNestingDepth = 8;
+
+    std::optional<RawStop>                  ParseTabstopAt(std::string_view body, std::size_t& pos, int depth = 0);
     std::optional<SnippetTransform>         ParseTransformSuffix(std::string_view body, std::size_t& pos);
     std::optional<std::vector<std::string>> ParseChoiceSuffix(std::string_view body, std::size_t& pos);
     std::string                             ApplyTransform(std::string_view fieldText, const SnippetTransform& transform);
@@ -31,10 +52,12 @@ namespace {
                                                             const SnippetVariables& variables);
 
     // Reads placeholder content from just past the ':' up to the matching
-    // unescaped '}', consuming it. A nested tabstop marker contributes its
-    // own placeholder text only (the inner stop is dropped -- see the
-    // header's cuts). nullopt when the closing '}' is missing.
-    std::optional<std::string> ParsePlaceholderContent(std::string_view body, std::size_t& pos) {
+    // unescaped '}', consuming it. A nested tabstop marker substitutes its
+    // own placeholder text into the content and is recorded in `nested` at
+    // the span that text occupies, so the stop survives as a real field.
+    // nullopt when the closing '}' is missing.
+    std::optional<std::string> ParsePlaceholderContent(std::string_view body, std::size_t& pos,
+                                                       std::vector<NestedStop>& nested, int depth) {
         std::string content;
         while (pos < body.size()) {
             const char c = body[pos];
@@ -55,8 +78,11 @@ namespace {
             }
             if (c == '$') {
                 std::size_t probe = pos;
-                if (const auto inner = ParseTabstopAt(body, probe)) {
+                if (auto inner = ParseTabstopAt(body, probe, depth + 1)) {
+                    const std::size_t innerStart = content.size();
                     content += inner->placeholder;
+                    nested.push_back(NestedStop{inner->index, innerStart, content.size(), inner->hasPlaceholder,
+                                                std::move(inner->transform), std::move(inner->nested)});
                     pos = probe;
                     continue;
                 }
@@ -89,9 +115,9 @@ namespace {
     // Attempts to parse a tabstop marker at body[pos] (which is '$'). On
     // success advances pos past the marker; on failure leaves pos untouched
     // so the caller emits the '$' literally.
-    std::optional<RawStop> ParseTabstopAt(std::string_view body, std::size_t& pos) {
+    std::optional<RawStop> ParseTabstopAt(std::string_view body, std::size_t& pos, int depth) {
         std::size_t p = pos + 1;
-        if (p >= body.size()) {
+        if (p >= body.size() || depth > kMaxNestingDepth) {
             return std::nullopt;
         }
         if (std::isdigit(static_cast<unsigned char>(body[p]))) {
@@ -136,12 +162,15 @@ namespace {
             return std::nullopt;
         }
         ++p;
-        auto content = ParsePlaceholderContent(body, p);
+        std::vector<NestedStop> nested;
+        auto                    content = ParsePlaceholderContent(body, p, nested, depth);
         if (!content) {
             return std::nullopt;
         }
         pos = p;
-        return RawStop{*index, std::move(*content), true};
+        RawStop stop{*index, std::move(*content), true};
+        stop.nested = std::move(nested);
+        return stop;
     }
 
     // Reads /regex/format/flags} starting at body[pos] == '/' (the
@@ -657,26 +686,68 @@ ParsedSnippet ParseSnippet(std::string_view body, const SnippetVariables& variab
     // Each index's substitution text: its first placeholder-carrying
     // occurrence wins; an index with no placeholder anywhere substitutes "".
     std::map<int, std::string> primaryText;
-    std::map<int, std::size_t> primaryPiece; // piece position of the winning occurrence
+    std::map<int, std::size_t> primaryPiece;        // piece position of the winning occurrence
+    std::map<int, bool>        indexHasPlaceholder; // whether that text came from real placeholder syntax
     for (std::size_t i = 0; i < pieces.size(); ++i) {
         const Piece& piece = pieces[i];
         if (!piece.isStop) {
             continue;
         }
         if (!primaryPiece.contains(piece.stop.index) || (piece.stop.hasPlaceholder && !pieces[primaryPiece[piece.stop.index]].stop.hasPlaceholder)) {
-            primaryPiece[piece.stop.index] = i;
-            primaryText[piece.stop.index]  = piece.stop.placeholder;
+            primaryPiece[piece.stop.index]        = i;
+            primaryText[piece.stop.index]         = piece.stop.placeholder;
+            indexHasPlaceholder[piece.stop.index] = piece.stop.hasPlaceholder;
         }
+    }
+    // An index that only ever appears nested still needs a substitution text
+    // of its own, because it can be mirrored by a bare `$N` at top level.
+    // Same rule one level down: a placeholder-carrying occurrence beats a
+    // bare one, and loses to a top-level placeholder that already won -- in
+    // which case the nested field's own baked text disagrees with its
+    // index's substitution until the first edit syncs them, a documented cut
+    // for a body that spells the same index with two different placeholders.
+    const auto adoptNested = [&](auto&& self, const std::string& owner, const std::vector<NestedStop>& nested) -> void {
+        for (const NestedStop& stop : nested) {
+            std::string text = owner.substr(stop.start, stop.end - stop.start);
+            if (stop.hasPlaceholder && !indexHasPlaceholder[stop.index]) {
+                primaryText[stop.index]         = text;
+                indexHasPlaceholder[stop.index] = true;
+            }
+            else if (!primaryText.contains(stop.index)) {
+                primaryText[stop.index] = "";
+            }
+            self(self, text, stop.nested);
+        }
+    };
+    for (const auto& [index, piece] : primaryPiece) {
+        adoptNested(adoptNested, pieces[piece].stop.placeholder, pieces[piece].stop.nested);
     }
 
     // Pass 2: emit stripped text, recording every occurrence as a field.
     ParsedSnippet result;
     struct Emitted {
         SnippetField field;
-        bool         primary;
-        std::size_t  piecePos;
+        bool         hasPlaceholder;
+        bool         primary = false;
+        std::size_t  origin  = 0; // position before the visit-order sort
     };
     std::vector<Emitted> emitted;
+    // Nested stops of the occurrence that actually spelled them, laid over
+    // the substitution run just emitted. `base` is the start of the
+    // placeholder these offsets index into, so a stop's own children pass
+    // their parent's start in turn; `parent` is that occurrence's position
+    // in `emitted`, rewritten to its post-sort position further down.
+    const auto emitNested = [&](auto&& self, const std::vector<NestedStop>& nested, std::size_t base,
+                                std::size_t parent) -> void {
+        for (const NestedStop& stop : nested) {
+            const std::size_t start    = base + stop.start;
+            const std::size_t position = emitted.size();
+            emitted.push_back(
+                Emitted{SnippetField{stop.index, start, base + stop.end, stop.transform, parent},
+                        stop.hasPlaceholder});
+            self(self, stop.nested, start, position);
+        }
+    };
     for (std::size_t i = 0; i < pieces.size(); ++i) {
         const Piece& piece = pieces[i];
         if (!piece.isStop) {
@@ -690,14 +761,42 @@ ParsedSnippet ParseSnippet(std::string_view body, const SnippetVariables& variab
         const std::string& primary      = primaryText[piece.stop.index];
         const std::string  substitution = piece.stop.transform ? ApplyTransform(primary, *piece.stop.transform) : primary;
         const std::size_t  start        = result.text.size();
+        const std::size_t  position     = emitted.size();
         result.text += substitution;
         emitted.push_back(Emitted{SnippetField{piece.stop.index, start, result.text.size(), piece.stop.transform},
-                                  primaryPiece[piece.stop.index] == i, i});
+                                  piece.stop.hasPlaceholder});
+        // Only the occurrence whose own syntax carried the nested markers
+        // emits them. A mirror of the same index substitutes the identical
+        // text as flat literal, which is what keeps SnippetSession's
+        // wholesale mirror rewrite from ever landing on top of a live
+        // nested field.
+        if (primaryPiece[piece.stop.index] == i) {
+            emitNested(emitNested, piece.stop.nested, start, position);
+        }
+    }
+
+    // An index's primary occurrence -- where point lands when the index is
+    // visited -- is its first placeholder-carrying occurrence in document
+    // order, else its first occurrence. `emitted` is in document order here:
+    // a nested field is pushed directly after the run it sits inside.
+    std::map<int, std::size_t> primaryOccurrence;
+    for (std::size_t i = 0; i < emitted.size(); ++i) {
+        const auto [it, inserted] = primaryOccurrence.try_emplace(emitted[i].field.index, i);
+        if (!inserted && emitted[i].hasPlaceholder && !emitted[it->second].hasPlaceholder) {
+            it->second = i;
+        }
+    }
+    for (const auto& [index, position] : primaryOccurrence) {
+        emitted[position].primary = true;
+    }
+
+    for (std::size_t i = 0; i < emitted.size(); ++i) {
+        emitted[i].origin = i;
     }
 
     // Visit order: ascending index with 0 last; within an index the primary
     // occurrence first, then mirrors in document order (stable sort keeps
-    // piece order for equal keys).
+    // emission order for equal keys).
     std::stable_sort(emitted.begin(), emitted.end(), [](const Emitted& a, const Emitted& b) {
         const int keyA = a.field.index == 0 ? INT_MAX : a.field.index;
         const int keyB = b.field.index == 0 ? INT_MAX : b.field.index;
@@ -706,9 +805,19 @@ ParsedSnippet ParseSnippet(std::string_view body, const SnippetVariables& variab
         }
         return a.primary && !b.primary;
     });
+    // The sort moved every occurrence, so the parent links -- recorded as
+    // pre-sort positions -- are rewritten to where their targets landed.
+    std::vector<std::size_t> sortedPosition(emitted.size());
+    for (std::size_t i = 0; i < emitted.size(); ++i) {
+        sortedPosition[emitted[i].origin] = i;
+    }
     result.fields.reserve(emitted.size() + 1);
     for (const Emitted& e : emitted) {
-        result.fields.push_back(e.field);
+        SnippetField field = e.field;
+        if (field.parent != kNoParentField) {
+            field.parent = sortedPosition[field.parent];
+        }
+        result.fields.push_back(field);
     }
     if (std::none_of(result.fields.begin(), result.fields.end(),
                      [](const SnippetField& f) { return f.index == 0; })) {
@@ -739,11 +848,15 @@ std::optional<SnippetSession> SnippetSession::Start(text::Buffer& buffer, std::s
 
     std::vector<text::Buffer::SnippetRange> ranges;
     ranges.reserve(parsed.fields.size());
-    std::size_t nextId = 1;
-    for (const SnippetField& field : parsed.fields) {
-        const std::size_t id = nextId++;
+    // Ids are the field's own position plus one, so a field's parent link
+    // (a position in parsed.fields) converts to a parent id without a side
+    // table, and 0 stays free to mean "no parent".
+    for (std::size_t i = 0; i < parsed.fields.size(); ++i) {
+        const SnippetField& field    = parsed.fields[i];
+        const std::size_t   id       = i + 1;
+        const std::size_t   parentId = field.parent == kNoParentField ? 0 : field.parent + 1;
         ranges.push_back(text::Buffer::SnippetRange{id, field.index, replaceStart + field.start,
-                                                    replaceStart + field.end, false});
+                                                    replaceStart + field.end, false, parentId});
         if (field.transform) {
             session.transforms_[id] = *field.transform;
         }
@@ -832,13 +945,6 @@ void SnippetSession::SyncMirrors(text::Buffer& buffer) {
     if (current == lastSyncedText_) {
         return;
     }
-    const int                index = active->tabstopIndex;
-    std::vector<std::size_t> mirrorIds;
-    for (const text::Buffer::SnippetRange& range : buffer.SnippetRanges()) {
-        if (range.tabstopIndex == index && range.id != activeRangeId_) {
-            mirrorIds.push_back(range.id);
-        }
-    }
     // A rewrite of a mirror directly adjacent to the active field inserts
     // exactly at point (the field's own edge), and Point_'s right-gravity
     // relocation would drag point to the end of the mirror's fresh text --
@@ -848,35 +954,24 @@ void SnippetSession::SyncMirrors(text::Buffer& buffer) {
     const std::size_t pointBefore      = buffer.Point();
     const bool        pointInActive    = pointBefore >= active->start && pointBefore <= active->end;
     const std::size_t pointFieldOffset = pointInActive ? pointBefore - active->start : 0;
-    // Deactivate for the rewrites: the active range's grow-at-boundary
-    // gravity would absorb a rewrite of a directly adjacent mirror (the
-    // insert lands exactly at the active field's own edge); with every
-    // range inactive, boundary inserts stay excluded everywhere and each
-    // rewritten mirror is repaired explicitly below.
-    buffer.SetActiveSnippetRange(0); // 0 is never an assigned id -- clears every flag
-    for (const std::size_t id : mirrorIds) {
-        // Re-resolve per iteration: each rewrite relocates every other range.
-        const text::Buffer::SnippetRange* mirror = FindRange(buffer, id);
-        if (mirror == nullptr) {
-            continue;
-        }
-        const std::size_t start = mirror->start;
-        // A mirror carrying its own /regex/format/flags shows the
-        // transformed content, recomputed fresh from the primary's current
-        // text on every sync -- every other (plain) mirror shows it verbatim.
-        const auto        transformIt = transforms_.find(id);
-        const std::string replacement = transformIt != transforms_.end() ? ApplyTransform(current, transformIt->second) : current;
-        if (buffer.Content().Substring(start, mirror->end - start) == replacement) {
-            continue;
-        }
-        if (mirror->end > start) {
-            buffer.DeleteRange(start, mirror->end - start);
-        }
-        if (!replacement.empty()) {
-            buffer.InsertAt(start, replacement);
-        }
-        buffer.UpdateSnippetRange(id, start, start + replacement.size());
+
+    // Typing in a nested field changes the field enclosing it too (that is
+    // what containment means), so the enclosing index's own mirrors are
+    // stale in exactly the same way and get the same treatment. Walking the
+    // parent chain gives them innermost-outwards for free, which is the
+    // order that reads each source only after everything inside it has
+    // settled. Collected by id before the first rewrite, since every
+    // rewrite relocates every range.
+    std::vector<std::size_t> sourceIds;
+    for (std::size_t id = activeRangeId_; id != 0 && sourceIds.size() <= buffer.SnippetRanges().size();) {
+        sourceIds.push_back(id);
+        const text::Buffer::SnippetRange* range = FindRange(buffer, id);
+        id                                      = range != nullptr ? range->parentId : 0;
     }
+    for (const std::size_t sourceId : sourceIds) {
+        SyncIndexFrom(buffer, sourceId);
+    }
+
     buffer.SetActiveSnippetRange(activeRangeId_);
     if (pointInActive) {
         if (const text::Buffer::SnippetRange* after = FindRange(buffer, activeRangeId_)) {
@@ -884,6 +979,52 @@ void SnippetSession::SyncMirrors(text::Buffer& buffer) {
         }
     }
     lastSyncedText_ = current;
+}
+
+void SnippetSession::SyncIndexFrom(text::Buffer& buffer, std::size_t sourceId) {
+    const text::Buffer::SnippetRange* source = FindRange(buffer, sourceId);
+    if (source == nullptr) {
+        return;
+    }
+    const std::string        current = buffer.Content().Substring(source->start, source->end - source->start);
+    const int                index   = source->tabstopIndex;
+    std::vector<std::size_t> mirrorIds;
+    for (const text::Buffer::SnippetRange& range : buffer.SnippetRanges()) {
+        if (range.tabstopIndex == index && range.id != sourceId) {
+            mirrorIds.push_back(range.id);
+        }
+    }
+    for (const std::size_t id : mirrorIds) {
+        // Re-resolve per iteration: each rewrite relocates every other range.
+        const text::Buffer::SnippetRange* mirror = FindRange(buffer, id);
+        if (mirror == nullptr) {
+            continue;
+        }
+        const std::size_t start = mirror->start;
+        const std::size_t end   = mirror->end;
+        // A mirror carrying its own /regex/format/flags shows the
+        // transformed content, recomputed fresh from the primary's current
+        // text on every sync -- every other (plain) mirror shows it verbatim.
+        const auto        transformIt = transforms_.find(id);
+        const std::string replacement = transformIt != transforms_.end() ? ApplyTransform(current, transformIt->second) : current;
+        if (buffer.Content().Substring(start, end - start) == replacement) {
+            continue;
+        }
+        // The mirror being rewritten owns the insert for the duration of its
+        // own rewrite: as the active range it -- and every range enclosing
+        // it, which is how a mirror nested inside another field keeps its
+        // container -- grows with the fresh text, while the field the user
+        // is actually typing in stays inactive and so excludes a rewrite
+        // landing on its own edge.
+        buffer.SetActiveSnippetRange(id);
+        if (end > start) {
+            buffer.DeleteRange(start, end - start);
+        }
+        if (!replacement.empty()) {
+            buffer.InsertAt(start, replacement);
+        }
+        buffer.UpdateSnippetRange(id, start, start + replacement.size());
+    }
 }
 
 bool SnippetSession::RangesValid(const text::Buffer& buffer) const {

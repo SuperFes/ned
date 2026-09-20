@@ -288,9 +288,16 @@ diagnostics ship wired at five sites and not the sixth.
       returns a reference to stored state, so a migration means either touching all of
       them or materializing a vector per read -- and `Diagnostics()`/`SecondaryCursors()`
       are read inside `Paint()` loops. They already relocate correctly through the one
-      feed, so the churn buys nothing visible. The exception worth taking on its own
-      merits is snippet ranges, because there the migration closes a real open item
-      rather than just moving code -- see "Nested snippet placeholders" below.
+      feed, so the churn buys nothing visible. Snippet ranges were the candidate
+      exception — "migrate them and nested placeholders fall out" — and building nesting
+      for real showed that to be wrong (`git log --grep=nested-snippet-stops`): `Buffer`
+      already relocated each endpoint independently under its own gravity, so anchors
+      offered nothing it lacked. What nesting actually needed was *carried ancestry*
+      (which field encloses which — a placeholder that is exactly one nested stop shares
+      its parent's span, so geometry can't say) plus a gravity that changes on every TAB,
+      and `AnchorSet::Create` fixes a policy for the anchor's lifetime. A tenant whose
+      gravity is dynamic is the shape anchors do **not** fit today; that is the finding,
+      and it applies to any future migration candidate too.
 
 **What a second and third tenant cost, and the one rule they found.** An `AnchorId`
 carries no owner, so a handle from one buffer offered to another buffer's `AnchorSet` can
@@ -587,18 +594,16 @@ ordinary click) or `BufferView::ForwardMouseWhileSiblingDrags` (a real drop)).
       reported path, several same-named files) — deterministic, but it can be the
       wrong file. A prompt-to-choose would be the honest answer; not worth it until
       the silent wrong pick is actually seen.
-- [ ] **Nested snippet placeholders' inner stops** (`${1:foo ${2:bar}}` keeps only the
-      literal text "foo bar", the inner `$2` tabstop is dropped). Confirmed *not*
-      reachable via the tree-sitter fold-depth machinery (`CodeFold.h` re-derives a
-      fold's extent from a fresh AST parse on demand; a snippet body has no
-      grammar/parser behind it to re-derive anything from). The real blocker: field 2's
-      range would need to sit properly *contained inside* field 1's range, and
-      `Buffer::SnippetRange`'s relocation/gravity model currently only understands
-      "disjoint or adjacent" — true nesting needs new relocation semantics, not a
-      parser gap. Those semantics now exist: `Text/AnchorSet.h` (`sidecar-anchors`)
-      relocates each endpoint independently under its own gravity, which is what a
-      properly contained range needs, so this is now a migration of `SnippetRanges_` onto
-      anchors rather than a model to invent. Not attempted.
+- [ ] A snippet body that spells one tabstop index with two different placeholders
+      (`${2:A} ${1:foo ${2:bar}}`) renders the nested occurrence with its own baked text
+      until the first edit syncs the mirrors — the substitution for an index is resolved
+      before emission, so the nested run is already spliced by the time the top-level
+      placeholder wins. Ill-defined in the LSP grammar to begin with, and it degrades to
+      a cosmetic first-render disagreement, never a wrong edit (`nested-snippet-stops`).
+- [ ] A variable reference nested inside another placeholder's own default text still
+      doesn't resolve (only a top-level `$`/`${` reference does) — untouched by
+      `nested-snippet-stops`, which taught the placeholder parser about nested *tabstops*
+      only.
 - [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
       unstaged edits exist earlier in the file — exact in the common stage-then-undo
       flow; revisit only if it bites.
@@ -1190,6 +1195,18 @@ for closed-issue history.
   class of bug -- see `ModePrewarmTest.cpp` and the dynamic-mode-race entry closed
   earlier) rather than anything about cache invalidation specifically, but not
   root-caused -- logged rather than guessed at.
+
+- **Every editor-source edit recompiles all 74 grammar tables.**
+  `CMake/LanguageTables.cmake`'s per-language rule is `DEPENDS ned "${grammar}"`, so any
+  relink of the `ned` binary — a one-line change in `Text/Buffer.cpp`, a `Source/UI/`
+  tweak, anything — invalidates every `tables` output and costs roughly 5-10 minutes of
+  `--compile-language` runs before the test binary is even reached. The dependency is
+  right in principle (the table format is whatever the generator emits) but far too
+  coarse: the generator is `Editor/Grammar/Compile/` plus the Janet reader, not the
+  editor. Options if this gets picked up: a separate small `ned-compile-language` helper
+  executable linking only the generator (`libexec/ned`, the precedent already exists), or
+  stamping a generator-version/format hash the rule depends on instead of the binary.
+  Noted 2026-09-19 while building `nested-snippet-stops`; annoying rather than broken.
 
 ### Named Non-Goals (Leaning "Won't Do", Kept Visible So It's a Conscious Call)
 

@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <string>
+
 #include "Editor/Snippet.h"
 
 using ned::editor::ParsedSnippet;
@@ -97,12 +99,96 @@ TEST_CASE("ParseSnippet keeps adjacent fields distinct", "[Snippet]") {
     REQUIRE(FieldEquals(parsed.fields[2], 0, 2, 2));
 }
 
-TEST_CASE("ParseSnippet keeps a nested placeholder's text but drops its inner stop", "[Snippet]") {
+TEST_CASE("ParseSnippet keeps a nested placeholder's inner stop, contained in its parent", "[Snippet]") {
     const ParsedSnippet parsed = ParseSnippet("${1:foo ${2:bar}}");
     REQUIRE(parsed.text == "foo bar");
-    REQUIRE(parsed.fields.size() == 2);
+    REQUIRE(parsed.fields.size() == 3);
     REQUIRE(FieldEquals(parsed.fields[0], 1, 0, 7));
-    REQUIRE(FieldEquals(parsed.fields[1], 0, 7, 7));
+    REQUIRE(FieldEquals(parsed.fields[1], 2, 4, 7));
+    REQUIRE(FieldEquals(parsed.fields[2], 0, 7, 7));
+}
+
+TEST_CASE("ParseSnippet nests to arbitrary depth", "[Snippet]") {
+    const ParsedSnippet parsed = ParseSnippet("${1:a${2:b${3:c}}}");
+    REQUIRE(parsed.text == "abc");
+    REQUIRE(parsed.fields.size() == 4);
+    REQUIRE(FieldEquals(parsed.fields[0], 1, 0, 3));
+    REQUIRE(FieldEquals(parsed.fields[1], 2, 1, 3));
+    REQUIRE(FieldEquals(parsed.fields[2], 3, 2, 3));
+    REQUIRE(FieldEquals(parsed.fields[3], 0, 3, 3));
+}
+
+TEST_CASE("ParseSnippet records which field each nested field sits inside", "[Snippet]") {
+    // Parent links are positions in `fields`, rewritten through the
+    // visit-order sort -- the spans alone can't carry this, since a
+    // placeholder that is exactly one nested stop shares its span.
+    const ParsedSnippet parsed = ParseSnippet("${1:a${2:b${3:c}}} $1");
+    REQUIRE(parsed.text == "abc abc");
+    REQUIRE(parsed.fields.size() == 5);
+    REQUIRE(parsed.fields[0].index == 1);
+    REQUIRE(parsed.fields[0].parent == ned::editor::kNoParentField);
+    REQUIRE(parsed.fields[1].index == 1); // the flat mirror, also top level
+    REQUIRE(parsed.fields[1].parent == ned::editor::kNoParentField);
+    REQUIRE(parsed.fields[2].index == 2);
+    REQUIRE(parsed.fields[2].parent == 0);
+    REQUIRE(parsed.fields[3].index == 3);
+    REQUIRE(parsed.fields[3].parent == 2);
+    REQUIRE(parsed.fields[4].index == 0);
+}
+
+TEST_CASE("ParseSnippet nests a placeholder that is exactly one stop", "[Snippet]") {
+    const ParsedSnippet parsed = ParseSnippet("${1:${2:x}}");
+    REQUIRE(parsed.text == "x");
+    REQUIRE(parsed.fields.size() == 3);
+    REQUIRE(FieldEquals(parsed.fields[0], 1, 0, 1));
+    REQUIRE(FieldEquals(parsed.fields[1], 2, 0, 1)); // same span as its parent
+    REQUIRE(parsed.fields[1].parent == 0);
+    REQUIRE(FieldEquals(parsed.fields[2], 0, 1, 1));
+}
+
+TEST_CASE("ParseSnippet keeps a bare nested stop as a zero-width contained field", "[Snippet]") {
+    const ParsedSnippet parsed = ParseSnippet("${1:foo$2}");
+    REQUIRE(parsed.text == "foo");
+    REQUIRE(parsed.fields.size() == 3);
+    REQUIRE(FieldEquals(parsed.fields[0], 1, 0, 3));
+    REQUIRE(FieldEquals(parsed.fields[1], 2, 3, 3));
+    REQUIRE(FieldEquals(parsed.fields[2], 0, 3, 3));
+}
+
+TEST_CASE("ParseSnippet gives a nested $0 a real contained final stop", "[Snippet]") {
+    const ParsedSnippet parsed = ParseSnippet("${1:a$0b}");
+    REQUIRE(parsed.text == "ab");
+    REQUIRE(parsed.fields.size() == 2);
+    REQUIRE(FieldEquals(parsed.fields[0], 1, 0, 2));
+    REQUIRE(FieldEquals(parsed.fields[1], 0, 1, 1));
+}
+
+TEST_CASE("ParseSnippet mirrors a nested index at top level without nesting the mirror", "[Snippet]") {
+    const ParsedSnippet parsed = ParseSnippet("${1:foo ${2:bar}} $1 $2");
+    REQUIRE(parsed.text == "foo bar foo bar bar");
+    REQUIRE(parsed.fields.size() == 5);
+    // Index 1: the spelled occurrence first, then its flat mirror.
+    REQUIRE(FieldEquals(parsed.fields[0], 1, 0, 7));
+    REQUIRE(FieldEquals(parsed.fields[1], 1, 8, 15));
+    // Index 2: the nested occurrence is the placeholder-carrying one, so it
+    // stays the primary even though its mirror is further left in the text.
+    REQUIRE(FieldEquals(parsed.fields[2], 2, 4, 7));
+    REQUIRE(FieldEquals(parsed.fields[3], 2, 16, 19));
+    REQUIRE(FieldEquals(parsed.fields[4], 0, 19, 19));
+}
+
+TEST_CASE("ParseSnippet passes a body nested past the depth cap through as literal text", "[Snippet]") {
+    std::string body;
+    for (int i = 0; i < 12; ++i) {
+        body += "${1:";
+    }
+    body += "x";
+    body += std::string(12, '}');
+    const ParsedSnippet parsed = ParseSnippet(body);
+    // The outermost markers are the ones that exceed nothing, so what
+    // degrades is the innermost run -- the point is only that it parses,
+    // renders visible text and never recurses without bound.
+    REQUIRE(parsed.text.find('x') != std::string::npos);
 }
 
 TEST_CASE("ParseSnippet honors dollar and backslash escapes", "[Snippet]") {

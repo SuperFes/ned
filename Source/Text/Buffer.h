@@ -931,9 +931,18 @@ class Buffer {
     // text is inserted at either of its own edges (typing at the active
     // field's boundary extends the field), while an inactive range excludes
     // a boundary insert (so an insert at the seam between two adjacent
-    // fields lands in whichever of the two is active, never both). A range
-    // whose content is fully deleted becomes degenerate (start == end) and
-    // is kept -- an emptied field is still a navigable, refillable field.
+    // fields lands in whichever of the two is active, never both). Ranges
+    // are not required to be disjoint -- a nested snippet placeholder's
+    // field is properly contained inside the field it was written in -- and
+    // the active range's ancestors (parentId, walked upwards) share its
+    // inclusive gravity, since a container that didn't grow with what it
+    // contains would stop containing it. Ancestry is carried rather than
+    // inferred from the offsets on purpose: a placeholder that is exactly
+    // one nested stop gives parent and child the same span, and so does
+    // emptying a field, so geometry alone cannot say which way the
+    // containment runs. A range whose content is fully deleted becomes
+    // degenerate (start == end) and is kept -- an emptied field is still a
+    // navigable, refillable field.
     // Undo()/Redo() clear the whole set (the same v1 simplification
     // secondary cursors make: restoring field positions across a snapshot
     // restore has no obviously-right answer, and the owning session treats
@@ -943,7 +952,8 @@ class Buffer {
         int         tabstopIndex; // 0 = final stop; mirrors share an index
         std::size_t start;        // invariant: start <= end
         std::size_t end;
-        bool        active = false;
+        bool        active   = false;
+        std::size_t parentId = 0; // enclosing range's id; 0 = none (ids start at 1)
 
         bool operator==(const SnippetRange&) const = default;
     };
