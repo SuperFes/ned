@@ -14762,6 +14762,67 @@ TEST_CASE("Tab expands a registered snippet and mirrors track typing", "[BufferV
     REQUIRE(fixture.buffer.Text() == "for (idx; idx < n; ++idx)   ");
 }
 
+TEST_CASE("A nested snippet placeholder is a real tabstop of its own", "[BufferView]") {
+    const SnippetRegistryTestGuard guard;
+    ned::editor::RegisterSnippet("", "decl", "${1:int ${2:name}};");
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    TypeText(view, "decl");
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(fixture.buffer.Text() == "int name;");
+    // Field 1 spans "int name", field 2 "name" inside it, plus the final stop.
+    REQUIRE(fixture.buffer.SnippetRanges().size() == 3);
+    REQUIRE(fixture.statusMessage == "Snippet field 1/2 (TAB next, S-TAB previous, ESC done)");
+
+    // Tab into the contained field and retype it: the outer field has to
+    // grow with it, so the next Tab's final stop still lands past the ';'.
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(fixture.statusMessage == "Snippet field 2/2 (TAB next, S-TAB previous, ESC done)");
+    TypeText(view, "counter");
+    REQUIRE(fixture.buffer.Text() == "int counter;");
+
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(fixture.buffer.SnippetRanges().empty());
+    REQUIRE(fixture.buffer.Point() == 12);
+}
+
+TEST_CASE("Typing in a nested snippet field updates the enclosing field's mirrors", "[BufferView]") {
+    const SnippetRegistryTestGuard guard;
+    ned::editor::RegisterSnippet("", "dup", "${1:a${2:b}} = $1;");
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    TypeText(view, "dup");
+    view.OnEvent(ned::ui::test::Tab());
+    REQUIRE(fixture.buffer.Text() == "ab = ab;");
+
+    view.OnEvent(ned::ui::test::Tab()); // into the nested field
+    TypeText(view, "Z");
+    // The inner edit changed the field containing it, so index 1's own
+    // mirror follows it too.
+    REQUIRE(fixture.buffer.Text() == "aZ = aZ;");
+}
+
+TEST_CASE("Overwriting an outer snippet field leaves its nested stop navigable", "[BufferView]") {
+    const SnippetRegistryTestGuard guard;
+    ned::editor::RegisterSnippet("", "decl", "${1:int ${2:name}};");
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+
+    TypeText(view, "decl");
+    view.OnEvent(ned::ui::test::Tab());
+    // Pristine placeholder: the first character replaces the whole outer
+    // field, collapsing the field nested inside it.
+    TypeText(view, "auto x");
+    REQUIRE(fixture.buffer.Text() == "auto x;");
+
+    // The collapsed inner stop is still there to Tab into and refill.
+    view.OnEvent(ned::ui::test::Tab());
+    TypeText(view, "!");
+    REQUIRE(fixture.buffer.Text() == "auto x!;");
+}
+
 TEST_CASE("Backspace on a pristine placeholder deletes it whole and stays in session", "[BufferView]") {
     const SnippetRegistryTestGuard guard;
     ned::editor::RegisterSnippet("", "greet", "hello ${1:world}!");

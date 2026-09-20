@@ -19,13 +19,23 @@
 // snippet-expansion-gaps follow-up: `$TM_*`/other editor-context variables,
 // `${1|a,b|}` choices, and `${1/regex/format/flags}` tabstop transforms are
 // all real support now -- see SnippetVariables/SnippetTransform below and
-// TryParseVariable/ParseTransformSuffix in the .cpp. A nested placeholder
-// (`${1:foo ${2:bar}}`) still contributes only its literal text ("foo bar")
-// with the inner tabstop dropped, and a variable reference nested inside
-// another placeholder's own default text doesn't resolve (only a top-level
-// `$`/`${` reference does) -- both stay documented v1 cuts: overlapping
-// field ranges are a relocation-semantics can of worms, and the nested-
-// variable case is rare enough not to be worth it either.
+// TryParseVariable/ParseTransformSuffix in the .cpp.
+//
+// A nested placeholder (`${1:foo ${2:bar}}`) is a real tabstop: field 2's
+// range sits properly contained inside field 1's, and Buffer's snippet
+// relocation grows a containing field whenever the field inside it grows.
+// Only the occurrence that spelled the nesting carries it -- a mirror of
+// the same index substitutes the identical text as flat literal, so the
+// session's wholesale mirror rewrite can never land on a live inner field.
+// Nesting is capped at kMaxNestingDepth levels; past that the body falls
+// through as literal text like any other ill-formed input.
+//
+// Two v1 cuts remain. A variable reference nested inside another
+// placeholder's own default text doesn't resolve (only a top-level
+// `$`/`${` reference does), and a body spelling one index with two
+// different placeholders (`${2:A} ${1:foo ${2:bar}}`) renders the nested
+// occurrence with its own baked text until the first edit syncs the
+// mirrors -- both rare enough not to be worth the machinery.
 //
 
 #ifndef NED_EDITOR_SNIPPET_H
@@ -80,6 +90,11 @@ struct SnippetTransform {
     bool        global = false; // the /g flag -- every match transformed, not just the first
 };
 
+// A SnippetField::parent that names no field: this occurrence was written
+// at the body's top level rather than inside another occurrence's
+// placeholder.
+inline constexpr std::size_t kNoParentField = static_cast<std::size_t>(-1);
+
 // One field occurrence in ParsedSnippet::text. index 0 is the final stop.
 struct SnippetField {
     int         index;
@@ -89,13 +104,22 @@ struct SnippetField {
     // `${N/regex/format/flags}` -- a plain mirror (bare `$N`/`${N}`) or the
     // placeholder-carrying primary never carries one.
     std::optional<SnippetTransform> transform;
+    // Position in ParsedSnippet::fields of the occurrence this one was
+    // written inside, or kNoParentField. Carried explicitly rather than
+    // recomputed from the offsets, because a placeholder that is exactly
+    // one nested stop (`${1:${2:x}}`) gives parent and child the same span
+    // -- and so does emptying a field -- so geometry alone cannot tell
+    // which way the containment runs.
+    std::size_t parent = kNoParentField;
 };
 
 // fields is ordered by visit order -- ascending index with 0 sorted last --
 // and, within one index, the primary occurrence (the first one whose own
 // syntax carried a placeholder, else the first occurrence) ahead of its
 // mirrors in document order. A session leans on that contract: "the first
-// field listed for an index" is where point lands when the index is visited.
+// field listed for an index" is where point lands when the index is
+// visited. Ranges are not disjoint: a nested placeholder's field is
+// contained inside the field it was written in.
 struct ParsedSnippet {
     std::string               text;   // body with all markers stripped, placeholders substituted
     std::vector<SnippetField> fields; // every occurrence, mirrors included; never empty (implicit $0)
@@ -153,12 +177,14 @@ class SnippetSession {
     void               DeleteActiveFieldContent(text::Buffer& buffer);
 
     // Propagates the active field's current content to its mirrors (same
-    // tabstop index). No-op when nothing changed since the last sync; each
-    // mirror rewrite is a real DeleteRange+InsertAt, re-reading the
-    // buffer's ranges between edits (every edit relocates every other
-    // range) and repairing the rewritten mirror via UpdateSnippetRange.
-    // Caller owns undo grouping (one group per keystroke wraps the
-    // dispatched edit and this sync together).
+    // tabstop index), and then any enclosing field's content to that
+    // index's mirrors -- typing in a nested field changes the field it sits
+    // inside, so both sets of mirrors are stale. No-op when nothing changed
+    // since the last sync; each mirror rewrite is a real
+    // DeleteRange+InsertAt, re-reading the buffer's ranges between edits
+    // (every edit relocates every other range) and repairing the rewritten
+    // mirror via UpdateSnippetRange. Caller owns undo grouping (one group
+    // per keystroke wraps the dispatched edit and this sync together).
     void SyncMirrors(text::Buffer& buffer);
 
     // False once the buffer's snippet ranges are gone (undo/redo cleared
@@ -175,6 +201,10 @@ class SnippetSession {
     // Enters visitOrder_[activePos_]: marks its primary range active, puts
     // point at the field's end, arms Pristine for a non-empty field.
     void                                            EnterActiveField(text::Buffer& buffer);
+    // Rewrites every mirror of sourceId's tabstop index from sourceId's own
+    // current content. SyncMirrors' per-source half, called once for the
+    // active field and once for each field enclosing it.
+    void                                            SyncIndexFrom(text::Buffer& buffer, std::size_t sourceId);
     [[nodiscard]] const text::Buffer::SnippetRange* FindRange(const text::Buffer& buffer,
                                                               std::size_t         id) const;
 

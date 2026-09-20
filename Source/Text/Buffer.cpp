@@ -1524,8 +1524,37 @@ void Buffer::UpdateSnippetRange(std::size_t id, std::size_t start, std::size_t e
 }
 
 void Buffer::RelocateSnippetRangesForInsert(std::size_t insertOffset, std::size_t length) {
+    if (SnippetRanges_.empty()) {
+        return;
+    }
+    // A nested snippet field sits properly inside the field it was written
+    // in, and containment has to survive every insert: when the inner field
+    // grows at an edge the two share, the outer one has to grow with it or
+    // it stops containing what it contains. So the inclusive gravity below
+    // belongs to the active field *and* to its ancestors, not to the active
+    // field alone. Everything else keeps the exclusive rule, which is what
+    // still makes an insert at the seam between two adjacent fields land in
+    // exactly one of them -- and what keeps a field *inside* the active one
+    // from absorbing text typed into its container.
+    std::vector<std::size_t> inclusiveIds;
+    for (const SnippetRange& range : SnippetRanges_) {
+        if (!range.active) {
+            continue;
+        }
+        // Bounded by the range count so a malformed parent chain (a cycle,
+        // an id that outlived its range) costs a wasted walk, never a hang.
+        std::size_t id = range.id;
+        for (std::size_t step = 0; step < SnippetRanges_.size() && id != 0; ++step) {
+            inclusiveIds.push_back(id);
+            const auto parent = std::find_if(SnippetRanges_.begin(), SnippetRanges_.end(),
+                                             [id](const SnippetRange& candidate) { return candidate.id == id; });
+            id                = parent != SnippetRanges_.end() ? parent->parentId : 0;
+        }
+        break;
+    }
     for (SnippetRange& range : SnippetRanges_) {
-        if (range.active) {
+        const bool inclusive = std::find(inclusiveIds.begin(), inclusiveIds.end(), range.id) != inclusiveIds.end();
+        if (inclusive) {
             // The active field grows when text lands at either of its own
             // edges: an insert exactly at start stays outside-left of the
             // shift (start keeps its position, the new text is inside), an

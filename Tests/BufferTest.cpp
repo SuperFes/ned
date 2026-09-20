@@ -1444,8 +1444,8 @@ TEST_CASE("RestoreContent to empty over a nonempty saved snapshot still reads Mo
 namespace {
 
 Buffer::SnippetRange SnipRange(std::size_t id, int index, std::size_t start, std::size_t end,
-                               bool active = false) {
-    return Buffer::SnippetRange{id, index, start, end, active};
+                               bool active = false, std::size_t parentId = 0) {
+    return Buffer::SnippetRange{id, index, start, end, active, parentId};
 }
 
 } // namespace
@@ -1520,6 +1520,92 @@ TEST_CASE("Snippet ranges at buffer boundaries relocate correctly", "[Buffer]") 
     buffer.InsertAt(0, "Z"); // offset 0, before the active start? No: at it -> grows
     REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 0, 2, true));
     REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 0, 3, 3, false));
+}
+
+TEST_CASE("A nested snippet field stays contained while the inner field grows", "[Buffer]") {
+    // `${1:foo ${2:bar}}` expanded: field 1 spans "foo bar", field 2 "bar".
+    Buffer buffer("scratch", ned::text::Rope("foo bar"));
+    buffer.SetSnippetRanges({SnipRange(1, 1, 0, 7, false), SnipRange(2, 2, 4, 7, true, 1)});
+
+    buffer.InsertAt(7, "X"); // the edge both fields share
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 0, 8, false));
+    REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 2, 4, 8, true, 1));
+
+    buffer.InsertAt(4, "Y"); // the inner field's own start, inside the outer
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 0, 9, false));
+    REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 2, 4, 9, true, 1));
+
+    buffer.InsertAt(0, "Z"); // the outer's start: inside the outer, before the inner
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 0, 10, false));
+    REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 2, 5, 10, true, 1));
+}
+
+TEST_CASE("An outer snippet field being typed into keeps text out of the field it contains", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("foo bar"));
+    buffer.SetSnippetRanges({SnipRange(1, 1, 0, 7, true), SnipRange(2, 2, 4, 7, false, 1)});
+
+    buffer.InsertAt(7, "X"); // shared edge, outer active -> only the outer grows
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 0, 8, true));
+    REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 2, 4, 7, false, 1));
+
+    buffer.InsertAt(4, "Y"); // the inner's start -> the inner shifts whole, outer grows
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 0, 9, true));
+    REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 2, 5, 8, false, 1));
+}
+
+TEST_CASE("Overwriting an outer snippet field collapses the field it contains", "[Buffer]") {
+    Buffer buffer("scratch", ned::text::Rope("foo bar"));
+    buffer.SetSnippetRanges({SnipRange(1, 1, 0, 7, true), SnipRange(2, 2, 4, 7, false, 1)});
+
+    buffer.DeleteRange(0, 7); // the pristine-placeholder overwrite
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 0, 0, true));
+    // Degenerate but kept, and still contained: an emptied nested field is
+    // still navigable and refillable.
+    REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 2, 0, 0, false, 1));
+
+    // The text now goes into the outer field the user is typing in, not
+    // into the emptied field inside it -- which the offsets alone can't
+    // say, since both spans are the same point.
+    buffer.InsertAt(0, "x");
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 0, 1, true));
+    REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 2, 1, 1, false, 1));
+}
+
+TEST_CASE("A nested snippet field with its parent's exact span still grows its parent", "[Buffer]") {
+    // `${1:${2:x}}`: the two spans are identical, so which one contains the
+    // other is only knowable from the recorded parent link.
+    Buffer buffer("scratch", ned::text::Rope("x"));
+    buffer.SetSnippetRanges({SnipRange(1, 1, 0, 1, false), SnipRange(2, 2, 0, 1, true, 1)});
+
+    buffer.InsertAt(1, "y");
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 0, 2, false));
+    REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 2, 0, 2, true, 1));
+}
+
+TEST_CASE("Three nested snippet fields all stay contained through an insert", "[Buffer]") {
+    // `${1:a${2:b${3:c}}}` expanded to "abc".
+    Buffer buffer("scratch", ned::text::Rope("abc"));
+    buffer.SetSnippetRanges(
+        {SnipRange(1, 1, 0, 3, false), SnipRange(2, 2, 1, 3, false, 1), SnipRange(3, 3, 2, 3, true, 2)});
+
+    buffer.InsertAt(3, "Z"); // the edge all three share
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 0, 4, false));
+    REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 2, 1, 4, false, 1));
+    REQUIRE(buffer.SnippetRanges()[2] == SnipRange(3, 3, 2, 4, true, 2));
+}
+
+TEST_CASE("A snippet field that does not enclose the active one keeps exclusive gravity", "[Buffer]") {
+    // The adjacent-fields rule has to survive the containment rule: field 3
+    // starts exactly where the active field 2 ends, and must not absorb the
+    // insert that field 2 claims.
+    Buffer buffer("scratch", ned::text::Rope("abcd"));
+    buffer.SetSnippetRanges(
+        {SnipRange(1, 1, 0, 4, false), SnipRange(2, 2, 1, 2, true, 1), SnipRange(3, 3, 2, 3, false, 1)});
+
+    buffer.InsertAt(2, "X");
+    REQUIRE(buffer.SnippetRanges()[0] == SnipRange(1, 1, 0, 5, false));    // ancestor: grows
+    REQUIRE(buffer.SnippetRanges()[1] == SnipRange(2, 2, 1, 3, true, 1));  // active: grows
+    REQUIRE(buffer.SnippetRanges()[2] == SnipRange(3, 3, 3, 4, false, 1)); // sibling: shifts
 }
 
 TEST_CASE("Snippet ranges relocate through deletes and keep an emptied field", "[Buffer]") {
