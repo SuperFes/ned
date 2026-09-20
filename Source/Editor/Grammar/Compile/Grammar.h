@@ -186,6 +186,15 @@ struct Rule {
 // non-terminal extra are two extra bits. Equality is set equality. The
 // generator holds these in maps and compares them constantly, so nothing
 // here allocates except Symbols()/Terminals().
+// One round of a 64-bit mix, for the hash-keyed lookups the table builder
+// leans on (ParseTable.cpp). Not a stable hash: it is only ever used inside
+// one compile, never written to a `tables` file.
+inline std::size_t HashCombine(std::size_t seed, std::uint64_t value) {
+    value *= 0x9E37'79B9'7F4A'7C15ULL;
+    value ^= value >> 32;
+    return seed * 0x0100'0000'01B3ULL ^ value;
+}
+
 class TokenSet {
   public:
     void               Insert(Symbol symbol);
@@ -222,6 +231,9 @@ class TokenSet {
     // The order of Symbols() compared lexicographically, computed on the
     // words: what a map keyed on token sets iterates by.
     [[nodiscard]] std::strong_ordering Compare(const TokenSet& other) const;
+    // Agrees with operator==: the representation is canonical (no trailing
+    // zero word), so equal sets hash equal.
+    [[nodiscard]] std::size_t          Hash() const;
     bool                               operator<(const TokenSet& other) const {
         return Compare(other) == std::strong_ordering::less;
     }

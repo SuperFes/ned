@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <deque>
 #include <set>
+#include <unordered_map>
 
 #include "Editor/Grammar/Compile/LexTable.h"
 
@@ -64,6 +65,18 @@ void ParseState::UpdateReferencedStates(const std::function<ParseStateId(ParseSt
 
 namespace {
 
+    // A Symbol packed into one integer, ordered exactly as Symbol's own <=>
+    // orders it (kind, then index). Entries keep the order the std::map
+    // they came from held them in, and the merge walks below compare one
+    // integer instead of a two-field spaceship.
+    constexpr std::uint64_t SymbolKey(Symbol symbol) {
+        return (static_cast<std::uint64_t>(symbol.kind) << 32) | symbol.index;
+    }
+
+    constexpr Symbol KeyedSymbol(std::uint64_t key) {
+        return {static_cast<SymbolType>(key >> 32), static_cast<std::uint32_t>(key)};
+    }
+
     // --- items ----------------------------------------------------------------
 
     const Production& StartProduction() {
@@ -83,9 +96,14 @@ namespace {
         // Whether an already-matched child was hidden and had fields: then
         // the preceding children's symbols matter for equality.
         bool hasPrecedingInheritedFields = false;
+        // This production's Order ranks, one per step index (ItemOrderRanks
+        // below). Carried rather than looked up because Successor() and
+        // every copy inherit it: only the handful of sites that change the
+        // production ever need a new row.
+        const std::uint32_t* ranks = nullptr;
 
-        static ParseItem Start() {
-            return {};
+        static ParseItem Start(const std::uint32_t* startRanks) {
+            return {.ranks = startRanks};
         }
         [[nodiscard]] const ProductionStep* Step() const {
             return stepIndex < production->steps.size() ? &production->steps[stepIndex] : nullptr;
@@ -117,41 +135,23 @@ namespace {
             item.stepIndex++;
             return item;
         }
-        [[nodiscard]] ParseItem WithProduction(const Production* other) const {
+        [[nodiscard]] ParseItem WithProduction(const Production* other, const std::uint32_t* otherRanks) const {
             ParseItem item  = *this;
             item.production = other;
+            item.ranks      = otherRanks;
             return item;
         }
 
         // The reference's Ord: already-matched steps count only by alias and
-        // field. Used for the position of an item within a set.
+        // field. Used for the position of an item within a set. Everything
+        // after variableIndex is a property of (production, stepIndex), and
+        // ranks[] is that comparison already made (CompareProductionAtStep).
         [[nodiscard]] std::strong_ordering Order(const ParseItem& other) const {
             if (const auto c = stepIndex <=> other.stepIndex; c != 0)
                 return c;
             if (const auto c = variableIndex <=> other.variableIndex; c != 0)
                 return c;
-            if (const auto c = production->dynamicPrecedence <=> other.production->dynamicPrecedence; c != 0)
-                return c;
-            if (const auto c = production->steps.size() <=> other.production->steps.size(); c != 0)
-                return c;
-            if (const auto c = ItemPrecedence() <=> other.ItemPrecedence(); c != 0)
-                return c;
-            if (const auto c = ItemAssociativity() <=> other.ItemAssociativity(); c != 0)
-                return c;
-            for (std::size_t i = 0; i < production->steps.size(); ++i) {
-                const ProductionStep& a = production->steps[i];
-                const ProductionStep& b = other.production->steps[i];
-                if (i < stepIndex) {
-                    if (const auto c = a.alias <=> b.alias; c != 0)
-                        return c;
-                    if (const auto c = a.fieldName <=> b.fieldName; c != 0)
-                        return c;
-                }
-                else if (const auto c = a <=> b; c != 0) {
-                    return c;
-                }
-            }
-            return std::strong_ordering::equal;
+            return ranks[stepIndex] <=> other.ranks[stepIndex];
         }
 
         // The reference's Eq: Order-equal, plus the inherited-fields flag and,
@@ -166,17 +166,16 @@ namespace {
             return true;
         }
 
-        // A total order consistent with Equals, for map keys.
-        [[nodiscard]] std::strong_ordering KeyOrder(const ParseItem& other) const {
-            if (const auto c = Order(other); c != 0)
-                return c;
-            if (const auto c = hasPrecedingInheritedFields <=> other.hasPrecedingInheritedFields; c != 0)
-                return c;
+        // Agrees with Equals: the three terms Order compares, the flag, and
+        // the matched symbols the flag makes significant.
+        [[nodiscard]] std::size_t Hash() const {
+            std::size_t hash = HashCombine(ranks[stepIndex], stepIndex);
+            hash             = HashCombine(hash, variableIndex);
+            hash             = HashCombine(hash, hasPrecedingInheritedFields ? 1U : 0U);
             if (hasPrecedingInheritedFields)
                 for (std::size_t i = 0; i < stepIndex; ++i)
-                    if (const auto c = production->steps[i].symbol <=> other.production->steps[i].symbol; c != 0)
-                        return c;
-            return std::strong_ordering::equal;
+                    hash = HashCombine(hash, SymbolKey(production->steps[i].symbol));
+            return hash;
         }
     };
 
@@ -197,35 +196,58 @@ namespace {
             return *entries.insert(pos, ParseItemSetEntry{.item = item});
         }
 
-        [[nodiscard]] std::strong_ordering KeyOrder(const ParseItemSet& other) const {
-            for (std::size_t i = 0; i < entries.size() && i < other.entries.size(); ++i) {
+        [[nodiscard]] bool KeyEquals(const ParseItemSet& other) const {
+            if (entries.size() != other.entries.size())
+                return false;
+            for (std::size_t i = 0; i < entries.size(); ++i) {
                 const ParseItemSetEntry& a = entries[i];
                 const ParseItemSetEntry& b = other.entries[i];
-                if (const auto c = a.item.KeyOrder(b.item); c != 0)
-                    return c;
-                if (a.lookaheads < b.lookaheads)
-                    return std::strong_ordering::less;
-                if (b.lookaheads < a.lookaheads)
-                    return std::strong_ordering::greater;
-                if (const auto c = a.followingReservedWordSet <=> b.followingReservedWordSet; c != 0)
-                    return c;
+                if (a.followingReservedWordSet != b.followingReservedWordSet || !(a.lookaheads == b.lookaheads) || !a.item.Equals(b.item))
+                    return false;
             }
-            return entries.size() <=> other.entries.size();
+            return true;
+        }
+
+        [[nodiscard]] std::size_t Hash() const {
+            std::size_t hash = entries.size();
+            for (const ParseItemSetEntry& entry : entries) {
+                hash = HashCombine(hash, entry.item.Hash());
+                hash = HashCombine(hash, entry.lookaheads.Hash());
+                hash = HashCombine(hash, entry.followingReservedWordSet);
+            }
+            return hash;
         }
     };
 
-    struct ItemSetKeyLess {
+    // The builder looks states and cores up by identity and never walks
+    // either map in order, so both are hashed rather than tree-ordered: a
+    // lookup costs one pass over the item set instead of the ~log(states)
+    // whole-item-set comparisons an ordered map needs, each of which
+    // compared lookahead sets token by token.
+    struct ItemSetHash {
+        std::size_t operator()(const ParseItemSet& set) const {
+            return set.Hash();
+        }
+    };
+
+    struct ItemSetKeyEqual {
         bool operator()(const ParseItemSet& a, const ParseItemSet& b) const {
-            return a.KeyOrder(b) == std::strong_ordering::less;
+            return a.KeyEquals(b);
         }
     };
 
-    struct CoreKeyLess {
+    struct CoreHash {
+        std::size_t operator()(const std::vector<ParseItem>& core) const {
+            std::size_t hash = core.size();
+            for (const ParseItem& item : core)
+                hash = HashCombine(hash, item.Hash());
+            return hash;
+        }
+    };
+
+    struct CoreKeyEqual {
         bool operator()(const std::vector<ParseItem>& a, const std::vector<ParseItem>& b) const {
-            for (std::size_t i = 0; i < a.size() && i < b.size(); ++i)
-                if (const auto c = a[i].KeyOrder(b[i]); c != 0)
-                    return c == std::strong_ordering::less;
-            return a.size() < b.size();
+            return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin(), [](const ParseItem& x, const ParseItem& y) { return x.Equals(y); });
         }
     };
 
@@ -254,9 +276,98 @@ namespace {
         }
     };
 
+    // ParseItem::Order is a lexicographic chain, and every term in it after
+    // variableIndex is a property of (production, stepIndex) alone: the
+    // dynamic precedence, the step count, the preceding step's precedence
+    // and associativity, and then the steps themselves -- compared by alias
+    // and field before the dot, whole after it. This is that comparison,
+    // spelled out once so it can be made ahead of time.
+    std::strong_ordering CompareProductionAtStep(const Production& left, const Production& right, std::size_t step) {
+        static const Precedence kNone;
+        if (const auto c = left.dynamicPrecedence <=> right.dynamicPrecedence; c != 0)
+            return c;
+        if (const auto c = left.steps.size() <=> right.steps.size(); c != 0)
+            return c;
+        const bool        matched         = step > 0;
+        const Precedence& leftPrecedence  = matched ? left.steps[step - 1].precedence : kNone;
+        const Precedence& rightPrecedence = matched ? right.steps[step - 1].precedence : kNone;
+        if (const auto c = leftPrecedence <=> rightPrecedence; c != 0)
+            return c;
+        const std::optional<Associativity> leftAssociativity  = matched ? left.steps[step - 1].associativity : std::nullopt;
+        const std::optional<Associativity> rightAssociativity = matched ? right.steps[step - 1].associativity : std::nullopt;
+        if (const auto c = leftAssociativity <=> rightAssociativity; c != 0)
+            return c;
+        for (std::size_t i = 0; i < left.steps.size(); ++i) {
+            const ProductionStep& a = left.steps[i];
+            const ProductionStep& b = right.steps[i];
+            if (i < step) {
+                if (const auto c = a.alias <=> b.alias; c != 0)
+                    return c;
+                if (const auto c = a.fieldName <=> b.fieldName; c != 0)
+                    return c;
+            }
+            else if (const auto c = a <=> b; c != 0) {
+                return c;
+            }
+        }
+        return std::strong_ordering::equal;
+    }
+
+    // An integer rank per (production, step index), standing in for that
+    // whole comparison. A grammar has a few thousand such pairs, so ranking
+    // them costs one sort per step index; in exchange the generator's
+    // innermost comparison stops walking ProductionStep's defaulted <=>,
+    // which reaches Precedence's and fieldName's strings and dominated the
+    // profile. Ranks are only ever compared within one step index, because
+    // Order settles a differing stepIndex before it looks at them.
+    class ItemOrderRanks {
+      public:
+        ItemOrderRanks(const SyntaxGrammar& syntax, const InlinedProductionMap& inlines) {
+            std::vector<const Production*> all{&StartProduction()};
+            for (const SyntaxVariable& variable : syntax.variables)
+                for (const Production& production : variable.productions)
+                    all.push_back(&production);
+            for (const Production& production : inlines.productions)
+                all.push_back(&production);
+
+            std::size_t maxSteps = 0;
+            for (const Production* production : all) {
+                maxSteps = std::max(maxSteps, production->steps.size());
+                ranks_[production].assign(production->steps.size() + 1, 0);
+            }
+
+            std::vector<const Production*> bucket;
+            for (std::size_t step = 0; step <= maxSteps; ++step) {
+                bucket.clear();
+                for (const Production* production : all)
+                    if (step <= production->steps.size())
+                        bucket.push_back(production);
+                std::sort(bucket.begin(), bucket.end(), [step](const Production* a, const Production* b) {
+                    return CompareProductionAtStep(*a, *b, step) < 0;
+                });
+                std::uint32_t rank = 0;
+                for (std::size_t i = 0; i < bucket.size(); ++i) {
+                    if (i > 0 && CompareProductionAtStep(*bucket[i - 1], *bucket[i], step) != 0)
+                        ++rank;
+                    ranks_[bucket[i]][step] = rank;
+                }
+            }
+        }
+
+        // Stable across this object being moved: the rows are heap buffers
+        // the map's nodes merely point at, and ParseItems hold them
+        // directly.
+        [[nodiscard]] const std::uint32_t* For(const Production* production) const {
+            return ranks_.at(production).data();
+        }
+
+      private:
+        std::unordered_map<const Production*, std::vector<std::uint32_t>> ranks_;
+    };
+
     class ParseItemSetBuilder {
       public:
-        ParseItemSetBuilder(const SyntaxGrammar& syntax, const LexicalGrammar& lexical, const InlinedProductionMap& inlines) : syntax_(syntax), inlines_(inlines) {
+        ParseItemSetBuilder(const SyntaxGrammar& syntax, const LexicalGrammar& lexical, const InlinedProductionMap& inlines) : syntax_(syntax), inlines_(inlines), ranks_(syntax, inlines) {
             for (std::size_t i = 0; i < lexical.variables.size(); ++i) {
                 const Symbol symbol = Symbol::Terminal(static_cast<std::uint32_t>(i));
                 TokenSet     set;
@@ -367,10 +478,10 @@ namespace {
                     if (syntax.IsInlined(nonTerminal))
                         continue;
                     for (const Production& production : variable.productions) {
-                        const ParseItem item{.variableIndex = static_cast<std::uint32_t>(variableIndex), .stepIndex = 0, .production = &production};
+                        const ParseItem item{.variableIndex = static_cast<std::uint32_t>(variableIndex), .stepIndex = 0, .production = &production, .ranks = ranks_.For(&production)};
                         if (const std::vector<std::size_t>* inlined = inlines.InlinedProductions(&production, 0)) {
                             for (const std::size_t index : *inlined)
-                                FindOrPush(additions, {item.WithProduction(&inlines.productions[index]), followSetInfo});
+                                FindOrPush(additions, {item.WithProduction(&inlines.productions[index], ranks_.For(&inlines.productions[index])), followSetInfo});
                         }
                         else {
                             FindOrPush(additions, {item, followSetInfo});
@@ -386,7 +497,7 @@ namespace {
                 if (const std::vector<std::size_t>* inlined = inlines_.InlinedProductions(entry.item.production, entry.item.stepIndex)) {
                     for (const std::size_t index : *inlined) {
                         ParseItemSetEntry substituted = entry;
-                        substituted.item              = entry.item.WithProduction(&inlines_.productions[index]);
+                        substituted.item              = entry.item.WithProduction(&inlines_.productions[index], ranks_.For(&inlines_.productions[index]));
                         AddItem(result, substituted);
                     }
                 }
@@ -407,10 +518,14 @@ namespace {
         [[nodiscard]] const TokenSet& LastSet(Symbol symbol) const {
             return lastSets_.at(symbol);
         }
+        [[nodiscard]] const ItemOrderRanks& Ranks() const {
+            return ranks_;
+        }
 
       private:
         const SyntaxGrammar&                                syntax_;
         const InlinedProductionMap&                         inlines_;
+        ItemOrderRanks                                      ranks_;
         std::map<Symbol, TokenSet>                          firstSets_;
         std::map<Symbol, ReservedWordSetId>                 reservedFirstSets_;
         std::map<Symbol, TokenSet>                          lastSets_;
@@ -485,7 +600,7 @@ namespace {
             AddParseState({}, {}, ParseItemSet{}); // error state, id 0
 
             ParseItemSet start;
-            start.entries.push_back({.item = ParseItem::Start(), .lookaheads = TokenSet::Of({Symbol::End()}), .followingReservedWordSet = 0});
+            start.entries.push_back({.item = ParseItem::Start(itemSetBuilder_.Ranks().For(&StartProduction())), .lookaheads = TokenSet::Of({Symbol::End()}), .followingReservedWordSet = 0});
             AddParseState({}, {}, std::move(start)); // start state, id 1
 
             std::map<Symbol, ParseItemSet> extraItemSetsByFirstTerminal;
@@ -493,7 +608,7 @@ namespace {
                 if (!extra.IsNonTerminal())
                     continue;
                 for (const Production& production : syntax_.variables[extra.index].productions) {
-                    const ParseItem item{.variableIndex = extra.index, .stepIndex = 1, .production = &production};
+                    const ParseItem item{.variableIndex = extra.index, .stepIndex = 1, .production = &production, .ranks = itemSetBuilder_.Ranks().For(&production)};
                     extraItemSetsByFirstTerminal[*production.FirstSymbol()].Insert(item).lookaheads.Insert(Symbol::EndOfNonTerminalExtra());
                 }
             }
@@ -527,8 +642,8 @@ namespace {
         const LexicalGrammar&                                      lexical_;
         ParseItemSetBuilder                                        itemSetBuilder_;
         const std::vector<VariableInfo>&                           variableInfo_;
-        std::map<std::vector<ParseItem>, std::size_t, CoreKeyLess> coreIdsByCore_;
-        std::map<ParseItemSet, ParseStateId, ItemSetKeyLess>       stateIdsByItemSet_;
+        std::unordered_map<std::vector<ParseItem>, std::size_t, CoreHash, CoreKeyEqual> coreIdsByCore_;
+        std::unordered_map<ParseItemSet, ParseStateId, ItemSetHash, ItemSetKeyEqual>    stateIdsByItemSet_;
         std::vector<StateInfo>                                     stateInfoById_;
         std::deque<QueueEntry>                                     queue_;
         std::vector<std::pair<Symbol, ParseStateId>>               nonTerminalExtraStates_;
@@ -1019,41 +1134,107 @@ namespace {
             }
         }
 
+        // EntriesConflict compares two entries' actions verbatim except for
+        // shift targets, which it compares through the current grouping. So
+        // an entry splits into a `shape` -- every field compared verbatim,
+        // interned to an id -- and its shift targets, which stay out of the
+        // shape because the grouping changes as the split loop runs. Equal
+        // shapes with equally-grouped targets is exactly "no conflict", so
+        // the pairwise walk below compares integers rather than action
+        // vectors reached through a std::map's nodes.
+        struct FlatEntry {
+            std::uint64_t symbol     = 0;
+            std::uint32_t shape      = 0;
+            std::uint32_t shiftCount = 0;
+            ParseStateId  firstShift = 0; // unused, and 0 in both, when shiftCount is 0
+            std::uint32_t shiftAt    = 0; // into extraShifts_, for targets past the first
+        };
+
         // The pairwise questions below run for every pair of states in a
         // core group, so they work on flat, sorted copies of each state's
         // entries (walked together, never looked up) and memoize the
         // per-(state, token) conflict test.
         struct StateView {
-            std::vector<std::pair<Symbol, const ParseTableEntry*>> terminals;
-            std::vector<std::uint32_t>                             terminalIndices; // Terminal-kind tokens only
-            std::vector<std::pair<Symbol, ParseStateId>>           shiftTargets;    // terminals whose last action shifts
-            std::vector<std::pair<Symbol, GotoAction>>             gotos;
-            const TokenSet*                                        reservedWords = nullptr;
-            std::size_t                                            id            = 0;
+            std::vector<FlatEntry>                              terminals;
+            std::vector<std::uint32_t>                          terminalIndices; // Terminal-kind tokens only
+            std::vector<std::pair<std::uint64_t, ParseStateId>> shiftTargets;    // terminals whose last action shifts
+            std::vector<std::pair<std::uint64_t, GotoAction>>   gotos;
+            const TokenSet*                                     reservedWords = nullptr;
+            std::size_t                                         id            = 0;
         };
 
-        std::vector<StateView>   views_;
-        std::vector<std::int8_t> tokenConflictMemo_; // views_.size() x (terminal count + 1), -1 = unknown
-        std::size_t              memoStride_ = 0;
-        TokenSet                 externalCorresponding_;
+        std::vector<StateView>    views_;
+        std::vector<ParseStateId> extraShifts_;       // shared: an entry with two shift actions is vanishingly rare
+        std::vector<std::int8_t>  tokenConflictMemo_; // views_.size() x (terminal count + 1), -1 = unknown
+        std::size_t               memoStride_ = 0;
+        TokenSet                  externalCorresponding_;
+
+        std::string                                    shapeKey_;
+        std::unordered_map<std::string, std::uint32_t> shapeIds_;
+
+        template <typename T>
+        void AppendShapeKey(const T& value) {
+            shapeKey_.append(reinterpret_cast<const char*>(&value), sizeof(value));
+        }
+
+        // Every action contributes its kind first and then a tail fixed by
+        // that kind, so the encoding is self-delimiting: two action lists
+        // share a key only if they are equal everywhere EntriesConflict
+        // looks. Ids are only ever compared for equality, never ordered, so
+        // interning order does not reach the tables.
+        std::uint32_t ShapeId(const ParseTableEntry& entry) {
+            shapeKey_.clear();
+            for (const ParseAction& action : entry.actions) {
+                AppendShapeKey(action.kind);
+                AppendShapeKey(action.isRepetition);
+                if (action.kind == ParseAction::Kind::Shift)
+                    continue; // the target compares through the grouping, not verbatim
+                AppendShapeKey(action.state);
+                AppendShapeKey(action.symbol.kind);
+                AppendShapeKey(action.symbol.index);
+                AppendShapeKey(action.childCount);
+                AppendShapeKey(action.dynamicPrecedence);
+                AppendShapeKey(action.productionId);
+            }
+            return shapeIds_.try_emplace(shapeKey_, static_cast<std::uint32_t>(shapeIds_.size())).first->second;
+        }
 
         void BuildViews() {
             views_.clear();
             views_.reserve(table_.states.size());
+            extraShifts_.clear();
+            shapeIds_.clear();
             for (std::size_t i = 0; i < table_.states.size(); ++i) {
                 const ParseState& state = table_.states[i];
                 StateView         view;
                 view.id            = i;
                 view.reservedWords = &state.reservedWords;
+                view.terminals.reserve(state.terminalEntries.size());
                 for (const auto& [token, entry] : state.terminalEntries) {
-                    view.terminals.emplace_back(token, &entry);
+                    FlatEntry flat;
+                    flat.symbol = SymbolKey(token);
+                    flat.shape  = ShapeId(entry);
+                    for (const ParseAction& action : entry.actions) {
+                        if (action.kind != ParseAction::Kind::Shift)
+                            continue;
+                        if (flat.shiftCount == 0) {
+                            flat.firstShift = action.state;
+                        }
+                        else {
+                            if (flat.shiftCount == 1)
+                                flat.shiftAt = static_cast<std::uint32_t>(extraShifts_.size());
+                            extraShifts_.push_back(action.state);
+                        }
+                        ++flat.shiftCount;
+                    }
+                    view.terminals.push_back(flat);
                     if (token.IsTerminal())
                         view.terminalIndices.push_back(token.index);
                     if (entry.actions.back().kind == ParseAction::Kind::Shift)
-                        view.shiftTargets.emplace_back(token, entry.actions.back().state);
+                        view.shiftTargets.emplace_back(flat.symbol, entry.actions.back().state);
                 }
                 for (const auto& [symbol, action] : state.nonterminalEntries)
-                    view.gotos.emplace_back(symbol, action);
+                    view.gotos.emplace_back(SymbolKey(symbol), action);
                 views_.push_back(std::move(view));
             }
             memoStride_ = lexical_.variables.size() + 1;
@@ -1082,7 +1263,10 @@ namespace {
                                       [&](const StateView& l, const StateView& r, const std::vector<std::size_t>& groups) { return StateSuccessorsDiffer(l, r, groups); })) {
             }
             views_.clear();
+            views_.shrink_to_fit();
             tokenConflictMemo_.clear();
+            extraShifts_.clear();
+            shapeIds_.clear();
 
             const auto groupContaining = [&](std::size_t stateId) {
                 for (std::size_t g = 0; g < stateIdsByGroupId.size(); ++g)
@@ -1119,18 +1303,18 @@ namespace {
             auto l = left.terminals.begin();
             auto r = right.terminals.begin();
             while (l != left.terminals.end() || r != right.terminals.end()) {
-                if (r == right.terminals.end() || (l != left.terminals.end() && l->first < r->first)) {
-                    if (TokenConflicts(right, l->first))
+                if (r == right.terminals.end() || (l != left.terminals.end() && l->symbol < r->symbol)) {
+                    if (TokenConflicts(right, KeyedSymbol(l->symbol)))
                         return true;
                     ++l;
                 }
-                else if (l == left.terminals.end() || r->first < l->first) {
-                    if (TokenConflicts(left, r->first))
+                else if (l == left.terminals.end() || r->symbol < l->symbol) {
+                    if (TokenConflicts(left, KeyedSymbol(r->symbol)))
                         return true;
                     ++r;
                 }
                 else {
-                    if (EntriesConflict(l->first, *l->second, *r->second, groups))
+                    if (EntriesConflict(*l, *r, groups))
                         return true;
                     ++l;
                     ++r;
@@ -1175,18 +1359,19 @@ namespace {
             return false;
         }
 
-        static bool EntriesConflict(Symbol, const ParseTableEntry& entry1, const ParseTableEntry& entry2, const std::vector<std::size_t>& groups) {
-            if (entry1.actions.size() != entry2.actions.size())
+        // Equal shapes already mean equal action counts and kinds, so the
+        // shift counts match and only the targets remain to compare. Equal
+        // targets settle it without consulting the grouping at all, which
+        // is the overwhelmingly common case.
+        bool EntriesConflict(const FlatEntry& left, const FlatEntry& right, const std::vector<std::size_t>& groups) const {
+            if (left.shape != right.shape)
                 return true;
-            for (std::size_t i = 0; i < entry1.actions.size(); ++i) {
-                const ParseAction& a1 = entry1.actions[i];
-                const ParseAction& a2 = entry2.actions[i];
-                if (a1.kind == ParseAction::Kind::Shift && a2.kind == ParseAction::Kind::Shift) {
-                    if (groups[a1.state] == groups[a2.state] && a1.isRepetition == a2.isRepetition)
-                        continue;
-                    return true;
-                }
-                if (a1 != a2)
+            if (left.firstShift != right.firstShift && groups[left.firstShift] != groups[right.firstShift])
+                return true;
+            for (std::uint32_t i = 1; i < left.shiftCount; ++i) {
+                const ParseStateId l = extraShifts_[left.shiftAt + i - 1];
+                const ParseStateId r = extraShifts_[right.shiftAt + i - 1];
+                if (l != r && groups[l] != groups[r])
                     return true;
             }
             return false;
