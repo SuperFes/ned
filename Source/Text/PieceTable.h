@@ -88,6 +88,22 @@ class PieceTable {
     // spans).
     [[nodiscard]] PieceTable Concatenated(const PieceTable& fragment) const;
 
+    // A copy that shares no mutable state with this one, for a thread that
+    // reads while the main thread keeps editing. An ordinary copy is not
+    // that: it shares the append buffer, and Inserted() appends to that
+    // buffer in place -- safe single-threaded (spans only ever reference a
+    // strictly earlier prefix, which an append never disturbs) but not
+    // against a concurrent reader, since the append can reallocate the
+    // string and invalidate the view SpanView just handed out.
+    //
+    // Only the append buffer is copied. The mmap is never written after
+    // Open(), so the file's own bytes -- all of a huge table's bulk -- stay
+    // shared, and the tree is reused as-is: leaves address the append
+    // buffer by offset, and a copy holds the same bytes at the same
+    // offsets. The cost is therefore the text inserted so far this session,
+    // never the file size.
+    [[nodiscard]] PieceTable DetachedCopy() const;
+
     [[nodiscard]] bool        Empty() const;
     [[nodiscard]] std::size_t ByteLength() const;
     [[nodiscard]] std::size_t CodepointLength() const;

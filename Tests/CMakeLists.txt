@@ -50,6 +50,7 @@ add_executable(ned_tests
             DiskSpaceTest.cpp
             BufferSaveEquivalenceTest.cpp
             SavePlanTest.cpp
+            StorageSnapshotTest.cpp
             WhitespaceHygieneTest.cpp
             MultiCursorTest.cpp
             BufferListTest.cpp

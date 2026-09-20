@@ -289,6 +289,14 @@ PieceTable::Split(const std::shared_ptr<const Node>& node, std::size_t offset, c
     return {node->left, node->right};
 }
 
+PieceTable PieceTable::DetachedCopy() const {
+    Backing detached = backing_;
+    if (detached.added) {
+        detached.added = std::make_shared<std::string>(*detached.added);
+    }
+    return PieceTable(root_, std::move(detached));
+}
+
 PieceTable PieceTable::Inserted(std::size_t byteOffset, std::string_view text) const {
     if (text.empty()) {
         return *this;

@@ -15,6 +15,10 @@ std::unique_ptr<ITextStorage> PieceTableStorage::Clone() const {
     return std::make_unique<PieceTableStorage>(table_);
 }
 
+std::unique_ptr<ITextStorage> PieceTableStorage::SnapshotForBackgroundRead() const {
+    return std::make_unique<PieceTableStorage>(table_.DetachedCopy());
+}
+
 bool PieceTableStorage::IsHuge() const {
     return true;
 }

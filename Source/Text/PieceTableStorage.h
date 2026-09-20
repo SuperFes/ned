@@ -35,6 +35,7 @@ class PieceTableStorage : public ITextStorage {
     [[nodiscard]] const PieceTable& Value() const;
 
     [[nodiscard]] std::unique_ptr<ITextStorage> Clone() const override;
+    [[nodiscard]] std::unique_ptr<ITextStorage> SnapshotForBackgroundRead() const override;
     [[nodiscard]] bool                          IsHuge() const override;
 
     [[nodiscard]] bool        Empty() const override;

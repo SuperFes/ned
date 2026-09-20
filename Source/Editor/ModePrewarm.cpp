@@ -4,6 +4,7 @@
 #include "ModeOverrides.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
+#include "Text/ITextStorage.h"
 #include "UI/EventLoop.h"
 
 namespace ned::editor {
@@ -25,6 +26,13 @@ Mode BuildWarmModeForPath(const std::filesystem::path& path, std::string_view te
     return mode;
 }
 
+Mode BuildWarmModeForStorage(const std::filesystem::path& path, const text::ITextStorage& storage) {
+    if (storage.ByteLength() > MaxHighlightBytes()) {
+        return ModeForPath(path);
+    }
+    return BuildWarmModeForPath(path, storage.ToString());
+}
+
 ModePrewarmer::ModePrewarmer(text::BufferList& bufferList, ui::EventLoop& eventLoop) : bufferList_(bufferList), eventLoop_(eventLoop) {
 }
 
@@ -34,10 +42,10 @@ void ModePrewarmer::Prewarm(text::Buffer& buffer) {
     }
     const std::string                   name     = buffer.Name();
     const std::filesystem::path         path     = *buffer.Path();
-    std::unique_ptr<text::ITextStorage> snapshot = buffer.Content().Clone(); // see header comment: O(1), thread-safe
+    std::unique_ptr<text::ITextStorage> snapshot = buffer.Content().SnapshotForBackgroundRead(); // see header comment
 
     inFlight_[name] = std::jthread([this, name, path, snapshot = std::move(snapshot)](std::stop_token) {
-        Mode mode = BuildWarmModeForPath(path, snapshot->ToString());
+        Mode mode = BuildWarmModeForStorage(path, *snapshot);
         eventLoop_.Post([this, name, mode = std::move(mode)]() mutable { ApplyPrewarmedMode(name, std::move(mode)); });
     });
 }

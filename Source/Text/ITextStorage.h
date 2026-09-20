@@ -44,6 +44,21 @@ class ITextStorage {
     // `SavedSnapshot_ = Rope_;`-style value copy.
     [[nodiscard]] virtual std::unique_ptr<ITextStorage> Clone() const = 0;
 
+    // A copy safe for another thread to read while this one keeps being
+    // edited. Clone() is not that copy for every storage kind: a piece
+    // table's clone shares the append buffer new insertions are written
+    // into, and appending to a std::string can reallocate it out from under
+    // a reader holding a view. This detaches whatever a clone would have
+    // shared mutably, so the result depends on nothing the editing thread
+    // can touch.
+    //
+    // Costs more than Clone() by exactly the amount that has to be
+    // detached -- nothing at all for a rope, a copy of the text inserted so
+    // far (not of the file) for a piece table -- so this is for handing
+    // content to a thread, and Clone() remains the one to use on the
+    // main-thread paths that snapshot per keystroke.
+    [[nodiscard]] virtual std::unique_ptr<ITextStorage> SnapshotForBackgroundRead() const = 0;
+
     // True for a huge (piece-table-backed) buffer -- false for the ordinary
     // Rope-backed case. Buffer.cpp and a small number of external callers
     // (LSP sync, persistent undo) use this to skip an operation that would

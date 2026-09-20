@@ -15,6 +15,12 @@ std::unique_ptr<ITextStorage> RopeStorage::Clone() const {
     return std::make_unique<RopeStorage>(rope_);
 }
 
+// A rope shares only immutable nodes, so a clone is already detached from
+// anything the editing thread can change.
+std::unique_ptr<ITextStorage> RopeStorage::SnapshotForBackgroundRead() const {
+    return Clone();
+}
+
 bool RopeStorage::IsHuge() const {
     return false;
 }

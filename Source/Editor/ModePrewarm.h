@@ -21,6 +21,7 @@
 namespace ned::text {
 class Buffer;
 class BufferList;
+class ITextStorage;
 } // namespace ned::text
 
 namespace ned::ui {
@@ -43,6 +44,14 @@ namespace ned::editor {
 // same rule, uniformly, for every file, not a size-based special case
 // invented just for prewarming.
 [[nodiscard]] Mode BuildWarmModeForPath(const std::filesystem::path& path, std::string_view text);
+
+// The same warm-up, against storage that has not been materialized yet.
+// Applies the size gate BEFORE ToString(), which the overload above cannot
+// do for a caller who had to materialize the document just to call it --
+// for anything past the limit that copy is made only to be measured and
+// thrown away, and for a huge buffer it is a copy of the whole file.
+// Resolves the Mode either way; only the warm-up pass is conditional.
+[[nodiscard]] Mode BuildWarmModeForStorage(const std::filesystem::path& path, const text::ITextStorage& storage);
 
 // Owns one background std::jthread per in-flight prewarm, keyed by buffer
 // name -- the same "map of jthread, erased from within a posted completion
@@ -67,12 +76,12 @@ class ModePrewarmer {
     // build per buffer name at a time).
     //
     // Snapshots buffer's content synchronously, on the calling thread,
-    // before handing off (an O(1) text::Rope copy -- Rope.h's structural
-    // sharing means this is just a shared_ptr copy, not a text copy). The
-    // background thread only ever touches that private, immutable
-    // snapshot, never buffer's own live Content() -- a concurrent edit to
-    // buffer on the main thread while this prewarm is in flight is
-    // therefore never a data race.
+    // before handing off -- ITextStorage::SnapshotForBackgroundRead(), not
+    // Clone(), because a huge buffer's clone would still share the append
+    // buffer its own edits are written into. The background thread only
+    // ever touches that private snapshot, never buffer's own live
+    // Content(), so a concurrent edit while this prewarm is in flight is
+    // not a data race for either storage kind.
     void Prewarm(text::Buffer& buffer);
 
     // The background thread's completion callback's real body, exposed
