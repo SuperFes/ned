@@ -34,7 +34,7 @@
              [pipeline_parenthesized]
              [val_record val_closure]]
  :precedences []
- :externals [raw_string_begin raw_string_content raw_string_end]
+ :externals [raw_string_begin raw_string_content raw_string_end _error_sentinel]
  :inline [_flag_value
           _item_expression
           _match_expression
