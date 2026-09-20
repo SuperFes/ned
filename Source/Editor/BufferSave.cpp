@@ -2,6 +2,7 @@
 
 #include <mutex>
 
+#include "Application.h"
 #include "Backup.h"
 #include "FinalNewline.h"
 #include "LineEndingPolicy.h"
@@ -97,11 +98,23 @@ void WriteBufferToDisk(text::Buffer& buffer, SaveDispatch dispatch) {
     try {
         RunSavePlanWithBackup(plan, bufferPath);
     }
+    catch (const std::exception& e) {
+        buffer.AbandonSave();
+        // Recorded here as well as on the asynchronous path: a save the
+        // user watched fail and then gave up on is still a file that is not
+        // there. The caller shows the message immediately too, but that
+        // leaves with the editor, which is no help to whoever reads the
+        // exit code afterwards.
+        Ned::Application::NoteSaveFailed(bufferPath, buffer.Name(), e.what());
+        throw;
+    }
     catch (...) {
         buffer.AbandonSave();
+        Ned::Application::NoteSaveFailed(bufferPath, buffer.Name(), std::string());
         throw;
     }
     buffer.FinishSave(bufferPath, std::move(plan));
+    Ned::Application::NoteSaveSucceeded(bufferPath);
 }
 
 } // namespace ned::editor

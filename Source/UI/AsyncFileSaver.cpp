@@ -3,7 +3,7 @@
 #include <chrono>
 #include <exception>
 
-#include "Editor/ExitReport.h"
+#include "Application.h"
 #include "EventLoop.h"
 
 namespace ned::ui {
@@ -63,6 +63,9 @@ void AsyncFileSaver::Run(EventLoop& eventLoop) {
     eventLoop.Post([this, failure = std::move(failure)]() mutable {
         text::Buffer* buffer = bufferList_.Find(bufferName_);
         if (failure.empty()) {
+            // Cleared even when the buffer is gone: what the exit code is
+            // about is whether the file is on disk, and it is.
+            Ned::Application::NoteSaveSucceeded(bufferPath_);
             if (buffer != nullptr) {
                 buffer->FinishSave(bufferPath_, std::move(plan_));
             }
@@ -77,7 +80,7 @@ void AsyncFileSaver::Run(EventLoop& eventLoop) {
             // user still being there to read a status line -- they may well
             // have quit in the same breath, and if the buffer was closed
             // mid-write there is no mode line left to say it in at all.
-            editor::ReportOnExit("ned: failed to save \"" + bufferName_ + "\": " + failure);
+            Ned::Application::NoteSaveFailed(bufferPath_, bufferName_, failure);
             if (onFailure_) {
                 onFailure_(std::move(failure));
             }

@@ -19,6 +19,29 @@ automatically when the file opened is one a version control system named (a comm
 message, a rebase todo), so `git config --global core.editor ned` needs no extra setup;
 see [Version Control](features/version-control.md).
 
+## Exit codes
+
+ned's exit status is a documented interface — `EDITOR=ned` means a version control system
+reads it to decide whether to go through with a commit, so anything scripting ned can rely
+on these staying put.
+
+| Code | Meaning |
+|---|---|
+| `0` | Success. The editor ran and exited normally, and every file you asked to save is on disk. |
+| `1` | A requested operation failed. The general case, and what a failing subcommand (`--format`, `--compile-language`, `--import-language`, the LSP broker controls) returns. |
+| `2` | The command line itself was wrong — an unknown flag, or a missing or repeated argument. Nothing was attempted. |
+| `3` | At least one file you asked to save is still unwritten, because the write failed. |
+
+Code `3` is specifically *a save that was attempted and did not happen* — a full disk, a
+file that became unwritable, a directory that disappeared. Quitting with unsaved changes is
+not this: deciding not to save is your business, and exits `0`. Retrying a failed save
+successfully also exits `0`; what the code reports is whether the file is on disk when ned
+exits, not whether the road there was bumpy.
+
+A failed save also prints to stderr on the way out, after the terminal has been restored —
+so the reason survives even when the editor had no chance to show it, such as a save that
+failed after its buffer was closed, or one that failed as you were quitting.
+
 ## The keybinding model
 
 ned follows Emacs' notation and conventions: `C-x` means Ctrl+X, `M-x` means Alt+X (or

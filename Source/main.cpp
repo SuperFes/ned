@@ -44,7 +44,6 @@
 #include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/Manager.h"
-#include "Editor/ExitReport.h"
 #include "Editor/Format.h"
 #include "Editor/FormatBlankLines.h"
 #include "Editor/FormatBracePlacement.h"
@@ -3217,7 +3216,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
     logShutdown("post-run: explicit steps done; entering local destruction "
                 "(terminal pty, DAP, VCS, task runner, LSP clients, window tree, Janet, EventLoop/terminal restore)");
 
-    return 0;
+    // Quitting with unsaved changes is the user's own decision and exits
+    // Success; this is only for a save that was attempted and did not
+    // happen, which is what `EDITOR=ned` needs in order to stop a commit
+    // going ahead on a message that never reached disk. See
+    // Editor/ExitStatus.h.
+    return Ned::ToExitCode(Ned::Application::CurrentExitStatus());
 }
 
 } // namespace
@@ -3349,7 +3353,13 @@ auto main(int argc, char** argv) -> int {
         app.parse(argc, argv);
     }
     catch (const CLI::ParseError& e) {
-        return app.exit(e);
+        // app.exit() prints the message (or the help text) and hands back
+        // CLI11's own code, which is 0 for --help/--version and one of its
+        // internal numbers otherwise. Those internal numbers are not ned's
+        // to promise, so every real parse failure reports as UsageError --
+        // the code the UserGuide documents for exactly this.
+        const int code = app.exit(e);
+        return code == 0 ? code : Ned::ToExitCode(Ned::ExitStatus::UsageError);
     }
 
     // ned-format argv[0] dispatch follow-up: `ned-format <paths...>` is
@@ -3407,7 +3417,7 @@ auto main(int argc, char** argv) -> int {
     if (importLanguage) {
         if (paths.size() != 1) {
             std::cerr << "ned --import-language: exactly one git URL or directory is required\n";
-            return 2;
+            return Ned::ToExitCode(Ned::ExitStatus::UsageError);
         }
         return ned::editor::grammar::compile::RunImportLanguage(
             ned::editor::grammar::compile::ImportOptions{.source = paths.front(), .name = importName, .subdir = importSubdir, .ref = importRef, .into = importInto},
@@ -3440,7 +3450,7 @@ auto main(int argc, char** argv) -> int {
     // PendingReExec comment below, which relies on the same fact). Printed
     // before the re-exec check, since an exec would replace this process and
     // take any unread message with it.
-    for (const std::string& report : ned::editor::TakeExitReports()) {
+    for (const std::string& report : Ned::Application::TakeExitReports()) {
         std::cerr << report << '\n';
     }
 

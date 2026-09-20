@@ -18,8 +18,8 @@
 #include <string>
 #include <unistd.h>
 
+#include "Application.h"
 #include "Editor/BufferSave.h"
-#include "Editor/ExitReport.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/RopeStorage.h"
@@ -27,7 +27,6 @@
 #include "UI/EventLoop.h"
 
 using ned::editor::AsyncSaveRequest;
-using ned::editor::TakeExitReports;
 using ned::ui::AsyncFileSaver;
 
 namespace {
@@ -63,10 +62,10 @@ void PumpUntilDone(ned::ui::EventLoop& eventLoop, const AsyncFileSaver& saver) {
 
 struct DrainedReports {
     DrainedReports() {
-        TakeExitReports();
+        Ned::Application::ResetExitStateForTesting();
     }
     ~DrainedReports() {
-        TakeExitReports();
+        Ned::Application::ResetExitStateForTesting();
     }
     DrainedReports(const DrainedReports&)            = delete;
     DrainedReports& operator=(const DrainedReports&) = delete;
@@ -115,7 +114,7 @@ TEST_CASE("A failed background save queues an exit report that outlives the UI",
         PumpUntilDone(eventLoop, saver);
     }
 
-    const std::vector<std::string> reports = TakeExitReports();
+    const std::vector<std::string> reports = Ned::Application::TakeExitReports();
     REQUIRE(reports.size() == 1);
     REQUIRE(reports.front().find("doomed.txt") != std::string::npos);
 }
@@ -142,7 +141,7 @@ TEST_CASE("A save whose buffer was closed mid-write still reports on exit", "[As
         PumpUntilDone(eventLoop, saver);
     }
 
-    const std::vector<std::string> reports = TakeExitReports();
+    const std::vector<std::string> reports = Ned::Application::TakeExitReports();
     REQUIRE(reports.size() == 1);
     REQUIRE(reports.front().find("closed.txt") != std::string::npos);
 }
