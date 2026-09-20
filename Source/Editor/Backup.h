@@ -128,6 +128,13 @@ void MaybePruneBackups(std::optional<std::int64_t> nowSeconds = std::nullopt);
 // dimension entirely.
 void               SetFileAutoSaveEnabled(bool enabled);
 [[nodiscard]] bool FileAutoSaveEnabled(); // default true
+// The gate for the other writer, BackupFileBeforeSave's pre-save version
+// copy. Unlike its siblings here this one is not a Janet setting: it exists
+// for TransientSession.h's ApplyTransientMode, which must stop a throwaway
+// commit-message file from accumulating versions in the backup tree, and a
+// user who wants versions off has BackupMaxVersions for that.
+void               SetBackupVersionsEnabled(bool enabled);
+[[nodiscard]] bool BackupVersionsEnabled(); // default true
 void               SetBackupMaxAgeDays(int days);
 [[nodiscard]] int  BackupMaxAgeDays(); // default 14
 void               SetBackupMaxVersions(int versions);

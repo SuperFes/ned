@@ -450,6 +450,20 @@ commands, never a replacement for them.
       a generated binding column is a small addition to `Tests/CommandReferenceTest.cpp`'s
       blessing pass. The same lookup is what a real `describe-bindings` would be built on;
       neither exists yet.
+- [ ] **Transient mode covers the five VCS tools whose editor filenames are fixed, and
+      nothing else.** Shipped, slug for `git log --grep=`: `transient-mode`
+      (`Editor/TransientSession.h` -- `--transient`/`--no-transient` plus automatic
+      detection, verified live against git/hg/svn/jj/fossil by running each tool with a
+      probe editor. Composition of switches that already existed rather than new gating:
+      the quit-time saves are the load-bearing half, since `SaveFilePlaces(force)`/
+      `SaveRecentFiles(force)` write the in-memory store without consulting their own
+      enabled flag). A tool whose editor file is randomly named -- `crontab -e`,
+      `sudoedit`, `cvs`, `gh pr create` -- cannot be detected and needs
+      `EDITOR="ned --transient"`; that is inherent, not a todo. Two conscious calls worth
+      not re-litigating: `DiagnosticsLog` still writes in transient mode (it is a log
+      about the process, not state about the file), and there is deliberately no
+      `ned/set-transient` Janet setting -- the mode is chosen at invocation, and the
+      Janet surface is a 1.0 freeze commitment.
 - [ ] **Terminal-side mouse forwarding** — clicks/wheel inside `TerminalPanel` are
       consumed by the panel itself (focus, scrollback ring); a TUI subprocess running
       inside it (e.g. `htop`, `vim`) never receives a forwarded mouse event.

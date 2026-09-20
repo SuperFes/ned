@@ -32,6 +32,43 @@ message, then:
 - `C-c C-c` (`vcs-commit-finish`) commits it.
 - `C-c C-k` (`vcs-commit-abort`) discards the in-progress message.
 
+## Using ned as your VCS editor
+
+ned works as the editor your version control system launches for a commit message, a tag
+annotation or a rebase todo. Point the relevant setting at it:
+
+```sh
+git config --global core.editor ned      # git
+export HGEDITOR=ned                      # mercurial
+export SVN_EDITOR=ned                    # subversion
+export JJ_EDITOR=ned                     # jujutsu
+fossil settings editor ned               # fossil
+```
+
+Such a run is **transient**: ned recognizes the message file by name and stores nothing
+about it. No project session is restored or saved, no save-place entry, no recent-files
+entry, no persistent undo, no backup versions, and no project-local `.ned/` config is
+loaded or prompted about.
+
+That last point is the one that matters most. A version control system runs your editor
+from the repository root, so without this a commit would quit having replaced the
+project's real saved session with one containing nothing but `COMMIT_EDITMSG` — the next
+`ned` in that repository would reopen the commit message instead of your work.
+
+Detection covers every file the five tools above name, including git's `MERGE_MSG`,
+`TAG_EDITMSG`, `SQUASH_MSG`, `NOTES_EDITMSG` and `git-rebase-todo`. It keys on the
+filename alone, so it holds for worktrees, submodules and a relocated `GIT_DIR`.
+
+For a tool whose editor file has a random name — `crontab -e`, `sudoedit`, `cvs`, or
+`gh pr create` — say so explicitly:
+
+```sh
+export EDITOR="ned --transient"
+```
+
+`--no-transient` forces a normal, recorded run even for a file that would otherwise be
+detected, for the rare case where you really do want the commit message in your session.
+
 ## History and blame
 
 | Command | Effect |

@@ -217,6 +217,7 @@ add_library(ned_lib STATIC
         Editor/MassifOutputParser.cpp
         Editor/MassifReportBuffer.cpp
         Editor/Session.cpp
+        Editor/TransientSession.cpp
         Editor/RecentFiles.cpp
         Editor/Bookmark.cpp
         Editor/Project/Session.cpp

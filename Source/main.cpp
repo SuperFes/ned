@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <chrono>
@@ -88,6 +89,7 @@
 #include "Editor/TestRun/TestResultsBuffer.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/ThemeSetting.h"
+#include "Editor/TransientSession.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/Runner.h"
 #include "Editor/Vim/Settings.h"
@@ -649,7 +651,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
     // one file. Establishing the root here (before init.janet loads,
     // below) is what lets ned/set-session-restore still veto everything:
     // every load/save path re-checks SessionRestoreEnabled() at use time.
-    if (!noRestore && ned::editor::HasProjectMarker(projectRoot)) {
+    // --transient leaves the root unset for exactly the same reason
+    // --no-restore does, and this is the case that motivated the mode: git
+    // runs its editor from the repository root, so a commit that didn't
+    // skip this would quit having replaced the project's real session with
+    // one holding nothing but .git/COMMIT_EDITMSG.
+    if (!noRestore && !ned::editor::TransientMode() && ned::editor::HasProjectMarker(projectRoot)) {
         ned::editor::SetActiveProjectSessionRoot(projectRoot);
     }
 
@@ -779,6 +786,13 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
     };
 
     std::deque<std::filesystem::path> deferredTrustPrompts;
+    // A transient run reads no project-local config and records no trust
+    // decision about one: TouchProjectTrust/SaveProjectTrust write state,
+    // and a y/n/a prompt has no business interrupting an edit-and-exit
+    // flow that another program is blocking on.
+    if (ned::editor::TransientMode()) {
+        projectTrustCandidates.clear();
+    }
     if (!projectTrustCandidates.empty()) {
         ned::editor::LoadProjectTrust();
         for (const std::filesystem::path& candidate : projectTrustCandidates) {
@@ -809,6 +823,11 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
     if (vimMode) {
         ned::editor::vim::SetModeEnabled(true);
     }
+
+    // Same "explicit invocation-time flag wins over config" placement as
+    // --vim just above: init.janet has had its chance to call
+    // ned/set-save-place and friends, and this overrides all of them.
+    ned::editor::ApplyTransientMode();
 
     // session-persistence slice 1: deliberately after LoadInitFile, not
     // beside the CLI opens above -- init.janet is where ned/set-save-place
@@ -3148,17 +3167,29 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
     // store dirty, see FilePlaceStore::Record) still reach disk. Everything
     // recorded from is still alive here: bufferList/windowManager are
     // locals destroyed after this returns.
-    logShutdown("post-run: recording session places");
-    windowManager->RecordSessionPlaces();
-    logShutdown("post-run: saving file places");
-    ned::editor::SaveFilePlaces(/*force=*/true);
-    logShutdown("post-run: saving recent files and bookmarks");
-    ned::editor::SaveRecentFiles(/*force=*/true);
-    ned::editor::SaveBookmarks(/*force=*/true);
-    logShutdown("post-run: saving undo history");
-    ned::editor::SaveUndoHistoryForOpenBuffers(bufferList);
-    logShutdown("post-run: saving project session");
-    windowManager->SaveProjectSessionNow();
+    //
+    // Skipped wholesale by a transient run, and skipping the *saves* is the
+    // load-bearing half of that mode rather than a belt-and-braces extra:
+    // SaveFilePlaces(force)/SaveRecentFiles(force) write whatever the
+    // in-memory store holds without consulting their own enabled flag, so
+    // having merely stopped recording would still rewrite the real store
+    // here -- with the forced write turning a no-op into a real one.
+    if (!ned::editor::TransientMode()) {
+        logShutdown("post-run: recording session places");
+        windowManager->RecordSessionPlaces();
+        logShutdown("post-run: saving file places");
+        ned::editor::SaveFilePlaces(/*force=*/true);
+        logShutdown("post-run: saving recent files and bookmarks");
+        ned::editor::SaveRecentFiles(/*force=*/true);
+        ned::editor::SaveBookmarks(/*force=*/true);
+        logShutdown("post-run: saving undo history");
+        ned::editor::SaveUndoHistoryForOpenBuffers(bufferList);
+        logShutdown("post-run: saving project session");
+        windowManager->SaveProjectSessionNow();
+    }
+    else {
+        logShutdown("post-run: transient run -- persisting nothing");
+    }
     // graceful-lsp-shutdown follow-up: sends "shutdown"+"exit" to every
     // directly-spawned (non-broker) running LSP client before the local
     // teardown below destroys lspManager -- see Manager::Shutdown's own
@@ -3232,6 +3263,8 @@ auto main(int argc, char** argv) -> int {
     bool                     forceBinary   = false;
     bool                     noRestore     = false;
     bool                     vimMode       = false;
+    bool                     transient     = false;
+    bool                     noTransient   = false;
     std::string              mcpStdioRelaySocketPath;
     std::vector<std::string> paths;
 
@@ -3284,6 +3317,14 @@ auto main(int argc, char** argv) -> int {
                  "Open files that look binary anyway, without an interactive confirmation");
     app.add_flag("--no-restore", noRestore,
                  "Don't restore the project's saved session (open buffers, breakpoints, sidebar state)");
+    app.add_flag("--transient", transient,
+                 "Store nothing about this run: no project session (neither restored nor saved), no save-place, "
+                 "no recent-files entry, no persistent undo, no backups. For running ned as another tool's "
+                 "$EDITOR -- it is applied automatically for a file a version control system names (git's "
+                 "COMMIT_EDITMSG and friends, hg, svn, jj, fossil)");
+    app.add_flag("--no-transient", noTransient,
+                 "Record this run normally even if the file opened is one a version control system names -- the "
+                 "override for --transient's own automatic detection");
     app.add_flag("--vim", vimMode,
                  "Start with Vim emulation on (the same setting ned/set-vim-mode controls; applied after "
                  "init.janet loads, so this flag wins over any ned/set-vim-mode call there)");
@@ -3364,6 +3405,16 @@ auto main(int argc, char** argv) -> int {
     if (format) {
         return RunFormatFiles(paths, forceHuge);
     }
+
+    // Set before the editor runs rather than threaded through as a fifth
+    // parameter: this is process-wide state by design (TransientSession.h),
+    // read by the handful of places that persist something. Detection is
+    // per-path and basename-only -- any named file makes the whole run
+    // transient, which is the only sensible reading when the entire point
+    // is that nothing about it gets recorded.
+    const bool detectedVcsEditorFile =
+        !noTransient && std::ranges::any_of(paths, [](const std::string& path) { return ned::editor::IsVcsEditorFile(path); });
+    ned::editor::SetTransientMode(transient || detectedVcsEditorFile);
 
     const int exitCode = RunInteractiveEditor(forceBinary, noRestore, vimMode, paths);
 

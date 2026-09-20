@@ -230,6 +230,7 @@ add_executable(ned_tests
             ProjectFileOpsTest.cpp
             ScratchPadTest.cpp
             BackupTest.cpp
+            TransientSessionTest.cpp
             CliFormatDispatchTest.cpp
             LanguageTablesTest.cpp
             ScannersTest.cpp

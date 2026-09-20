@@ -49,6 +49,11 @@ namespace {
         return enabled;
     }
 
+    bool& BackupVersionsEnabledStorage() {
+        static bool enabled = true;
+        return enabled;
+    }
+
     int& MaxAgeDaysStorage() {
         static int days = 14;
         return days;
@@ -344,6 +349,9 @@ std::string ReadBackupVersion(const std::filesystem::path& versionPath) {
 }
 
 void BackupFileBeforeSave(const std::filesystem::path& file, std::optional<std::int64_t> nowSeconds) {
+    if (!BackupVersionsEnabled()) {
+        return;
+    }
     try {
         std::error_code ec;
         if (!std::filesystem::is_regular_file(file, ec)) {
@@ -469,6 +477,16 @@ bool FileAutoSaveEnabled() {
     return AutoSaveEnabledStorage();
 }
 
+void SetBackupVersionsEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(BackupMutex());
+    BackupVersionsEnabledStorage() = enabled;
+}
+
+bool BackupVersionsEnabled() {
+    const std::lock_guard<std::mutex> lock(BackupMutex());
+    return BackupVersionsEnabledStorage();
+}
+
 void SetBackupMaxAgeDays(int days) {
     const std::lock_guard<std::mutex> lock(BackupMutex());
     MaxAgeDaysStorage() = days;
@@ -511,7 +529,8 @@ int BackupVersionMaxSizeMb() {
 
 void ResetBackupsForTesting() {
     const std::lock_guard<std::mutex> lock(BackupMutex());
-    AutoSaveEnabledStorage()  = true;
+    AutoSaveEnabledStorage()       = true;
+    BackupVersionsEnabledStorage() = true;
     MaxAgeDaysStorage()       = 14;
     MaxVersionsStorage()      = 20;
     MaxSizeMbStorage()        = 64;

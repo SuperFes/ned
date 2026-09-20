@@ -13,6 +13,12 @@ If a file argument isn't inside a recognized project (a directory containing `.g
 similar), ned still opens it fine — project-wide features (search, sidebar) just have
 less to work with.
 
+`ned --transient` runs without storing anything about the session — no saved session, no
+save-place, no recent-files entry, no persistent undo, no backups. This is applied
+automatically when the file opened is one a version control system named (a commit
+message, a rebase todo), so `git config --global core.editor ned` needs no extra setup;
+see [Version Control](features/version-control.md).
+
 ## The keybinding model
 
 ned follows Emacs' notation and conventions: `C-x` means Ctrl+X, `M-x` means Alt+X (or
