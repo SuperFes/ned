@@ -297,8 +297,8 @@ Buffer Buffer::NewFile(std::filesystem::path path) {
     return buffer;
 }
 
-void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline, bool trimTrailingWhitespace,
-                        std::optional<LineEnding> lineEndingOverride) {
+SavePlan Buffer::BeginSave(const std::filesystem::path& path, bool ensureFinalNewline, bool trimTrailingWhitespace,
+                           std::optional<LineEnding> lineEndingOverride) {
     // progressive-huge-file-load follow-up: a still-loading huge buffer is
     // now genuinely editable (ReadOnly() no longer implies "can't save" the
     // way it used to via Loading_) -- without this guard, nothing else
@@ -308,6 +308,14 @@ void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewli
     // unconditional refusal rather than a size-dependent one.
     if (Loading_) {
         throw std::runtime_error("ned: cannot save \"" + Name_ + "\" -- still loading in the background");
+    }
+
+    // Two concurrent writes to one file would race each other to the
+    // rename regardless of which finished first, and the second one's
+    // FinishSave would claim a saved state the first had already moved
+    // past. The inverse of the loading refusal above.
+    if (Saving_) {
+        throw std::runtime_error("ned: cannot save \"" + Name_ + "\" -- a save is already in progress");
     }
 
     // file-attribute-preservation follow-up: everything below writes to the
@@ -332,28 +340,70 @@ void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewli
         }
     }
 
-    // The snapshot is what makes the plan self-contained: the write reads
-    // it and never Storage_. Attributes are captured before the file is
-    // replaced -- see Text/FilePreservation.h for what a rename silently
-    // discards and why each piece has to be put back by hand.
+    // SnapshotForBackgroundRead rather than Clone: the write may run on
+    // another thread, and a huge buffer's clone would still share the
+    // append buffer this buffer's own later edits are written into.
+    // Attributes are captured before the file is replaced -- see
+    // Text/FilePreservation.h for what a rename silently discards and why
+    // each piece has to be put back by hand.
     SavePlan plan;
     plan.target                 = target;
-    plan.snapshot               = Storage_->Clone();
+    plan.snapshot               = Storage_->SnapshotForBackgroundRead();
     plan.attributes             = CaptureFileAttributes(target);
     plan.lineEnding             = effectiveEnding;
     plan.trimTrailingWhitespace = trimTrailingWhitespace;
     plan.ensureFinalNewline     = ensureFinalNewline;
 
-    ExecuteSavePlan(plan);
+    Saving_ = true;
+    SaveInFlightRanges_.clear();
+    return plan;
+}
 
+void Buffer::FinishSave(const std::filesystem::path& path, SavePlan plan) {
     Path_       = path;
-    LineEnding_ = effectiveEnding;
-    // What was written, not what Storage_ holds now -- the two are the same
-    // here only because the write was synchronous.
+    LineEnding_ = plan.lineEnding;
+    // What was written, not what Storage_ holds now: an edit that landed
+    // while the write was running must not be counted as saved.
     SavedSnapshot_ = std::move(plan.snapshot);
-    UnsavedChangeRanges_.clear();
+    // Which is also why this is an install rather than a clear -- those
+    // same edits stay marked, and a buffer edited mid-save stays Modified().
+    UnsavedChangeRanges_ = std::move(SaveInFlightRanges_);
+    SaveInFlightRanges_.clear();
+    Saving_       = false;
+    SaveProgress_ = nullptr;
     ++UnsavedChangeGeneration_;
     CaptureDiskTimestamp();
+}
+
+void Buffer::AbandonSave() {
+    SaveInFlightRanges_.clear();
+    Saving_       = false;
+    SaveProgress_ = nullptr;
+}
+
+bool Buffer::IsSaving() const {
+    return Saving_;
+}
+
+void Buffer::SetSaveProgress(std::shared_ptr<SaveProgress> progress) {
+    SaveProgress_ = std::move(progress);
+}
+
+const SaveProgress* Buffer::CurrentSaveProgress() const {
+    return SaveProgress_.get();
+}
+
+void Buffer::SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline, bool trimTrailingWhitespace,
+                        std::optional<LineEnding> lineEndingOverride) {
+    SavePlan plan = BeginSave(path, ensureFinalNewline, trimTrailingWhitespace, lineEndingOverride);
+    try {
+        ExecuteSavePlan(plan);
+    }
+    catch (...) {
+        AbandonSave();
+        throw;
+    }
+    FinishSave(path, std::move(plan));
 }
 
 void Buffer::Save(bool ensureFinalNewline, bool trimTrailingWhitespace, std::optional<LineEnding> lineEndingOverride) {
@@ -1190,22 +1240,39 @@ void Buffer::RelocateFoldMarkersForDelete(std::size_t rangeStart, std::size_t ra
     ++FoldGeneration_;
 }
 
-void Buffer::MarkUnsavedRangeInserted(std::size_t insertOffset, std::size_t length) {
-    for (auto& [start, end] : UnsavedChangeRanges_) {
+void Buffer::MarkRangeInserted(std::vector<std::pair<std::size_t, std::size_t>>& ranges, std::size_t insertOffset,
+                               std::size_t length) {
+    for (auto& [start, end] : ranges) {
         start = RelocateForInsert(start, insertOffset, length);
         end   = RelocateForInsert(end, insertOffset, length);
     }
-    MergeUnsavedRange(UnsavedChangeRanges_, insertOffset, insertOffset + length);
+    MergeUnsavedRange(ranges, insertOffset, insertOffset + length);
+}
+
+void Buffer::MarkUnsavedRangeInserted(std::size_t insertOffset, std::size_t length) {
+    MarkRangeInserted(UnsavedChangeRanges_, insertOffset, length);
+    // An edit made while a save is in flight belongs to the buffer's state
+    // *after* the snapshot being written, so it is tracked separately and
+    // becomes the whole unsaved set once that write completes.
+    if (Saving_) {
+        MarkRangeInserted(SaveInFlightRanges_, insertOffset, length);
+    }
     ++UnsavedChangeGeneration_;
 }
 
-void Buffer::MarkUnsavedRangeDeleted(std::size_t rangeStart, std::size_t rangeEnd) {
-    for (auto& [start, end] : UnsavedChangeRanges_) {
+void Buffer::MarkRangeDeleted(std::vector<std::pair<std::size_t, std::size_t>>& ranges, std::size_t rangeStart,
+                              std::size_t rangeEnd, std::size_t markStart, std::size_t markEnd) {
+    for (auto& [start, end] : ranges) {
         start = RelocateForDelete(start, rangeStart, rangeEnd);
         end   = RelocateForDelete(end, rangeStart, rangeEnd);
     }
-    std::erase_if(UnsavedChangeRanges_, [](const auto& range) { return range.first >= range.second; });
+    std::erase_if(ranges, [](const auto& range) { return range.first >= range.second; });
+    if (markEnd > markStart) {
+        MergeUnsavedRange(ranges, markStart, markEnd);
+    }
+}
 
+void Buffer::MarkUnsavedRangeDeleted(std::size_t rangeStart, std::size_t rangeEnd) {
     // A delete removes content -- there's no span left to mark, only the
     // position it collapsed to. One byte is enough for the line it maps to
     // at render time; deleting through to the end of whatever's left has
@@ -1226,8 +1293,12 @@ void Buffer::MarkUnsavedRangeDeleted(std::size_t rangeStart, std::size_t rangeEn
         markStart = markStart - 1;
         markEnd   = markStart + 1;
     }
-    if (markEnd > markStart) {
-        MergeUnsavedRange(UnsavedChangeRanges_, markStart, markEnd);
+
+    MarkRangeDeleted(UnsavedChangeRanges_, rangeStart, rangeEnd, markStart, markEnd);
+    // See MarkUnsavedRangeInserted for why an in-flight save tracks its own
+    // set.
+    if (Saving_) {
+        MarkRangeDeleted(SaveInFlightRanges_, rangeStart, rangeEnd, markStart, markEnd);
     }
     ++UnsavedChangeGeneration_;
 }

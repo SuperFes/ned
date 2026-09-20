@@ -32,6 +32,7 @@
 #include "LineEnding.h"
 #include "PieceTable.h"
 #include "Rope.h"
+#include "SavePlan.h"
 #include "UndoTree.h"
 
 namespace ned::text {
@@ -46,6 +47,15 @@ namespace ned::text {
 // ROADMAP.md's large-file-handling notes).
 struct LoadProgress {
     std::atomic<std::uintmax_t> bytesRead{0};
+    std::uintmax_t              totalBytes = 0;
+};
+
+// The same thing for the write direction, kept separate rather than shared
+// with LoadProgress so neither one's field names lie about what they count.
+// bytesWritten is written by whichever thread runs the save and read by UI
+// paint code; totalBytes is written once, before that thread starts.
+struct SaveProgress {
+    std::atomic<std::uintmax_t> bytesWritten{0};
     std::uintmax_t              totalBytes = 0;
 };
 
@@ -504,6 +514,43 @@ class Buffer {
     // percentage -- never retain it).
     void                              SetLoadProgress(std::shared_ptr<LoadProgress> progress);
     [[nodiscard]] const LoadProgress* CurrentLoadProgress() const;
+
+    // --- Saving, as a three-step state machine -------------------------
+    //
+    // SaveToFile below is BeginSave + Text/SavePlan.h's ExecuteSavePlan +
+    // FinishSave run back to back, which is all a small file ever needs.
+    // The steps are separate so a large write can run between them on
+    // another thread while this buffer keeps taking edits -- the case the
+    // load side never had to answer, because a loading buffer has no user
+    // content to lose.
+    //
+    // Captures the plan and arms edit tracking against that capture.
+    // Throws the same preconditions SaveToFile does, plus a refusal if a
+    // save is already in flight.
+    [[nodiscard]] SavePlan BeginSave(const std::filesystem::path& path, bool ensureFinalNewline = true, bool trimTrailingWhitespace = true,
+                                     std::optional<LineEnding> lineEndingOverride = std::nullopt);
+
+    // Applies the state a completed write implies: the snapshot that was
+    // written becomes the saved one, and what stays marked unsaved is
+    // exactly the edits made since BeginSave -- not nothing, which is what
+    // clearing outright would wrongly claim for a buffer edited while the
+    // write was still running. Consumes the plan for its snapshot. `path`
+    // is the path the buffer should report afterwards (the one passed to
+    // BeginSave, not the resolved write target).
+    void FinishSave(const std::filesystem::path& path, SavePlan plan);
+
+    // Gives up on an in-flight save (the write threw). Disarms edit
+    // tracking and changes nothing about what the buffer considers saved,
+    // so a failed save leaves every unsaved edit still marked unsaved.
+    void AbandonSave();
+
+    [[nodiscard]] bool IsSaving() const;
+
+    // Same ownership contract as SetLoadProgress above: set by whatever
+    // drives an asynchronous save, read in place by UI paint code, and
+    // cleared by FinishSave/AbandonSave alongside IsSaving() itself.
+    void                              SetSaveProgress(std::shared_ptr<SaveProgress> progress);
+    [[nodiscard]] const SaveProgress* CurrentSaveProgress() const;
 
     // Bumped by the exact same set of content-changing operations that can
     // make Modified() true (tree-sitter foundation follow-up) -- unlike
@@ -1196,6 +1243,14 @@ class Buffer {
     void MarkUnsavedRangeInserted(std::size_t insertOffset, std::size_t length);
     void MarkUnsavedRangeDeleted(std::size_t rangeStart, std::size_t rangeEnd);
 
+    // The relocate-then-merge body both of the above apply, factored out
+    // because an in-flight save applies it to a second range set as well
+    // (see SaveInFlightRanges_).
+    static void MarkRangeInserted(std::vector<std::pair<std::size_t, std::size_t>>& ranges, std::size_t insertOffset,
+                                  std::size_t length);
+    static void MarkRangeDeleted(std::vector<std::pair<std::size_t, std::size_t>>& ranges, std::size_t rangeStart,
+                                 std::size_t rangeEnd, std::size_t markStart, std::size_t markEnd);
+
     // SecondaryCursors_'s own leg of the relocation every edit gives
     // Point_/Mark_/NarrowedRange_/FoldMarkers_, driven from
     // RelocateTrackedState above.
@@ -1351,6 +1406,12 @@ class Buffer {
     bool                                               ReadOnly_              = false; // see ReadOnly()/SetReadOnly()'s own doc comment above
     std::optional<std::string>                         ReadOnlyReason_;                // see SetReadOnly()/ReadOnlyReason()'s own doc comment above
     bool                                               Loading_ = false;               // see IsLoading()'s own doc comment above
+    bool                                               Saving_  = false;               // see IsSaving()
+    // Edits landing while a save is in flight, tracked alongside
+    // UnsavedChangeRanges_ and relocated identically. FinishSave installs
+    // this as the new UnsavedChangeRanges_; meaningless unless Saving_.
+    std::vector<std::pair<std::size_t, std::size_t>>   SaveInFlightRanges_;
+    std::shared_ptr<SaveProgress>                      SaveProgress_;                  // see SetSaveProgress
     std::shared_ptr<LoadProgress>                      LoadProgress_;                  // see SetLoadProgress
     bool                                               LikelyBinary_         = false;  // see LikelyBinary()'s own doc comment above
     bool                                               BinarySafetyOverride_ = false;  // see BinarySafetyOverride()'s own doc comment above
