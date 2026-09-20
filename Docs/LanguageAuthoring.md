@@ -22,14 +22,20 @@ project's `.ned/languages/<name>/`, trust-gated) where it loads at startup. Noth
 about a language is compiled into the editor: the grammar is `grammar.janet`, ned's
 own generator turns it into parse tables, and ned's own engine runs them.
 
-Three commands cover the loop; each is also reachable through a symlink so it
-tab-completes as its own tool.
+Three commands cover the loop; each is also reachable as its own tool, so it
+tab-completes on its own name.
 
-| command | symlink | does |
+| command | also | does |
 | --- | --- | --- |
-| `ned --import-language <url-or-dir> [--name n] [--subdir s] [--ref tag-or-commit] [--into root]` | `ned-import-language` | a tree-sitter grammar repository → a package |
-| `ned --compile-language <dir>... [-o file]` | `ned-langc` | `grammar.janet` → `tables` |
-| `ned --test-language <dir>... [--bless]` | `ned-test-language` | run the corpus; `--bless` rewrites stale expected trees |
+| `ned --import-language <url-or-dir> [--name n] [--subdir s] [--ref tag-or-commit] [--into root]` | `ned-import-language` (symlink) | a tree-sitter grammar repository → a package |
+| `ned --compile-language <dir>... [-o file]` | `ned-langc` (program) | `grammar.janet` → `tables` |
+| `ned --test-language <dir>... [--bless]` | `ned-test-language` (symlink) | run the corpus; `--bless` rewrites stale expected trees |
+
+`ned-langc` is a separate binary rather than a symlink onto `ned`: the generator
+depends on no editor code, and keeping it its own program is what stops an edit
+anywhere in the editor from invalidating every compiled table. It takes the same
+command line either way — `ned-langc <dir>` and `ned-langc --compile-language <dir>`
+both work — and produces byte-identical output to `ned --compile-language`.
 
 ## Importing a tree-sitter grammar
 

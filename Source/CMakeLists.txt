@@ -1,10 +1,47 @@
-# ned_lib (everything except main()) and the ned executable. Added via
+# ned_grammar_compile (the table generator), ned_lib (everything else except
+# main()), and the ned and ned-langc executables. Added via
 # add_subdirectory(Source) from the root CMakeLists.txt, after
 # CMake/Dependencies.cmake, CMake/Grammars.cmake and CMake/DataTree.cmake
 # have already run -- this file links against targets all three produce
 # (notcurses-core, vterm, utf8proc, nlohmann_json::nlohmann_json, re2::re2,
 # pcre2-8-static, Janet_*,
 # ned_data).
+
+# The grammar.janet -> tables generator, kept in its own library because
+# CMake/LanguageTables.cmake runs it for every bundled language: whatever
+# those outputs depend on is rebuilt on every editor source change. It
+# reaches nothing in the editor -- Editor/JanetData.h (a Janet *data* reader
+# with no VM behind it) and utf8proc are its entire external surface -- so
+# splitting it out is what lets a UI or LSP edit leave all 111 compiled
+# tables alone. ImportCommand/TestCommand stay in ned_lib: they drive
+# corpora, the parser and child processes, none of which compiling needs.
+add_library(ned_grammar_compile STATIC
+        Editor/JanetData.cpp
+        Editor/Grammar/Compile/GrammarFile.cpp
+        Editor/Grammar/Compile/Grammar.cpp
+        Editor/Grammar/Compile/Nfa.cpp
+        Editor/Grammar/Compile/Unicode.cpp
+        Editor/Grammar/Compile/UnicodeTables.cpp
+        Editor/Grammar/Compile/Regex.cpp
+        Editor/Grammar/Compile/Prepare.cpp
+        Editor/Grammar/Compile/NodeTypes.cpp
+        Editor/Grammar/Compile/ParseTable.cpp
+        Editor/Grammar/Compile/LexTable.cpp
+        Editor/Grammar/Compile/Tables.cpp
+        Editor/Grammar/Compile/Compiler.cpp
+        Editor/Grammar/Compile/TableFile.cpp
+        Editor/Grammar/Compile/CompileCommand.cpp)
+
+target_include_directories(ned_grammar_compile PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(ned_grammar_compile PUBLIC utf8proc)
+
+if (NED_ENABLE_SANITIZERS)
+    target_compile_options(ned_grammar_compile PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(ned_grammar_compile PUBLIC -fsanitize=address,undefined)
+endif()
+
+add_executable(ned-langc Editor/Grammar/Compile/LangcMain.cpp)
+target_link_libraries(ned-langc PRIVATE ned_grammar_compile)
 
 add_library(ned_lib STATIC
         Application.cpp
@@ -58,7 +95,6 @@ add_library(ned_lib STATIC
         Editor/LanguageDefinition.cpp
         Editor/LanguageFiles.cpp
         Editor/DataDir.cpp
-        Editor/JanetData.cpp
         Editor/LanguageParse.cpp
         Editor/LanguageRegistry.cpp
         Editor/CaptureClassifiers.cpp
@@ -258,20 +294,6 @@ add_library(ned_lib STATIC
         Editor/ImprintBracket.cpp
         Editor/ImprintIndent.cpp
         Editor/Grammar/GrammarImprint.cpp
-        Editor/Grammar/Compile/GrammarFile.cpp
-        Editor/Grammar/Compile/Grammar.cpp
-        Editor/Grammar/Compile/Nfa.cpp
-        Editor/Grammar/Compile/Unicode.cpp
-        Editor/Grammar/Compile/UnicodeTables.cpp
-        Editor/Grammar/Compile/Regex.cpp
-        Editor/Grammar/Compile/Prepare.cpp
-        Editor/Grammar/Compile/NodeTypes.cpp
-        Editor/Grammar/Compile/ParseTable.cpp
-        Editor/Grammar/Compile/LexTable.cpp
-        Editor/Grammar/Compile/Tables.cpp
-        Editor/Grammar/Compile/Compiler.cpp
-        Editor/Grammar/Compile/TableFile.cpp
-        Editor/Grammar/Compile/CompileCommand.cpp
         Editor/Grammar/Compile/TestCommand.cpp
         Editor/Grammar/Compile/ImportCommand.cpp
         Editor/Grammar/Corpus.cpp
@@ -446,6 +468,9 @@ target_include_directories(ned_lib
 target_link_directories(ned_lib PUBLIC ${Janet_LIBRARY_DIRS})
 
 target_link_libraries(ned_lib
+        # The editor compiles out-of-tree language packages in process, and
+        # `ned --compile-language` runs the same generator ned-langc does.
+        PUBLIC ned_grammar_compile
         PUBLIC ${Janet_LIBRARIES}
         # Every widget (Widget/KeyTranslation/Theme/EventLoop/Layout and every
         # concrete widget through main.cpp's own composition root) is built on
@@ -504,6 +529,14 @@ include(GNUInstallDirs)
 # consumer does, with the linker's normal default search path.
 install(TARGETS ned RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
+# ned-langc is a real program rather than one more argv[0] symlink onto
+# `ned`, because the build graph needs it to be a target that editor changes
+# do not touch (see ned_grammar_compile above). Installing the binary keeps
+# the installed tool matching the one the build itself runs; `ned` still
+# answers to --compile-language, and still dispatches on an ned-langc
+# argv[0], so nothing that already invoked it either way breaks.
+install(TARGETS ned-langc RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+
 # ned-format argv[0] dispatch follow-up: a relative symlink (main.cpp
 # dispatches on argv[0]'s own basename, so it doesn't matter whether it was
 # reached via this symlink directly or a bare PATH lookup finding it) --
@@ -526,8 +559,6 @@ install(TARGETS ned RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(CODE "
     file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-format\")
     file(CREATE_LINK \"ned\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-format\" SYMBOLIC)
-    file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-langc\")
-    file(CREATE_LINK \"ned\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-langc\" SYMBOLIC)
     file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-import-language\")
     file(CREATE_LINK \"ned\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-import-language\" SYMBOLIC)
     file(REMOVE \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/ned-test-language\")
