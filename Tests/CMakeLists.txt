@@ -399,3 +399,23 @@ catch_discover_tests(ned_tests
 catch_discover_tests(ned_tests
         TEST_SPEC "[Performance]"
         PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" LABELS "Performance")
+
+# The generator is deterministic, so a hash per language is a complete gate
+# on generator changes: a refactor meant to preserve behaviour either
+# reproduces every bundled grammar's tables or it does not. This hashes the
+# tables ned_tables already compiled into the data tree, so it costs nothing
+# beyond the build that produced them. Tools/grammar-tables.py's own header
+# comment covers re-recording GrammarTables.sha256 when a grammar or the
+# table format genuinely moves. Python is an optional tool dependency, not a
+# build one -- without an interpreter the gate simply isn't registered.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if (Python3_Interpreter_FOUND)
+    add_test(NAME "Every bundled grammar's tables match the recorded manifest"
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/Tools/grammar-tables.py" check
+                    --tables "${NED_DATA_TREE}/languages"
+                    --manifest "${CMAKE_CURRENT_SOURCE_DIR}/GrammarTables.sha256")
+    set_tests_properties("Every bundled grammar's tables match the recorded manifest"
+            PROPERTIES LABELS "GrammarTables")
+else()
+    message(STATUS "No Python3 interpreter: skipping the grammar tables manifest test")
+endif()
