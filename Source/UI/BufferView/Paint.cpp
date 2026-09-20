@@ -1729,6 +1729,12 @@ void BufferView::PaintFoldEllipsis(Canvas& c, int row, int& col, std::size_t lin
 }
 
 void BufferView::Paint(Canvas paneCanvas) {
+    // Before anything else in the frame: a quit held for an in-flight save
+    // is resolved here, since this is what runs every time the loop cycles
+    // (and an asynchronous save posts progress often enough to keep it
+    // cycling -- see AsyncFileSaver).
+    RefreshPendingQuit();
+
     // First thing in the frame, deliberately. BrushForCell reads the cached
     // glow state for every cell it paints, so refreshing afterwards meant
     // every cell used the *previous* frame's answer -- an edit painted with

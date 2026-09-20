@@ -354,7 +354,8 @@ SavePlan Buffer::BeginSave(const std::filesystem::path& path, bool ensureFinalNe
     plan.trimTrailingWhitespace = trimTrailingWhitespace;
     plan.ensureFinalNewline     = ensureFinalNewline;
 
-    Saving_ = true;
+    Saving_              = true;
+    SavingSnapshotBytes_ = plan.snapshot->ByteLength();
     SaveInFlightRanges_.clear();
     return plan;
 }
@@ -383,6 +384,19 @@ void Buffer::AbandonSave() {
 
 bool Buffer::IsSaving() const {
     return Saving_;
+}
+
+bool Buffer::ModifiedAfterPendingSave() const {
+    if (!Saving_) {
+        return Modified();
+    }
+    if (!SaveInFlightRanges_.empty()) {
+        return true;
+    }
+    // The same case Modified() has to special-case: a buffer emptied out
+    // has no byte left to mark anywhere, so it is compared by length
+    // instead -- here against what the in-flight save is writing.
+    return Storage_->ByteLength() == 0 && SavingSnapshotBytes_ != 0;
 }
 
 void Buffer::SetSaveProgress(std::shared_ptr<SaveProgress> progress) {

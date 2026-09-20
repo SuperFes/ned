@@ -150,6 +150,60 @@ TEST_CASE("A deletion made while a save is in flight stays marked unsaved", "[Bu
     std::filesystem::remove(path);
 }
 
+TEST_CASE("A buffer whose save is in flight does not count as needing a quit prompt", "[BufferSaveState]") {
+    const std::filesystem::path path   = TempPath("pendingquit.txt");
+    Buffer                      buffer = BufferWith("content\n");
+
+    REQUIRE(buffer.Modified());
+    REQUIRE(buffer.ModifiedAfterPendingSave());
+
+    SavePlan plan = buffer.BeginSave(path, false, false);
+
+    // Right now it is still Modified() -- the bytes aren't on disk yet --
+    // but the save that will put them there is already running, so quitting
+    // must not prompt about it.
+    REQUIRE(buffer.Modified());
+    REQUIRE_FALSE(buffer.ModifiedAfterPendingSave());
+
+    ExecuteSavePlan(plan);
+    buffer.FinishSave(path, std::move(plan));
+
+    REQUIRE_FALSE(buffer.ModifiedAfterPendingSave());
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("A buffer edited during its save does count as needing a quit prompt", "[BufferSaveState]") {
+    const std::filesystem::path path   = TempPath("pendingquitedit.txt");
+    Buffer                      buffer = BufferWith("content\n");
+
+    SavePlan plan = buffer.BeginSave(path, false, false);
+    REQUIRE_FALSE(buffer.ModifiedAfterPendingSave());
+
+    buffer.InsertAt(0, "EDIT "); // genuinely would be lost on quit
+    REQUIRE(buffer.ModifiedAfterPendingSave());
+
+    ExecuteSavePlan(plan);
+    buffer.FinishSave(path, std::move(plan));
+
+    REQUIRE(buffer.ModifiedAfterPendingSave());
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("A buffer emptied during its save still counts as needing a quit prompt", "[BufferSaveState]") {
+    const std::filesystem::path path   = TempPath("pendingquitempty.txt");
+    Buffer                      buffer = BufferWith("content\n");
+
+    SavePlan plan = buffer.BeginSave(path, false, false);
+    // Deleting everything leaves no byte anywhere to mark a range against
+    // -- the one case Modified() itself has to answer by length.
+    buffer.DeleteRange(0, buffer.Size());
+    REQUIRE(buffer.ModifiedAfterPendingSave());
+
+    ExecuteSavePlan(plan);
+    buffer.FinishSave(path, std::move(plan));
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("Save progress is exposed while saving and cleared when it finishes", "[BufferSaveState]") {
     const std::filesystem::path path   = TempPath("progress.txt");
     Buffer                      buffer = BufferWith("content\n");

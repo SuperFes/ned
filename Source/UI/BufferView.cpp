@@ -53,6 +53,45 @@ std::size_t BufferView::TopLine() const {
     return viewport_.TopLine();
 }
 
+bool BufferView::AnySaveInFlight() const {
+    return std::ranges::any_of(bufferList_.Buffers(), [](const auto& buffer) { return buffer->IsSaving(); });
+}
+
+std::string BufferView::PendingSaveStatus() const {
+    std::string status;
+    for (const auto& buffer : bufferList_.Buffers()) {
+        if (!buffer->IsSaving()) {
+            continue;
+        }
+        if (!status.empty()) {
+            status += ", ";
+        }
+        status += buffer->Name();
+        const text::SaveProgress* progress = buffer->CurrentSaveProgress();
+        if (progress != nullptr && progress->totalBytes > 0) {
+            const std::uintmax_t written = progress->bytesWritten.load(std::memory_order_relaxed);
+            const std::uintmax_t percent = std::min<std::uintmax_t>(100, written * 100 / progress->totalBytes);
+            status += " " + std::to_string(percent) + "%";
+        }
+    }
+    return status.empty() ? std::string("Waiting for saves to finish...") : "Finishing save: " + status + "...";
+}
+
+void BufferView::RefreshPendingQuit() {
+    if (!quitPendingSaves_) {
+        return;
+    }
+    if (AnySaveInFlight()) {
+        statusMessage_ = PendingSaveStatus(); // keeps the percentage moving
+        return;
+    }
+    quitPendingSaves_ = false;
+    statusMessage_    = "Shutting down...";
+    if (eventLoop_) {
+        eventLoop_->Exit();
+    }
+}
+
 void BufferView::SetTopLine(std::size_t line) {
     viewport_.SetTopLine(line);
 }
@@ -945,6 +984,18 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
     }
 
     if (context.quit) {
+        // A save still writing must finish: it holds a snapshot of content
+        // the user asked to be on disk, and killing the process mid-write
+        // leaves either a stray .ned-tmp or a truncated real file. So the
+        // quit is held here rather than refused -- the editor stays up,
+        // says what it is waiting on, and exits on its own the moment the
+        // last write lands (see RefreshPendingQuit, called each frame).
+        if (AnySaveInFlight()) {
+            quitPendingSaves_ = true;
+            statusMessage_    = PendingSaveStatus();
+            return ran;
+        }
+
         // eventLoop_ is nullptr outside a real, running-editor SetEventLoop
         // call -- every unit test, and any other headless use of
         // BufferView. It is never null during real, running-editor usage

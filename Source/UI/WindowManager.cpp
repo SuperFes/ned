@@ -1640,6 +1640,53 @@ void WindowManager::PurgeFinishedHugeFileLoaders() {
     std::erase_if(hugeFileLoaders_, [](const std::unique_ptr<HugeFileLoader>& loader) { return loader->Done(); });
 }
 
+void WindowManager::EnableAsyncFileSaving(EventLoop& eventLoop) {
+    editor::SetAsyncSaveDispatcher([this, &eventLoop](editor::AsyncSaveRequest request) -> bool {
+        PurgeFinishedAsyncSavers();
+        asyncFileSavers_.push_back(std::make_unique<AsyncFileSaver>(std::move(request), bufferList_, eventLoop));
+        return true;
+    });
+}
+
+void WindowManager::PurgeFinishedAsyncSavers() {
+    for (const auto& saver : asyncFileSavers_) {
+        if (saver->Done() && !saver->Error().empty()) {
+            statusMessage_ = saver->Error();
+        }
+    }
+    std::erase_if(asyncFileSavers_, [](const std::unique_ptr<AsyncFileSaver>& saver) { return saver->Done(); });
+}
+
+bool WindowManager::AsyncSaveInFlight() const {
+    return std::ranges::any_of(asyncFileSavers_, [](const std::unique_ptr<AsyncFileSaver>& saver) { return !saver->Done(); });
+}
+
+std::string WindowManager::AsyncSaveStatus() const {
+    std::string status;
+    for (const auto& saver : asyncFileSavers_) {
+        if (saver->Done()) {
+            continue;
+        }
+        if (!status.empty()) {
+            status += ", ";
+        }
+        status += "Saving " + saver->BufferName();
+        // The percentage lives on the buffer, not the saver -- the writing
+        // thread reports into it, and it is gone the moment FinishSave runs.
+        const text::Buffer*       buffer   = bufferList_.Find(saver->BufferName());
+        const text::SaveProgress* progress = buffer != nullptr ? buffer->CurrentSaveProgress() : nullptr;
+        if (progress != nullptr && progress->totalBytes > 0) {
+            const std::uintmax_t written = progress->bytesWritten.load(std::memory_order_relaxed);
+            const std::uintmax_t percent = std::min<std::uintmax_t>(100, written * 100 / progress->totalBytes);
+            status += "... " + std::to_string(percent) + "%";
+        }
+        else {
+            status += "...";
+        }
+    }
+    return status;
+}
+
 void WindowManager::HandleWindowRequest(editor::InteractiveRequest request) {
     switch (request) {
         case editor::InteractiveRequest::SplitBelow:

@@ -1802,9 +1802,17 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     registry.Register("quit", "Exit the editor, or prompt for confirmation if any buffer has unsaved changes.",
                       [](CommandContext& context) {
+                          // ModifiedAfterPendingSave, not Modified: a buffer
+                          // whose save is still writing is not something to
+                          // prompt about -- the user just asked for exactly
+                          // that, and prompting reads as the save having been
+                          // ignored. One edited again *since* that write began
+                          // still prompts, because those edits really would be
+                          // lost. The quit itself then waits for the write
+                          // (BufferView::RefreshPendingQuit).
                           const bool anyModified =
                               std::any_of(context.bufferList.Buffers().begin(), context.bufferList.Buffers().end(),
-                                          [](const auto& buffer) { return buffer->Modified() && !buffer->ReadOnly(); });
+                                          [](const auto& buffer) { return buffer->ModifiedAfterPendingSave() && !buffer->ReadOnly(); });
                           if (anyModified) {
                               context.interactiveRequest = InteractiveRequest::ConfirmQuit;
                           }
@@ -1861,9 +1869,17 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 ApplyScopedFormatOnSave(context.buffer, *context.mode);
             }
 
-            WriteBufferToDisk(context.buffer);
+            WriteBufferToDisk(context.buffer, SaveDispatch::Automatic);
             if (context.message) {
-                *context.message = "Wrote " + context.buffer.Name() + (formatFailed ? " (format command failed)" : "");
+                // A large save is still running when this returns, so it
+                // must not claim the file is written -- the mode line
+                // carries the percentage from here, and a failure arrives
+                // there too. Only this one call site opts into that; every
+                // other WriteBufferToDisk caller reports from the call
+                // itself and stays synchronous.
+                *context.message = context.buffer.IsSaving()
+                                       ? "Saving " + context.buffer.Name() + "..."
+                                       : "Wrote " + context.buffer.Name() + (formatFailed ? " (format command failed)" : "");
             }
         }
         catch (const std::exception& e) {

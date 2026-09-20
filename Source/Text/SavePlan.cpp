@@ -1,5 +1,6 @@
 #include "SavePlan.h"
 
+#include <algorithm>
 #include <fstream>
 #include <stdexcept>
 #include <system_error>
@@ -34,7 +35,9 @@ namespace {
     // no second pass or full-content buffer needed.
     class StreamingSaveWriter {
       public:
-        StreamingSaveWriter(std::ofstream& file, LineEnding ending, bool trim, bool ensureFinalNewline) : file_(file), ending_(ending), trim_(trim), ensureFinalNewline_(ensureFinalNewline) {
+        StreamingSaveWriter(std::ofstream& file, LineEnding ending, bool trim, bool ensureFinalNewline,
+                            const std::function<void(std::uintmax_t)>& onProgress) :
+            file_(file), ending_(ending), trim_(trim), ensureFinalNewline_(ensureFinalNewline), onProgress_(onProgress) {
         }
 
         void operator()(std::string_view chunk) {
@@ -118,16 +121,22 @@ namespace {
         void FlushBuffer() {
             if (!outBuffer_.empty()) {
                 file_.write(outBuffer_.data(), static_cast<std::streamsize>(outBuffer_.size()));
+                bytesWritten_ += outBuffer_.size();
                 outBuffer_.clear();
+                if (onProgress_) {
+                    onProgress_(bytesWritten_);
+                }
             }
         }
 
         static constexpr std::size_t kFlushThreshold = 256 * 1024;
 
-        std::ofstream& file_;
-        LineEnding     ending_;
-        bool           trim_;
-        bool           ensureFinalNewline_;
+        std::ofstream&                             file_;
+        LineEnding                                 ending_;
+        bool                                       trim_;
+        bool                                       ensureFinalNewline_;
+        const std::function<void(std::uintmax_t)>& onProgress_;
+        std::uintmax_t                             bytesWritten_ = 0;
 
         std::string outBuffer_;
         std::string pendingWhitespace_;
@@ -144,7 +153,7 @@ namespace {
     // failed write very differently (remove the temp file vs. report a
     // possibly-truncated real file).
     void WriteBufferContent(std::ofstream& file, const ITextStorage& storage, LineEnding effectiveEnding, bool trimTrailingWhitespace,
-                            bool ensureFinalNewline) {
+                            bool ensureFinalNewline, const std::function<void(std::uintmax_t)>& onProgress) {
         if (storage.IsHuge()) {
             // huge-file-editing follow-up: same trim/ensureFinalNewline/
             // line-ending pipeline as the non-huge path below, but streamed
@@ -158,7 +167,7 @@ namespace {
             // machine would be -- no reason to pay that cost when the
             // simple whole-string approach is already correct and cheap
             // enough for anything below HugeFileThreshold.
-            StreamingSaveWriter writer(file, effectiveEnding, trimTrailingWhitespace, ensureFinalNewline);
+            StreamingSaveWriter writer(file, effectiveEnding, trimTrailingWhitespace, ensureFinalNewline, onProgress);
             storage.ForEachChunk([&writer](std::string_view chunk) { writer(chunk); });
             writer.Finish();
             return;
@@ -197,7 +206,19 @@ namespace {
             content = ApplyLineEnding(content, effectiveEnding);
         }
 
-        file.write(content.data(), static_cast<std::streamsize>(content.size()));
+        // Written in chunks rather than one call purely so a save large
+        // enough to run off the main thread can report progress while it
+        // does; the bytes and their order are identical either way.
+        constexpr std::size_t kWriteChunkBytes = 256 * 1024;
+        std::uintmax_t        written          = 0;
+        for (std::size_t offset = 0; offset < content.size(); offset += kWriteChunkBytes) {
+            const std::size_t count = std::min(kWriteChunkBytes, content.size() - offset);
+            file.write(content.data() + offset, static_cast<std::streamsize>(count));
+            written += count;
+            if (onProgress) {
+                onProgress(written);
+            }
+        }
     }
 
     // Truncate-and-write the target's own inode, preserving everything
@@ -210,7 +231,8 @@ namespace {
             throw std::runtime_error("ned: cannot open file for writing: " + plan.target.string());
         }
 
-        WriteBufferContent(file, *plan.snapshot, plan.lineEnding, plan.trimTrailingWhitespace, plan.ensureFinalNewline);
+        WriteBufferContent(file, *plan.snapshot, plan.lineEnding, plan.trimTrailingWhitespace, plan.ensureFinalNewline,
+                           plan.onProgress);
         const bool writeFailed = !file;
         file.close();
 
@@ -262,7 +284,8 @@ void ExecuteSavePlan(const SavePlan& plan) {
         throw std::runtime_error("ned: cannot open file for writing: " + tempPath.string());
     }
 
-    WriteBufferContent(file, *plan.snapshot, plan.lineEnding, plan.trimTrailingWhitespace, plan.ensureFinalNewline);
+    WriteBufferContent(file, *plan.snapshot, plan.lineEnding, plan.trimTrailingWhitespace, plan.ensureFinalNewline,
+                       plan.onProgress);
     const bool writeFailed = !file;
     file.close();
 

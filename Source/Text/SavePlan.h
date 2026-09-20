@@ -14,7 +14,9 @@
 #ifndef NED_TEXT_SAVEPLAN_H
 #define NED_TEXT_SAVEPLAN_H
 
+#include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 
 #include "FilePreservation.h"
@@ -41,6 +43,14 @@ struct SavePlan {
     LineEnding lineEnding             = LineEnding::LF;
     bool       trimTrailingWhitespace = false;
     bool       ensureFinalNewline     = false;
+
+    // Called at flush boundaries with the running total of bytes handed to
+    // the stream, from whichever thread runs the write -- an asynchronous
+    // save's only window into how far along it is. Counts bytes *written*,
+    // which is not the snapshot's length: trimming removes some and a CRLF
+    // line ending adds some, so a caller deriving a fraction should clamp.
+    // Never called once ExecuteSavePlan has returned.
+    std::function<void(std::uintmax_t bytesWritten)> onProgress;
 };
 
 // Writes plan.target: atomically via a sibling temp file and a rename

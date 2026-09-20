@@ -101,6 +101,23 @@ void ModeLine::Paint(Canvas c) {
         }
     }
 
+    // The write-side counterpart, on the same reasoning: a save large
+    // enough to run off the main thread is the one case where the file on
+    // disk is knowably mid-change, and this is where the buffer already
+    // reports its own state per frame. Same clamp, same fall-back to a
+    // plain indicator when totalBytes is 0 -- and the two can't collide,
+    // since a loading buffer refuses to save at all.
+    std::string savingSuffix;
+    if (buffer.IsSaving()) {
+        savingSuffix = "   Saving...";
+        if (const text::SaveProgress* progress = buffer.CurrentSaveProgress();
+            progress != nullptr && progress->totalBytes > 0) {
+            const std::uintmax_t written = progress->bytesWritten.load(std::memory_order_relaxed);
+            const std::uintmax_t percent = std::min<std::uintmax_t>(100, written * 100 / progress->totalBytes);
+            savingSuffix += " " + std::to_string(percent) + "%";
+        }
+    }
+
     // embedded-language-documents follow-up: shown next to the mode name
     // only while point sits inside an embedded region (e.g. "[javascript]"
     // inside an HTML <script> block) -- nothing extra for the ordinary
@@ -178,7 +195,7 @@ void ModeLine::Paint(Canvas c) {
     const std::string text = buffer.IsLoading() ? "  " + buffer.Name() + loadingText
                                                 : "  " + modifiedMarker + buffer.Name() + "   L" + std::to_string(line + 1) +
                                                       ":C" + std::to_string(col + 1) + "  (" + mode_.name + ")" + embeddedLanguageSuffix +
-                                                      indentStyleSuffix + lineEndingSuffix;
+                                                      indentStyleSuffix + lineEndingSuffix + savingSuffix;
 
     // background-activity-spinner follow-up: one column-per-entry cell list
     // instead of the raw byte string above, so the spinner's multi-byte

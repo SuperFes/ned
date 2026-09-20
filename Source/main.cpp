@@ -1542,6 +1542,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
     // below, before this hook exists) -- every interactive open of a huge
     // file gets the progressive, editable-while-loading path from here on.
     windowManager->EnableAsyncHugeFileLoading(eventLoop);
+    // The save side of the same wiring: from here on, a save-buffer of a
+    // large enough buffer writes on a background thread instead of freezing
+    // the event loop for the duration. Before this point (the CLI --format
+    // run, a quit-time save) there is no event loop to post a completion
+    // back to, so those stay synchronous regardless of size.
+    windowManager->EnableAsyncFileSaving(eventLoop);
 
     // huge-file-session-restore follow-up: the restored-session files
     // deferred above (see deferredSessionOpenPaths' own comment), opened now

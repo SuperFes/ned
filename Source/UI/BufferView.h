@@ -140,6 +140,15 @@ class BufferView : public Widget {
     static constexpr std::size_t kMaxJumpBackStack = 64;
 
     void Paint(Canvas c) override;
+
+    // A quit requested while a save is still writing is held until that
+    // write lands, rather than killing it partway through and leaving a
+    // stray temp file or a truncated real one. RefreshPendingQuit runs at
+    // the top of every Paint: it keeps the status line's percentage moving
+    // while the write runs, and exits the event loop once none are left.
+    [[nodiscard]] bool        AnySaveInFlight() const;
+    [[nodiscard]] std::string PendingSaveStatus() const;
+    void                      RefreshPendingQuit();
     bool OnEvent(const Event& event) override;
     void OnPaste(std::string_view text) override;
     bool Focusable() const override;
@@ -3526,6 +3535,7 @@ class BufferView : public Widget {
     text::KillRing&        killRing_;
     editor::RegisterTable& registers_;
     editor::PromptHistory& promptHistory_;
+    bool                   quitPendingSaves_ = false; // see RefreshPendingQuit
     text::BufferList&      bufferList_;
     editor::Dispatcher&    dispatcher_;
     std::string&           statusMessage_;

@@ -546,6 +546,13 @@ class Buffer {
 
     [[nodiscard]] bool IsSaving() const;
 
+    // Whether this buffer will STILL have unsaved changes once any
+    // in-flight save completes -- Modified() answers about right now, which
+    // is a different question while a write is running. A buffer whose
+    // content is on its way to disk is not something to prompt about on
+    // quit; one edited again since that write began is.
+    [[nodiscard]] bool ModifiedAfterPendingSave() const;
+
     // Same ownership contract as SetLoadProgress above: set by whatever
     // drives an asynchronous save, read in place by UI paint code, and
     // cleared by FinishSave/AbandonSave alongside IsSaving() itself.
@@ -1411,6 +1418,7 @@ class Buffer {
     // UnsavedChangeRanges_ and relocated identically. FinishSave installs
     // this as the new UnsavedChangeRanges_; meaningless unless Saving_.
     std::vector<std::pair<std::size_t, std::size_t>>   SaveInFlightRanges_;
+    std::size_t                                        SavingSnapshotBytes_ = 0;       // see ModifiedAfterPendingSave
     std::shared_ptr<SaveProgress>                      SaveProgress_;                  // see SetSaveProgress
     std::shared_ptr<LoadProgress>                      LoadProgress_;                  // see SetLoadProgress
     bool                                               LikelyBinary_         = false;  // see LikelyBinary()'s own doc comment above

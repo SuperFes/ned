@@ -33,6 +33,7 @@
 
 #include "ActiveBuffer.h"
 #include "AsyncFileLoader.h"
+#include "AsyncFileSaver.h"
 #include "BufferView.h"
 #include "Editor/Command.h"
 #include "Editor/Dispatcher.h"
@@ -792,6 +793,22 @@ class WindowManager {
     // main.cpp calls both once, alongside StartAutoSaveTimer.
     void EnableAsyncHugeFileLoading(EventLoop& eventLoop);
 
+    // The save-side counterpart: wires editor::SetAsyncSaveDispatcher to
+    // spin up an AsyncFileSaver (Source/UI/AsyncFileSaver.h) per large
+    // save, owned here in asyncFileSavers_. Same
+    // not-called-from-the-constructor reasoning as the two above.
+    void EnableAsyncFileSaving(EventLoop& eventLoop);
+
+    // True while any save is still writing. The quit path polls this so
+    // shutdown waits for a write rather than killing it partway through,
+    // and AsyncSaveStatus() is what it tells the user it is waiting on.
+    [[nodiscard]] bool AsyncSaveInFlight() const;
+
+    // A one-line description of the saves still running, e.g.
+    // "Saving huge.log... 43%" -- empty when none are. Also what the mode
+    // line shows while a save is in flight.
+    [[nodiscard]] std::string AsyncSaveStatus() const;
+
   private:
     // Drops any asyncFileLoaders_ entries that have finished (AsyncFileLoader
     // ::Done()) -- called opportunistically whenever a new load starts,
@@ -801,6 +818,9 @@ class WindowManager {
     void PurgeFinishedAsyncLoaders();
     // Same as PurgeFinishedAsyncLoaders, for hugeFileLoaders_/HugeFileLoader.
     void PurgeFinishedHugeFileLoaders();
+    // Same again, for asyncFileSavers_/AsyncFileSaver. A finished saver
+    // whose write failed reports that failure before it is dropped.
+    void PurgeFinishedAsyncSavers();
 
     // file-watcher follow-up: the external-change portion of the auto-save
     // tick (AutoRevertBuffers + AutoMergeBuffers + their status-line
@@ -981,6 +1001,8 @@ class WindowManager {
     std::vector<std::unique_ptr<AsyncFileLoader>> asyncFileLoaders_;
     // See EnableAsyncHugeFileLoading's own comment above.
     std::vector<std::unique_ptr<HugeFileLoader>> hugeFileLoaders_;
+    // See EnableAsyncFileSaving's own comment above.
+    std::vector<std::unique_ptr<AsyncFileSaver>> asyncFileSavers_;
 
     // See StartFileWatcher's own comment above. Shares autoSaveThread_'s
     // accepted latent shutdown ordering: main.cpp declares eventLoop after

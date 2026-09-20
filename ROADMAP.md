@@ -413,34 +413,17 @@ commands, never a replacement for them.
       reach `Dispatcher` through `C-x` would mean either breaking real vim's own
       decrement-number binding or a two-key lookahead hack — not worth it now that the
       practical gap (no way to split/close/cycle windows under Vim mode) is closed.
-- [ ] **A determinate progress bar, and a huge save that can paint one.** The mode line's
-      spinner is the right answer for indeterminate work and stays; what has no answer at
-      all is a long operation whose end *is* knowable. Saving a multi-GB buffer is the
-      motivating case, and the blocker is not the widget:
-      `save-buffer` calls `Editor/BufferSave.h`'s `WriteBufferToDisk` **synchronously,
-      inside command dispatch, on the main thread** (`Commands.cpp`'s `saveBufferBody`),
-      so a huge save freezes the event loop outright — nothing repaints, and a progress
-      bar added today would never be drawn during the one operation it exists for. The
-      `Editor/Backup.h` pre-save version write (huge buffers included, 64GiB cap) is on
-      that same blocking path, so the wait is roughly doubled.
-      Two pieces, in order:
-      - **Make the huge save yield.** `Buffer::SaveToFile`'s huge branch is already a
-        streaming `ITextStorage::ForEachChunk` pass, so the chunk boundary is exactly
-        where a progress callback and a yield point belong. The shape to copy is the
-        load side, which already solved this: `UI/AsyncFileLoader.h`/`HugeFileLoader.h`
-        run off-thread and marshal back via `EventLoop::Post`, with `Buffer::IsLoading()`
-        gating what may touch the buffer meanwhile. A symmetric `IsSaving()` is the
-        obvious counterpart — `save-buffer` already refuses a still-loading buffer, so
-        the precedent for refusing during the inverse exists too. The real design
-        question is what an edit *during* a save should do, which the load side never had
-        to answer (a loading buffer has no user content yet).
-      - **Then the widget.** Determinate, 0..1 plus a label, painted through a themed
-        surface like every other chrome. Two consumers already have a real fraction the
-        moment one exists: `Buffer::CurrentLoadProgress` (huge load, currently rendered
-        as `Loading... 45%` text in the mode line) and LSP `$/progress`, whose
-        `percentage` `Lsp/Manager.cpp` already parses and then discards into a string.
+- [ ] **A determinate progress bar widget.** The asynchronous-save half of this shipped
+      (`git log --grep=` `async-save`): `save-buffer` hands a large enough write to a
+      background thread, the event loop keeps running, and the mode line shows a live
+      `Saving... N%` from `Buffer::CurrentSaveProgress`. What is still missing is the
+      widget itself -- a real determinate bar, 0..1 plus a label, painted through a themed
+      surface rather than rendered as text in the mode line. Three consumers already have
+      a real fraction waiting for one: that save progress, `Buffer::CurrentLoadProgress`
+      (huge load, currently `Loading... 45%` text), and LSP `$/progress`, whose
+      `percentage` `Lsp/Manager.cpp` parses and then discards into a string.
       Deliberately *not* the "state-driven mode-line fills" idea listed under Translucency
-      phase 5 — that one washes the whole bar and was set aside as decoration; this is a
+      phase 5 -- that one washes the whole bar and was set aside as decoration; this is a
       real widget for real determinate work.
 - [ ] **Search-everywhere preview pane** -- a File/Symbol/TextMatch row shows no
       preview of what it points at (Telescope's, JetBrains'). All that is left of the
@@ -1042,17 +1025,13 @@ for closed-issue history.
   earlier) rather than anything about cache invalidation specifically, but not
   root-caused -- logged rather than guessed at.
 
-- **Every editor-source edit recompiles all 74 grammar tables.**
-  `CMake/LanguageTables.cmake`'s per-language rule is `DEPENDS ned "${grammar}"`, so any
-  relink of the `ned` binary — a one-line change in `Text/Buffer.cpp`, a `Source/UI/`
-  tweak, anything — invalidates every `tables` output and costs roughly 5-10 minutes of
-  `--compile-language` runs before the test binary is even reached. The dependency is
-  right in principle (the table format is whatever the generator emits) but far too
-  coarse: the generator is `Editor/Grammar/Compile/` plus the Janet reader, not the
-  editor. Options if this gets picked up: a separate small `ned-compile-language` helper
-  executable linking only the generator (`libexec/ned`, the precedent already exists), or
-  stamping a generator-version/format hash the rule depends on instead of the binary.
-  Noted 2026-09-19 while building `nested-snippet-stops`; annoying rather than broken.
+- **`search-everywhere debounces a background text search and Enter opens the matching
+  file at that line` fails occasionally under `ctest -j8`.** Seen once on 2026-09-20
+  during the async-save work; passes on its own and on an immediate full rerun, and the
+  branch it appeared on touches neither search-everywhere nor the debounce timer. Same
+  shape as the parallel-run flakes closed on 2026-09-08: a timing assertion that loses
+  its margin when eight test binaries contend for the machine, rather than a real defect.
+  Worth pinning the debounce to a fake clock if it resurfaces; not chased now.
 
 ### Named Non-Goals (Leaning "Won't Do", Kept Visible So It's a Conscious Call)
 

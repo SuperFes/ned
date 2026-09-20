@@ -51,6 +51,7 @@ add_executable(ned_tests
             BufferSaveEquivalenceTest.cpp
             SavePlanTest.cpp
             BufferSaveStateTest.cpp
+            AsyncSaveDispatchTest.cpp
             StorageSnapshotTest.cpp
             WhitespaceHygieneTest.cpp
             MultiCursorTest.cpp
