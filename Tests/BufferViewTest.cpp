@@ -20,6 +20,7 @@
 #include "Editor/Acp/Manager.h"
 #include "Editor/Acp/Transport.h"
 #include "Editor/Backup.h"
+#include "Editor/BindingsReport.h"
 #include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/Client.h"
@@ -4235,6 +4236,25 @@ TEST_CASE("dap-toggle-console reaches the registered callback", "[BufferView]") 
     view.OnEvent(ned::ui::test::Ctrl('c'));
     view.OnEvent(ned::ui::test::Character('D'));
     REQUIRE(toggles == 1);
+}
+
+TEST_CASE("C-c ? lists the live keymap into *bindings*", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 9});
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character('?'));
+
+    ned::text::Buffer* bindings = fixture.bufferList.Find(ned::editor::BindingsBufferName());
+    REQUIRE(bindings != nullptr);
+    REQUIRE(bindings->ReadOnly());
+    const std::string report = bindings->Text();
+    // The fixture's stack is the global keymap alone, so "C-c ?" itself is
+    // the round trip: the command that just ran has to be in its own report.
+    REQUIRE(report.find("C-c ?") != std::string::npos);
+    REQUIRE(report.find("describe-bindings") != std::string::npos);
+    REQUIRE(fixture.statusMessage == "Key bindings listed in *bindings*.");
 }
 
 TEST_CASE("The diagnostics gutter uses a distinct glyph per severity", "[BufferView]") {

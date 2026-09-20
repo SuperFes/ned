@@ -897,6 +897,12 @@ enum class InteractiveRequest { None,
                                 // interactive rename prompt rather than applying anything directly.
                                 CheckFormatConventions,
                                 FixCaseViolationAtPoint,
+                                // describe-bindings: same synchronous, no-subprocess shape as
+                                // CheckFormatConventions above. It has to be a request rather
+                                // than a plain command because the live KeymapStack is the
+                                // Dispatcher's, and CommandContext deliberately carries no
+                                // route back to it -- see Editor/BindingsReport.h.
+                                DescribeBindings,
                                 // editor-ergonomics follow-up: find-recent-file, same
                                 // "just signal intent" shape as ProjectFindFile -- the
                                 // candidate list (Editor/RecentFiles.h's most-recent-first

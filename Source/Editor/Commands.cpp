@@ -3353,6 +3353,14 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::CheckFormatConventions;
                       });
+    // describe-bindings: the reverse of M-x -- what key runs what, rather
+    // than what command exists. See Editor/BindingsReport.h.
+    registry.Register("describe-bindings",
+                      "List every reachable key binding, grouped by keymap layer and annotated with each "
+                      "command's docstring, into *bindings*.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DescribeBindings;
+                      });
     registry.Register("fix-case-violation-at-point",
                       "Rename the case-convention violation at point to Editor/FormatCase.h's suggested "
                       "conforming name, via rename-symbol's own prompt (pre-filled, not applied silently).",
@@ -4889,6 +4897,10 @@ Keymap BuildDefaultGlobalKeymap() {
     // picks a free "C-c f" prefix ("f" for files) rather than squatting an
     // established chord.
     keymap.Bind(ParseKeySequence("C-c f r"), "find-recent-file");
+    // Emacs puts describe-bindings on "C-h b", which is unusable here: a
+    // C-h prefix swallows the Backspace that terminals sending ^H for it
+    // would otherwise deliver. "C-c ?" is free and reads as help.
+    keymap.Bind(ParseKeySequence("C-c ?"), "describe-bindings");
     keymap.Bind(ParseKeySequence("C-x k"), "kill-buffer");
     keymap.Bind(ParseKeySequence("C-c a"), "org-agenda"); // real Org's own actual binding
     // capture-templates follow-up: real Org's own org-capture is "C-c c",

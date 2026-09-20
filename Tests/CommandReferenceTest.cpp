@@ -10,6 +10,7 @@
 
 #include "Editor/Command.h"
 #include "Editor/Commands.h"
+#include "Editor/Keymap.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "JanetTestSupport.h"
@@ -42,10 +43,23 @@ namespace fs = std::filesystem;
 fs::path ReferencePath() { return fs::path(NED_REPO_ROOT) / "Docs" / "Commands.md"; }
 
 std::string Render(const ned::editor::CommandRegistry& registry) {
+    // The default global keymap only. A major mode's own layer and anything
+    // init.janet binds are both real and both absent here on purpose: this
+    // page is generated from a static registry, and a per-mode key column
+    // would be a different (per-language) page. describe-bindings is the
+    // live answer -- see Editor/BindingsReport.h.
+    const ned::editor::Keymap                globalKeymap = ned::editor::BuildDefaultGlobalKeymap();
+    const ned::editor::KeymapStack           stack({&globalKeymap});
+    const std::map<std::string, std::string> bindings = ned::editor::ShortestBindingPerCommand(stack);
+
     std::ostringstream out;
     out << "# Command reference\n\n"
         << "Every command reachable from `M-x`, from a keybinding, or from Janet via\n"
-        << "`ned/run-command`.\n\n";
+        << "`ned/run-command`.\n\n"
+        << "The key shown is the shortest sequence bound in the default global keymap; a\n"
+        << "command with none is reachable from `M-x` and Janet alone. Major-mode and\n"
+        << "`init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)\n"
+        << "for the live keymap stack, this page's own layer included.\n\n";
 
     const std::vector<std::string> names = registry.Names();
     out << names.size() << " commands.\n\n";
@@ -53,7 +67,12 @@ std::string Render(const ned::editor::CommandRegistry& registry) {
     for (const std::string& name : names) {
         const ned::editor::Command* command = registry.Find(name);
         if (command == nullptr) continue;
-        out << "## `" << name << "`\n\n" << command->Docstring() << "\n\n";
+        out << "## `" << name << "`\n\n";
+        const auto binding = bindings.find(name);
+        if (binding != bindings.end()) {
+            out << "Key: `" << binding->second << "`\n\n";
+        }
+        out << command->Docstring() << "\n\n";
     }
     return out.str();
 }

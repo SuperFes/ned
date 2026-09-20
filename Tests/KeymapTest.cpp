@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <map>
+#include <string>
 
 #include "Editor/Key.h"
 #include "Editor/Keymap.h"
@@ -212,6 +214,55 @@ TEST_CASE("KeymapStack::AllBindings drops a sequence a shorter one shadows", "[K
     const auto        bindings = stack.AllBindings();
     REQUIRE(bindings.size() == 1);
     REQUIRE(bindings.front().commandName == "vim-decrement-number");
+}
+
+TEST_CASE("KeymapStack::AllBindings reports which layer each binding came from", "[Keymap]") {
+    Keymap mode;
+    Keymap global;
+    mode.Bind(ParseKeySequence("C-c C-c"), "compile");
+    global.Bind(ParseKeySequence("C-x C-s"), "save-buffer");
+
+    const KeymapStack stack({&mode, &global}, {"Major mode", "Global"});
+    REQUIRE(stack.LayerCount() == 2);
+    REQUIRE(stack.LayerName(0) == "Major mode");
+    REQUIRE(stack.LayerName(1) == "Global");
+
+    const auto bindings = stack.AllBindings();
+    REQUIRE(bindings.size() == 2);
+    REQUIRE(bindings.front().commandName == "compile");
+    REQUIRE(bindings.front().layer == 0);
+    REQUIRE(bindings.back().commandName == "save-buffer");
+    REQUIRE(bindings.back().layer == 1);
+}
+
+TEST_CASE("KeymapStack::LayerName falls back to a generic label", "[Keymap]") {
+    // Every bare KeymapStack in this file and in the UI tests names nothing.
+    Keymap            only;
+    const KeymapStack stack({&only});
+    REQUIRE(stack.LayerName(0) == "Layer 0");
+}
+
+TEST_CASE("KeymapStack::ShadowedBindings names what fires instead", "[Keymap]") {
+    // Both ways to lose: a prefix Matching first, and a higher-priority
+    // layer owning the same sequence outright.
+    Keymap user;
+    Keymap global;
+    user.Bind(ParseKeySequence("C-x"), "vim-decrement-number");
+    user.Bind(ParseKeySequence("C-s"), "isearch-forward");
+    global.Bind(ParseKeySequence("C-x C-s"), "save-buffer");
+    global.Bind(ParseKeySequence("C-s"), "project-search");
+
+    const KeymapStack stack({&user, &global}, {"User", "Global"});
+    const auto        shadowed = stack.ShadowedBindings();
+    REQUIRE(shadowed.size() == 2);
+
+    std::map<std::string, std::string> byCommand;
+    for (const auto& entry : shadowed) {
+        byCommand.emplace(entry.binding.commandName, entry.shadowedBy);
+        REQUIRE(entry.binding.layer == 1); // both losers are the global layer's
+    }
+    REQUIRE(byCommand.at("save-buffer") == "vim-decrement-number");
+    REQUIRE(byCommand.at("project-search") == "isearch-forward");
 }
 
 TEST_CASE("ShortestBindingPerCommand keeps the shortest of several bindings", "[Keymap]") {

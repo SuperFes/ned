@@ -416,11 +416,14 @@ commands, never a replacement for them.
 - [ ] **Search-everywhere preview pane** -- a File/Symbol/TextMatch row shows no
       preview of what it points at (Telescope's, JetBrains'). All that is left of the
       2026-09-18 remainder, and genuinely optional.
-- [ ] `Docs/Commands.md` lists all 315 commands and never says which key runs one,
-      though `ShortestBindingPerCommand` (above) now hands that over in one call --
-      a generated binding column is a small addition to `Tests/CommandReferenceTest.cpp`'s
-      blessing pass. The same lookup is what a real `describe-bindings` would be built on;
-      neither exists yet.
+- [ ] `describe-bindings` (`C-c ?`) and `Docs/Commands.md`'s key column both shipped --
+      slug for `git log --grep=`: `describe-bindings`. Two conscious cuts left behind.
+      The report's "Major mode" section is whatever mode was active when it ran, and
+      there is no way to ask for another language's layer without opening a file in it;
+      a mode argument would mean instantiating a `Mode` the pane isn't showing.
+      `Docs/Commands.md`'s key column is the default global keymap alone, for the same
+      reason from the other side: the page is generated from a static registry, so a
+      per-mode column would be a different, per-language page.
 - [ ] **Transient mode covers the five VCS tools whose editor filenames are fixed, and
       nothing else.** Shipped, slug for `git log --grep=`: `transient-mode`
       (`Editor/TransientSession.h` -- `--transient`/`--no-transient` plus automatic

@@ -13,6 +13,7 @@
 #ifndef NED_EDITOR_KEYMAP_H
 #define NED_EDITOR_KEYMAP_H
 
+#include <cstddef>
 #include <map>
 #include <memory>
 #include <optional>
@@ -71,6 +72,10 @@ class Keymap {
     struct Binding {
         std::vector<KeyChord> sequence;
         std::string           commandName;
+        // Which stack layer this came from, filled in by KeymapStack::
+        // AllBindings/ShadowedBindings -- always 0 from the single-layer
+        // Keymap::AllBindings below, where there is nothing else it could be.
+        std::size_t layer = 0;
     };
     [[nodiscard]] std::vector<Binding> AllBindings() const;
 
@@ -119,7 +124,13 @@ class Keymap {
 // Prefix so the caller keeps collecting keys.
 class KeymapStack {
   public:
-    explicit KeymapStack(std::vector<const Keymap*> layers);
+    // layerNames is display-only (a help buffer's section headings) and is
+    // allowed to be shorter than layers -- LayerName falls back to a generic
+    // label, which is what every test constructing a bare stack gets.
+    explicit KeymapStack(std::vector<const Keymap*> layers, std::vector<std::string> layerNames = {});
+
+    [[nodiscard]] std::size_t LayerCount() const;
+    [[nodiscard]] std::string LayerName(std::size_t layer) const;
 
     [[nodiscard]] Keymap::Lookup Resolve(const std::vector<KeyChord>& sequence) const;
 
@@ -138,8 +149,21 @@ class KeymapStack {
     // for this command" must not show one that does nothing.
     [[nodiscard]] std::vector<Keymap::Binding> AllBindings() const;
 
+    // The complement of AllBindings: every bound sequence that typing can
+    // never reach, paired with the command that wins instead. AllBindings
+    // drops these silently because a palette must not show a chord that
+    // does nothing; describe-bindings reports them, since an unreachable
+    // binding in a user's own init.janet is a bug they can only see if
+    // something says so.
+    struct ShadowedBinding {
+        Keymap::Binding binding;    // the unreachable one
+        std::string     shadowedBy; // the command that fires instead
+    };
+    [[nodiscard]] std::vector<ShadowedBinding> ShadowedBindings() const;
+
   private:
     std::vector<const Keymap*> layers_;
+    std::vector<std::string>   layerNames_;
 };
 
 // One formatted chord sequence per command name, over KeymapStack::

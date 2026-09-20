@@ -69,6 +69,7 @@ add_executable(ned_tests
             FuzzyMatchTest.cpp
             SearchEverywhereTest.cpp
             KeymapTest.cpp
+            BindingsReportTest.cpp
             DispatcherTest.cpp
             CommandsTest.cpp
             JanetTestSupport.cpp

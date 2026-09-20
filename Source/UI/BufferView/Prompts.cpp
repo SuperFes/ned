@@ -12,6 +12,7 @@
 
 #include <re2/re2.h>
 
+#include "Editor/BindingsReport.h"
 #include "Editor/FileNaming.h"
 #include "Editor/FormatCase.h"
 #include "Editor/FormatRules.h"
@@ -959,6 +960,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         }
         case editor::InteractiveRequest::FixCaseViolationAtPoint:
             RequestFixCaseViolationAtPoint();
+            return;
+        // The live stack, not BuildDefaultGlobalKeymap(): what this reports
+        // has to include the major mode's own layer and anything init.janet
+        // bound, which only the Dispatcher's own KeymapStack knows.
+        case editor::InteractiveRequest::DescribeBindings:
+            activeBuffer_.Set(
+                editor::RebuildBindingsBuffer(bufferList_, dispatcher_.Keymaps(), dispatcher_.Registry(), mode_.name));
+            statusMessage_ = "Key bindings listed in *bindings*.";
             return;
         case editor::InteractiveRequest::RunTestAtPoint: {
             if (!TestRunPreconditionsMet()) {

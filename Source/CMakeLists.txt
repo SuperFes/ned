@@ -114,6 +114,7 @@ add_library(ned_lib STATIC
         Editor/MultibufferLimits.cpp
         Editor/MultibufferSearchSettings.cpp
         Editor/NextError.cpp
+        Editor/BindingsReport.cpp
         Editor/WrapOverrides.cpp
         Editor/WrapIndent.cpp
         Editor/CodeFold.cpp

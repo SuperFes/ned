@@ -109,7 +109,18 @@ std::vector<Keymap::Binding> Keymap::AllBindings() const {
     return out;
 }
 
-KeymapStack::KeymapStack(std::vector<const Keymap*> layers) : layers_(std::move(layers)) {
+KeymapStack::KeymapStack(std::vector<const Keymap*> layers, std::vector<std::string> layerNames) : layers_(std::move(layers)), layerNames_(std::move(layerNames)) {
+}
+
+std::size_t KeymapStack::LayerCount() const {
+    return layers_.size();
+}
+
+std::string KeymapStack::LayerName(std::size_t layer) const {
+    if (layer < layerNames_.size() && !layerNames_[layer].empty()) {
+        return layerNames_[layer];
+    }
+    return "Layer " + std::to_string(layer);
 }
 
 Keymap::Lookup KeymapStack::Resolve(const std::vector<KeyChord>& sequence) const {
@@ -144,32 +155,60 @@ std::vector<Keymap::ChildBinding> KeymapStack::ChildrenAt(const std::vector<KeyC
     return merged;
 }
 
+namespace {
+
+    // Empty when the binding is reachable, otherwise the command that fires
+    // instead of it. Two ways to lose: a higher-priority layer owns the same
+    // sequence, or a strict prefix of it Matches anywhere in the stack (the
+    // Dispatcher fires that shorter command before the sequence can ever be
+    // completed).
+    std::string ShadowingCommand(const KeymapStack& stack, const Keymap::Binding& binding) {
+        // Always a Match: the binding came out of one of these layers.
+        const Keymap::Lookup lookup = stack.Resolve(binding.sequence);
+        if (lookup.commandName != binding.commandName) {
+            return lookup.commandName;
+        }
+        for (std::size_t length = 1; length < binding.sequence.size(); ++length) {
+            const std::vector<KeyChord> prefix(binding.sequence.begin(), binding.sequence.begin() + static_cast<std::ptrdiff_t>(length));
+            const Keymap::Lookup        prefixLookup = stack.Resolve(prefix);
+            if (prefixLookup.result == Keymap::LookupResult::Match) {
+                return prefixLookup.commandName;
+            }
+        }
+        return {};
+    }
+
+} // namespace
+
 std::vector<Keymap::Binding> KeymapStack::AllBindings() const {
     std::vector<Keymap::Binding> reachable;
 
-    for (const Keymap* layer : layers_) {
-        for (Keymap::Binding& binding : layer->AllBindings()) {
-            const Keymap::Lookup lookup = Resolve(binding.sequence);
-            if (lookup.result != Keymap::LookupResult::Match || lookup.commandName != binding.commandName) {
-                continue; // a higher-priority layer owns this sequence
-            }
-            // A strict prefix that resolves anywhere in the stack fires
-            // first, so nothing can ever finish typing this sequence.
-            bool shadowedByPrefix = false;
-            for (std::size_t length = 1; length < binding.sequence.size(); ++length) {
-                const std::vector<KeyChord> prefix(binding.sequence.begin(), binding.sequence.begin() + static_cast<std::ptrdiff_t>(length));
-                if (Resolve(prefix).result == Keymap::LookupResult::Match) {
-                    shadowedByPrefix = true;
-                    break;
-                }
-            }
-            if (!shadowedByPrefix) {
+    for (std::size_t index = 0; index < layers_.size(); ++index) {
+        for (Keymap::Binding& binding : layers_[index]->AllBindings()) {
+            binding.layer = index;
+            if (ShadowingCommand(*this, binding).empty()) {
                 reachable.push_back(std::move(binding));
             }
         }
     }
 
     return reachable;
+}
+
+std::vector<KeymapStack::ShadowedBinding> KeymapStack::ShadowedBindings() const {
+    std::vector<ShadowedBinding> shadowed;
+
+    for (std::size_t index = 0; index < layers_.size(); ++index) {
+        for (Keymap::Binding& binding : layers_[index]->AllBindings()) {
+            binding.layer  = index;
+            std::string by = ShadowingCommand(*this, binding);
+            if (!by.empty()) {
+                shadowed.push_back(ShadowedBinding{.binding = std::move(binding), .shadowedBy = std::move(by)});
+            }
+        }
+    }
+
+    return shadowed;
 }
 
 std::map<std::string, std::string> ShortestBindingPerCommand(const KeymapStack& keymaps) {
