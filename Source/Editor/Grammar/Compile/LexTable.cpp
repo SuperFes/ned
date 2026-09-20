@@ -214,29 +214,33 @@ bool TokenConflictMap::PreferTransition(const LexicalGrammar& grammar, const Nfa
 
 // --- CoincidentTokenIndex -----------------------------------------------------------
 
-CoincidentTokenIndex::CoincidentTokenIndex(const ParseTable& table, const LexicalGrammar& grammar) : n_(grammar.variables.size()), entries_(n_ * n_) {
+CoincidentTokenIndex::CoincidentTokenIndex(const ParseTable& table, const LexicalGrammar& grammar, std::optional<Symbol> wordToken) : n_(grammar.variables.size()), coincident_(n_ * n_, false), wordTokenEverywhere_(n_ * n_, true) {
     std::vector<std::uint32_t> terminals;
-    for (std::size_t i = 0; i < table.states.size(); ++i) {
+    for (const ParseState& state : table.states) {
         terminals.clear();
-        for (const auto& [symbol, _] : table.states[i].terminalEntries)
+        for (const auto& [symbol, _] : state.terminalEntries)
             if (symbol.IsTerminal())
                 terminals.push_back(symbol.index);
-        for (const std::uint32_t a : terminals) {
-            for (const std::uint32_t b : terminals) {
-                std::vector<ParseStateId>& entry = entries_[Index(a, b)];
-                if (entry.empty() || entry.back() != i)
-                    entry.push_back(i);
+        const bool hasWordToken = wordToken && state.terminalEntries.count(*wordToken) > 0;
+        // terminalEntries iterates ascending, so b >= a covers each
+        // normalized index exactly once.
+        for (std::size_t i = 0; i < terminals.size(); ++i) {
+            for (std::size_t j = i; j < terminals.size(); ++j) {
+                const std::size_t index = Index(terminals[i], terminals[j]);
+                coincident_[index]      = true;
+                if (!hasWordToken)
+                    wordTokenEverywhere_[index] = false;
             }
         }
     }
 }
 
-const std::vector<ParseStateId>& CoincidentTokenIndex::StatesWith(Symbol a, Symbol b) const {
-    return entries_[Index(a.index, b.index)];
+bool CoincidentTokenIndex::Contains(Symbol a, Symbol b) const {
+    return coincident_[Index(a.index, b.index)];
 }
 
-bool CoincidentTokenIndex::Contains(Symbol a, Symbol b) const {
-    return !entries_[Index(a.index, b.index)].empty();
+bool CoincidentTokenIndex::EveryStateWithBothHasWordToken(Symbol a, Symbol b) const {
+    return wordTokenEverywhere_[Index(a.index, b.index)];
 }
 
 // --- BuildLexTable ----------------------------------------------------------------

@@ -79,20 +79,29 @@ class TokenConflictMap {
 };
 
 // For each pair of tokens, the parse states where both are valid.
+// Which pairs of terminals are valid in the same parse state, as two bits
+// per pair rather than the state ids themselves: every caller asks a
+// yes/no question, and materialising the lists cost gigabytes on a large
+// grammar (nim: 3.5 GB, more than half its peak) because the pre-minimized
+// table has hundreds of thousands of states.
 class CoincidentTokenIndex {
   public:
-    CoincidentTokenIndex(const ParseTable& table, const LexicalGrammar& grammar);
+    CoincidentTokenIndex(const ParseTable& table, const LexicalGrammar& grammar, std::optional<Symbol> wordToken);
 
-    [[nodiscard]] const std::vector<ParseStateId>& StatesWith(Symbol a, Symbol b) const;
-    [[nodiscard]] bool                             Contains(Symbol a, Symbol b) const;
+    [[nodiscard]] bool Contains(Symbol a, Symbol b) const;
+    // Whether every state holding both a and b also holds the word token --
+    // vacuously true for a pair no state holds, matching the all_of over an
+    // empty list this replaced.
+    [[nodiscard]] bool EveryStateWithBothHasWordToken(Symbol a, Symbol b) const;
 
   private:
     [[nodiscard]] std::size_t Index(std::size_t a, std::size_t b) const {
         return a < b ? a * n_ + b : b * n_ + a;
     }
 
-    std::size_t                            n_;
-    std::vector<std::vector<ParseStateId>> entries_;
+    std::size_t       n_;
+    std::vector<bool> coincident_;
+    std::vector<bool> wordTokenEverywhere_;
 };
 
 // A character set with more than this many ranges is a candidate for a
