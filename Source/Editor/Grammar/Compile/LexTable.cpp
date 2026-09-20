@@ -490,7 +490,7 @@ LexTables BuildLexTable(ParseTable& table, const SyntaxGrammar& syntax, const Le
             }
         }
         if (!merged)
-            parseStateIdsByTokenSet.emplace_back(std::move(tokens), std::vector<ParseStateId>{i});
+            parseStateIdsByTokenSet.emplace_back(std::move(tokens), std::vector<ParseStateId>{static_cast<ParseStateId>(i)});
     }
 
     LexTableBuilder builder(lexical);
