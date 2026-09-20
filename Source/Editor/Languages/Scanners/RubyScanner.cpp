@@ -160,7 +160,9 @@ static inline unsigned serialize(Scanner* scanner, char* buffer) {
         buffer[size++] = (char)heredoc->allows_interpolation;
         buffer[size++] = (char)heredoc->started;
         buffer[size++] = (char)heredoc->word.size;
-        memcpy(&buffer[size], heredoc->word.contents, heredoc->word.size);
+        if (heredoc->word.size > 0) {
+            memcpy(&buffer[size], heredoc->word.contents, heredoc->word.size);
+        }
         size += heredoc->word.size;
     }
 
@@ -196,8 +198,10 @@ static inline void deserialize(Scanner* scanner, const char* buffer, unsigned le
 
         heredoc.word        = (String)array_new();
         uint8_t word_length = buffer[size++];
-        array_reserve(&heredoc.word, word_length);
-        memcpy(heredoc.word.contents, &buffer[size], word_length);
+        if (word_length > 0) {
+            array_reserve(&heredoc.word, word_length);
+            memcpy(heredoc.word.contents, &buffer[size], word_length);
+        }
         heredoc.word.size = word_length;
         size += word_length;
         array_push(&scanner->open_heredocs, heredoc);

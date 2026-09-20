@@ -3867,7 +3867,7 @@ static unsigned serialize_parse_lines(char *cursor, ParseLines *parse, unsigned 
     if (to_copy > kSerializationBufferSize) return 0;
     *((uint32_t *) cursor) = line->size;
     cursor += sizeof(line->size);
-    memcpy(cursor, line->contents, line_size);
+    if (line_size > 0) memcpy(cursor, line->contents, line_size);
     cursor += line_size;
   }
   return to_copy;
@@ -3884,7 +3884,7 @@ static void deserialize_parse_lines(const char *cursor, ParseLines *parse, uint3
     array_reserve(line, line_len);
     line->size = line_len;
     unsigned line_size = line->size * sizeof(uint32_t);
-    memcpy(line->contents, cursor, line_size);
+    if (line_size > 0) memcpy(line->contents, cursor, line_size);
     cursor += line_size;
   }
   // Free the excessive lines in the previous since we can't check in the next round whether there was a line in
@@ -5943,7 +5943,8 @@ static unsigned Serialize(void *payload_, char *buffer) {
   memcpy(buffer, &persist, sizeof(Persist));
   unsigned to_copy = sizeof(Persist) + contexts_size;
   if (to_copy > kSerializationBufferSize) return 0;
-  memcpy(buffer + sizeof(Persist), state->contexts.contents, contexts_size);
+  if (contexts_size > 0)
+    memcpy(buffer + sizeof(Persist), state->contexts.contents, contexts_size);
 #ifdef TREE_SITTER_DEBUG
   to_copy = serialize_parse_lines(buffer + sizeof(Persist) + contexts_size, &state->parse, to_copy);
 #endif
@@ -5966,7 +5967,8 @@ static void Deserialize(void *payload_, const char *buffer, unsigned length) {
   state->newline = persist->newline;
   array_reserve(&state->contexts, persist->contexts);
   state->contexts.size = persist->contexts;
-  if (length > 0)
+  // An empty context stack reserves nothing, so there is no destination.
+  if (length > 0 && contexts_size > 0)
     memcpy(state->contexts.contents, buffer + sizeof(Persist), contexts_size);
   state->lookahead.size = 0;
   state->lookahead.offset = 0;
