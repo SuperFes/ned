@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.29)
-project(Ned VERSION 0.8.0)
+project(Ned VERSION 0.9.0)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
