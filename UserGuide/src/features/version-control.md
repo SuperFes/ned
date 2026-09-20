@@ -50,6 +50,13 @@ about it. No project session is restored or saved, no save-place entry, no recen
 entry, no persistent undo, no backup versions, and no project-local `.ned/` config is
 loaded or prompted about.
 
+The rule is that what ned noticed on your behalf isn't recorded, but what you asked for
+still is. Bookmarks are the case that distinction exists for: if you read around the tree
+while composing a commit and mark something worth coming back to, that mark is kept.
+Bookmarking the message file itself is refused — git leaves `COMMIT_EDITMSG` on disk
+holding whatever the *next* commit writes, and the other tools delete theirs, so such a
+bookmark would either point at unrelated content or dangle.
+
 That last point is the one that matters most. A version control system runs your editor
 from the repository root, so without this a commit would quit having replaced the
 project's real saved session with one containing nothing but `COMMIT_EDITMSG` — the next

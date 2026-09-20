@@ -3980,3 +3980,44 @@ TEST_CASE("indent-region/indent-buffer report when no indent rules are configure
     REQUIRE(message == "No indent rules configured for this mode.");
     REQUIRE(fixture.buffer.Text() == "anything\n");
 }
+
+// transient-mode follow-up: a bookmark is a deliberate act and survives a
+// transient run, but the version control message file itself is not a
+// bookmarkable thing -- git leaves COMMIT_EDITMSG on disk holding the next
+// commit's message, and every other tool deletes its own outright.
+
+TEST_CASE("bookmark-set refuses a version control message file", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture     fixture;
+    const auto  path = std::filesystem::temp_directory_path() / "ned_commands_test_repo" / ".git" / "COMMIT_EDITMSG";
+    std::string message;
+
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(path);
+    CommandContext     context{buffer, fixture.killRing, fixture.bufferList};
+    context.message = &message;
+
+    registry.Invoke("bookmark-set", context);
+
+    REQUIRE(message == "Can't bookmark a version control message file");
+    REQUIRE(context.interactiveRequest == InteractiveRequest::None); // never opened the name prompt
+}
+
+TEST_CASE("bookmark-set still opens its prompt for an ordinary file", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture     fixture;
+    const auto  path = std::filesystem::temp_directory_path() / "ned_commands_test_repo" / "main.cpp";
+    std::string message;
+
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(path);
+    CommandContext     context{buffer, fixture.killRing, fixture.bufferList};
+    context.message = &message;
+
+    registry.Invoke("bookmark-set", context);
+
+    REQUIRE(message.empty());
+    REQUIRE(context.interactiveRequest == InteractiveRequest::BookmarkSet);
+}

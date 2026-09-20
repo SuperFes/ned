@@ -3179,17 +3179,25 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
         windowManager->RecordSessionPlaces();
         logShutdown("post-run: saving file places");
         ned::editor::SaveFilePlaces(/*force=*/true);
-        logShutdown("post-run: saving recent files and bookmarks");
+        logShutdown("post-run: saving recent files");
         ned::editor::SaveRecentFiles(/*force=*/true);
-        ned::editor::SaveBookmarks(/*force=*/true);
         logShutdown("post-run: saving undo history");
         ned::editor::SaveUndoHistoryForOpenBuffers(bufferList);
         logShutdown("post-run: saving project session");
         windowManager->SaveProjectSessionNow();
     }
     else {
-        logShutdown("post-run: transient run -- persisting nothing");
+        logShutdown("post-run: transient run -- persisting nothing but bookmarks");
     }
+    // Bookmarks save either way, and that line is the whole rule transient
+    // mode draws: what ned noticed on your behalf (where point was, which
+    // files were open, what you recently visited) is not worth recording
+    // about a throwaway commit-message run, but what you deliberately asked
+    // it to record is. Someone reading around the tree while a commit is
+    // open and marking something meant to mark it. bookmark-set's own guard
+    // is what keeps the message file itself out of the store.
+    logShutdown("post-run: saving bookmarks");
+    ned::editor::SaveBookmarks(/*force=*/true);
     // graceful-lsp-shutdown follow-up: sends "shutdown"+"exit" to every
     // directly-spawned (non-broker) running LSP client before the local
     // teardown below destroys lspManager -- see Manager::Shutdown's own

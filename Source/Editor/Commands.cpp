@@ -53,6 +53,7 @@
 #include "Text/ThreeWayMerge.h"
 #include "Text/Utf8.h"
 #include "ToolchainIncludePaths.h"
+#include "TransientSession.h"
 #include "Vcs/Runner.h"
 #include "WhitespaceSettings.h"
 
@@ -2748,6 +2749,22 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           if (!context.buffer.Path()) {
                               if (context.message) {
                                   *context.message = "Buffer has no file to bookmark";
+                              }
+                              return;
+                          }
+                          // A version control system's message file is a
+                          // throwaway, and a bookmark into one is wrong
+                          // either way it goes: git leaves COMMIT_EDITMSG
+                          // on disk holding whatever the *next* commit
+                          // writes, so the bookmark silently points into
+                          // unrelated content, while hg/jj/svn/fossil
+                          // delete theirs outright and it dangles.
+                          // Refused regardless of --transient: what makes
+                          // it unbookmarkable is the file, not how ned was
+                          // launched.
+                          if (IsVcsEditorFile(*context.buffer.Path())) {
+                              if (context.message) {
+                                  *context.message = "Can't bookmark a version control message file";
                               }
                               return;
                           }
