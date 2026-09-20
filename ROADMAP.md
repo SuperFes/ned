@@ -413,18 +413,6 @@ commands, never a replacement for them.
       reach `Dispatcher` through `C-x` would mean either breaking real vim's own
       decrement-number binding or a two-key lookahead hack — not worth it now that the
       practical gap (no way to split/close/cycle windows under Vim mode) is closed.
-- [ ] **A determinate progress bar widget.** The asynchronous-save half of this shipped
-      (`git log --grep=` `async-save`): `save-buffer` hands a large enough write to a
-      background thread, the event loop keeps running, and the mode line shows a live
-      `Saving... N%` from `Buffer::CurrentSaveProgress`. What is still missing is the
-      widget itself -- a real determinate bar, 0..1 plus a label, painted through a themed
-      surface rather than rendered as text in the mode line. Three consumers already have
-      a real fraction waiting for one: that save progress, `Buffer::CurrentLoadProgress`
-      (huge load, currently `Loading... 45%` text), and LSP `$/progress`, whose
-      `percentage` `Lsp/Manager.cpp` parses and then discards into a string.
-      Deliberately *not* the "state-driven mode-line fills" idea listed under Translucency
-      phase 5 -- that one washes the whole bar and was set aside as decoration; this is a
-      real widget for real determinate work.
 - [ ] **Search-everywhere preview pane** -- a File/Symbol/TextMatch row shows no
       preview of what it points at (Telescope's, JetBrains'). All that is left of the
       2026-09-18 remainder, and genuinely optional.

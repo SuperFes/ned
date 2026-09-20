@@ -412,6 +412,21 @@ namespace {
         if (name == "scrollbar") {
             return FromBrush(theme.scrollBar);
         }
+        if (name == "progress") {
+            // The unfilled track. Derived from the scroll bar rather than
+            // given colours of its own: both are a thin run showing how far
+            // through something you are, and a theme that styled one and not
+            // the other would look like an oversight.
+            return FromBrush(theme.scrollBar);
+        }
+        if (name == "progress.fill") {
+            // The filled run, in the focused mode line's accent -- the
+            // colour this UI already uses for "this is the live one", so a
+            // bar lights up in the same language as a focused pane's edges.
+            Surface filled = FromBrush(theme.scrollBar);
+            filled.text    = SolidOrNothing(theme.modeLineFocusedGradientStart);
+            return filled;
+        }
         if (name == "popup") {
             surface.fill   = SolidOrNothing(theme.background);
             surface.border = SolidOrNothing(theme.border.foreground);
@@ -632,7 +647,7 @@ std::vector<std::string> SurfaceNames() {
     // already knew the name.
     return {"buffer", "buffer.current_line", "buffer.ruler", "buffer.selection", "buffer.search",
             "buffer.recency", "modeline", "modeline.focused", "modeline.activity", "tab.strip", "tab", "tab.active",
-            "tab.active.focused", "echo", "scrollbar", "panel",
+            "tab.active.focused", "echo", "scrollbar", "progress", "progress.fill", "panel",
             "popup", "scrim"};
 }
 

@@ -12,6 +12,7 @@ using ned::editor::BeginBackgroundActivity;
 using ned::editor::EndBackgroundActivity;
 using ned::editor::ResetBackgroundActivitiesForTesting;
 using ned::editor::SetBackgroundActivityDetail;
+using ned::editor::SetBackgroundActivityProgress;
 
 // The registry is process-wide state (the TabWidth.h/ProjectRoot.h pattern),
 // so every test here must leave it empty -- the same clean-up-after-yourself
@@ -97,4 +98,43 @@ TEST_CASE("ActiveBackgroundActivities returns entries sorted by name", "[Backgro
     EndBackgroundActivity("zeta");
     EndBackgroundActivity("alpha");
     REQUIRE(ActiveBackgroundActivities().empty());
+}
+
+TEST_CASE("BackgroundActivity progress attaches to an active entry and dies with it", "[BackgroundActivity]") {
+    SetBackgroundActivityProgress("inactive", 0.5); // no active entry -- must not create one
+    REQUIRE(ActiveBackgroundActivities().empty());
+
+    BeginBackgroundActivity("worker");
+    // Indeterminate until something measures it: the spinner is the whole
+    // answer, and no bar is drawn.
+    REQUIRE_FALSE(ActiveBackgroundActivities().front().fraction.has_value());
+
+    SetBackgroundActivityProgress("worker", 0.25);
+    REQUIRE(ActiveBackgroundActivities().front().fraction == 0.25);
+
+    // Back to indeterminate, for work that stops being able to say.
+    SetBackgroundActivityProgress("worker", std::nullopt);
+    REQUIRE_FALSE(ActiveBackgroundActivities().front().fraction.has_value());
+
+    SetBackgroundActivityProgress("worker", 0.75);
+    EndBackgroundActivity("worker");
+    REQUIRE(ActiveBackgroundActivities().empty());
+
+    BeginBackgroundActivity("worker"); // fresh entry -- the old fraction must not resurrect
+    REQUIRE_FALSE(ActiveBackgroundActivities().front().fraction.has_value());
+    EndBackgroundActivity("worker");
+}
+
+TEST_CASE("BackgroundActivity progress clamps whatever a server reports", "[BackgroundActivity]") {
+    // An LSP server's $/progress percentage is not to be trusted inside
+    // 0..100; a bar drawn from it must not run past its own width.
+    BeginBackgroundActivity("worker");
+
+    SetBackgroundActivityProgress("worker", 1.8);
+    REQUIRE(ActiveBackgroundActivities().front().fraction == 1.0);
+
+    SetBackgroundActivityProgress("worker", -0.4);
+    REQUIRE(ActiveBackgroundActivities().front().fraction == 0.0);
+
+    EndBackgroundActivity("worker");
 }

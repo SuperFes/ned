@@ -1,6 +1,8 @@
 #include "BackgroundActivity.h"
 
 #include <algorithm>
+
+#include <algorithm>
 #include <map>
 #include <mutex>
 
@@ -9,8 +11,9 @@ namespace ned::editor {
 namespace {
 
     struct ActivityState {
-        int         count = 0;
-        std::string detail;
+        int                   count = 0;
+        std::string           detail;
+        std::optional<double> fraction;
     };
 
     std::mutex activityMutex;
@@ -51,12 +54,22 @@ void SetBackgroundActivityDetail(const std::string& name, std::string detail) {
     it->second.detail = std::move(detail);
 }
 
+void SetBackgroundActivityProgress(const std::string& name, std::optional<double> fraction) {
+    const std::lock_guard<std::mutex> lock(activityMutex);
+    auto&                             activities = Activities();
+    const auto                        it         = activities.find(name);
+    if (it == activities.end()) {
+        return; // not active -- no entry to attach progress to
+    }
+    it->second.fraction = fraction ? std::optional<double>(std::clamp(*fraction, 0.0, 1.0)) : std::nullopt;
+}
+
 std::vector<BackgroundActivity> ActiveBackgroundActivities() {
     const std::lock_guard<std::mutex> lock(activityMutex);
     std::vector<BackgroundActivity>   result;
     result.reserve(Activities().size());
     for (const auto& [name, state] : Activities()) {
-        result.push_back(BackgroundActivity{.name = name, .detail = state.detail});
+        result.push_back(BackgroundActivity{.name = name, .detail = state.detail, .fraction = state.fraction});
     }
     return result;
 }

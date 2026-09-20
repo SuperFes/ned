@@ -116,17 +116,21 @@ TEST_CASE("ModeLine shows a live load percentage when the loader published progr
     REQUIRE(RowText(screen, 0, 60).find("Loading...") != std::string::npos);
     REQUIRE(RowText(screen, 0, 60).find('%') == std::string::npos);
 
+    // determinate-progress follow-up: a known fraction draws a bar as well
+    // as the number, so the two are asserted separately -- a quarter-filled
+    // bar is two full cells and a half cell of the third, at ten cells wide.
     auto progress        = std::make_shared<ned::text::LoadProgress>();
     progress->totalBytes = 200;
     progress->bytesRead.store(50);
     buffer.SetLoadProgress(progress);
     modeLine.Paint(canvas);
-    REQUIRE(RowText(screen, 0, 60).find("Loading... 25%") != std::string::npos);
+    REQUIRE(RowText(screen, 0, 60).find("Loading... ██▌┈┈┈┈┈┈┈ 25%") != std::string::npos);
 
-    // bytesRead past totalBytes (the file grew mid-load) clamps to 100.
+    // bytesRead past totalBytes (the file grew mid-load) clamps to 100 --
+    // and the bar fills completely rather than running past its own width.
     progress->bytesRead.store(999);
     modeLine.Paint(canvas);
-    REQUIRE(RowText(screen, 0, 60).find("Loading... 100%") != std::string::npos);
+    REQUIRE(RowText(screen, 0, 60).find("Loading... ██████████ 100%") != std::string::npos);
 
     // FinishLoad clears both the loading state and the progress pointer.
     buffer.FinishLoad(ned::text::Rope("done"));

@@ -19,6 +19,7 @@
 #define NED_EDITOR_BACKGROUNDACTIVITY_H
 
 #include <chrono>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,13 @@ struct BackgroundActivity {
     std::string name;
     std::string detail; // optional human-readable progress text ("indexing (45%)"); empty if none
 
+    // Set only when the work reports a real fraction of itself done -- an
+    // LSP server's $/progress percentage, say. Unset is the normal case and
+    // means indeterminate: the spinner is the whole answer, because nothing
+    // knows how much is left. A consumer that can draw a determinate bar
+    // (ui::ProgressBar) draws one exactly when this is set.
+    std::optional<double> fraction;
+
     bool operator==(const BackgroundActivity&) const = default;
 };
 
@@ -45,6 +53,13 @@ void EndBackgroundActivity(const std::string& name);
 // detail describes live work, and the entry it would attach to is erased
 // the moment the count reaches zero.
 void SetBackgroundActivityDetail(const std::string& name, std::string detail);
+
+// Attaches/replaces the completed fraction for an active name, clamped to
+// 0..1; std::nullopt clears it back to indeterminate. Same no-op-for-an-
+// inactive-name rule as SetBackgroundActivityDetail, and for the same
+// reason: this describes live work, and the entry is erased as soon as the
+// count reaches zero.
+void SetBackgroundActivityProgress(const std::string& name, std::optional<double> fraction);
 
 // Every currently-active activity, sorted by name -- recomputed-fresh-per-
 // Paint consumers (ModeLine) and the composition root's animation re-arm

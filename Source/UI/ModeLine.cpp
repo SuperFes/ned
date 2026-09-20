@@ -1,5 +1,7 @@
 #include "ModeLine.h"
 
+#include "ProgressBar.h"
+
 #include "Paint.h"
 #include "ThemePaints.h"
 
@@ -22,6 +24,23 @@
 #include "Text/Utf8.h"
 
 namespace ned::ui {
+
+namespace {
+    // Wide enough to be read as a bar rather than a smudge, narrow enough
+    // that a mode line still has room for the things only words can say.
+    constexpr int              kInlineProgressCells = 10;
+    constexpr std::string_view kInlineProgressTrack = "┈";
+
+    // The inline form all three determinate consumers share: the bar, then
+    // the number, so neither has to be inferred from the other.
+    std::string InlineProgressText(double fraction) {
+        std::string text;
+        for (const std::string& glyph : ProgressGlyphs(fraction, kInlineProgressCells, kInlineProgressTrack)) {
+            text += glyph;
+        }
+        return text + " " + ProgressPercentText(fraction);
+    }
+} // namespace
 
 namespace {
 
@@ -91,13 +110,17 @@ void ModeLine::Paint(Canvas c) {
     // size query failed -- fall back to the old plain indicator rather than
     // dividing by it). bytesRead can momentarily exceed totalBytes if the
     // file grew after the size query, hence the clamp.
+    // Determinate-progress follow-up: a known fraction now draws a real bar
+    // (ui::ProgressBar's own glyph run) rather than only a number. The bar
+    // is what reads at a glance; the number stays beside it, because a bar
+    // alone can't be quoted in a bug report. A loader that never learned the
+    // file's size has no fraction at all and keeps the plain indicator.
     std::string loadingText = "   Loading...";
     if (buffer.IsLoading()) {
         if (const text::LoadProgress* progress = buffer.CurrentLoadProgress();
             progress != nullptr && progress->totalBytes > 0) {
-            const std::uintmax_t read    = progress->bytesRead.load(std::memory_order_relaxed);
-            const std::uintmax_t percent = std::min<std::uintmax_t>(100, read * 100 / progress->totalBytes);
-            loadingText += " " + std::to_string(percent) + "%";
+            const std::uintmax_t read = progress->bytesRead.load(std::memory_order_relaxed);
+            loadingText += " " + InlineProgressText(static_cast<double>(read) / static_cast<double>(progress->totalBytes));
         }
     }
 
@@ -113,8 +136,7 @@ void ModeLine::Paint(Canvas c) {
         if (const text::SaveProgress* progress = buffer.CurrentSaveProgress();
             progress != nullptr && progress->totalBytes > 0) {
             const std::uintmax_t written = progress->bytesWritten.load(std::memory_order_relaxed);
-            const std::uintmax_t percent = std::min<std::uintmax_t>(100, written * 100 / progress->totalBytes);
-            savingSuffix += " " + std::to_string(percent) + "%";
+            savingSuffix += " " + InlineProgressText(static_cast<double>(written) / static_cast<double>(progress->totalBytes));
         }
     }
 
@@ -254,6 +276,15 @@ void ModeLine::Paint(Canvas c) {
             AppendUtf8Columns(columns, activity.name);
             columns.emplace_back(" ");
             columns.emplace_back(frame);
+            if (activity.fraction) {
+                // Determinate work gets a bar next to its spinner: the
+                // spinner says something is happening, the bar says how much
+                // of it is left, and only the second one is knowable here.
+                columns.emplace_back(" ");
+                for (const std::string& glyph : ProgressGlyphs(*activity.fraction, kInlineProgressCells, kInlineProgressTrack)) {
+                    columns.emplace_back(glyph);
+                }
+            }
             if (!activity.detail.empty()) {
                 columns.emplace_back(" ");
                 AppendUtf8Columns(columns, activity.detail);

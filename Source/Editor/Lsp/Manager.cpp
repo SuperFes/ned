@@ -2863,6 +2863,9 @@ void Manager::HandleProgress(const std::string& connectionKey, const Json& param
             // detail rather than letting it caption a plain request spinner.
             // A no-op if nothing is active at all (the entry is already gone).
             SetBackgroundActivityDetail(kLspActivity, std::string());
+            // And the bar with it: a leftover fraction would keep drawing a
+            // determinate bar for work that has finished.
+            SetBackgroundActivityProgress(kLspActivity, std::nullopt);
         }
         return;
     }
@@ -2871,7 +2874,14 @@ void Manager::HandleProgress(const std::string& connectionKey, const Json& param
     // message when both are present -- it's the more glanceable of the two.
     std::string detail = it->second;
     if (value.contains("percentage") && value["percentage"].is_number()) {
-        const std::string percent = std::to_string(value["percentage"].get<int>()) + "%";
+        const int percentage = value["percentage"].get<int>();
+        // Published as a number as well as text: a real fraction is what
+        // lets the mode line draw a determinate bar instead of a spinner.
+        // The text stays, since it names *what* is progressing, which a bar
+        // can't say. Servers are not trusted to stay inside 0..100 --
+        // SetBackgroundActivityProgress clamps.
+        SetBackgroundActivityProgress(kLspActivity, static_cast<double>(percentage) / 100.0);
+        const std::string percent = std::to_string(percentage) + "%";
         detail += detail.empty() ? percent : " (" + percent + ")";
     }
     else if (const std::string message = value.value("message", std::string()); !message.empty()) {

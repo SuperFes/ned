@@ -409,6 +409,7 @@ add_library(ned_lib STATIC
         UI/EventLoop.cpp
         UI/Layout.cpp
         UI/ScrollBar.cpp
+        UI/ProgressBar.cpp
         UI/Minimap.cpp
         UI/Overlay.cpp
         UI/PanelDock.cpp
