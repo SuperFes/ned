@@ -12,7 +12,7 @@ namespace {
 
     // Tokens that are words the word token could also match: a keyword is
     // lexed as the word token and re-lexed by the keyword lexer.
-    TokenSet IdentifyKeywords(const LexicalGrammar& lexical, const ParseTable& table, std::optional<Symbol> wordToken, const TokenConflictMap& conflicts, const CoincidentTokenIndex& coincident) {
+    TokenSet IdentifyKeywords(const LexicalGrammar& lexical, std::optional<Symbol> wordToken, const TokenConflictMap& conflicts, const CoincidentTokenIndex& coincident) {
         TokenSet keywords;
         if (!wordToken)
             return keywords;
@@ -50,17 +50,12 @@ namespace {
                 unshadowed.Insert(token);
         }
 
-        std::vector<bool> stateHasWordToken(table.states.size());
-        for (std::size_t id = 0; id < table.states.size(); ++id)
-            stateHasWordToken[id] = table.states[id].terminalEntries.count(*wordToken) > 0;
-
         for (const Symbol token : unshadowed.Symbols()) {
             bool include = true;
             for (std::size_t other = 0; other < lexical.variables.size(); ++other) {
                 if (candidates.Contains(Symbol::Terminal(static_cast<std::uint32_t>(other))))
                     continue;
-                const std::vector<ParseStateId>& states = coincident.StatesWith(token, Symbol::Terminal(static_cast<std::uint32_t>(other)));
-                if (std::all_of(states.begin(), states.end(), [&](ParseStateId id) { return stateHasWordToken[id]; }))
+                if (coincident.EveryStateWithBothHasWordToken(token, Symbol::Terminal(static_cast<std::uint32_t>(other))))
                     continue;
                 if (!conflicts.HasSameConflictStatus(token.index, wordToken->index, other)) {
                     include = false;
@@ -201,8 +196,8 @@ std::unique_ptr<CompiledLanguage> CompileGrammar(const GrammarFile& file) {
     const std::vector<TokenSet> following = GetFollowingTokens(prepared.syntax, prepared.lexical, prepared.inlines);
     ParseTable                  table     = BuildParseTable(prepared.syntax, prepared.lexical, prepared.inlines, variableInfo);
     const TokenConflictMap      conflicts(prepared.lexical, following);
-    const CoincidentTokenIndex  coincident(table, prepared.lexical);
-    const TokenSet              keywords = IdentifyKeywords(prepared.lexical, table, prepared.syntax.wordToken, conflicts, coincident);
+    const CoincidentTokenIndex  coincident(table, prepared.lexical, prepared.syntax.wordToken);
+    const TokenSet              keywords = IdentifyKeywords(prepared.lexical, prepared.syntax.wordToken, conflicts, coincident);
     PopulateErrorState(table, prepared.syntax, prepared.lexical, coincident, conflicts, keywords);
     PopulateUsedSymbols(table, prepared.syntax, prepared.lexical);
     MinimizeParseTable(table, prepared.syntax, prepared.lexical, prepared.defaultAliases, conflicts, keywords);
