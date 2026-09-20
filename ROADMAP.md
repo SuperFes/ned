@@ -34,13 +34,7 @@ Notcurses.
 
 ## Open Items
 
-### Release 0.7.1 — "a stranger can install it, learn it, and get equal language treatment"
-
-Version is now real and reported: `project(Ned VERSION 0.5.0)` flows through a generated
-`NedVersion.h` into `ned --version`, and `v0.5.0` is tagged. Before that the CMake version
-was metadata nothing consumed, which is how it came to read 0.5.0 while the only tag read
-v0.1.0 and the binary could
-report neither.
+### Releases
 
 **1.0, for context, since branching starts near it.** For a scriptable editor 1.0 is a
 promise about the *Janet surface*, not about features: 160 `Register<>` bindings and 275
@@ -110,44 +104,6 @@ measurement said "fine" while typing felt bad.
       with a space/`#`/`?` in it ever misbehaves.
 
 **LSP results as buffer-anchored data, not byte snapshots**
-
-Shipped, slug for `git log --grep=`: `buffer-anchored-lsp-results` (`Text/EditJournal.h`
-plus `Manager::CarryForward` -- `Buffer` records one op per content generation, and every
-server result that holds byte offsets across edits replays those ops from the generation
-it was resolved against, with per-kind gravity, instead of diffing document snapshots).
-
-The payoff is taken, slug for `git log --grep=`: `lsp-viewport-request-idle`
-(`Manager::RequestViewportFeatures` -- a per-buffer throttle behind which
-`RequestSemanticTokens`/`RequestInlayHints`/`RequestCodeLenses` now run, at most one
-round trip per `ned/set-lsp-request-idle` window, default 150ms). Leading edge on
-purpose: a trailing-only debounce was written first and rejected on its own test
-fallout -- it made every *discrete* viewport jump (PageDown, opening a file, a cursor
-move that scrolls a line) wait out the window for nothing, since one pair change with
-nothing before it has nothing to coalesce with. Only a pair that changes again inside
-the window is deferred, and the single fire at the window's end carries whatever pair
-is armed by then, so a held scroll is one request per window and the frames in between
-arm nothing at all.
-
-The other half of that payoff, slug for `git log --grep=`: `viewport-answer-retention`
-(the inlay hint half is commit 7eb3a81, which predates the slug). The throttle cut how
-often the viewport was asked about; this cut asking about the same viewport twice. A
-response used to replace the whole store with just the slice it answered for, so
-scrolling deleted the region scrolled away from, and the gate remembered only the most
-recent `(generation, start, end)` triple, so scrolling back re-asked for an answer
-already given and thrown away -- visibly, the code reflowing sideways on every wheel
-notch while inlay hints came and went. Both viewport-ranged requests now merge per
-answered range and share one `ViewportCoverage` gate (answered ranges plus the one
-in-flight range, discarded whenever the content generation moves, since an edit anywhere
-can change an answer anywhere), and both ask for a screenful of margin either side so an
-ordinary scroll lands on covered ground. Coverage is claimed by answers, never by
-questions: a dropped response leaves its region askable rather than permanently blank.
-Inlay hints moved to `AnchorSet` in the process -- not tidiness, a correctness
-requirement, since a set meant to live as long as the buffer cannot ride `EditJournal`,
-whose reach-back stops at `kCapacity` and whose answer to that is to drop everything the
-holder has. Semantic tokens deliberately stayed on the journal: there are one to two
-orders of magnitude more of them, every live anchor is visited on every edit, and a set
-of tokens dropped wholesale falls back to the grammar's own highlighting where a dropped
-hint would reflow the text.
 
 - [ ] The throttle is per buffer and per window, not per request kind: a viewport-scoped
       `semanticTokens/range` and a whole-document `codeLens` share one window even though
@@ -268,20 +224,6 @@ answer to a request for an obscure DSL becomes "yes, next release".
 
 **Sidecar metadata: association without binding**
 
-Shipped, slug for `git log --grep=`: `sidecar-anchors` (`Text/AnchorSet.h` -- a store of
-anchors that survive edits by construction, sitting beside the rope rather than in it, so
-a feature associates metadata with a position without the text structure knowing anything
-about it. Fed by the same `Commit*` helpers that publish a generation and append to
-`Buffer::Edits()`, so eager anchor relocation and `CarryForward`'s lazy journal replay are
-two consumers of one feed. Per-endpoint `Gravity` and `InsideDelete` came straight from
-`EditJournal.h` -- measured against all nine hand-written rules first, and they already
-covered every one). The duplication that motivated it went with the same change:
-`Buffer::RelocateTrackedState` is now the single place every tracked position moves, and
-the five content-mutation entry points call `ApplyInsert`/`ApplyDelete` instead of
-repeating the list. `Tests/BufferTrackedStateTest.cpp` holds the tenant-by-entry-point
-matrix that the per-tenant tests leave open, which is the shape of gap that let
-diagnostics ship wired at five sites and not the sixth.
-
 - [ ] The eight existing tenants are **not** migrated onto anchors, and that is a cost
       finding rather than a leftover: each accessor (`Diagnostics()`, `SnippetRanges()`,
       `ExcerptRanges()`, `SecondaryCursors()`, `FoldMarkerAt()`) has 58-108 call sites and
@@ -298,29 +240,6 @@ diagnostics ship wired at five sites and not the sixth.
       and `AnchorSet::Create` fixes a policy for the anchor's lifetime. A tenant whose
       gravity is dynamic is the shape anchors do **not** fit today; that is the finding,
       and it applies to any future migration candidate too.
-
-**What a second and third tenant cost, and the one rule they found.** An `AnchorId`
-carries no owner, so a handle from one buffer offered to another buffer's `AnchorSet` can
-free a *stranger's* live anchor whose slot index and version happen to match. A holder
-that follows a buffer around therefore needs an explicit release hook, called while the
-outgoing buffer is still alive -- the `NotifyBufferClosed` shape, fanned out from
-`WindowManager`'s two close sites -- rather than noticing the change lazily, by which
-point the pointer it would release into is dangling. Identity compares against
-`Buffer::InstanceId()`, never the address.
-
-The pass this section used to ask for ran 2026-09-19: what else hand-rolls something
-`AnchorSet`, `EditJournal`/`CarryForward`, `Buffer::Commit*`, `QueryMatcher` or
-`FramedConnection` now does properly? Two hits were wrong rather than merely dated and
-were fixed (vim's marks/jumplist/changelist, DAP breakpoints -- `git log --grep=`
-`vim-anchored-marks` and `dap-anchored-breakpoints`). Four things came back clean and are
-recorded so the question isn't re-asked: every `Storage_` assignment in `Buffer.cpp`
-pairs with a `Commit*`/barrier, so no mutation bypasses the one feed; `OffsetRemap` is
-down to a single caller, the undo/restore path its one-contiguous-region model is exact
-for; the gutter/inline-diagnostic/test/coverage stores are derive-and-invalidate caches
-keyed on generation, not tracked positions; and `Bookmark.h`/`Vim/GlobalMarks.h` store
-line/column rather than offsets on a stated rationale (surviving edits made to the file
-outside ned), which anchors don't address either way. What the pass left open:
-
 - [ ] **`IncrementalParseCache` re-derives an edit the buffer already recorded exactly.**
       `Editor/Grammar/IncrementalParse.h` keeps `lastText_` -- a second full copy of the
       document -- and reconstructs one changed region per call by common-prefix/suffix
@@ -349,7 +268,6 @@ outside ned), which anchors don't address either way. What the pass left open:
       connection, or leaving it -- not a migration. Nothing here is known-broken; the
       cost is that the next bug of the shape `lsp-use-after-free` was has five places to
       hide in instead of one.
-
 - [ ] Anchors have no Janet surface. Deliberate for now: the C++ seam has one consumer
       shape so far, and a scripted holder that leaks handles leaks them forever (there is
       no RAII handle -- `Buffer` is move-only and an anchor outliving its owner would
@@ -358,7 +276,6 @@ outside ned), which anchors don't address either way. What the pass left open:
       stays faithfully wrong, which is exactly what the 2026-09-18 phpantom_lsp session
       turned out to be (the server's own `character` values disagreed with its own
       document; ned's conversion and relocation were both correct).
-
 - [ ] A Lisp binding vector's names are captured by unrolled per-pair-index patterns
       (`clojure-locals.scm`, `janet-locals.scm`), because the whole-vector form a query
       would naturally express captures a bare-symbol *value* as a definition and turns a
@@ -384,7 +301,6 @@ outside ned), which anchors don't address either way. What the pass left open:
       Unlike the fold/symbol/test gutters beside it, this one cannot window: a binding's
       occurrence set is only complete if the whole file was parsed, so a windowed answer
       would be a partial *rename*, not a partial display (`scope-aware-rename`).
-
 - [ ] A rename carrying filesystem resource operations (a `documentChanges` edit that also
       creates, deletes or renames a file) is applied directly rather than reviewed -- a
       multibuffer has no way to represent a resource op, and reviewing half an edit is
@@ -401,7 +317,6 @@ outside ned), which anchors don't address either way. What the pass left open:
       A name that appears in a comment in a file with no code reference at all is never
       offered -- that would be a project-wide search, which `project-replace` already is
       (`rename-review`).
-
 - [ ] An import fixup only ever rewrites a specifier in the style it was already written
       in, and declines anything that style cannot express: an angle-form system include, a
       PHP `use` namespace, a Rust `mod` declaration, a bare package specifier, and a target
@@ -430,7 +345,6 @@ outside ned), which anchors don't address either way. What the pass left open:
       ordinary file. Bounded by `ned/set-import-fixup-max-files` and skipped outright for a
       move with no end inside the project root. Worth moving off-thread only if a real
       repository makes the pause visible (`file-rename-propagation`).
-
 - [ ] The automatic offers ride on a SERVER rename landing, or on a `*rename*` review being
       committed -- never on the no-server in-buffer rewrite, because renaming a top-level
       type is always cross-file and `rename-symbol`'s scope-aware tier declines it by
@@ -449,7 +363,6 @@ outside ned), which anchors don't address either way. What the pass left open:
       (`ned_embed_treesitter_query_concat`). The deltas are small and current; the thing to
       watch is a grammar bump making one redundant, which shows up as a duplicate marker
       rather than a wrong one (`class-file-sync`).
-
 - [ ] **Change signature (the hard one, scoped honestly).** LSP has no request for this --
       JetBrains does it from its own index, and no server offers an equivalent -- so it is
       ned's own transform or nothing. Renaming a parameter falls out of the `locals.scm`
@@ -472,20 +385,6 @@ doesn't mean "not worth it" — a right-click menu scoped to exactly what's unde
 cursor is often faster than keyboarding to a location and running a named command, even
 for a keyboard-first user. Treat mouse work as an accelerant layered on existing
 commands, never a replacement for them.
-
-Shipped here, one slug each for `git log --grep=`: `context-menu` (the right-click sweep
-across `BufferView` content+gutter, `TabBar`, `ProjectSidebar`, `VcsPanel`, plus
-double/triple-click select, gutter click, middle-click paste, scrollback click-drag),
-`mouse-hover` (hover tooltips), `hunk-context-menu` (hunk stage/unstage/revert, and
-`vcs-revert-hunk` as a genuinely new capability), `sidebar-drag-drop` and
-`sidebar-drag-drop-double-open` (the row's own press-time preview-open used to fire
-unconditionally through `activeBufferProvider_` — the currently-focused pane in the real
-app — before a drag was known to be one, so dropping onto a different pane opened the
-file there too, leaving it open in whichever pane was already focused as well. Fixed by
-moving click-vs-double-click timing off Pressed and onto Released: a press now only arms
-`dragPath_`/records the single-vs-double classification, and the open itself fires
-exactly once, on whichever Released event actually claims it — this widget's own (an
-ordinary click) or `BufferView::ForwardMouseWhileSiblingDrags` (a real drop)).
 
 ### Navigation & Search
 
@@ -543,29 +442,14 @@ ordinary click) or `BufferView::ForwardMouseWhileSiblingDrags` (a real drop)).
       Deliberately *not* the "state-driven mode-line fills" idea listed under Translucency
       phase 5 — that one washes the whole bar and was set aside as decoration; this is a
       real widget for real determinate work.
-
 - [ ] **Search-everywhere preview pane** -- a File/Symbol/TextMatch row shows no
       preview of what it points at (Telescope's, JetBrains'). All that is left of the
       2026-09-18 remainder, and genuinely optional.
-
-      The rest of it shipped 2026-09-20, slugs for `git log --grep=`:
-      `search-everywhere-bindings` (a command row shows the chord that already runs it,
-      flush right -- `Keymap::AllBindings`/`KeymapStack::AllBindings`/
-      `ShortestBindingPerCommand`, where the stack's version filters to what is actually
-      *reachable*: a sequence a higher layer rebinds, or whose prefix Matches anywhere
-      in the stack, is one `Dispatcher` can never deliver) and
-      `search-everywhere-more-sources` (three more kinds: a running server's own
-      `executeCommandProvider.commands`, recorded per connection like every other
-      `initialize`-response capability; themes; registered projects).
-      Not wanted, unchanged: making this the only way to reach anything. Every
-      purpose-built command and binding stays -- see the amended Named Non-Goal below
-      for why that distinction is the one that matters.
 - [ ] `Docs/Commands.md` lists all 315 commands and never says which key runs one,
       though `ShortestBindingPerCommand` (above) now hands that over in one call --
       a generated binding column is a small addition to `Tests/CommandReferenceTest.cpp`'s
       blessing pass. The same lookup is what a real `describe-bindings` would be built on;
       neither exists yet.
-
 - [ ] **Terminal-side mouse forwarding** — clicks/wheel inside `TerminalPanel` are
       consumed by the panel itself (focus, scrollback ring); a TUI subprocess running
       inside it (e.g. `htop`, `vim`) never receives a forwarded mouse event.
@@ -876,26 +760,6 @@ staying local-only for now is a storage-shape choice, not a hole in what shipped
   across a transport, where the threat model is strictly worse. Decide the trust model
   alongside the framing, not after it.
 
-Shipped, one slug for `git log --grep=`: `one-connection-class` (`LspClient`/
-`DapClient`/`AcpClient`'s triplicated background-read-loop/stderr-loop/async-write-queue/
-`alive_`-guard/member-order machinery now lives once, in `Editor/Protocol/
-FramedConnection.h` — a class template over the concrete transport type
-(`lsp::Transport`, shared verbatim by LSP and DAP, or `acp::Transport`, renamed
-`ReadMessage`/`WriteMessage` → `ReadFrame`/`WriteFrame` to satisfy the same shape), owning
-`TransportT` by value rather than type-erased read/write-a-frame callables so the
-load-bearing destruction-order invariant stays enforced by one class's member layout
-instead of being re-derived per protocol. Each `Client` keeps only its own envelope/
-dispatch/handshake logic and a `connection_` member; `DispatchFrame` and every existing
-test seam (`SetClientForTesting`, the pipe-pair `ClientFixture` pattern) are untouched, so
-every pre-existing `LspClientTest.cpp`/`DapClientTest.cpp`/`AcpClientTest.cpp`/
-`*ManagerTest.cpp`/`BufferView`/panel test needed no edits. New
-`Tests/FramedConnectionTest.cpp` is the class's own direct safety net. Migrated one client at a time (Dap, then Acp, then Lsp) per this entry's own stated
-risk stance, `ctest`/single-process/`sanitize`-preset all clean at every step and at the
-end — 4948 tests, zero ASan/UBSan findings). The `Transport`-becomes-a-concept-over-
-`AF_UNIX`/TCP half of the original sketch here was deliberately NOT part of this — that's
-raw-byte-transport work tied to the not-yet-started remote protocol below, independent of
-the connection-orchestration layer this shipped.
-
 ### Remote Development (SSH Remote Editing)
 
 The goal: edit files on a remote host over SSH without ned itself running remotely —
@@ -1045,19 +909,6 @@ Terminal/ACP/Debug Console on one tab strip.
       reserved border the way `ProjectSidebar`'s divider column does (right-dock mode
       stays a fully separate, byte-for-byte-unchanged standalone overlay from the
       `PanelDock`-hosted bottom-dock mode).
-
-Shipped here, one slug each for `git log --grep=`: `acp-mcp-tool-bridge` and
-`acp-mcp-tool-bridge-remainder` (`Editor/Mcp/`, `ned/set-acp-mcp-bridge`, ~20 tools plus
-`capture_note`; the original transport question resolved to a real local MCP server,
-forced by the spec — stdio is the only transport every agent must support, so
-`ned --mcp-stdio-relay` is a dumb byte pump into the live process's own Unix socket where
-`LspManager`/`VcsRunner`/`TestRunner`/open `Buffer`s actually live), `dap-acp-bridge`
-(structured DAP tools + `dap-ask-agent`), `acp-context-auto-attach` (`@buffer`/
-`@selection` composer mentions, `ask-agent-about-line`), `acp-composer-prose-check`, and
-`Text/LineDiff.h`'s `SplitLines`/`DiffLines`/`UnifiedDiff` with the agent-edit diff
-preview built on it.
-
-Deliberately cut from those slices, still open:
 - [ ] **Real rename/code-action apply + `goto(file, line)` navigation** — all three
       need a live `WindowManager`/`BufferView` (`ApplyProjectEdit`'s multi-file
       transaction machinery for the first two — `ProjectUndoManager` recording, file
@@ -1065,7 +916,6 @@ Deliberately cut from those slices, still open:
       third) that `McpToolRegistry` doesn't have and doesn't currently reach. Not a
       thin wrapper the way everything shipped so far is — a real follow-up, not
       attempted here.
-
 - [ ] **A `dap_get_pointer_graph`-shaped MCP tool** — the pointer-graph/memory/
       disassembly/thread/function-and-exception-breakpoint surface stayed out of the DAP
       tool set on purpose (not part of the ask/step/inspect loop that slice targeted),
@@ -1073,7 +923,6 @@ Deliberately cut from those slices, still open:
       `BufferView::ExpandPointerGraphNode`'s cycle-detection traversal would have to be
       extracted into a UI-free helper first (`Editor/PointerGraphNode.h`'s data shape is
       already reusable, the traversal isn't).
-
 - [ ] **Real-time collaborative editing** (CRDT-based) — the biggest lift in this file;
       last.
 - [ ] VCS: "generalize the two-callback plugin shape past version control" (cloud CLIs,
@@ -1149,17 +998,6 @@ a PR is a `git am` and a push rather than a re-derivation.
       (no `fbuf`/`paste_content` field inside Notcurses itself; all buffering happens in
       `EventLoop::Run()`, which already owns the right place for it), so it isn't a
       drop-in match for that sketch if we ever revisit upstreaming this specific gap.
-
-### Vendored Grammar Patches Worth Upstreaming (Watch List)
-
-- [x] **`tree-sitter-sql`'s external scanner leaks two ways** — found 2026-09-14 under
-      LeakSanitizer (`scan()`'s dollar-quoted-string path dropped `start_tag` on an early
-      return; `deserialize()` overwrote `state->start_tag` without freeing it). The fix
-      now lives in ned's own port, `Source/Editor/Languages/Scanners/SqlScanner.cpp`
-      (2026-09-17, Step 3 of the tree-sitter divorce), so there is no vendored file to
-      re-apply it to; a future `ned --import-language` of a newer tree-sitter-sql would
-      re-port the upstream scanner and needs the two `free()` calls re-checked. Still
-      unmerged upstream as of 2026-09-14.
 
 ### Known Test Flakiness / Non-Critical Issues (Watch List)
 
