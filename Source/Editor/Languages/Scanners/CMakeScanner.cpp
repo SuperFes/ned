@@ -126,7 +126,8 @@ static bool is_close_brackets(struct TreeSitterCMakeState* state,
 }
 
 void* Create() {
-    return scanner_malloc(sizeof(struct TreeSitterCMakeState));
+    // Zeroed, not just allocated: `token` is read before any scan writes it.
+    return scanner_calloc(1, sizeof(struct TreeSitterCMakeState));
 }
 
 static void Destroy(void* payload_) {
@@ -149,8 +150,10 @@ static void Deserialize(void*       payload_,
         memcpy(payload, buffer, length);
     }
     else {
+        // A length that isn't a serialized state means "start over", so the
+        // whole state goes back to what Create() hands out.
         struct TreeSitterCMakeState* state = payload;
-        state->level                       = 0;
+        *state                             = {};
     }
 }
 
