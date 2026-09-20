@@ -1,13 +1,20 @@
 # Every bundled language's parse tables, compiled from its grammar.janet by
-# the ned binary itself (`ned --compile-language`) into the build tree's
-# share/ned/languages/<name>/tables, beside the definition and query files
-# ned_data copied there (CMake/DataTree.cmake). Included from the root
-# CMakeLists.txt after add_subdirectory(Source), since it runs `ned`.
+# ned-langc into the build tree's share/ned/languages/<name>/tables, beside
+# the definition and query files ned_data copied there
+# (CMake/DataTree.cmake). Included from the root CMakeLists.txt after
+# add_subdirectory(Source), since it runs ned-langc.
 #
-# A table depends on its grammar.janet and on ned, so a generator change
-# recompiles every language; the slowest (kotlin) takes ~40s and the set
-# builds in parallel. The install rule takes the compiled files from here:
-# an installed prefix's share/ned/languages/<name>/ is the build tree's.
+# A table depends on its grammar.janet and on ned-langc -- deliberately not
+# on `ned`. The generator is its own library and its own program
+# (Source/CMakeLists.txt's ned_grammar_compile) precisely so that this
+# dependency is narrow: an edit anywhere in the editor relinks `ned` without
+# invalidating a single table, where depending on `ned` made every such edit
+# cost a full recompile of all of them (~2 minutes). A generator change
+# still recompiles every language, which is what it should cost; the set
+# builds in parallel and Tests/GrammarTables.sha256 gates the result.
+#
+# The install rule takes the compiled files from here: an installed prefix's
+# share/ned/languages/<name>/ is the build tree's.
 
 file(GLOB _ned_grammar_files CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Source/Languages/*/grammar.janet")
 set(_ned_table_files)
@@ -17,8 +24,8 @@ foreach(grammar IN LISTS _ned_grammar_files)
     set(output "${NED_DATA_TREE}/languages/${language}/tables")
     add_custom_command(OUTPUT "${output}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${NED_DATA_TREE}/languages/${language}"
-            COMMAND ned --compile-language "${language_dir}" -o "${output}"
-            DEPENDS ned "${grammar}"
+            COMMAND ned-langc "${language_dir}" -o "${output}"
+            DEPENDS ned-langc "${grammar}"
             COMMENT "Compiling the ${language} grammar"
             VERBATIM)
     list(APPEND _ned_table_files "${output}")
