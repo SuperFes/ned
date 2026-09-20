@@ -59,7 +59,12 @@ static unsigned Serialize(void* state_, char *buffer) {
 
 static void Deserialize(void* state_, const char *buffer, unsigned n_bytes) {
     VoidPtr state{state_};
-  memcpy(state, buffer, n_bytes);
+  // No serialized state (a fresh parse) means start from a zeroed state
+  // rather than whatever the previous parse left behind.
+  if (n_bytes == sizeof(ScannerState))
+    memcpy(state, buffer, n_bytes);
+  else
+    memset(state, 0, sizeof(ScannerState));
 }
 
 static void advance(Lexer *lexer) { lexer->advance(lexer, false); }

@@ -552,7 +552,9 @@ static void Destroy(void* payload_) {
 static unsigned Serialize(void* payload_, char* buffer) {
     VoidPtr payload{payload_};
     Stack*  stack = (Stack*)payload;
-    memcpy(buffer, stack->contents, stack->size);
+    // An empty stack has no allocation to copy from.
+    if (stack->size > 0)
+        memcpy(buffer, stack->contents, stack->size);
     return stack->size;
 }
 

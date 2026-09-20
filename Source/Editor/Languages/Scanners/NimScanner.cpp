@@ -368,9 +368,13 @@ _nonnull_(1) static void state_deserialize(
     return;
   }
 
-  unsigned idx = 0;
   state_clear(self);
-  indent_vec_deserialize(&self->layout_stack, &buffer[idx], buffer_len - idx);
+  // No serialized state: the cleared stack is the answer, and there is no
+  // buffer to take an address into.
+  if (buffer_len == 0) {
+    return;
+  }
+  indent_vec_deserialize(&self->layout_stack, buffer, buffer_len);
 }
 
 _nonnull_(1) static void state_debug(struct state* self)

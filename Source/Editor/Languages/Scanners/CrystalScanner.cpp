@@ -3283,7 +3283,9 @@ static unsigned Serialize(void *payload_, char *buffer) {
 
     // The literals array can be serialized in one chunk.
     size_t literal_content_size = state->literals.size * array_elem_size(&state->literals);
-    memcpy(&buffer[offset], state->literals.contents, literal_content_size);
+    // An empty array has no allocation to copy from.
+    if (literal_content_size > 0)
+        memcpy(&buffer[offset], state->literals.contents, literal_content_size);
     offset += literal_content_size;
 
     // It's safe to cast the heredoc count into a char since it will always be
@@ -3301,7 +3303,8 @@ static unsigned Serialize(void *payload_, char *buffer) {
         // always be less than or equal to MAX_HEREDOC_WORD_SIZE.
         buffer[offset++] = (char)heredoc->identifier.size;
 
-        memcpy(&buffer[offset], heredoc->identifier.contents, heredoc->identifier.size);
+        if (heredoc->identifier.size > 0)
+            memcpy(&buffer[offset], heredoc->identifier.contents, heredoc->identifier.size);
         offset += heredoc->identifier.size;
     }
 

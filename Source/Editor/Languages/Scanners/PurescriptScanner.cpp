@@ -7358,7 +7358,9 @@ static unsigned Serialize(void *indents_v_, char *buffer) {
   if (to_copy > kSerializationBufferSize) {
     return 0;
   }
-  memcpy(buffer, indents->data, to_copy);
+  if (to_copy > 0) {
+    memcpy(buffer, indents->data, to_copy);
+  }
   return to_copy;
 }
 

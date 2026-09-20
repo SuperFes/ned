@@ -160,7 +160,9 @@ static unsigned serialize(Scanner* scanner, char* buf) {
         size += sizeof(ContextType);
         memcpy(&buf[size], &(context->heredoc_identifier.len), sizeof(uint32_t));
         size += sizeof(uint32_t);
-        memcpy(&buf[size], context->heredoc_identifier.data, context->heredoc_identifier.len);
+        if (context->heredoc_identifier.len > 0) {
+            memcpy(&buf[size], context->heredoc_identifier.data, context->heredoc_identifier.len);
+        }
         size += context->heredoc_identifier.len;
     }
     return size;
