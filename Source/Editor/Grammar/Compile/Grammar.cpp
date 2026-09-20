@@ -369,6 +369,16 @@ std::strong_ordering TokenSet::Compare(const TokenSet& other) const {
     return std::strong_ordering::equal;
 }
 
+std::size_t TokenSet::Hash() const {
+    std::size_t hash = (eof_ ? 1U : 0U) | (endOfNonTerminalExtra_ ? 2U : 0U);
+    for (const std::uint64_t word : terminals_)
+        hash = HashCombine(hash, word);
+    hash = HashCombine(hash, terminals_.size());
+    for (const std::uint64_t word : externals_)
+        hash = HashCombine(hash, word);
+    return hash;
+}
+
 // --- Grammars ----------------------------------------------------------------
 
 std::size_t LexicalGrammar::VariableIndexForNfaState(std::uint32_t stateId) const {
