@@ -160,7 +160,8 @@ class Buffer {
     // carried across the rename by hand; a multiply-linked file (or one
     // whose directory won't accept a temp file) is instead written in
     // place, which preserves all of that plus the links themselves at the
-    // cost of this path's crash atomicity -- see WriteInPlace below.
+    // cost of this path's crash atomicity -- see Text/SavePlan.h, which
+    // owns the write itself.
     void SaveToFile(const std::filesystem::path& path, bool ensureFinalNewline = true, bool trimTrailingWhitespace = true,
                     std::optional<LineEnding> lineEndingOverride = std::nullopt);
     // Writes to the buffer's associated file. Throws std::runtime_error if
@@ -1316,15 +1317,6 @@ class Buffer {
     // relocation path unchanged.
     void               SnapshotExcerptRangeOffsets();
     [[nodiscard]] bool RestoreExcerptRangeOffsets();
-
-    // SaveToFile's non-atomic write mode: truncates and rewrites target's
-    // own inode instead of renaming a fresh one over it, so everything
-    // hanging off that inode survives (mode, owner, xattrs/ACLs, and every
-    // hard link). Selected only when the target is multiply-linked, or when
-    // the temp file can't be created at all -- see SaveToFile's own doc
-    // comment above and Text/FilePreservation.h.
-    void WriteInPlace(const std::filesystem::path& target, ned::text::LineEnding effectiveEnding, bool trimTrailingWhitespace,
-                      bool ensureFinalNewline);
 
     // Re-stats Path_ and records its current timestamp (or clears the
     // record if the file is missing/unstatable) -- called wherever content

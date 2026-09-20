@@ -47,6 +47,7 @@ add_library(ned_lib STATIC
         Application.cpp
         Text/Rope.cpp
         Text/RopeStorage.cpp
+        Text/SavePlan.cpp
         Text/MappedFile.cpp
         Text/OffsetRemap.cpp
         Text/AnchorSet.cpp

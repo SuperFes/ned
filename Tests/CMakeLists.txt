@@ -49,6 +49,7 @@ add_executable(ned_tests
             BufferHugeFileTest.cpp
             DiskSpaceTest.cpp
             BufferSaveEquivalenceTest.cpp
+            SavePlanTest.cpp
             WhitespaceHygieneTest.cpp
             MultiCursorTest.cpp
             BufferListTest.cpp
