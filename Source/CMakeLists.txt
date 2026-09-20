@@ -210,6 +210,7 @@ add_library(ned_lib STATIC
         Editor/Backup.cpp
         Editor/CliFormatDispatch.cpp
         Editor/BufferSave.cpp
+        Editor/ExitReport.cpp
         Editor/PersistentUndo.cpp
         Editor/Project/Undo.cpp
         Editor/DiagnosticsLog.cpp

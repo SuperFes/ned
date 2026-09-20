@@ -44,6 +44,7 @@
 #include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/Manager.h"
+#include "Editor/ExitReport.h"
 #include "Editor/Format.h"
 #include "Editor/FormatBlankLines.h"
 #include "Editor/FormatBracePlacement.h"
@@ -3431,6 +3432,17 @@ auto main(int argc, char** argv) -> int {
     ned::editor::SetTransientMode(transient || detectedVcsEditorFile);
 
     const int exitCode = RunInteractiveEditor(forceBinary, noRestore, vimMode, paths);
+
+    // Everything RunInteractiveEditor owned -- EventLoop and the
+    // notcurses_stop in its destructor included -- is destroyed by the time
+    // it returns, so this is the first point at which stderr reaches a
+    // terminal the user can actually read (see Editor/ExitReport.h, and the
+    // PendingReExec comment below, which relies on the same fact). Printed
+    // before the re-exec check, since an exec would replace this process and
+    // take any unread message with it.
+    for (const std::string& report : ned::editor::TakeExitReports()) {
+        std::cerr << report << '\n';
+    }
 
     // named-projects follow-up: PendingReExec is a plain process-wide global
     // (Editor/PendingReExec.h) set deep inside RunInteractiveEditor's own

@@ -1643,17 +1643,17 @@ void WindowManager::PurgeFinishedHugeFileLoaders() {
 void WindowManager::EnableAsyncFileSaving(EventLoop& eventLoop) {
     editor::SetAsyncSaveDispatcher([this, &eventLoop](editor::AsyncSaveRequest request) -> bool {
         PurgeFinishedAsyncSavers();
-        asyncFileSavers_.push_back(std::make_unique<AsyncFileSaver>(std::move(request), bufferList_, eventLoop));
+        asyncFileSavers_.push_back(std::make_unique<AsyncFileSaver>(
+            std::move(request), bufferList_, eventLoop,
+            [this](std::string message) { statusMessage_ = std::move(message); }));
         return true;
     });
 }
 
 void WindowManager::PurgeFinishedAsyncSavers() {
-    for (const auto& saver : asyncFileSavers_) {
-        if (saver->Done() && !saver->Error().empty()) {
-            statusMessage_ = saver->Error();
-        }
-    }
+    // Cleanup only -- a failure reports itself through the callback the
+    // saver was constructed with, as it happens. Nothing polls a saver that
+    // has already finished, which is exactly why the error can't wait here.
     std::erase_if(asyncFileSavers_, [](const std::unique_ptr<AsyncFileSaver>& saver) { return saver->Done(); });
 }
 

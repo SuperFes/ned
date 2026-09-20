@@ -27,6 +27,7 @@
 #ifndef NED_UI_ASYNCFILESAVER_H
 #define NED_UI_ASYNCFILESAVER_H
 
+#include <functional>
 #include <string>
 #include <thread>
 
@@ -42,7 +43,12 @@ class AsyncFileSaver {
     // The buffer named by request must already be IsSaving() (which
     // editor::WriteBufferToDisk's BeginSave has done by the time it hands
     // the request over). bufferList and eventLoop must outlive this saver.
-    AsyncFileSaver(editor::AsyncSaveRequest request, text::BufferList& bufferList, EventLoop& eventLoop);
+    // onFailure is called on the main thread, from inside the posted
+    // completion, if the write failed -- reported as it happens rather than
+    // left for someone to poll, since nothing polls a saver that has
+    // already finished.
+    AsyncFileSaver(editor::AsyncSaveRequest request, text::BufferList& bufferList, EventLoop& eventLoop,
+                   std::function<void(std::string)> onFailure);
     ~AsyncFileSaver();
 
     AsyncFileSaver(const AsyncFileSaver&)            = delete;
@@ -59,19 +65,15 @@ class AsyncFileSaver {
     // percentage comes from the buffer's own SaveProgress.
     [[nodiscard]] const std::string& BufferName() const;
 
-    // Non-empty once a failed write has been reported, for the status line
-    // to show. Cleared by nobody -- this object is dropped right after.
-    [[nodiscard]] const std::string& Error() const;
-
   private:
     void Run(EventLoop& eventLoop);
 
-    text::BufferList&     bufferList_;
-    std::string           bufferName_;
-    std::filesystem::path bufferPath_;
-    text::SavePlan        plan_;
-    std::string           error_;
-    bool                  done_ = false;
+    text::BufferList&                bufferList_;
+    std::string                      bufferName_;
+    std::filesystem::path            bufferPath_;
+    text::SavePlan                   plan_;
+    std::function<void(std::string)> onFailure_;
+    bool                             done_ = false;
 
     // Declared last so it is joined first. Nothing requests a stop -- see
     // this file's header comment on why a save is never cancelled.

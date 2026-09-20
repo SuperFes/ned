@@ -3,6 +3,7 @@
 #include <chrono>
 #include <exception>
 
+#include "Editor/ExitReport.h"
 #include "EventLoop.h"
 
 namespace ned::ui {
@@ -11,9 +12,10 @@ namespace {
     constexpr std::chrono::milliseconds kProgressRepaintInterval{200};
 } // namespace
 
-AsyncFileSaver::AsyncFileSaver(editor::AsyncSaveRequest request, text::BufferList& bufferList, EventLoop& eventLoop) :
+AsyncFileSaver::AsyncFileSaver(editor::AsyncSaveRequest request, text::BufferList& bufferList, EventLoop& eventLoop,
+                               std::function<void(std::string)> onFailure) :
     bufferList_(bufferList), bufferName_(std::move(request.bufferName)), bufferPath_(std::move(request.bufferPath)),
-    plan_(std::move(request.plan)) {
+    plan_(std::move(request.plan)), onFailure_(std::move(onFailure)) {
     // The write reports into the buffer's SaveProgress on its own (the
     // dispatcher installed that sink), but a number nothing reads is
     // invisible: the event loop only repaints when something wakes it.
@@ -45,10 +47,6 @@ const std::string& AsyncFileSaver::BufferName() const {
     return bufferName_;
 }
 
-const std::string& AsyncFileSaver::Error() const {
-    return error_;
-}
-
 void AsyncFileSaver::Run(EventLoop& eventLoop) {
     std::string failure;
     try {
@@ -73,7 +71,16 @@ void AsyncFileSaver::Run(EventLoop& eventLoop) {
             if (buffer != nullptr) {
                 buffer->AbandonSave();
             }
-            error_ = std::move(failure);
+            // Queued for the way out as well as shown now. The mode line is
+            // the right place to say it while the editor is up, but a save
+            // is exactly the operation whose failure must not depend on the
+            // user still being there to read a status line -- they may well
+            // have quit in the same breath, and if the buffer was closed
+            // mid-write there is no mode line left to say it in at all.
+            editor::ReportOnExit("ned: failed to save \"" + bufferName_ + "\": " + failure);
+            if (onFailure_) {
+                onFailure_(std::move(failure));
+            }
         }
         done_ = true;
     });
