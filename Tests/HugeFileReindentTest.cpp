@@ -11,6 +11,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <unistd.h>
+
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -29,6 +31,15 @@ using ned::editor::StreamHugeReindent;
 
 namespace {
 
+// ctest runs each test case in its own process, several at a time, so a
+// fixed scratch filename is one shared file every concurrent case truncates
+// and deletes under the others -- the pid keeps each run's temp files its
+// own.
+std::filesystem::path ScratchPath(const std::string& suffix) {
+    return std::filesystem::temp_directory_path() /
+           ("ned_huge_reindent_test_" + std::to_string(::getpid()) + "_" + suffix);
+}
+
 // Feeds `text` to a fresh stream split at every offset in `splits` (each a
 // byte offset marking where one chunk ends and the next begins) and
 // returns {reindented output, outcome}. splits = {} feeds the whole text as
@@ -39,7 +50,7 @@ std::pair<std::string, HugeReindentOutcome> Run(const std::string& text, const s
     // HugeReindentStream writes through a std::ofstream&, not an ostream in
     // general -- a real temp file stands in, cheap and matches what the
     // real caller (a sibling-temp-file swap) actually does.
-    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_huge_reindent_test_scratch.txt";
+    const std::filesystem::path path = ScratchPath("scratch.txt");
     std::ofstream               out(path, std::ios::binary | std::ios::trunc);
     HugeReindentStream          stream(out, lineCommentPrefix, style);
 
@@ -197,14 +208,14 @@ TEST_CASE("HugeReindentStream tracks a Python-style '#' line comment as its own 
 
 TEST_CASE("StreamHugeReindent reindents a real PieceTableStorage-backed huge buffer end to end",
           "[HugeFileReindent]") {
-    const std::filesystem::path inPath = std::filesystem::temp_directory_path() / "ned_huge_reindent_test_input.cpp";
+    const std::filesystem::path inPath = ScratchPath("input.cpp");
     { std::ofstream(inPath) << "void f() {\nint x = 1;\n}\n"; }
 
     ned::text::SetHugeFileThreshold(4); // well under this file's real size
     ned::text::Buffer buffer = ned::text::Buffer::FromHugeFile(inPath);
     REQUIRE(buffer.Content().IsHuge());
 
-    const std::filesystem::path outPath = std::filesystem::temp_directory_path() / "ned_huge_reindent_test_output.cpp";
+    const std::filesystem::path outPath = ScratchPath("output.cpp");
     std::ofstream               out(outPath, std::ios::binary | std::ios::trunc);
     const HugeReindentOutcome   outcome = StreamHugeReindent(buffer.Content(), out, "//", kFourSpaces);
     out.close();
