@@ -416,6 +416,15 @@ if (Python3_Interpreter_FOUND)
                     --manifest "${CMAKE_CURRENT_SOURCE_DIR}/GrammarTables.sha256")
     set_tests_properties("Every bundled grammar's tables match the recorded manifest"
             PROPERTIES LABELS "GrammarTables")
+    # The same interpreter gates the scanners against their grammars: a
+    # ported scanner's TokenType enum and its grammar's :externals are two
+    # copies of one vocabulary, and a scanner that reads a token the grammar
+    # dropped reads past the external-lex-state row the engine hands it.
+    # Source-only, so it needs no build output.
+    add_test(NAME "Every bundled scanner indexes inside its grammar's externals"
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/Tools/scanner-externals.py" check)
+    set_tests_properties("Every bundled scanner indexes inside its grammar's externals"
+            PROPERTIES LABELS "GrammarTables")
 else()
     message(STATUS "No Python3 interpreter: skipping the grammar tables manifest test")
 endif()
