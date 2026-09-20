@@ -826,6 +826,13 @@ class Manager {
         completionProvider_[std::move(connectionKey)] = std::move(info);
     }
 
+    // search-everywhere-server-commands follow-up: same test-only injection
+    // point as SetCompletionProviderForTesting just above, for the piece of
+    // `initialize`-response state ServerCommandsFor reads.
+    void SetServerCommandsForTesting(std::string connectionKey, std::vector<std::string> commands) {
+        executeCommandProvider_[std::move(connectionKey)] = std::move(commands);
+    }
+
     // incremental-sync follow-up: same test-only injection point as
     // SetSemanticTokensLegendForTesting just above, for the sibling piece of
     // `initialize`-response state -- a test wanting to exercise the
@@ -964,6 +971,16 @@ class Manager {
     // completionProvider, which BufferView treats as "keep the pre-existing
     // hardcoded trigger set" rather than "never complete."
     [[nodiscard]] std::optional<CompletionProviderInfo> CompletionProviderFor(const std::string& connectionKey) const;
+
+    // search-everywhere-server-commands follow-up: same shape and lifetime
+    // as the accessors above, for capabilities.executeCommandProvider.
+    // commands -- the server's own maintenance verbs, which the palette
+    // lists as candidates. Empty when the connection never advertised any
+    // (or never finished a handshake); no optional, because "advertised an
+    // empty list" and "advertised nothing" are the same thing to every
+    // caller. This is a list to *offer*, not a gate: ExecuteCommand itself
+    // still checks nothing, per its own doc comment.
+    [[nodiscard]] std::vector<std::string> ServerCommandsFor(const std::string& connectionKey) const;
 
     // incremental-sync follow-up: unlike the two accessors above, this
     // returns a plain TextDocumentSyncKind rather than an optional -- every
@@ -1772,6 +1789,11 @@ class Manager {
     // CompletionProviderFor's own doc comment in the public section for the
     // three things it decides.
     std::unordered_map<std::string, CompletionProviderInfo> completionProvider_;
+
+    // search-everywhere-server-commands follow-up: same role/lifetime/
+    // erasure convention as the caches just above -- see ServerCommandsFor's
+    // own doc comment in the public section.
+    std::unordered_map<std::string, std::vector<std::string>> executeCommandProvider_;
 
     // rename-file-notifications follow-up: same lifetime/erasure convention
     // as the two caches just above -- see RequestWillRenameFiles/

@@ -37,6 +37,18 @@ enum class SearchEverywhereKind {
     // doesn't separate local from project-wide either.
     Symbol,
     TextMatch,
+    // search-everywhere-more-sources follow-up. Appended rather than slotted
+    // in beside Command, because this enum's declaration order is also
+    // RankSearchEverywhere's tie-break and Tab's cycle order -- the three
+    // original categories stay where a user's fingers already expect them.
+    //
+    // ServerCommand is a running language server's own advertised
+    // executeCommandProvider.commands (rust-analyzer.reloadWorkspace and
+    // friends); Theme and Project are the two registries a user already
+    // reaches for by name (UI/ThemeRegistry.h, Editor/Project/Registry.h).
+    ServerCommand,
+    Theme,
+    Project,
 };
 
 // LSP-agnostic on purpose -- this module stays as dependency-free as
@@ -52,6 +64,21 @@ struct SearchEverywhereCandidate {
     SearchEverywhereKind kind;
     std::string          label;  // fuzzy-matched against
     std::string          detail; // shown dimmed alongside label: a doc string, a relative path, or ""
+
+    // The chord that already runs this row, formatted (FormatKeySequence),
+    // or "" for a row with no binding. Set for Command rows only -- a
+    // palette that shows the binding beside the command is what teaches the
+    // chord rather than replacing it, which is the whole point of listing
+    // commands here at all. Display only: never fuzzy-matched against, so
+    // typing "C-x" narrows to commands *named* that, not bound to it.
+    std::string binding;
+
+    // An opaque routing token the UI hands back on commit, never
+    // interpreted here: the LSP serverKey that advertised a ServerCommand,
+    // the root path of a Project. Empty for every other kind. A dedicated
+    // field rather than reading it back out of `detail`, so prettifying
+    // what a row displays can never break what committing it does.
+    std::string target;
 
     // Exactly one of these is set for a Symbol candidate (which jump shape
     // applies), and remoteLocation is always set for a TextMatch one; both

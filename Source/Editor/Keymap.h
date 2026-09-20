@@ -63,6 +63,17 @@ class Keymap {
     };
     [[nodiscard]] std::vector<ChildBinding> ChildrenAt(const std::vector<KeyChord>& prefix) const;
 
+    // The reverse of Bind: every bound sequence in this layer, paired with
+    // the command it runs. Traversal order is the trie's own (std::map over
+    // KeyChord), so it is deterministic but is not a useful sort for
+    // display -- a caller that wants "the one chord to show for a command"
+    // wants ShortestBindingPerCommand below, not this.
+    struct Binding {
+        std::vector<KeyChord> sequence;
+        std::string           commandName;
+    };
+    [[nodiscard]] std::vector<Binding> AllBindings() const;
+
   private:
     // Every existing Mode factory constructs an empty Keymap() and nothing
     // pre-existing ever copy-constructs a Mode (always moved/RVO'd), so this
@@ -95,6 +106,7 @@ class Keymap {
     };
 
     static void CollectAmbiguousBindings(const Node& node, std::vector<KeyChord>& sequence, std::vector<std::string>& out);
+    static void CollectBindings(const Node& node, std::vector<KeyChord>& sequence, std::vector<Binding>& out);
 
     Node root_;
 };
@@ -115,9 +127,28 @@ class KeymapStack {
     // chord wins, mirroring Resolve's own "first Match wins" layer priority.
     [[nodiscard]] std::vector<Keymap::ChildBinding> ChildrenAt(const std::vector<KeyChord>& prefix) const;
 
+    // Every binding across all layers that is actually *reachable* by
+    // typing it. Two ways a bound sequence is not: a higher-priority layer
+    // binds the same sequence to something else (Resolve's own first-Match-
+    // wins), or any strict prefix of it Matches anywhere in the stack, in
+    // which case Dispatcher fires that shorter command before the longer
+    // sequence can ever be completed. The second is AmbiguousBindings'
+    // within-a-layer diagnostic generalized across layers -- here it is a
+    // filter rather than a report, because a caller displaying "the chord
+    // for this command" must not show one that does nothing.
+    [[nodiscard]] std::vector<Keymap::Binding> AllBindings() const;
+
   private:
     std::vector<const Keymap*> layers_;
 };
+
+// One formatted chord sequence per command name, over KeymapStack::
+// AllBindings -- what a palette row or a help buffer shows beside a command
+// it lists. A command bound more than once keeps its shortest sequence
+// (fewest chords, then FormatKeySequence order), on the grounds that the
+// shortest is the one worth teaching; commands with no reachable binding
+// are simply absent.
+[[nodiscard]] std::map<std::string, std::string> ShortestBindingPerCommand(const KeymapStack& keymaps);
 
 } // namespace ned::editor
 

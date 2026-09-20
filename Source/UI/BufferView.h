@@ -2367,6 +2367,11 @@ class BufferView : public Widget {
     [[nodiscard]] bufferview::FuzzyPrompt AcpAgentNamePrompt();
     [[nodiscard]] bufferview::FuzzyPrompt BookmarkJumpPrompt();
     [[nodiscard]] bufferview::FuzzyPrompt SelectThemePrompt();
+
+    // Applies a theme by name and offers to write it to init.janet -- shared
+    // by the select-theme picker's own commit and search-everywhere's Theme
+    // rows, so a theme picked either way lands in the same state.
+    void                                  CommitThemeSelection(const std::string& selected);
     [[nodiscard]] bufferview::FuzzyPrompt VcsSwitchBranchPrompt();
 
     // search-everywhere follow-up: deliberately not a FuzzyPrompt -- that

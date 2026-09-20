@@ -880,6 +880,25 @@ std::optional<CompletionProviderInfo> ExtractCompletionProvider(const Json& init
     return info;
 }
 
+std::optional<std::vector<std::string>> ExtractExecuteCommandProvider(const Json& initializeResult) {
+    if (!initializeResult.is_object()) {
+        return std::nullopt;
+    }
+    const auto capabilitiesIt = initializeResult.find("capabilities");
+    if (capabilitiesIt == initializeResult.end() || !capabilitiesIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto providerIt = capabilitiesIt->find("executeCommandProvider");
+    if (providerIt == capabilitiesIt->end() || !providerIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto commandsIt = providerIt->find("commands");
+    if (commandsIt == providerIt->end() || !commandsIt->is_array()) {
+        return std::nullopt;
+    }
+    return StringArray(*commandsIt);
+}
+
 std::optional<OnTypeFormattingTriggers> ExtractOnTypeFormattingTriggers(const Json& initializeResult) {
     if (!initializeResult.is_object()) {
         return std::nullopt;

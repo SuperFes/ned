@@ -4066,11 +4066,17 @@ void BufferView::HandleFuzzyPromptKey(const bufferview::FuzzyPrompt& prompt, con
 std::vector<editor::SearchEverywhereCandidate> BufferView::BuildSearchEverywhereCandidates() {
     std::vector<editor::SearchEverywhereCandidate> candidates;
 
+    // search-everywhere-bindings follow-up: one reverse lookup for the whole
+    // command list rather than one per row -- the chord beside a command is
+    // what keeps the palette teaching the keymap instead of replacing it.
+    const std::map<std::string, std::string> bindings = editor::ShortestBindingPerCommand(dispatcher_.Keymaps());
     for (const std::string& name : dispatcher_.Registry().Names()) {
         const editor::Command* command = dispatcher_.Registry().Find(name);
-        candidates.push_back({.kind   = editor::SearchEverywhereKind::Command,
-                              .label  = name,
-                              .detail = command ? command->Docstring() : std::string{}});
+        const auto             binding = bindings.find(name);
+        candidates.push_back({.kind    = editor::SearchEverywhereKind::Command,
+                              .label   = name,
+                              .detail  = command ? command->Docstring() : std::string{},
+                              .binding = binding != bindings.end() ? binding->second : std::string{}});
     }
     for (const std::string& name : editor::MacroNames()) {
         candidates.push_back({.kind = editor::SearchEverywhereKind::Macro, .label = name, .detail = {}});
@@ -4115,6 +4121,37 @@ std::vector<editor::SearchEverywhereCandidate> BufferView::BuildSearchEverywhere
                 // to report -- ResolveTopLevelTypeInBuffer's own precedent.
             }
         }
+    }
+
+    // search-everywhere-more-sources follow-up: a running server's own
+    // advertised commands, the two name registries, and nothing that needs
+    // a round trip -- every source here is a synchronous read, the same
+    // "gathered once per session, never per keystroke" rule the symbol
+    // block above follows.
+    if (lspManager_) {
+        text::Buffer& buffer = activeBuffer_.Get();
+        for (const std::string& serverKey : lspManager_->ActiveServerKeysForBuffer(buffer)) {
+            for (const std::string& command :
+                 lspManager_->ServerCommandsFor(lspManager_->ConnectionKeyForBuffer(buffer, serverKey))) {
+                candidates.push_back({.kind   = editor::SearchEverywhereKind::ServerCommand,
+                                      .label  = command,
+                                      .detail = serverKey,
+                                      .target = serverKey});
+            }
+        }
+    }
+    for (const std::string& canonical : ThemeNames()) {
+        // Label as the picker shows it, detail as init.janet spells it --
+        // the row answers "what do I write down to keep this?" itself.
+        candidates.push_back({.kind   = editor::SearchEverywhereKind::Theme,
+                              .label  = ThemeDisplayName(canonical),
+                              .detail = canonical});
+    }
+    for (const editor::ProjectRegistryEntry& entry : editor::ListProjects()) {
+        candidates.push_back({.kind   = editor::SearchEverywhereKind::Project,
+                              .label  = entry.name,
+                              .detail = entry.root,
+                              .target = entry.root});
     }
 
     return candidates;
@@ -4193,6 +4230,34 @@ void BufferView::CommitSearchEverywhereCandidate(const editor::SearchEverywhereC
             else {
                 ReportError("Internal error resolving the selected symbol.");
             }
+            return;
+        case editor::SearchEverywhereKind::ServerCommand: {
+            if (!lspManager_) {
+                ReportError("No LSP manager available.");
+                return;
+            }
+            // No arguments: the verbs this category exists for
+            // (rust-analyzer.reloadWorkspace and friends) take none. A
+            // server that does want some answers with an error, which the
+            // status line reports -- guessing at an argument shape would be
+            // worse than saying plainly what the server said.
+            text::Buffer* const bufferPtr = &activeBuffer_.Get();
+            const std::string   command   = candidate.label;
+            statusMessage_                = "Running " + command + "...";
+            lspManager_->ExecuteCommand(*bufferPtr, candidate.target, command, editor::lsp::Json::array(),
+                                        [this, bufferPtr, command](bool ok) {
+                                            if (bufferPtr != &activeBuffer_.Get()) {
+                                                return; // active buffer changed since the request was sent
+                                            }
+                                            statusMessage_ = ok ? command + " done." : command + " failed.";
+                                        });
+            return;
+        }
+        case editor::SearchEverywhereKind::Theme:
+            CommitThemeSelection(candidate.label);
+            return;
+        case editor::SearchEverywhereKind::Project:
+            ActivateProjectAndReport(candidate.target);
             return;
         case editor::SearchEverywhereKind::TextMatch:
             if (candidate.remoteLocation) {
@@ -4530,6 +4595,33 @@ bufferview::FuzzyPrompt BufferView::BookmarkJumpPrompt() {
                 } }};
 }
 
+// Applies a theme by name and offers to write it down. Shared by the
+// select-theme picker and search-everywhere's Theme rows so both reach the
+// same end state -- applied now, persisted only if the user says so.
+//
+// Applies to this session only, and says so with the line to write down. A
+// theme is an explicit setting: the picker used to persist the pick to
+// $XDG_STATE_HOME and that pin then outranked ned/set-theme, so a config
+// file could be silently overruled by a click with nothing on screen to
+// explain it. Trying a theme and choosing to keep one are different acts,
+// and only the second belongs in a config file -- which is the user's to
+// edit, not ned's to rewrite. Declining the offer is a real answer: the
+// theme still applies for this session.
+void BufferView::CommitThemeSelection(const std::string& selected) {
+    const auto named = ThemeByName(selected);
+    if (!named) {
+        statusMessage_ = "Unknown theme \"" + selected + "\"";
+        return;
+    }
+    if (themeApplier_) {
+        themeApplier_(*named);
+    }
+    pendingThemeToWrite_ = named->name;
+    inputMode_           = InputMode::ConfirmWriteThemeToInit;
+    statusMessage_ =
+        "Theme: " + selected + ". Write (ned/set-theme \"" + named->name + "\") to init.janet? (y/n)";
+}
+
 bufferview::FuzzyPrompt BufferView::SelectThemePrompt() {
     // The snapshot is captured here rather than read inside commit, because the
     // driver ends the session -- which clears themeBeforePreview_ -- before
@@ -4568,30 +4660,7 @@ bufferview::FuzzyPrompt BufferView::SelectThemePrompt() {
                         }
                         return;
                     }
-                    const auto named = ThemeByName(selected);
-                    if (!named) {
-                        statusMessage_ = "Unknown theme \"" + selected + "\"";
-                        return;
-                    }
-                    if (themeApplier_) {
-                        themeApplier_(*named);
-                    }
-                    // Applies to this session only, and says so with the line to write
-                    // down. A theme is an explicit setting: the picker used to persist
-                    // the pick to $XDG_STATE_HOME and that pin then outranked
-                    // ned/set-theme, so a config file could be silently overruled by a
-                    // click with nothing on screen to explain it. Trying a theme and
-                    // choosing to keep one are different acts, and only the second
-                    // belongs in a config file -- which is the user's to edit, not
-                    // ned's to rewrite.
-                    //
-                    // ...and offer to write it down, rather than either persisting
-                    // silently or leaving the user to retype it. Declining is a real
-                    // answer: the theme still applies for this session.
-                    pendingThemeToWrite_ = named->name;
-                    inputMode_           = InputMode::ConfirmWriteThemeToInit;
-                    statusMessage_       = "Theme: " + selected + ". Write (ned/set-theme \"" + named->name +
-                                           "\") to init.janet? (y/n)";
+                    CommitThemeSelection(selected);
                 },
             .onSelectionChanged = [this] { ApplySelectedThemePreview(); },
             .onCancel           = [this] {

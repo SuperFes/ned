@@ -2817,8 +2817,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         });
     registry.Register(
         "search-everywhere",
-        "Fuzzy-search commands, named macros, project files, and open buffers in one merged, ranked list; TAB "
-        "narrows to one kind.",
+        "Fuzzy-search commands (with their keybindings), named macros, project files, open buffers, symbols, "
+        "file text, a language server's own commands, themes and registered projects in one merged, ranked "
+        "list; TAB narrows to one kind.",
         [](CommandContext& context) {
             context.interactiveRequest = InteractiveRequest::SearchEverywhere;
         });

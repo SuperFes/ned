@@ -170,3 +170,59 @@ TEST_CASE("KeymapStack::ChildrenAt merges layers, first layer wins on overlap", 
     REQUIRE(find(ParseKeySequence("a").front())->commandName == "minor-command");
     REQUIRE(find(ParseKeySequence("b").front())->commandName == "global-only");
 }
+
+TEST_CASE("AllBindings is the reverse of Bind", "[Keymap]") {
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-x C-s"), "save-buffer");
+    keymap.Bind(ParseKeySequence("C-n"), "next-line");
+
+    const auto bindings = keymap.AllBindings();
+    REQUIRE(bindings.size() == 2);
+
+    const auto find = [&](const std::string& command) {
+        return std::find_if(bindings.begin(), bindings.end(),
+                            [&](const Keymap::Binding& binding) { return binding.commandName == command; });
+    };
+    REQUIRE(find("save-buffer")->sequence == ParseKeySequence("C-x C-s"));
+    REQUIRE(find("next-line")->sequence == ParseKeySequence("C-n"));
+}
+
+TEST_CASE("KeymapStack::AllBindings drops a sequence a higher layer rebinds", "[Keymap]") {
+    Keymap minor;
+    Keymap global;
+    minor.Bind(ParseKeySequence("C-c a"), "minor-command");
+    global.Bind(ParseKeySequence("C-c a"), "org-agenda");
+
+    const KeymapStack stack({&minor, &global});
+    const auto        bindings = stack.AllBindings();
+    REQUIRE(bindings.size() == 1);
+    REQUIRE(bindings.front().commandName == "minor-command");
+}
+
+TEST_CASE("KeymapStack::AllBindings drops a sequence a shorter one shadows", "[Keymap]") {
+    // C-x alone Matches in the minor layer, so Dispatcher fires it before
+    // "C-x C-s" can ever be completed -- the cross-layer form of the bug
+    // AmbiguousBindings reports within one layer.
+    Keymap minor;
+    Keymap global;
+    minor.Bind(ParseKeySequence("C-x"), "vim-decrement-number");
+    global.Bind(ParseKeySequence("C-x C-s"), "save-buffer");
+
+    const KeymapStack stack({&minor, &global});
+    const auto        bindings = stack.AllBindings();
+    REQUIRE(bindings.size() == 1);
+    REQUIRE(bindings.front().commandName == "vim-decrement-number");
+}
+
+TEST_CASE("ShortestBindingPerCommand keeps the shortest of several bindings", "[Keymap]") {
+    Keymap keymap;
+    keymap.Bind(ParseKeySequence("C-x C-s"), "save-buffer");
+    keymap.Bind(ParseKeySequence("C-s"), "save-buffer");
+    keymap.Bind(ParseKeySequence("C-c b"), "switch-to-buffer");
+
+    const KeymapStack stack({&keymap});
+    const auto        bindings = ned::editor::ShortestBindingPerCommand(stack);
+    REQUIRE(bindings.at("save-buffer") == FormatKeySequence(ParseKeySequence("C-s")));
+    REQUIRE(bindings.at("switch-to-buffer") == FormatKeySequence(ParseKeySequence("C-c b")));
+    REQUIRE(bindings.find("no-such-command") == bindings.end());
+}

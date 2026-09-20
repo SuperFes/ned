@@ -395,6 +395,12 @@ inline std::string SearchEverywhereKindGlyph(editor::SearchEverywhereKind kind) 
             return "sym";
         case editor::SearchEverywhereKind::TextMatch:
             return "text";
+        case editor::SearchEverywhereKind::ServerCommand:
+            return "lsp";
+        case editor::SearchEverywhereKind::Theme:
+            return "theme";
+        case editor::SearchEverywhereKind::Project:
+            return "proj";
     }
     return "";
 }
@@ -422,14 +428,19 @@ inline std::string SearchEverywhereTitle(std::optional<editor::SearchEverywhereK
             return "Search Everywhere -- Symbols";
         case editor::SearchEverywhereKind::TextMatch:
             return "Search Everywhere -- Text";
+        case editor::SearchEverywhereKind::ServerCommand:
+            return "Search Everywhere -- Server Commands";
+        case editor::SearchEverywhereKind::Theme:
+            return "Search Everywhere -- Themes";
+        case editor::SearchEverywhereKind::Project:
+            return "Search Everywhere -- Projects";
     }
     return "Search Everywhere";
 }
 
-// search-everywhere follow-up: Tab's own cycle order, All -> Command ->
-// Macro -> File -> Buffer -> All -- SearchEverywhereKind's own declaration
-// order, so this and RankSearchEverywhere's tie-break agree on what "the
-// next kind" means.
+// search-everywhere follow-up: Tab's own cycle order -- SearchEverywhereKind's
+// own declaration order, so this and RankSearchEverywhere's tie-break agree on
+// what "the next kind" means. All -> Command -> ... -> Project -> All.
 inline std::optional<editor::SearchEverywhereKind>
 NextSearchEverywhereKindFilter(std::optional<editor::SearchEverywhereKind> current) {
     if (!current) {
@@ -447,6 +458,12 @@ NextSearchEverywhereKindFilter(std::optional<editor::SearchEverywhereKind> curre
         case editor::SearchEverywhereKind::Symbol:
             return editor::SearchEverywhereKind::TextMatch;
         case editor::SearchEverywhereKind::TextMatch:
+            return editor::SearchEverywhereKind::ServerCommand;
+        case editor::SearchEverywhereKind::ServerCommand:
+            return editor::SearchEverywhereKind::Theme;
+        case editor::SearchEverywhereKind::Theme:
+            return editor::SearchEverywhereKind::Project;
+        case editor::SearchEverywhereKind::Project:
             return std::nullopt;
     }
     return std::nullopt;
@@ -481,6 +498,22 @@ inline std::string SearchEverywhereSymbolKindLabel(editor::SymbolKind kind) {
 constexpr std::size_t kMinSearchEverywhereTextQueryLength = 3;
 constexpr std::size_t kMaxSearchEverywhereTextMatches     = 200;
 
+// search-everywhere-bindings follow-up: the row's right-aligned column --
+// the detail text, then the chord that already runs this row flush against
+// the popup's right border, which is where every palette that shows one
+// puts it. Composed into one string because ListPopupRow has a single
+// `right` column; the chord goes last precisely because that column is
+// right-aligned, so it is the part that stays put as details vary in width.
+inline std::string SearchEverywhereRightColumn(const editor::SearchEverywhereCandidate& candidate) {
+    if (candidate.binding.empty()) {
+        return candidate.detail;
+    }
+    if (candidate.detail.empty()) {
+        return candidate.binding;
+    }
+    return candidate.detail + "   " + candidate.binding;
+}
+
 // search-everywhere follow-up: BuildFuzzyCandidatePopupModel's own shape
 // (title, ComputeCandidatePopupWindow, the "N more above/below" synthetic
 // rows), over SearchEverywhereCandidate/Result instead of bare strings --
@@ -506,8 +539,9 @@ inline ListPopupModel BuildSearchEverywherePopupModel(const std::string&        
     }
     for (std::size_t i = windowStart; i < windowEnd; ++i) {
         const editor::SearchEverywhereCandidate& candidate = candidates[ranked[i].candidateIndex];
-        model.rows.push_back(
-            {.left = SearchEverywhereKindGlyph(candidate.kind), .main = candidate.label, .right = candidate.detail});
+        model.rows.push_back({.left  = SearchEverywhereKindGlyph(candidate.kind),
+                              .main  = candidate.label,
+                              .right = SearchEverywhereRightColumn(candidate)});
     }
     model.selectedIndex = (selected - windowStart) + (windowStart > 0 ? 1 : 0);
 

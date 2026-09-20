@@ -1601,6 +1601,29 @@ TEST_CASE("ExtractCompletionProvider reads triggerCharacters, allCommitCharacter
     CHECK(provider->resolveProvider);
 }
 
+TEST_CASE("ExtractExecuteCommandProvider reads the advertised command list", "[Lsp]") {
+    const Json initializeResult = {
+        {"capabilities",
+         {{"executeCommandProvider", {{"commands", Json::array({"rust-analyzer.reloadWorkspace", "rust-analyzer.run"})}}}}}};
+
+    const auto commands = ned::editor::lsp::ExtractExecuteCommandProvider(initializeResult);
+    REQUIRE(commands.has_value());
+    CHECK(*commands == std::vector<std::string>{"rust-analyzer.reloadWorkspace", "rust-analyzer.run"});
+}
+
+TEST_CASE("ExtractExecuteCommandProvider yields nullopt without a commands array", "[Lsp]") {
+    CHECK_FALSE(ned::editor::lsp::ExtractExecuteCommandProvider(Json::object()).has_value());
+    CHECK_FALSE(ned::editor::lsp::ExtractExecuteCommandProvider(Json{{"capabilities", Json::object()}}).has_value());
+    CHECK_FALSE(
+        ned::editor::lsp::ExtractExecuteCommandProvider(Json{{"capabilities", {{"executeCommandProvider", Json::object()}}}})
+            .has_value());
+    // Advertised with nothing in it: a real, empty list -- not the same as never advertising.
+    const auto empty = ned::editor::lsp::ExtractExecuteCommandProvider(
+        Json{{"capabilities", {{"executeCommandProvider", {{"commands", Json::array()}}}}}});
+    REQUIRE(empty.has_value());
+    CHECK(empty->empty());
+}
+
 TEST_CASE("ExtractCompletionProvider distinguishes an absent provider from a bare one", "[Lsp]") {
     // Absent: nullopt, which BufferView reads as "keep the hardcoded fallback trigger set".
     CHECK_FALSE(ned::editor::lsp::ExtractCompletionProvider(Json{{"capabilities", Json::object()}}).has_value());

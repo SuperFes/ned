@@ -863,6 +863,9 @@ Client* Manager::ClientForLanguage(const std::string& serverKey, const std::file
                 if (const auto completionProvider = ExtractCompletionProvider(*result)) {
                     completionProvider_[connectionKey] = *completionProvider;
                 }
+                if (const auto serverCommands = ExtractExecuteCommandProvider(*result)) {
+                    executeCommandProvider_[connectionKey] = *serverCommands;
+                }
                 if (const auto syncKind = ExtractTextDocumentSyncKind(*result)) {
                     textDocumentSyncKind_[connectionKey] = *syncKind;
                 }
@@ -1347,6 +1350,7 @@ void Manager::ClientDisconnected(const std::string& serverKey, const std::string
     semanticTokensLegend_.erase(connectionKeyCopy);
     onTypeFormattingTriggers_.erase(connectionKeyCopy);
     completionProvider_.erase(connectionKeyCopy);                 // ditto -- a respawn may declare different triggers, or lose resolveProvider
+    executeCommandProvider_.erase(connectionKeyCopy);             // ditto -- a respawn may advertise a different command set
     textDocumentSyncKind_.erase(connectionKeyCopy);               // ditto -- a respawned server may advertise a different sync kind
     fileOperationFilters_.erase(connectionKeyCopy);               // ditto -- a respawned server may advertise different willRename/didRename filters
     pullDiagnosticsUnsupported_.erase(connectionKeyCopy);         // a respawned server gets one fresh attempt
@@ -1507,6 +1511,11 @@ std::optional<SemanticTokensLegend> Manager::SemanticTokensLegendFor(const std::
 std::optional<CompletionProviderInfo> Manager::CompletionProviderFor(const std::string& connectionKey) const {
     const auto it = completionProvider_.find(connectionKey);
     return it != completionProvider_.end() ? std::optional(it->second) : std::nullopt;
+}
+
+std::vector<std::string> Manager::ServerCommandsFor(const std::string& connectionKey) const {
+    const auto it = executeCommandProvider_.find(connectionKey);
+    return it != executeCommandProvider_.end() ? it->second : std::vector<std::string>{};
 }
 
 std::optional<OnTypeFormattingTriggers> Manager::OnTypeFormattingTriggersFor(const std::string& connectionKey) const {

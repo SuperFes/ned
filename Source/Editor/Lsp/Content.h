@@ -539,6 +539,16 @@ struct OnTypeFormattingTriggers {
 // requires).
 [[nodiscard]] std::optional<OnTypeFormattingTriggers> ExtractOnTypeFormattingTriggers(const Json& initializeResult);
 
+// search-everywhere-server-commands follow-up. Parses
+// `capabilities.executeCommandProvider.commands` out of a full `initialize`
+// response -- the server's own maintenance verbs
+// (rust-analyzer.reloadWorkspace, intelephense.index.workspace, ...), which
+// are otherwise reachable only when a code action or code lens happens to
+// carry one. nullopt when the provider is absent or carries no "commands"
+// array; an empty array is a server advertising the capability with nothing
+// in it, and comes back as an empty vector rather than nullopt.
+[[nodiscard]] std::optional<std::vector<std::string>> ExtractExecuteCommandProvider(const Json& initializeResult);
+
 // incremental-sync follow-up. LSP's own TextDocumentSyncKind (spec section
 // "TextDocumentSyncKind") -- what a server's advertised
 // capabilities.textDocumentSync says about how it wants

@@ -544,36 +544,27 @@ ordinary click) or `BufferView::ForwardMouseWhileSiblingDrags` (a real drop)).
       phase 5 — that one washes the whole bar and was set aside as decoration; this is a
       real widget for real determinate work.
 
-- [ ] **Search-everywhere remainder** (2026-09-18). The palette itself shipped -- see
-      `git log --grep=search-everywhere`: double-tap-Shift gesture
-      (`ned/set-search-everywhere-gesture`, `UI/DoubleTapModifier.h`), a merged
-      Command/Macro/File/Buffer/Symbol/TextMatch pool in `Editor/SearchEverywhere.h`
-      that keeps each candidate's provenance and a dimmed `detail` line through its own
-      ranking, JetBrains-style kind-filter cycling, async workspace symbols appended as
-      they arrive, and a debounced backgrounded project text scan
-      (`ned/set-search-everywhere-text-search`). What is genuinely missing, smallest
-      first:
-      - **A command's own keybinding is not shown beside it.** `detail` carries the
-        docstring; `Keymap` already knows the chord. This is the single highest-value
-        row detail in every palette that has one -- it is what turns the palette into
-        the thing that *teaches* the chords rather than the thing that replaces them,
-        which was the whole worry behind the original non-goal.
-      - **A server's own commands are unreachable.** `executeCommandProvider.commands`
-        is never read from the initialize response (no reference anywhere in
-        `Editor/Lsp/*.cpp`), so `intelephense.index.workspace`,
-        `rust-analyzer.reloadWorkspace` and every other maintenance verb can only be
-        reached if a code action or code lens happens to carry it.
-        `Manager::ExecuteCommand` already exists and is exercised by those two paths --
-        this needs the capability recorded per connection and a seventh
-        `SearchEverywhereKind`, nothing more.
-      - **Themes and registered projects aren't sources**, though both are already
-        enumerable (`UI/ThemeRegistry.h`, `Editor/Project/Registry.h`) and both are
-        things people reach for by name.
-      - **No preview pane** for a File/Symbol/TextMatch row (Telescope's, JetBrains').
-        Last, and genuinely optional.
-      Not wanted: making this the only way to reach anything. Every purpose-built
-      command and binding stays -- see the amended Named Non-Goal below for why that
-      distinction is the one that matters.
+- [ ] **Search-everywhere preview pane** -- a File/Symbol/TextMatch row shows no
+      preview of what it points at (Telescope's, JetBrains'). All that is left of the
+      2026-09-18 remainder, and genuinely optional.
+
+      The rest of it shipped 2026-09-20, slugs for `git log --grep=`:
+      `search-everywhere-bindings` (a command row shows the chord that already runs it,
+      flush right -- `Keymap::AllBindings`/`KeymapStack::AllBindings`/
+      `ShortestBindingPerCommand`, where the stack's version filters to what is actually
+      *reachable*: a sequence a higher layer rebinds, or whose prefix Matches anywhere
+      in the stack, is one `Dispatcher` can never deliver) and
+      `search-everywhere-more-sources` (three more kinds: a running server's own
+      `executeCommandProvider.commands`, recorded per connection like every other
+      `initialize`-response capability; themes; registered projects).
+      Not wanted, unchanged: making this the only way to reach anything. Every
+      purpose-built command and binding stays -- see the amended Named Non-Goal below
+      for why that distinction is the one that matters.
+- [ ] `Docs/Commands.md` lists all 315 commands and never says which key runs one,
+      though `ShortestBindingPerCommand` (above) now hands that over in one call --
+      a generated binding column is a small addition to `Tests/CommandReferenceTest.cpp`'s
+      blessing pass. The same lookup is what a real `describe-bindings` would be built on;
+      neither exists yet.
 
 - [ ] **Terminal-side mouse forwarding** — clicks/wheel inside `TerminalPanel` are
       consumed by the panel itself (focus, scrollback ring); a TUI subprocess running

@@ -38,6 +38,7 @@
 #include "Editor/MacroRegistry.h"
 #include "Editor/Mode.h"
 #include "Editor/Multibuffer.h"
+#include "Editor/Project/Registry.h"
 #include "Editor/Project/Root.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
@@ -205,6 +206,31 @@ class EnvVarGuard {
 // sibling files' own narrower per-multibuffer-feature fixtures, so the
 // guard lives here once rather than being added to every individual
 // multibuffer-building TEST_CASE.
+// search-everywhere-more-sources follow-up: the palette lists registered
+// projects, which are process-wide state loaded from (and saved to)
+// $XDG_STATE_HOME -- a test must neither read nor write the developer's own
+// registry, and must not depend on what happens to be in it.
+struct ScopedProjectRegistry {
+    explicit ScopedProjectRegistry(std::filesystem::path stateDir) : dir_(std::move(stateDir)) {
+        std::filesystem::remove_all(dir_);
+        std::filesystem::create_directories(dir_);
+        stateHome_.emplace("XDG_STATE_HOME", dir_.c_str());
+        ned::editor::ResetProjectRegistryForTesting();
+    }
+
+    ~ScopedProjectRegistry() {
+        ned::editor::ResetProjectRegistryForTesting();
+        stateHome_.reset();
+        std::filesystem::remove_all(dir_);
+    }
+
+    ScopedProjectRegistry(const ScopedProjectRegistry&)            = delete;
+    ScopedProjectRegistry& operator=(const ScopedProjectRegistry&) = delete;
+
+    std::filesystem::path      dir_;
+    std::optional<EnvVarGuard> stateHome_;
+};
+
 struct RegistryResetGuard {
     RegistryResetGuard() {
         ned::editor::multibuffer::ClearRegistryForTesting();
@@ -7891,7 +7917,9 @@ TEST_CASE("TAB in search-everywhere cycles the kind filter, narrowing to just on
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
     { std::ofstream(dir / "quit-plan.txt") << "hello\n"; } // shares "quit" with the quit command
-    const CurrentPathGuard cwdGuard(dir);
+    const CurrentPathGuard      cwdGuard(dir);
+    const ScopedProjectRegistry registryGuard(std::filesystem::temp_directory_path() /
+                                              "ned_bufferview_test_search_everywhere_tab_state");
 
     // One "quit"-matching candidate per kind, so every filter step below has
     // something to show (an empty ranked list hides the popup entirely --
@@ -7941,7 +7969,19 @@ TEST_CASE("TAB in search-everywhere cycles the kind filter, narrowing to just on
     view.OnEvent(ned::ui::test::Tab()); // Symbol -> TextMatch
     REQUIRE_FALSE(fixture.candidates.has_value());
 
-    view.OnEvent(ned::ui::test::Tab()); // TextMatch -> All
+    // ServerCommand/Theme/Project are empty here for the same reason: no LSP
+    // manager is set, no theme is named "quit", and the registry this test
+    // runs against was just emptied.
+    view.OnEvent(ned::ui::test::Tab()); // TextMatch -> ServerCommand
+    REQUIRE_FALSE(fixture.candidates.has_value());
+
+    view.OnEvent(ned::ui::test::Tab()); // ServerCommand -> Theme
+    REQUIRE_FALSE(fixture.candidates.has_value());
+
+    view.OnEvent(ned::ui::test::Tab()); // Theme -> Project
+    REQUIRE_FALSE(fixture.candidates.has_value());
+
+    view.OnEvent(ned::ui::test::Tab()); // Project -> All
     REQUIRE(fixture.candidates->title == "Search Everywhere");
 
     view.OnEvent(ned::ui::test::Escape());
@@ -8257,6 +8297,166 @@ TEST_CASE("ned/set-search-everywhere-text-search false makes the text category i
 
     view.OnEvent(ned::ui::test::Escape());
     std::filesystem::remove_all(dir);
+}
+
+// search-everywhere-bindings follow-up: the chord beside a command row.
+
+TEST_CASE("search-everywhere shows a command's own keybinding in its row", "[BufferView]") {
+    // "save-buffer" is 3+ characters, so keep the unrelated background text
+    // search off -- the workspace/symbol test above says why.
+    struct TextSearchGuard {
+        TextSearchGuard() : previous_(ned::editor::SearchEverywhereTextSearchEnabled()) {
+        }
+        ~TextSearchGuard() {
+            ned::editor::SetSearchEverywhereTextSearchEnabled(previous_);
+        }
+        bool previous_;
+    } const textSearchGuard;
+    ned::editor::SetSearchEverywhereTextSearchEnabled(false);
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "save-buffer");
+
+    REQUIRE(fixture.candidates);
+    const auto row = std::find_if(fixture.candidates->rows.begin(), fixture.candidates->rows.end(),
+                                  [](const ned::ui::ListPopupRow& candidate) { return candidate.main == "save-buffer"; });
+    REQUIRE(row != fixture.candidates->rows.end());
+    // Flush right, after the docstring -- see SearchEverywhereRightColumn.
+    const std::string chord =
+        ned::editor::FormatKeySequence(ned::editor::ParseKeySequence("C-x C-s"));
+    REQUIRE(row->right.ends_with(chord));
+    REQUIRE(row->right.starts_with(fixture.registry.Find("save-buffer")->Docstring()));
+
+    view.OnEvent(ned::ui::test::Escape());
+}
+
+TEST_CASE("search-everywhere leaves an unbound command's row showing only its docstring", "[BufferView]") {
+    struct TextSearchGuard {
+        TextSearchGuard() : previous_(ned::editor::SearchEverywhereTextSearchEnabled()) {
+        }
+        ~TextSearchGuard() {
+            ned::editor::SetSearchEverywhereTextSearchEnabled(previous_);
+        }
+        bool previous_;
+    } const textSearchGuard;
+    ned::editor::SetSearchEverywhereTextSearchEnabled(false);
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    const auto                     bindings = ned::editor::ShortestBindingPerCommand(fixture.dispatcher.Keymaps());
+    const std::vector<std::string> names    = fixture.registry.Names();
+    const auto                     unbound =
+        std::find_if(names.begin(), names.end(), [&](const std::string& name) { return !bindings.contains(name); });
+    REQUIRE(unbound != names.end());
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, *unbound);
+
+    REQUIRE(fixture.candidates);
+    const auto row = std::find_if(fixture.candidates->rows.begin(), fixture.candidates->rows.end(),
+                                  [&](const ned::ui::ListPopupRow& candidate) { return candidate.main == *unbound; });
+    REQUIRE(row != fixture.candidates->rows.end());
+    REQUIRE(row->right == fixture.registry.Find(*unbound)->Docstring());
+
+    view.OnEvent(ned::ui::test::Escape());
+}
+
+// search-everywhere-more-sources follow-up: server commands, themes, projects.
+
+TEST_CASE("search-everywhere lists a server's own commands and Enter executes one", "[BufferView]") {
+    Fixture                     fixture;
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "ned_bufferview_search_everywhere_servercmd_test.txt";
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("x");
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
+    FakeLspServer             server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    // Deliberately no SetEventLoop: this test is scoped to the server-command
+    // category, and the view's event loop is what arms the unrelated
+    // workspace/symbol and text-search debounces as the query is typed.
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    ned::ui::Screen screenBuf = ned::ui::Screen(80, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    view.Paint(canvas); // syncs the buffer, so it has an active server key at all
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    manager.SetServerCommandsForTesting(manager.ConnectionKeyForBuffer(buffer, "fundamental"),
+                                        {"rust-analyzer.reloadWorkspace"});
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "reloadWorkspace");
+
+    REQUIRE(CandidateRowExists(fixture.candidates, "lsp", "rust-analyzer.reloadWorkspace"));
+
+    view.OnEvent(ned::ui::test::Return());
+
+    const std::string raw     = ReadRawLspFrame(server.serverStdinRead);
+    const auto        request = ned::editor::lsp::Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "workspace/executeCommand");
+    REQUIRE(request["params"]["command"] == "rust-analyzer.reloadWorkspace");
+    REQUIRE(request["params"]["arguments"].empty());
+}
+
+TEST_CASE("search-everywhere lists themes and committing one offers to write it down", "[BufferView]") {
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    const std::string themeName = ned::ui::ThemeDisplayNames().front();
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, themeName);
+
+    REQUIRE(CandidateRowExists(fixture.candidates, "theme", themeName));
+
+    view.OnEvent(ned::ui::test::Return());
+
+    // The same end state select-theme's own commit reaches -- applied now,
+    // persisted only on an explicit y.
+    REQUIRE(fixture.statusMessage.starts_with("Theme: " + themeName + "."));
+    REQUIRE(fixture.statusMessage.find("init.janet? (y/n)") != std::string::npos);
+    view.OnEvent(ned::ui::test::Character("n"));
+}
+
+TEST_CASE("search-everywhere lists registered projects", "[BufferView]") {
+    // Commit is deliberately not exercised: it shares ActivateProjectAndReport
+    // with switch-project, whose activation really does try to open a terminal
+    // tab on a developer's own machine (see ProjectSwitchIntegrationTest.cpp).
+    const ScopedProjectRegistry registryGuard(std::filesystem::temp_directory_path() /
+                                              "ned_bufferview_search_everywhere_project_state");
+
+    const std::filesystem::path root = registryGuard.dir_ / "someproject";
+    std::filesystem::create_directories(root);
+    ned::editor::RegisterProject("someproject", root);
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "someproject");
+
+    REQUIRE(CandidateRowExists(fixture.candidates, "proj", "someproject"));
+    view.OnEvent(ned::ui::test::Escape());
 }
 
 namespace {
