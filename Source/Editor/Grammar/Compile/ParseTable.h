@@ -15,7 +15,9 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Editor/Grammar/Compile/Grammar.h"
@@ -23,9 +25,15 @@
 
 namespace ned::editor::grammar::compile {
 
-using ParseStateId     = std::size_t;
-using ProductionInfoId = std::size_t;
-using LexStateId       = std::size_t;
+// 32-bit, not size_t: a ParseAction is stored per entry and a large grammar
+// holds tens of millions of them before minimization, so the padding costs
+// real memory. The pre-minimized table runs to hundreds of thousands of
+// states, well past a uint16 -- the narrower widths the runtime ABI uses
+// (Editor/Parse/Abi.h) apply to the minimized table, and Tables.cpp already
+// casts at that boundary.
+using ParseStateId     = std::uint32_t;
+using ProductionInfoId = std::uint32_t;
+using LexStateId       = std::uint32_t;
 
 struct ParseAction {
     enum class Kind : std::uint8_t { Accept,
@@ -37,7 +45,7 @@ struct ParseAction {
     ParseStateId     state        = 0; // Shift
     bool             isRepetition = false;
     Symbol           symbol;                // Reduce
-    std::size_t      childCount        = 0; // Reduce
+    std::uint32_t    childCount        = 0; // Reduce
     int              dynamicPrecedence = 0; // Reduce
     ProductionInfoId productionId      = 0; // Reduce
 
@@ -46,7 +54,7 @@ struct ParseAction {
     static ParseAction Shift(ParseStateId state, bool isRepetition = false) {
         return {.kind = Kind::Shift, .state = state, .isRepetition = isRepetition};
     }
-    static ParseAction Reduce(Symbol symbol, std::size_t childCount, int dynamicPrecedence, ProductionInfoId productionId) {
+    static ParseAction Reduce(Symbol symbol, std::uint32_t childCount, int dynamicPrecedence, ProductionInfoId productionId) {
         return {.kind = Kind::Reduce, .symbol = symbol, .childCount = childCount, .dynamicPrecedence = dynamicPrecedence, .productionId = productionId};
     }
     static ParseAction Accept() {
@@ -74,10 +82,99 @@ struct ParseTableEntry {
     auto operator<=>(const ParseTableEntry&) const = default;
 };
 
+// A map keyed on Symbol, kept as one sorted buffer rather than a node per
+// entry. Every parse state holds two, and a large grammar builds hundreds of
+// thousands of states before minimization, so std::map's per-entry node --
+// a red-black header plus its own malloc chunk, around 48 bytes over the
+// entry itself -- was the single biggest thing in the generator's memory.
+// Iteration is ascending by Symbol, the order the rest of the generator and
+// the serialized tables both depend on.
+//
+// References into one are invalidated by any insertion, unlike std::map's;
+// no caller holds one across an insert.
+template <typename T>
+class SymbolMap {
+  public:
+    using value_type     = std::pair<Symbol, T>;
+    using iterator       = typename std::vector<value_type>::iterator;
+    using const_iterator = typename std::vector<value_type>::const_iterator;
+
+    iterator begin() {
+        return entries_.begin();
+    }
+    iterator end() {
+        return entries_.end();
+    }
+    [[nodiscard]] const_iterator begin() const {
+        return entries_.begin();
+    }
+    [[nodiscard]] const_iterator end() const {
+        return entries_.end();
+    }
+    [[nodiscard]] std::size_t size() const {
+        return entries_.size();
+    }
+    [[nodiscard]] bool empty() const {
+        return entries_.empty();
+    }
+
+    [[nodiscard]] iterator find(Symbol symbol) {
+        return Found(LowerBound(symbol), symbol, entries_.end());
+    }
+    [[nodiscard]] const_iterator find(Symbol symbol) const {
+        return Found(LowerBound(symbol), symbol, entries_.end());
+    }
+    [[nodiscard]] std::size_t count(Symbol symbol) const {
+        return find(symbol) == entries_.end() ? 0 : 1;
+    }
+
+    T& at(Symbol symbol) {
+        const iterator found = find(symbol);
+        if (found == entries_.end())
+            throw std::out_of_range("SymbolMap::at");
+        return found->second;
+    }
+    [[nodiscard]] const T& at(Symbol symbol) const {
+        const const_iterator found = find(symbol);
+        if (found == entries_.end())
+            throw std::out_of_range("SymbolMap::at");
+        return found->second;
+    }
+
+    T& operator[](Symbol symbol) {
+        return try_emplace(symbol).first->second;
+    }
+
+    template <typename... Args>
+    std::pair<iterator, bool> try_emplace(Symbol symbol, Args&&... args) {
+        const iterator pos = LowerBound(symbol);
+        if (pos != entries_.end() && pos->first == symbol)
+            return {pos, false};
+        return {entries_.insert(pos, value_type{symbol, T(std::forward<Args>(args)...)}), true};
+    }
+
+  private:
+    template <typename It>
+    static It Found(It pos, Symbol symbol, It last) {
+        return pos != last && pos->first == symbol ? pos : last;
+    }
+    iterator LowerBound(Symbol symbol) {
+        return std::lower_bound(entries_.begin(), entries_.end(), symbol, Less);
+    }
+    [[nodiscard]] const_iterator LowerBound(Symbol symbol) const {
+        return std::lower_bound(entries_.begin(), entries_.end(), symbol, Less);
+    }
+    static bool Less(const value_type& entry, Symbol symbol) {
+        return entry.first < symbol;
+    }
+
+    std::vector<value_type> entries_;
+};
+
 struct ParseState {
     ParseStateId                      id = 0;
-    std::map<Symbol, ParseTableEntry> terminalEntries;
-    std::map<Symbol, GotoAction>      nonterminalEntries;
+    SymbolMap<ParseTableEntry>        terminalEntries;
+    SymbolMap<GotoAction>             nonterminalEntries;
     TokenSet                          reservedWords;
     LexStateId                        lexStateId         = 0;
     std::size_t                       externalLexStateId = 0;
