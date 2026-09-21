@@ -492,10 +492,24 @@ commands, never a replacement for them.
       unconditionally, truncated to 24 columns, with no setting to turn it off. A noisy
       PS1-driven title is the case that would want one; the Janet surface is a 1.0 freeze
       commitment, so it waits for a real complaint rather than landing speculatively.
-- [ ] **DAP gaps, remainder**: data breakpoints (tied to a live variable rather than a
-      source line) have no natural entry point yet. Thread-focus reattachment across a
+- [ ] **DAP gaps, remainder**: data breakpoints shipped -- slug for `git log --grep=`:
+      `dap-data-breakpoints` (`dataBreakpointInfo`/`setDataBreakpoints`, armed from a
+      `*debug*` buffer variable row's own `[owner:M]` container reference, listed and
+      removed via `[data:N]` rows in the same buffer). Thread-focus reattachment across a
       session restart is deliberately excluded even if revisited — a fresh session has
       entirely new thread IDs, nothing meaningful to reattach it to.
+- [ ] A data breakpoint is session-scoped and deliberately not persisted: the `dataId` is
+      minted by one adapter for one run, so the store is cleared in `EndSession` alongside
+      the exception filters and for the same reason. DAP's own `canPersist` flag is read
+      but not acted on — a persistable id still needs the next session to be the same
+      build of the same program, which nothing here can check. Revisit only if an adapter
+      that sets it turns out to make re-arming after a restart genuinely tedious.
+- [ ] Data breakpoints have no gutter representation, function breakpoints' own cut, and
+      for the same reason (nothing here is tied to a line). Unlike function breakpoints
+      they do at least get a listing -- the `*debug*` buffer's `== Data breakpoints ==`
+      section -- which is also the only way to remove one. A `VcsPanel`-style standing
+      breakpoint panel covering all three stores is the obvious lift if that listing
+      proves too easy to lose track of.
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.

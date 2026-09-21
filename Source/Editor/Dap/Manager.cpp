@@ -222,6 +222,95 @@ void Manager::SetExceptionBreakpointFilters(std::set<std::string> ids) {
     }
 }
 
+void Manager::RequestDataBreakpointInfo(int variablesReference, const std::string& name,
+                                        std::function<void(DataBreakpointInfo)> callback) {
+    if (!client_ || state_ != SessionState::Stopped) {
+        callback(DataBreakpointInfo{.description = "No stopped debug session."});
+        return;
+    }
+    Json arguments = {{"name", name}};
+    // A container reference of 0 is DAP's own "resolve this name in the
+    // frame itself" -- omitted rather than sent as 0, which some adapters
+    // reject outright.
+    if (variablesReference > 0) {
+        arguments["variablesReference"] = variablesReference;
+    }
+    else if (stoppedFrameId_) {
+        arguments["frameId"] = *stoppedFrameId_;
+    }
+    const bool advertised = capabilities_.dataBreakpoints;
+    client_->SendRequest("dataBreakpointInfo", std::move(arguments),
+                         [callback = std::move(callback), advertised](bool success, const Json& body,
+                                                                      const std::string& message) {
+                             if (!success) {
+                                 // The request failing is itself the answer for an
+                                 // adapter that never advertised support -- say which
+                                 // it was rather than surfacing a bare protocol error.
+                                 DataBreakpointInfo info;
+                                 info.description = message.empty() ? std::string("Adapter refused dataBreakpointInfo.") : message;
+                                 if (!advertised) {
+                                     info.description += " (adapter did not advertise data-breakpoint support)";
+                                 }
+                                 callback(std::move(info));
+                                 return;
+                             }
+                             DataBreakpointInfo info;
+                             // DAP defines "description" as the label when dataId is a
+                             // string and the refusal reason when it is null, so it is
+                             // read the same way on both paths.
+                             info.description = body.value("description", "");
+                             if (body.contains("dataId") && body["dataId"].is_string()) {
+                                 info.canBreak = true;
+                                 info.dataId   = body["dataId"].get<std::string>();
+                             }
+                             if (body.contains("accessTypes") && body["accessTypes"].is_array()) {
+                                 for (const Json& accessType : body["accessTypes"]) {
+                                     if (accessType.is_string()) {
+                                         info.accessTypes.push_back(accessType.get<std::string>());
+                                     }
+                                 }
+                             }
+                             if (!info.canBreak && info.description.empty()) {
+                                 info.description = "The adapter cannot watch that value.";
+                             }
+                             callback(std::move(info));
+                         });
+}
+
+bool Manager::ToggleDataBreakpoint(std::string dataId, std::string description, std::string accessType) {
+    const auto it = std::find_if(dataBreakpoints_.begin(), dataBreakpoints_.end(),
+                                 [&dataId](const DataBreakpoint& bp) { return bp.dataId == dataId; });
+    bool       nowSet;
+    if (it != dataBreakpoints_.end()) {
+        dataBreakpoints_.erase(it);
+        nowSet = false;
+    }
+    else {
+        dataBreakpoints_.push_back(DataBreakpoint{.dataId      = std::move(dataId),
+                                                  .description = std::move(description),
+                                                  .accessType  = std::move(accessType)});
+        nowSet = true;
+    }
+    if (client_ && state_ != SessionState::Inactive) {
+        SendDataBreakpoints();
+    }
+    return nowSet;
+}
+
+void Manager::RemoveDataBreakpointAt(std::size_t index) {
+    if (index >= dataBreakpoints_.size()) {
+        return;
+    }
+    dataBreakpoints_.erase(dataBreakpoints_.begin() + static_cast<std::ptrdiff_t>(index));
+    if (client_ && state_ != SessionState::Inactive) {
+        SendDataBreakpoints();
+    }
+}
+
+const std::vector<Manager::DataBreakpoint>& Manager::DataBreakpoints() const {
+    return dataBreakpoints_;
+}
+
 std::vector<std::size_t> Manager::BreakpointsForFile(const std::filesystem::path& path) const {
     const auto               it = breakpoints_.find(NormalizePathKey(path));
     std::vector<std::size_t> lines;
@@ -536,6 +625,9 @@ std::string Manager::BeginSession(const std::string& language, bool attach) {
                              if (body.contains("supportsStepBack") && body["supportsStepBack"].is_boolean()) {
                                  capabilities_.stepBack = body["supportsStepBack"].get<bool>();
                              }
+                             if (body.contains("supportsDataBreakpoints") && body["supportsDataBreakpoints"].is_boolean()) {
+                                 capabilities_.dataBreakpoints = body["supportsDataBreakpoints"].get<bool>();
+                             }
                              if (body.contains("exceptionBreakpointFilters") && body["exceptionBreakpointFilters"].is_array()) {
                                  for (const Json& filterJson : body["exceptionBreakpointFilters"]) {
                                      ExceptionFilter filter;
@@ -632,6 +724,44 @@ void Manager::SendExceptionBreakpoints() {
     client_->SendRequest("setExceptionBreakpoints", Json{{"filters", std::move(filtersJson)}},
                          [](bool, const Json&, const std::string&) {
                              // Same fire-and-forget shape as setFunctionBreakpoints above.
+                         });
+}
+
+void Manager::SendDataBreakpoints() {
+    Json                     breakpointsJson = Json::array();
+    std::vector<std::string> sentIds;
+    for (const DataBreakpoint& bp : dataBreakpoints_) {
+        Json entry = Json{{"dataId", bp.dataId}};
+        if (!bp.accessType.empty()) {
+            entry["accessType"] = bp.accessType;
+        }
+        breakpointsJson.push_back(std::move(entry));
+        sentIds.push_back(bp.dataId);
+    }
+    client_->SendRequest("setDataBreakpoints", Json{{"breakpoints", std::move(breakpointsJson)}},
+                         [this, sentIds = std::move(sentIds)](bool success, const Json& body, const std::string&) {
+                             if (!success || !body.contains("breakpoints") || !body["breakpoints"].is_array()) {
+                                 return;
+                             }
+                             // The response array pairs with the REQUEST's order, which
+                             // is not necessarily the store's any more -- a toggle
+                             // while this was in flight already sent its own
+                             // setDataBreakpoints. Matching back by the id that was
+                             // actually sent costs nothing and cannot mispair, unlike
+                             // setBreakpoints' positional match (where the key, a line,
+                             // isn't echoed).
+                             const Json& results = body["breakpoints"];
+                             for (std::size_t i = 0; i < sentIds.size() && i < results.size(); ++i) {
+                                 const auto it = std::find_if(dataBreakpoints_.begin(), dataBreakpoints_.end(),
+                                                              [&](const DataBreakpoint& bp) { return bp.dataId == sentIds[i]; });
+                                 if (it == dataBreakpoints_.end()) {
+                                     continue; // removed before the response landed
+                                 }
+                                 if (results[i].contains("verified") && results[i]["verified"].is_boolean()) {
+                                     it->verified = results[i]["verified"].get<bool>();
+                                 }
+                                 it->message = results[i].value("message", "");
+                             }
                          });
 }
 
@@ -1264,6 +1394,10 @@ void Manager::EndSession(std::string reason) {
     // regardless, this just keeps a post-EndSession query honest.
     exceptionFilters_.clear();
     enabledExceptionFilters_.clear();
+    // Data breakpoints go with them: a dataId is minted by this adapter for
+    // this run, so keeping one would arm the next session against an id it
+    // never issued -- see ToggleDataBreakpoint's own doc comment.
+    dataBreakpoints_.clear();
     isAttach_ = false;
     // lsp-use-after-free follow-up: client_ used to move into retired_ here
     // instead of destroying in place, deferring to the next StartOrContinue

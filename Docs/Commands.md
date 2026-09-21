@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-318 commands.
+319 commands.
 
 ## `acp-rewind`
 
@@ -317,6 +317,10 @@ Toggle a breakpoint on the current line.
 Key: `C-c D`
 
 Show or hide the debug console (REPL) panel.
+
+## `dap-toggle-data-breakpoint`
+
+Watch the *debug* buffer variable at point for changes, or remove the data breakpoint on point's own row (adapter support required).
 
 ## `dap-toggle-function-breakpoint`
 

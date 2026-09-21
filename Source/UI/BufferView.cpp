@@ -550,6 +550,9 @@ bool BufferView::OnKeyEvent(const Event& event) {
             ClampPointToNarrowing();
             return true;
 
+        case InputMode::DapDataBreakpointAccess:
+            HandleDapDataBreakpointAccessKey(*chord);
+            return true;
         case InputMode::DapExceptionFilterSelect:
             HandleDapExceptionFilterSelectKey(*chord);
             ClampPointToNarrowing();

@@ -3539,6 +3539,12 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::DapToggleFunctionBreakpoint;
                       });
+    registry.Register("dap-toggle-data-breakpoint",
+                      "Watch the *debug* buffer variable at point for changes, or remove the data breakpoint on point's "
+                      "own row (adapter support required).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::DapToggleDataBreakpoint;
+                      });
     registry.Register("dap-select-exception-breakpoints",
                       "Toggle which of the adapter's advertised exception filters halt the debuggee.",
                       [](CommandContext& context) {

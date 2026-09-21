@@ -1566,3 +1566,200 @@ TEST_CASE("StartOrContinue parses supportsStepBack, dropping the warning suffix 
     fixture.reader.Next(); // stepBack
     SetLaunchConfig("dap-manager-test-stepback-caps", "");
 }
+
+// Debugging wishlist: data breakpoints (watchpoints).
+
+namespace {
+
+// Drives the handshake and a first stop, leaving the session Stopped with a
+// known frame id -- dataBreakpointInfo is Stopped-only by construction, so
+// every case below needs this rather than StartRunningSession alone.
+void StopSessionAtFrame(ManagerFixture& fixture, const std::string& language, Json initializeBody = Json::object()) {
+    SetLaunchConfig(language, R"({"program": "./fake-program"})");
+    fixture.manager.StartOrContinue(language);
+    const Json initialize = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(initialize["seq"].get<int>(), "initialize", true, std::move(initializeBody)));
+    const Json launch = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(launch["seq"].get<int>(), "launch", true));
+
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true,
+                                                Json{{"stackFrames", Json::array({Json{{"id", 7}, {"name", "main"}}})}}));
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Stopped);
+}
+
+} // namespace
+
+TEST_CASE("dataBreakpointInfo carries the container reference and reports the adapter's dataId", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    StopSessionAtFrame(fixture, "dap-manager-test-data-info", Json{{"supportsDataBreakpoints", true}});
+
+    Manager::DataBreakpointInfo info;
+    bool                        fired = false;
+    fixture.manager.RequestDataBreakpointInfo(12, "counter", [&](Manager::DataBreakpointInfo result) {
+        info  = std::move(result);
+        fired = true;
+    });
+
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["command"] == "dataBreakpointInfo");
+    REQUIRE(request["arguments"]["name"] == "counter");
+    REQUIRE(request["arguments"]["variablesReference"] == 12);
+    REQUIRE_FALSE(request["arguments"].contains("frameId")); // a real container wins over the frame fallback
+
+    fixture.client->DispatchFrame(ResponseFrame(request["seq"].get<int>(), "dataBreakpointInfo", true,
+                                                Json{{"dataId", "4444:counter"},
+                                                     {"description", "counter (4 bytes)"},
+                                                     {"accessTypes", Json::array({"read", "write", "readWrite"})}}));
+    REQUIRE(fired);
+    REQUIRE(info.canBreak);
+    REQUIRE(info.dataId == "4444:counter");
+    REQUIRE(info.description == "counter (4 bytes)");
+    REQUIRE(info.accessTypes == std::vector<std::string>{"read", "write", "readWrite"});
+    SetLaunchConfig("dap-manager-test-data-info", "");
+}
+
+TEST_CASE("dataBreakpointInfo falls back to the stopped frame when there is no container reference", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    StopSessionAtFrame(fixture, "dap-manager-test-data-frame", Json{{"supportsDataBreakpoints", true}});
+
+    fixture.manager.RequestDataBreakpointInfo(0, "local", [](Manager::DataBreakpointInfo) {});
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["arguments"]["frameId"] == 7);
+    REQUIRE_FALSE(request["arguments"].contains("variablesReference")); // never sent as a literal 0
+    SetLaunchConfig("dap-manager-test-data-frame", "");
+}
+
+TEST_CASE("A null dataId declines with the adapter's own reason", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    StopSessionAtFrame(fixture, "dap-manager-test-data-null", Json{{"supportsDataBreakpoints", true}});
+
+    Manager::DataBreakpointInfo info;
+    fixture.manager.RequestDataBreakpointInfo(3, "temporary", [&](Manager::DataBreakpointInfo result) { info = std::move(result); });
+    const Json request = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(request["seq"].get<int>(), "dataBreakpointInfo", true,
+                                                Json{{"dataId", nullptr}, {"description", "Cannot watch a temporary."}}));
+    REQUIRE_FALSE(info.canBreak);
+    REQUIRE(info.dataId.empty());
+    REQUIRE(info.description == "Cannot watch a temporary.");
+    SetLaunchConfig("dap-manager-test-data-null", "");
+}
+
+TEST_CASE("A refused dataBreakpointInfo names the missing capability", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    StopSessionAtFrame(fixture, "dap-manager-test-data-unsupported"); // no supportsDataBreakpoints in the initialize body
+
+    Manager::DataBreakpointInfo info;
+    fixture.manager.RequestDataBreakpointInfo(3, "counter", [&](Manager::DataBreakpointInfo result) { info = std::move(result); });
+    const Json request = fixture.reader.Next();
+    fixture.client->DispatchFrame(
+        ResponseFrame(request["seq"].get<int>(), "dataBreakpointInfo", false, Json::object(), "unknown command"));
+    REQUIRE_FALSE(info.canBreak);
+    REQUIRE(info.description == "unknown command (adapter did not advertise data-breakpoint support)");
+    SetLaunchConfig("dap-manager-test-data-unsupported", "");
+}
+
+TEST_CASE("RequestDataBreakpointInfo declines without a stopped session", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-data-running");
+
+    Manager::DataBreakpointInfo info;
+    bool                        fired = false;
+    fixture.manager.RequestDataBreakpointInfo(1, "counter", [&](Manager::DataBreakpointInfo result) {
+        info  = std::move(result);
+        fired = true;
+    });
+    REQUIRE(fired); // answered inline, nothing sent
+    REQUIRE_FALSE(info.canBreak);
+    REQUIRE(info.description == "No stopped debug session.");
+    SetLaunchConfig("dap-manager-test-data-running", "");
+}
+
+TEST_CASE("Toggling a data breakpoint pushes the whole set, access type included", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    StopSessionAtFrame(fixture, "dap-manager-test-data-toggle", Json{{"supportsDataBreakpoints", true}});
+
+    REQUIRE(fixture.manager.ToggleDataBreakpoint("id-a", "counter", "write"));
+    Json request = fixture.reader.Next();
+    REQUIRE(request["command"] == "setDataBreakpoints");
+    REQUIRE(request["arguments"]["breakpoints"] == Json::array({Json{{"dataId", "id-a"}, {"accessType", "write"}}}));
+
+    // An empty access type is omitted rather than sent, leaving the adapter
+    // its own default.
+    REQUIRE(fixture.manager.ToggleDataBreakpoint("id-b", "total", ""));
+    request = fixture.reader.Next();
+    REQUIRE(request["arguments"]["breakpoints"] ==
+            Json::array({Json{{"dataId", "id-a"}, {"accessType", "write"}}, Json{{"dataId", "id-b"}}}));
+
+    // setDataBreakpoints replaces the whole set, so removing one still
+    // sends the survivors rather than nothing.
+    REQUIRE_FALSE(fixture.manager.ToggleDataBreakpoint("id-a", "counter", "write"));
+    request = fixture.reader.Next();
+    REQUIRE(request["arguments"]["breakpoints"] == Json::array({Json{{"dataId", "id-b"}}}));
+    REQUIRE(fixture.manager.DataBreakpoints().size() == 1);
+    REQUIRE(fixture.manager.DataBreakpoints()[0].description == "total");
+
+    fixture.manager.RemoveDataBreakpointAt(0);
+    request = fixture.reader.Next();
+    REQUIRE(request["arguments"]["breakpoints"] == Json::array());
+    REQUIRE(fixture.manager.DataBreakpoints().empty());
+    fixture.manager.RemoveDataBreakpointAt(0); // out of range -- no send, asserted by the next frame below
+    SetLaunchConfig("dap-manager-test-data-toggle", "");
+}
+
+TEST_CASE("A setDataBreakpoints response corrects verified by dataId, not by position", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    StopSessionAtFrame(fixture, "dap-manager-test-data-verified", Json{{"supportsDataBreakpoints", true}});
+
+    fixture.manager.ToggleDataBreakpoint("id-a", "counter", "write");
+    const Json first = fixture.reader.Next();
+    fixture.manager.ToggleDataBreakpoint("id-b", "total", "write");
+    const Json second = fixture.reader.Next();
+
+    // The first request's response lands AFTER the store already changed --
+    // its single entry must still be matched to id-a, which is index 0 here
+    // but need not have been.
+    fixture.client->DispatchFrame(ResponseFrame(first["seq"].get<int>(), "setDataBreakpoints", true,
+                                                Json{{"breakpoints", Json::array({Json{{"verified", false},
+                                                                                       {"message", "out of watchpoint registers"}}})}}));
+    REQUIRE_FALSE(fixture.manager.DataBreakpoints()[0].verified);
+    REQUIRE(fixture.manager.DataBreakpoints()[0].message == "out of watchpoint registers");
+    REQUIRE(fixture.manager.DataBreakpoints()[1].verified); // untouched by a response that never named it
+
+    fixture.client->DispatchFrame(
+        ResponseFrame(second["seq"].get<int>(), "setDataBreakpoints", true,
+                      Json{{"breakpoints", Json::array({Json{{"verified", true}}, Json{{"verified", true}}})}}));
+    REQUIRE(fixture.manager.DataBreakpoints()[0].verified);
+    REQUIRE(fixture.manager.DataBreakpoints()[1].verified);
+    SetLaunchConfig("dap-manager-test-data-verified", "");
+}
+
+TEST_CASE("Data breakpoints are dropped when the session ends", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    StopSessionAtFrame(fixture, "dap-manager-test-data-session-scope", Json{{"supportsDataBreakpoints", true}});
+
+    fixture.manager.ToggleDataBreakpoint("id-a", "counter", "write");
+    fixture.reader.Next();
+    REQUIRE(fixture.manager.DataBreakpoints().size() == 1);
+
+    // EndSession joins the client's read thread, which is still blocked on
+    // this fixture's fake pipe -- close the write end first, exactly as the
+    // terminated-event case above documents.
+    ::close(fixture.adapterStdoutWrite);
+    fixture.adapterStdoutWrite = -1;
+
+    fixture.client->DispatchFrame(EventFrame("terminated"));
+    // An adapter-minted id means nothing to the next session's adapter --
+    // unlike line breakpoints, which survive.
+    REQUIRE(fixture.manager.DataBreakpoints().empty());
+    SetLaunchConfig("dap-manager-test-data-session-scope", "");
+}

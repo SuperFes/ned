@@ -1322,6 +1322,12 @@ class BufferView : public Widget {
                            DapBreakpointHitCondition,
                            DapFunctionBreakpointName,
                            DapExceptionFilterSelect,
+                           // Debugging wishlist: DapDataBreakpointAccess is
+                           // DapThreadSelect's single-pick shape again -- entered from
+                           // RequestDataBreakpointInfo's async callback, and only when
+                           // the adapter offered more than one access type (one or none
+                           // arms the breakpoint straight away, with no prompt at all).
+                           DapDataBreakpointAccess,
                            // DAP round 5: DapMemoryByteCount is one more
                            // HandlePromptKey-routed plain-text prompt
                            // (dap-show-memory-at-point, ShowMemoryAtPoint's
@@ -3472,6 +3478,19 @@ class BufferView : public Widget {
     void RefreshDapExceptionFilterStatus();
     void HandleDapExceptionFilterSelectKey(const editor::KeyChord& chord);
 
+    // Debugging wishlist: dap-toggle-data-breakpoint's entry point. Reads
+    // point's own *debug* buffer line: a "[data:N]" marker removes that
+    // data breakpoint (RemoveWatchAtPoint's own shape), any other line is
+    // parsed as a variable row and its "[owner:M]" container reference plus
+    // name asked about via Manager::RequestDataBreakpointInfo -- the same
+    // pair SetVariableAtPoint feeds to setVariable. An adapter offering
+    // several access types chains into InputMode::DapDataBreakpointAccess
+    // (BeginDapThreadSelect's single-pick shape); one or none arms it
+    // immediately.
+    void ToggleDataBreakpointAtPoint();
+    void RefreshDapDataBreakpointAccessStatus();
+    void HandleDapDataBreakpointAccessKey(const editor::KeyChord& chord);
+
     // Diagnostic aid, opt-in via $NED_DEBUG_MOUSE (a file path to append
     // to): logs the raw event plus current point/mark/topLine_/size at the
     // top of every mouse handler call, before any of it can be mutated by
@@ -3675,6 +3694,16 @@ class BufferView : public Widget {
     std::vector<editor::dap::Manager::ExceptionFilter> pendingDapExceptionFilters_;
     std::set<std::string>                                 pendingDapEnabledExceptionFilters_;
     std::size_t                                           dapExceptionFilterSelection_ = 0;
+
+    // Debugging wishlist: valid only while inputMode_ ==
+    // InputMode::DapDataBreakpointAccess -- pendingDapThreads_'s own
+    // convention. The dataId/description are carried along because the pick
+    // is the last step of one action the adapter already answered for, not
+    // a lookup of its own.
+    std::string              pendingDapDataBreakpointId_;
+    std::string              pendingDapDataBreakpointDescription_;
+    std::vector<std::string> pendingDapDataBreakpointAccessTypes_;
+    std::size_t              dapDataBreakpointAccessSelection_ = 0;
 
     // DAP round 2: the path:line a dap-set-breakpoint-condition/
     // dap-set-breakpoint-log-message prompt targets -- captured when the

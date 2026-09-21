@@ -1083,6 +1083,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 ExpandVariableAtPoint();
             }
             return;
+        case editor::InteractiveRequest::DapToggleDataBreakpoint:
+            if (!dapManager_) {
+                statusMessage_ = "No debugger available.";
+            }
+            else {
+                ToggleDataBreakpointAtPoint();
+            }
+            return;
         case editor::InteractiveRequest::DapRestartFrame:
             if (!dapManager_) {
                 statusMessage_ = "No debugger available.";

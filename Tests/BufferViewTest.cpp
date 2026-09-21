@@ -15941,3 +15941,175 @@ TEST_CASE("Bracket highlighting stays out of the way of an active search", "[Buf
     const int braceColumn = gutter + static_cast<int>(fixture.buffer.Text().find('{'));
     CHECK(screen.PixelAt(braceColumn, 0).background_color == fixture.theme.isearchMatchBackground);
 }
+
+// Debugging wishlist: data breakpoints. The *debug* buffer is both the entry
+// point (a variable row carries the container reference dataBreakpointInfo
+// needs) and the only place an armed one is visible -- nothing here is tied
+// to a line, so there is no gutter to show it in.
+
+namespace {
+
+// The dap-add-watch test's own handshake, plus the stopped stack trace that
+// leaves stoppedFrameId_ set -- dataBreakpointInfo is Stopped-only.
+void StartStoppedDapSession(ned::editor::dap::Manager& manager, ned::editor::dap::Client*& client, FakeDapAdapter& adapter,
+                            const std::string& language, ned::editor::dap::Json initializeBody) {
+    ned::editor::dap::SetLaunchConfig(language, "{}");
+    manager.StartOrContinue(language);
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", std::move(initializeBody)));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto autoStackTrace = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(autoStackTrace["seq"].get<int>(), "stackTrace",
+                                           {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+    ned::editor::dap::SetLaunchConfig(language, "");
+}
+
+// Runs dap-show-debug through one stackTrace + one scopes + one variables
+// round trip, leaving the built *debug* buffer active.
+void ShowDebugWithOneVariable(ned::ui::BufferView& view, ned::editor::dap::Client* client, FakeDapAdapter& adapter) {
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-show-debug");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto stackTrace = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(stackTrace["seq"].get<int>(), "stackTrace",
+                                           {{"stackFrames", ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}}})}}));
+    const auto scopes = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        scopes["seq"].get<int>(), "scopes",
+        {{"scopes", ned::editor::dap::Json::array({{{"name", "Locals"}, {"variablesReference", 12}}})}}));
+    const auto variables = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(
+        variables["seq"].get<int>(), "variables",
+        {{"variables", ned::editor::dap::Json::array({{{"name", "counter"}, {"value", "3"}, {"type", "int"}}})}}));
+}
+
+} // namespace
+
+TEST_CASE("dap-toggle-data-breakpoint arms a watchpoint from a *debug* variable line", "[BufferView]") {
+    Fixture                   fixture;
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
+    FakeDapAdapter            adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+    StartStoppedDapSession(manager, client, adapter, "bufferview-dap-data", {{"supportsDataBreakpoints", true}});
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+    ShowDebugWithOneVariable(view, client, adapter);
+
+    ned::text::Buffer& debugBuffer  = fixture.activeBuffer.Get();
+    const std::size_t  variableByte = debugBuffer.Text().find("counter: int = 3");
+    REQUIRE(variableByte != std::string::npos);
+    debugBuffer.SetPoint(variableByte);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-toggle-data-breakpoint");
+    view.OnEvent(ned::ui::test::Return());
+
+    // The scope's own variablesReference rides along as the container --
+    // FormatDebugVariableLine's "[owner:12]" marker, parsed back off the line.
+    const auto info = adapter.NextRequest();
+    REQUIRE(info["command"] == "dataBreakpointInfo");
+    REQUIRE(info["arguments"]["name"] == "counter");
+    REQUIRE(info["arguments"]["variablesReference"] == 12);
+    client->DispatchFrame(DapResponseFrame(info["seq"].get<int>(), "dataBreakpointInfo",
+                                           {{"dataId", "id-counter"},
+                                            {"description", "counter (4 bytes)"},
+                                            {"accessTypes", ned::editor::dap::Json::array({"read", "write", "readWrite"})}}));
+
+    // Several access types offered, so a pick is asked for -- with "write"
+    // preselected, which is what a watchpoint means to most people.
+    REQUIRE(fixture.statusMessage == "Watch counter (4 bytes) on: 1) read  [2) write]  3) readWrite");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto setDataBreakpoints = adapter.NextRequest();
+    REQUIRE(setDataBreakpoints["command"] == "setDataBreakpoints");
+    REQUIRE(setDataBreakpoints["arguments"]["breakpoints"] ==
+            ned::editor::dap::Json::array({{{"dataId", "id-counter"}, {"accessType", "write"}}}));
+    REQUIRE(manager.DataBreakpoints().size() == 1);
+    client->DispatchFrame(DapResponseFrame(setDataBreakpoints["seq"].get<int>(), "setDataBreakpoints",
+                                           {{"breakpoints", ned::editor::dap::Json::array({{{"verified", true}}})}}));
+
+    // The armed breakpoint is listed in the next *debug* build, and removed
+    // from that row -- the only handle it has, having no line of its own.
+    ShowDebugWithOneVariable(view, client, adapter);
+    ned::text::Buffer& rebuilt = fixture.activeBuffer.Get();
+    REQUIRE(rebuilt.Text().find("== Data breakpoints ==") != std::string::npos);
+    REQUIRE(rebuilt.Text().find("counter (4 bytes) (write)  [data:0]") != std::string::npos);
+
+    const std::size_t dataRowByte = rebuilt.Text().find("counter (4 bytes) (write)");
+    rebuilt.SetPoint(dataRowByte);
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-toggle-data-breakpoint");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto cleared = adapter.NextRequest();
+    REQUIRE(cleared["command"] == "setDataBreakpoints");
+    REQUIRE(cleared["arguments"]["breakpoints"] == ned::editor::dap::Json::array());
+    REQUIRE(manager.DataBreakpoints().empty());
+}
+
+TEST_CASE("A single offered access type arms the data breakpoint with no prompt", "[BufferView]") {
+    Fixture                   fixture;
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
+    FakeDapAdapter            adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+    StartStoppedDapSession(manager, client, adapter, "bufferview-dap-data-single", {{"supportsDataBreakpoints", true}});
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+    ShowDebugWithOneVariable(view, client, adapter);
+
+    ned::text::Buffer& debugBuffer = fixture.activeBuffer.Get();
+    debugBuffer.SetPoint(debugBuffer.Text().find("counter: int = 3"));
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-toggle-data-breakpoint");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto info = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(info["seq"].get<int>(), "dataBreakpointInfo",
+                                           {{"dataId", "id-counter"},
+                                            {"description", "counter"},
+                                            {"accessTypes", ned::editor::dap::Json::array({"write"})}}));
+
+    REQUIRE(fixture.statusMessage == "Watching counter");
+    const auto setDataBreakpoints = adapter.NextRequest();
+    REQUIRE(setDataBreakpoints["arguments"]["breakpoints"] ==
+            ned::editor::dap::Json::array({{{"dataId", "id-counter"}, {"accessType", "write"}}}));
+}
+
+TEST_CASE("A value the adapter refuses to watch reports its reason and arms nothing", "[BufferView]") {
+    Fixture                   fixture;
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
+    FakeDapAdapter            adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+    StartStoppedDapSession(manager, client, adapter, "bufferview-dap-data-refused", {{"supportsDataBreakpoints", true}});
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 20});
+    ShowDebugWithOneVariable(view, client, adapter);
+
+    ned::text::Buffer& debugBuffer = fixture.activeBuffer.Get();
+    debugBuffer.SetPoint(debugBuffer.Text().find("counter: int = 3"));
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "dap-toggle-data-breakpoint");
+    view.OnEvent(ned::ui::test::Return());
+
+    const auto info = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(info["seq"].get<int>(), "dataBreakpointInfo",
+                                           {{"dataId", nullptr}, {"description", "No watchpoint registers left."}}));
+
+    REQUIRE(fixture.statusMessage == "Cannot watch counter: No watchpoint registers left.");
+    REQUIRE(manager.DataBreakpoints().empty());
+}

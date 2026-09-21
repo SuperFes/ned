@@ -183,6 +183,62 @@ class Manager {
     // persisted).
     void SetExceptionBreakpointFilters(std::set<std::string> ids);
 
+    // Debugging wishlist: data breakpoints (watchpoints) -- DAP's own
+    // `dataBreakpointInfo`/`setDataBreakpoints` pair. Unlike every other
+    // breakpoint kind here, a data breakpoint is not addressed by anything
+    // the user typed: the adapter mints an opaque `dataId` for one variable
+    // as resolved in one live frame, and that id means nothing outside the
+    // session that minted it. Two consequences, both deliberate. The store
+    // is session-scoped -- cleared in EndSession, never written to the
+    // session file (exception filters' own reasoning; DAP's own `canPersist`
+    // is read but not acted on, since a persistable id still needs the next
+    // session to be the same build of the same program, which nothing here
+    // can check). And there is no gutter representation, since nothing here
+    // is tied to a line -- function breakpoints' own shape, except that
+    // these DO get a listing, in the *debug* buffer's own "== Data
+    // breakpoints ==" section, because a breakpoint the user cannot see is
+    // one they cannot remove.
+    struct DataBreakpointInfo {
+        bool        canBreak = false; // the adapter answered with a non-null dataId
+        std::string dataId;
+        // The adapter's own human-readable label for what would be watched
+        // -- and, when canBreak is false, its reason for refusing instead
+        // (DAP defines the one field as carrying both, per whether dataId
+        // is null). Never empty on the refusal path: a bare adapter error or
+        // an unusable session fills it with ned's own short text.
+        std::string              description;
+        std::vector<std::string> accessTypes; // "read"/"write"/"readWrite", the adapter's own order; may be empty
+    };
+    // Asks the adapter whether `name`, resolved inside the container
+    // `variablesReference` came from, can be watched -- the same
+    // container-reference-plus-name pair SetVariable takes (a *debug*
+    // buffer line's own "[owner:M]" marker). Stopped-only: a dataId is a
+    // fact about a live frame. Graceful {canBreak=false} with a filled
+    // description on no session/adapter error/a null dataId, every other
+    // Request*'s own convention.
+    void RequestDataBreakpointInfo(int variablesReference, const std::string& name,
+                                   std::function<void(DataBreakpointInfo)> callback);
+
+    struct DataBreakpoint {
+        std::string dataId;
+        std::string description; // what RequestDataBreakpointInfo reported -- the only user-legible half
+        std::string accessType;  // empty means "whatever the adapter defaults to"
+        // Corrected by the next setDataBreakpoints response, matched back by
+        // dataId rather than by position (see SendDataBreakpoints) --
+        // starts optimistic exactly like Breakpoint::verified.
+        bool        verified = true;
+        std::string message; // the adapter's own reason when verified is false
+    };
+    // Adds the breakpoint, or removes it if that dataId is already watched
+    // -- ToggleBreakpoint's own return convention (true if now set). The
+    // whole set goes to the adapter immediately, since setDataBreakpoints
+    // replaces it wholesale.
+    bool ToggleDataBreakpoint(std::string dataId, std::string description, std::string accessType);
+    // Removes by index into DataBreakpoints() -- RemoveWatchAt's own shape,
+    // for the *debug* buffer's "[data:N]" rows. Out-of-range is a no-op.
+    void                                             RemoveDataBreakpointAt(std::size_t index);
+    [[nodiscard]] const std::vector<DataBreakpoint>& DataBreakpoints() const;
+
     // F5. No session: starts one for language (adapter + launch config both
     // required, see Config.h). Stopped: sends `continue` for the stopped
     // thread. Starting/Running: reports that, changes nothing.
@@ -540,6 +596,9 @@ class Manager {
     // SendBreakpointsForFile's siblings for the two non-line-keyed stores.
     void SendFunctionBreakpoints();
     void SendExceptionBreakpoints();
+    // Debugging wishlist: setDataBreakpoints -- SendFunctionBreakpoints's
+    // sibling for the session-scoped data-breakpoint store.
+    void SendDataBreakpoints();
     void HandleInitializedEvent();
     void HandleStoppedEvent(const Json& body);
     // Debugging wishlist: watch-history sparkline -- fans out one Evaluate
@@ -637,6 +696,11 @@ class Manager {
     std::vector<ExceptionFilter> exceptionFilters_;
     std::set<std::string>        enabledExceptionFilters_;
 
+    // Debugging wishlist: data breakpoints -- session-scoped, cleared in
+    // EndSession alongside exceptionFilters_ above and for the same reason
+    // (an adapter-minted id, nothing stable to restore against).
+    std::vector<DataBreakpoint> dataBreakpoints_;
+
     // DAP round 3: true for a session started via Attach, false for
     // StartOrContinue's own launch path -- read by SendLaunchOrAttach (which
     // config/request name to use) and StopSession (terminateDebuggee).
@@ -664,6 +728,8 @@ class Manager {
         // `supportsStepBack` capability covers both `stepBack` and
         // `reverseContinue` (see ReverseContinue/StepBack).
         bool stepBack = false;
+        // Debugging wishlist: data breakpoints -- see ToggleDataBreakpoint.
+        bool dataBreakpoints = false;
     };
     Capabilities capabilities_;
 

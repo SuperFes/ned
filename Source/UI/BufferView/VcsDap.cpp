@@ -723,6 +723,26 @@ void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>
                 lines->push_back("#" + std::to_string(i) + " " + frame.name + " (no source)" + frameMarker);
             }
         }
+        // Debugging wishlist: data breakpoints. Emitted straight into
+        // `lines` rather than into the chunk fan-out below, because unlike
+        // scopes and watches this section needs no request -- the store is
+        // already local, and its "[data:N]" indices are exactly its own.
+        const std::vector<editor::dap::Manager::DataBreakpoint>& dataBreakpoints = dapManager_->DataBreakpoints();
+        if (!dataBreakpoints.empty()) {
+            lines->push_back("");
+            lines->push_back("== Data breakpoints ==");
+            for (std::size_t d = 0; d < dataBreakpoints.size(); ++d) {
+                const editor::dap::Manager::DataBreakpoint& bp  = dataBreakpoints[d];
+                std::string                                 row = "  " + bp.description;
+                if (!bp.accessType.empty()) {
+                    row += " (" + bp.accessType + ")";
+                }
+                if (!bp.verified) {
+                    row += bp.message.empty() ? "  [unverified]" : ("  [unverified: " + bp.message + "]");
+                }
+                lines->push_back(row + "  [data:" + std::to_string(d) + "]");
+            }
+        }
         dapManager_->RequestScopes(frames[0].id, [this, lines, onComplete](std::vector<editor::dap::Manager::Scope> scopes) {
             const std::vector<std::string>& watches = dapManager_->Watches();
             if (scopes.empty() && watches.empty()) {
@@ -820,7 +840,9 @@ void BufferView::BuildDebugBuffer(const std::vector<std::string>& lines) {
     debug.SetPoint(0);
     debug.SetReadOnly(true); // same tossable-read-only reasoning as BuildResultsBuffer
     activeBuffer_.Set(debug);
-    statusMessage_ = "C-c C-v visits a frame; dap-expand-variable/dap-set-variable/dap-remove-watch act on point's own line.";
+    statusMessage_ =
+        "C-c C-v visits a frame; dap-expand-variable/dap-set-variable/dap-remove-watch/dap-toggle-data-breakpoint act on "
+        "point's own line.";
 }
 
 void BufferView::ExpandVariableAtPoint() {
@@ -1750,6 +1772,112 @@ void BufferView::HandleDapExceptionFilterSelectKey(const editor::KeyChord& chord
         pendingDapEnabledExceptionFilters_.erase(id); // was already enabled -- insert reported no-op, so toggle off
     }
     RefreshDapExceptionFilterStatus();
+}
+
+// Debugging wishlist: data breakpoints. The "[data:N]" marker is
+// RemoveWatchAtPoint's "[watch:N]" exactly -- a data breakpoint has no line
+// to hang a gutter glyph off, so the *debug* buffer's own listing is where
+// it is both seen and removed.
+
+void BufferView::ToggleDataBreakpointAtPoint() {
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         line      = content.ByteOffsetToLine(buffer.Point());
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+
+    if (const std::size_t markerPos = lineText.rfind("[data:"); markerPos != std::string::npos) {
+        std::size_t index = 0;
+        try {
+            index = static_cast<std::size_t>(std::stoul(lineText.substr(markerPos + 6))); // stoul stops at the closing ']'
+        }
+        catch (const std::exception&) {
+            statusMessage_ = "No data breakpoint on this line.";
+            return;
+        }
+        dapManager_->RemoveDataBreakpointAt(index);
+        ShowDebugInfo();
+        return;
+    }
+
+    const std::optional<ParsedDebugVariableLine> parsed = ParseDebugVariableLine(lineText);
+    if (!parsed || parsed->name.empty()) {
+        statusMessage_ = "Not a variable line (no value to watch).";
+        return;
+    }
+    // ownerRef is the container the variable was fetched from; 0 is a
+    // legitimate value here (a scope-less row), and Manager falls back to
+    // the stopped frame for it rather than declining.
+    statusMessage_ = "Asking the adapter about " + parsed->name + "...";
+    dapManager_->RequestDataBreakpointInfo(
+        parsed->ownerRef, parsed->name, [this, name = parsed->name](editor::dap::Manager::DataBreakpointInfo info) {
+            if (!info.canBreak) {
+                statusMessage_ = "Cannot watch " + name + ": " + info.description;
+                return;
+            }
+            const std::string description = info.description.empty() ? name : info.description;
+            // Already armed: the toggle half of the name. No pick to make --
+            // removing needs no access type.
+            const std::vector<editor::dap::Manager::DataBreakpoint>& existing = dapManager_->DataBreakpoints();
+            const bool                                               armed =
+                std::any_of(existing.begin(), existing.end(),
+                            [&info](const editor::dap::Manager::DataBreakpoint& bp) { return bp.dataId == info.dataId; });
+            if (armed || info.accessTypes.size() <= 1) {
+                const std::string accessType = info.accessTypes.empty() ? std::string() : info.accessTypes.front();
+                const bool        nowSet     = dapManager_->ToggleDataBreakpoint(info.dataId, description, accessType);
+                statusMessage_               = (nowSet ? "Watching " : "Stopped watching ") + description;
+                return;
+            }
+            if (inputMode_ != InputMode::Normal) {
+                statusMessage_ = "Data breakpoint cancelled (another prompt is open).";
+                return;
+            }
+            pendingDapDataBreakpointId_          = info.dataId;
+            pendingDapDataBreakpointDescription_ = description;
+            pendingDapDataBreakpointAccessTypes_ = info.accessTypes;
+            // "write" is what a watchpoint means to nearly everyone asking
+            // for one, so it starts selected when the adapter offers it.
+            const auto write = std::find(info.accessTypes.begin(), info.accessTypes.end(), "write");
+            dapDataBreakpointAccessSelection_ =
+                (write == info.accessTypes.end())
+                    ? 0
+                    : static_cast<std::size_t>(std::distance(info.accessTypes.begin(), write));
+            inputMode_ = InputMode::DapDataBreakpointAccess;
+            RefreshDapDataBreakpointAccessStatus();
+        });
+}
+
+void BufferView::RefreshDapDataBreakpointAccessStatus() {
+    std::string status = "Watch " + pendingDapDataBreakpointDescription_ + " on: ";
+    for (std::size_t i = 0; i < pendingDapDataBreakpointAccessTypes_.size(); ++i) {
+        if (i > 0) {
+            status += "  ";
+        }
+        const bool selected = (i == dapDataBreakpointAccessSelection_);
+        status += (selected ? "[" : "") + std::to_string(i + 1) + ") " + pendingDapDataBreakpointAccessTypes_[i] +
+                  (selected ? "]" : "");
+    }
+    statusMessage_ = status;
+}
+
+void BufferView::HandleDapDataBreakpointAccessKey(const editor::KeyChord& chord) {
+    HandleChoicePromptKey({.count         = pendingDapDataBreakpointAccessTypes_.size(),
+                           .selection     = &dapDataBreakpointAccessSelection_,
+                           .cancelMessage = "Data breakpoint cancelled.",
+                           .refresh       = [this] { RefreshDapDataBreakpointAccessStatus(); },
+                           .commit =
+                               [this, dataId = pendingDapDataBreakpointId_,
+                                description = pendingDapDataBreakpointDescription_,
+                                accessTypes = pendingDapDataBreakpointAccessTypes_](std::size_t index) {
+                                   if (dapManager_ == nullptr) {
+                                       return;
+                                   }
+                                   dapManager_->ToggleDataBreakpoint(dataId, description, accessTypes[index]);
+                                   statusMessage_ = "Watching " + description + " (" + accessTypes[index] + ")";
+                               }},
+                          chord);
 }
 
 bufferview::ConfirmPrompt BufferView::ConfirmRevertHunkPrompt() {

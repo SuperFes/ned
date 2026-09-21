@@ -615,6 +615,15 @@ enum class InteractiveRequest { None,
                                 // WindowManager re-fetches its row list on every stop event, not
                                 // only when explicitly invoked.
                                 DapToggleThreadsPanel,
+                                // Debugging wishlist: dap-toggle-data-breakpoint --
+                                // one-shot like DapExpandVariable, acting on point's own
+                                // *debug* buffer line: a "[data:N]" row removes that data
+                                // breakpoint, a variable row asks the adapter whether the
+                                // value can be watched and arms it (see
+                                // ToggleDataBreakpointAtPoint). Prompt-shaped only when the
+                                // adapter offers more than one access type, in which case
+                                // it chains into a numbered pick, DapSelectThread's shape.
+                                DapToggleDataBreakpoint,
                                 // DAP<->ACP debugging bridge: one-shot direct action, same
                                 // "just forward" shape as DapShowPointerGraph -- gathers the
                                 // stopped session's own stack/scopes/variables/watches
