@@ -2765,7 +2765,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
             model.anchor = anchor;
             vcsContextMenuActions.clear();
 
-            auto addRow = [&](std::string label, std::function<void()> action) {
+            auto addRow = [&](std::string label, std::function<void()> action) -> void {
                 model.rows.push_back({.left = "", .main = std::move(label)});
                 vcsContextMenuActions.push_back(std::move(action));
             };
