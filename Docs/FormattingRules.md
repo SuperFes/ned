@@ -1747,11 +1747,16 @@ lower-to-upper transitions, then re-joins per the target convention (an acronym 
 `"HTMLParser"` tokenizes as `["HTML", "Parser"]`, the same imprecision real naming-
 convention tooling widely accepts rather than solving dictionary-lookup word-splitting).
 
-No results-buffer command, gutter marker, or interactive fixer exists yet -- this rollout
-is the checker primitive only, unit-tested end to end against cpp's own real
-locals.janet/tags.janet output. Surfacing violations (a `TestResultsBuffer.cpp`-shaped
-results buffer is the closest existing template) and the rename-based fixer are open
-follow-ups, not oversights.
+Both halves of the surfacing follow-up this section originally left open have since
+shipped. `check-format-conventions` scans the project and collects every violation into a
+`*case violations*` results buffer (the `TestResultsBuffer.cpp`-shaped template this
+section predicted), and `fix-case-violation-at-point` applies one, routing
+`SuggestNameForConvention`'s answer through `rename-symbol`'s own scope-aware pipeline as
+a PRE-FILLED prompt rather than a silent rewrite -- which is what keeps "never an
+automatic reformat step" true while still making a violation one keystroke from fixed.
+No gutter marker, still deliberately: a naming violation is not a diagnostic, and a
+column of them down a file that simply uses another convention would be noise rather than
+information.
 
 ## The `--format` CLI
 
