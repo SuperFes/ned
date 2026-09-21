@@ -35,6 +35,19 @@
 // inside its own onExit callback would tear down the std::function currently
 // being executed.
 //
+// terminal-mouse-and-osc-relay follow-up: three things an application
+// running in the pty can drive, none of which used to leave the emulator.
+// Mouse reporting (DECSET 1000/1002/1003) hands clicks, drags and the wheel
+// to that application instead of to this panel's own selection and
+// scrollback -- with Shift (xterm's own convention) and a scrolled-back
+// view as the two escape hatches back to the local behavior, since the
+// roadmap's standing rule is that no control is mouse-only. An OSC 0/2
+// title names the tab in PanelDock's strip in place of the static label,
+// truncated because that strip pays for every column. An OSC 52 write goes
+// through editor::CopyToSystemClipboard, which means it inherits the
+// clipboard kill switch already there; an OSC 52 *read* is refused in
+// Emulator itself rather than here.
+//
 // terminal-panel-scrollback-search-and-selection follow-up: click-drag over
 // a content row selects text (real-terminal convention); releasing with a
 // non-empty range copies it via editor::CopyToSystemClipboard --
@@ -187,6 +200,11 @@ class TerminalPanel : public Widget {
     void ForwardPendingOutput();
     void ScrollBy(int deltaLines);
 
+    // terminal-mouse-and-osc-relay follow-up: hands the event to the
+    // application when it has asked for mouse reporting, returning whether
+    // it did. See the header comment.
+    bool ForwardMouseEvent(const Event& event);
+
     // scrollback-search-and-selection follow-up:
     [[nodiscard]] std::vector<std::string> CellCharsForLine(int lineIndex) const;
     [[nodiscard]] std::string              TextForLine(int lineIndex) const;
@@ -222,6 +240,10 @@ class TerminalPanel : public Widget {
     // any forwarded keypress (not by output arriving -- reading scrollback
     // while a command streams shouldn't fight the user).
     int scrollbackOffset_ = 0;
+
+    // A press this panel forwarded to the application, so its drag and
+    // release keep going there even once the pointer leaves the panel.
+    bool mouseForwardActive_ = false;
 
     // scrollback-search-and-selection follow-up.
     std::optional<SelectionPoint> selectionAnchor_;

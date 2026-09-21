@@ -9,6 +9,7 @@
 
 #include "Editor/Clipboard.h"
 #include "KeyTranslation.h"
+#include "Text/Utf8.h"
 #include "UI/EventLoop.h"
 
 namespace ned::ui {
@@ -20,6 +21,30 @@ namespace {
         // user-configured command in this codebase crosses.
         const char* shell = std::getenv("SHELL");
         return {(shell != nullptr && *shell != '\0') ? shell : "/bin/sh"};
+    }
+
+    // Longest application-set title the dock's tab strip is asked to carry
+    // -- a shell's own PS1 title is routinely a full `user@host:/long/path`.
+    constexpr int kMaxTitleColumns = 24;
+
+    // One codepoint per column, PaintUtf8Row's own convention (PanelDock's
+    // ColumnCount measures tab labels the same way).
+    std::string TruncateToColumns(std::string_view text, int columns) {
+        std::size_t pos      = 0;
+        int         consumed = 0;
+        while (pos < text.size() && consumed < columns) {
+            pos = text::NextCodepointBoundary(text, pos);
+            ++consumed;
+        }
+        if (pos >= text.size()) {
+            return std::string(text);
+        }
+        return std::string(text.substr(0, pos)) + "\u2026";
+    }
+
+    bool IsWheel(MouseEvent::Button button) {
+        return button == MouseEvent::Button::WheelUp || button == MouseEvent::Button::WheelDown ||
+               button == MouseEvent::Button::WheelLeft || button == MouseEvent::Button::WheelRight;
     }
 
 } // namespace
@@ -70,6 +95,11 @@ void TerminalPanel::Feed(std::string_view bytes) {
     // real, screenshot-confirmed bug ("could not read response to Primary
     // Device Attribute query"), not a hypothetical.
     ForwardPendingOutput();
+    if (const std::optional<std::string> clipboard = emulator_.TakeClipboardText()) {
+        // OSC 52 from a program in the terminal, routed through the same
+        // path (and the same kill switch) as ned's own copy commands.
+        editor::CopyToSystemClipboard(*clipboard);
+    }
     // Output never yanks a scrolled-back view to the bottom (see the
     // scrollbackOffset_ comment), but the ring it indexes into may just
     // have grown/shrunk; keep the offset valid.
@@ -123,7 +153,10 @@ void TerminalPanel::ScrollBy(int deltaLines) {
 }
 
 std::string TerminalPanel::TitleText() const {
-    std::string title = label_;
+    // An application-set title (OSC 0/2 -- a shell's PS1, vim, ssh) names
+    // the tab the way every terminal emulator does; the static label is the
+    // fallback, and stays what Label() reports for uniquification.
+    std::string title = emulator_.Title().empty() ? label_ : TruncateToColumns(emulator_.Title(), kMaxTitleColumns);
     if (exited_) {
         title += " (exited)";
     }
@@ -375,8 +408,51 @@ void TerminalPanel::Paint(Canvas canvas) {
     }
 }
 
+bool TerminalPanel::ForwardMouseEvent(const Event& event) {
+    if (exited_ || search_.has_value() || emulator_.MouseReporting() == editor::terminal::Emulator::MouseMode::None) {
+        mouseForwardActive_ = false; // an application that dropped the mouse mid-drag owns nothing anymore
+        return false;
+    }
+    MouseEvent                      mouse = event.mouse();
+    const std::optional<MouseEvent> local = LocalMouseEvent(event);
+    // Shift is the escape hatch back to this panel's own selection and
+    // scrollback while an application holds the mouse (xterm's convention).
+    // A scrolled-back view is local for a different reason: the cell under
+    // the pointer isn't a cell the application has any notion of.
+    if (mouse.shift || (!mouseForwardActive_ && (!local.has_value() || scrollbackOffset_ != 0))) {
+        return false;
+    }
+    if (local.has_value()) {
+        mouse = *local;
+    }
+    else {
+        // A drag the application owns that wandered outside the panel --
+        // clamped back onto the grid so it still sees the button come up.
+        mouse.at = Point{.x = std::clamp(mouse.at.x - Box_().x_min, 0, ContentCols() - 1),
+                         .y = std::clamp(mouse.at.y - Box_().y_min, 0, ContentRows() - 1)};
+    }
+
+    if (!IsWheel(mouse.button) && mouse.button != MouseEvent::Button::None) {
+        mouseForwardActive_ = mouse.motion == MouseEvent::Motion::Pressed;
+        if (mouse.motion == MouseEvent::Motion::Pressed) {
+            // Same as the local press path below: clicking into the panel
+            // is what aims the keyboard at it, forwarded or not.
+            TakeFocus();
+            ClearSelection();
+        }
+    }
+    if (!emulator_.SendMouse(mouse)) {
+        return false;
+    }
+    ForwardPendingOutput();
+    return true;
+}
+
 bool TerminalPanel::OnEvent(const Event& event) {
     if (event.is_mouse()) {
+        if (ForwardMouseEvent(event)) {
+            return true;
+        }
         if (const std::optional<MouseEvent> mouse = LocalMouseEvent(event)) {
             if (mouse->button == MouseEvent::Button::WheelUp) {
                 ScrollBy(3);

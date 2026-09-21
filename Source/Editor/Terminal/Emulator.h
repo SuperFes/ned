@@ -8,6 +8,13 @@
 // TakeOutput(). No UI, no pty, no threads -- Source/UI/TerminalPanel is what
 // composes this with a PtyProcess and paints the result.
 //
+// Three application-driven side channels ride the same in-out shape:
+// SendMouse forwards a click/wheel/drag once the application has asked for
+// mouse reporting (MouseReporting), Title() carries whatever OSC 0/2 title
+// it set, and TakeClipboardText() drains an OSC 52 clipboard write. All
+// three stop here -- pushing the title into a tab strip or the text into a
+// system clipboard is the host panel's job, not this layer's.
+//
 // SendKey is deliberately the one place the four real ncinput decoding
 // gotchas KeyTranslation.cpp documents (pre-uppercased Ctrl letters, the
 // legacy `alt` bool Notcurses never syncs into `modifiers`, kitty-protocol
@@ -85,6 +92,38 @@ class Emulator {
     // meaning (mouse, RELEASE events, bare modifier presses, unmapped
     // synthesized keys).
     bool SendKey(const ncinput& input);
+
+    // Mouse reporting the running application has asked for (DECSET
+    // 1000/1002/1003, libvterm's VTERM_PROP_MOUSE). None -- the default,
+    // and what a plain shell leaves it at -- is what lets a host panel keep
+    // the wheel and click-drag for its own scrollback and selection.
+    enum class MouseMode { None,
+                           Click,
+                           Drag,
+                           Move };
+
+    [[nodiscard]] MouseMode MouseReporting() const;
+
+    // Encodes one mouse event for the pty (retrieved via TakeOutput);
+    // `mouse.at` is a cell on the live screen (x = column, y = row).
+    // Returns false -- with nothing emitted -- while the application wants
+    // no reporting at all. A true return means "consumed", not "bytes were
+    // produced": libvterm itself drops what the *active* mode doesn't want
+    // (motion outside drag/move modes), which is exactly the filtering a
+    // caller would otherwise duplicate.
+    bool SendMouse(const ui::MouseEvent& mouse);
+
+    // The window title the application last set (OSC 0/2). Empty until one
+    // is set; only ever replaced by a newer title.
+    [[nodiscard]] const std::string& Title() const;
+
+    // Drains a completed OSC 52 clipboard-set, already base64-decoded by
+    // libvterm. Last-writer-wins -- only the most recent completed set
+    // survives to the next drain, which is what a clipboard means anyway.
+    // An OSC 52 *query* is deliberately never answered: replying would hand
+    // the user's clipboard to any process running in the terminal, and
+    // xterm defaults the same way.
+    [[nodiscard]] std::optional<std::string> TakeClipboardText();
 
     // Drains the pty-bound bytes SendKey (and libvterm's own query replies)
     // encoded since the last call.

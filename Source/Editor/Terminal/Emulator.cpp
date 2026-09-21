@@ -1,7 +1,9 @@
 #include "Emulator.h"
 
+#include <array>
 #include <cstring>
 #include <deque>
+#include <optional>
 #include <vector>
 
 #include <vterm.h>
@@ -67,6 +69,21 @@ struct Emulator::State {
 
     std::deque<std::vector<VTermScreenCell>> scrollback;
     std::string                              pendingOutput;
+
+    Emulator::MouseMode mouseMode = Emulator::MouseMode::None;
+
+    // libvterm hands string-valued properties and selections over in
+    // fragments, so each has a pending accumulator alongside its completed
+    // value.
+    std::string                title;
+    std::string                pendingTitle;
+    std::string                pendingSelection;
+    std::optional<std::string> clipboardText;
+
+    // Scratch libvterm base64-decodes an OSC 52 payload into before handing
+    // it to the selection callback; a payload larger than this simply
+    // arrives as several fragments.
+    std::array<char, 16384> selectionBuffer{};
 };
 
 namespace {
@@ -81,12 +98,88 @@ namespace {
         return 1;
     }
 
+    // Appends one libvterm string fragment to `pending`, returning true
+    // once the value is complete (and left whole in `pending`).
+    bool AppendFragment(std::string& pending, const VTermStringFragment& fragment) {
+        if (fragment.initial != 0) {
+            pending.clear();
+        }
+        pending.append(fragment.str, fragment.len);
+        return fragment.final != 0;
+    }
+
+    Emulator::MouseMode MouseModeFor(int property) {
+        switch (property) {
+            case VTERM_PROP_MOUSE_CLICK:
+                return Emulator::MouseMode::Click;
+            case VTERM_PROP_MOUSE_DRAG:
+                return Emulator::MouseMode::Drag;
+            case VTERM_PROP_MOUSE_MOVE:
+                return Emulator::MouseMode::Move;
+            default:
+                return Emulator::MouseMode::None;
+        }
+    }
+
     int OnSetTermProp(VTermProp prop, VTermValue* value, void* user) {
         auto* state = static_cast<Emulator::State*>(user);
         if (prop == VTERM_PROP_CURSORVISIBLE) {
             state->cursorVisible = value->boolean;
         }
+        else if (prop == VTERM_PROP_MOUSE) {
+            state->mouseMode = MouseModeFor(value->number);
+        }
+        else if (prop == VTERM_PROP_TITLE) {
+            if (AppendFragment(state->pendingTitle, value->string)) {
+                state->title = std::move(state->pendingTitle);
+                state->pendingTitle.clear();
+            }
+        }
         return 1;
+    }
+
+    int OnSelectionSet(VTermSelectionMask /*mask*/, VTermStringFragment fragment, void* user) {
+        auto* state = static_cast<Emulator::State*>(user);
+        if (AppendFragment(state->pendingSelection, fragment)) {
+            state->clipboardText = std::move(state->pendingSelection);
+            state->pendingSelection.clear();
+        }
+        return 1;
+    }
+
+    // Left unanswered on purpose -- see Emulator::TakeClipboardText's own
+    // doc comment. 0 is libvterm's "not handled."
+    int OnSelectionQuery(VTermSelectionMask /*mask*/, void* /*user*/) {
+        return 0;
+    }
+
+    constexpr VTermSelectionCallbacks kSelectionCallbacks{
+        .set   = &OnSelectionSet,
+        .query = &OnSelectionQuery,
+    };
+
+    std::optional<int> VTermButtonFor(ui::MouseEvent::Button button) {
+        switch (button) {
+            case ui::MouseEvent::Button::Left:
+                return 1;
+            case ui::MouseEvent::Button::Middle:
+                return 2;
+            case ui::MouseEvent::Button::Right:
+                return 3;
+            // Wheel notches are xterm's device group 4-7, which libvterm
+            // re-encodes into the 64-and-up report codes itself.
+            case ui::MouseEvent::Button::WheelUp:
+                return 4;
+            case ui::MouseEvent::Button::WheelDown:
+                return 5;
+            case ui::MouseEvent::Button::WheelLeft:
+                return 6;
+            case ui::MouseEvent::Button::WheelRight:
+                return 7;
+            case ui::MouseEvent::Button::None:
+                break;
+        }
+        return std::nullopt;
     }
 
     int OnScrollbackPushLine(int cols, const VTermScreenCell* cells, void* user) {
@@ -185,6 +278,10 @@ Emulator::Emulator(int rows, int cols) : state_(std::make_unique<State>()) {
 
     state_->screen = vterm_obtain_screen(state_->vt);
     vterm_screen_set_callbacks(state_->screen, &kScreenCallbacks, state_.get());
+    // OSC 52: libvterm parses and base64-decodes the payload itself once a
+    // selection buffer is registered, so nothing here touches base64.
+    vterm_state_set_selection_callbacks(vterm_obtain_state(state_->vt), &kSelectionCallbacks, state_.get(),
+                                        state_->selectionBuffer.data(), state_->selectionBuffer.size());
     vterm_screen_enable_altscreen(state_->screen, 1);
     vterm_screen_reset(state_->screen, 1);
 }
@@ -298,6 +395,58 @@ bool Emulator::SendKey(const ncinput& input) {
 
     vterm_keyboard_unichar(state_->vt, codepoint, static_cast<VTermModifier>(modifier));
     return true;
+}
+
+Emulator::MouseMode Emulator::MouseReporting() const {
+    return state_->mouseMode;
+}
+
+bool Emulator::SendMouse(const ui::MouseEvent& mouse) {
+    if (state_->mouseMode == MouseMode::None) {
+        return false;
+    }
+
+    unsigned modifier = VTERM_MOD_NONE;
+    if (mouse.shift) {
+        modifier |= VTERM_MOD_SHIFT;
+    }
+    if (mouse.meta) {
+        modifier |= VTERM_MOD_ALT;
+    }
+    if (mouse.control) {
+        modifier |= VTERM_MOD_CTRL;
+    }
+    const auto vtermModifier = static_cast<VTermModifier>(modifier);
+
+    // Always first: libvterm records the position unconditionally and
+    // encodes it into the button report that follows, while only *emitting*
+    // a motion report in the modes that asked for one.
+    vterm_mouse_move(state_->vt, mouse.at.y, mouse.at.x, vtermModifier);
+
+    const std::optional<int> button = VTermButtonFor(mouse.button);
+    if (!button.has_value() || mouse.motion == ui::MouseEvent::Motion::Moved) {
+        return true;
+    }
+    if (*button >= 4) {
+        // A wheel notch has no release half in any reporting mode (xterm's
+        // convention) -- an application that saw one would scroll twice.
+        if (mouse.motion == ui::MouseEvent::Motion::Pressed) {
+            vterm_mouse_button(state_->vt, *button, true, vtermModifier);
+        }
+        return true;
+    }
+    vterm_mouse_button(state_->vt, *button, mouse.motion == ui::MouseEvent::Motion::Pressed, vtermModifier);
+    return true;
+}
+
+const std::string& Emulator::Title() const {
+    return state_->title;
+}
+
+std::optional<std::string> Emulator::TakeClipboardText() {
+    std::optional<std::string> text = std::move(state_->clipboardText);
+    state_->clipboardText.reset();
+    return text;
 }
 
 std::string Emulator::TakeOutput() {

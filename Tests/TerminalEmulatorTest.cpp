@@ -9,6 +9,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <optional>
+#include <string>
+
 #include "Editor/Terminal/Emulator.h"
 #include "TestEvents.h"
 
@@ -203,4 +206,136 @@ TEST_CASE("Emulator ignores input with no terminal meaning", "[TerminalEmulator]
 
     REQUIRE_FALSE(emulator.SendKey(ncinput{}));
     REQUIRE(emulator.TakeOutput().empty());
+}
+
+// terminal-mouse-and-osc-relay follow-up. SGR reporting (DECSET 1006) is
+// enabled alongside every mouse mode below so the encoded report is legible
+// in the assertion rather than a run of raw high bytes; the coordinates in
+// it are 1-based, so a press at row 2 / column 3 reads as `3;4`.
+namespace {
+
+void Drain(Emulator& emulator) {
+    static_cast<void>(emulator.TakeOutput());
+}
+
+ned::ui::MouseEvent MouseAt(int column, int row, ned::ui::MouseEvent::Button button, ned::ui::MouseEvent::Motion motion) {
+    return ned::ui::MouseEvent{.at = ned::ui::Point{.x = column, .y = row}, .button = button, .motion = motion};
+}
+
+} // namespace
+
+TEST_CASE("Emulator tracks the mouse reporting mode an application asks for", "[TerminalEmulator]") {
+    Emulator emulator(4, 20);
+    REQUIRE(emulator.MouseReporting() == Emulator::MouseMode::None);
+
+    emulator.Feed("\x1b[?1000h");
+    REQUIRE(emulator.MouseReporting() == Emulator::MouseMode::Click);
+
+    emulator.Feed("\x1b[?1002h");
+    REQUIRE(emulator.MouseReporting() == Emulator::MouseMode::Drag);
+
+    emulator.Feed("\x1b[?1003h");
+    REQUIRE(emulator.MouseReporting() == Emulator::MouseMode::Move);
+
+    emulator.Feed("\x1b[?1003l\x1b[?1002l\x1b[?1000l");
+    REQUIRE(emulator.MouseReporting() == Emulator::MouseMode::None);
+}
+
+TEST_CASE("Emulator emits nothing for a mouse event no application asked for", "[TerminalEmulator]") {
+    Emulator emulator(4, 20);
+
+    REQUIRE_FALSE(emulator.SendMouse(MouseAt(3, 2, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(emulator.TakeOutput().empty());
+}
+
+TEST_CASE("Emulator encodes a click and its release for a reporting application", "[TerminalEmulator]") {
+    Emulator emulator(4, 20);
+    emulator.Feed("\x1b[?1000h\x1b[?1006h");
+    Drain(emulator); // libvterm's own DECSET acknowledgements, if any
+
+    REQUIRE(emulator.SendMouse(MouseAt(3, 2, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(emulator.TakeOutput() == "\x1b[<0;4;3M");
+
+    REQUIRE(emulator.SendMouse(MouseAt(3, 2, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Released)));
+    REQUIRE(emulator.TakeOutput() == "\x1b[<0;4;3m");
+}
+
+TEST_CASE("Emulator carries modifiers into a mouse report", "[TerminalEmulator]") {
+    Emulator emulator(4, 20);
+    emulator.Feed("\x1b[?1000h\x1b[?1006h");
+    Drain(emulator);
+
+    ned::ui::MouseEvent mouse = MouseAt(6, 5, ned::ui::MouseEvent::Button::Right, ned::ui::MouseEvent::Motion::Pressed);
+    mouse.control             = true;
+
+    REQUIRE(emulator.SendMouse(mouse));
+    REQUIRE(emulator.TakeOutput() == "\x1b[<18;7;6M"); // button 3 (2) + Ctrl (16)
+}
+
+TEST_CASE("Emulator encodes a wheel notch with no release half", "[TerminalEmulator]") {
+    Emulator emulator(4, 20);
+    emulator.Feed("\x1b[?1000h\x1b[?1006h");
+    Drain(emulator);
+
+    REQUIRE(emulator.SendMouse(MouseAt(6, 5, ned::ui::MouseEvent::Button::WheelUp, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(emulator.TakeOutput() == "\x1b[<64;7;6M");
+
+    // A terminal that reports one anyway must not scroll the application
+    // twice for one notch.
+    REQUIRE(emulator.SendMouse(MouseAt(6, 5, ned::ui::MouseEvent::Button::WheelUp, ned::ui::MouseEvent::Motion::Released)));
+    REQUIRE(emulator.TakeOutput().empty());
+}
+
+TEST_CASE("Emulator reports motion only once an application asks for drags", "[TerminalEmulator]") {
+    Emulator emulator(4, 20);
+    emulator.Feed("\x1b[?1000h\x1b[?1006h");
+    Drain(emulator);
+
+    REQUIRE(emulator.SendMouse(MouseAt(3, 2, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    Drain(emulator);
+    // Click mode: the position is recorded, nothing is emitted.
+    REQUIRE(emulator.SendMouse(MouseAt(8, 7, ned::ui::MouseEvent::Button::None, ned::ui::MouseEvent::Motion::Moved)));
+    REQUIRE(emulator.TakeOutput().empty());
+
+    emulator.Feed("\x1b[?1002h");
+    Drain(emulator);
+    REQUIRE(emulator.SendMouse(MouseAt(9, 8, ned::ui::MouseEvent::Button::None, ned::ui::MouseEvent::Motion::Moved)));
+    REQUIRE(emulator.TakeOutput() == "\x1b[<32;10;9M"); // 32: motion with button 1 held
+}
+
+TEST_CASE("Emulator captures the title an application sets", "[TerminalEmulator]") {
+    Emulator emulator(4, 20);
+    REQUIRE(emulator.Title().empty());
+
+    emulator.Feed("\x1b]0;first\x07");
+    REQUIRE(emulator.Title() == "first");
+
+    emulator.Feed("\x1b]2;second\x1b\\");
+    REQUIRE(emulator.Title() == "second");
+}
+
+TEST_CASE("Emulator hands over an OSC 52 clipboard write, decoded", "[TerminalEmulator]") {
+    Emulator emulator(4, 20);
+    REQUIRE_FALSE(emulator.TakeClipboardText().has_value());
+
+    emulator.Feed("\x1b]52;c;aGVsbG8gdGhlcmU=\x1b\\");
+
+    const std::optional<std::string> text = emulator.TakeClipboardText();
+    REQUIRE(text.has_value());
+    REQUIRE(*text == "hello there");
+    // Drained, not latched.
+    REQUIRE_FALSE(emulator.TakeClipboardText().has_value());
+}
+
+TEST_CASE("Emulator never answers an OSC 52 clipboard query", "[TerminalEmulator]") {
+    Emulator emulator(4, 20);
+
+    emulator.Feed("\x1b]52;c;aGk=\x1b\\");
+    REQUIRE(emulator.TakeClipboardText().has_value());
+    Drain(emulator);
+
+    emulator.Feed("\x1b]52;c;?\x1b\\");
+
+    REQUIRE(emulator.TakeOutput().empty());
+    REQUIRE_FALSE(emulator.TakeClipboardText().has_value());
 }

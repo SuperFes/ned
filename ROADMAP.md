@@ -444,13 +444,18 @@ commands, never a replacement for them.
       a log about the process, not state about the file); and there is deliberately no
       `ned/set-transient` Janet setting -- the mode is chosen at invocation, and the Janet
       surface is a 1.0 freeze commitment.
-- [ ] **Terminal-side mouse forwarding** — clicks/wheel inside `TerminalPanel` are
-      consumed by the panel itself (focus, scrollback ring); a TUI subprocess running
-      inside it (e.g. `htop`, `vim`) never receives a forwarded mouse event.
-- [ ] **OSC 52/title integration inside the embedded terminal** — a program running
-      inside `TerminalPanel` that emits its own OSC 52 clipboard/title sequences isn't
-      relayed anywhere; unrelated to `Editor/Clipboard.h`'s own OSC 52 *write* path for
-      ned's own copy/paste commands, which already works.
+- [ ] Terminal-side mouse forwarding and the OSC 52/title relay both shipped -- slug for
+      `git log --grep=`: `terminal-mouse-and-osc-relay`. Two conscious calls left behind,
+      each its own item below.
+- [ ] An OSC 52 *query* from a program inside `TerminalPanel` is never answered
+      (`Emulator`'s selection-query callback returns libvterm's "not handled"), so such a
+      program can write ned's clipboard but never read it — xterm's own default, and the
+      alternative hands the user's clipboard to every subprocess. Revisit only against a
+      real need.
+- [ ] An application-set title (OSC 0/2) replaces the terminal tab's static label
+      unconditionally, truncated to 24 columns, with no setting to turn it off. A noisy
+      PS1-driven title is the case that would want one; the Janet surface is a 1.0 freeze
+      commitment, so it waits for a real complaint rather than landing speculatively.
 - [ ] **DAP gaps, remainder**: data breakpoints (tied to a live variable rather than a
       source line) have no natural entry point yet. Thread-focus reattachment across a
       session restart is deliberately excluded even if revisited — a fresh session has

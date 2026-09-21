@@ -416,3 +416,134 @@ TEST_CASE("TerminalPanel::EnterSearch finds a scrolled-back line and Escape rest
     REQUIRE(f.panel.OnEvent(ned::ui::test::Character('z')));
     REQUIRE(sent == "z");
 }
+
+// terminal-mouse-and-osc-relay follow-up.
+namespace {
+
+// Puts the "shell" into SGR mouse-drag reporting and captures everything
+// the panel would write back to it.
+struct MouseReportingFixture : Fixture {
+    std::string sent;
+
+    MouseReportingFixture() {
+        panel.SetWriteSinkForTesting([this](std::string_view bytes) { sent += bytes; });
+        panel.Feed("\x1b[?1002h\x1b[?1006h");
+        sent.clear();
+    }
+};
+
+} // namespace
+
+TEST_CASE("TerminalPanel forwards a click to an application that asked for the mouse", "[TerminalPanel]") {
+    MouseReportingFixture f;
+
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(3, 2, MouseEvent::Button::Left, MouseEvent::Motion::Pressed)));
+    REQUIRE(f.sent == "\x1b[<0;4;3M");
+
+    f.sent.clear();
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(5, 2, MouseEvent::Button::Left, MouseEvent::Motion::Moved)));
+    REQUIRE(f.sent == "\x1b[<32;6;3M");
+
+    f.sent.clear();
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(5, 2, MouseEvent::Button::Left, MouseEvent::Motion::Released)));
+    REQUIRE(f.sent == "\x1b[<0;6;3m");
+
+    // Nothing was selected locally along the way.
+    f.panel.Feed("hello world");
+    f.Paint();
+    REQUIRE(f.screen.PixelAt(3, 0).background_color != f.theme.selectionBackground);
+}
+
+TEST_CASE("TerminalPanel keeps Shift-click for its own selection while an application holds the mouse", "[TerminalPanel]") {
+    MouseReportingFixture f;
+    f.panel.Feed("hello world");
+
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(6, 0, MouseEvent::Button::Left, MouseEvent::Motion::Pressed, /*shift=*/true)));
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(10, 0, MouseEvent::Button::Left, MouseEvent::Motion::Moved, /*shift=*/true)));
+
+    REQUIRE(f.sent.empty());
+    f.Paint();
+    REQUIRE(f.screen.PixelAt(6, 0).background_color == f.theme.selectionBackground);
+}
+
+TEST_CASE("TerminalPanel sends the wheel to a reporting application, and Shift-wheel to its own scrollback", "[TerminalPanel]") {
+    MouseReportingFixture f;
+
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(1, 1, MouseEvent::Button::WheelUp, MouseEvent::Motion::Pressed)));
+    REQUIRE(f.sent == "\x1b[<64;2;2M");
+    REQUIRE(f.panel.TitleText() == "Terminal"); // not scrolled back
+
+    // Enough output to fill the ring, then a Shift-wheel the application
+    // never sees.
+    for (int line = 0; line < 10; ++line) {
+        f.panel.Feed("line\r\n");
+    }
+    f.sent.clear();
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(1, 1, MouseEvent::Button::WheelUp, MouseEvent::Motion::Pressed, /*shift=*/true)));
+    REQUIRE(f.sent.empty());
+    REQUIRE(f.panel.TitleText() == "Terminal (scrollback)");
+
+    // And while scrolled back, the panel is local throughout -- a plain
+    // click would otherwise report a cell the application has no notion of.
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(3, 2, MouseEvent::Button::Left, MouseEvent::Motion::Pressed)));
+    REQUIRE(f.sent.empty());
+}
+
+TEST_CASE("TerminalPanel finishes a forwarded drag that left the panel", "[TerminalPanel]") {
+    MouseReportingFixture f;
+
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(3, 2, MouseEvent::Button::Left, MouseEvent::Motion::Pressed)));
+    f.sent.clear();
+
+    // Below the panel's last row: clamped back onto the grid so the
+    // application still sees the drag land on the bottom row and the
+    // button come up there.
+    REQUIRE(f.panel.OnEvent(ned::ui::test::Mouse(3, kHeight + 4, MouseEvent::Button::Left, MouseEvent::Motion::Released)));
+    REQUIRE(f.sent == "\x1b[<32;4;4M\x1b[<0;4;4m");
+
+    // The drag is over -- a later out-of-bounds press belongs to whatever
+    // widget is actually under it.
+    f.sent.clear();
+    REQUIRE_FALSE(f.panel.OnEvent(ned::ui::test::Mouse(3, kHeight + 4, MouseEvent::Button::Left, MouseEvent::Motion::Pressed)));
+    REQUIRE(f.sent.empty());
+}
+
+TEST_CASE("TerminalPanel names its tab after the title an application sets", "[TerminalPanel]") {
+    Fixture f;
+    f.panel.Feed("\x1b]0;~/Development\x07");
+    REQUIRE(f.panel.TitleText() == "~/Development");
+
+    // State suffixes still apply on top of it.
+    f.panel.HandleExitForTesting();
+    REQUIRE(f.panel.TitleText() == "~/Development (exited)");
+
+    // The static label is what uniquification still compares against.
+    REQUIRE(f.panel.Label() == "Terminal");
+}
+
+TEST_CASE("TerminalPanel truncates an over-long application title", "[TerminalPanel]") {
+    Fixture f;
+    f.panel.Feed("\x1b]0;user@host:/very/long/path/that/keeps/going\x07");
+
+    const std::string title = f.panel.TitleText();
+    REQUIRE(title == "user@host:/very/long/pat…");
+}
+
+TEST_CASE("TerminalPanel copies an OSC 52 write to the system clipboard", "[TerminalPanel]") {
+    const RestoreClipboardDisabled restore;
+
+    Fixture f;
+
+    const std::filesystem::path fakeClipboard = std::filesystem::temp_directory_path() / "ned_terminal_panel_test_osc52_clipboard";
+    std::filesystem::remove(fakeClipboard);
+    ned::editor::SetClipboardEnabled(true);
+    ned::editor::SetClipboardCopyCommand({"sh", "-c", "cat > " + fakeClipboard.string()});
+
+    f.panel.Feed("\x1b]52;c;aGVsbG8gdGhlcmU=\x1b\\");
+
+    REQUIRE(std::filesystem::exists(fakeClipboard));
+    std::ifstream copied(fakeClipboard);
+    std::string   copiedText((std::istreambuf_iterator<char>(copied)), std::istreambuf_iterator<char>());
+    REQUIRE(copiedText == "hello there");
+    std::filesystem::remove(fakeClipboard);
+}
