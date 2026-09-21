@@ -164,8 +164,12 @@ else
 ```
 
 `false` normalises horizontal spacing only — it won't un-break a keyword already on its
-own line, because joining `} // done` and `else` would comment the keyword out. PHP is
-the only language declaring `control.keyword` today.
+own line, because joining `} // done` and `else` would comment the keyword out.
+
+Every brace language declares `control.keyword` — C, C++, JavaScript/TypeScript, Java, C#,
+Rust, Kotlin, PHP. **Go deliberately does not**: its automatic semicolon insertion makes a
+newline between `}` and `else` a syntax error rather than a style, so ned refuses it there
+even if you configure it.
 
 A worked example — brace style that differs between two languages sharing one rule set:
 
