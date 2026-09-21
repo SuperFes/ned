@@ -8,8 +8,9 @@ namespace ned::editor {
 
 namespace {
 
-    bool IsWordChar(char c) {
-        return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
+    bool IsWordChar(char c, std::string_view extraWordCharacters) {
+        return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_' ||
+               extraWordCharacters.find(c) != std::string_view::npos;
     }
 
     struct Match {
@@ -20,7 +21,7 @@ namespace {
 } // namespace
 
 std::vector<std::string> CollectDabbrevCandidates(std::string_view content, std::size_t point, std::string_view prefix,
-                                                  std::size_t maxCandidates) {
+                                                  std::size_t maxCandidates, std::string_view extraWordCharacters) {
     if (prefix.empty() || maxCandidates == 0) {
         return {};
     }
@@ -31,12 +32,12 @@ std::vector<std::string> CollectDabbrevCandidates(std::string_view content, std:
     const std::size_t length = content.size();
     std::size_t       i      = 0;
     while (i < length) {
-        if (!IsWordChar(content[i])) {
+        if (!IsWordChar(content[i], extraWordCharacters)) {
             ++i;
             continue;
         }
         const std::size_t start = i;
-        while (i < length && IsWordChar(content[i])) {
+        while (i < length && IsWordChar(content[i], extraWordCharacters)) {
             ++i;
         }
         const std::size_t wordLength = i - start;

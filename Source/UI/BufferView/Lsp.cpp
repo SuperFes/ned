@@ -60,31 +60,34 @@ void BufferView::RequestCompletionAtPoint(const std::string& triggerCharacter) {
     const std::string serverKey   = ResolvedLspServerKey(point);
     const std::string languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
 
+    // completion-source-merge follow-up: the prefix rule is decided here,
+    // before anything is collected, because every source has to agree on
+    // what word is being completed -- and Refilter has to re-apply the same
+    // rule at the new point to decide whether point is still inside it.
+    // A Janet buffer reads "ned/register-command" as one token whether or
+    // not a server is attached, which the generic word rule cannot.
+    completionPrefixRule_         = (languageKey == "janet") ? CompletionPrefixRule::JanetSymbol : CompletionPrefixRule::Word;
+    const std::size_t prefixStart = CurrentCompletionPrefixStart(buffer, point);
+
+    std::vector<editor::Completion> locals = LocalCompletionsAtPoint(buffer, point, languageKey, prefixStart);
+
     // dabbrev-fallback follow-up: StatusForLanguage never spawns a client,
     // so this is a pure "is one currently usable" check -- NotConfigured/
-    // SpawnFailed/Disconnected all fall back to scanning the buffer itself
-    // rather than asking a server that isn't there.
+    // SpawnFailed/Disconnected mean the locals below are the whole popup
+    // rather than half of it.
     const bool hasRunningLsp = lspManager_ && lspManager_->StatusForLanguage(lspManager_->ConnectionKeyForBuffer(
                                                   buffer, languageKey)) == editor::lsp::Manager::Status::Running;
     if (!hasRunningLsp) {
-        // Self-hosting-completion follow-up: tried ahead of plain
-        // dabbrev-expand for a Janet-mode buffer, falling through to it when
-        // there's no janetEnv_ wired or nothing fuzzy-matches (e.g. a local
-        // variable name rather than a "ned/*" binding).
-        if (languageKey == "janet" && ApplyJanetBindingCompletion(buffer, point)) {
-            return;
-        }
-        ApplyDabbrevCompletion(buffer, point);
+        ShowCompletions(std::move(locals), /*isIncomplete=*/false, point, prefixStart);
         return;
     }
 
-    text::Buffer* const bufferPtr   = &buffer;
-    const std::size_t   generation  = completionRequest_.Begin();
-    const std::size_t   prefixStart = WordPrefixStart(buffer.Content(), point);
+    text::Buffer* const bufferPtr  = &buffer;
+    const std::size_t   generation = completionRequest_.Begin();
 
     lspManager_->RequestCompletion(
         buffer, point,
-        [this, bufferPtr, point, prefixStart, generation](editor::lsp::CompletionList list) {
+        [this, bufferPtr, point, prefixStart, generation, locals = std::move(locals)](editor::lsp::CompletionList list) mutable {
             if (completionRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
@@ -96,21 +99,12 @@ void BufferView::RequestCompletionAtPoint(const std::string& triggerCharacter) {
             if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
                 return; // buffer/point changed since the request was sent
             }
-            if (list.items.empty()) {
-                activeCompletion_.reset();
-                NotifyCompletionChanged();
-                return;
-            }
-            completionPrefixRule_ = CompletionPrefixRule::Word;
-            activeCompletion_.emplace(std::move(list.items), list.isIncomplete, activeBuffer_.Get().Content(), point, prefixStart);
-            if (activeCompletion_->Empty()) {
-                // Every item the server sent was filtered out against the
-                // prefix already typed (CompletionSession ranks on
-                // construction, not just on narrowing) -- an empty popup is
-                // no popup.
-                activeCompletion_.reset();
-            }
-            NotifyCompletionChanged();
+            // The locals were collected at request time against this same
+            // point, which the guard above has just confirmed hasn't moved
+            // -- so they need no re-collection and no relocation, and a
+            // server that answers with nothing still leaves a popup.
+            ShowCompletions(editor::MergeCompletions({editor::FromLspItems(std::move(list.items)), std::move(locals)}),
+                            list.isIncomplete, point, prefixStart);
         },
         serverKey, triggerCharacter);
 }
@@ -147,8 +141,9 @@ void BufferView::MaybeScheduleCompletionResolve() {
     }
     const std::vector<editor::CompletionCandidate>& candidates = activeCompletion_->Candidates();
     const std::size_t                               selected   = activeCompletion_->SelectedIndex();
-    if (selected >= candidates.size() || candidates[selected].resolved || candidates[selected].item.raw.is_null()) {
-        return; // already answered for, or a synthesized item with nothing to send back
+    if (selected >= candidates.size() || candidates[selected].resolved ||
+        candidates[selected].item.source != editor::CompletionSource::Lsp || candidates[selected].item.raw.is_null()) {
+        return; // locally produced, or already answered for, or a server item with nothing to send back
     }
     text::Buffer&                                            buffer      = activeBuffer_.Get();
     const std::string                                        serverKey   = ResolvedLspServerKey(buffer.Point());
@@ -174,7 +169,7 @@ void BufferView::RequestCompletionResolve() {
     // Copied, not referenced: ResolveCompletionItem's callback runs after a
     // full round trip, by which point Refilter may have rebuilt the very
     // vector this candidate lives in.
-    const editor::lsp::CompletionItem item       = activeCompletion_->Candidates()[selected].item;
+    const editor::lsp::CompletionItem item       = editor::ToLspItem(activeCompletion_->Candidates()[selected].item);
     text::Buffer&                     buffer     = activeBuffer_.Get();
     text::Buffer* const               bufferPtr  = &buffer;
     const std::string                 serverKey  = ResolvedLspServerKey(buffer.Point());
@@ -198,77 +193,60 @@ void BufferView::RequestCompletionResolve() {
             if (selected >= candidates.size() || candidates[selected].item.label != label) {
                 return;
             }
-            activeCompletion_->ApplyResolution(selected, *resolved);
+            activeCompletion_->ApplyResolution(selected, editor::FromLspItem(std::move(*resolved)));
             NotifyCompletionChanged();
         },
         serverKey);
 }
 
-void BufferView::ApplyDabbrevCompletion(text::Buffer& buffer, std::size_t point) {
-    const text::ITextStorage& content     = buffer.Content();
-    const std::size_t         prefixStart = WordPrefixStart(content, point);
-    const std::string         prefix      = content.Substring(prefixStart, point - prefixStart);
+std::vector<editor::Completion> BufferView::LocalCompletionsAtPoint(text::Buffer& buffer, std::size_t point,
+                                                                    const std::string& languageKey, std::size_t prefixStart) {
+    const std::string prefix = buffer.Content().Substring(prefixStart, point - prefixStart);
+    if (prefix.empty()) {
+        return {}; // see CompletionSources.h -- every local source ranks against a typed word
+    }
 
-    std::vector<std::string> words = editor::CollectDabbrevCandidates(buffer.Text(), point, prefix);
-    if (words.empty()) {
+    std::vector<editor::Completion> snippets = editor::SnippetCompletions(languageKey, prefix);
+
+    std::vector<editor::Completion> bindings;
+    if (janetEnv_ && languageKey == "janet") {
+        bindings = editor::JanetBindingCompletions(janetEnv_->BindingNamesWithPrefix("ned/"), prefix);
+    }
+
+    std::vector<editor::Completion> words;
+    if (!buffer.Content().IsHuge()) {
+        // Buffer::Text() materializes the whole document, which is the one
+        // thing this path cannot afford on a huge file -- and a word scan
+        // over hundreds of megabytes would be the wrong trade even if the
+        // copy were free. The guard the huge-file work already applies to
+        // every other whole-buffer scan (Rename.cpp, ClassFileSync.cpp).
+        //
+        // The Janet prefix rule reads '-' and '/' as name characters, so the
+        // word scan has to as well or it would never produce a word the
+        // typed prefix could match (see DabbrevComplete.h's own note).
+        const std::string_view extraWordCharacters =
+            (completionPrefixRule_ == CompletionPrefixRule::JanetSymbol) ? "-/" : "";
+        words = editor::BufferWordCompletions(buffer.Text(), point, prefix, extraWordCharacters);
+    }
+
+    return editor::MergeCompletions({std::move(snippets), std::move(bindings), std::move(words)});
+}
+
+void BufferView::ShowCompletions(std::vector<editor::Completion> completions, bool isIncomplete, std::size_t point,
+                                 std::size_t prefixStart) {
+    if (completions.empty()) {
         activeCompletion_.reset();
         NotifyCompletionChanged();
         return;
     }
-    std::vector<editor::lsp::CompletionItem> items;
-    items.reserve(words.size());
-    for (std::string& word : words) {
-        // completion-popup follow-up: kind 1 == LSP CompletionItemKind::Text
-        // -- a buffer-scanned word has no real semantic category, but a
-        // fixed, sensible glyph beats the popup's "unrecognized kind"
-        // fallback for every dabbrev row.
-        items.push_back(editor::lsp::CompletionItem{.label = word, .insertText = word, .kind = 1});
+    activeCompletion_.emplace(std::move(completions), isIncomplete, activeBuffer_.Get().Content(), point, prefixStart);
+    if (activeCompletion_->Empty()) {
+        // Everything was filtered out against the prefix already typed
+        // (CompletionSession ranks on construction, not just on narrowing)
+        // -- an empty popup is no popup.
+        activeCompletion_.reset();
     }
-    completionPrefixRule_ = CompletionPrefixRule::Word;
-    activeCompletion_.emplace(std::move(items), /*isIncomplete=*/false, content, point, prefixStart);
     NotifyCompletionChanged();
-}
-
-bool BufferView::ApplyJanetBindingCompletion(text::Buffer& buffer, std::size_t point) {
-    if (!janetEnv_) {
-        return false;
-    }
-
-    const std::string text        = buffer.Text();
-    const std::size_t prefixStart = editor::JanetSymbolPrefixStart(text, point);
-    const std::string prefix      = text.substr(prefixStart, point - prefixStart);
-    if (prefix.empty()) {
-        return false;
-    }
-
-    const std::vector<std::string> names  = janetEnv_->BindingNamesWithPrefix("ned/");
-    const std::vector<std::string> ranked = editor::FuzzyFilterAndRank(names, prefix);
-
-    std::vector<editor::lsp::CompletionItem> items;
-    items.reserve(ranked.size());
-    for (const std::string& name : ranked) {
-        // A subsequence match can never be shorter than the query it matched
-        // against, so name.size() == prefix.size() here only when name IS
-        // prefix verbatim -- point already sits right after a complete
-        // binding name, nothing left to suggest (DabbrevComplete.h's own
-        // "exact-length matches excluded" rule, applied here for the same
-        // reason: CompletionInsertSuffix's insertText-doesn't-share-prefix
-        // fallback would otherwise show the whole name again as a bogus
-        // duplicate suffix).
-        if (name.size() == prefix.size()) {
-            continue;
-        }
-        // completion-popup follow-up: kind 3 == LSP CompletionItemKind::
-        // Function -- every "ned/*" binding is, semantically, a callable.
-        items.push_back(editor::lsp::CompletionItem{.label = name, .insertText = name, .kind = 3});
-    }
-    if (items.empty()) {
-        return false;
-    }
-    completionPrefixRule_ = CompletionPrefixRule::JanetSymbol;
-    activeCompletion_.emplace(std::move(items), /*isIncomplete=*/false, buffer.Content(), point, prefixStart);
-    NotifyCompletionChanged();
-    return true;
 }
 
 bool BufferView::ShouldSuppressAutoCompletion() const {
@@ -883,10 +861,15 @@ void BufferView::NotifyCompletionChanged() {
     }
     model.selectedIndex = (activeCompletion_->SelectedIndex() - windowStart) + (windowStart > 0 ? 1 : 0);
     for (std::size_t i = windowStart; i < windowEnd; ++i) {
-        const editor::lsp::CompletionItem& item = candidates[i].item;
-        ListPopupRow                       row;
-        row.main  = item.label;
-        row.right = item.detail;
+        const editor::Completion& item = candidates[i].item;
+        ListPopupRow              row;
+        row.main = item.label;
+        // completion-source-merge follow-up: a candidate with nothing to say
+        // about itself says where it came from instead, which is what keeps
+        // a merged popup readable -- a row is either a type signature or a
+        // "snippet"/"buffer"/"janet". A server item's source label is
+        // deliberately empty: every row would otherwise read "lsp".
+        row.right = item.detail.empty() ? std::string(editor::CompletionSourceLabel(item.source)) : item.detail;
         if (const std::optional<editor::SymbolKind> bucket = CompletionKindBucket(item.kind)) {
             row.left           = SymbolGlyphFor(*bucket);
             row.leftForeground = theme_.BrushFor(editor::SyntaxClassFor(*bucket)).foreground;
@@ -895,8 +878,12 @@ void BufferView::NotifyCompletionChanged() {
             // Unrecognized/absent kind (a bare keyword, snippet, file path,
             // ... -- see CompletionKindBucket's own doc comment): a dim,
             // generic marker rather than no glyph at all, so every row
-            // still has a visual anchor in this column.
-            row.left           = "·"; // MIDDLE DOT
+            // still has a visual anchor in this column. A snippet gets its
+            // own shape within that same dim column, the distinction-by-
+            // shape the debug panel's own ▣/▢ filters already settle on when
+            // a row can't spend a colour.
+            row.left           = (item.source == editor::CompletionSource::Snippet) ? "◈"  // WHITE DIAMOND CONTAINING BLACK SMALL DIAMOND
+                                                                                    : "·"; // MIDDLE DOT
             row.leftForeground = theme_.ghostTextForeground;
         }
         model.rows.push_back(std::move(row));

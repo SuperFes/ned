@@ -29,8 +29,16 @@ namespace ned::editor {
 // way an LSP completion item's insertText is handled. Empty prefix or
 // maxCandidates yields no candidates -- nothing meaningful to rank without a
 // prefix to anchor on.
+//
+// extraWordCharacters widens the word rule with characters the caller's own
+// prefix rule treats as part of a name -- "-/" for a Janet buffer, where
+// JanetSymbolPrefixStart reads "ned/register-command" as one token and the
+// default rule would otherwise chop the same text into three words this scan
+// could never match against that prefix. Empty (the default) is the plain
+// alnum/underscore rule.
 [[nodiscard]] std::vector<std::string> CollectDabbrevCandidates(std::string_view content, std::size_t point,
-                                                                std::string_view prefix, std::size_t maxCandidates = 20);
+                                                                std::string_view prefix, std::size_t maxCandidates = 20,
+                                                                std::string_view extraWordCharacters = {});
 
 } // namespace ned::editor
 

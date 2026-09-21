@@ -1,11 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "Editor/Completion.h"
 #include "Editor/CompletionSession.h"
 #include "Text/Buffer.h"
 #include "Text/Rope.h"
 
+using ned::editor::Completion;
 using ned::editor::CompletionSession;
-using ned::editor::lsp::CompletionItem;
 using ned::editor::lsp::Position;
 using ned::editor::lsp::WorkspaceTextEdit;
 using ned::text::Buffer;
@@ -17,11 +18,11 @@ Buffer MakeBuffer(const std::string& content) {
     return Buffer("test", Rope(content));
 }
 
-// Mirrors what Content's own parsing guarantees (sortText/filterText
+// Mirrors what the LSP boundary conversion guarantees (sortText/filterText
 // default to the label), so a test that doesn't care about them doesn't
 // have to keep restating it.
-CompletionItem Item(std::string label, std::string insertText = {}) {
-    CompletionItem item;
+Completion Item(std::string label, std::string insertText = {}) {
+    Completion item;
     item.label      = label;
     item.insertText = insertText.empty() ? label : std::move(insertText);
     item.sortText   = label;
@@ -31,7 +32,7 @@ CompletionItem Item(std::string label, std::string insertText = {}) {
 
 } // namespace
 
-TEST_CASE("A candidate with no textEdit falls back to the caller's word-boundary prefix start", "[CompletionSession]") {
+TEST_CASE("A candidate with no replaceEdit falls back to the caller's word-boundary prefix start", "[CompletionSession]") {
     Buffer            buffer = MakeBuffer("foo");
     const std::size_t point  = 3;
     CompletionSession session({Item("foobar")}, /*isIncomplete=*/false, buffer.Content(), point, /*fallbackPrefixStart=*/0);
@@ -40,16 +41,16 @@ TEST_CASE("A candidate with no textEdit falls back to the caller's word-boundary
     CHECK(session.Candidates()[0].replaceStart == 0);
 }
 
-TEST_CASE("A candidate's textEdit range start wins over the fallback prefix start", "[CompletionSession]") {
+TEST_CASE("A candidate's replaceEdit range start wins over the fallback prefix start", "[CompletionSession]") {
     // "std::vec" -- the editor's own ASCII word rule starts the prefix at
     // "vec" (offset 5), but clangd's textEdit covers "std::vec" from 0.
     Buffer            buffer = MakeBuffer("std::vec");
     const std::size_t point  = 8;
 
-    CompletionItem item = Item("vector", "std::vector");
-    item.textEdit       = WorkspaceTextEdit{.start   = Position{.line = 0, .character = 0},
-                                            .end     = Position{.line = 0, .character = 8},
-                                            .newText = "std::vector"};
+    Completion item  = Item("vector", "std::vector");
+    item.replaceEdit = WorkspaceTextEdit{.start   = Position{.line = 0, .character = 0},
+                                         .end     = Position{.line = 0, .character = 8},
+                                         .newText = "std::vector"};
 
     CompletionSession session({item}, false, buffer.Content(), point, /*fallbackPrefixStart=*/5);
     REQUIRE(session.Candidates().size() == 1);
@@ -62,14 +63,14 @@ TEST_CASE("A candidate's textEdit range start wins over the fallback prefix star
     CHECK(plan->newText == "std::vector");
 }
 
-TEST_CASE("A textEdit range starting after point degrades to an insert at point", "[CompletionSession]") {
+TEST_CASE("A replaceEdit range starting after point degrades to an insert at point", "[CompletionSession]") {
     Buffer            buffer = MakeBuffer("foo bar");
     const std::size_t point  = 3;
 
-    CompletionItem item = Item("foo_thing");
-    item.textEdit       = WorkspaceTextEdit{.start   = Position{.line = 0, .character = 5}, // past point
-                                            .end     = Position{.line = 0, .character = 7},
-                                            .newText = "foo_thing"};
+    Completion item  = Item("foo_thing");
+    item.replaceEdit = WorkspaceTextEdit{.start   = Position{.line = 0, .character = 5}, // past point
+                                         .end     = Position{.line = 0, .character = 7},
+                                         .newText = "foo_thing"};
 
     CompletionSession session({item}, false, buffer.Content(), point, 0);
     const auto        plan = session.PlanAccept(point);
@@ -96,7 +97,7 @@ TEST_CASE("An insertText that doesn't extend the typed prefix replaces it rather
 
 TEST_CASE("PlanAccept reports a snippet item's raw body and flags it for expansion", "[CompletionSession]") {
     Buffer         buffer = MakeBuffer("fo");
-    CompletionItem item   = Item("for", "for (${1:i}) {\n\t$0\n}");
+    Completion     item   = Item("for", "for (${1:i}) {\n\t$0\n}");
     item.isSnippet        = true;
 
     CompletionSession session({item}, false, buffer.Content(), 2, 0);
@@ -117,9 +118,9 @@ TEST_CASE("PlanAccept is nullopt with no candidates", "[CompletionSession]") {
 TEST_CASE("Candidates are ranked by sortText, not arrival order", "[CompletionSession]") {
     Buffer buffer = MakeBuffer("");
 
-    CompletionItem zebra = Item("zebra");
+    Completion zebra     = Item("zebra");
     zebra.sortText       = "0001"; // the server wants this one first
-    CompletionItem apple = Item("apple");
+    Completion apple     = Item("apple");
     apple.sortText       = "0002";
 
     CompletionSession session({apple, zebra}, false, buffer.Content(), 0, 0);
@@ -130,7 +131,7 @@ TEST_CASE("Candidates are ranked by sortText, not arrival order", "[CompletionSe
 
 TEST_CASE("Ranking matches against filterText, not the label", "[CompletionSession]") {
     Buffer         buffer = MakeBuffer("foo");
-    CompletionItem item   = Item("foo (from <bar>)");
+    Completion     item   = Item("foo (from <bar>)");
     item.filterText       = "foo";
 
     CompletionSession session({item, Item("unrelated")}, false, buffer.Content(), 3, 0);
@@ -231,8 +232,8 @@ TEST_CASE("Refilter dismisses when point moves before the session's prefix start
 TEST_CASE("preselect picks the initial selection while nothing has been typed", "[CompletionSession]") {
     Buffer buffer = MakeBuffer("");
 
-    CompletionItem plain       = Item("alpha");
-    CompletionItem preselected = Item("beta");
+    Completion plain           = Item("alpha");
+    Completion preselected     = Item("beta");
     preselected.preselect      = true;
 
     CompletionSession session({plain, preselected}, false, buffer.Content(), /*point=*/0, /*fallbackPrefixStart=*/0);
@@ -245,8 +246,8 @@ TEST_CASE("preselect is ignored once a real prefix exists", "[CompletionSession]
     // context-free guess, so "alpha" must win over the preselected "beta".
     Buffer buffer = MakeBuffer("a");
 
-    CompletionItem alpha       = Item("alpha");
-    CompletionItem preselected = Item("beta");
+    Completion alpha           = Item("alpha");
+    Completion preselected     = Item("beta");
     preselected.preselect      = true;
 
     CompletionSession session({preselected, alpha}, false, buffer.Content(), /*point=*/1, /*fallbackPrefixStart=*/0);
@@ -254,17 +255,17 @@ TEST_CASE("preselect is ignored once a real prefix exists", "[CompletionSession]
     CHECK(session.Candidates()[session.SelectedIndex()].item.label == "alpha");
 }
 
-TEST_CASE("ApplyResolution merges documentation/detail/additionalTextEdits and survives a refilter", "[CompletionSession]") {
+TEST_CASE("ApplyResolution merges documentation/detail/additionalEdits and survives a refilter", "[CompletionSession]") {
     Buffer buffer = MakeBuffer("fo");
 
     CompletionSession session({Item("foobar"), Item("foobaz")}, false, buffer.Content(), /*point=*/2, /*fallbackPrefixStart=*/0);
     REQUIRE(session.Candidates().size() == 2);
     REQUIRE_FALSE(session.Candidates()[0].resolved);
 
-    CompletionItem resolved      = Item(session.Candidates()[0].item.label);
+    Completion resolved          = Item(session.Candidates()[0].item.label);
     resolved.documentation       = "Docs fetched on resolve.";
     resolved.detail              = "int(int)";
-    resolved.additionalTextEdits = {WorkspaceTextEdit{.start   = Position{.line = 0, .character = 0},
+    resolved.additionalEdits     = {WorkspaceTextEdit{.start   = Position{.line = 0, .character = 0},
                                                       .end     = Position{.line = 0, .character = 0},
                                                       .newText = "#include <foo>\n"}};
     session.ApplyResolution(0, resolved);
@@ -272,7 +273,7 @@ TEST_CASE("ApplyResolution merges documentation/detail/additionalTextEdits and s
     CHECK(session.Candidates()[0].resolved);
     CHECK(session.Candidates()[0].item.documentation == "Docs fetched on resolve.");
     CHECK(session.Candidates()[0].item.detail == "int(int)");
-    REQUIRE(session.Candidates()[0].item.additionalTextEdits.size() == 1);
+    REQUIRE(session.Candidates()[0].item.additionalEdits.size() == 1);
 
     // The write-through to the master list is the whole point: candidates_ is
     // rebuilt from scratch on the very next keystroke.
@@ -289,7 +290,7 @@ TEST_CASE("ApplyResolution never rewrites the fields that decide what gets inser
     Buffer            buffer = MakeBuffer("fo");
     CompletionSession session({Item("foobar", "foobar()")}, false, buffer.Content(), 2, 0);
 
-    CompletionItem hostile = Item("SOMETHING ELSE", "rm -rf /");
+    Completion hostile     = Item("SOMETHING ELSE", "rm -rf /");
     hostile.sortText       = "aaa";
     hostile.filterText     = "zzz";
     session.ApplyResolution(0, hostile);
@@ -307,10 +308,10 @@ TEST_CASE("ApplyResolution ignores an out-of-range index", "[CompletionSession]"
     CHECK_FALSE(session.Candidates()[0].resolved);
 }
 
-TEST_CASE("PlanAccept carries the selected item's additionalTextEdits", "[CompletionSession]") {
+TEST_CASE("PlanAccept carries the selected item's additionalEdits", "[CompletionSession]") {
     Buffer         buffer    = MakeBuffer("vec");
-    CompletionItem item      = Item("vector", "std::vector");
-    item.additionalTextEdits = {WorkspaceTextEdit{.start   = Position{.line = 0, .character = 0},
+    Completion     item      = Item("vector", "std::vector");
+    item.additionalEdits     = {WorkspaceTextEdit{.start   = Position{.line = 0, .character = 0},
                                                   .end     = Position{.line = 0, .character = 0},
                                                   .newText = "#include <vector>\n"}};
 
@@ -323,7 +324,7 @@ TEST_CASE("PlanAccept carries the selected item's additionalTextEdits", "[Comple
 
 TEST_CASE("IsCommitCharacter only reports characters the selected item actually declared", "[CompletionSession]") {
     Buffer         buffer       = MakeBuffer("fo");
-    CompletionItem withCommit   = Item("foobar");
+    Completion     withCommit   = Item("foobar");
     withCommit.commitCharacters = {"(", "."};
 
     CompletionSession session({withCommit, Item("foobaz")}, false, buffer.Content(), 2, 0);
@@ -338,4 +339,69 @@ TEST_CASE("IsCommitCharacter only reports characters the selected item actually 
     session.Cycle(1);
     REQUIRE(session.Candidates()[session.SelectedIndex()].item.label == "foobaz");
     CHECK_FALSE(session.IsCommitCharacter("("));
+}
+
+TEST_CASE("The typed prefix outranks the source a candidate came from", "[CompletionSession]") {
+    // "fb" scores the buffer word far better than the server item; where a
+    // candidate came from is only ever a tie-break.
+    Buffer     buffer = MakeBuffer("fb");
+    Completion server = Item("foreign_bystander");
+    server.source     = ned::editor::CompletionSource::Lsp;
+    Completion word   = Item("fb_handler");
+    word.source       = ned::editor::CompletionSource::BufferWord;
+
+    CompletionSession session({server, word}, false, buffer.Content(), 2, 0);
+    REQUIRE(session.Candidates().size() == 2);
+    CHECK(session.Candidates()[0].item.label == "fb_handler");
+}
+
+TEST_CASE("Equally-scoring candidates order by source, snippet first", "[CompletionSession]") {
+    Buffer     buffer  = MakeBuffer("fo");
+    Completion word    = Item("fo");
+    word.source        = ned::editor::CompletionSource::BufferWord;
+    Completion server  = Item("fo");
+    server.source      = ned::editor::CompletionSource::Lsp;
+    Completion binding = Item("fo");
+    binding.source     = ned::editor::CompletionSource::JanetBinding;
+    Completion snippet = Item("fo");
+    snippet.source     = ned::editor::CompletionSource::Snippet;
+
+    CompletionSession session({word, server, binding, snippet}, false, buffer.Content(), 2, 0);
+    REQUIRE(session.Candidates().size() == 4);
+    CHECK(session.Candidates()[0].item.source == ned::editor::CompletionSource::Snippet);
+    CHECK(session.Candidates()[1].item.source == ned::editor::CompletionSource::Lsp);
+    CHECK(session.Candidates()[2].item.source == ned::editor::CompletionSource::JanetBinding);
+    CHECK(session.Candidates()[3].item.source == ned::editor::CompletionSource::BufferWord);
+}
+
+TEST_CASE("Source order beats sortText, which only means anything within one source", "[CompletionSession]") {
+    // A server's "000" sortText is its own "put this first" -- it has no
+    // authority over a snippet the user registered.
+    Buffer     buffer  = MakeBuffer("fo");
+    Completion server  = Item("fo");
+    server.source      = ned::editor::CompletionSource::Lsp;
+    server.sortText    = "000";
+    Completion snippet = Item("fo");
+    snippet.source     = ned::editor::CompletionSource::Snippet;
+    snippet.sortText   = "zzz";
+
+    CompletionSession session({server, snippet}, false, buffer.Content(), 2, 0);
+    REQUIRE(session.Candidates().size() == 2);
+    CHECK(session.Candidates()[0].item.source == ned::editor::CompletionSource::Snippet);
+}
+
+TEST_CASE("A snippet candidate accepted from a merged list still plans an expansion", "[CompletionSession]") {
+    Buffer     buffer  = MakeBuffer("fo");
+    Completion snippet = Item("for", "for (${1:i};) {\n\t$0\n}");
+    snippet.source     = ned::editor::CompletionSource::Snippet;
+    snippet.isSnippet  = true;
+
+    CompletionSession session({Item("form"), snippet}, false, buffer.Content(), 2, 0);
+    session.Select(0);
+    const auto plan = session.PlanAccept(2);
+    REQUIRE(plan.has_value());
+    CHECK(plan->isSnippet);
+    CHECK(plan->newText == "for (${1:i};) {\n\t$0\n}");
+    CHECK(plan->replaceStart == 0);
+    CHECK(plan->replaceEnd == 2);
 }

@@ -37,7 +37,7 @@
 #include <string_view>
 #include <vector>
 
-#include "Lsp/Content.h"
+#include "Completion.h"
 
 namespace ned::text {
 class ITextStorage;
@@ -45,16 +45,13 @@ class ITextStorage;
 
 namespace ned::editor {
 
-// One candidate, resolved against the buffer as it was when the response
-// arrived. Deliberately a wrapper around the LSP wire struct rather than a
-// replacement for it: the fallback sources (dabbrev, Janet bindings) already
-// synthesize CompletionItems, so keeping that type as the payload means this
-// session serves all three sources with no conversion. A genuinely
-// source-neutral candidate type is a bigger piece of work -- see ROADMAP's
-// "merging non-LSP candidates into the same popup" entry, which this makes
-// cheaper but does not do.
+// One candidate, resolved against the buffer as it was when the list was
+// assembled. The payload is the source-neutral Completion (Editor/
+// Completion.h), so a server item, a snippet trigger, a buffer word and a
+// Janet binding all sit in one list and rank against each other -- this
+// wrapper adds only what needs a buffer and a point to be true.
 struct CompletionCandidate {
-    lsp::CompletionItem item;
+    Completion item;
     // Byte offset where accepting this item starts replacing. From the
     // item's own textEdit range when the server sent one, else the caller's
     // word-boundary prefix start (see the constructor).
@@ -84,8 +81,9 @@ class CompletionSession {
         Dismiss,   // nothing matches any more, or point left the region this session covers
     };
 
-    // items are taken in server order. isIncomplete is the CompletionList's
-    // own flag -- true means the server truncated/approximated the list for
+    // completions are taken in the order the merge produced (server order
+    // within the server's own items -- see CompletionSources.h). isIncomplete
+    // is the CompletionList's own flag -- true means the server truncated/approximated the list for
     // this prefix and must be re-asked as it narrows, which is the single
     // input that decides Keep vs. Rerequest below.
     //
@@ -95,7 +93,7 @@ class CompletionSession {
     // passed in rather than recomputed here). It supplies replaceStart for
     // any item the server gave no textEdit for, and independently anchors
     // the typed prefix that Refilter matches against.
-    CompletionSession(std::vector<lsp::CompletionItem> items, bool isIncomplete, const text::ITextStorage& content,
+    CompletionSession(std::vector<Completion> completions, bool isIncomplete, const text::ITextStorage& content,
                       std::size_t point, std::size_t fallbackPrefixStart);
 
     // The current, ranked candidate set -- empty only if the caller built a
@@ -172,7 +170,7 @@ class CompletionSession {
     // that is what keeps a response landing mid-typing from rewriting what
     // Tab would insert. label/sortText/filterText are likewise left alone so
     // a resolve can never reorder the list under the user.
-    void ApplyResolution(std::size_t index, const lsp::CompletionItem& resolved);
+    void ApplyResolution(std::size_t index, const Completion& resolved);
 
     // completion-trigger-characters follow-up. Whether `ch` (one typed
     // character, UTF-8) is a commit character for the *selected* candidate:

@@ -16,23 +16,23 @@ namespace {
     // the cursor (malformed, or a pure-suffix edit this editor has no way to
     // express) degrades to a plain insert at point rather than a reversed
     // range that would delete backwards.
-    std::size_t ResolveReplaceStart(const lsp::CompletionItem& item, const text::ITextStorage& content, std::size_t point,
+    std::size_t ResolveReplaceStart(const Completion& completion, const text::ITextStorage& content, std::size_t point,
                                     std::size_t fallbackPrefixStart) {
-        if (!item.textEdit) {
+        if (!completion.replaceEdit) {
             return std::min(fallbackPrefixStart, point);
         }
-        return std::min(lsp::PositionToByte(content, item.textEdit->start), point);
+        return std::min(lsp::PositionToByte(content, completion.replaceEdit->start), point);
     }
 
 } // namespace
 
-CompletionSession::CompletionSession(std::vector<lsp::CompletionItem> items, bool isIncomplete, const text::ITextStorage& content,
+CompletionSession::CompletionSession(std::vector<Completion> completions, bool isIncomplete, const text::ITextStorage& content,
                                      std::size_t point, std::size_t fallbackPrefixStart) : isIncomplete_(isIncomplete), prefixStart_(std::min(fallbackPrefixStart, point)) {
-    allCandidates_.reserve(items.size());
-    for (lsp::CompletionItem& item : items) {
-        const std::size_t replaceStart = ResolveReplaceStart(item, content, point, prefixStart_);
+    allCandidates_.reserve(completions.size());
+    for (Completion& completion : completions) {
+        const std::size_t replaceStart = ResolveReplaceStart(completion, content, point, prefixStart_);
         allCandidates_.push_back(
-            CompletionCandidate{.item = std::move(item), .replaceStart = replaceStart, .sourceIndex = allCandidates_.size()});
+            CompletionCandidate{.item = std::move(completion), .replaceStart = replaceStart, .sourceIndex = allCandidates_.size()});
     }
     Rank(content.Substring(prefixStart_, point - prefixStart_));
 }
@@ -68,11 +68,24 @@ void CompletionSession::Rank(std::string_view prefix) {
                          if (lhs.first != rhs.first) {
                              return lhs.first > rhs.first;
                          }
+                         // Only once the typed prefix has nothing more to say
+                         // does where a candidate came from get a vote -- see
+                         // Completion.h's CompletionSource for the order and
+                         // why. Ahead of sortText because sortText is only
+                         // ever meaningful *within* one source: a server's
+                         // "this overload first" string has no bearing on a
+                         // snippet trigger, and comparing the two as strings
+                         // would interleave the sources arbitrarily.
+                         if (const int lhsRank = CompletionSourceRank(lhs.second->item.source),
+                             rhsRank           = CompletionSourceRank(rhs.second->item.source);
+                             lhsRank != rhsRank) {
+                             return lhsRank < rhsRank;
+                         }
                          // sortText is the server's own intended ordering and
                          // beats the label for equally good matches -- it's
                          // how a server surfaces "this overload first" or
-                         // "deprecated last". Content already defaulted it
-                         // to the label, so this never compares empties.
+                         // "deprecated last". Every source defaults it to the
+                         // label, so this never compares empties.
                          if (lhs.second->item.sortText != rhs.second->item.sortText) {
                              return lhs.second->item.sortText < rhs.second->item.sortText;
                          }
@@ -99,7 +112,7 @@ void CompletionSession::Rank(std::string_view prefix) {
     }
 }
 
-void CompletionSession::ApplyResolution(std::size_t index, const lsp::CompletionItem& resolved) {
+void CompletionSession::ApplyResolution(std::size_t index, const Completion& resolved) {
     if (index >= candidates_.size()) {
         return;
     }
@@ -116,8 +129,8 @@ void CompletionSession::ApplyResolution(std::size_t index, const lsp::Completion
         if (!resolved.detail.empty()) {
             candidate.item.detail = resolved.detail;
         }
-        if (!resolved.additionalTextEdits.empty()) {
-            candidate.item.additionalTextEdits = resolved.additionalTextEdits;
+        if (!resolved.additionalEdits.empty()) {
+            candidate.item.additionalEdits = resolved.additionalEdits;
         }
         candidate.resolved = true;
     };
@@ -184,7 +197,7 @@ std::optional<CompletionSession::AcceptPlan> CompletionSession::PlanAccept(std::
         .replaceEnd      = point,
         .newText         = candidate.item.insertText,
         .isSnippet       = candidate.item.isSnippet,
-        .additionalEdits = candidate.item.additionalTextEdits,
+        .additionalEdits = candidate.item.additionalEdits,
     };
 }
 

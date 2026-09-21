@@ -4636,24 +4636,29 @@ class BufferView : public Widget {
     // keystroke -- both are genuinely "Invoked", not trigger-character
     // requests.
     void RequestCompletionAtPoint(const std::string& triggerCharacter = {});
-    // dabbrev-fallback follow-up: the "no running LSP client for this
-    // buffer's language" half of RequestCompletionAtPoint -- scans the
-    // buffer itself (Editor/DabbrevComplete.h) for candidates instead of
-    // asking a server, populating activeCompletion_ synchronously (no
-    // generation/staleness bookkeeping needed, unlike the async LSP path).
-    void ApplyDabbrevCompletion(text::Buffer& buffer, std::size_t point);
-    // Self-hosting-completion follow-up: the "Janet-mode buffer" half of
-    // RequestCompletionAtPoint, tried ahead of ApplyDabbrevCompletion --
-    // fuzzy-ranks every live "ned/*" binding name (Janet/Environment.h's
-    // BindingNamesWithPrefix) against the Janet-symbol-aware prefix at point
-    // (JanetSymbolPrefixStart, not WordPrefixStart -- the two rules disagree
-    // on where a name like "ned/register-command" starts, which is why the
-    // applicable one is passed into CompletionSession rather than recomputed
-    // there). Returns false (activeCompletion_ left
-    // untouched) when there's no janetEnv_ wired, the prefix is empty, or
-    // nothing fuzzy-matches, so the caller falls through to plain
-    // dabbrev-expand instead of showing an empty suggestion.
-    [[nodiscard]] bool ApplyJanetBindingCompletion(text::Buffer& buffer, std::size_t point);
+    // completion-source-merge follow-up: every candidate that can be
+    // produced without asking a server -- snippet triggers for this
+    // buffer's language, the buffer's own words, and (in a Janet buffer)
+    // every live "ned/*" binding name. Collected synchronously at request
+    // time and merged with the server's own answer when it arrives, rather
+    // than serving as the fallback they used to be: a running server
+    // suppressing the buffer's own words was a popup missing candidates,
+    // not a tidier one.
+    //
+    // languageKey/prefixStart are the caller's own already-resolved values
+    // (point's embedded-language server key wins over the host mode's, and
+    // the prefix rule is this class's policy -- see completionPrefixRule_),
+    // passed rather than recomputed so the locals and the request agree on
+    // what word is being completed.
+    [[nodiscard]] std::vector<editor::Completion> LocalCompletionsAtPoint(text::Buffer& buffer, std::size_t point,
+                                                                          const std::string& languageKey,
+                                                                          std::size_t        prefixStart);
+    // The one place activeCompletion_ is populated -- both the "no server"
+    // path and the server's own response land here, so the empty-set rules
+    // (nothing collected, or everything ranked away against the prefix
+    // already typed) are stated once rather than per caller.
+    void               ShowCompletions(std::vector<editor::Completion> completions, bool isIncomplete, std::size_t point,
+                                       std::size_t prefixStart);
     [[nodiscard]] bool ShouldSuppressAutoCompletion() const;
     void               MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore);
     void               AcceptActiveCompletion();
@@ -4662,10 +4667,11 @@ class BufferView : public Widget {
     // completion-resolve follow-up. Arms completionResolveDebounceTimer_ for
     // the currently selected candidate, unless it's already resolved, the
     // server never advertised completionProvider.resolveProvider, or the
-    // item carries no raw JSON to send back (a dabbrev/Janet-synthesized
-    // one). Called from NotifyCompletionChanged, which every selection
-    // change already funnels through -- so cycling, clicking and scrolling
-    // all schedule a resolve without each having to remember to.
+    // candidate did not come from a server at all (a snippet, a buffer word,
+    // a Janet binding -- nothing to round-trip). Called from
+    // NotifyCompletionChanged, which every selection change already funnels
+    // through -- so cycling, clicking and scrolling all schedule a resolve
+    // without each having to remember to.
     void MaybeScheduleCompletionResolve();
     // The fired half of the above: re-checks that the selection still points
     // at the same unresolved candidate, sends the request, and merges the

@@ -17,6 +17,7 @@ add_executable(ned_tests
             RectangleTest.cpp
             AutoPairTest.cpp
             CompletionSessionTest.cpp
+            CompletionSourcesTest.cpp
             LspEditApplyTest.cpp
             DabbrevCompleteTest.cpp
             LocalScopesTest.cpp

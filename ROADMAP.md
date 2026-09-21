@@ -179,17 +179,25 @@ alone). Four conscious cuts left behind.
       every real case — an `#include`/`import` near the top of the file. An edit
       positioned after point on point's own line would be off by the characters typed
       since; no server has been observed to send one.
-- [ ] Considered and deliberately *not* prioritized (recorded so it stays a conscious
-      call): merging non-LSP candidates into the same popup. `RequestCompletionAtPoint`
-      (`BufferView.cpp:5427-5438`) is a mutually-exclusive cascade — LSP if running, else
-      Janet-binding completion in janet-mode, else dabbrev — so buffer words and snippet
-      triggers are strict fallbacks that vanish the moment a server attaches, never ranked
-      alongside server items. A real fix means a completion-source abstraction and a
-      source-neutral candidate type. `completion-fidelity` moved this closer without
-      doing it: `CompletionSession`'s own `CompletionCandidate` is already the wrapper
-      such a type would grow out of, but its payload is still the LSP wire struct and
-      the fallback sources still synthesize LSP items to fit it. Bigger than the
-      fidelity work above and independent of it.
+
+**Merged completion sources**
+
+Shipped -- slug for `git log --grep=`: `completion-source-merge`. `Editor/Completion.h`
+is the source-neutral candidate type, `Editor/CompletionSources.h` the four producers
+and the merge. Two conscious cuts left behind.
+
+- [ ] Buffer words are collected from `Buffer::Text()` -- a whole-document copy -- on
+      every completion request, which is why a huge buffer (`ITextStorage::IsHuge()`)
+      is skipped outright rather than scanned incrementally. A windowed scan (the
+      viewport plus some margin, the shape the huge-file search work already uses)
+      would give a huge file back its buffer words; nothing has needed it, since a
+      huge file is usually one being read rather than one being typed into.
+- [ ] Snippet and buffer-word candidates are collected once, at request time, and
+      re-ranked from there for the rest of the session -- correct for narrowing, and
+      for widening back to the prefix the session started at, which is the only
+      widening `CompletionSession` permits. A *server* answering `isIncomplete` re-asks
+      and re-collects; a local source has no equivalent, and needs none as long as the
+      collection is a superset of every prefix the session can reach.
 
 ### Parsing Engine: Trait Vocabulary over Per-Language Queries
 

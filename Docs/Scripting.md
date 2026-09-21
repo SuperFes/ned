@@ -199,7 +199,7 @@ Register a named keyboard macro: (name chords), e.g. (ned/register-macro "save-a
 
 ## `ned/register-snippet`
 
-Register a snippet: (language-key trigger body), e.g. (ned/register-snippet "cpp" "for" "for (int ${1:i} = 0; $1 < ${2:n}; ++$1) {\n    $0\n}"). Typing the trigger word then TAB (or M-x expand-snippet in modes whose keymap claims TAB) expands the body: ${n:placeholder}/$n are tabstop fields TAB/S-TAB hop between (a repeated index mirrors typing live), $0 is where point lands at the end, \$ escapes a literal dollar. language-key matches ned/set-lsp-command's ("cpp", "python", ...); "" registers for every mode. An empty body clears the trigger; re-registering overwrites it.
+Register a snippet: (language-key trigger body), e.g. (ned/register-snippet "cpp" "for" "for (int ${1:i} = 0; $1 < ${2:n}; ++$1) {\n    $0\n}"). A registered trigger also appears in the completion popup (marked snippet) once its first characters are typed, accepted the same way any other candidate is. Typing the trigger word then TAB (or M-x expand-snippet in modes whose keymap claims TAB) expands the body: ${n:placeholder}/$n are tabstop fields TAB/S-TAB hop between (a repeated index mirrors typing live), $0 is where point lands at the end, \$ escapes a literal dollar. language-key matches ned/set-lsp-command's ("cpp", "python", ...); "" registers for every mode. An empty body clears the trigger; re-registering overwrites it.
 
 ## `ned/register-test-parser`
 
@@ -511,7 +511,9 @@ Set how many recent *Messages* entries are kept in memory (default 5000) -- infi
 
 ## `ned/set-lsp-auto-complete`
 
-Enable or disable the automatic LSP completion popup while typing (default true). Manual completion (lsp-complete, bound to C-M-i) works regardless of this setting.
+Enable or disable the automatic completion popup while typing (default true). Manual completion (lsp-complete, bound to C-M-i) works regardless of this setting.
+
+The popup is never one source: a language server's items, snippet triggers for the buffer's language, the buffer's own words, and -- in a Janet buffer -- every live ned/* binding name all rank in one list against what you typed. A candidate's source only breaks a tie, in the order snippet, server, Janet binding, buffer word; what you typed decides first. A label a higher-ranked source already offered suppresses the same label from a lower one, so a buffer word never echoes a symbol the server just named. The local sources need a typed word to rank against, so a bare trigger character (".", "::") still draws members alone.
 
 ## `ned/set-lsp-code-action-hints`
 

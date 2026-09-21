@@ -46,6 +46,7 @@
 #include "Editor/BufferSave.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
+#include "Editor/CompletionSources.h"
 #include "Editor/Coverage/Config.h"
 #include "Editor/DabbrevComplete.h"
 #include "Editor/DiagnosticsLog.h"

@@ -89,7 +89,9 @@ add_library(ned_lib STATIC
         Editor/Rectangle.cpp
         Editor/ConflictResolution.cpp
         Editor/AutoPair.cpp
+        Editor/Completion.cpp
         Editor/CompletionSession.cpp
+        Editor/CompletionSources.cpp
         Editor/DabbrevComplete.cpp
         Editor/JanetSymbolComplete.cpp
         Editor/MinibufferPrompt.cpp
