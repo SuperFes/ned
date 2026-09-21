@@ -14,6 +14,10 @@
 - [Formatting Capabilities](FormattingCapabilities.md)
 - [Language Coverage](LanguageCoverage.md)
 
+# Design Records
+
+- [Formatting Rules](FormattingRules.md)
+
 # Investigations
 
 - [Jank Embedding Feasibility](JankFeasibility.md)

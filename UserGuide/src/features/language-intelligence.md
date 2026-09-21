@@ -63,7 +63,7 @@ sub-project root it detects independently).
 | `lsp-quick-fix` | Apply the code action at point immediately, no menu |
 | `lsp-document-highlight` | Highlight every occurrence of the symbol at point, in this file |
 | `lsp-linked-editing-range` | Live-mirror edits across linked ranges (e.g. a markup tag's opening/closing name) |
-| `format-buffer` | Reformat the whole buffer via the configured formatter |
+| `format-buffer` | Reformat the whole buffer — see [Formatting](formatting.md) |
 | `lsp-run-code-lens-at-point` | Run (resolving first if needed) the code lens at point |
 
 Completion appears as an anchored popup as you type, ranked by fuzzy match against the

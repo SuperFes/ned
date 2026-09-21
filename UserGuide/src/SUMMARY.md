@@ -17,6 +17,7 @@
 # Features
 
 - [Language Intelligence](features/language-intelligence.md)
+- [Formatting](features/formatting.md)
 - [Debugging](features/debugging.md)
 - [Version Control](features/version-control.md)
 - [Snippets](features/snippets.md)
