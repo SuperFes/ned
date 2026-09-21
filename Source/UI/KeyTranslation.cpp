@@ -1,5 +1,7 @@
 #include "KeyTranslation.h"
 
+#include <array>
+
 #include <notcurses/notcurses.h>
 
 namespace ned::ui {
@@ -71,6 +73,51 @@ namespace {
             default:
                 return std::nullopt;
         }
+    }
+
+    // xterm/terminfo's own encoding for a MODIFIED function key. A terminal
+    // without the kitty keyboard protocol has no way to say "Shift+F9", so
+    // it sends a different function key entirely and sets no modifier bit
+    // at all -- kf13..kf24 ARE shifted F1..F12 by terminfo convention, and
+    // xterm extends the same idea through Ctrl, Ctrl+Shift and Alt.
+    // Measured with this codebase's own key probe rather than assumed:
+    // Shift+F9 arrives as F21, Ctrl+F9 as F33, Ctrl+Shift+F9 as F45 and
+    // Alt+F9 as F57, every one of them with `modifiers` == 0.
+    //
+    // Folded back onto F1..F12 plus the modifiers they imply, so one keymap
+    // entry written "S-F9" matches under both protocols -- a kitty-protocol
+    // terminal reports F9 with the shift bit set and lands on the same
+    // chord through the ordinary path below. Without this every S-F<n>
+    // binding was silently dead: SpecialKeyFor stopped at F12 and returned
+    // nullopt, so the keystroke was dropped before any keymap saw it.
+    //
+    // The cost is that a physical F13..F24 key (rare, and exactly what
+    // terminfo already conflates these with) cannot be bound separately.
+    std::optional<KeyChord> DecodeExtendedFunctionKey(std::uint32_t id) {
+        if (id < NCKEY_F13 || id > NCKEY_F60) {
+            return std::nullopt;
+        }
+        static constexpr std::array<SpecialKey, 12> kFunctionKeys{
+            SpecialKey::F1, SpecialKey::F2, SpecialKey::F3, SpecialKey::F4, SpecialKey::F5, SpecialKey::F6,
+            SpecialKey::F7, SpecialKey::F8, SpecialKey::F9, SpecialKey::F10, SpecialKey::F11, SpecialKey::F12};
+        const std::uint32_t offset = id - NCKEY_F13;
+        KeyChord            chord{.Special = kFunctionKeys[offset % kFunctionKeys.size()]};
+        switch (offset / kFunctionKeys.size()) {
+            case 0: // F13..F24
+                chord.Shift = true;
+                break;
+            case 1: // F25..F36
+                chord.Control = true;
+                break;
+            case 2: // F37..F48
+                chord.Control = true;
+                chord.Shift   = true;
+                break;
+            default: // F49..F60
+                chord.Meta = true;
+                break;
+        }
+        return chord;
     }
 
     // Pure modifier-key-by-itself presses (NCKEY_LSHIFT, NCKEY_LCTRL, ...),
@@ -164,6 +211,12 @@ std::optional<KeyChord> TranslateKey(const Event& event) {
     if (const std::optional<SpecialKey> special = SpecialKeyFor(input.id)) {
         result = KeyChord{.Special = *special};
     }
+    else if (std::optional<KeyChord> extended = DecodeExtendedFunctionKey(input.id)) {
+        // Already carries the modifiers its own id implies; the bit-reading
+        // below can only add to them, never contradict them (a terminal
+        // using this encoding sets no bits at all).
+        result = *extended;
+    }
     else {
         result = DecodeBaseKey(input);
     }
@@ -196,6 +249,14 @@ std::optional<KeyChord> TranslateKey(const Event& event) {
         // codepoint; a Special key paired with Ctrl (e.g. Ctrl+Arrow) still
         // needs it applied here, since SpecialKeyFor itself doesn't consult
         // modifiers at all.
+        // copilot-key follow-up: unlike Shift, Super is NOT folded into the
+        // codepoint by the terminal -- Super+x still arrives as a plain 'x'
+        // -- so this applies to a literal character as well as to a special
+        // key, which is why it isn't guarded on Special != None the way
+        // Shift and Control are.
+        if (ncinput_super_p(&input)) {
+            result->Super = true;
+        }
         if (ncinput_ctrl_p(&input) && result->Special != SpecialKey::None) {
             result->Control = true;
         }

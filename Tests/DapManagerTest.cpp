@@ -1175,7 +1175,8 @@ TEST_CASE("ToggleFunctionBreakpoint adds/removes and pushes setFunctionBreakpoin
 
     REQUIRE(fixture.manager.FunctionBreakpoints().empty());
     REQUIRE(fixture.manager.ToggleFunctionBreakpoint("main"));
-    REQUIRE(fixture.manager.FunctionBreakpoints() == std::vector<std::string>{"main"});
+    REQUIRE(fixture.manager.FunctionBreakpoints().size() == 1);
+    REQUIRE(fixture.manager.FunctionBreakpoints()[0].name == "main");
 
     const Json added = fixture.reader.Next();
     REQUIRE(added["command"] == "setFunctionBreakpoints");
@@ -1762,4 +1763,475 @@ TEST_CASE("Data breakpoints are dropped when the session ends", "[Dap]") {
     // unlike line breakpoints, which survive.
     REQUIRE(fixture.manager.DataBreakpoints().empty());
     SetLaunchConfig("dap-manager-test-data-session-scope", "");
+}
+
+// debug-panel: the enable/disable/remove/clear operations a standing
+// breakpoint listing needs, and the change notification that keeps it from
+// going stale.
+
+TEST_CASE("A disabled source breakpoint is kept locally but omitted from setBreakpoints", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-disable");
+
+    const std::filesystem::path path = std::filesystem::current_path() / "dap-test-disable.c";
+    fixture.manager.ToggleBreakpoint(path, 4);
+    fixture.manager.ToggleBreakpoint(path, 9);
+    fixture.reader.Next();
+    fixture.reader.Next();
+
+    REQUIRE(fixture.manager.SetBreakpointEnabled(path, 4, false));
+    const Json afterDisable = fixture.reader.Next();
+    REQUIRE(afterDisable["command"] == "setBreakpoints");
+    REQUIRE(afterDisable["arguments"]["breakpoints"] == Json::array({Json{{"line", 9}}}));
+
+    // Still in the store, and still in the gutter's own view of the file --
+    // disabled is not removed.
+    const auto stored = fixture.manager.BreakpointsForKey(Manager::NormalizePathKey(path));
+    REQUIRE(stored.size() == 2);
+    REQUIRE_FALSE(stored[0].enabled);
+    REQUIRE(stored[1].enabled);
+    REQUIRE(fixture.manager.BreakpointsForFile(path) == std::vector<std::size_t>{4, 9});
+
+    REQUIRE(fixture.manager.SetBreakpointEnabled(path, 4, true));
+    const Json afterEnable = fixture.reader.Next();
+    REQUIRE(afterEnable["arguments"]["breakpoints"] == Json::array({Json{{"line", 4}}, Json{{"line", 9}}}));
+
+    REQUIRE_FALSE(fixture.manager.SetBreakpointEnabled(path, 77, false)); // no breakpoint there
+    SetLaunchConfig("dap-manager-test-disable", "");
+}
+
+TEST_CASE("A setBreakpoints response pairs with the request, not the store, when one is disabled", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-disable-pairing");
+
+    const std::filesystem::path path = std::filesystem::current_path() / "dap-test-pairing.c";
+    fixture.manager.ToggleBreakpoint(path, 3);
+    fixture.manager.ToggleBreakpoint(path, 8);
+    fixture.reader.Next();
+    fixture.reader.Next();
+    fixture.manager.SetBreakpointEnabled(path, 3, false);
+
+    // One entry on the wire (line 8), two in the store -- a positional
+    // match would land the response on the disabled line 3 instead.
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["arguments"]["breakpoints"] == Json::array({Json{{"line", 8}}}));
+    fixture.client->DispatchFrame(ResponseFrame(request["seq"].get<int>(), "setBreakpoints", true,
+                                                Json{{"breakpoints", Json::array({Json{{"verified", false}, {"line", 11}}})}}));
+
+    const auto stored = fixture.manager.BreakpointsForKey(Manager::NormalizePathKey(path));
+    REQUIRE(stored.size() == 2);
+    REQUIRE(stored[0].line == 3);
+    REQUIRE(stored[0].verified); // untouched -- it was never sent
+    REQUIRE(stored[0].actualLine == 0);
+    REQUIRE(stored[1].line == 8);
+    REQUIRE_FALSE(stored[1].verified);
+    REQUIRE(stored[1].actualLine == 11);
+    SetLaunchConfig("dap-manager-test-disable-pairing", "");
+}
+
+TEST_CASE("RemoveBreakpoint and ClearSourceBreakpoints push the emptied file to the adapter", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-remove");
+
+    const std::filesystem::path path = std::filesystem::current_path() / "dap-test-remove.c";
+    fixture.manager.ToggleBreakpoint(path, 2);
+    fixture.manager.ToggleBreakpoint(path, 5);
+    fixture.reader.Next();
+    fixture.reader.Next();
+
+    REQUIRE(fixture.manager.RemoveBreakpoint(path, 2));
+    REQUIRE(fixture.reader.Next()["arguments"]["breakpoints"] == Json::array({Json{{"line", 5}}}));
+    REQUIRE_FALSE(fixture.manager.RemoveBreakpoint(path, 2)); // already gone
+
+    fixture.manager.ClearSourceBreakpoints();
+    REQUIRE(fixture.reader.Next()["arguments"]["breakpoints"] == Json::array());
+    REQUIRE(fixture.manager.AllBreakpoints().empty());
+    SetLaunchConfig("dap-manager-test-remove", "");
+}
+
+TEST_CASE("A disabled function breakpoint is omitted from setFunctionBreakpoints", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-function-disable");
+
+    fixture.manager.ToggleFunctionBreakpoint("main");
+    fixture.manager.ToggleFunctionBreakpoint("parse");
+    fixture.reader.Next();
+    fixture.reader.Next();
+
+    REQUIRE(fixture.manager.SetFunctionBreakpointEnabled("main", false));
+    REQUIRE(fixture.reader.Next()["arguments"]["breakpoints"] == Json::array({Json{{"name", "parse"}}}));
+    REQUIRE(fixture.manager.FunctionBreakpoints().size() == 2);
+    REQUIRE_FALSE(fixture.manager.FunctionBreakpoints()[0].enabled);
+
+    REQUIRE(fixture.manager.RemoveFunctionBreakpoint("main"));
+    REQUIRE(fixture.reader.Next()["arguments"]["breakpoints"] == Json::array({Json{{"name", "parse"}}}));
+    REQUIRE_FALSE(fixture.manager.RemoveFunctionBreakpoint("main"));
+
+    fixture.manager.ClearFunctionBreakpoints();
+    REQUIRE(fixture.reader.Next()["arguments"]["breakpoints"] == Json::array());
+    REQUIRE(fixture.manager.FunctionBreakpoints().empty());
+    SetLaunchConfig("dap-manager-test-function-disable", "");
+}
+
+TEST_CASE("RestoreFunctionBreakpoints sorts, deduplicates and keeps the enabled flag", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.manager.RestoreFunctionBreakpoints({
+        Manager::FunctionBreakpoint{.name = "parse", .enabled = false},
+        Manager::FunctionBreakpoint{.name = "main"},
+        Manager::FunctionBreakpoint{.name = "parse"}, // duplicate: first occurrence after sorting wins
+    });
+    const auto& stored = fixture.manager.FunctionBreakpoints();
+    REQUIRE(stored.size() == 2);
+    REQUIRE(stored[0].name == "main");
+    REQUIRE(stored[1].name == "parse");
+    REQUIRE_FALSE(stored[1].enabled);
+}
+
+TEST_CASE("The enabled flag round-trips through AllBreakpoints/RestoreBreakpoints", "[Dap]") {
+    ManagerFixture              fixture;
+    const std::filesystem::path path = std::filesystem::current_path() / "dap-test-roundtrip.c";
+    fixture.manager.ToggleBreakpoint(path, 12);
+    REQUIRE(fixture.manager.SetBreakpointEnabled(path, 12, false));
+
+    const auto persisted = fixture.manager.AllBreakpoints();
+    REQUIRE(persisted.size() == 1);
+    REQUIRE_FALSE(persisted.begin()->second[0].enabled);
+
+    // Restored onto the same manager (one EventLoop per test process --
+    // a second fixture would re-init notcurses), which is also the real
+    // restore path: RestoreBreakpoints replaces the store wholesale.
+    fixture.manager.ClearSourceBreakpoints();
+    REQUIRE(fixture.manager.AllBreakpoints().empty());
+    fixture.manager.RestoreBreakpoints(persisted);
+    const auto stored = fixture.manager.BreakpointsForKey(Manager::NormalizePathKey(path));
+    REQUIRE(stored.size() == 1);
+    REQUIRE_FALSE(stored[0].enabled);
+}
+
+TEST_CASE("SetOnBreakpointsChanged fires for every store mutation", "[Dap]") {
+    ManagerFixture fixture;
+    int            changes = 0;
+    fixture.manager.SetOnBreakpointsChanged([&changes] { ++changes; });
+
+    const std::filesystem::path path = std::filesystem::current_path() / "dap-test-notify.c";
+    fixture.manager.ToggleBreakpoint(path, 6);
+    REQUIRE(changes == 1);
+    fixture.manager.SetBreakpointCondition(path, 6, "i > 2");
+    REQUIRE(changes == 2);
+    fixture.manager.SetBreakpointEnabled(path, 6, false);
+    REQUIRE(changes == 3);
+    fixture.manager.SetBreakpointEnabled(path, 6, false); // already disabled -- no change, no fire
+    REQUIRE(changes == 3);
+    fixture.manager.ToggleFunctionBreakpoint("main");
+    REQUIRE(changes == 4);
+    fixture.manager.RemoveBreakpoint(path, 6);
+    REQUIRE(changes == 5);
+    fixture.manager.ClearFunctionBreakpoints();
+    REQUIRE(changes == 6);
+}
+
+// debug-panel: the protocol requests added with the debug panel --
+// breakpointLocations (so a breakpoint that could never bind moves instead
+// of sitting silently in the gutter) and setExpression.
+
+namespace {
+
+// StartRunningSession's shape, but with an initialize response that
+// advertises whatever capabilities a test needs.
+void StartSessionWithCapabilities(ManagerFixture& fixture, const std::string& language, Json capabilities) {
+    SetLaunchConfig(language, R"({"program": "./fake-program"})");
+    fixture.manager.StartOrContinue(language);
+    const Json initialize = fixture.reader.Next();
+    REQUIRE(initialize["command"] == "initialize");
+    fixture.client->DispatchFrame(ResponseFrame(initialize["seq"].get<int>(), "initialize", true, std::move(capabilities)));
+    const Json launch = fixture.reader.Next();
+    REQUIRE(launch["command"] == "launch");
+    fixture.client->DispatchFrame(ResponseFrame(launch["seq"].get<int>(), "launch", true));
+    SetLaunchConfig(language, "");
+}
+
+} // namespace
+
+TEST_CASE("A breakpoint on a line the adapter says cannot hold one is moved to the nearest that can", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    StartSessionWithCapabilities(fixture, "dap-manager-test-snap", Json{{"supportsBreakpointLocationsRequest", true}});
+
+    std::string status;
+    fixture.manager.SetOnStatusMessage([&status](std::string message) { status = std::move(message); });
+
+    const std::filesystem::path path = std::filesystem::current_path() / "dap-test-snap.c";
+    REQUIRE(fixture.manager.ToggleBreakpoint(path, 10)); // a blank line, say
+    fixture.reader.Next();                               // the setBreakpoints this fired
+
+    const Json locations = fixture.reader.Next();
+    REQUIRE(locations["command"] == "breakpointLocations");
+    REQUIRE(locations["arguments"]["line"] == 10);
+    REQUIRE(locations["arguments"]["endLine"] == 18); // line + the snap window
+    fixture.client->DispatchFrame(ResponseFrame(locations["seq"].get<int>(), "breakpointLocations", true,
+                                                Json{{"breakpoints", Json::array({Json{{"line", 12}}, Json{{"line", 15}}})}}));
+
+    // The STORE moved, not just the display -- a condition set afterwards
+    // has to address a line that really exists.
+    REQUIRE(fixture.manager.BreakpointsForFile(path) == std::vector<std::size_t>{12});
+    REQUIRE(status.find("moved to line 12") != std::string::npos);
+    REQUIRE(fixture.reader.Next()["arguments"]["breakpoints"] == Json::array({Json{{"line", 12}}}));
+    SetLaunchConfig("dap-manager-test-snap", "");
+}
+
+TEST_CASE("An adapter that offers no breakpoint locations leaves the breakpoint exactly where it was", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    StartSessionWithCapabilities(fixture, "dap-manager-test-no-snap", Json{{"supportsBreakpointLocationsRequest", true}});
+
+    const std::filesystem::path path = std::filesystem::current_path() / "dap-test-no-snap.c";
+    fixture.manager.ToggleBreakpoint(path, 20);
+    fixture.reader.Next();
+
+    const Json locations = fixture.reader.Next();
+    REQUIRE(locations["command"] == "breakpointLocations");
+    // An empty answer is "no opinion", not "no valid lines" -- the two are
+    // indistinguishable on the wire, and refusing on it would break every
+    // adapter that answers thinly.
+    fixture.client->DispatchFrame(
+        ResponseFrame(locations["seq"].get<int>(), "breakpointLocations", true, Json{{"breakpoints", Json::array()}}));
+    REQUIRE(fixture.manager.BreakpointsForFile(path) == std::vector<std::size_t>{20});
+    SetLaunchConfig("dap-manager-test-no-snap", "");
+}
+
+TEST_CASE("No breakpointLocations request at all against an adapter that never advertised it", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-snap-uncapable"); // plain initialize, no capabilities
+
+    const std::filesystem::path path = std::filesystem::current_path() / "dap-test-snap-uncapable.c";
+    fixture.manager.ToggleBreakpoint(path, 30);
+    const Json sent = fixture.reader.Next();
+    REQUIRE(sent["command"] == "setBreakpoints"); // and nothing after it
+
+    fixture.manager.ToggleFunctionBreakpoint("probe"); // something to read next, to prove nothing was queued between
+    REQUIRE(fixture.reader.Next()["command"] == "setFunctionBreakpoints");
+    REQUIRE(fixture.manager.BreakpointsForFile(path) == std::vector<std::size_t>{30});
+    SetLaunchConfig("dap-manager-test-snap-uncapable", "");
+}
+
+TEST_CASE("SetExpression assigns to an expression, scoped to the stopped frame", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    StartSessionWithCapabilities(fixture, "dap-manager-test-set-expression", Json{{"supportsSetExpression", true}});
+
+    // Stop, so there is a frame to scope to.
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true,
+                                                Json{{"stackFrames", Json::array({Json{{"id", 77}, {"name", "main"}}})}}));
+
+    std::optional<Manager::SetVariableResult> result;
+    fixture.manager.SetExpression("node->key", "\"z\"", [&result](Manager::SetVariableResult r) { result = std::move(r); });
+
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["command"] == "setExpression");
+    REQUIRE(request["arguments"]["expression"] == "node->key");
+    REQUIRE(request["arguments"]["value"] == "\"z\"");
+    REQUIRE(request["arguments"]["frameId"] == 77);
+    fixture.client->DispatchFrame(
+        ResponseFrame(request["seq"].get<int>(), "setExpression", true, Json{{"value", "\"z\""}, {"type", "char *"}}));
+    REQUIRE(result);
+    REQUIRE(result->success);
+    REQUIRE(result->value == "\"z\"");
+    SetLaunchConfig("dap-manager-test-set-expression", "");
+}
+
+TEST_CASE("SetExpression refuses rather than asking an adapter that never advertised it", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-set-expression-uncapable");
+    // Stopped, so "no session" cannot be what refuses it -- the capability
+    // guard is what this covers.
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true,
+                                                Json{{"stackFrames", Json::array({Json{{"id", 5}, {"name", "main"}}})}}));
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Stopped);
+
+    std::optional<Manager::SetVariableResult> result;
+    fixture.manager.SetExpression("x", "1", [&result](Manager::SetVariableResult r) { result = std::move(r); });
+    REQUIRE(result);
+    REQUIRE_FALSE(result->success);
+    REQUIRE(result->errorMessage.find("does not support") != std::string::npos);
+    SetLaunchConfig("dap-manager-test-set-expression-uncapable", "");
+}
+
+TEST_CASE("RequestModules and RequestLoadedSources answer empty without asking an uncapable adapter", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-inventory-uncapable");
+
+    bool modulesAnswered = false;
+    bool sourcesAnswered = false;
+    fixture.manager.RequestModules([&](std::vector<Manager::Module> modules) {
+        modulesAnswered = true;
+        REQUIRE(modules.empty());
+    });
+    fixture.manager.RequestLoadedSources([&](std::vector<Manager::LoadedSource> sources) {
+        sourcesAnswered = true;
+        REQUIRE(sources.empty());
+    });
+    // Answered inline, not after a round trip -- nothing was sent.
+    REQUIRE(modulesAnswered);
+    REQUIRE(sourcesAnswered);
+    SetLaunchConfig("dap-manager-test-inventory-uncapable", "");
+}
+
+TEST_CASE("RequestModules normalizes a numeric module id and drops a nameless entry", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    StartSessionWithCapabilities(fixture, "dap-manager-test-modules", Json{{"supportsModulesRequest", true}});
+
+    std::vector<Manager::Module> modules;
+    fixture.manager.RequestModules([&modules](std::vector<Manager::Module> answered) { modules = std::move(answered); });
+
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["command"] == "modules");
+    fixture.client->DispatchFrame(ResponseFrame(
+        request["seq"].get<int>(), "modules", true,
+        Json{{"modules", Json::array({Json{{"id", 7}, {"name", "a.out"}, {"symbolStatus", "Symbols loaded."}},
+                                      Json{{"id", "anon"}}})}})); // no name: not worth a row
+    REQUIRE(modules.size() == 1);
+    REQUIRE(modules[0].id == "7");
+    REQUIRE(modules[0].name == "a.out");
+    REQUIRE(modules[0].symbolStatus == "Symbols loaded.");
+    SetLaunchConfig("dap-manager-test-modules", "");
+}
+
+// debug-panel (inline values): the frame-locals cache BufferView paints
+// from -- populated automatically on every stop, dropped on resume, and
+// never paid for on a scope the adapter called expensive.
+
+TEST_CASE("FrameLocals is populated on a stop and cleared when the debuggee resumes", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.manager.SetFrameLocalsTrackingEnabled(true);
+    fixture.StartRunningSession("dap-manager-test-frame-locals");
+    REQUIRE(fixture.manager.FrameLocals().empty());
+
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    REQUIRE(stackTrace["command"] == "stackTrace");
+    fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true,
+                                                Json{{"stackFrames", Json::array({Json{{"id", 4}, {"name", "main"}}})}}));
+
+    const Json scopes = fixture.reader.Next();
+    REQUIRE(scopes["command"] == "scopes");
+    REQUIRE(scopes["arguments"]["frameId"] == 4);
+    fixture.client->DispatchFrame(
+        ResponseFrame(scopes["seq"].get<int>(), "scopes", true,
+                      Json{{"scopes", Json::array({Json{{"name", "Locals"}, {"variablesReference", 50}},
+                                                   // Flagged expensive: never fetched, since inline
+                                                   // values are drawn on every paint.
+                                                   Json{{"name", "Globals"}, {"variablesReference", 60}, {"expensive", true}}})}}));
+
+    const Json variables = fixture.reader.Next();
+    REQUIRE(variables["command"] == "variables");
+    REQUIRE(variables["arguments"]["variablesReference"] == 50);
+    fixture.client->DispatchFrame(ResponseFrame(
+        variables["seq"].get<int>(), "variables", true,
+        Json{{"variables", Json::array({Json{{"name", "count"}, {"value", "3"}}, Json{{"name", "buf"}, {"value", "0x7f"}}})}}));
+
+    REQUIRE(fixture.manager.FrameLocals().size() == 2);
+    REQUIRE(fixture.manager.FrameLocals().at("count") == "3");
+    REQUIRE(fixture.manager.FrameLocals().at("buf") == "0x7f");
+
+    // Resuming makes them meaningless, not stale -- the frame may be gone.
+    fixture.manager.StartOrContinue("dap-manager-test-frame-locals");
+    const Json resume = fixture.reader.Next();
+    REQUIRE(resume["command"] == "continue");
+    fixture.client->DispatchFrame(ResponseFrame(resume["seq"].get<int>(), "continue", true));
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Running);
+    REQUIRE(fixture.manager.FrameLocals().empty());
+    SetLaunchConfig("dap-manager-test-frame-locals", "");
+}
+
+TEST_CASE("A frame-locals response arriving after a resume is dropped", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.manager.SetFrameLocalsTrackingEnabled(true);
+    fixture.StartRunningSession("dap-manager-test-frame-locals-stale");
+
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true,
+                                                Json{{"stackFrames", Json::array({Json{{"id", 4}, {"name", "main"}}})}}));
+    const Json scopes = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(scopes["seq"].get<int>(), "scopes", true,
+                                                Json{{"scopes", Json::array({Json{{"name", "Locals"}, {"variablesReference", 50}}})}}));
+    const Json variables = fixture.reader.Next();
+
+    // Resume BEFORE answering the variables request: its answer describes a
+    // frame that is no longer current.
+    fixture.manager.StartOrContinue("dap-manager-test-frame-locals-stale");
+    const Json resume = fixture.reader.Next();
+    REQUIRE(resume["command"] == "continue");
+    fixture.client->DispatchFrame(ResponseFrame(resume["seq"].get<int>(), "continue", true));
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Running);
+    fixture.client->DispatchFrame(ResponseFrame(variables["seq"].get<int>(), "variables", true,
+                                                Json{{"variables", Json::array({Json{{"name", "count"}, {"value", "3"}}})}}));
+    REQUIRE(fixture.manager.FrameLocals().empty());
+    SetLaunchConfig("dap-manager-test-frame-locals-stale", "");
+}
+
+// debug-panel: stepInTargets -- which of several calls on the stopped line
+// to step into.
+
+TEST_CASE("RequestStepInTargets answers empty without asking an adapter that never advertised it", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-step-in-uncapable");
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "step"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true,
+                                                Json{{"stackFrames", Json::array({Json{{"id", 3}, {"name", "main"}}})}}));
+
+    bool answered = false;
+    fixture.manager.RequestStepInTargets(3, [&](std::vector<Manager::StepInTarget> targets) {
+        answered = true;
+        REQUIRE(targets.empty()); // "no opinion", and nothing was sent
+    });
+    REQUIRE(answered);
+    SetLaunchConfig("dap-manager-test-step-in-uncapable", "");
+}
+
+TEST_CASE("StepIntoTarget carries the chosen target id alongside the thread", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    StartSessionWithCapabilities(fixture, "dap-manager-test-step-in", Json{{"supportsStepInTargetsRequest", true}});
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "step"}, {"threadId", 2}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true,
+                                                Json{{"stackFrames", Json::array({Json{{"id", 3}, {"name", "main"}}})}}));
+
+    std::vector<Manager::StepInTarget> targets;
+    fixture.manager.RequestStepInTargets(3, [&targets](std::vector<Manager::StepInTarget> answered) {
+        targets = std::move(answered);
+    });
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["command"] == "stepInTargets");
+    REQUIRE(request["arguments"]["frameId"] == 3);
+    fixture.client->DispatchFrame(ResponseFrame(
+        request["seq"].get<int>(), "stepInTargets", true,
+        Json{{"targets", Json::array({Json{{"id", 1}, {"label", "parse()"}}, Json{{"id", 2}, {"label", "validate()"}},
+                                      Json{{"id", 3}}})}})); // no label: nothing to show, so dropped
+    REQUIRE(targets.size() == 2);
+    REQUIRE(targets[1].label == "validate()");
+
+    REQUIRE(fixture.manager.StepIntoTarget(2) == "Stepping into...");
+    const Json stepIn = fixture.reader.Next();
+    REQUIRE(stepIn["command"] == "stepIn");
+    REQUIRE(stepIn["arguments"]["targetId"] == 2);
+    REQUIRE(stepIn["arguments"]["threadId"] == 2);
+    SetLaunchConfig("dap-manager-test-step-in", "");
 }

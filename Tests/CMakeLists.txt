@@ -66,6 +66,7 @@ add_executable(ned_tests
             LineEndingPolicyTest.cpp
             KeyTest.cpp
             DoubleTapModifierTest.cpp
+            ModifierTapTest.cpp
             CommandTest.cpp
             FuzzyMatchTest.cpp
             SearchEverywhereTest.cpp
@@ -300,6 +301,7 @@ add_executable(ned_tests
             DebugConsolePanelTest.cpp
             JanetReplPanelTest.cpp
             DapThreadsPanelTest.cpp
+            DebugPanelTest.cpp
             ChildProcessTest.cpp
             TaskConfigTest.cpp
             TaskProcessTest.cpp

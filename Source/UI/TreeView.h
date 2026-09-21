@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "Editor/Key.h"
 #include "Theme.h"
 #include "Widget.h"
 
@@ -37,6 +38,19 @@ struct TreeRow {
 
     std::string label;
     std::size_t depth = 0; // 0 for a root -- indentation is depth * 2 columns
+
+    // Overrides the label's own color -- a row that is present but inert
+    // (a disabled breakpoint, a section header with nothing under it)
+    // reads as such without needing a second glyph vocabulary. The
+    // selection brush still wins, same as kindForeground above.
+    std::optional<Color> labelForeground;
+
+    // Optional trailing column, right-aligned against the border --
+    // ListPopupRow::right's own shape and reasoning (a variable's value, a
+    // breakpoint's hit count). Empty means none; `label` is truncated
+    // before it rather than allowed to run underneath.
+    std::string          right;
+    std::optional<Color> rightForeground;
 
     // Whether to show an expand affordance at all. True both for "not yet
     // asked" (the common case: a hierarchy item's children are unknown
@@ -98,6 +112,25 @@ class TreeView : public Widget {
 
     void SetOnCancel(std::function<void()> onCancel);
 
+    // Any key this widget doesn't handle itself, offered to the caller
+    // before being dropped -- ListPopup::SetOnKey's own contract, so a
+    // consumer can layer per-row actions (remove, enable/disable, edit)
+    // without reimplementing navigation.
+    void SetOnKey(std::function<void(const editor::KeyChord&)> onKey);
+
+    // debug-panel: whether this widget draws its own border and title.
+    // True (the default) is the standalone-overlay shape every existing
+    // consumer uses. False is for a host that owns the chrome itself --
+    // LeftDock draws a bordered, titled content region around its active
+    // panel, and a second border inside it is just a second border.
+    void SetDrawBorder(bool drawBorder);
+
+    // The selected row, clamped to the current model -- a SetOnKey handler
+    // acts on "the row the user is looking at" and this widget owns that
+    // selection between SetModel calls (see SetOnSelectionChanged).
+    // std::nullopt for an empty model.
+    [[nodiscard]] std::optional<std::size_t> SelectedRow() const;
+
     void Paint(Canvas c) override;
     bool OnEvent(const Event& event) override;
 
@@ -105,14 +138,25 @@ class TreeView : public Widget {
     const Theme&  theme_;
     TreeViewModel model_;
 
-    std::function<void(std::size_t)> onSelectionChanged_;
-    std::function<void(std::size_t)> onActivate_;
-    std::function<void(std::size_t)> onToggleExpand_;
-    std::function<void(std::size_t)> onCollapseRequested_;
-    std::function<void()>            onCancel_;
+    // First visible row. Unlike ListPopup (whose callers window the model
+    // themselves), this widget owns its selection, so it owns the scroll
+    // that keeps that selection on screen -- a caller pushing a freshly
+    // flattened model after every expand has no way to know this widget's
+    // height. Clamped against the model and the paint height on every
+    // Paint; see EnsureSelectionVisible.
+    std::size_t scrollOffset_ = 0;
+    bool        drawBorder_   = true; // see SetDrawBorder
+
+    std::function<void(std::size_t)>             onSelectionChanged_;
+    std::function<void(std::size_t)>             onActivate_;
+    std::function<void(std::size_t)>             onToggleExpand_;
+    std::function<void(std::size_t)>             onCollapseRequested_;
+    std::function<void()>                        onCancel_;
+    std::function<void(const editor::KeyChord&)> onKey_;
 
     bool HandleKeyEvent(const Event& event);
     bool HandleMouseEvent(const Event& event);
+    void EnsureSelectionVisible(int visibleRows);
 };
 
 } // namespace ned::ui

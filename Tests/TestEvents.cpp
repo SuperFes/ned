@@ -203,6 +203,11 @@ Event F(int n) {
     return FromInput(SpecialInput(kFKeys[n - 1]));
 }
 
+Event LegacyExtendedF(int n) {
+    // NCKEY_F13..NCKEY_F60 are contiguous, so this needs no table.
+    return FromInput(SpecialInput(NCKEY_F13 + static_cast<std::uint32_t>(n - 13)));
+}
+
 Event ShiftPress() {
     ncinput input{};
     input.id     = NCKEY_LSHIFT;

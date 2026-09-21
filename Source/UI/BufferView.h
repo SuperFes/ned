@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "ActiveBuffer.h"
+#include "DebugPanel.h"
 #include "Editor/Acp/Manager.h"
 #include "Editor/Backup.h"
 #include "Editor/ClassFileSync.h"
@@ -238,6 +239,31 @@ class BufferView : public Widget {
     // project with no VCS provider configured just never gets this wired
     // in main.cpp.
     void SetVcsPanel(VcsPanel* panel);
+
+    // debug-panel: registers the third LeftDock panel so ToggleDebugPanel/
+    // FocusDebugPanel (toggle-debug-panel/focus-debug-panel) can drive it,
+    // exactly as SetVcsPanel does for the second. The dock itself enforces
+    // mutual exclusivity among all three (only its active panel paints or
+    // receives events), so nothing here coordinates between them. nullptr
+    // (the default) is a safe no-op, the usual convention.
+    void SetDebugPanel(DebugPanel* panel);
+
+    // copilot-key follow-up: run an already-decoded chord through this
+    // pane's full key path (InputMode switch, keymap, the lot). Public
+    // because a modifier tap is a GLOBAL gesture -- WindowManager routes it
+    // here whichever widget currently holds focus, which is what lets it
+    // dismiss a panel that has taken the keyboard away from this pane.
+    bool HandleChord(const editor::KeyChord& chord);
+
+    // debug-panel: starts a one-line text prompt on this pane whose result
+    // goes straight back to `onAccept` -- the debug panel has no minibuffer
+    // of its own (VcsPanel::SetOnAction's own reason for existing), but
+    // unlike VcsPanel's fixed action set it needs arbitrary one-off
+    // prompts, so what the text MEANS stays with the caller. Cancelling
+    // (Escape/C-g) drops the callback without calling it. The callback must
+    // not start a second prompt of its own: the session teardown that
+    // follows every accept would cancel it immediately.
+    void BeginDebugPanelTextEntry(std::string label, std::string initialText, std::function<void(std::string)> onAccept);
 
     // VCS side panel: starts an existing VCS interactive flow (commit
     // compose / branch switch / branch create) on this pane -- the same
@@ -1321,6 +1347,22 @@ class BufferView : public Widget {
                            // instead of single-pick.
                            DapBreakpointHitCondition,
                            DapFunctionBreakpointName,
+                           // debug-panel: a numbered pick among the calls on
+                           // the stopped line, entered only when the adapter
+                           // reports more than one -- DapThreadSelect's own
+                           // HandleChoicePromptKey shape.
+                           DapStepInTargetSelect,
+                           // debug-panel: a text prompt whose meaning lives
+                           // entirely in the caller's own accept callback
+                           // (debugPanelTextEntryAccept_) rather than in a
+                           // case of this enum -- the debug panel needs
+                           // half a dozen one-line prompts (condition, hit
+                           // condition, log message, function name, new
+                           // variable value, watch expression) that differ
+                           // only in what they do with the string, and it,
+                           // not this class, is what knows the row they act
+                           // on.
+                           DebugPanelTextEntry,
                            DapExceptionFilterSelect,
                            // Debugging wishlist: DapDataBreakpointAccess is
                            // DapThreadSelect's single-pick shape again -- entered from
@@ -1405,6 +1447,7 @@ class BufferView : public Widget {
     // Keyboard/mouse handling split out of OnEvent for readability -- was
     // key_press/mouse_press/mouse_move/mouse_release/mouse_wheel.
     bool OnKeyEvent(const Event& event);
+
     bool OnMouseEvent(const Event& event);
     // A left button press in the content area -- gutter columns get first
     // refusal, then point placement, drag selection and click counting.
@@ -1816,6 +1859,12 @@ class BufferView : public Widget {
     // inside it is swallowed rather than placing point in the gutter --
     // HandleTestGutterClick's own convention.
     bool HandleCodeActionGutterClick(Point at);
+
+    // debug-panel. A click on the breakpoint column toggles a breakpoint on
+    // that row -- the mouse counterpart to F9, with the same
+    // "true for any click inside the column" convention as the two gutter
+    // click handlers around it.
+    bool HandleDapGutterClick(Point at);
 
     // codeLens follow-up. Runs the first code lens (Manager::
     // CodeLensSpans, sorted by startByte) whose range covers point's own
@@ -3468,6 +3517,14 @@ class BufferView : public Widget {
     void RefreshDapThreadSelectStatus();
     void HandleDapThreadSelectKey(const editor::KeyChord& chord);
 
+    // debug-panel: step-into, asking first when the adapter can say which
+    // calls the stopped line actually offers. Falls straight through to
+    // Manager::StepInto when it can't, or when there is only one -- F11
+    // must not grow a prompt in the case it never had one.
+    void StepIntoWithTargets();
+    void RefreshDapStepInTargetStatus();
+    void HandleDapStepInTargetKey(const editor::KeyChord& chord);
+
     // DAP round 3: dap-select-exception-breakpoints's entry point --
     // BeginDapThreadSelect's shape, but multi-select/toggle over
     // Manager::AvailableExceptionFilters() rather than a single pick;
@@ -3642,6 +3699,7 @@ class BufferView : public Widget {
     ProjectSidebar*                       projectSidebar_  = nullptr;         // see SetProjectSidebar
     LeftDock*                             leftDock_        = nullptr;         // see SetLeftDock
     VcsPanel*                             vcsPanel_        = nullptr;         // see SetVcsPanel
+    DebugPanel*                           debugPanel_      = nullptr;         // see SetDebugPanel
     std::function<bool()>                 splitResizeQuery_;                  // see SetSplitResizeQuery
     Minimap*                              minimap_                 = nullptr; // see SetMinimap
     Widget*                               minimapScrollColumn_     = nullptr; // see SetMinimap
@@ -3686,6 +3744,11 @@ class BufferView : public Widget {
     std::vector<editor::dap::Manager::Thread> pendingDapThreads_;
     std::size_t                                  dapThreadSelection_ = 0;
 
+    // debug-panel: valid only while inputMode_ == DapStepInTargetSelect --
+    // pendingDapThreads_'s own convention.
+    std::vector<editor::dap::Manager::StepInTarget> pendingDapStepInTargets_;
+    std::size_t                                     dapStepInTargetSelection_ = 0;
+
     // DAP round 3: valid only while inputMode_ ==
     // InputMode::DapExceptionFilterSelect -- pendingDapThreads_'s own
     // convention, but the enabled set is a local editable copy (toggled by
@@ -3729,6 +3792,12 @@ class BufferView : public Widget {
         std::string   name;
     };
     std::optional<PendingDapSetVariable> pendingDapSetVariable_;
+
+    // debug-panel: what to do with the text of the current
+    // InputMode::DebugPanelTextEntry prompt -- see
+    // BeginDebugPanelTextEntry. Cleared on accept and on cancel alike.
+    std::function<void(std::string)> debugPanelTextEntryAccept_;
+    std::string                      debugPanelTextEntryLabel_;
 
     // DAP round 5: dap-show-memory-at-point's captured target -- just the
     // memory reference string itself (unlike PendingDapSetVariable, the
@@ -4306,6 +4375,21 @@ class BufferView : public Widget {
     // Editor/InlineDiagnostics.h for why that is the default.
     void PaintEndOfLineDiagnostics(Canvas& c, const std::vector<std::size_t>& rowLine,
                                    const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);
+
+    // debug-panel: the debugger's inline values -- `name = value` after a
+    // line that mentions one of the stopped frame's own locals, for the one
+    // buffer the debuggee is actually stopped in. PaintEndOfLineDiagnostics'
+    // shape and its reasoning: never a row of its own, so a value appearing
+    // or changing while stepping doesn't shove the code below it around.
+    //
+    // A local is matched against a line by whole-word text search, not by
+    // parsing: the adapter reports names, not positions, and the grammar
+    // would have to agree with the debugger's own notion of scope for a
+    // structural match to be any more correct than this one. The failure
+    // mode is a value shown against a line that mentions the same word in a
+    // comment or a string -- visible noise, never a wrong value.
+    void PaintInlineDebugValues(Canvas& c, const std::vector<std::size_t>& rowLine,
+                                const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);
 
     void PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::size_t>& rowLine,
                                       const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);

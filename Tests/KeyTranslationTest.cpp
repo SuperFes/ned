@@ -178,3 +178,65 @@ TEST_CASE("TranslateKey returns nullopt for mouse events", "[KeyTranslation]") {
 TEST_CASE("TranslateKey returns nullopt for an empty (all-zero) event", "[KeyTranslation]") {
     REQUIRE_FALSE(TranslateKey(ned::ui::Event(ncinput{})).has_value());
 }
+
+// A terminal without the kitty keyboard protocol cannot say "Shift+F9": it
+// sends a different function key and sets no modifier bit at all. Every
+// S-F<n> binding in the default keymap (dap-stop, dap-step-out,
+// toggle-debug-panel) was silently dead until these were decoded -- the
+// keystroke was dropped before any keymap saw it. Ranges measured against a
+// real terminal with Tools-style probe: Shift+F9 -> F21, Ctrl+F9 -> F33,
+// Ctrl+Shift+F9 -> F45, Alt+F9 -> F57.
+TEST_CASE("TranslateKey folds terminfo's extended function keys back onto F1-F12 plus modifiers", "[KeyTranslation]") {
+    SECTION("F13-F24 are Shift+F1-F12") {
+        const auto shiftF1 = TranslateKey(ned::ui::test::LegacyExtendedF(13));
+        REQUIRE(shiftF1.has_value());
+        REQUIRE(shiftF1->Special == SpecialKey::F1);
+        REQUIRE(shiftF1->Shift);
+        REQUIRE_FALSE(shiftF1->Control);
+        REQUIRE_FALSE(shiftF1->Meta);
+
+        const auto shiftF9 = TranslateKey(ned::ui::test::LegacyExtendedF(21));
+        REQUIRE(shiftF9->Special == SpecialKey::F9);
+        REQUIRE(shiftF9->Shift);
+
+        const auto shiftF12 = TranslateKey(ned::ui::test::LegacyExtendedF(24));
+        REQUIRE(shiftF12->Special == SpecialKey::F12);
+        REQUIRE(shiftF12->Shift);
+    }
+
+    SECTION("F25-F36 are Ctrl+F1-F12") {
+        const auto ctrlF9 = TranslateKey(ned::ui::test::LegacyExtendedF(33));
+        REQUIRE(ctrlF9.has_value());
+        REQUIRE(ctrlF9->Special == SpecialKey::F9);
+        REQUIRE(ctrlF9->Control);
+        REQUIRE_FALSE(ctrlF9->Shift);
+    }
+
+    SECTION("F37-F48 are Ctrl+Shift+F1-F12") {
+        const auto ctrlShiftF9 = TranslateKey(ned::ui::test::LegacyExtendedF(45));
+        REQUIRE(ctrlShiftF9.has_value());
+        REQUIRE(ctrlShiftF9->Special == SpecialKey::F9);
+        REQUIRE(ctrlShiftF9->Control);
+        REQUIRE(ctrlShiftF9->Shift);
+    }
+
+    SECTION("F49-F60 are Alt+F1-F12") {
+        const auto altF9 = TranslateKey(ned::ui::test::LegacyExtendedF(57));
+        REQUIRE(altF9.has_value());
+        REQUIRE(altF9->Special == SpecialKey::F9);
+        REQUIRE(altF9->Meta);
+        REQUIRE_FALSE(altF9->Shift);
+    }
+
+    SECTION("a kitty-protocol terminal's own Shift+F9 lands on the same chord") {
+        // The point of folding: one keymap entry, written S-F9, matches
+        // whichever encoding the terminal happens to use.
+        ncinput input{};
+        input.id         = NCKEY_F09;
+        input.modifiers  = NCKEY_MOD_SHIFT;
+        input.evtype     = NCTYPE_PRESS;
+        const auto kitty = TranslateKey(ned::ui::Event(input));
+        REQUIRE(kitty.has_value());
+        REQUIRE(*kitty == *TranslateKey(ned::ui::test::LegacyExtendedF(21)));
+    }
+}

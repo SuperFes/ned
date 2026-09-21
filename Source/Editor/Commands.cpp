@@ -37,6 +37,7 @@
 #include "FormatWrap.h"
 #include "Indent.h"
 #include "IndentStyle.h"
+#include "InlineDebugValues.h"
 #include "InlineDiagnostics.h"
 #include "Lsp/Manager.h"
 #include "Lsp/ServerConfig.h"
@@ -2573,6 +2574,25 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::FocusVcsPanel;
                       });
 
+    // debug-panel: the third LeftDock panel, same "just set
+    // interactiveRequest" shape as the two above. Unlike them it is useful
+    // with no session running at all -- line and function breakpoints are
+    // process-wide and persisted, so this is where they get reviewed and
+    // armed before anything is launched.
+    registry.Register("toggle-debug-panel",
+                      "Show or hide the left-side debug panel (source, function, data and exception breakpoints).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ToggleDebugPanel;
+                      });
+    registry.Register("focus-debug-panel",
+                      "Move keyboard focus into the debug panel (Up/Down to move, Left/Right to collapse/expand, "
+                      "Enter to visit a breakpoint's line, Space to enable/disable it, 'd' to remove it, "
+                      "'c'/'h'/'l' to set a condition/hit condition/log message, 'a' to add a function "
+                      "breakpoint, 'X' to clear the section, 'g' to refresh, Escape or C-g to return to the editor).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::FocusDebugPanel;
+                      });
+
     // session-persistence slice 3: creates the project's .ned/ directory --
     // the strictly-opt-in marker nothing else ever creates -- so the
     // session moves to <root>/.ned/session.json and a .ned/init.janet can
@@ -3140,6 +3160,17 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // Whitespace-visualization follow-up: same "plain process-wide toggle,
     // actable right here" shape as toggle-inline-diagnostics just above --
     // WhitespaceSettings.h's three settings had been Janet-only until now.
+    registry.Register("toggle-inline-debug-values",
+                      "Show or hide the debugger's inline values (the stopped frame's locals, shown after the lines "
+                      "that mention them).",
+                      [](CommandContext& context) {
+                          const bool enabled = !InlineDebugValuesEnabled();
+                          SetInlineDebugValuesEnabled(enabled);
+                          if (context.message) {
+                              *context.message = enabled ? "Inline debug values on." : "Inline debug values off.";
+                          }
+                      });
+
     registry.Register("toggle-tab-glyphs",
                       "Show or hide a glyph marking the first cell of every real (literal) tab byte.",
                       [](CommandContext& context) {
@@ -4785,6 +4816,15 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("F10"), "dap-step-over");
     keymap.Bind(ParseKeySequence("F11"), "dap-step-into");
     keymap.Bind(ParseKeySequence("S-F11"), "dap-step-out");
+    // debug-panel: beside F9's own toggle-a-breakpoint, the list of every
+    // breakpoint F9 has ever set.
+    keymap.Bind(ParseKeySequence("S-F9"), "toggle-debug-panel");
+    // copilot-key follow-up: a deliberate tap of Shift+Super, which is what
+    // at least one laptop's "Copilot" key emits and nothing else does. See
+    // UI/ModifierTap.h -- the chord only exists at all on a terminal
+    // speaking the Kitty keyboard protocol, so this binding is simply inert
+    // elsewhere, and C-c c reaches the same panel regardless.
+    keymap.Bind(ParseKeySequence("S-SUPER"), "acp-toggle-panel");
     // ACP client slice 2 (keymap-collision follow-up): "C-c A" prefix
     // (shifted "a" for agent), not plain "C-c a" -- that's already
     // org-agenda's own leaf binding (real Org's actual binding), and

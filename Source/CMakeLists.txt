@@ -16,6 +16,7 @@
 # tables alone. ImportCommand/TestCommand stay in ned_lib: they drive
 # corpora, the parser and child processes, none of which compiling needs.
 add_library(ned_grammar_compile STATIC
+        Editor/InlineDebugValues.cpp
         Editor/JanetData.cpp
         Editor/Grammar/Compile/GrammarFile.cpp
         Editor/Grammar/Compile/Grammar.cpp
@@ -424,6 +425,8 @@ add_library(ned_lib STATIC
         UI/MemoryImageView.cpp
         UI/BufferListPanel.cpp
         UI/DapThreadsPanel.cpp
+        UI/DebugPanel.cpp
+        UI/ModifierTap.cpp
         UI/BufferView.cpp
         UI/BufferView/Paint.cpp
         UI/BufferView/Gutter.cpp

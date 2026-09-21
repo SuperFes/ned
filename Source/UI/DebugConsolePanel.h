@@ -33,6 +33,15 @@
 // uses (C-s/C-r repeat-or-reverse depending on current direction, Enter
 // accepts, Esc cancels back to the pre-search scrollbackOffset_).
 //
+// debug-panel: Tab completes the typed expression through the adapter's own
+// `completions` request (Manager::RequestCompletions) -- the debuggee's
+// symbols, not the editor's. A single candidate is inserted outright; several
+// are listed in the transcript and the common prefix inserted, readline's own
+// convention, because this panel has no popup of its own and adding one for
+// the debug console alone would be a second completion UI. An adapter that
+// doesn't implement the request simply doesn't complete, rather than falling
+// back to a guess made from the transcript.
+//
 // Deliberate v1 cut, same as AcpPanel/TerminalPanel: no dock-side config
 // (hardcoded bottom-dock like TerminalPanel -- a REPL is naturally
 // bottom-docked and nothing asked for a right-dock option).
@@ -118,6 +127,14 @@ class DebugConsolePanel : public Widget {
     // this panel's own transcript -- only called while search_ already has
     // a value. Always returns true (every key is consumed mid-search).
     bool HandleSearchKey(const editor::KeyChord& chord);
+    // debug-panel: Tab -- see this file's own header comment. Returns true
+    // whenever it consumed the chord, which is any Tab at all: a Tab that
+    // completes nothing must still not fall through to inserting one.
+    bool TryComplete(const editor::KeyChord& chord);
+    // Splices one completion into the prompt, over the span the adapter
+    // named or (when it named none) the identifier run the request ended
+    // with. A no-op if the prompt has changed under the request.
+    void ApplyCompletion(const editor::dap::Manager::Completion& completion, const std::string& requestText);
 
     const Theme&             theme_;
     editor::dap::Manager* dapManager_    = nullptr;

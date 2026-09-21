@@ -1695,6 +1695,61 @@ void BufferView::HandleDapThreadSelectKey(const editor::KeyChord& chord) {
                           chord);
 }
 
+void BufferView::StepIntoWithTargets() {
+    if (dapManager_ == nullptr) {
+        statusMessage_ = "No debugger available.";
+        return;
+    }
+    const auto frameId = dapManager_->FocusedFrameId();
+    if (!frameId) {
+        statusMessage_ = dapManager_->StepInto();
+        return;
+    }
+    dapManager_->RequestStepInTargets(*frameId, [this](std::vector<editor::dap::Manager::StepInTarget> targets) {
+        // Zero targets means "this adapter has no opinion" as often as it
+        // means "nothing to step into", and one target is not a choice --
+        // both step the way F11 always did.
+        if (targets.size() < 2) {
+            statusMessage_ = dapManager_->StepInto();
+            return;
+        }
+        if (inputMode_ != InputMode::Normal) {
+            return; // another prompt began while this was in flight -- don't hijack it
+        }
+        pendingDapStepInTargets_  = std::move(targets);
+        dapStepInTargetSelection_ = 0;
+        inputMode_                = InputMode::DapStepInTargetSelect;
+        RefreshDapStepInTargetStatus();
+    });
+}
+
+void BufferView::RefreshDapStepInTargetStatus() {
+    std::string status = "Step into: ";
+    for (std::size_t i = 0; i < pendingDapStepInTargets_.size(); ++i) {
+        if (i > 0) {
+            status += "  ";
+        }
+        const bool selected = (i == dapStepInTargetSelection_);
+        status += (selected ? "[" : "") + std::to_string(i + 1) + ") " + pendingDapStepInTargets_[i].label + (selected ? "]" : "");
+    }
+    statusMessage_ = status;
+}
+
+void BufferView::HandleDapStepInTargetKey(const editor::KeyChord& chord) {
+    HandleChoicePromptKey({.count         = pendingDapStepInTargets_.size(),
+                           .selection     = &dapStepInTargetSelection_,
+                           .cancelMessage = "Step-into cancelled.",
+                           .refresh       = [this] { RefreshDapStepInTargetStatus(); },
+                           .commit =
+                               [this, targets = pendingDapStepInTargets_](std::size_t index) {
+                                   if (dapManager_ == nullptr) {
+                                       return;
+                                   }
+                                   statusMessage_ = dapManager_->StepIntoTarget(targets[index].id);
+                               }},
+                          chord);
+}
+
 // DAP round 3: BeginDapThreadSelect's own shape, but a live/local toggle set
 // (pendingDapEnabledExceptionFilters_) rather than a single pick -- nothing
 // reaches the adapter until Enter commits it via
@@ -1928,6 +1983,19 @@ void BufferView::HandleVcsSwitchBranchKey(const editor::KeyChord& chord) {
 
 void BufferView::SetVcsPanel(VcsPanel* panel) {
     vcsPanel_ = panel;
+}
+
+void BufferView::SetDebugPanel(DebugPanel* panel) {
+    debugPanel_ = panel;
+}
+
+void BufferView::BeginDebugPanelTextEntry(std::string label, std::string initialText, std::function<void(std::string)> onAccept) {
+    debugPanelTextEntryAccept_ = std::move(onAccept);
+    debugPanelTextEntryLabel_  = std::move(label);
+    inputMode_                 = InputMode::DebugPanelTextEntry;
+    prompt_.emplace(debugPanelTextEntryLabel_ + ": ");
+    prompt_->SetText(std::move(initialText));
+    statusMessage_ = prompt_->StatusText();
 }
 
 void BufferView::RequestVcsAction(VcsPanelAction action) {

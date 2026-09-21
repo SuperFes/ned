@@ -7,8 +7,10 @@
 //
 
 #include "Editor/HighlightCache.h"
+#include "Editor/InlineDebugValues.h"
 #include "Editor/RecencyGlow.h"
 #include "Editor/RulerSettings.h"
+#include "UI/BreakpointGlyph.h"
 #include "UI/BufferView/Internal.h"
 
 namespace ned::ui {
@@ -365,11 +367,13 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
                                                return (bp.actualLine != 0 ? bp.actualLine : bp.line) == line + 1;
                                            });
             if (bpIt != frame.dapBreakpoints.end()) {
-                cell.character    = !bpIt->logMessage.empty()     ? "○"
-                                    : !bpIt->condition.empty()    ? "◆"
-                                    : !bpIt->hitCondition.empty() ? "◇"
-                                                                  : "●";
-                const Color color = bpIt->verified ? theme_.breakpointMarker : theme_.unverifiedBreakpointMarker;
+                // debug-panel: the glyph/color vocabulary moved to
+                // BreakpointGlyph.h so the panel's own breakpoint section
+                // draws the same marks this column does. A disabled
+                // breakpoint recedes rather than disappearing -- it is
+                // still set here, just not armed.
+                cell.character    = BreakpointGlyph(*bpIt);
+                const Color color = BreakpointGlyphColor(theme_, bpIt->verified, bpIt->enabled);
                 Brush{.background = theme_.background, .foreground = color}.ApplyTo(cell);
             }
         }
@@ -2292,6 +2296,8 @@ void BufferView::Paint(Canvas paneCanvas) {
 
     PaintEndOfLineDiagnostics(c, rowLine, rowContentEndColumn, gutter.totalWidth);
 
+    PaintInlineDebugValues(c, rowLine, rowContentEndColumn, gutter.totalWidth);
+
     PaintConflictActionChips(c, rowLine, rowContentEndColumn, gutter.totalWidth);
 
     PaintProseDiagnosticCallouts(c, rowLine, rowContentEndColumn, gutter.totalWidth);
@@ -2729,6 +2735,89 @@ void BufferView::PaintRuler(Canvas& c, std::size_t gutterWidth) const {
         }
         // Any other background (selection, search hit, diff tint, ...) already
         // owns this cell -- same yield-to-louder rule as the current line.
+    }
+}
+
+void BufferView::PaintInlineDebugValues(Canvas& c, const std::vector<std::size_t>& rowLine,
+                                        const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth) {
+    if (!editor::InlineDebugValuesEnabled() || dapManager_ == nullptr) {
+        return;
+    }
+    const std::map<std::string, std::string>& locals = dapManager_->FrameLocals();
+    if (locals.empty()) {
+        return;
+    }
+    // Only the file the debuggee is actually stopped in: a local named
+    // `count` means nothing in a file the stopped frame isn't from, and
+    // annotating every open buffer with it would be actively misleading.
+    EnsureDapPathKey();
+    const auto stop = dapManager_->CurrentStopKeyAndLine();
+    if (dapPathKey_.empty() || !stop || stop->first != dapPathKey_) {
+        return;
+    }
+
+    const text::ITextStorage& content = activeBuffer_.Get().Content();
+    const int                 height  = c.size().height;
+    const int                 width   = c.size().width;
+
+    for (int row = 0; row < height; ++row) {
+        if (row >= static_cast<int>(rowLine.size()) || rowLine[row] == kNoRowLine) {
+            continue;
+        }
+        // The line's last row, same rule the diagnostics use: a wrapped
+        // line's annotation belongs after the end of its text.
+        if (row + 1 < height && row + 1 < static_cast<int>(rowLine.size()) && rowLine[row + 1] == rowLine[row]) {
+            continue;
+        }
+
+        const std::size_t lineStart = content.LineToByteOffset(rowLine[row]);
+        const std::size_t lineEnd   = (rowLine[row] + 1 < content.LineCount())
+                                          ? content.LineToByteOffset(rowLine[row] + 1) - 1
+                                          : content.ByteLength();
+        if (lineEnd <= lineStart) {
+            continue;
+        }
+        const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+
+        // At most a few per line: a dense line mentioning six locals would
+        // otherwise annotate itself into unreadability.
+        constexpr int kMaxPerLine = 3;
+        std::string   annotation;
+        int           shown = 0;
+        for (const auto& [name, value] : locals) {
+            if (shown >= kMaxPerLine) {
+                break;
+            }
+            if (!ContainsWholeWord(lineText, name)) {
+                continue;
+            }
+            annotation += (annotation.empty() ? "" : "  ") + name + " = " + FirstLineOf(value);
+            shown += 1;
+        }
+        if (annotation.empty()) {
+            continue;
+        }
+
+        // Two columns of gap, so the annotation never reads as a
+        // continuation of the code it follows -- the inline diagnostics'
+        // own spacing.
+        int col = std::max(static_cast<int>(gutterWidth), rowContentEndColumn[row]) + 2;
+        if (col >= width) {
+            continue;
+        }
+        // Dim and italic: this is the editor talking about the code, not
+        // code -- the same distinction the inline diagnostics draw, minus
+        // their severity colour, which would claim something is wrong.
+        const Brush brush{.foreground = theme_.indentGuideForeground, .italic = true};
+        for (const char character : annotation) {
+            if (col >= width) {
+                break;
+            }
+            Cell& cell     = c[{.x = col, .y = row}];
+            cell.character = std::string(1, character);
+            brush.ApplyTextTo(cell);
+            ++col;
+        }
     }
 }
 

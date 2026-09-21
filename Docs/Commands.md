@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-319 commands.
+322 commands.
 
 ## `acp-rewind`
 
@@ -36,7 +36,7 @@ Stop the active ACP session.
 
 ## `acp-toggle-panel`
 
-Key: `C-c c`
+Key: `S-SUPER`
 
 Show, focus, or hide the ACP chat panel.
 
@@ -471,6 +471,10 @@ Open or create a named scratch note (prompts for its name; not tied to any proje
 ## `fix-case-violation-at-point`
 
 Rename the case-convention violation at point to Editor/FormatCase.h's suggested conforming name, via rename-symbol's own prompt (pre-filled, not applied silently).
+
+## `focus-debug-panel`
+
+Move keyboard focus into the debug panel (Up/Down to move, Left/Right to collapse/expand, Enter to visit a breakpoint's line, Space to enable/disable it, 'd' to remove it, 'c'/'h'/'l' to set a condition/hit condition/log message, 'a' to add a function breakpoint, 'X' to clear the section, 'g' to refresh, Escape or C-g to return to the editor).
 
 ## `focus-project-sidebar`
 
@@ -1430,9 +1434,19 @@ Show every themed surface and named paint as a live swatch, with a contrast read
 
 Toggle whether a binary-detected buffer's format/line-ending/final-newline safeguards apply.
 
+## `toggle-debug-panel`
+
+Key: `S-F9`
+
+Show or hide the left-side debug panel (source, function, data and exception breakpoints).
+
 ## `toggle-indent-guides`
 
 Show or hide vertical indentation guide glyphs within each line's own leading whitespace.
+
+## `toggle-inline-debug-values`
+
+Show or hide the debugger's inline values (the stopped frame's locals, shown after the lines that mention them).
 
 ## `toggle-inline-diagnostics`
 

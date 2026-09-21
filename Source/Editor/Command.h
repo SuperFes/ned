@@ -109,6 +109,11 @@ enum class InteractiveRequest { None,
                                 // own doc comment).
                                 ToggleVcsPanel,
                                 FocusVcsPanel,
+                                // debug-panel: the same pair for the third
+                                // LeftDock panel -- breakpoints, and
+                                // everything else the debugger knows.
+                                ToggleDebugPanel,
+                                FocusDebugPanel,
                                 // org-agenda follow-up: another one-shot direct action, same
                                 // shape as ToggleProjectSidebar -- BufferView builds and
                                 // switches to a synthesized "*agenda*" buffer.

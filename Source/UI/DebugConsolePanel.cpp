@@ -1,6 +1,7 @@
 #include "DebugConsolePanel.h"
 
 #include <algorithm>
+#include <cctype>
 
 #include "Border.h"
 #include "KeyTranslation.h"
@@ -355,6 +356,9 @@ bool DebugConsolePanel::OnEvent(const Event& event) {
         }
         return true;
     }
+    if (TryComplete(*chord)) {
+        return true;
+    }
     if (TryNavigateHistory(*chord)) {
         return true;
     }
@@ -363,6 +367,85 @@ bool DebugConsolePanel::OnEvent(const Event& event) {
         return true;
     }
     return false;
+}
+
+bool DebugConsolePanel::TryComplete(const editor::KeyChord& chord) {
+    if (chord.Special != editor::SpecialKey::Tab) {
+        return false;
+    }
+    if (dapManager_ == nullptr) {
+        return true; // consumed either way -- a literal tab here would be noise
+    }
+    const std::string text = prompt_.Text();
+    // DAP's column is 1-based and counts from the start of `text`; the
+    // prompt's cursor is a byte offset, and the console's input is a single
+    // line, so the two differ by exactly one.
+    const int column = static_cast<int>(prompt_.CursorByteOffset()) + 1;
+    dapManager_->RequestCompletions(text, column, [this, text](std::vector<editor::dap::Manager::Completion> completions) {
+        if (completions.empty()) {
+            return; // no opinion, or nothing matches -- say nothing rather than guess
+        }
+        if (completions.size() == 1) {
+            ApplyCompletion(completions.front(), text);
+            return;
+        }
+        // The common prefix first, so repeated Tab still makes progress,
+        // then the list -- readline's own behaviour.
+        std::string shared = completions.front().text;
+        for (const editor::dap::Manager::Completion& completion : completions) {
+            std::size_t common = 0;
+            while (common < shared.size() && common < completion.text.size() && shared[common] == completion.text[common]) {
+                ++common;
+            }
+            shared.resize(common);
+        }
+        if (!shared.empty()) {
+            editor::dap::Manager::Completion prefix = completions.front();
+            prefix.text                             = shared;
+            ApplyCompletion(prefix, text);
+        }
+        std::string line;
+        for (const editor::dap::Manager::Completion& completion : completions) {
+            if (!line.empty()) {
+                line += "  ";
+            }
+            line += completion.label;
+        }
+        history_.push_back({line, DisplayStyle::Dim});
+    });
+    return true;
+}
+
+void DebugConsolePanel::ApplyCompletion(const editor::dap::Manager::Completion& completion, const std::string& requestText) {
+    // The adapter may name the exact span its suggestion replaces; when it
+    // doesn't, replace the identifier-ish run ending at the cursor, which
+    // is the only span a completion could sensibly mean.
+    std::size_t start  = 0;
+    std::size_t length = 0;
+    if (completion.start >= 0 && completion.length >= 0 &&
+        static_cast<std::size_t>(completion.start) + static_cast<std::size_t>(completion.length) <= requestText.size()) {
+        start  = static_cast<std::size_t>(completion.start);
+        length = static_cast<std::size_t>(completion.length);
+    }
+    else {
+        std::size_t wordStart = requestText.size();
+        while (wordStart > 0) {
+            const unsigned char character = static_cast<unsigned char>(requestText[wordStart - 1]);
+            if (std::isalnum(character) == 0 && character != '_' && character != '$' && (character & 0x80U) == 0) {
+                break;
+            }
+            --wordStart;
+        }
+        start  = wordStart;
+        length = requestText.size() - wordStart;
+    }
+    // The prompt may have moved on while the request was in flight; only
+    // splice into text that still starts the way the request did.
+    const std::string current = prompt_.Text();
+    if (current.compare(0, start + length, requestText, 0, start + length) != 0) {
+        return;
+    }
+    prompt_.SetText(current.substr(0, start) + completion.text + current.substr(start + length));
 }
 
 } // namespace ned::ui

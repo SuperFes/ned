@@ -77,6 +77,10 @@ std::string ResponseFrame(int requestSeq, const std::string& command, bool succe
         .dump();
 }
 
+std::string EventFrame(const std::string& event, Json body = Json::object()) {
+    return Json{{"seq", 2000}, {"type", "event"}, {"event", event}, {"body", std::move(body)}}.dump();
+}
+
 struct Fixture {
     ned::ui::EventLoop eventLoop;
     Manager         manager{eventLoop};
@@ -106,15 +110,31 @@ struct Fixture {
             std::make_unique<Client>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop));
     }
 
-    void StartRunningSession(const std::string& language) {
+    void StartRunningSession(const std::string& language, Json capabilities = Json::object()) {
         SetLaunchConfig(language, R"({"program": "./fake-program"})");
         manager.StartOrContinue(language);
         const Json initialize = reader.Next();
-        client->DispatchFrame(ResponseFrame(initialize["seq"].get<int>(), "initialize", true));
+        client->DispatchFrame(ResponseFrame(initialize["seq"].get<int>(), "initialize", true, std::move(capabilities)));
         const Json launch = reader.Next();
         client->DispatchFrame(ResponseFrame(launch["seq"].get<int>(), "launch", true));
         REQUIRE(manager.State() == Manager::SessionState::Running);
         SetLaunchConfig(language, "");
+    }
+
+    // Stops the debuggee, so there is a frame for `completions` to scope to.
+    void StopAtFrame(int frameId) {
+        client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+        const Json stackTrace = reader.Next();
+        REQUIRE(stackTrace["command"] == "stackTrace");
+        client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true,
+                                            Json{{"stackFrames", Json::array({Json{{"id", frameId}, {"name", "main"}}})}}));
+        REQUIRE(manager.State() == Manager::SessionState::Stopped);
+    }
+
+    void Type(const std::string& text) {
+        for (const char character : text) {
+            REQUIRE(panel.OnEvent(ned::ui::test::Character(std::string(1, character))));
+        }
     }
 
     void Paint() {
@@ -454,4 +474,93 @@ TEST_CASE("Escape cancels a search, restores the prior scroll position, and does
     REQUIRE_FALSE(toggled); // Escape mid-search cancels the search, not the panel
     REQUIRE(fixture.panel.TitleText().find("I-search:") == std::string::npos);
     REQUIRE(fixture.panel.TitleText().find("(scrollback)") == std::string::npos); // back to live, same as before the search
+}
+
+// debug-panel: Tab completion, answered by the adapter rather than guessed
+// from the transcript -- see DebugConsolePanel.h's own header comment.
+
+TEST_CASE("DebugConsolePanel Tab inserts the adapter's single completion", "[DebugConsolePanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("debug-console-complete-one", Json{{"supportsCompletionsRequest", true}});
+    fixture.StopAtFrame(6);
+
+    fixture.Type("par");
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Tab()));
+
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["command"] == "completions");
+    REQUIRE(request["arguments"]["text"] == "par");
+    REQUIRE(request["arguments"]["column"] == 4); // 1-based, past the last typed byte
+    REQUIRE(request["arguments"]["frameId"] == 6);
+    fixture.client->DispatchFrame(ResponseFrame(request["seq"].get<int>(), "completions", true,
+                                                Json{{"targets", Json::array({Json{{"label", "parse_expression"}}})}}));
+
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1).find("parse_expression") != std::string::npos);
+    SetLaunchConfig("debug-console-complete-one", "");
+}
+
+TEST_CASE("DebugConsolePanel Tab inserts the common prefix and lists several completions", "[DebugConsolePanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("debug-console-complete-many", Json{{"supportsCompletionsRequest", true}});
+    fixture.StopAtFrame(6);
+
+    fixture.Type("pa");
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Tab()));
+    const Json request = fixture.reader.Next();
+    fixture.client->DispatchFrame(
+        ResponseFrame(request["seq"].get<int>(), "completions", true,
+                      Json{{"targets", Json::array({Json{{"label", "parse_one"}}, Json{{"label", "parse_two"}}})}}));
+
+    fixture.Paint();
+    const std::string input = fixture.RowText(kHeight - 1);
+    // The shared prefix goes in, so repeated Tab still makes progress; both
+    // candidates are listed in the transcript above.
+    REQUIRE(input.find("parse_") != std::string::npos);
+    REQUIRE(input.find("parse_one") == std::string::npos);
+    bool listed = false;
+    for (int y = 0; y < kHeight - 1; ++y) {
+        if (fixture.RowText(y).find("parse_one") != std::string::npos &&
+            fixture.RowText(y).find("parse_two") != std::string::npos) {
+            listed = true;
+        }
+    }
+    REQUIRE(listed);
+    SetLaunchConfig("debug-console-complete-many", "");
+}
+
+TEST_CASE("DebugConsolePanel Tab honours the span the adapter names", "[DebugConsolePanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("debug-console-complete-span", Json{{"supportsCompletionsRequest", true}});
+    fixture.StopAtFrame(6);
+
+    fixture.Type("node->k");
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Tab()));
+    const Json request = fixture.reader.Next();
+    // start/length replace just the "k", not the whole expression.
+    fixture.client->DispatchFrame(
+        ResponseFrame(request["seq"].get<int>(), "completions", true,
+                      Json{{"targets", Json::array({Json{{"label", "key"}, {"text", "key"}, {"start", 6}, {"length", 1}}})}}));
+
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1).find("node->key") != std::string::npos);
+    SetLaunchConfig("debug-console-complete-span", "");
+}
+
+TEST_CASE("DebugConsolePanel Tab is swallowed rather than inserted when nothing can complete", "[DebugConsolePanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("debug-console-complete-none"); // no completions capability
+    fixture.StopAtFrame(6);
+
+    fixture.Type("xy");
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Tab())); // consumed
+    fixture.Paint();
+    const std::string input = fixture.RowText(kHeight - 1);
+    REQUIRE(input.find("xy") != std::string::npos);
+    REQUIRE(input.find('\t') == std::string::npos);
+    SetLaunchConfig("debug-console-complete-none", "");
 }

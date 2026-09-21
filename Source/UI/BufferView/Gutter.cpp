@@ -6,6 +6,7 @@
 // queries, and the viewport geometry: scrolling, wrapping, and visible-line math.
 //
 
+#include "Editor/Dap/Config.h"
 #include "UI/BufferView/Internal.h"
 
 namespace ned::ui {
@@ -139,7 +140,17 @@ bool BufferView::DapGutterActive() const {
         return true;
     }
     const auto stop = dapManager_->CurrentStopKeyAndLine();
-    return stop && stop->first == dapPathKey_;
+    if (stop && stop->first == dapPathKey_) {
+        return true;
+    }
+    // debug-panel: a configured adapter is enough on its own. Reserving the
+    // column only once a breakpoint exists was a chicken-and-egg -- the
+    // column is where you click to set the first one -- and it made the
+    // gutter shift the moment F9 was pressed. The cost is one column in
+    // every buffer of a language the user has actually configured a
+    // debugger for, which is the same trade the diff/blame/symbol columns
+    // each make for their own precondition.
+    return editor::dap::AdapterCommand(editor::LanguageKeyForMode(mode_)).has_value();
 }
 
 void BufferView::EnsureDapPathKey() const {

@@ -130,7 +130,10 @@ alone). Four conscious cuts left behind.
       opening a file in a server-backed language still shifts the gutter one column
       once -- the same one-time shift the diff, blame and symbol columns already make.
       Reserving it before the server attaches would mean paying a column in every
-      buffer, LSP or not.
+      buffer, LSP or not. (The breakpoint column made the opposite call as of
+      `debug-panel`: it is reserved for any language with a configured DAP adapter,
+      because that column is where the first breakpoint gets clicked, so gating it on
+      one already existing was a chicken-and-egg.)
 
 - [ ] `Lsp/Manager.cpp`'s `PathToUri` doesn't percent-encode, while its `UriToPath` now
       decodes (`lsp-document-link`, after clangd's own encoded targets proved every
@@ -504,12 +507,79 @@ commands, never a replacement for them.
       but not acted on — a persistable id still needs the next session to be the same
       build of the same program, which nothing here can check. Revisit only if an adapter
       that sets it turns out to make re-arming after a restart genuinely tedious.
-- [ ] Data breakpoints have no gutter representation, function breakpoints' own cut, and
-      for the same reason (nothing here is tied to a line). Unlike function breakpoints
-      they do at least get a listing -- the `*debug*` buffer's `== Data breakpoints ==`
-      section -- which is also the only way to remove one. A `VcsPanel`-style standing
-      breakpoint panel covering all three stores is the obvious lift if that listing
-      proves too easy to lose track of.
+**Debug panel**
+
+Shipped -- slug for `git log --grep=`: `debug-panel`. `Source/UI/DebugPanel.h`, the third
+`LeftDock` rail panel beside Files and VCS, over `TreeView` rather than `ListPopup`
+because it is sections containing files containing breakpoints. One panel rather than one
+per store, for the reason VS Code's own Run-and-Debug sidebar is one: a rail glyph per DAP
+concern would be four glyphs that say nothing whenever no session is live, and the
+sections share a single refresh path. Sections: call stack (threads, their frames), the
+focused frame's scopes and variables, watches, all four breakpoint stores, and the two
+inventory listings. The breakpoint half works with no session at all -- line and function
+breakpoints are process-wide and persisted, so this is where they get armed before
+anything is launched. Cuts left behind, each its own item below.
+
+- [ ] The panel's Watches section and the `*debug*` buffer's own now show the same
+      expressions through two entirely separate fetch paths (`DebugPanel::FetchWatchValues`
+      and `BuildDebugInfoLines`'s chunked fan-out). Deliberate: the `*debug*` buffer is
+      also what `dap-ask-agent` sends to an agent, so it stays a text rendering rather
+      than becoming a view of the panel's model. Worth merging only if they drift.
+- [ ] `DebugPanel` re-fetches every scope and variable of the focused frame on each stop,
+      and `Manager::RefreshFrameLocals` independently fetches the same non-expensive
+      scopes for the inline values. Two overlapping fan-outs, kept apart because the
+      panel needs the tree (per-`variablesReference` children, lazily expanded) and the
+      painter needs a flat name→value map it can read synchronously. Measured at nothing
+      so far -- both are a handful of requests per stop -- but it is duplicated work, and
+      a `Manager`-side variables cache keyed by reference would serve both.
+- [ ] A variable row's tree depth is recomputed in `PushModel` from a map of
+      container-reference → depth rather than stored on the row, which works only because
+      a container is always an earlier row than its children. True by construction today
+      (`AppendVariableRows` is a pre-order walk); a future row source that isn't would
+      silently mis-indent rather than fail.
+- [ ] Inline debug values match a local to a line by whole-word text search, not by
+      parsing (`BufferView::PaintInlineDebugValues`). The adapter reports names, not
+      positions, and a structural match would need the grammar to agree with the
+      debugger's own notion of scope to be any more correct. Degrades to a value shown
+      against a line mentioning the same word in a comment or string -- visible noise,
+      never a wrong value. At most three per line, and only in the file the debuggee is
+      actually stopped in.
+- [ ] Inline values show only the focused frame's *locals*, never a watch or an
+      arbitrary expression, and never a field of a composite. The flat name→value map
+      they read is exactly what the non-expensive scopes report.
+- [ ] `Manager::SnapBreakpointToValidLine` moves a newly-set breakpoint to the nearest
+      line the adapter says can hold one, within an 8-line window. It is the pre-emptive
+      sibling of `Breakpoint::actualLine`, which stays the fallback for adapters that
+      don't implement `breakpointLocations` -- so two mechanisms now correct the same
+      thing from different ends. Kept separate deliberately: the snap makes the *store*
+      honest (conditions and removals address a real line), `actualLine` only ever
+      corrected the display, and collapsing them would mean making every edit operation
+      re-address itself asynchronously.
+- [ ] The debug console's Tab completion lists several candidates into the transcript and
+      inserts their common prefix, readline-style, rather than showing a popup. The panel
+      has no `ListPopup` of its own and adding one for the debug console alone would be a
+      second completion UI beside `CompletionSession`'s.
+- [ ] `BufferView::BeginDebugPanelTextEntry`'s accept callback must not start a second
+      prompt: the session teardown that follows every accept would cancel it immediately.
+      Fine for every prompt the panel actually needs (all single-shot); a chained one
+      would need the callback deferred past the reset.
+- [ ] `TreeView`'s selection brush deliberately wins over a row's own colours, so a
+      selected row cannot say anything in colour alone -- which is exactly the row being
+      acted on. Worked around where it mattered (a disabled breakpoint says `off` in its
+      value column, an exception filter's `▣`/`▢` differ in shape), not fixed: a row that
+      wants its colours through selection would need the widget to say so per row.
+- [ ] `Manager::FrameLocals` is a flat name→value map of the focused frame's
+      non-expensive scopes, so inline values can never show a field of a composite
+      (`node->key`) or a watch -- only a top-level local. The adapter reports
+      `evaluateName` per variable, which is what a deeper version would key on.
+- [ ] Six DAP requests were added with the debug panel and all six are capability-gated,
+      which is load-bearing rather than polite: an empty answer and "this adapter does
+      not implement the request" are indistinguishable on the wire. `breakpointLocations`
+      in particular must read an empty list as "no opinion", never as "no valid lines",
+      or it would refuse every breakpoint against a thin adapter. Only unit-tested
+      against a fake adapter so far -- none of `modules`, `loadedSources`,
+      `breakpointLocations`, `stepInTargets`, `setExpression` or `completions` has been
+      exercised against a real lldb-dap/debugpy session.
 - [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
       no way to keep a warm process (buffers, LSP connections, undo history) alive and
       attach a new terminal client to it.
@@ -1027,6 +1097,20 @@ non-goal, see below).
       both need a worked example in the docs, not new `DapManager` code.
 
 ### Notcurses Patches Worth Upstreaming (Watch List)
+
+Not one of these, recorded here because it looked like one and wasn't: every
+`S-F<n>` binding in the default keymap (`dap-stop`, `dap-step-out`, and
+`toggle-debug-panel` as of `debug-panel`) was silently dead, and Notcurses was
+reporting faithfully. A terminal without the kitty keyboard protocol cannot say
+"Shift+F9" -- it sends a *different function key* and no modifier bit, which is
+what terminfo's `kf13`..`kf24` have always meant. `KeyTranslation.cpp`'s own
+`SpecialKeyFor` stopped at F12 and returned `nullopt`, dropping the keystroke
+before any keymap saw it. Measured with a throwaway probe against a real
+terminal (Shift+F9 -> F21, Ctrl+F9 -> F33, Ctrl+Shift+F9 -> F45, Alt+F9 -> F57,
+every one with `modifiers == 0`) and folded back onto F1-F12 plus the modifiers
+each range implies -- see `DecodeExtendedFunctionKey`. The one cost is that a
+physical F13..F24 key can no longer be bound separately from Shift+F1..F12,
+which is the conflation terminfo itself already makes.
 
 Not submitted anywhere yet — a deliberate choice (2026-09-06), not an oversight. Recorded
 so the research doesn't have to be redone before actually opening anything.

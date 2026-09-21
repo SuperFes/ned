@@ -81,6 +81,12 @@ std::string ProjectSessionToJson(const ProjectSessionData& data, const std::file
             if (!bp.hitCondition.empty()) {
                 entry["hitCondition"] = bp.hitCondition;
             }
+            // Written only when false, so an ordinary session file is byte-
+            // identical to what it was before this field existed -- the
+            // same "empty means none" economy the three fields above use.
+            if (!bp.enabled) {
+                entry["disabled"] = true;
+            }
             list.push_back(std::move(entry));
         }
         breakpoints[pathKey] = std::move(list);
@@ -125,6 +131,17 @@ std::string ProjectSessionToJson(const ProjectSessionData& data, const std::file
     };
     if (!data.watches.empty()) {
         json["watches"] = data.watches;
+    }
+    if (!data.functionBreakpoints.empty()) {
+        Json functionBreakpoints = Json::array();
+        for (const FunctionBreakpointState& bp : data.functionBreakpoints) {
+            Json entry = {{"name", bp.name}};
+            if (!bp.enabled) {
+                entry["disabled"] = true;
+            }
+            functionBreakpoints.push_back(std::move(entry));
+        }
+        json["functionBreakpoints"] = std::move(functionBreakpoints);
     }
     if (data.activeFile) {
         json["activeFile"] = data.activeFile->string();
@@ -197,9 +214,28 @@ std::optional<ProjectSessionData> ProjectSessionFromJson(std::string_view json) 
                     if (entry.contains("hitCondition") && entry["hitCondition"].is_string()) {
                         bp.hitCondition = entry["hitCondition"].get<std::string>();
                     }
+                    if (entry.contains("disabled") && entry["disabled"].is_boolean()) {
+                        bp.enabled = !entry["disabled"].get<bool>();
+                    }
                     parsedEntries.push_back(std::move(bp));
                 }
                 data.breakpoints.emplace(pathKey, std::move(parsedEntries));
+            }
+        }
+        if (parsed.contains("functionBreakpoints") && parsed["functionBreakpoints"].is_array()) {
+            for (const Json& entry : parsed["functionBreakpoints"]) {
+                if (!entry.is_object() || !entry.contains("name") || !entry["name"].is_string()) {
+                    continue; // one malformed entry shouldn't discard the rest
+                }
+                FunctionBreakpointState bp;
+                bp.name = entry["name"].get<std::string>();
+                if (bp.name.empty()) {
+                    continue;
+                }
+                if (entry.contains("disabled") && entry["disabled"].is_boolean()) {
+                    bp.enabled = !entry["disabled"].get<bool>();
+                }
+                data.functionBreakpoints.push_back(std::move(bp));
             }
         }
         if (parsed.contains("watches") && parsed["watches"].is_array()) {

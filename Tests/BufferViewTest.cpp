@@ -30,6 +30,7 @@
 #include "Editor/Dispatcher.h"
 #include "Editor/FileNaming.h"
 #include "Editor/FormatOnSave.h"
+#include "Editor/InlineDebugValues.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/Client.h"
@@ -16112,4 +16113,136 @@ TEST_CASE("A value the adapter refuses to watch reports its reason and arms noth
 
     REQUIRE(fixture.statusMessage == "Cannot watch counter: No watchpoint registers left.");
     REQUIRE(manager.DataBreakpoints().empty());
+}
+
+// debug-panel (inline values): the stopped frame's own locals, drawn after
+// the lines that mention them, in the file the debuggee is actually stopped
+// in. See BufferView::PaintInlineDebugValues for why the match is textual.
+
+namespace {
+
+// The handshake-plus-stop the two tests below share, with the frame-locals
+// fan-out answered: one non-expensive scope holding two locals, and one
+// expensive scope that must never be asked about.
+void StopWithLocals(ned::editor::dap::Manager& manager, ned::editor::dap::Client* client, FakeDapAdapter& adapter,
+                    const std::string& language, const std::string& path) {
+    manager.SetFrameLocalsTrackingEnabled(true);
+    ned::editor::dap::SetLaunchConfig(language, "{}");
+    manager.StartOrContinue(language);
+    const auto initialize = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(initialize["seq"].get<int>(), "initialize", ned::editor::dap::Json::object()));
+    const auto launch = adapter.NextRequest();
+    client->DispatchFrame(DapResponseFrame(launch["seq"].get<int>(), "launch", ned::editor::dap::Json::object()));
+    client->DispatchFrame(DapEventFrame("stopped", {{"reason", "breakpoint"}, {"threadId", 1}}));
+    const auto stackTrace = adapter.NextRequest();
+    REQUIRE(stackTrace["command"] == "stackTrace");
+    client->DispatchFrame(DapResponseFrame(
+        stackTrace["seq"].get<int>(), "stackTrace",
+        {{"stackFrames",
+          ned::editor::dap::Json::array({{{"id", 1}, {"name", "main"}, {"line", 2}, {"source", {{"path", path}}}}})}}));
+
+    const auto scopes = adapter.NextRequest();
+    REQUIRE(scopes["command"] == "scopes");
+    client->DispatchFrame(DapResponseFrame(
+        scopes["seq"].get<int>(), "scopes",
+        {{"scopes", ned::editor::dap::Json::array({{{"name", "Locals"}, {"variablesReference", 9}},
+                                                   {{"name", "Globals"}, {"variablesReference", 10}, {"expensive", true}}})}}));
+
+    const auto variables = adapter.NextRequest();
+    REQUIRE(variables["command"] == "variables");
+    REQUIRE(variables["arguments"]["variablesReference"] == 9); // never the expensive one
+    client->DispatchFrame(DapResponseFrame(variables["seq"].get<int>(), "variables",
+                                           {{"variables", ned::editor::dap::Json::array(
+                                                              {{{"name", "total"}, {"value", "41"}},
+                                                               {{"name", "unused"}, {"value", "0"}}})}}));
+    ned::editor::dap::SetLaunchConfig(language, "");
+}
+
+} // namespace
+
+TEST_CASE("Inline debug values annotate the lines that mention the stopped frame's locals", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("int total = 0;\ntotal += 1;\nint other = 2;");
+    fixture.buffer.SetPath("/tmp/ned-inline-values-test.c");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
+    FakeDapAdapter            adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+    StopWithLocals(manager, client, adapter, "bufferview-inline-values", "/tmp/ned-inline-values-test.c");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    ned::ui::Screen screen = ned::ui::Screen(60, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    // Both lines that name `total` carry its value; the line that names
+    // neither local carries nothing.
+    REQUIRE(RowText(screen, 0, 60).find("total = 41") != std::string::npos);
+    REQUIRE(RowText(screen, 1, 60).find("total = 41") != std::string::npos);
+    REQUIRE(RowText(screen, 2, 60).find("total") == std::string::npos); // names no local: no annotation
+    // `unused` is a local but appears on no line, so it annotates nothing.
+    REQUIRE(RowText(screen, 0, 60).find("unused") == std::string::npos);
+}
+
+TEST_CASE("Inline debug values are absent from a file the debuggee is not stopped in", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("int total = 0;\ntotal += 1;");
+    // A different file: a local named `total` says nothing about this one.
+    fixture.buffer.SetPath("/tmp/ned-inline-values-elsewhere.c");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
+    FakeDapAdapter            adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+    StopWithLocals(manager, client, adapter, "bufferview-inline-values-elsewhere", "/tmp/ned-inline-values-other.c");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 1});
+
+    ned::ui::Screen screen = ned::ui::Screen(60, 2);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 1});
+    view.Paint(canvas);
+
+    REQUIRE(RowText(screen, 0, 60).find("total = 41") == std::string::npos);
+    REQUIRE(RowText(screen, 1, 60).find("total = 41") == std::string::npos);
+}
+
+TEST_CASE("Inline debug values can be turned off without affecting the values themselves", "[BufferView]") {
+    struct EnabledGuard {
+        ~EnabledGuard() {
+            ned::editor::SetInlineDebugValuesEnabled(true);
+        }
+    } guard;
+
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("int total = 0;\ntotal += 1;");
+    fixture.buffer.SetPath("/tmp/ned-inline-values-off.c");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::dap::Manager manager(eventLoop);
+    ned::editor::dap::Client* client  = nullptr;
+    FakeDapAdapter            adapter = FakeDapAdapter::Create(manager, eventLoop, client);
+    StopWithLocals(manager, client, adapter, "bufferview-inline-values-off", "/tmp/ned-inline-values-off.c");
+
+    ned::editor::SetInlineDebugValuesEnabled(false);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetDapManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 1});
+
+    ned::ui::Screen screen = ned::ui::Screen(60, 2);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 1});
+    view.Paint(canvas);
+
+    REQUIRE(RowText(screen, 0, 60).find("total = 41") == std::string::npos);
+    // Display only -- the value is still there for the debug panel.
+    REQUIRE(manager.FrameLocals().at("total") == "41");
 }

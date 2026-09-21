@@ -538,6 +538,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     // Set*-hook forward below.
     pane->Buffer().SetLeftDock(leftDock_);
     pane->Buffer().SetVcsPanel(vcsPanel_);
+    pane->Buffer().SetDebugPanel(debugPanel_);
     pane->Buffer().SetThemeApplier(themeApplier_);
     pane->Buffer().SetThemeDetector(themeDetector_);
     pane->Buffer().SetOnTerminalToggle(onTerminalToggle_);
@@ -586,6 +587,13 @@ void WindowManager::SetVcsPanel(VcsPanel* panel) {
     vcsPanel_ = panel;
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetVcsPanel(panel);
+    }
+}
+
+void WindowManager::SetDebugPanel(DebugPanel* panel) {
+    debugPanel_ = panel;
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetDebugPanel(panel);
     }
 }
 
@@ -1043,6 +1051,49 @@ void WindowManager::RequestVcsPanelAction(VcsPanelAction action) {
     }
 }
 
+void WindowManager::DispatchGlobalChord(const editor::KeyChord& chord) {
+    // The focused pane when the editor has focus; otherwise the first leaf,
+    // because the whole point of a global chord is that it works while some
+    // panel owns the keyboard -- and the command it runs (hiding that
+    // panel, say) still needs a pane to run against.
+    Pane* pane = FocusedPane();
+    if (pane == nullptr && !Leaves().empty()) {
+        pane = Leaves().front();
+    }
+    if (pane != nullptr) {
+        pane->Buffer().HandleChord(chord);
+    }
+}
+
+void WindowManager::RequestVisitLocation(const std::filesystem::path& path, std::size_t line) {
+    // The focused pane is the debug panel's own TreeView while it drives
+    // this, so fall back to the first leaf exactly as the stop handler does
+    // -- there is always an editor pane to open into, just not a focused one.
+    Pane* pane = FocusedPane();
+    if (pane == nullptr && !Leaves().empty()) {
+        pane = Leaves().front();
+    }
+    if (pane != nullptr) {
+        pane->Buffer().JumpToPathLine(path, line);
+    }
+}
+
+void WindowManager::RequestDebugPanelTextEntry(std::string label, std::string initialText,
+                                               std::function<void(std::string)> onAccept) {
+    // Unlike the jump above, a prompt needs a pane that will actually
+    // receive the next keystrokes -- so this takes focus back from the
+    // panel, which is what the user asking to type implies anyway.
+    Pane* pane = FocusedPane();
+    if (pane == nullptr && !Leaves().empty()) {
+        pane = Leaves().front();
+    }
+    if (pane == nullptr) {
+        return;
+    }
+    TakeFocus();
+    pane->Buffer().BeginDebugPanelTextEntry(std::move(label), std::move(initialText), std::move(onAccept));
+}
+
 void WindowManager::RequestOpenBinaryFile(const std::filesystem::path& path) {
     if (Pane* pane = FocusedPane()) {
         pane->Buffer().RequestOpenBinaryFile(path);
@@ -1452,8 +1503,12 @@ void WindowManager::SaveProjectSessionNow() {
                     .condition    = bp.condition,
                     .logMessage   = bp.logMessage,
                     .hitCondition = bp.hitCondition,
+                    .enabled      = bp.enabled,
                 });
             }
+        }
+        for (const auto& bp : dapManager_->FunctionBreakpoints()) {
+            data.functionBreakpoints.push_back(editor::FunctionBreakpointState{.name = bp.name, .enabled = bp.enabled});
         }
         data.watches = dapManager_->Watches();
     }

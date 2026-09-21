@@ -83,8 +83,26 @@ struct BreakpointState {
     std::string condition;
     std::string logMessage;
     std::string hitCondition;
+    // debug-panel: ned-side enable/disable (Manager::Breakpoint::enabled).
+    // Unlike verified/actualLine it is not adapter-derived, so it round-
+    // trips -- a breakpoint deliberately switched off stays off across a
+    // restart rather than silently re-arming.
+    bool enabled = true;
 
     bool operator==(const BreakpointState&) const = default;
+};
+
+// debug-panel: one function breakpoint's persisted state
+// (Manager::FunctionBreakpoint's own shape), kept in this file's own
+// namespace for the same Dap-header-free reason BreakpointState is. Function
+// breakpoints are process-wide like line breakpoints -- nothing about them is
+// session-scoped -- so they persist alongside them; data breakpoints
+// deliberately do not (their dataId belongs to one adapter run).
+struct FunctionBreakpointState {
+    std::string name;
+    bool        enabled = true;
+
+    bool operator==(const FunctionBreakpointState&) const = default;
 };
 
 struct ProjectSessionData {
@@ -95,6 +113,8 @@ struct ProjectSessionData {
     // Normalized path key -> sorted-by-line BreakpointStates, Manager's
     // own store shape (see Manager::AllBreakpoints/RestoreBreakpoints).
     std::map<std::string, std::vector<BreakpointState>> breakpoints;
+    // debug-panel: Manager::FunctionBreakpoints()'s own sorted-by-name list.
+    std::vector<FunctionBreakpointState> functionBreakpoints;
     // session-persistence round 2: Manager::Watches()/RestoreWatches's
     // plain ordered list -- watch expressions now survive a restart the
     // same way breakpoints do (closes the gap ROADMAP.md recorded).

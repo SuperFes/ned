@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-217 bindings.
+218 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -480,6 +480,10 @@ Override the indent of every line whose own leading construct is a given grammar
 ## `ned/set-indent-style`
 
 Set the indent style smart-indentation (indent-for-tab-command/newline/indent-region/indent-buffer) writes: (mode-name-or-empty use-tabs? width). An empty mode-name sets the process-wide default (spaces, width 4); a Mode name (e.g. "python-mode") sets a per-mode override, checked first.
+
+## `ned/set-inline-debug-values`
+
+Enable/disable the debugger's inline values (each stopped frame's own locals shown after the lines that mention them, in the file the debuggee is stopped in; default true). Display only -- the same values are in the debug panel's Variables section either way.
 
 ## `ned/set-inline-diagnostic-style`
 

@@ -84,6 +84,12 @@ namespace {
             {"F10", SpecialKey::F10},
             {"F11", SpecialKey::F11},
             {"F12", SpecialKey::F12},
+            // The Super/Windows key as a key in its own right -- see
+            // SpecialKey::Super. Written uppercase like every other named
+            // key here, and distinct from the `s-` modifier prefix above:
+            // "s-x" is Super held while x is pressed, "SUPER" is Super
+            // itself tapped.
+            {"SUPER", SpecialKey::Super},
         };
         return table;
     }
@@ -93,7 +99,11 @@ namespace {
 KeyChord ParseKeyChord(std::string_view token) {
     KeyChord chord;
 
-    while (token.size() >= 2 && token[1] == '-' && (token[0] == 'C' || token[0] == 'M' || token[0] == 'S')) {
+    // Case matters, and deliberately: Emacs spells Shift `S-` and Super
+    // `s-`, and this parser has always been case-sensitive, so the
+    // lowercase slot was free for Super without disturbing anything.
+    while (token.size() >= 2 && token[1] == '-' &&
+           (token[0] == 'C' || token[0] == 'M' || token[0] == 'S' || token[0] == 's')) {
         switch (token[0]) {
             case 'C':
                 chord.Control = true;
@@ -103,6 +113,9 @@ KeyChord ParseKeyChord(std::string_view token) {
                 break;
             case 'S':
                 chord.Shift = true;
+                break;
+            case 's':
+                chord.Super = true;
                 break;
             default:
                 break;
@@ -166,6 +179,9 @@ std::string FormatKeyChord(const KeyChord& chord) {
     if (chord.Shift) {
         text += "S-";
     }
+    if (chord.Super) {
+        text += "s-"; // lowercase, Emacs's own notation -- see ParseKeyChord
+    }
 
     switch (chord.Special) {
         case SpecialKey::None:
@@ -196,6 +212,8 @@ std::string FormatKeyChord(const KeyChord& chord) {
             return text + "PAGEUP";
         case SpecialKey::PageDown:
             return text + "PAGEDOWN";
+        case SpecialKey::Super:
+            return text + "SUPER";
         case SpecialKey::F1:
             return text + "F1";
         case SpecialKey::F2:

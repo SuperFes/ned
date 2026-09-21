@@ -202,3 +202,146 @@ TEST_CASE("TreeView activates a row on a left-click and updates the selection", 
     REQUIRE(tree.OnEvent(ned::ui::test::Mouse(5, 2, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
     REQUIRE(activated == 1);
 }
+
+// debug-panel: the value column, the unhandled-key hook, scrolling, and the
+// disclosure-column click -- what a standing panel needs on top of the
+// one-shot hierarchy picker this widget was built for.
+
+TEST_CASE("TreeView right-aligns a row's value column and clips the label before it", "[TreeView]") {
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
+    ned::ui::TreeView tree(theme);
+    tree.SetModel(ned::ui::TreeViewModel{
+        .rows = {{.label = "averyveryverylonglabelindeed", .depth = 0, .hasChildren = false, .right = "42"}}});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    tree.Paint(canvas);
+
+    // Width 20: the right column ends at x=18 (x=19 is the border), so "42"
+    // occupies x=17..18 and the label may not reach x=16.
+    REQUIRE(screen.PixelAt(17, 1).character == "4");
+    REQUIRE(screen.PixelAt(18, 1).character == "2");
+    REQUIRE(screen.PixelAt(16, 1).character == " ");
+    REQUIRE(screen.PixelAt(4, 1).character == "a"); // label still painted from its usual column
+}
+
+TEST_CASE("TreeView offers an unhandled key to its consumer, with or without rows", "[TreeView]") {
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
+    ned::ui::TreeView tree(theme);
+    tree.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 5});
+    tree.TakeFocus();
+
+    std::vector<char32_t> keys;
+    tree.SetOnKey([&](const ned::editor::KeyChord& chord) { keys.push_back(chord.Codepoint); });
+
+    tree.SetModel(ned::ui::TreeViewModel{.rows = {}});
+    REQUIRE(tree.OnEvent(ned::ui::test::Character("a")));
+    REQUIRE(keys == std::vector<char32_t>{U'a'});
+
+    tree.SetModel(ned::ui::TreeViewModel{.rows = {{.label = "one"}}, .selectedIndex = 0});
+    REQUIRE(tree.OnEvent(ned::ui::test::Character("d")));
+    REQUIRE(keys == std::vector<char32_t>{U'a', U'd'});
+
+    // Keys this widget handles itself never reach the hook.
+    REQUIRE(tree.OnEvent(ned::ui::test::Return()));
+    REQUIRE(keys.size() == 2);
+}
+
+TEST_CASE("TreeView scrolls to keep the selected row visible", "[TreeView]") {
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
+    ned::ui::TreeView tree(theme);
+    tree.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4}); // 3 interior rows
+
+    std::vector<ned::ui::TreeRow> rows;
+    for (int i = 0; i < 8; ++i) {
+        rows.push_back(ned::ui::TreeRow{.label = "row" + std::to_string(i), .hasChildren = false});
+    }
+    tree.SetModel(ned::ui::TreeViewModel{.rows = rows, .selectedIndex = 7});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
+    tree.Paint(canvas);
+
+    // Three rows fit; the selection is the last one, so rows 5, 6, 7 show.
+    REQUIRE(screen.PixelAt(7, 1).character == "5");
+    REQUIRE(screen.PixelAt(7, 3).character == "7");
+}
+
+TEST_CASE("TreeView maps a click through its scroll offset", "[TreeView]") {
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
+    ned::ui::TreeView tree(theme);
+    tree.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
+
+    std::vector<ned::ui::TreeRow> rows;
+    for (int i = 0; i < 8; ++i) {
+        rows.push_back(ned::ui::TreeRow{.label = "row" + std::to_string(i), .hasChildren = false});
+    }
+    tree.SetModel(ned::ui::TreeViewModel{.rows = rows, .selectedIndex = 7});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 5);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 4});
+    tree.Paint(canvas); // scrolls to rows 5..7
+
+    std::optional<std::size_t> activated;
+    tree.SetOnActivate([&](std::size_t index) { activated = index; });
+    REQUIRE(tree.OnEvent(ned::ui::test::Mouse(8, 1, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(activated == 5); // the first visible row, not row 0
+}
+
+TEST_CASE("TreeView treats a click on the disclosure glyph as expand/collapse, not activate", "[TreeView]") {
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
+    ned::ui::TreeView tree(theme);
+    tree.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 5});
+    tree.SetModel(ned::ui::TreeViewModel{
+        .rows          = {{.label = "collapsed", .depth = 0, .hasChildren = true, .expanded = false},
+                          {.label = "expanded", .depth = 1, .hasChildren = true, .expanded = true}},
+        .selectedIndex = 0});
+
+    std::optional<std::size_t> activated;
+    std::optional<std::size_t> expanded;
+    std::optional<std::size_t> collapsed;
+    tree.SetOnActivate([&](std::size_t index) { activated = index; });
+    tree.SetOnToggleExpand([&](std::size_t index) { expanded = index; });
+    tree.SetOnCollapseRequested([&](std::size_t index) { collapsed = index; });
+
+    // Depth 0's glyph is at x=2.
+    REQUIRE(tree.OnEvent(ned::ui::test::Mouse(2, 1, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(expanded == 0);
+    REQUIRE_FALSE(activated);
+
+    // Depth 1's glyph is at x=4; that row is already expanded.
+    REQUIRE(tree.OnEvent(ned::ui::test::Mouse(4, 2, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(collapsed == 1);
+    REQUIRE_FALSE(activated);
+
+    // Anywhere else on the row still activates.
+    REQUIRE(tree.OnEvent(ned::ui::test::Mouse(9, 1, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(activated == 0);
+}
+
+TEST_CASE("TreeView drops its frame and uses the whole box when a host owns the chrome", "[TreeView]") {
+    ned::ui::Theme    theme = ned::ui::DarkTheme();
+    ned::ui::TreeView tree(theme);
+    tree.SetDrawBorder(false);
+    tree.SetModel(ned::ui::TreeViewModel{
+        .title = "Debug", .rows = {{.label = "first", .hasChildren = false}, {.label = "second", .hasChildren = false}}});
+    tree.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 3});
+
+    ned::ui::Screen screen = ned::ui::Screen(20, 4);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 3});
+    tree.Paint(canvas);
+
+    // Row 0 is a real row, not a border, and the label starts one column
+    // further left than it would inside a frame.
+    REQUIRE(screen.PixelAt(3, 0).character == "f");
+    REQUIRE(screen.PixelAt(3, 1).character == "s");
+    // No border anywhere on the edges.
+    REQUIRE(screen.PixelAt(0, 0).character != "╭");
+    REQUIRE(screen.PixelAt(19, 3).character != "╯");
+
+    // A click maps through the same inset: local y=0 is the first row.
+    std::optional<std::size_t> activated;
+    tree.SetOnActivate([&](std::size_t index) { activated = index; });
+    REQUIRE(tree.OnEvent(ned::ui::test::Mouse(8, 1, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(activated == 1);
+}

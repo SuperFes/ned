@@ -61,6 +61,12 @@ namespace ned::ui::test {
 [[nodiscard]] Event ArrowRightShift();
 [[nodiscard]] Event F(int n); // 1-12
 
+// A function key as a terminal WITHOUT the kitty keyboard protocol reports a
+// modified one: a different function key entirely, with no modifier bit set
+// (xterm/terminfo's own convention -- kf13..kf24 are shifted F1..F12). `n` is
+// 13-60; see KeyTranslation.cpp's DecodeExtendedFunctionKey.
+[[nodiscard]] Event LegacyExtendedF(int n);
+
 // A bare Left Shift press/release -- only ever reported at all under the
 // Kitty keyboard protocol (see KeyTranslation.cpp's IsBareModifierKey);
 // search-everywhere's double-tap gesture (UI/DoubleTapModifier.h) is the one

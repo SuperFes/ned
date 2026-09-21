@@ -35,6 +35,7 @@
 #include "AsyncFileLoader.h"
 #include "AsyncFileSaver.h"
 #include "BufferView.h"
+#include "DebugPanel.h"
 #include "Editor/Command.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FileWatch.h"
@@ -256,6 +257,11 @@ class WindowManager {
     // exclusive on the shared left dock slot; see
     // BufferView::SetVcsPanel's own doc comment.
     void SetVcsPanel(VcsPanel* panel);
+
+    // debug-panel: same "forwarded to every pane, present and future" shape
+    // as SetVcsPanel above -- see BufferView::SetDebugPanel's own doc
+    // comment.
+    void SetDebugPanel(DebugPanel* panel);
 
     // LSP client follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar above. Also used by
@@ -610,6 +616,20 @@ class WindowManager {
     // branch-create starts on the focused pane's own BufferView.
     void RequestVcsPanelAction(VcsPanelAction action);
 
+    // debug-panel: the same "route to whichever pane is currently focused"
+    // shape, for the two things that panel cannot do itself -- open a
+    // breakpoint's own file, and start one of BufferView's breakpoint text
+    // prompts aimed at that breakpoint rather than at point.
+    // copilot-key follow-up: a modifier tap is a GLOBAL gesture, so it is
+    // detected above every widget (main.cpp's own key dispatch) and routed
+    // here rather than handled by whichever one happens to hold focus.
+    // That is what lets it dismiss a panel that has taken the keyboard --
+    // the panel never sees the chord, and does not have to.
+    void DispatchGlobalChord(const editor::KeyChord& chord);
+
+    void RequestVisitLocation(const std::filesystem::path& path, std::size_t line);
+    void RequestDebugPanelTextEntry(std::string label, std::string initialText, std::function<void(std::string)> onAccept);
+
     // named-projects follow-up: same "route to whichever pane is currently
     // focused" shape as RequestOpenBinaryFile just above -- wired to
     // ProjectSidebar::SetOnHeaderClicked so a click on the sidebar's title
@@ -915,6 +935,7 @@ class WindowManager {
     ProjectSidebar*                                    projectSidebar_ = nullptr;
     LeftDock*                                          leftDock_       = nullptr;
     VcsPanel*                                          vcsPanel_       = nullptr;
+    DebugPanel*                                        debugPanel_     = nullptr;
     editor::lsp::Manager*                           lspManager_     = nullptr;
     editor::tasks::TaskRunner*                         taskRunner_     = nullptr;
     editor::testrun::TestRunner*                       testRunner_     = nullptr; // see SetTestRunner

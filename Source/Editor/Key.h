@@ -43,15 +43,35 @@ enum class SpecialKey {
     F10,
     F11,
     F12,
+    // copilot-key follow-up: the Super/Windows key pressed AS A KEY rather
+    // than as a modifier -- a deliberate tap of it, with nothing else in
+    // between. Terminals only report a modifier press at all under the
+    // Kitty keyboard protocol, and ned drops those by default
+    // (KeyTranslation.cpp's IsBareModifierKey), so this chord is never
+    // produced by ordinary translation: UI/ModifierTap.h synthesizes it on
+    // a completed tap. That indirection is what keeps holding Super as a
+    // modifier from also meaning "the user pressed Super".
+    //
+    // One value for the whole Super/Hyper/Meta family: which of Notcurses'
+    // six ids a terminal reports for the physical Windows key is not
+    // knowable in advance, and no keymap should have to name all six.
+    Super,
 };
 
 // One keystroke: modifiers plus either a named/special key or a literal
 // Unicode codepoint (meaningful only when Special == SpecialKey::None).
 // Totally ordered (via defaulted <=>) so it can key a std::map.
 struct KeyChord {
-    bool       Control   = false;
-    bool       Meta      = false; // Alt / Emacs "Meta"
-    bool       Shift     = false;
+    bool Control = false;
+    bool Meta    = false; // Alt / Emacs "Meta"
+    bool Shift   = false;
+    // copilot-key follow-up: the Super/Windows key held as a modifier,
+    // written `s-` (lowercase, Emacs's own notation) against Shift's `S-`.
+    // Only ever set for a terminal that reports NCKEY_MOD_SUPER, which in
+    // practice means one speaking the Kitty keyboard protocol -- and only
+    // for combinations the desktop doesn't grab first, which on KDE
+    // excludes most of them.
+    bool       Super     = false;
     SpecialKey Special   = SpecialKey::None;
     char32_t   Codepoint = 0;
 

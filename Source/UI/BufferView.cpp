@@ -322,6 +322,16 @@ bool BufferView::OnKeyEvent(const Event& event) {
     if (!chord) {
         return false;
     }
+    return HandleChord(*chord);
+}
+
+// copilot-key follow-up: everything a decoded chord does, split out of
+// OnKeyEvent so a chord that did NOT come from this widget's own key
+// event can take the identical path -- the InputMode switch, the keymap,
+// the lot. WindowManager::DispatchGlobalChord routes a modifier tap here
+// no matter which widget currently holds focus, which is what makes that
+// gesture able to dismiss a panel that has taken the keyboard.
+bool BufferView::HandleChord(const editor::KeyChord& chord) {
     DismissHover(); // hover-tooltips follow-up: any real keystroke ends a pending/shown tooltip
 
     // One switch rather than a chain of ifs: with no default label the
@@ -335,74 +345,74 @@ bool BufferView::OnKeyEvent(const Event& event) {
 
         case InputMode::IsearchForward:
         case InputMode::IsearchBackward:
-            HandleSearchKey(*chord);
+            HandleSearchKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::QueryReplace:
-            HandleQueryReplaceKey(*chord);
+            HandleQueryReplaceKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::ProjectReplace:
-            HandleProjectReplaceKey(*chord);
+            HandleProjectReplaceKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::ConfirmQuit:
-            HandleConfirmQuitKey(*chord);
+            HandleConfirmQuitKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::ConfirmCloseBuffer:
-            HandleConfirmCloseBufferKey(*chord);
+            HandleConfirmCloseBufferKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::ConfirmWriteThemeToInit:
-            HandleConfirmWriteThemeToInitKey(*chord);
+            HandleConfirmWriteThemeToInitKey(chord);
             ClampPointToNarrowing();
             return true;
         case InputMode::ConfirmOverwriteSave:
-            HandleConfirmOverwriteSaveKey(*chord);
+            HandleConfirmOverwriteSaveKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::MultibufferApplyTarget:
-            HandleMultibufferApplyTargetKey(*chord);
+            HandleMultibufferApplyTargetKey(chord);
             return true;
         case InputMode::ConfirmSaveWithConflicts:
-            HandleConfirmSaveWithConflictsKey(*chord);
+            HandleConfirmSaveWithConflictsKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::ConfirmRevertHunk:
-            HandleConfirmRevertHunkKey(*chord);
+            HandleConfirmRevertHunkKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::ConfirmHugeFormat:
-            HandleConfirmHugeFormatKey(*chord);
+            HandleConfirmHugeFormatKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::ConfirmRenameFileToMatchType:
-            HandleConfirmRenameFileToMatchTypeKey(*chord);
+            HandleConfirmRenameFileToMatchTypeKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::ConfirmRenameTypeToMatchFile:
-            HandleConfirmRenameTypeToMatchFileKey(*chord);
+            HandleConfirmRenameTypeToMatchFileKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::ConfirmOpenBinary:
-            HandleConfirmOpenBinaryKey(*chord);
+            HandleConfirmOpenBinaryKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::ConfirmTrustProjectInit:
-            HandleConfirmTrustProjectInitKey(*chord);
+            HandleConfirmTrustProjectInitKey(chord);
             ClampPointToNarrowing();
             return true;
 
@@ -418,6 +428,7 @@ bool BufferView::OnKeyEvent(const Event& event) {
         case InputMode::DapBreakpointCondition:
         case InputMode::DapBreakpointHitCondition:
         case InputMode::DapBreakpointLogMessage:
+        case InputMode::DebugPanelTextEntry:
         case InputMode::DapEvaluate:
         case InputMode::DapFunctionBreakpointName:
         case InputMode::DapMemoryByteCount:
@@ -439,27 +450,27 @@ bool BufferView::OnKeyEvent(const Event& event) {
         case InputMode::VcsCreateBranch:
             // Every plain text-entry prompt. What Tab offers in each, and what
             // it is called when cancelled, is TextEntryPromptFor's business.
-            HandlePromptKey(*chord);
+            HandlePromptKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::DeleteFile:
-            HandleDeleteFileKey(*chord);
+            HandleDeleteFileKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::RenameFile:
-            HandleRenameFileKey(*chord);
+            HandleRenameFileKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::SetProperty:
-            HandleSetPropertyKey(*chord);
+            HandleSetPropertyKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::RecoverFile:
-            HandleRecoverFileKey(*chord);
+            HandleRecoverFileKey(chord);
             ClampPointToNarrowing();
             return true;
 
@@ -469,7 +480,7 @@ bool BufferView::OnKeyEvent(const Event& event) {
             // internally (M-x invoking a command by name), which handles the
             // clamp itself -- see that method's own doc comment for why it has
             // to be the one doing it, not a caller after the fact.
-            HandleExecuteCommandKey(*chord);
+            HandleExecuteCommandKey(chord);
             return true;
 
         case InputMode::ProjectFindFile:
@@ -478,47 +489,47 @@ bool BufferView::OnKeyEvent(const Event& event) {
             // routing through RunCommandAndHandleOutcome, so the ordinary
             // after-the-fact ClampPointToNarrowing() every other prompt-shaped
             // mode uses is correct here too.
-            HandleProjectFindFileKey(*chord);
+            HandleProjectFindFileKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::FindRecentFile:
-            HandleFindRecentFileKey(*chord);
+            HandleFindRecentFileKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::SwitchProject:
-            HandleSwitchProjectKey(*chord);
+            HandleSwitchProjectKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::SwitchToBuffer:
-            HandleSwitchToBufferKey(*chord);
+            HandleSwitchToBufferKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::SearchEverywhere:
-            HandleSearchEverywhereKey(*chord);
+            HandleSearchEverywhereKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::VcsSwitchBranch:
-            HandleVcsSwitchBranchKey(*chord);
+            HandleVcsSwitchBranchKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::AcpAgentName:
-            HandleAcpAgentNameKey(*chord);
+            HandleAcpAgentNameKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::BookmarkJump:
-            HandleBookmarkJumpKey(*chord);
+            HandleBookmarkJumpKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::SelectTheme:
-            HandleSelectThemeKey(*chord);
+            HandleSelectThemeKey(chord);
             ClampPointToNarrowing();
             return true;
 
@@ -526,67 +537,72 @@ bool BufferView::OnKeyEvent(const Event& event) {
         case InputMode::JumpToRegister:
         case InputMode::CopyToRegister:
         case InputMode::InsertRegister:
-            HandleRegisterKey(*chord);
+            HandleRegisterKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::ZapToChar:
-            HandleZapToCharKey(*chord);
+            HandleZapToCharKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::OrgCaptureSelectTemplate:
-            HandleOrgCaptureKey(*chord);
+            HandleOrgCaptureKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::AcpPermissionPrompt:
-            HandleAcpPermissionPromptKey(*chord);
+            HandleAcpPermissionPromptKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::DapThreadSelect:
-            HandleDapThreadSelectKey(*chord);
+            HandleDapThreadSelectKey(chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::DapStepInTargetSelect:
+            HandleDapStepInTargetKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::DapDataBreakpointAccess:
-            HandleDapDataBreakpointAccessKey(*chord);
+            HandleDapDataBreakpointAccessKey(chord);
             return true;
         case InputMode::DapExceptionFilterSelect:
-            HandleDapExceptionFilterSelectKey(*chord);
+            HandleDapExceptionFilterSelectKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::LspCodeActionSelect:
-            HandleCodeActionSelectKey(*chord);
+            HandleCodeActionSelectKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::LspGotoDefinitionSelect:
-            HandleDefinitionSelectKey(*chord);
+            HandleDefinitionSelectKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::LspPeekDefinition:
-            HandlePeekDefinitionKey(*chord);
+            HandlePeekDefinitionKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::ContextMenu:
-            HandleContextMenuKey(*chord);
+            HandleContextMenuKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::LspGotoSymbol:
             // Same "Enter jumps directly, no RunCommandAndHandleOutcome routing"
             // shape as ProjectFindFile above.
-            HandleDocumentSymbolKey(*chord);
+            HandleDocumentSymbolKey(chord);
             ClampPointToNarrowing();
             return true;
 
         case InputMode::LspWorkspaceSymbol:
-            HandleWorkspaceSymbolKey(*chord);
+            HandleWorkspaceSymbolKey(chord);
             ClampPointToNarrowing();
             return true;
 
@@ -595,7 +611,7 @@ bool BufferView::OnKeyEvent(const Event& event) {
             // point itself -- a Continue outcome does nothing to the buffer, and
             // a Terminate outcome re-dispatches through DispatchChordNormally,
             // which already runs the same clamp any other normal dispatch does.
-            HandlePrefixArgumentKey(*chord);
+            HandlePrefixArgumentKey(chord);
             return true;
 
         case InputMode::Snippet:
@@ -603,7 +619,7 @@ bool BufferView::OnKeyEvent(const Event& event) {
             // reason: consumed chords clamp inside HandleSnippetKey themselves,
             // and a fall-through chord re-dispatches through
             // DispatchChordNormally, after which *this* may be destroyed.
-            HandleSnippetKey(*chord);
+            HandleSnippetKey(chord);
             return true;
     }
 
@@ -618,18 +634,18 @@ bool BufferView::OnKeyEvent(const Event& event) {
     // ahead of the normal dispatch below so none of these ever reach
     // Dispatcher::Feed while the popup is showing.
     if (activeCompletion_) {
-        if (chord->Special == editor::SpecialKey::Tab && !chord->Control && !chord->Meta) {
+        if (chord.Special == editor::SpecialKey::Tab && !chord.Control && !chord.Meta) {
             AcceptActiveCompletion();
             ClampPointToNarrowing();
             return true;
         }
-        if ((chord->Special == editor::SpecialKey::Down && !chord->Control && !chord->Meta) ||
-            (chord->Meta && !chord->Control && chord->Codepoint == U'n')) {
+        if ((chord.Special == editor::SpecialKey::Down && !chord.Control && !chord.Meta) ||
+            (chord.Meta && !chord.Control && chord.Codepoint == U'n')) {
             CycleActiveCompletion(1);
             return true;
         }
-        if ((chord->Special == editor::SpecialKey::Up && !chord->Control && !chord->Meta) ||
-            (chord->Meta && !chord->Control && chord->Codepoint == U'p')) {
+        if ((chord.Special == editor::SpecialKey::Up && !chord.Control && !chord.Meta) ||
+            (chord.Meta && !chord.Control && chord.Codepoint == U'p')) {
             CycleActiveCompletion(-1);
             return true;
         }
@@ -644,9 +660,9 @@ bool BufferView::OnKeyEvent(const Event& event) {
         // {".", ",", ";", "("} on every item, so ned/set-lsp-commit-characters
         // exists to turn the whole behavior off (see its own doc comment in
         // ServerConfig.h).
-        if (chord->Special == editor::SpecialKey::None && !chord->Control && !chord->Meta &&
+        if (chord.Special == editor::SpecialKey::None && !chord.Control && !chord.Meta &&
             editor::lsp::CommitCharactersEnabled() &&
-            activeCompletion_->IsCommitCharacter(text::EncodeCodepointUtf8(chord->Codepoint))) {
+            activeCompletion_->IsCommitCharacter(text::EncodeCodepointUtf8(chord.Codepoint))) {
             AcceptActiveCompletion();
             ClampPointToNarrowing();
             // Falls through to the ordinary dispatch below rather than
@@ -663,9 +679,9 @@ bool BufferView::OnKeyEvent(const Event& event) {
         // CompletionSession keeps every item the server sent, so widening
         // back toward the original prefix is free and needs no request.
         // Everything else (motion, C-/M- chords, Enter, ...) still dismisses.
-        const bool editsCompletionWord = (!chord->Control && !chord->Meta) &&
-                                         (chord->Special == editor::SpecialKey::None ||
-                                          chord->Special == editor::SpecialKey::Backspace);
+        const bool editsCompletionWord = (!chord.Control && !chord.Meta) &&
+                                         (chord.Special == editor::SpecialKey::None ||
+                                          chord.Special == editor::SpecialKey::Backspace);
         if (!editsCompletionWord) {
             activeCompletion_.reset();
             NotifyCompletionChanged();
@@ -680,15 +696,15 @@ bool BufferView::OnKeyEvent(const Event& event) {
     // non-matching line (see its doc comment) is what makes this safe to
     // key off ReadOnly() alone, without needing to know which specific
     // kind of results buffer this is.
-    if (chord->Special == editor::SpecialKey::Enter && !chord->Control && !chord->Meta && activeBuffer_.Get().ReadOnly()) {
+    if (chord.Special == editor::SpecialKey::Enter && !chord.Control && !chord.Meta && activeBuffer_.Get().ReadOnly()) {
         VisitSearchResult();
         return true;
     }
 
-    if (HandleConflictQuickKey(*chord)) {
+    if (HandleConflictQuickKey(chord)) {
         return true;
     }
-    if (HandleMultibufferQuickKey(*chord)) {
+    if (HandleMultibufferQuickKey(chord)) {
         return true;
     }
     if (editor::vim::ModeEnabled()) {
@@ -700,11 +716,11 @@ bool BufferView::OnKeyEvent(const Event& event) {
         // key ("v" enters Visual mode, "N" repeats the last search) would be
         // reinterpreted as a vim command instead of completing the sequence.
         if (!dispatcher_.Pending().empty()) {
-            return DispatchChordNormally(*chord);
+            return DispatchChordNormally(chord);
         }
-        return HandleVimKey(*chord);
+        return HandleVimKey(chord);
     }
-    return DispatchChordNormally(*chord);
+    return DispatchChordNormally(chord);
 }
 
 void BufferView::OnPaste(std::string_view text) {

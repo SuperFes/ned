@@ -108,6 +108,7 @@ bool Manager::ToggleBreakpoint(const std::filesystem::path& path, std::size_t li
                 SendBreakpointsForFile(key);
             }
             breakpoints_.erase(key);
+            NotifyBreakpointsChanged();
             return false;
         }
     }
@@ -119,7 +120,81 @@ bool Manager::ToggleBreakpoint(const std::filesystem::path& path, std::size_t li
     if (client_ && state_ != SessionState::Inactive) {
         SendBreakpointsForFile(key);
     }
+    NotifyBreakpointsChanged();
+    if (nowSet) {
+        // Asked only for a breakpoint that was just SET, and only of an
+        // adapter that offered to answer -- see SnapBreakpointToValidLine.
+        SnapBreakpointToValidLine(key, line);
+    }
     return nowSet;
+}
+
+bool Manager::SetBreakpointEnabled(const std::filesystem::path& path, std::size_t line, bool enabled) {
+    const std::string key  = NormalizePathKey(path);
+    const auto        file = breakpoints_.find(key);
+    if (file == breakpoints_.end()) {
+        return false;
+    }
+    const auto it = std::find_if(file->second.begin(), file->second.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    if (it == file->second.end() || it->enabled == enabled) {
+        return it != file->second.end();
+    }
+    it->enabled = enabled;
+    // A disabled breakpoint keeps whatever the adapter last said about it,
+    // which would be a stale "verified" claim about a breakpoint that is no
+    // longer set. Reset to the same optimistic default a fresh toggle gets.
+    if (!enabled) {
+        it->verified   = true;
+        it->actualLine = 0;
+    }
+    if (client_ && state_ != SessionState::Inactive) {
+        SendBreakpointsForFile(key);
+    }
+    NotifyBreakpointsChanged();
+    return true;
+}
+
+bool Manager::RemoveBreakpoint(const std::filesystem::path& path, std::size_t line) {
+    const std::string key  = NormalizePathKey(path);
+    const auto        file = breakpoints_.find(key);
+    if (file == breakpoints_.end()) {
+        return false;
+    }
+    const auto it = std::find_if(file->second.begin(), file->second.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    if (it == file->second.end()) {
+        return false;
+    }
+    file->second.erase(it);
+    // Same "push the now-empty list before erasing the map entry" ordering
+    // ToggleBreakpoint's own removal path documents.
+    const bool nowEmpty = file->second.empty();
+    if (client_ && state_ != SessionState::Inactive) {
+        SendBreakpointsForFile(key);
+    }
+    if (nowEmpty) {
+        breakpoints_.erase(key);
+    }
+    NotifyBreakpointsChanged();
+    return true;
+}
+
+void Manager::ClearSourceBreakpoints() {
+    if (breakpoints_.empty()) {
+        return;
+    }
+    std::vector<std::string> keys;
+    keys.reserve(breakpoints_.size());
+    for (const auto& [key, entries] : breakpoints_) {
+        keys.push_back(key);
+    }
+    for (const std::string& key : keys) {
+        breakpoints_[key].clear();
+        if (client_ && state_ != SessionState::Inactive) {
+            SendBreakpointsForFile(key); // the empty list is what actually clears the adapter
+        }
+    }
+    breakpoints_.clear();
+    NotifyBreakpointsChanged();
 }
 
 std::string Manager::SetBreakpointCondition(const std::filesystem::path& path, std::size_t line, std::string condition) {
@@ -135,6 +210,7 @@ std::string Manager::SetBreakpointCondition(const std::filesystem::path& path, s
     if (client_ && state_ != SessionState::Inactive) {
         SendBreakpointsForFile(key);
     }
+    NotifyBreakpointsChanged();
     std::string status = (condition.empty() ? "Condition cleared at " : "Condition set at ") + path.filename().string() + ":" +
                          std::to_string(line);
     if (!condition.empty() && client_ && state_ != SessionState::Inactive && !capabilities_.conditionalBreakpoints) {
@@ -156,6 +232,7 @@ std::string Manager::SetBreakpointLogMessage(const std::filesystem::path& path, 
     if (client_ && state_ != SessionState::Inactive) {
         SendBreakpointsForFile(key);
     }
+    NotifyBreakpointsChanged();
     std::string status = (logMessage.empty() ? "Log message cleared at " : "Log message set at ") + path.filename().string() + ":" +
                          std::to_string(line);
     if (!logMessage.empty() && client_ && state_ != SessionState::Inactive && !capabilities_.logPoints) {
@@ -177,6 +254,7 @@ std::string Manager::SetBreakpointHitCondition(const std::filesystem::path& path
     if (client_ && state_ != SessionState::Inactive) {
         SendBreakpointsForFile(key);
     }
+    NotifyBreakpointsChanged();
     std::string status = (hitCondition.empty() ? "Hit condition cleared at " : "Hit condition set at ") +
                          path.filename().string() + ":" + std::to_string(line);
     if (!hitCondition.empty() && client_ && state_ != SessionState::Inactive && !capabilities_.hitConditionalBreakpoints) {
@@ -185,26 +263,223 @@ std::string Manager::SetBreakpointHitCondition(const std::filesystem::path& path
     return status;
 }
 
+namespace {
+
+    auto FindFunctionBreakpoint(std::vector<Manager::FunctionBreakpoint>& breakpoints, const std::string& name) {
+        return std::find_if(breakpoints.begin(), breakpoints.end(),
+                            [&name](const Manager::FunctionBreakpoint& bp) { return bp.name == name; });
+    }
+
+} // namespace
+
 bool Manager::ToggleFunctionBreakpoint(std::string name) {
-    const auto it = std::find(functionBreakpoints_.begin(), functionBreakpoints_.end(), name);
+    const auto it = FindFunctionBreakpoint(functionBreakpoints_, name);
     bool       nowSet;
     if (it != functionBreakpoints_.end()) {
         functionBreakpoints_.erase(it);
         nowSet = false;
     }
     else {
-        functionBreakpoints_.push_back(std::move(name));
-        std::sort(functionBreakpoints_.begin(), functionBreakpoints_.end());
+        functionBreakpoints_.push_back(FunctionBreakpoint{.name = std::move(name)});
+        std::sort(functionBreakpoints_.begin(), functionBreakpoints_.end(),
+                  [](const FunctionBreakpoint& a, const FunctionBreakpoint& b) { return a.name < b.name; });
         nowSet = true;
     }
     if (client_ && state_ != SessionState::Inactive) {
         SendFunctionBreakpoints();
     }
+    NotifyBreakpointsChanged();
     return nowSet;
 }
 
-const std::vector<std::string>& Manager::FunctionBreakpoints() const {
+bool Manager::SetFunctionBreakpointEnabled(const std::string& name, bool enabled) {
+    const auto it = FindFunctionBreakpoint(functionBreakpoints_, name);
+    if (it == functionBreakpoints_.end()) {
+        return false;
+    }
+    if (it->enabled != enabled) {
+        it->enabled = enabled;
+        if (client_ && state_ != SessionState::Inactive) {
+            SendFunctionBreakpoints();
+        }
+        NotifyBreakpointsChanged();
+    }
+    return true;
+}
+
+bool Manager::RemoveFunctionBreakpoint(const std::string& name) {
+    const auto it = FindFunctionBreakpoint(functionBreakpoints_, name);
+    if (it == functionBreakpoints_.end()) {
+        return false;
+    }
+    functionBreakpoints_.erase(it);
+    if (client_ && state_ != SessionState::Inactive) {
+        SendFunctionBreakpoints();
+    }
+    NotifyBreakpointsChanged();
+    return true;
+}
+
+void Manager::RestoreFunctionBreakpoints(std::vector<FunctionBreakpoint> breakpoints) {
+    std::sort(breakpoints.begin(), breakpoints.end(),
+              [](const FunctionBreakpoint& a, const FunctionBreakpoint& b) { return a.name < b.name; });
+    breakpoints.erase(std::unique(breakpoints.begin(), breakpoints.end(),
+                                  [](const FunctionBreakpoint& a, const FunctionBreakpoint& b) { return a.name == b.name; }),
+                      breakpoints.end());
+    functionBreakpoints_ = std::move(breakpoints);
+    if (client_ && state_ != SessionState::Inactive) {
+        SendFunctionBreakpoints();
+    }
+    NotifyBreakpointsChanged();
+}
+
+void Manager::ClearFunctionBreakpoints() {
+    if (functionBreakpoints_.empty()) {
+        return;
+    }
+    functionBreakpoints_.clear();
+    if (client_ && state_ != SessionState::Inactive) {
+        SendFunctionBreakpoints();
+    }
+    NotifyBreakpointsChanged();
+}
+
+const std::vector<Manager::FunctionBreakpoint>& Manager::FunctionBreakpoints() const {
     return functionBreakpoints_;
+}
+
+void Manager::SetOnBreakpointsChanged(std::function<void()> handler) {
+    onBreakpointsChanged_ = std::move(handler);
+}
+
+void Manager::SetOnStatusMessage(std::function<void(std::string)> handler) {
+    onStatusMessage_ = std::move(handler);
+}
+
+void Manager::ReportStatus(std::string message) {
+    if (onStatusMessage_) {
+        onStatusMessage_(std::move(message));
+    }
+}
+
+void Manager::SnapBreakpointToValidLine(const std::string& pathKey, std::size_t line) {
+    if (!client_ || state_ == SessionState::Inactive || state_ == SessionState::Starting ||
+        !capabilities_.breakpointLocations) {
+        return;
+    }
+    // A window rather than the whole file: the question is "where does the
+    // statement this line belongs to actually start", and an answer dozens
+    // of lines away would be a different statement, not a correction.
+    constexpr std::size_t kSnapWindow = 8;
+    RequestBreakpointLocations(std::filesystem::path(pathKey), line, line + kSnapWindow,
+                               [this, pathKey, line](std::vector<std::size_t> valid) {
+                                   if (valid.empty() || std::find(valid.begin(), valid.end(), line) != valid.end()) {
+                                       return; // no opinion, or the line was already fine
+                                   }
+                                   const auto file = breakpoints_.find(pathKey);
+                                   if (file == breakpoints_.end()) {
+                                       return; // removed while the request was in flight
+                                   }
+                                   const auto it = std::find_if(file->second.begin(), file->second.end(),
+                                                                [line](const Breakpoint& bp) { return bp.line == line; });
+                                   if (it == file->second.end()) {
+                                       return;
+                                   }
+                                   const std::size_t target = valid.front();
+                                   // Already a breakpoint where this one would land: drop the
+                                   // new one rather than create a duplicate line, which
+                                   // BreakpointsForFile's callers all assume cannot happen.
+                                   const bool occupied = std::any_of(file->second.begin(), file->second.end(),
+                                                                     [target](const Breakpoint& bp) { return bp.line == target; });
+                                   if (occupied) {
+                                       file->second.erase(it);
+                                       ReportStatus("Line " + std::to_string(line) + " cannot hold a breakpoint; one is already set at " +
+                                                    std::to_string(target) + ".");
+                                   }
+                                   else {
+                                       it->line = target;
+                                       std::sort(file->second.begin(), file->second.end(),
+                                                 [](const Breakpoint& a, const Breakpoint& b) { return a.line < b.line; });
+                                       ReportStatus("Breakpoint moved to line " + std::to_string(target) +
+                                                    " -- line " + std::to_string(line) + " cannot hold one.");
+                                   }
+                                   if (file->second.empty()) {
+                                       breakpoints_.erase(pathKey);
+                                   }
+                                   SendBreakpointsForFile(pathKey);
+                                   NotifyBreakpointsChanged();
+                               });
+}
+
+void Manager::NotifyBreakpointsChanged() {
+    if (onBreakpointsChanged_) {
+        onBreakpointsChanged_();
+    }
+}
+
+void Manager::SetState(SessionState state) {
+    if (state_ == state) {
+        return;
+    }
+    state_ = state;
+    if (onSessionStateChanged_) {
+        onSessionStateChanged_(state_);
+    }
+}
+
+void Manager::SetOnSessionStateChanged(std::function<void(SessionState)> handler) {
+    onSessionStateChanged_ = std::move(handler);
+}
+
+void Manager::SelectFrame(int frameId) {
+    stoppedFrameId_ = frameId;
+    RefreshFrameLocals();
+}
+
+const std::map<std::string, std::string>& Manager::FrameLocals() const {
+    return frameLocals_;
+}
+
+void Manager::SetFrameLocalsTrackingEnabled(bool enabled) {
+    if (frameLocalsTracking_ == enabled) {
+        return;
+    }
+    frameLocalsTracking_ = enabled;
+    RefreshFrameLocals(); // fills in if just enabled at a stop, clears if just disabled
+}
+
+void Manager::RefreshFrameLocals() {
+    // Every outstanding response belongs to the frame that was focused when
+    // it was issued; bumping first is what makes a stale one droppable.
+    ++frameLocalsGeneration_;
+    frameLocals_.clear();
+    if (!frameLocalsTracking_ || !client_ || state_ != SessionState::Stopped || !stoppedFrameId_) {
+        return;
+    }
+    const std::uint64_t generation = frameLocalsGeneration_;
+    RequestScopes(*stoppedFrameId_, [this, generation](std::vector<Scope> scopes) {
+        if (generation != frameLocalsGeneration_) {
+            return;
+        }
+        for (const Scope& scope : scopes) {
+            if (scope.expensive || scope.variablesReference == 0) {
+                continue; // the adapter said so; inline values are drawn every paint
+            }
+            RequestVariables(scope.variablesReference, [this, generation](std::vector<Variable> variables) {
+                if (generation != frameLocalsGeneration_) {
+                    return;
+                }
+                for (Variable& variable : variables) {
+                    if (variable.name.empty()) {
+                        continue;
+                    }
+                    // emplace, not assign: scopes arrive innermost first, so
+                    // the first answer for a shadowed name is the right one.
+                    frameLocals_.emplace(std::move(variable.name), std::move(variable.value));
+                }
+            });
+        }
+    });
 }
 
 const std::vector<Manager::ExceptionFilter>& Manager::AvailableExceptionFilters() const {
@@ -220,6 +495,7 @@ void Manager::SetExceptionBreakpointFilters(std::set<std::string> ids) {
     if (client_ && state_ != SessionState::Inactive) {
         SendExceptionBreakpoints();
     }
+    NotifyBreakpointsChanged();
 }
 
 void Manager::RequestDataBreakpointInfo(int variablesReference, const std::string& name,
@@ -294,6 +570,7 @@ bool Manager::ToggleDataBreakpoint(std::string dataId, std::string description, 
     if (client_ && state_ != SessionState::Inactive) {
         SendDataBreakpoints();
     }
+    NotifyBreakpointsChanged();
     return nowSet;
 }
 
@@ -305,6 +582,37 @@ void Manager::RemoveDataBreakpointAt(std::size_t index) {
     if (client_ && state_ != SessionState::Inactive) {
         SendDataBreakpoints();
     }
+    NotifyBreakpointsChanged();
+}
+
+bool Manager::SetDataBreakpointEnabled(std::size_t index, bool enabled) {
+    if (index >= dataBreakpoints_.size()) {
+        return false;
+    }
+    DataBreakpoint& bp = dataBreakpoints_[index];
+    if (bp.enabled != enabled) {
+        bp.enabled = enabled;
+        if (!enabled) {
+            bp.verified = true; // same stale-claim reset SetBreakpointEnabled documents
+            bp.message.clear();
+        }
+        if (client_ && state_ != SessionState::Inactive) {
+            SendDataBreakpoints();
+        }
+        NotifyBreakpointsChanged();
+    }
+    return true;
+}
+
+void Manager::ClearDataBreakpoints() {
+    if (dataBreakpoints_.empty()) {
+        return;
+    }
+    dataBreakpoints_.clear();
+    if (client_ && state_ != SessionState::Inactive) {
+        SendDataBreakpoints();
+    }
+    NotifyBreakpointsChanged();
 }
 
 const std::vector<Manager::DataBreakpoint>& Manager::DataBreakpoints() const {
@@ -332,6 +640,7 @@ std::map<std::string, std::vector<Manager::PersistedBreakpoint>> Manager::AllBre
                 .condition    = bp.condition,
                 .logMessage   = bp.logMessage,
                 .hitCondition = bp.hitCondition,
+                .enabled      = bp.enabled,
             });
         }
     }
@@ -380,6 +689,7 @@ void Manager::RestoreBreakpoints(std::map<std::string, std::vector<PersistedBrea
                 .condition    = entry.condition,
                 .logMessage   = entry.logMessage,
                 .hitCondition = entry.hitCondition,
+                .enabled      = entry.enabled,
             });
         }
     }
@@ -391,6 +701,7 @@ void Manager::RestoreBreakpoints(std::map<std::string, std::vector<PersistedBrea
             SendBreakpointsForFile(key);
         }
     }
+    NotifyBreakpointsChanged();
 }
 
 // ---------------------------------------------------------------------------------
@@ -576,7 +887,7 @@ std::string Manager::BeginSession(const std::string& language, bool attach) {
     // handshake against it.
 
     language_ = language;
-    state_    = SessionState::Starting;
+    SetState(SessionState::Starting);
     WireClient(*client_);
 
     client_->SendRequest("initialize",
@@ -628,6 +939,28 @@ std::string Manager::BeginSession(const std::string& language, bool attach) {
                              if (body.contains("supportsDataBreakpoints") && body["supportsDataBreakpoints"].is_boolean()) {
                                  capabilities_.dataBreakpoints = body["supportsDataBreakpoints"].get<bool>();
                              }
+                             if (body.contains("supportsCompletionsRequest") &&
+                                 body["supportsCompletionsRequest"].is_boolean()) {
+                                 capabilities_.completions = body["supportsCompletionsRequest"].get<bool>();
+                             }
+                             if (body.contains("supportsStepInTargetsRequest") &&
+                                 body["supportsStepInTargetsRequest"].is_boolean()) {
+                                 capabilities_.stepInTargets = body["supportsStepInTargetsRequest"].get<bool>();
+                             }
+                             if (body.contains("supportsBreakpointLocationsRequest") &&
+                                 body["supportsBreakpointLocationsRequest"].is_boolean()) {
+                                 capabilities_.breakpointLocations = body["supportsBreakpointLocationsRequest"].get<bool>();
+                             }
+                             if (body.contains("supportsSetExpression") && body["supportsSetExpression"].is_boolean()) {
+                                 capabilities_.setExpression = body["supportsSetExpression"].get<bool>();
+                             }
+                             if (body.contains("supportsModulesRequest") && body["supportsModulesRequest"].is_boolean()) {
+                                 capabilities_.modules = body["supportsModulesRequest"].get<bool>();
+                             }
+                             if (body.contains("supportsLoadedSourcesRequest") &&
+                                 body["supportsLoadedSourcesRequest"].is_boolean()) {
+                                 capabilities_.loadedSources = body["supportsLoadedSourcesRequest"].get<bool>();
+                             }
                              if (body.contains("exceptionBreakpointFilters") && body["exceptionBreakpointFilters"].is_array()) {
                                  for (const Json& filterJson : body["exceptionBreakpointFilters"]) {
                                      ExceptionFilter filter;
@@ -642,6 +975,7 @@ std::string Manager::BeginSession(const std::string& language, bool attach) {
                                      }
                                      exceptionFilters_.push_back(std::move(filter));
                                  }
+                                 NotifyBreakpointsChanged(); // a listing's exception-filter section just came into existence
                              }
                              SendLaunchOrAttach();
                          });
@@ -667,7 +1001,7 @@ void Manager::SendLaunchOrAttach() {
             return;
         }
         if (state_ == SessionState::Starting) {
-            state_ = SessionState::Running;
+            SetState(SessionState::Running);
         }
     });
 }
@@ -704,8 +1038,11 @@ void Manager::HandleInitializedEvent() {
 
 void Manager::SendFunctionBreakpoints() {
     Json breakpointsJson = Json::array();
-    for (const std::string& name : functionBreakpoints_) {
-        breakpointsJson.push_back(Json{{"name", name}});
+    for (const FunctionBreakpoint& bp : functionBreakpoints_) {
+        if (!bp.enabled) {
+            continue; // "not sent" is what disabled means on the wire
+        }
+        breakpointsJson.push_back(Json{{"name", bp.name}});
     }
     client_->SendRequest("setFunctionBreakpoints", Json{{"breakpoints", std::move(breakpointsJson)}},
                          [](bool, const Json&, const std::string&) {
@@ -731,6 +1068,9 @@ void Manager::SendDataBreakpoints() {
     Json                     breakpointsJson = Json::array();
     std::vector<std::string> sentIds;
     for (const DataBreakpoint& bp : dataBreakpoints_) {
+        if (!bp.enabled) {
+            continue; // "not sent" is what disabled means on the wire
+        }
         Json entry = Json{{"dataId", bp.dataId}};
         if (!bp.accessType.empty()) {
             entry["accessType"] = bp.accessType;
@@ -762,13 +1102,18 @@ void Manager::SendDataBreakpoints() {
                                  }
                                  it->message = results[i].value("message", "");
                              }
+                             NotifyBreakpointsChanged();
                          });
 }
 
 void Manager::SendBreakpointsForFile(const std::string& pathKey) {
-    Json breakpointsJson = Json::array();
+    Json                       breakpointsJson = Json::array();
+    std::vector<std::uint64_t> sentIds;
     if (const auto it = breakpoints_.find(pathKey); it != breakpoints_.end()) {
         for (const Breakpoint& bp : it->second) {
+            if (!bp.enabled) {
+                continue; // "not sent" is what disabled means on the wire
+            }
             Json entry = Json{{"line", bp.line}};
             if (!bp.condition.empty()) {
                 entry["condition"] = bp.condition;
@@ -780,6 +1125,7 @@ void Manager::SendBreakpointsForFile(const std::string& pathKey) {
                 entry["hitCondition"] = bp.hitCondition;
             }
             breakpointsJson.push_back(std::move(entry));
+            sentIds.push_back(bp.id);
         }
     }
     client_->SendRequest("setBreakpoints",
@@ -787,16 +1133,22 @@ void Manager::SendBreakpointsForFile(const std::string& pathKey) {
                              {"source", Json{{"path", pathKey}}},
                              {"breakpoints", std::move(breakpointsJson)},
                          },
-                         [this, pathKey](bool success, const Json& body, const std::string&) {
-                             // "verified" IS tracked now, matched back by index (the
-                             // response array is the same order as the request, per
-                             // spec) -- it dims the gutter glyph rather than being
-                             // dropped on the floor. DAP round 4: the adapter's own
-                             // snapped "line" per entry is tracked too (actualLine) --
-                             // the gutter shows it in place of the requested line when
-                             // it differs; editing operations still address the
-                             // requested line (see Breakpoint::actualLine's own doc
-                             // comment).
+                         [this, pathKey, sentIds = std::move(sentIds)](bool success, const Json& body, const std::string&) {
+                             // "verified" IS tracked now -- it dims the gutter glyph
+                             // rather than being dropped on the floor. DAP round 4: the
+                             // adapter's own snapped "line" per entry is tracked too
+                             // (actualLine) -- the gutter shows it in place of the
+                             // requested line when it differs; editing operations still
+                             // address the requested line (see Breakpoint::actualLine's
+                             // own doc comment).
+                             //
+                             // debug-panel: matched back by Breakpoint::id rather than
+                             // by store position. The response pairs with the REQUEST's
+                             // order, which is no longer the store's -- a disabled
+                             // breakpoint occupies a slot here and none on the wire --
+                             // and this is also the pairing that survives a toggle
+                             // landing while the request was in flight, the same
+                             // reasoning SendDataBreakpoints' own dataId match records.
                              if (!success || !body.contains("breakpoints") || !body["breakpoints"].is_array()) {
                                  return;
                              }
@@ -805,13 +1157,23 @@ void Manager::SendBreakpointsForFile(const std::string& pathKey) {
                                  return; // toggled off again before the response landed
                              }
                              const Json& results = body["breakpoints"];
-                             for (std::size_t i = 0; i < it->second.size() && i < results.size(); ++i) {
+                             bool        changed = false;
+                             for (std::size_t i = 0; i < sentIds.size() && i < results.size(); ++i) {
+                                 const auto bp = std::find_if(it->second.begin(), it->second.end(),
+                                                              [id = sentIds[i]](const Breakpoint& candidate) { return candidate.id == id; });
+                                 if (bp == it->second.end()) {
+                                     continue; // removed before the response landed
+                                 }
                                  if (results[i].contains("verified") && results[i]["verified"].is_boolean()) {
-                                     it->second[i].verified = results[i]["verified"].get<bool>();
+                                     bp->verified = results[i]["verified"].get<bool>();
                                  }
                                  if (results[i].contains("line") && results[i]["line"].is_number_integer()) {
-                                     it->second[i].actualLine = static_cast<std::size_t>(std::max(results[i]["line"].get<int>(), 1));
+                                     bp->actualLine = static_cast<std::size_t>(std::max(results[i]["line"].get<int>(), 1));
                                  }
+                                 changed = true;
+                             }
+                             if (changed) {
+                                 NotifyBreakpointsChanged();
                              }
                          });
 }
@@ -820,7 +1182,7 @@ void Manager::HandleStoppedEvent(const Json& body) {
     // Run-to-cursor's temporary breakpoint (if any) is cleared on the very
     // next stop for any reason -- only one continue was ever issued for it.
     ClearPendingRunToCursor(/*pushToAdapter=*/true);
-    state_           = SessionState::Stopped;
+    SetState(SessionState::Stopped);
     stoppedThreadId_ = body.value("threadId", 1);
     focusedThreadId_.reset(); // re-seeded from stoppedThreadId_ via CurrentThreadId() until SelectThread overrides it
     const std::string reason = body.value("reason", "stopped");
@@ -851,6 +1213,7 @@ void Manager::HandleStoppedEvent(const Json& body) {
                                  }
                              }
                              RefreshWatchHistory(); // stoppedFrameId_ is set by now, same scoping Evaluate itself uses
+                             RefreshFrameLocals();  // same reason, same moment
                              if (onStopped_) {
                                  onStopped_(info);
                              }
@@ -918,17 +1281,31 @@ std::string Manager::StopSession() {
 }
 
 void Manager::MarkResumed() {
-    state_ = SessionState::Running;
+    SetState(SessionState::Running);
     currentStop_.reset();
     stoppedFrameId_.reset();
     focusedThreadId_.reset();
+    // debug-panel (inline values): a running debuggee's locals are not
+    // stale, they are meaningless -- the frame they belonged to may not
+    // exist any more. Bumping the generation also drops any response still
+    // in flight from the stop just left.
+    ++frameLocalsGeneration_;
+    frameLocals_.clear();
 }
 
 std::string Manager::SendStep(const std::string& command, const std::string& label) {
+    return SendStepWith(command, label, Json::object());
+}
+
+std::string Manager::SendStepWith(const std::string& command, const std::string& label, Json extraArguments) {
     if (state_ != SessionState::Stopped) {
         return "Not stopped (nothing to step).";
     }
-    client_->SendRequest(command, Json{{"threadId", CurrentThreadId()}},
+    Json arguments = Json{{"threadId", CurrentThreadId()}};
+    for (const auto& [key, value] : extraArguments.items()) {
+        arguments[key] = value;
+    }
+    client_->SendRequest(command, std::move(arguments),
                          [this, command](bool success, const Json&, const std::string& message) {
                              if (success) {
                                  MarkResumed(); // the landing spot arrives as the next `stopped` event
@@ -946,6 +1323,63 @@ std::string Manager::StepOver() {
 
 std::string Manager::StepInto() {
     return SendStep("stepIn", "Stepping into");
+}
+
+void Manager::RequestCompletions(const std::string& text, int column, std::function<void(std::vector<Completion>)> callback) {
+    if (!client_ || state_ != SessionState::Stopped || !capabilities_.completions) {
+        callback({});
+        return;
+    }
+    Json arguments = {{"text", text}, {"column", column}};
+    if (stoppedFrameId_) {
+        arguments["frameId"] = *stoppedFrameId_; // the same scoping Evaluate uses
+    }
+    client_->SendRequest("completions", std::move(arguments),
+                         [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+                             std::vector<Completion> completions;
+                             if (success && body.contains("targets") && body["targets"].is_array()) {
+                                 for (const Json& targetJson : body["targets"]) {
+                                     Completion completion;
+                                     completion.label = targetJson.value("label", "");
+                                     if (completion.label.empty()) {
+                                         continue;
+                                     }
+                                     completion.text   = targetJson.value("text", completion.label);
+                                     completion.type   = targetJson.value("type", "");
+                                     completion.start  = targetJson.value("start", -1);
+                                     completion.length = targetJson.value("length", -1);
+                                     completions.push_back(std::move(completion));
+                                 }
+                             }
+                             callback(std::move(completions));
+                         });
+}
+
+std::string Manager::StepIntoTarget(int targetId) {
+    return SendStepWith("stepIn", "Stepping into", Json{{"targetId", targetId}});
+}
+
+void Manager::RequestStepInTargets(int frameId, std::function<void(std::vector<StepInTarget>)> callback) {
+    if (!client_ || state_ != SessionState::Stopped || !capabilities_.stepInTargets) {
+        callback({});
+        return;
+    }
+    client_->SendRequest("stepInTargets", Json{{"frameId", frameId}},
+                         [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+                             std::vector<StepInTarget> targets;
+                             if (success && body.contains("targets") && body["targets"].is_array()) {
+                                 for (const Json& targetJson : body["targets"]) {
+                                     StepInTarget target;
+                                     target.id    = targetJson.value("id", 0);
+                                     target.label = targetJson.value("label", "");
+                                     if (target.label.empty()) {
+                                         continue;
+                                     }
+                                     targets.push_back(std::move(target));
+                                 }
+                             }
+                             callback(std::move(targets));
+                         });
 }
 
 std::string Manager::StepOut() {
@@ -1107,12 +1541,71 @@ int Manager::CurrentThreadId() const {
     return focusedThreadId_.value_or(stoppedThreadId_);
 }
 
-void Manager::RequestStackTrace(std::function<void(std::vector<StackFrame>)> callback) {
+void Manager::RequestModules(std::function<void(std::vector<Module>)> callback) {
+    if (!client_ || state_ == SessionState::Inactive || state_ == SessionState::Starting || !capabilities_.modules) {
+        callback({});
+        return;
+    }
+    client_->SendRequest("modules", Json::object(), [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+        std::vector<Module> modules;
+        if (success && body.contains("modules") && body["modules"].is_array()) {
+            for (const Json& moduleJson : body["modules"]) {
+                Module module;
+                // DAP allows an id to be a number or a string; neither is
+                // used as a key here, only shown, so it is normalized to
+                // text rather than branched on everywhere downstream.
+                if (moduleJson.contains("id")) {
+                    module.id = moduleJson["id"].is_string() ? moduleJson["id"].get<std::string>() : moduleJson["id"].dump();
+                }
+                module.name         = moduleJson.value("name", "");
+                module.path         = moduleJson.value("path", "");
+                module.symbolStatus = moduleJson.value("symbolStatus", "");
+                module.isUserCode   = moduleJson.value("isUserCode", false);
+                if (module.name.empty()) {
+                    continue;
+                }
+                modules.push_back(std::move(module));
+            }
+        }
+        callback(std::move(modules));
+    });
+}
+
+void Manager::RequestLoadedSources(std::function<void(std::vector<LoadedSource>)> callback) {
+    if (!client_ || state_ == SessionState::Inactive || state_ == SessionState::Starting || !capabilities_.loadedSources) {
+        callback({});
+        return;
+    }
+    client_->SendRequest("loadedSources", Json::object(),
+                         [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+                             std::vector<LoadedSource> sources;
+                             if (success && body.contains("sources") && body["sources"].is_array()) {
+                                 for (const Json& sourceJson : body["sources"]) {
+                                     LoadedSource source;
+                                     source.name = sourceJson.value("name", "");
+                                     if (sourceJson.contains("path") && sourceJson["path"].is_string()) {
+                                         source.path = std::filesystem::path(sourceJson["path"].get<std::string>());
+                                         if (source.name.empty()) {
+                                             source.name = source.path->filename().string();
+                                         }
+                                     }
+                                     if (source.name.empty()) {
+                                         continue;
+                                     }
+                                     sources.push_back(std::move(source));
+                                 }
+                             }
+                             callback(std::move(sources));
+                         });
+}
+
+void Manager::RequestStackTrace(std::function<void(std::vector<StackFrame>)> callback, int threadId) {
     if (!client_ || state_ != SessionState::Stopped) {
         callback({});
         return;
     }
-    client_->SendRequest("stackTrace", Json{{"threadId", CurrentThreadId()}, {"startFrame", 0}, {"levels", 20}},
+    client_->SendRequest("stackTrace",
+                         Json{{"threadId", threadId != 0 ? threadId : CurrentThreadId()}, {"startFrame", 0}, {"levels", 20}},
                          [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
                              std::vector<StackFrame> frames;
                              if (success && body.contains("stackFrames") && body["stackFrames"].is_array()) {
@@ -1150,6 +1643,7 @@ void Manager::RequestScopes(int frameId, std::function<void(std::vector<Scope>)>
                                      scopes.push_back(Scope{
                                          .name               = scopeJson.value("name", ""),
                                          .variablesReference = scopeJson.value("variablesReference", 0),
+                                         .expensive          = scopeJson.value("expensive", false),
                                      });
                                  }
                              }
@@ -1177,6 +1671,7 @@ void Manager::RequestVariables(int variablesReference, std::function<void(std::v
                                          .type               = variableJson.value("type", ""),
                                          .variablesReference = variableJson.value("variablesReference", 0),
                                          .memoryReference    = variableJson.value("memoryReference", ""),
+                                         .evaluateName       = variableJson.value("evaluateName", ""),
                                      });
                                  }
                              }
@@ -1352,6 +1847,69 @@ void Manager::SelectThread(int threadId, std::function<void(bool)> callback) {
                          });
 }
 
+void Manager::RequestBreakpointLocations(const std::filesystem::path& path, std::size_t line, std::size_t endLine,
+                                         std::function<void(std::vector<std::size_t>)> callback) {
+    if (!client_ || state_ == SessionState::Inactive || state_ == SessionState::Starting ||
+        !capabilities_.breakpointLocations) {
+        callback({});
+        return;
+    }
+    client_->SendRequest("breakpointLocations",
+                         Json{
+                             {"source", Json{{"path", NormalizePathKey(path)}}},
+                             {"line", line},
+                             {"endLine", std::max(endLine, line)},
+                         },
+                         [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+                             std::vector<std::size_t> lines;
+                             if (success && body.contains("breakpoints") && body["breakpoints"].is_array()) {
+                                 for (const Json& location : body["breakpoints"]) {
+                                     if (location.contains("line") && location["line"].is_number_integer()) {
+                                         lines.push_back(static_cast<std::size_t>(std::max(location["line"].get<int>(), 1)));
+                                     }
+                                 }
+                             }
+                             std::sort(lines.begin(), lines.end());
+                             lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
+                             callback(std::move(lines));
+                         });
+}
+
+bool Manager::SupportsSetVariable() const {
+    return capabilities_.setVariable;
+}
+
+void Manager::SetExpression(const std::string& expression, const std::string& value,
+                            std::function<void(SetVariableResult)> callback) {
+    if (!client_ || state_ != SessionState::Stopped) {
+        callback(SetVariableResult{.success = false, .errorMessage = "No debug session."});
+        return;
+    }
+    if (!capabilities_.setExpression) {
+        callback(SetVariableResult{.success      = false,
+                                   .errorMessage = "This adapter does not support assigning to an expression."});
+        return;
+    }
+    Json arguments = {{"expression", expression}, {"value", value}};
+    if (stoppedFrameId_) {
+        arguments["frameId"] = *stoppedFrameId_; // the same scoping Evaluate uses
+    }
+    client_->SendRequest("setExpression", std::move(arguments),
+                         [callback = std::move(callback)](bool success, const Json& body, const std::string& message) {
+                             SetVariableResult result;
+                             result.success = success;
+                             if (success) {
+                                 result.value              = body.value("value", "");
+                                 result.type               = body.value("type", "");
+                                 result.variablesReference = body.value("variablesReference", 0);
+                             }
+                             else {
+                                 result.errorMessage = message;
+                             }
+                             callback(std::move(result));
+                         });
+}
+
 void Manager::SetVariable(int variablesReference, const std::string& name, const std::string& value,
                              std::function<void(SetVariableResult)> callback) {
     if (!client_ || state_ != SessionState::Stopped) {
@@ -1383,7 +1941,7 @@ void Manager::EndSession(std::string reason) {
     // a permanent breakpoint the user never actually asked to keep. No live
     // adapter left worth telling (client_ is torn down just below).
     ClearPendingRunToCursor(/*pushToAdapter=*/false);
-    state_           = SessionState::Inactive;
+    SetState(SessionState::Inactive);
     stoppedThreadId_ = 0;
     currentStop_.reset();
     stoppedFrameId_.reset();
@@ -1398,6 +1956,8 @@ void Manager::EndSession(std::string reason) {
     // this run, so keeping one would arm the next session against an id it
     // never issued -- see ToggleDataBreakpoint's own doc comment.
     dataBreakpoints_.clear();
+    frameLocals_.clear();
+    ++frameLocalsGeneration_;
     isAttach_ = false;
     // lsp-use-after-free follow-up: client_ used to move into retired_ here
     // instead of destroying in place, deferring to the next StartOrContinue
@@ -1410,6 +1970,9 @@ void Manager::EndSession(std::string reason) {
     // callback safely no-ops instead of touching freed memory regardless of
     // when this destroys the object, so plain immediate destruction is safe.
     client_.reset();
+    // The exception-filter and data-breakpoint stores just emptied, and a
+    // standing listing shows both -- same staleness a toggle would cause.
+    NotifyBreakpointsChanged();
     if (onSessionEnded_) {
         onSessionEnded_(std::move(reason));
     }

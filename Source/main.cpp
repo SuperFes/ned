@@ -116,6 +116,7 @@
 #include "UI/JanetReplPanel.h"
 #include "UI/Layout.h"
 #include "UI/ListPopup.h"
+#include "UI/ModifierTap.h"
 #include "UI/Overlay.h"
 #include "UI/PaintParse.h"
 #include "UI/PanelDock.h"
@@ -135,6 +136,11 @@
 using namespace ned::ui;
 
 namespace {
+
+// debug-panel: "no such panel registered yet" for a LeftDock panel id whose
+// registration happens later in main() than the callback that has to
+// recognize it. LeftDock's own ids start at 0 and only ever grow.
+constexpr std::size_t kUnregisteredPanelId = static_cast<std::size_t>(-1);
 
 // `ned --lsp-broker-stop`: connects to the running LSP broker daemon (see
 // Editor/Lsp/BrokerMain.h) and sends it the ned/broker-shutdown control
@@ -1178,9 +1184,17 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
     // ProjectSidebar/VcsPanel's own former "vcs-panel-visible" tie-break
     // variable's real replacement now that there's one dock, not two
     // independently-hidden widgets.
-    leftDock->SetOnActivePanelCommitted([filesPanelId, vcsPanelId](std::size_t id) {
+    // debug-panel: filled in when that panel registers, which can only
+    // happen further down (it needs dapManager, which needs the EventLoop).
+    // Captured by reference for the same reason every other long-lived
+    // callback here captures a main() local by reference.
+    std::size_t debugPanelId = kUnregisteredPanelId;
+    leftDock->SetOnActivePanelCommitted([filesPanelId, vcsPanelId, &debugPanelId](std::size_t id) {
         if (id == vcsPanelId) {
             ned::editor::SetVariable("left-panel-active", "vcs");
+        }
+        else if (id == debugPanelId) {
+            ned::editor::SetVariable("left-panel-active", "debug");
         }
         else if (id == filesPanelId) {
             ned::editor::SetVariable("left-panel-active", "sidebar");
@@ -1477,13 +1491,67 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
                     .condition    = bp.condition,
                     .logMessage   = bp.logMessage,
                     .hitCondition = bp.hitCondition,
+                    .enabled      = bp.enabled,
                 });
             }
         }
         dapManager.RestoreBreakpoints(std::move(converted));
     }
+    if (restoredSession && !restoredSession->functionBreakpoints.empty()) {
+        std::vector<ned::editor::dap::Manager::FunctionBreakpoint> converted;
+        converted.reserve(restoredSession->functionBreakpoints.size());
+        for (const auto& bp : restoredSession->functionBreakpoints) {
+            converted.push_back(ned::editor::dap::Manager::FunctionBreakpoint{.name = bp.name, .enabled = bp.enabled});
+        }
+        dapManager.RestoreFunctionBreakpoints(std::move(converted));
+    }
     if (restoredSession && !restoredSession->watches.empty()) {
         dapManager.RestoreWatches(restoredSession->watches);
+    }
+
+    // debug-panel: the third LeftDock panel -- registered here rather than
+    // beside the other two because it needs dapManager, which needs the
+    // EventLoop constructed above them. Its rail position follows
+    // registration order, so it sits below Files and VCS.
+    ned::ui::DebugPanel debugPanel(theme, dapManager);
+    windowManager->SetDebugPanel(&debugPanel);
+    // nerd-font-glyph follow-up: bug glyph (U+F188), the same deliberate
+    // exception the Files and VCS glyphs above are.
+    // The dock draws the bordered, titled content region around its active
+    // panel (ProjectSidebar and VcsPanel own no frame either) -- a TreeView
+    // defaults to drawing its own, which would be a second border inside it.
+    debugPanel.Tree().SetDrawBorder(false);
+    debugPanelId = leftDock->AddPanel(U'', "Debug", debugPanel.Tree());
+    debugPanel.Tree().SetOnCancel([wm = windowManager.get(), dock = leftDock.get()] {
+        wm->TakeFocus();
+        dock->NoteFocusReturned();
+    });
+    debugPanel.SetOnMessage([&statusMessage](std::string message) { statusMessage = std::move(message); });
+    debugPanel.SetOnVisitLocation([wm = windowManager.get()](const std::filesystem::path& path, std::size_t line) {
+        wm->RequestVisitLocation(path, line);
+    });
+    debugPanel.SetOnTextEntryRequest(
+        [wm = windowManager.get()](std::string label, std::string initialText, std::function<void(std::string)> onAccept) {
+            wm->RequestDebugPanelTextEntry(std::move(label), std::move(initialText), std::move(onAccept));
+        });
+    // The store is mutated from everywhere (the gutter, F9, a dap-* command,
+    // an adapter's own setBreakpoints response) -- this is the one feed that
+    // keeps the listing honest regardless of which.
+    dapManager.SetOnBreakpointsChanged([panel = &debugPanel] { panel->Refresh(); });
+    // Anything the debugger has to say after the call that caused it has
+    // already returned -- a breakpoint the adapter moved, for instance.
+    dapManager.SetOnStatusMessage([&statusMessage](std::string message) { statusMessage = std::move(message); });
+    // What BufferView's inline values paint from -- off in Manager by
+    // default, since keeping it current costs requests on every stop (see
+    // SetFrameLocalsTrackingEnabled).
+    dapManager.SetFrameLocalsTrackingEnabled(true);
+    // The stack, the scopes and every watch value belong to one stop -- this
+    // is what re-asks for them, and what drops them when the debuggee runs
+    // on or the session ends.
+    dapManager.SetOnSessionStateChanged(
+        [panel = &debugPanel](ned::editor::dap::Manager::SessionState) { panel->NotifySessionStateChanged(); });
+    if (ned::editor::Variable("left-panel-active") == "debug") {
+        leftDock->SwitchTo(debugPanelId); // silent, same as the VCS restore above
     }
 
     // ACP client slice 2: same "constructed here, needs a real EventLoop&"
@@ -3022,6 +3090,10 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
     // straight to FocusedWidget() (Widget.h's own flat registry, no tree
     // walk needed at all), and only a mouse Event is broadcast, via head's
     // own Container::OnEvent, to the whole tree.
+    // copilot-key follow-up: one detector for the whole application, above
+    // every widget -- see the dispatch site below for why this is global
+    // rather than per-widget.
+    ned::ui::ModifierTapDetector modifierTapDetector;
     callbacks.onEvent = [&](const Event& event) {
         if (event.is_mouse()) {
             // A visible overlay owns clicks inside its own Box; everything
@@ -3062,7 +3134,20 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
             }
         }
         else if (Widget* focused = FocusedWidget()) {
-            focused->OnEvent(event);
+            // copilot-key follow-up: a modifier tap is a global gesture, so
+            // it is detected HERE, above every widget, rather than inside
+            // whichever one holds focus. That is the whole point: the
+            // chord has to work while a panel owns the keyboard, which is
+            // exactly when it is wanted (to dismiss that panel). Only the
+            // event that COMPLETES a tap is consumed -- the presses still
+            // reach the focused widget untouched, so nothing that cares
+            // about modifier state is disturbed.
+            if (const std::optional<ned::editor::KeyChord> tapped = modifierTapDetector.Feed(event.raw())) {
+                windowManager->DispatchGlobalChord(*tapped);
+            }
+            else {
+                focused->OnEvent(event);
+            }
         }
     };
 

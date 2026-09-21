@@ -38,6 +38,19 @@ namespace {
         return x;
     }
 
+    // Columns PaintRowText will consume for `text` -- one per codepoint,
+    // the same crude approximation it paints with. ListPopup's own
+    // DisplayColumnCount, duplicated for the reason above.
+    int DisplayColumnCount(const std::string& text) {
+        int         count = 0;
+        std::size_t pos   = 0;
+        while (pos < text.size()) {
+            pos = text::NextCodepointBoundary(text, pos);
+            ++count;
+        }
+        return count;
+    }
+
     // The glyph shown in a row's disclosure column, per TreeRow's own doc
     // comment on hasChildren/expanded/loading's meaning.
     const char* DisclosureGlyph(const TreeRow& row) {
@@ -79,6 +92,41 @@ void TreeView::SetOnCancel(std::function<void()> onCancel) {
     onCancel_ = std::move(onCancel);
 }
 
+void TreeView::SetOnKey(std::function<void(const editor::KeyChord&)> onKey) {
+    onKey_ = std::move(onKey);
+}
+
+void TreeView::SetDrawBorder(bool drawBorder) {
+    drawBorder_ = drawBorder;
+}
+
+std::optional<std::size_t> TreeView::SelectedRow() const {
+    if (model_.rows.empty()) {
+        return std::nullopt;
+    }
+    return std::min(model_.selectedIndex.value_or(0), model_.rows.size() - 1);
+}
+
+void TreeView::EnsureSelectionVisible(int visibleRows) {
+    if (visibleRows <= 0 || model_.rows.empty()) {
+        scrollOffset_ = 0;
+        return;
+    }
+    const auto        window    = static_cast<std::size_t>(visibleRows);
+    const std::size_t maxOffset = model_.rows.size() > window ? model_.rows.size() - window : 0;
+    scrollOffset_               = std::min(scrollOffset_, maxOffset);
+    if (!model_.selectedIndex) {
+        return;
+    }
+    const std::size_t selected = std::min(*model_.selectedIndex, model_.rows.size() - 1);
+    if (selected < scrollOffset_) {
+        scrollOffset_ = selected;
+    }
+    else if (selected >= scrollOffset_ + window) {
+        scrollOffset_ = selected - window + 1;
+    }
+}
+
 void TreeView::Paint(Canvas c) {
     const int width  = c.size().width;
     const int height = c.size().height;
@@ -99,8 +147,13 @@ void TreeView::Paint(Canvas c) {
     // Reset the interior's glyphs and traits. The background is handled
     // separately below, because whether it may be cleared depends on the
     // fill: a blur *samples* what is already there.
-    for (int y = 1; y < height - 1; ++y) {
-        for (int x = 1; x < width - 1; ++x) {
+    // 1 when this widget owns its frame, 0 when a host does (see
+    // SetDrawBorder) -- every row/column bound below is expressed against
+    // it rather than against a hardcoded border of 1.
+    const int inset = drawBorder_ ? 1 : 0;
+
+    for (int y = inset; y < height - inset; ++y) {
+        for (int x = inset; x < width - inset; ++x) {
             Cell& cell            = c[{.x = x, .y = y}];
             cell.character        = " ";
             labelBrush.ApplyTextTo(cell);
@@ -127,26 +180,32 @@ void TreeView::Paint(Canvas c) {
     // that actually needs the destination today.
     const bool fillReadsDestination = PaintReadsDestination(surface.fill);
     if (!fillReadsDestination) {
-        for (int y = 1; y < height - 1; ++y) {
-            for (int x = 1; x < width - 1; ++x) {
+        for (int y = inset; y < height - inset; ++y) {
+            for (int x = inset; x < width - inset; ++x) {
                 c[{.x = x, .y = y}].background_color = theme_.background;
             }
         }
     }
-    const Point origin = c.Origin();
-    Canvas      interior =
-        c.ForBox(Box{.x_min = origin.x + 1, .x_max = origin.x + width - 2, .y_min = origin.y + 1, .y_max = origin.y + height - 2});
+    const Point origin   = c.Origin();
+    Canvas      interior = c.ForBox(Box{.x_min = origin.x + inset,
+                                        .x_max = origin.x + width - 1 - inset,
+                                        .y_min = origin.y + inset,
+                                        .y_max = origin.y + height - 1 - inset});
     Fill(interior, surface.fill);
 
-    DrawBorder(c, theme_.border);
-    // Between the frame and its title on purpose -- see RecolourBorder.
-    RecolourBorder(c, surface.border);
-    DrawBorderTitle(c, model_.title, theme_.borderAccent);
+    if (drawBorder_) {
+        DrawBorder(c, theme_.border);
+        // Between the frame and its title on purpose -- see RecolourBorder.
+        RecolourBorder(c, surface.border);
+        DrawBorderTitle(c, model_.title, theme_.borderAccent);
+    }
 
-    int row = 1;
-    for (std::size_t i = 0; i < model_.rows.size(); ++i) {
-        if (row >= height - 1) {
-            break; // more rows than fit -- truncated, ListPopup's own overflow convention
+    EnsureSelectionVisible(height - 2 * inset);
+
+    int row = inset;
+    for (std::size_t i = scrollOffset_; i < model_.rows.size(); ++i) {
+        if (row >= height - inset) {
+            break; // past the bottom border -- the rest is reachable by scrolling
         }
         const TreeRow& treeRow  = model_.rows[i];
         const bool     selected = model_.selectedIndex && *model_.selectedIndex == i;
@@ -154,7 +213,7 @@ void TreeView::Paint(Canvas c) {
         const Brush&   text     = selected ? selectedLabelBrush : labelBrush;
 
         if (selected) {
-            for (int x = 1; x < width - 1; ++x) {
+            for (int x = inset; x < width - inset; ++x) {
                 c[{.x = x, .y = row}].background_color = selectionFill;
             }
         }
@@ -163,8 +222,25 @@ void TreeView::Paint(Canvas c) {
         // label -- one column per codepoint throughout, PaintRowText's own
         // crude-but-consistent approximation (no grapheme-cluster/east-
         // asian-width accounting, matching ListPopup).
-        const int indent = 2 + static_cast<int>(treeRow.depth) * 2;
-        PaintRowText(c, indent, width, row, DisclosureGlyph(treeRow), glyph);
+        const int indent = inset + 1 + static_cast<int>(treeRow.depth) * 2;
+        const int rowEnd = width - inset + 1; // PaintRowText stops one short of its bound
+        PaintRowText(c, indent, rowEnd, row, DisclosureGlyph(treeRow), glyph);
+        // The trailing column is laid out first so the label can be clipped
+        // against it -- ListPopup's own right-column rule, minus its
+        // dim/accent styling choice, which a caller sets per row here.
+        int labelLimit = rowEnd;
+        if (!treeRow.right.empty()) {
+            const int rightWidth  = DisplayColumnCount(treeRow.right);
+            const int rightColumn = width - inset - rightWidth;
+            if (rightColumn > indent + 2) {
+                Brush rightBrush = text;
+                if (!selected && treeRow.rightForeground) {
+                    rightBrush.foreground = *treeRow.rightForeground;
+                }
+                PaintRowText(c, rightColumn, rowEnd, row, treeRow.right, rightBrush);
+                labelLimit = rightColumn - 1;
+            }
+        }
         // The kind marker sits between the disclosure column and the label,
         // in its own per-kind color -- the selection brush still wins over
         // that color, same as the disclosure glyph above, so a selected row
@@ -176,10 +252,14 @@ void TreeView::Paint(Canvas c) {
             if (!selected && treeRow.kindForeground) {
                 kindBrush.foreground = *treeRow.kindForeground;
             }
-            PaintRowText(c, labelColumn, width, row, treeRow.kindGlyph, kindBrush);
+            PaintRowText(c, labelColumn, rowEnd, row, treeRow.kindGlyph, kindBrush);
             labelColumn += 2;
         }
-        PaintRowText(c, labelColumn, width, row, treeRow.label, text);
+        Brush labelText = text;
+        if (!selected && treeRow.labelForeground) {
+            labelText.foreground = *treeRow.labelForeground;
+        }
+        PaintRowText(c, labelColumn, labelLimit, row, treeRow.label, labelText);
         ++row;
     }
 }
@@ -201,8 +281,16 @@ bool TreeView::HandleKeyEvent(const Event& event) {
     }
 
     if (model_.rows.empty()) {
-        if (IsQuit(*chord) && onCancel_) {
-            onCancel_();
+        if (IsQuit(*chord)) {
+            if (onCancel_) {
+                onCancel_();
+            }
+        }
+        else if (onKey_) {
+            // Still offered: a consumer's row-independent action (add a
+            // function breakpoint to an empty list) has to work before
+            // there is anything to select.
+            onKey_(*chord);
         }
         return true;
     }
@@ -252,6 +340,9 @@ bool TreeView::HandleKeyEvent(const Event& event) {
         return true;
     }
 
+    if (onKey_) {
+        onKey_(*chord);
+    }
     return true; // every other key is consumed while this widget holds focus
 }
 
@@ -260,19 +351,65 @@ bool TreeView::HandleMouseEvent(const Event& event) {
     if (!mouse) {
         return true;
     }
+    // A wheel tick moves the window without touching the selection -- the
+    // document-like reading gesture, distinct from Up/Down's "move what I
+    // am acting on" (ListPopup's own one-row-per-tick convention, scaled
+    // to three here since this widget scrolls a list long enough to have
+    // somewhere to go).
+    if (mouse->button == MouseEvent::Button::WheelUp || mouse->button == MouseEvent::Button::WheelDown) {
+        constexpr std::size_t kWheelRows = 3;
+        if (mouse->button == MouseEvent::Button::WheelDown) {
+            scrollOffset_ += kWheelRows;
+        }
+        else {
+            scrollOffset_ = scrollOffset_ > kWheelRows ? scrollOffset_ - kWheelRows : 0;
+        }
+        // Clamped against the model here; Paint re-clamps against its own
+        // height, which is the only thing that knows the real window.
+        if (!model_.rows.empty()) {
+            scrollOffset_ = std::min(scrollOffset_, model_.rows.size() - 1);
+        }
+        return true;
+    }
+
     if (mouse->button != MouseEvent::Button::Left || mouse->motion != MouseEvent::Motion::Pressed) {
         return true;
     }
 
-    const int row = mouse->at.y - 1; // row 0 (local y=0) is the top border
-    if (row < 0 || static_cast<std::size_t>(row) >= model_.rows.size()) {
+    const int inset = drawBorder_ ? 1 : 0;
+    const int row   = mouse->at.y - inset; // with a frame, local y=0 is its top border
+    // Bounded by this widget's own box rather than by the last Paint's
+    // height: the box is current from the moment a layout assigns it, and a
+    // click can legitimately arrive before any Paint has run.
+    const int interiorRows = Box_().y_max - Box_().y_min + 1 - 2 * inset;
+    if (row < 0 || row >= interiorRows) {
+        return true;
+    }
+    const std::size_t index = scrollOffset_ + static_cast<std::size_t>(row);
+    if (index >= model_.rows.size()) {
         return true;
     }
 
-    const auto index     = static_cast<std::size_t>(row);
     model_.selectedIndex = index;
     if (onSelectionChanged_) {
         onSelectionChanged_(index);
+    }
+    // A click on the disclosure glyph itself is an expand/collapse gesture,
+    // not an activation -- the affordance is drawn there, so clicking it
+    // has to mean what it looks like. Everywhere else on the row still
+    // activates.
+    const TreeRow& treeRow          = model_.rows[index];
+    const int      disclosureColumn = inset + 1 + static_cast<int>(treeRow.depth) * 2;
+    if (mouse->at.x == disclosureColumn && treeRow.hasChildren && !treeRow.loading) {
+        if (treeRow.expanded) {
+            if (onCollapseRequested_) {
+                onCollapseRequested_(index);
+            }
+        }
+        else if (onToggleExpand_) {
+            onToggleExpand_(index);
+        }
+        return true;
     }
     if (onActivate_) {
         onActivate_(index);

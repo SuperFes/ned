@@ -37,6 +37,7 @@
 #include "Editor/ImportFixupSettings.h"
 #include "Editor/IndentRuleOverride.h"
 #include "Editor/IndentStyle.h"
+#include "Editor/InlineDebugValues.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/LanguageRegistry.h"
 #include "Editor/LineEndingPolicy.h"
@@ -618,6 +619,10 @@ namespace {
 
     void NedSetInlineDiagnostics(bool enabled) {
         editor::SetInlineDiagnosticsEnabled(enabled);
+    }
+
+    void NedSetInlineDebugValues(bool enabled) {
+        editor::SetInlineDebugValuesEnabled(enabled);
     }
 
     void NedSetInlineDiagnosticStyle(std::string style) {
@@ -2141,6 +2146,11 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetInlineDiagnostics>(
         "ned", "set-inline-diagnostics",
         "Enable/disable inline diagnostics (the LSP message shown against the line it flags; default true).");
+    env.Register<&NedSetInlineDebugValues>(
+        "ned", "set-inline-debug-values",
+        "Enable/disable the debugger's inline values (each stopped frame's own locals shown after the lines that "
+        "mention them, in the file the debuggee is stopped in; default true). Display only -- the same values are "
+        "in the debug panel's Variables section either way.");
     env.Register<&NedSetInlineDiagnosticStyle>(
         "ned", "set-inline-diagnostic-style",
         "How an inline diagnostic is drawn: \"end-of-line\" (default) puts the message after the line's own text, "

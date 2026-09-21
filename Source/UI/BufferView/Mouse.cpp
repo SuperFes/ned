@@ -333,6 +333,27 @@ bool BufferView::HandleTestGutterClick(Point at) {
     return true;
 }
 
+// debug-panel: a click in the breakpoint column toggles a breakpoint on that
+// row -- the mouse counterpart to F9, and the reason the column is now
+// reserved for any language with a configured adapter rather than only once
+// a breakpoint already exists (see DapGutterActive): the column is where the
+// first one gets set.
+bool BufferView::HandleDapGutterClick(Point at) {
+    const bufferview::GutterLayout gutter = ComputeGutterLayout(activeBuffer_.Get().Content().LineCount());
+    if (gutter.dapWidth == 0 || at.x < 0 || static_cast<std::size_t>(at.x) >= gutter.dapWidth) {
+        return false;
+    }
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (!buffer.Path() || dapManager_ == nullptr) {
+        return true; // inside the column with nothing to toggle -- swallow, don't place point
+    }
+    const std::size_t line   = viewport_.LineForRow(at.y).line + 1; // 1-based, DAP's own convention
+    const bool        nowSet = dapManager_->ToggleBreakpoint(*buffer.Path(), line);
+    statusMessage_           = (nowSet ? "Breakpoint set at " : "Breakpoint removed at ") + buffer.Path()->filename().string() +
+                               ":" + std::to_string(line);
+    return true;
+}
+
 // code-action-hints follow-up: the mouse counterpart to C-c C-a / lsp-quick-fix
 // on a marked line -- the accelerant this codebase's mouse stance asks for,
 // never the only path. Point moves to the flagged range's own start first,
@@ -450,6 +471,12 @@ bool BufferView::HandleLeftPress(const MouseEvent& mouseEvent) {
     // point-placement fallthrough" shape; the regions can't overlap, so
     // the order between this and the test column carries no meaning.
     if (HandleCodeActionGutterClick(mouseEvent.at)) {
+        return true;
+    }
+
+    // Same shape again; the breakpoint column is the leftmost one, so it
+    // cannot overlap either of the two above.
+    if (HandleDapGutterClick(mouseEvent.at)) {
         return true;
     }
 

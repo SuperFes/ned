@@ -116,6 +116,13 @@ class Manager {
         // requested `line`, matching where the user's cursor was; only the
         // gutter's display row follows actualLine when set.
         std::size_t actualLine = 0;
+        // debug-panel: disabled breakpoints stay in the store (and in the
+        // gutter, hollow) but are omitted from every setBreakpoints request.
+        // DAP has no disable of its own -- "not sent" IS disabled as far as
+        // an adapter is concerned -- so this is entirely ned-side state,
+        // which is also why it persists (see PersistedBreakpoint) while
+        // verified/actualLine don't.
+        bool enabled = true;
     };
 
     // session-persistence round 2: one breakpoint's persistable state --
@@ -132,6 +139,7 @@ class Manager {
         std::string condition;
         std::string logMessage;
         std::string hitCondition;
+        bool        enabled = true; // debug-panel; see Breakpoint::enabled
     };
 
     // Slice 4: sets/clears (empty string) the condition or log message on
@@ -148,6 +156,34 @@ class Manager {
     // DAP round 3: SetBreakpointCondition's exact sibling for hitCondition.
     std::string SetBreakpointHitCondition(const std::filesystem::path& path, std::size_t line, std::string hitCondition);
 
+    // debug-panel: the breakpoint store's remaining edit operations, needed
+    // by a listing that shows every breakpoint at once rather than only the
+    // one under point. Each pushes to a live adapter immediately, exactly
+    // like ToggleBreakpoint. Enable/disable is ned-side only (see
+    // Breakpoint::enabled); a disabled breakpoint is kept, and kept
+    // persisted, but never sent.
+    //
+    // SetBreakpointEnabled/RemoveBreakpoint address the REQUESTED line
+    // (Breakpoint::line), not the adapter's snapped actualLine -- the same
+    // rule the condition/logMessage/hitCondition setters follow. Both are
+    // no-ops, returning false, for a line holding no breakpoint.
+    bool SetBreakpointEnabled(const std::filesystem::path& path, std::size_t line, bool enabled);
+    bool RemoveBreakpoint(const std::filesystem::path& path, std::size_t line);
+    // Drops every source breakpoint in every file, pushing an empty list
+    // per file that had any -- a live adapter ends up with none, rather
+    // than with whatever it was last told.
+    void ClearSourceBreakpoints();
+
+    // debug-panel: DAP's `breakpointLocations` -- which lines in [line,
+    // endLine] can actually hold a breakpoint. Answers an empty list when
+    // the session isn't live or the adapter never advertised the request,
+    // which callers must read as "no opinion", NOT as "no valid lines":
+    // the two are indistinguishable on the wire and treating them alike
+    // would refuse every breakpoint against an adapter that simply doesn't
+    // implement this.
+    void RequestBreakpointLocations(const std::filesystem::path& path, std::size_t line, std::size_t endLine,
+                                    std::function<void(std::vector<std::size_t>)> callback);
+
     // Sorted breakpoint lines for path (normalized the same way) — empty if
     // none. Backs slice 2's gutter markers; public now for tests.
     [[nodiscard]] std::vector<std::size_t> BreakpointsForFile(const std::filesystem::path& path) const;
@@ -158,8 +194,15 @@ class Manager {
     // own shape); pushed to a live adapter immediately, same as
     // ToggleBreakpoint. Kept sorted+deduped. No gutter representation (not
     // tied to a line) -- status-string feedback only.
-    bool                                          ToggleFunctionBreakpoint(std::string name);
-    [[nodiscard]] const std::vector<std::string>& FunctionBreakpoints() const;
+    // debug-panel: a name plus the same ned-side enabled flag source
+    // breakpoints carry (see Breakpoint::enabled) -- a disabled entry is
+    // simply left out of setFunctionBreakpoints.
+    struct FunctionBreakpoint {
+        std::string name;
+        bool        enabled = true;
+    };
+    bool                                                 ToggleFunctionBreakpoint(std::string name);
+    [[nodiscard]] const std::vector<FunctionBreakpoint>& FunctionBreakpoints() const;
 
     // DAP round 3: exception breakpoints -- DAP's `setExceptionBreakpoints`
     // request. The adapter advertises available filters on its `initialize`
@@ -228,16 +271,56 @@ class Manager {
         // starts optimistic exactly like Breakpoint::verified.
         bool        verified = true;
         std::string message; // the adapter's own reason when verified is false
+        bool        enabled = true; // debug-panel; see Breakpoint::enabled
     };
     // Adds the breakpoint, or removes it if that dataId is already watched
     // -- ToggleBreakpoint's own return convention (true if now set). The
     // whole set goes to the adapter immediately, since setDataBreakpoints
     // replaces it wholesale.
     bool ToggleDataBreakpoint(std::string dataId, std::string description, std::string accessType);
+    // debug-panel: ToggleFunctionBreakpoint's remaining siblings, matching
+    // the source-breakpoint operations above one for one. Name-addressed
+    // (the store's own key); both no-op, returning false, for an unknown
+    // name.
+    bool SetFunctionBreakpointEnabled(const std::string& name, bool enabled);
+    bool RemoveFunctionBreakpoint(const std::string& name);
+    void ClearFunctionBreakpoints();
+    // debug-panel: RestoreBreakpoints' sibling for the function-breakpoint
+    // store -- replaces it wholesale from a session file, re-sorting and
+    // deduplicating by name (the invariants ToggleFunctionBreakpoint
+    // maintains) and pushing to a live adapter if one is somehow up.
+    void RestoreFunctionBreakpoints(std::vector<FunctionBreakpoint> breakpoints);
+
     // Removes by index into DataBreakpoints() -- RemoveWatchAt's own shape,
     // for the *debug* buffer's "[data:N]" rows. Out-of-range is a no-op.
     void                                             RemoveDataBreakpointAt(std::size_t index);
     [[nodiscard]] const std::vector<DataBreakpoint>& DataBreakpoints() const;
+    // debug-panel: the same enable/disable and clear operations the other
+    // two stores have. A disabled data breakpoint is left out of
+    // setDataBreakpoints; the store itself is still session-scoped and
+    // still cleared by EndSession (see ToggleDataBreakpoint).
+    bool SetDataBreakpointEnabled(std::size_t index, bool enabled);
+    void ClearDataBreakpoints();
+
+    // debug-panel: fired after any change to any breakpoint store -- a
+    // toggle/condition/enable/remove from anywhere, an adapter's
+    // setBreakpoints response correcting verified/actualLine, a restore,
+    // or EndSession clearing the session-scoped ones. A standing listing
+    // has no other way to know it went stale; the gutter doesn't need one
+    // because it re-reads the store on every paint. Carries no payload:
+    // the handler re-reads whichever store it renders, the same shape
+    // SetOnStopped's own consumers use. Unset (the default) is a safe
+    // no-op, matching every other Set* hook here.
+    void SetOnBreakpointsChanged(std::function<void()> handler);
+
+    // debug-panel: a channel for a status line this class produces
+    // ASYNCHRONOUSLY. Every other user-facing string here is the return
+    // value of the call that caused it, which works only while the answer
+    // is known synchronously -- an adapter telling us, a request later,
+    // that a breakpoint landed somewhere else has no such return value to
+    // ride on. Single-slot, unset is a safe no-op, same as every other
+    // hook here.
+    void SetOnStatusMessage(std::function<void(std::string)> handler);
 
     // F5. No session: starts one for language (adapter + launch config both
     // required, see Config.h). Stopped: sends `continue` for the stopped
@@ -269,6 +352,19 @@ class Manager {
     // SetOnStopped like any other.
     std::string StepOver();
     std::string StepInto();
+    // debug-panel: DAP's `stepInTargets` -- which of the calls on the
+    // stopped line can be stepped into. Answers an empty list when the
+    // adapter never advertised the request (or nothing is stopped), which
+    // a caller must read as "no choice to offer" and fall back to a plain
+    // StepInto, not as "nothing to step into".
+    struct StepInTarget {
+        int         id = 0;
+        std::string label;
+    };
+    void RequestStepInTargets(int frameId, std::function<void(std::vector<StepInTarget>)> callback);
+    // StepInto aimed at one of those targets -- otherwise identical to it,
+    // including the resume it implies.
+    std::string StepIntoTarget(int targetId);
     std::string StepOut();
 
     // Debugging wishlist: reverse debugging -- DAP's own `reverseContinue`/
@@ -409,11 +505,21 @@ class Manager {
         // address). Fed straight into RequestDisassembly, never parsed.
         std::string instructionPointerReference;
     };
-    void RequestStackTrace(std::function<void(std::vector<StackFrame>)> callback);
+    // threadId 0 (the default) means the thread the session is focused on
+    // -- SelectThread's own choice, else the one the stop event named.
+    // debug-panel: a listing that shows every thread at once needs to ask
+    // about a thread that is not the focused one, without changing which
+    // thread a following step/continue targets.
+    void RequestStackTrace(std::function<void(std::vector<StackFrame>)> callback, int threadId = 0);
 
     struct Scope {
         std::string name;
         int         variablesReference = 0; // fed back to RequestVariables
+        // DAP's own `expensive`: the adapter warns that enumerating this
+        // scope is slow (a whole globals table, a registers dump). Shown
+        // like any other, but never fetched automatically -- see
+        // FrameLocals.
+        bool expensive = false;
     };
     void RequestScopes(int frameId, std::function<void(std::vector<Scope>)> callback);
 
@@ -427,6 +533,12 @@ class Manager {
         // one (most variables -- only pointer/array-shaped ones typically
         // carry one). Fed straight into RequestMemory, never parsed.
         std::string memoryReference;
+        // debug-panel: DAP's own `evaluateName` -- an expression that
+        // re-produces this variable in the current frame ("node->key", not
+        // just "key"). Empty when the adapter sent none. It is what makes
+        // "watch this variable" and setExpression work on a nested field,
+        // where the bare name means nothing outside its container.
+        std::string evaluateName;
     };
     // Debugging wishlist: hex is DAP's own `format: {hex: true}` request
     // argument -- a display-only hint (the adapter renders the numeric
@@ -475,6 +587,24 @@ class Manager {
     // Debugging wishlist: hex is RequestVariables's own `format: {hex: true}`
     // hint, applied to evaluate's `result` field the same way. Defaults
     // false, matching every existing call site's behavior unchanged.
+    // debug-panel: DAP's `completions` -- what the adapter suggests for a
+    // partially typed expression in the debug console, scoped to the
+    // focused frame. `column` is 1-based into `text`, DAP's own convention.
+    // Answers empty when nothing is stopped or the adapter never advertised
+    // the request; the console then simply doesn't complete, rather than
+    // falling back to a guess of its own.
+    struct Completion {
+        std::string label; // what to show
+        std::string text;  // what to insert; falls back to label when the adapter sent none
+        std::string type;  // "function", "variable", ... -- adapter-defined, display only
+        // The span of the typed text this replaces, both 0-based byte
+        // offsets into what was sent. Defaults to "replace the word the
+        // console worked out itself" -- see RequestCompletions.
+        int start  = -1;
+        int length = -1;
+    };
+    void RequestCompletions(const std::string& text, int column, std::function<void(std::vector<Completion>)> callback);
+
     void Evaluate(const std::string& expression, std::function<void(bool, std::string)> callback,
                   std::string context = "repl", bool hex = false);
 
@@ -530,12 +660,67 @@ class Manager {
         int         id = 0;
         std::string name;
     };
+    // debug-panel: the debuggee's own inventory -- what got loaded, and
+    // which of it the debugger can actually see into. Both answer with an
+    // empty list rather than an error when the session isn't live or the
+    // adapter never advertised the capability (Capabilities::modules /
+    // ::loadedSources), so a caller needs no precondition of its own.
+    struct Module {
+        std::string id;
+        std::string name;
+        std::string path;
+        // "loaded" / "not loaded" / an adapter-specific explanation. The
+        // one field that makes this listing worth having: a module whose
+        // symbols never loaded is why a breakpoint in it stays unverified.
+        std::string symbolStatus;
+        bool        isUserCode = false;
+    };
+    void RequestModules(std::function<void(std::vector<Module>)> callback);
+
+    struct LoadedSource {
+        std::string                          name;
+        std::optional<std::filesystem::path> path; // absent for a source with no file (generated, in-memory)
+    };
+    void RequestLoadedSources(std::function<void(std::vector<LoadedSource>)> callback);
+
     void RequestThreads(std::function<void(std::vector<Thread>)> callback);
     void SelectThread(int threadId, std::function<void(bool)> callback);
     // Debugging wishlist: a public read-only echo of the private
     // CurrentThreadId() below, for UI/DapThreadsPanel.h's own "mark the
     // current thread's row" need -- every other consumer resolves it only
     // implicitly, via RequestThreads()/SelectThread()'s own internal use.
+    // debug-panel: which frame Evaluate (and therefore every watch) scopes
+    // to. Seeded to the top frame by each stop event; a call-stack listing
+    // re-points it when the user selects a different frame, which is the
+    // whole reason to have one. A no-op for a frame id this session never
+    // issued is not detectable here -- the adapter answers "invalid frame"
+    // to the next evaluate, which is where it becomes visible.
+    void SelectFrame(int frameId);
+
+    // debug-panel (inline values): the focused frame's own locals, by name,
+    // refreshed automatically on every stop and on SelectFrame, and emptied
+    // the moment the debuggee resumes. Fed from the frame's non-expensive
+    // scopes only -- an adapter that flags its globals table `expensive`
+    // means it, and inline values are drawn on every paint.
+    //
+    // A cache rather than a request because its consumer is the paint path:
+    // BufferView draws these against the lines that mention them, which
+    // cannot wait on a round trip. A shadowed name resolves to the
+    // innermost scope's value (DAP orders scopes innermost first, and the
+    // first answer for a name wins here).
+    [[nodiscard]] const std::map<std::string, std::string>& FrameLocals() const;
+
+    // Off by default, and deliberately: keeping this cache current costs a
+    // scopes request plus one variables request per non-expensive scope on
+    // every single stop, which is pure waste for any embedder that never
+    // paints inline values (and for every test that doesn't assert on
+    // them). main.cpp turns it on once. Turning it off clears the cache
+    // rather than freezing it, so nothing can paint a stale value.
+    void                             SetFrameLocalsTrackingEnabled(bool enabled);
+    [[nodiscard]] std::optional<int> FocusedFrameId() const {
+        return stoppedFrameId_;
+    }
+
     [[nodiscard]] int FocusedThreadId() const {
         return CurrentThreadId();
     }
@@ -553,6 +738,22 @@ class Manager {
         int         variablesReference = 0;
         std::string errorMessage;
     };
+    // debug-panel: DAP's `setExpression` -- assigns to an lvalue EXPRESSION
+    // rather than to a named child of a container, which is what
+    // SetVariable below does. Two things need it: assigning to a watch (a
+    // watch is an expression, with no container to name it in), and
+    // assigning to a variable whose adapter implements setExpression but
+    // not setVariable. Scoped to the focused frame (SelectFrame). Reports
+    // failure through the same SetVariableResult shape rather than a
+    // second one.
+    void SetExpression(const std::string& expression, const std::string& value,
+                       std::function<void(SetVariableResult)> callback);
+    // Which of the two a caller should reach for. Exposed as a predicate
+    // rather than by making the whole Capabilities struct public: this is
+    // the one capability a caller has to branch on rather than merely be
+    // warned about.
+    [[nodiscard]] bool SupportsSetVariable() const;
+
     void SetVariable(int variablesReference, const std::string& name, const std::string& value,
                      std::function<void(SetVariableResult)> callback);
 
@@ -565,6 +766,14 @@ class Manager {
         std::optional<std::filesystem::path> path;
         std::size_t                          line = 0; // 1-based, valid only when path is set
     };
+    // debug-panel: every transition of State(), fired after the new state
+    // is in place. SetOnStopped above is about ONE transition and carries
+    // the stop's own details; this is about all of them, for a standing
+    // view whose whole content (a stack, a scope, a watch value) is only
+    // meaningful while Stopped and has to be cleared when it isn't.
+    // Single-slot like every other hook here.
+    void SetOnSessionStateChanged(std::function<void(SessionState)> handler);
+
     void SetOnStopped(std::function<void(const StoppedInfo&)> handler);
 
     // The session ended for any reason — terminated/exited event, adapter
@@ -599,6 +808,21 @@ class Manager {
     // Debugging wishlist: setDataBreakpoints -- SendFunctionBreakpoints's
     // sibling for the session-scoped data-breakpoint store.
     void SendDataBreakpoints();
+    // debug-panel: fires onBreakpointsChanged_ if set. Called from every
+    // store mutation and from the responses that correct one.
+    void NotifyBreakpointsChanged();
+    void ReportStatus(std::string message);
+    // debug-panel: after a breakpoint is set on a line a live adapter says
+    // cannot hold one, moves it to the nearest line that can and reports
+    // the move. The pre-emptive sibling of Breakpoint::actualLine, which
+    // stays the fallback for adapters that don't implement
+    // breakpointLocations: this keeps the STORE honest (so conditions and
+    // removals address a line that really exists), actualLine only ever
+    // corrected the display.
+    void SnapBreakpointToValidLine(const std::string& pathKey, std::size_t line);
+    // debug-panel: the single assignment point for state_, so no transition
+    // can be made without onSessionStateChanged_ hearing about it.
+    void SetState(SessionState state);
     void HandleInitializedEvent();
     void HandleStoppedEvent(const Json& body);
     // Debugging wishlist: watch-history sparkline -- fans out one Evaluate
@@ -607,6 +831,9 @@ class Manager {
     // stoppedFrameId_ is set. A non-numeric or failed evaluation is
     // silently skipped -- see WatchHistoryAt's own doc comment.
     void RefreshWatchHistory();
+    // debug-panel (inline values): repopulates frameLocals_ for
+    // stoppedFrameId_. A no-op that just clears when nothing is stopped.
+    void RefreshFrameLocals();
     // RunToCursor's own cleanup: erases the pending temporary breakpoint (if
     // any) from the store, pushing the change to a live adapter when
     // pushToAdapter is set (HandleStoppedEvent's case -- the session is
@@ -616,6 +843,9 @@ class Manager {
     // The shared body of StepOver/StepInto/StepOut -- command is the DAP
     // request name, label the human-readable status verb.
     std::string SendStep(const std::string& command, const std::string& label);
+    // SendStep's variant carrying extra request arguments (stepIn's own
+    // targetId) -- everything else about the step is identical.
+    std::string SendStepWith(const std::string& command, const std::string& label, Json extraArguments);
     // Marks the session running again: state, stop location, and frame id
     // all cleared together (continue and every step share this).
     void MarkResumed();
@@ -682,9 +912,9 @@ class Manager {
     // found afterwards is one that never goes away.
     std::optional<std::pair<std::string, std::uint64_t>> pendingRunToCursor_;
 
-    // DAP round 3: sorted+deduped function-breakpoint names -- see
+    // DAP round 3: sorted+deduped function breakpoints, by name -- see
     // ToggleFunctionBreakpoint.
-    std::vector<std::string> functionBreakpoints_;
+    std::vector<FunctionBreakpoint> functionBreakpoints_;
 
     // DAP round 3: the adapter's advertised exception filters and which are
     // currently enabled -- see AvailableExceptionFilters/
@@ -730,8 +960,33 @@ class Manager {
         bool stepBack = false;
         // Debugging wishlist: data breakpoints -- see ToggleDataBreakpoint.
         bool dataBreakpoints = false;
+        // debug-panel: the two inventory requests -- see RequestModules/
+        // RequestLoadedSources. Both are optional in the protocol and
+        // genuinely absent from several adapters, so unlike the fields
+        // above (which only warn) these actually gate the request: asking
+        // an adapter that never advertised one is how you get an error
+        // response instead of an empty list.
+        bool modules       = false;
+        bool loadedSources = false;
+        // debug-panel: see SetExpression. Unlike modules/loadedSources this
+        // one only chooses between two ways of doing the same thing, so it
+        // selects a path rather than gating one.
+        bool setExpression = false;
+        // debug-panel: see RequestBreakpointLocations.
+        bool breakpointLocations = false;
+        // debug-panel: see RequestStepInTargets.
+        bool stepInTargets = false;
+        // debug-panel: see RequestCompletions.
+        bool completions = false;
     };
     Capabilities capabilities_;
+
+    // debug-panel (inline values) -- see FrameLocals. Carries the
+    // generation of the stop it was fetched for, so a response arriving
+    // after a resume or a frame change is dropped rather than painted.
+    std::map<std::string, std::string> frameLocals_;
+    std::uint64_t                      frameLocalsGeneration_ = 0;
+    bool                               frameLocalsTracking_   = false;
 
     std::vector<std::string> watches_; // slice 4; persisted across restarts (round 2) -- see AddWatch/Watches/RestoreWatches
     // Debugging wishlist: watch-history sparkline -- parallel to watches_
@@ -740,6 +995,9 @@ class Manager {
     std::vector<std::vector<double>> watchHistory_;
 
     std::function<void(const StoppedInfo&)> onStopped_;
+    std::function<void()>                   onBreakpointsChanged_;  // debug-panel; see SetOnBreakpointsChanged
+    std::function<void(std::string)>        onStatusMessage_;       // debug-panel; see SetOnStatusMessage
+    std::function<void(SessionState)>       onSessionStateChanged_; // debug-panel; see SetOnSessionStateChanged
     std::function<void(std::string)>        onSessionEnded_;
 };
 

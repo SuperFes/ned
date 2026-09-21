@@ -401,7 +401,7 @@ void Engine::ExitInsertToNormal(text::Buffer& buffer) {
     // sight of whichever buffer Insert mode is being left in -- and it stamps gi's own
     // anchor below.
     AdoptBuffer(buffer);
-    const KeyChord escape{false, false, false, SpecialKey::Escape, 0};
+    const KeyChord escape{.Special = SpecialKey::Escape};
     currentCommandChords_.push_back(escape);
     if (isRecordingMacro_) {
         macroRecordingBuffer_.push_back(escape);
@@ -2161,7 +2161,7 @@ void Engine::RepeatLastChange(text::Buffer& buffer) {
         // here since that check won't fire once these are pushed.
         generationBeforeCommand_ = buffer.ContentGeneration();
         for (char digit : std::to_string(overrideCount)) {
-            currentCommandChords_.push_back(KeyChord{false, false, false, SpecialKey::None, static_cast<char32_t>(digit)});
+            currentCommandChords_.push_back(KeyChord{.Codepoint = static_cast<char32_t>(digit)});
         }
     }
     if (replayDepth_ > 50) {

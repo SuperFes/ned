@@ -586,6 +586,13 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 leftDock_->ActivateOrToggle(vcsPanel_);
             }
             return;
+        case editor::InteractiveRequest::ToggleDebugPanel:
+            // Same shape as ToggleVcsPanel above, mirrored onto the third
+            // dock panel.
+            if (leftDock_ != nullptr && debugPanel_ != nullptr) {
+                leftDock_->ActivateOrToggle(&debugPanel_->Tree());
+            }
+            return;
         case editor::InteractiveRequest::ToggleTerminal:
             // terminal-panel follow-up: one-shot direct action, same shape
             // as the window-management requests just below -- the panel
@@ -636,6 +643,13 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             if (leftDock_ != nullptr && vcsPanel_ != nullptr) {
                 leftDock_->PrepareForKeyboardFocus(vcsPanel_);
                 vcsPanel_->TakeFocus();
+            }
+            return;
+        case editor::InteractiveRequest::FocusDebugPanel:
+            // Same shape as FocusVcsPanel above, mirrored.
+            if (leftDock_ != nullptr && debugPanel_ != nullptr) {
+                leftDock_->PrepareForKeyboardFocus(&debugPanel_->Tree());
+                debugPanel_->Tree().TakeFocus();
             }
             return;
         case editor::InteractiveRequest::ToggleMinimap:
@@ -1062,7 +1076,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             statusMessage_ = dapManager_ ? dapManager_->StepOver() : "No debugger available.";
             return;
         case editor::InteractiveRequest::DapStepInto:
-            statusMessage_ = dapManager_ ? dapManager_->StepInto() : "No debugger available.";
+            // debug-panel: asks which call first, but only when the adapter
+            // can say and there is more than one -- see StepIntoWithTargets.
+            StepIntoWithTargets();
             return;
         case editor::InteractiveRequest::DapStepOut:
             statusMessage_ = dapManager_ ? dapManager_->StepOut() : "No debugger available.";
@@ -2116,6 +2132,10 @@ void BufferView::EndInteractiveSession() {
     search_.reset();
     queryReplace_.reset();
     prompt_.reset();
+    // debug-panel: the callback goes with the prompt it belonged to, so a
+    // cancelled panel prompt drops it rather than firing on the next one.
+    debugPanelTextEntryAccept_ = nullptr;
+    debugPanelTextEntryLabel_.clear();
     promptHistoryIndex_ = kNoHistoryIndex;
     promptHistoryStash_.clear();
     projectReplace_.reset();
@@ -2349,6 +2369,8 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "dap-breakpoint-hit-condition";
         case InputMode::DapFunctionBreakpointName:
             return "dap-function-breakpoint-name";
+        case InputMode::DebugPanelTextEntry:
+            return "debug-panel-text-entry";
         case InputMode::DapMemoryByteCount:
             return "dap-memory-byte-count";
         case InputMode::ShowMassifGraphPath:
@@ -2469,6 +2491,10 @@ std::optional<bufferview::TextEntryPrompt> BufferView::TextEntryPromptFor(InputM
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Evaluate"};
         case InputMode::DapFunctionBreakpointName:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Function breakpoint name"};
+        case InputMode::DebugPanelTextEntry:
+            // The label is the caller's, not this enum's -- see
+            // BeginDebugPanelTextEntry.
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, debugPanelTextEntryLabel_};
         case InputMode::DapMemoryByteCount:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Memory byte count"};
         case InputMode::DapSetVariableValue:
@@ -2794,6 +2820,15 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
         else {
             const bool nowSet = dapManager_->ToggleFunctionBreakpoint(input);
             statusMessage_    = (nowSet ? "Function breakpoint added: " : "Function breakpoint removed: ") + input;
+        }
+    }
+    else if (inputMode_ == InputMode::DebugPanelTextEntry) {
+        // Everything this prompt means lives in the callback -- including
+        // what an empty string does, since "clear the condition" and "no
+        // name given" are both legitimate answers depending on the caller.
+        if (debugPanelTextEntryAccept_) {
+            auto accept = std::exchange(debugPanelTextEntryAccept_, nullptr);
+            accept(input);
         }
     }
     else if (inputMode_ == InputMode::DapAddWatch) {
