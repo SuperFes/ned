@@ -2292,6 +2292,8 @@ void BufferView::Paint(Canvas paneCanvas) {
 
     PaintEndOfLineDiagnostics(c, rowLine, rowContentEndColumn, gutter.totalWidth);
 
+    PaintConflictActionChips(c, rowLine, rowContentEndColumn, gutter.totalWidth);
+
     PaintProseDiagnosticCallouts(c, rowLine, rowContentEndColumn, gutter.totalWidth);
 
     // completion-popup follow-up: activeCompletion_ mutation sites already
@@ -2382,6 +2384,94 @@ void BufferView::PaintEndOfLineDiagnostics(Canvas& c, const std::vector<std::siz
             cell.character = std::string(1, ch);
             messageBrush.ApplyTextTo(cell);
             ++col;
+        }
+    }
+}
+
+// The per-hunk mouse affordance ROADMAP's merge-conflict entry asks for:
+// four (or five) chips after the "<<<<<<<" marker's own text, each one a
+// resolution the keyboard already has a chord for. See this method's
+// declaration for why they ride on the marker line rather than a row of
+// their own.
+//
+// Ours/theirs/base carry the same washes their content spans do, so a chip
+// reads as "this side" rather than as a word; both/neither have no side to
+// borrow from and take the inactive-tab brush, the codebase's existing
+// "chip" fill.
+void BufferView::PaintConflictActionChips(Canvas& c, const std::vector<std::size_t>& rowLine,
+                                          const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth) {
+    conflictActionChips_.clear();
+
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (buffer.ReadOnly()) {
+        return; // a results/preview buffer showing marker text isn't something to edit
+    }
+    const std::vector<text::ConflictHunk>& hunks = gutters_.ConflictHunks();
+    if (hunks.empty()) {
+        return;
+    }
+
+    const text::ITextStorage& content = buffer.Content();
+    const int                 height  = c.size().height;
+    const int                 width   = c.size().width;
+
+    struct Chip {
+        std::string                label;
+        Brush                      brush;
+        editor::ConflictResolution resolution;
+    };
+
+    for (int row = 0; row < height; ++row) {
+        if (row >= static_cast<int>(rowLine.size()) || rowLine[row] == kNoRowLine) {
+            continue;
+        }
+        // A wrapped marker line's chips belong after the end of its text,
+        // same last-row rule the end-of-line diagnostic style follows.
+        if (row + 1 < height && row + 1 < static_cast<int>(rowLine.size()) && rowLine[row + 1] == rowLine[row]) {
+            continue;
+        }
+        const std::size_t line      = rowLine[row];
+        const std::size_t lineStart = content.LineToByteOffset(line);
+        const auto        it =
+            std::find_if(hunks.begin(), hunks.end(),
+                         [lineStart](const text::ConflictHunk& hunk) { return hunk.startByte == lineStart; });
+        if (it == hunks.end()) {
+            continue; // not a hunk's own "<<<<<<<" line
+        }
+
+        std::vector<Chip> chips{
+            {"[ours]", Brush{.background = theme_.conflictOursBackground, .foreground = theme_.defaultForeground},
+             editor::ConflictResolution::TakeOurs},
+            {"[theirs]", Brush{.background = theme_.conflictTheirsBackground, .foreground = theme_.defaultForeground},
+             editor::ConflictResolution::TakeTheirs},
+        };
+        if (it->baseRange) {
+            chips.push_back({"[base]",
+                             Brush{.background = theme_.conflictBaseBackground, .foreground = theme_.defaultForeground},
+                             editor::ConflictResolution::KeepBase});
+        }
+        chips.push_back({"[both]", theme_.tabBar, editor::ConflictResolution::TakeBoth});
+        chips.push_back({"[neither]", theme_.tabBar, editor::ConflictResolution::TakeNeither});
+
+        // Two columns of gap, so the chips never read as a continuation of
+        // the marker text -- the end-of-line diagnostic's own spacing.
+        int col = std::max(static_cast<int>(gutterWidth), rowContentEndColumn[row]) + 2;
+        for (const Chip& chip : chips) {
+            const int chipEnd = col + static_cast<int>(chip.label.size());
+            if (chipEnd > width) {
+                break; // a half-painted chip would be a half-clickable one
+            }
+            for (int i = 0; col + i < chipEnd; ++i) {
+                Cell& cell     = c[{.x = col + i, .y = row}];
+                cell.character = std::string(1, chip.label[static_cast<std::size_t>(i)]);
+                chip.brush.ApplyTo(cell);
+            }
+            conflictActionChips_.push_back(ConflictActionChip{.row           = row,
+                                                              .startColumn   = col,
+                                                              .endColumn     = chipEnd,
+                                                              .hunkStartByte = it->startByte,
+                                                              .resolution    = chip.resolution});
+            col = chipEnd + 1;
         }
     }
 }

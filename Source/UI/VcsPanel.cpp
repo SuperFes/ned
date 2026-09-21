@@ -968,6 +968,25 @@ void VcsPanel::OpenFileEntry(const std::filesystem::path& path) {
     }
 }
 
+void VcsPanel::ResolveAllConflicts(const std::filesystem::path& path, editor::ConflictResolution resolution) {
+    const char* side = resolution == editor::ConflictResolution::TakeOurs ? "ours" : "theirs";
+    try {
+        text::Buffer& opened = bufferList_.OpenOrCreateFile(path);
+        activeBufferProvider_().Set(opened);
+        const std::size_t resolved = editor::ResolveAllConflictHunks(opened, resolution);
+        statusMessage_             = resolved == 0
+                                         ? "no conflict hunks in \"" + path.filename().string() + "\""
+                                         : "resolved " + std::to_string(resolved) + " conflict hunk" +
+                                               (resolved == 1 ? "" : "s") + " (" + side + ") -- unsaved";
+    }
+    catch (const text::BinaryFileError&) {
+        statusMessage_ = "\"" + path.string() + "\" looks like a binary file.";
+    }
+    catch (const std::exception& e) {
+        statusMessage_ = e.what();
+    }
+}
+
 void VcsPanel::PushStash() {
     if (!vcsRunner_) {
         statusMessage_ = "no vcs runner configured";

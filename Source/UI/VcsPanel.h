@@ -35,6 +35,7 @@
 #include <vector>
 
 #include "ActiveBuffer.h"
+#include "Editor/ConflictResolution.h"
 #include "Editor/Project/Tree.h"
 #include "Editor/Vcs/RowStatus.h"
 #include "Editor/Vcs/Runner.h"
@@ -170,6 +171,15 @@ class VcsPanel : public Widget {
     void OpenFileEntry(const std::filesystem::path& path);
     void PopStash(const std::string& ref);
     void DropStash(const std::string& ref);
+
+    // Merge Conflict Resolution Mode (bulk follow-up): resolve every
+    // conflict hunk in one conflicted file the same way -- the case the
+    // per-hunk loop is the wrong tool for, a lockfile or generated file
+    // where one side is right throughout. Opens the file the way a click
+    // on its row does, resolves in the buffer, and leaves it modified and
+    // unsaved: the result is an ordinary undoable edit to review, not a
+    // write behind the user's back.
+    void ResolveAllConflicts(const std::filesystem::path& path, editor::ConflictResolution resolution);
 
     // Stage/unstage a specific path regardless of focus/multi-select state
     // -- StageOrUnstageSelectionOrFocused's own single-target case, exposed

@@ -37,6 +37,17 @@ enum class ConflictResolution {
 // baseRange -- the only caller-checkable no-op case.
 bool ResolveConflictHunk(text::Buffer& buffer, const text::ConflictHunk& hunk, ConflictResolution resolution);
 
+// Every hunk in the buffer, resolved the same way, as ONE undo step --
+// the whole-file bulk action for a file whose hunks are all mechanically
+// identical (a lockfile, a generated file). Returns how many were resolved;
+// KeepBase skips a hunk with no base section rather than failing the run.
+// Point is left at the first resolved hunk's own start.
+//
+// Resolves back to front so each replacement leaves the earlier hunks'
+// offsets untouched -- the hunks come from one parse of the pre-edit text,
+// and re-parsing per hunk would be the only alternative.
+std::size_t ResolveAllConflictHunks(text::Buffer& buffer, ConflictResolution resolution);
+
 // Point motion only, wrapping around the buffer -- re-parses fresh each call
 // (a cheap O(n) scan; resolving a hunk changes the parse immediately after,
 // so there's no cache worth maintaining at this layer).

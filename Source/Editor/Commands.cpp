@@ -1800,6 +1800,27 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registerMergeResolution("merge-keep-base", "Resolve the conflict hunk at point by taking the diff3 base section.",
                             ConflictResolution::KeepBase);
 
+    // Whole-file bulk resolution, for the case the per-hunk loop is the
+    // wrong tool for: a lockfile or generated file where one side is right
+    // for every hunk in it. Ours/theirs only -- "all both"/"all neither"
+    // across a file has no case behind it, and each command registered is a
+    // name frozen at 1.0.
+    auto registerBulkResolution = [&registry](const char* name, const char* doc, ConflictResolution resolution,
+                                              const char* side) {
+        registry.Register(name, doc, [resolution, side](CommandContext& context) {
+            const std::size_t resolved = ResolveAllConflictHunks(context.buffer, resolution);
+            if (context.message) {
+                *context.message = resolved == 0 ? "no conflict hunks in this buffer"
+                                                 : "resolved " + std::to_string(resolved) + " conflict hunk" +
+                                                       (resolved == 1 ? "" : "s") + " (" + side + ")";
+            }
+        });
+    };
+    registerBulkResolution("merge-take-all-ours", "Resolve every conflict hunk in the buffer by taking \"ours\".",
+                           ConflictResolution::TakeOurs, "ours");
+    registerBulkResolution("merge-take-all-theirs", "Resolve every conflict hunk in the buffer by taking \"theirs\".",
+                           ConflictResolution::TakeTheirs, "theirs");
+
     registry.Register("quit", "Exit the editor, or prompt for confirmation if any buffer has unsaved changes.",
                       [](CommandContext& context) {
                           // ModifiedAfterPendingSave, not Modified: a buffer
@@ -4856,6 +4877,11 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c x b"), "merge-take-both");
     keymap.Bind(ParseKeySequence("C-c x d"), "merge-take-neither"); // "d" for delete
     keymap.Bind(ParseKeySequence("C-c x k"), "merge-keep-base");    // "k" for keep, diff3 only
+    // The bulk pair, as the shifted siblings of their own per-hunk keys --
+    // the same uppercase-is-the-wider-version convention "C-c A"/"C-c T"
+    // already use for a prefix.
+    keymap.Bind(ParseKeySequence("C-c x O"), "merge-take-all-ours");
+    keymap.Bind(ParseKeySequence("C-c x T"), "merge-take-all-theirs");
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");
     keymap.Bind(ParseKeySequence("C-c C-p"), "toggle-project-sidebar");
     // sidebar-keyboard-focus follow-up: the non-control second key beside

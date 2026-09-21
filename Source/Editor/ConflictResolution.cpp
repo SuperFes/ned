@@ -1,5 +1,7 @@
 #include "ConflictResolution.h"
 
+#include <vector>
+
 namespace ned::editor {
 
 std::optional<text::ConflictHunk> ConflictHunkAtPoint(const text::Buffer& buffer, std::size_t point) {
@@ -45,6 +47,28 @@ bool ResolveConflictHunk(text::Buffer& buffer, const text::ConflictHunk& hunk, C
     buffer.EndUndoGroup();
     buffer.SetPoint(hunk.startByte);
     return true;
+}
+
+std::size_t ResolveAllConflictHunks(text::Buffer& buffer, ConflictResolution resolution) {
+    const std::vector<text::ConflictHunk> hunks = text::ParseConflictHunks(buffer.Text());
+    if (hunks.empty()) {
+        return 0;
+    }
+
+    std::size_t resolved   = 0;
+    std::size_t firstStart = 0;
+    buffer.BeginUndoGroup();
+    for (auto it = hunks.rbegin(); it != hunks.rend(); ++it) {
+        if (ResolveConflictHunk(buffer, *it, resolution)) {
+            ++resolved;
+            firstStart = it->startByte;
+        }
+    }
+    buffer.EndUndoGroup();
+    if (resolved > 0) {
+        buffer.SetPoint(firstStart); // the last one resolved is the earliest in the document
+    }
+    return resolved;
 }
 
 std::optional<std::size_t> NextConflictHunkStart(const text::Buffer& buffer, std::size_t point) {

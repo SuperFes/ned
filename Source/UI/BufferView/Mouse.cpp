@@ -372,6 +372,40 @@ bool BufferView::HandleCodeActionGutterClick(Point at) {
     return true;
 }
 
+// The mouse counterpart to C-c x o/t/b/d/k on the hunk at point -- matched
+// against the chips the last frame actually painted (the quick-fix column's
+// own "hit the cell the user sees" contract), then re-resolved against the
+// live hunk list by start byte, so a frame that has gone stale resolves
+// nothing rather than the wrong block.
+bool BufferView::HandleConflictActionChipClick(Point at) {
+    const auto chip = std::find_if(conflictActionChips_.begin(), conflictActionChips_.end(),
+                                   [at](const ConflictActionChip& candidate) {
+                                       return candidate.row == at.y && at.x >= candidate.startColumn &&
+                                              at.x < candidate.endColumn;
+                                   });
+    if (chip == conflictActionChips_.end()) {
+        return false;
+    }
+
+    const std::vector<text::ConflictHunk>& hunks = gutters_.ConflictHunks();
+    const auto                             hunk  = std::find_if(hunks.begin(), hunks.end(),
+                                                                [chip](const text::ConflictHunk& candidate) {
+                                       return candidate.startByte == chip->hunkStartByte;
+                                                                });
+    if (hunk == hunks.end()) {
+        return true; // swallowed: the chips are chrome, never a place to put point
+    }
+
+    text::Buffer& buffer = activeBuffer_.Get();
+    buffer.ClearMark();
+    if (!editor::ResolveConflictHunk(buffer, *hunk, chip->resolution)) {
+        statusMessage_ = "hunk has no base section (not a diff3 conflict)";
+        return true;
+    }
+    viewport_.ScrollToShowPoint();
+    return true;
+}
+
 // A left button press in the content area: focus the pane, then let whichever
 // gutter column was clicked claim it (sticky scroll row, test mark, quick-fix
 // marker, fold affordance) before falling through to placing point. A press in the text
@@ -416,6 +450,13 @@ bool BufferView::HandleLeftPress(const MouseEvent& mouseEvent) {
     // point-placement fallthrough" shape; the regions can't overlap, so
     // the order between this and the test column carries no meaning.
     if (HandleCodeActionGutterClick(mouseEvent.at)) {
+        return true;
+    }
+
+    // Merge Conflict Resolution Mode: the chips live in the content area
+    // rather than a gutter column, but the same rule applies -- one
+    // specific region wins over the generic point-placement fallthrough.
+    if (HandleConflictActionChipClick(mouseEvent.at)) {
         return true;
     }
 

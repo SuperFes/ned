@@ -554,14 +554,21 @@ commands, never a replacement for them.
 
 ### Merge Conflict Resolution Mode (New Feature)
 
-- [ ] **A per-hunk inline mouse action row** (take-ours/take-theirs/take-both/take-neither
-      as clickable text, `BufferView`'s existing gutter-click precedent) — the mouse-driven
-      fast path the keyboard-only v1 above is missing; not required, scope as a follow-up.
-- [ ] **Whole-file / whole-hunk-run bulk actions** — "take all ours"/"take all theirs"
-      for a file with many mechanically-identical hunks (e.g. a lockfile or generated
-      file where one side is always right) — a `VcsPanel` per-file action, not a
-      per-hunk one; scope only if real usage shows the per-hunk loop is too slow for
-      that case.
+The per-hunk mouse action row and the whole-file bulk actions both shipped -- slug for
+`git log --grep=`: `merge-conflict-bulk-and-chips`. The action row is *not* a row: the
+chips ride on the `<<<<<<<` marker line as end-of-line virtual text, the same trick
+`PaintEndOfLineDiagnostics` uses and for the same reason (a resolution deletes the line
+the chips sit on, and nothing below it should jump on the way). Two conscious cuts left
+behind, each its own item below.
+
+- [ ] The chips are painted for any buffer whose text parses as a conflict run, including
+      a file merely *about* conflict markers — the same exposure the conflict tinting
+      already has, minus read-only buffers, which are excluded. A real fix means knowing
+      the file is actually conflicted (VCS state), not just that it looks it.
+- [ ] Bulk resolution is per file, on the right-clicked row only — `VcsPanel`'s
+      multi-select (the `Space`-marked set batch stage/unstage already acts on) is not
+      consulted. Worth doing the first time a merge lands the same mechanical conflict in
+      several lockfiles at once.
 - [ ] Out of scope for v1: rebase/cherry-pick conflict *sequences* (resolve, `git rebase
       --continue`, repeat) — the hunk-resolution primitive above is what such a sequence
       would be built on later, but driving the sequence itself needs its own `VcsRunner`

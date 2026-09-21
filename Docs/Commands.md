@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-316 commands.
+318 commands.
 
 ## `acp-rewind`
 
@@ -831,6 +831,18 @@ Realign the table at point and move to the previous cell.
 Key: `C-c x k`
 
 Resolve the conflict hunk at point by taking the diff3 base section.
+
+## `merge-take-all-ours`
+
+Key: `C-c x O`
+
+Resolve every conflict hunk in the buffer by taking "ours".
+
+## `merge-take-all-theirs`
+
+Key: `C-c x T`
+
+Resolve every conflict hunk in the buffer by taking "theirs".
 
 ## `merge-take-both`
 

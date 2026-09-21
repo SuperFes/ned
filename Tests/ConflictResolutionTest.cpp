@@ -10,6 +10,7 @@ using ned::editor::ConflictHunkAtPoint;
 using ned::editor::ConflictResolution;
 using ned::editor::NextConflictHunkStart;
 using ned::editor::PreviousConflictHunkStart;
+using ned::editor::ResolveAllConflictHunks;
 using ned::editor::ResolveConflictHunk;
 using ned::text::Buffer;
 using ned::text::Rope;
@@ -96,4 +97,36 @@ TEST_CASE("Next/PreviousConflictHunkStart return nullopt with no hunks", "[Confl
     Buffer buffer = MakeBuffer("plain text, no markers\n");
     REQUIRE_FALSE(NextConflictHunkStart(buffer, 0).has_value());
     REQUIRE_FALSE(PreviousConflictHunkStart(buffer, 0).has_value());
+}
+
+TEST_CASE("ResolveAllConflictHunks resolves every hunk as one undo step", "[ConflictResolution]") {
+    const std::string text   = "head\n"
+                               "<<<<<<< a\nx\n=======\ny\n>>>>>>> b\n"
+                               "middle\n"
+                               "<<<<<<< a\np\n=======\nq\n>>>>>>> b\n"
+                               "tail\n";
+    Buffer            buffer = MakeBuffer(text);
+
+    REQUIRE(ResolveAllConflictHunks(buffer, ConflictResolution::TakeTheirs) == 2);
+    REQUIRE(buffer.Text() == "head\ny\nmiddle\nq\ntail\n");
+    REQUIRE(buffer.Point() == text.find("<<<<<<<")); // the earliest hunk's own start
+
+    buffer.Undo(); // one step, not one per hunk
+    REQUIRE(buffer.Text() == text);
+}
+
+TEST_CASE("ResolveAllConflictHunks reports zero and leaves a clean buffer alone", "[ConflictResolution]") {
+    Buffer            buffer = MakeBuffer("plain text, no markers\n");
+    const std::size_t before = buffer.ContentGeneration();
+    REQUIRE(ResolveAllConflictHunks(buffer, ConflictResolution::TakeOurs) == 0);
+    REQUIRE(buffer.ContentGeneration() == before);
+}
+
+TEST_CASE("ResolveAllConflictHunks KeepBase skips the hunks that have no base section", "[ConflictResolution]") {
+    Buffer buffer = MakeBuffer("<<<<<<< a\nours\n||||||| base\nbase\n=======\ntheirs\n>>>>>>> b\n"
+                               "middle\n"
+                               "<<<<<<< a\nours2\n=======\ntheirs2\n>>>>>>> b\n");
+
+    REQUIRE(ResolveAllConflictHunks(buffer, ConflictResolution::KeepBase) == 1);
+    REQUIRE(buffer.Text() == "base\nmiddle\n<<<<<<< a\nours2\n=======\ntheirs2\n>>>>>>> b\n");
 }

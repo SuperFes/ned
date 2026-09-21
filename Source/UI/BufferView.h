@@ -36,6 +36,7 @@
 #include "Editor/CodeFold.h"
 #include "Editor/Command.h"
 #include "Editor/CompletionSession.h"
+#include "Editor/ConflictResolution.h"
 #include "Editor/Coverage/Report.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/DiagnosticsLog.h"
@@ -4279,6 +4280,40 @@ class BufferView : public Widget {
 
     void PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::size_t>& rowLine,
                                       const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);
+
+    // Merge Conflict Resolution Mode: the clickable per-hunk action chips
+    // ([ours] [theirs] [both] [neither], plus [base] on a diff3 hunk),
+    // painted after the "<<<<<<<" marker line's own text. Deliberately not
+    // a row of its own, unlike a code lens: PaintEndOfLineDiagnostics'
+    // reasoning applies here too -- a hunk resolves out from under the
+    // chips, and nothing below should jump as it goes. The marker line is
+    // chrome about to be deleted either way, so there is nothing real to
+    // crowd.
+    //
+    // Mouse-only, and an accelerant rather than a path of its own: every
+    // chip is a command that already has a key (C-c x o/t/b/d/k, and the
+    // M-o/t/b/d/k quick keys while the buffer has hunks).
+    void PaintConflictActionChips(Canvas& c, const std::vector<std::size_t>& rowLine,
+                                  const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);
+
+    // Where the chips landed this frame, so a click can be matched against
+    // what the user actually sees rather than against a recomputed guess --
+    // the quick-fix column's own click contract. Rebuilt by every Paint();
+    // a hunk that has since moved is caught by re-looking-it-up by start
+    // byte at click time.
+    struct ConflictActionChip {
+        int                        row           = 0;
+        int                        startColumn   = 0;
+        int                        endColumn     = 0; // exclusive
+        std::size_t                hunkStartByte = 0;
+        editor::ConflictResolution resolution    = editor::ConflictResolution::TakeOurs;
+    };
+    std::vector<ConflictActionChip> conflictActionChips_;
+
+    // A click on one of them: resolves that hunk and swallows the event, so
+    // it never falls through to placing point inside chrome that is about to
+    // disappear.
+    bool HandleConflictActionChipClick(Point at);
 
     // hover/completion follow-up. See Command.h's InteractiveRequest::
     // LspComplete doc comment and completionDebounceTimer_ above for the

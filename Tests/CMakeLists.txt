@@ -43,6 +43,7 @@ add_executable(ned_tests
             ConflictHunkTest.cpp
             ConflictResolutionTest.cpp
             BufferViewConflictQuickKeyTest.cpp
+            BufferViewConflictChipsTest.cpp
             BufferViewChoicePromptTest.cpp
             BufferViewPromptDriverTest.cpp
             BufferTest.cpp

@@ -2751,6 +2751,19 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
                     if (target.section == ned::ui::VcsPanelSection::Staged) {
                         addRow("Unstage", [vp, path] { vp->RequestStageOrUnstage(path, /*stage=*/false); });
                     }
+                    if (target.conflicted) {
+                        // Bulk resolution for a file whose hunks are all
+                        // mechanically identical -- the per-hunk chips and
+                        // C-c x o/t are still the path for a file that
+                        // needs reading. Listed above Discard so the two
+                        // destructive-looking rows aren't adjacent.
+                        addRow("Take All Ours", [vp, path] {
+                            vp->ResolveAllConflicts(path, ned::editor::ConflictResolution::TakeOurs);
+                        });
+                        addRow("Take All Theirs", [vp, path] {
+                            vp->ResolveAllConflicts(path, ned::editor::ConflictResolution::TakeTheirs);
+                        });
+                    }
                     if (target.section != ned::ui::VcsPanelSection::Untracked) {
                         // Discard/revert: reuses the same y/n confirm state
                         // 'x' drives -- this widget (not a BufferView pane)

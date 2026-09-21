@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1027,4 +1028,71 @@ TEST_CASE("Push/pull only appear in the root-scoped footer row when there's actu
     panel.Paint(canvas);
     REQUIRE(RowText(screen, kPullRow, 60).find("F pull ↓1") != std::string::npos);
     REQUIRE(RowText(screen, kPushRow, 60).find("P push ↑1") != std::string::npos);
+}
+
+TEST_CASE("ResolveAllConflicts resolves every hunk in a file and leaves it unsaved", "[VcsPanel]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_resolve_all";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const CurrentPathGuard cwdGuard(dir);
+
+    const std::string conflicted = "head\n"
+                                   "<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\n"
+                                   "middle\n"
+                                   "<<<<<<< ours\np\n=======\nq\n>>>>>>> theirs\n";
+    {
+        std::ofstream out(dir / "lock.txt");
+        out << conflicted;
+    }
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 30, 22);
+
+    panel.ResolveAllConflicts(dir / "lock.txt", ned::editor::ConflictResolution::TakeTheirs);
+
+    ned::text::Buffer& opened = activeBuffer.Get();
+    REQUIRE(opened.Text() == "head\ny\nmiddle\nq\n");
+    CHECK(opened.Modified());
+    CHECK(statusMessage.find("2 conflict hunks (theirs)") != std::string::npos);
+
+    // The file on disk is untouched until the user saves -- this is an edit
+    // to review, not a write.
+    std::ifstream     in(dir / "lock.txt");
+    const std::string onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(onDisk == conflicted);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("ResolveAllConflicts says so when a file has no conflict markers", "[VcsPanel]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_resolve_all_clean";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const CurrentPathGuard cwdGuard(dir);
+
+    {
+        std::ofstream out(dir / "clean.txt");
+        out << "nothing to resolve\n";
+    }
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 30, 22);
+
+    panel.ResolveAllConflicts(dir / "clean.txt", ned::editor::ConflictResolution::TakeOurs);
+
+    CHECK(activeBuffer.Get().Text() == "nothing to resolve\n");
+    CHECK_FALSE(activeBuffer.Get().Modified());
+    CHECK(statusMessage.find("no conflict hunks") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
 }
