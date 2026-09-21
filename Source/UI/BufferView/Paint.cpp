@@ -162,27 +162,24 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
     const text::ITextStorage& content = activeBuffer_.Get().Content();
     const int                 width   = c.size().width;
 
-    // sticky-scroll-gutter-alignment follow-up: mirrors GutterWidth()/
-    // Paint()'s own [dap][diff][status][diagnostic][gap][digits][gap][test]
-    // [coverage][symbol][fold][blame] column layout (see those methods' own doc
-    // comments), recomputed here from the same Active()-flag primitives
-    // rather than trusting gutterWidth as a second source of truth -- the
-    // same "recompute, don't unpack" precedent OnMouseEvent's own foldStart
-    // derivation already follows. Only digitsStart/gutterDigits and
-    // symbolStart are needed: those are the two columns a sticky row
-    // actually paints into, so its line number and glyph land in the exact
-    // same screen columns an ordinary content row's own digits/symbol glyph
-    // do -- a sticky row reads as a frozen real gutter row, not a
-    // synthesized label. Fold/blame never get anything drawn into them here.
-    const std::size_t diffColumnWidth     = DiffGutterActive() ? kDiffWidth : 0;
-    const std::size_t dapColumnWidth      = DapGutterActive() ? kDapWidth : 0;
-    const std::size_t diagnosticStart     = dapColumnWidth + diffColumnWidth + kStatusWidth;
-    const std::size_t lineNumberGapWidth  = LineNumberGutterActive() ? kLineNumberGap : 0;
-    const std::size_t digitsStart         = diagnosticStart + kDiagnosticWidth + lineNumberGapWidth;
-    const std::size_t gutterDigits        = LineNumberGutterActive() ? std::to_string(content.LineCount()).size() : 0;
-    const std::size_t testColumnWidth     = gutters_.TestGutterActive() ? kTestWidth : 0;
-    const std::size_t coverageColumnWidth = gutters_.CoverageGutterActive() ? kCoverageWidth : 0;
-    const std::size_t symbolStart         = digitsStart + gutterDigits + lineNumberGapWidth + testColumnWidth + coverageColumnWidth;
+    // sticky-scroll-gutter-alignment follow-up: a sticky row paints into two
+    // of the real gutter's columns -- the line-number digits and the symbol
+    // glyph -- so that its line number and glyph land in the exact screen
+    // columns an ordinary content row's do, and it reads as a frozen real
+    // gutter row rather than a synthesized label. Fold/blame never get
+    // anything drawn into them here.
+    //
+    // This arithmetic used to be spelled out again here from the same
+    // Active()-flag primitives, under a comment claiming it was "recompute,
+    // don't unpack" rather than a second source of truth. It was the second
+    // source of truth GutterLayout's own header comment describes, and it
+    // had to be kept in step by hand: adding one column ahead of the digits
+    // slid every sticky row one column out of alignment with the rows below
+    // it. One call to the same layout the rows themselves are drawn from.
+    const bufferview::GutterLayout stickyGutter = ComputeGutterLayout(content.LineCount());
+    const std::size_t              digitsStart  = stickyGutter.digitsStart;
+    const std::size_t              gutterDigits = stickyGutter.digits;
+    const std::size_t              symbolStart  = stickyGutter.symbolStart;
 
     for (std::size_t i = 0; i < chain.size(); ++i) {
         const editor::SymbolMarker& marker = chain[i];
@@ -477,6 +474,23 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
             cell.character              = glyph.glyph;
             Brush{.background = theme_.background, .foreground = DiagnosticSeverityColor(theme_, it->second), .bold = glyph.bold}
                 .ApplyTo(cell);
+        }
+    }
+
+    // code-action-hints follow-up: the quick-fix marker, immediately right
+    // of the severity glyph it qualifies. The column says only "a fix
+    // exists here" -- what the fix actually is comes from running
+    // lsp-quick-fix / lsp-code-action on the line, which is the on-demand
+    // request that has always been there. Plain single-width Unicode rather
+    // than the 💡 the same idea wears elsewhere: an emoji is two columns
+    // wide in a terminal and would not fit the one-column gutter
+    // convention every other column here keeps.
+    if (frame.gutter.codeActionWidth > 0 && static_cast<int>(frame.gutter.codeActionStart) < c.size().width) {
+        const auto it = std::lower_bound(frame.codeActionHintLines.begin(), frame.codeActionHintLines.end(), line);
+        if (it != frame.codeActionHintLines.end() && *it == line) {
+            Cell& cell     = c[{.x = static_cast<int>(frame.gutter.codeActionStart), .y = row}];
+            cell.character = "✦"; // U+2726 BLACK FOUR POINTED STAR -- "something is on offer here"
+            Brush{.background = theme_.background, .foreground = theme_.codeActionHintForeground, .bold = true}.ApplyTo(cell);
         }
     }
 
@@ -1807,9 +1821,13 @@ void BufferView::Paint(Canvas paneCanvas) {
     const std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>>& diagnosticLineSeverities =
         gutters_.DiagnosticLineSeverities();
 
+    // code-action-hints follow-up: resolved once per frame like the two
+    // above. Empty unless a server has actually answered for this buffer.
+    const std::vector<std::size_t>& codeActionHintLines = gutters_.CodeActionHintLines();
+
     const FramePaint frame{buffer, content, gutter, totalLines,
                            point, pointLine, dapBreakpoints, unsavedChangeLineRanges,
-                           diagnosticLineSeverities};
+                           diagnosticLineSeverities, codeActionHintLines};
     // VCS blame gutter: unconditional every Paint() like the two above, but
     // this only ever clears (never repopulates) blameLineInfo_ -- see its
     // own doc comment.

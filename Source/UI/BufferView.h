@@ -1803,6 +1803,13 @@ class BufferView : public Widget {
     // only when no selector produces exactly one candidate.
     void RequestQuickFixAtPoint();
 
+    // code-action-hints follow-up. A click on the quick-fix column: moves
+    // point onto the flagged range and runs RequestQuickFixAtPoint. Returns
+    // true for any click inside the column, marked row or not, so a miss
+    // inside it is swallowed rather than placing point in the gutter --
+    // HandleTestGutterClick's own convention.
+    bool HandleCodeActionGutterClick(Point at);
+
     // codeLens follow-up. Runs the first code lens (Manager::
     // CodeLensSpans, sorted by startByte) whose range covers point's own
     // line -- a deliberate v1 simplification, not a full disambiguation
@@ -3105,6 +3112,7 @@ class BufferView : public Widget {
         // accessors, but there is no reason to re-ask for every line.
         const std::vector<std::pair<std::size_t, std::size_t>>&                        unsavedChangeLineRanges;
         const std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>>& diagnosticLineSeverities;
+        const std::vector<std::size_t>&                                                codeActionHintLines;
     };
 
     // Per-frame bookkeeping Paint does before it draws anything. Kept separate
@@ -4056,6 +4064,19 @@ class BufferView : public Widget {
     // Layout when every region is active: [dap][diff][status][diagnostic]
     // [gap][digits][gap][test][coverage][symbol][fold][blame].
     static constexpr std::size_t kCoverageWidth = 1;
+
+    // code-action-hints follow-up: the quick-fix marker, one column to the
+    // immediate right of the diagnostic column -- the two belong together,
+    // since the marker's whole meaning is "that diagnostic has a fix".
+    // Layout when every region is active: [dap][diff][status][diagnostic]
+    // [action][gap][digits][gap][test][coverage][symbol][fold][blame].
+    //
+    // Reserved on "a language server has this buffer open" rather than on
+    // "there is a hint right now" (GutterModel::CodeActionGutterActive),
+    // unlike the data-driven columns above: fixes appear and disappear as
+    // the user types, and a column that came and went with them would slide
+    // the line numbers and the text sideways mid-keystroke.
+    static constexpr std::size_t kCodeActionWidth = 1;
 
     void EnsureSymbolMarkersCache() const;
 

@@ -317,6 +317,21 @@ struct CodeAction {
     };
     std::optional<CodeActionCommand> command;
 
+    // code-action-hints follow-up. The ranges of the diagnostics the server
+    // attached to this action -- the ones it says this action fixes. Only
+    // the ranges are kept: the message and severity are already the
+    // client's own copy of the same diagnostic.
+    //
+    // This is what lets one viewport-wide quickfix request map each action
+    // back to the line it applies to. Measured against clangd, gopls and
+    // typescript-language-server: with context.only = ["quickfix"] every
+    // action all three returned carried its diagnostics, and a wide request
+    // returned the same fix set as one narrow request per diagnostic.
+    // Without that filter the same wide request instead draws whole-file
+    // source/refactor actions that attach to no diagnostic at all and so
+    // name no line.
+    std::vector<std::pair<Position, Position>> diagnosticRanges;
+
     bool operator==(const CodeAction&) const = default;
 };
 

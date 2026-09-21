@@ -232,6 +232,13 @@ struct Theme {
     Color inlayHintParameterForeground;
     Color codeLensForeground;
 
+    // code-action-hints follow-up: the gutter marker saying a diagnostic on
+    // this line has a server-supplied quick fix. Its own colour rather than
+    // a diagnostic severity one: the marker is about a fix being available,
+    // not about how bad the problem is, and reusing a severity colour beside
+    // the severity glyph would read as a second copy of it.
+    Color codeActionHintForeground;
+
     // Foreground for a collapsed Org link's own displayText (links
     // follow-up) -- see BufferView::Paint()'s own "descriptive links"
     // comment. Not a SyntaxClass (links aren't a tree-sitter capture),

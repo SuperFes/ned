@@ -4343,6 +4343,166 @@ TEST_CASE("RequestInlayHints sends the viewport range and applies byte-resolved,
     REQUIRE(hints[1].byteOffset == 9);
 }
 
+// code-action-hints follow-up. The gutter marker saying "a diagnostic on
+// this line has a server-supplied fix", fed by one viewport-scoped
+// textDocument/codeAction per settle.
+TEST_CASE("RequestCodeActionHints sends only=quickfix with the viewport's own diagnostics", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-code-action-hints-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("ab = 1;\ncd = 2;\n"); // line0 = [0,8), line1 = [8,16)
+    buffer.SetDiagnostics({Buffer::Diagnostic{.startByte = 0, .endByte = 2, .severity = Buffer::Diagnostic::Severity::Error, .message = "bad"}});
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestCodeActionHints(buffer, 0, buffer.Size(), "test-lang");
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const auto        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "textDocument/codeAction");
+    REQUIRE(request["params"]["context"]["only"] == Json::array({"quickfix"}));
+    REQUIRE(request["params"]["context"]["diagnostics"].size() == 1);
+
+    // Two actions for the same diagnostic ("fix this"/"fix all of these"),
+    // which must still light exactly one line.
+    const auto response = Json{
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({
+                       {{"title", "fix it"},
+                        {"kind", "quickfix"},
+                        {"diagnostics", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 2}}}}}}})}},
+                       {{"title", "fix all of these"},
+                        {"kind", "quickfix"},
+                        {"diagnostics", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 2}}}}}}})}},
+                   })},
+    };
+    client->DispatchFrame(response.dump());
+
+    const std::vector<Manager::CodeActionHint>& hints = manager.CodeActionHintSpans(buffer);
+    REQUIRE(hints.size() == 1);
+    REQUIRE(hints[0].startByte == 0);
+    REQUIRE(hints[0].endByte == 2);
+}
+
+TEST_CASE("RequestCodeActionHints asks nothing at all for a viewport with no diagnostic in it", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-code-action-hints-clean-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("ab = 1;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestCodeActionHints(buffer, 0, buffer.Size(), "test-lang");
+    REQUIRE(NoFrameArrives(server.serverStdinRead)); // nothing is wrong here, so nothing is fixable
+    REQUIRE(manager.CodeActionHintSpans(buffer).empty());
+}
+
+// The marker has to retire on its own: the user fixes the flagged line, the
+// server publishes a clean set, and the next settle must clear the hint
+// without a round trip to do it.
+TEST_CASE("A viewport whose diagnostics have gone away clears the hints it had", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-code-action-hints-retire-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("ab = 1;\n");
+    buffer.SetDiagnostics({Buffer::Diagnostic{.startByte = 0, .endByte = 2, .severity = Buffer::Diagnostic::Severity::Error, .message = "bad"}});
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestCodeActionHints(buffer, 0, buffer.Size(), "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(raw)},
+                               {"result", Json::array({{{"title", "fix it"},
+                                                        {"kind", "quickfix"},
+                                                        {"diagnostics", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 2}}}}}}})}}})}}
+                              .dump());
+    REQUIRE(manager.CodeActionHintSpans(buffer).size() == 1);
+
+    // A clean publish: no edit behind it, so nothing but the diagnostics
+    // generation has moved -- which is exactly the gate this feature needs
+    // and the other viewport features do not have.
+    buffer.SetDiagnostics({});
+    manager.RequestCodeActionHints(buffer, 0, buffer.Size(), "test-lang");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+    REQUIRE(manager.CodeActionHintSpans(buffer).empty());
+}
+
+TEST_CASE("CodeActionHintSpans relocates a hint past an edit above it", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-code-action-hints-relocate-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("ab = 1;\ncd = 2;\n"); // line1 starts at byte 8
+    buffer.SetDiagnostics({Buffer::Diagnostic{.startByte = 8, .endByte = 10, .severity = Buffer::Diagnostic::Severity::Error, .message = "bad"}});
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestCodeActionHints(buffer, 0, buffer.Size(), "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(raw)},
+                               {"result", Json::array({{{"title", "fix it"},
+                                                        {"kind", "quickfix"},
+                                                        {"diagnostics", Json::array({{{"range", {{"start", {{"line", 1}, {"character", 0}}}, {"end", {{"line", 1}, {"character", 2}}}}}}})}}})}}
+                              .dump());
+    REQUIRE(manager.CodeActionHintSpans(buffer)[0].startByte == 8);
+
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("// note\n"); // 8 bytes above the flagged line
+
+    const std::vector<Manager::CodeActionHint>& hints = manager.CodeActionHintSpans(buffer);
+    REQUIRE(hints.size() == 1);
+    REQUIRE(hints[0].startByte == 16); // 8 + 8, not left behind on the wrong line
+}
+
+TEST_CASE("A code-action error response stops this connection being asked again", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-code-action-hints-unsupported-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("ab = 1;\n");
+    buffer.SetDiagnostics({Buffer::Diagnostic{.startByte = 0, .endByte = 2, .severity = Buffer::Diagnostic::Severity::Error, .message = "bad"}});
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestCodeActionHints(buffer, 0, buffer.Size(), "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(raw)},
+                               {"error", {{"code", -32601}, {"message", "method not found"}}}}
+                              .dump());
+
+    // A different viewport, so the coverage gate isn't what's refusing.
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint("ef = 3;\n");
+    manager.RequestCodeActionHints(buffer, 0, buffer.Size(), "test-lang");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
 // region-scoped-relocation follow-up: an edit anywhere in the buffer used
 // to blank every applied inlay hint (a global content-generation gate),
 // which is exactly the "annotations vanish on every keystroke" complaint --

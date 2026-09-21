@@ -333,9 +333,48 @@ bool BufferView::HandleTestGutterClick(Point at) {
     return true;
 }
 
+// code-action-hints follow-up: the mouse counterpart to C-c C-a / lsp-quick-fix
+// on a marked line -- the accelerant this codebase's mouse stance asks for,
+// never the only path. Point moves to the flagged range's own start first,
+// because the request the fix comes from is a request about point.
+bool BufferView::HandleCodeActionGutterClick(Point at) {
+    const bufferview::GutterLayout gutter = ComputeGutterLayout(activeBuffer_.Get().Content().LineCount());
+    if (gutter.codeActionWidth == 0 || at.x < static_cast<int>(gutter.codeActionStart) ||
+        static_cast<std::size_t>(at.x) >= gutter.codeActionStart + gutter.codeActionWidth) {
+        return false;
+    }
+
+    const std::size_t line = viewport_.LineForRow(at.y).line;
+    const auto        it   = std::lower_bound(gutters_.CodeActionHintLines().begin(), gutters_.CodeActionHintLines().end(), line);
+    if (it == gutters_.CodeActionHintLines().end() || *it != line) {
+        return true; // inside the column, just not on a marked row -- swallow, don't place point
+    }
+
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    // The diagnostic's own start, not the line's: RequestQuickFixAtPoint
+    // picks the diagnostic covering point to scope its request with, and
+    // column 0 of a line is usually indentation that covers nothing.
+    std::size_t target = lineStart;
+    for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+        if (diagnostic.startByte >= lineStart && diagnostic.startByte <= lineEnd) {
+            target = diagnostic.startByte;
+            break;
+        }
+    }
+    buffer.ClearMark();
+    buffer.SetPoint(target);
+    viewport_.ScrollToShowPoint();
+    RequestQuickFixAtPoint();
+    return true;
+}
+
 // A left button press in the content area: focus the pane, then let whichever
-// gutter column was clicked claim it (sticky scroll row, test mark, fold
-// affordance) before falling through to placing point. A press in the text
+// gutter column was clicked claim it (sticky scroll row, test mark, quick-fix
+// marker, fold affordance) before falling through to placing point. A press in the text
 // also starts a drag selection and counts toward double/triple click.
 bool BufferView::HandleLeftPress(const MouseEvent& mouseEvent) {
     // Window-splitting follow-up: harmless/no-op today (the sole
@@ -370,6 +409,13 @@ bool BufferView::HandleLeftPress(const MouseEvent& mouseEvent) {
     // has. Checked first only because the two regions can't overlap;
     // order between them carries no meaning.
     if (HandleTestGutterClick(mouseEvent.at)) {
+        return true;
+    }
+
+    // Same "one specific gutter region wins over the generic
+    // point-placement fallthrough" shape; the regions can't overlap, so
+    // the order between this and the test column carries no meaning.
+    if (HandleCodeActionGutterClick(mouseEvent.at)) {
         return true;
     }
 

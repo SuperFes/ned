@@ -11,6 +11,8 @@
 #include "Editor/Coverage/Config.h"
 #include "Editor/HugeStructuralWindow.h"
 #include "Editor/InlineDiagnostics.h"
+#include "Editor/Lsp/Manager.h"
+#include "Editor/Lsp/ServerConfig.h"
 #include "Editor/Project/Root.h"
 #include "Editor/TestRun/Config.h"
 #include "Editor/TestRun/TestRunner.h"
@@ -635,6 +637,11 @@ bool GutterModel::CoverageGutterActive() const {
     return !coverageLineStatuses_.empty();
 }
 
+bool GutterModel::CodeActionGutterActive() const {
+    return context_.lspManager != nullptr && editor::lsp::CodeActionHintsEnabled() &&
+           context_.lspManager->HasOpenedDocument(context_.activeBuffer.Get());
+}
+
 bool GutterModel::TestRunnable() const {
     EnsureTestEntries();
     return testRunnable_;
@@ -674,6 +681,43 @@ const std::vector<GutterModel::TestGutterEntry>& GutterModel::TestEntries() cons
 const std::vector<std::pair<std::size_t, editor::coverage::LineStatus>>& GutterModel::CoverageLineStatuses() const {
     EnsureCoverageStatuses();
     return coverageLineStatuses_;
+}
+
+const std::vector<std::size_t>& GutterModel::CodeActionHintLines() const {
+    EnsureCodeActionHintLines();
+    return codeActionHintLines_;
+}
+
+void GutterModel::EnsureCodeActionHintLines() const {
+    text::Buffer& buffer = context_.activeBuffer.Get();
+    if (context_.lspManager == nullptr) {
+        codeActionHintLines_.clear();
+        codeActionHintStamp_.Invalidate();
+        return;
+    }
+    // The revision is the load-bearing third key: a response landing moves
+    // neither generation, and the diagnostics generation moves without the
+    // content one whenever a publish changes what is fixable.
+    const CacheStamp stamp = CacheStamp::For(&buffer, {buffer.ContentGeneration(), buffer.DiagnosticsGeneration(),
+                                                       context_.lspManager->CodeActionHintRevision(buffer)});
+    if (codeActionHintStamp_.Matches(stamp)) {
+        return;
+    }
+
+    codeActionHintLines_.clear();
+    const text::ITextStorage& content = buffer.Content();
+    for (const editor::lsp::Manager::CodeActionHint& hint : context_.lspManager->CodeActionHintSpans(buffer)) {
+        // The line the flagged range *starts* on, the same one-glyph-per-line
+        // convention DiagnosticLineSeverities uses for a multi-line range.
+        codeActionHintLines_.push_back(content.ByteOffsetToLine(hint.startByte));
+    }
+    // Spans arrive sorted by start byte, so the lines are already
+    // non-decreasing -- unique alone collapses the several-fixes-on-one-line
+    // case without a sort.
+    codeActionHintLines_.erase(std::unique(codeActionHintLines_.begin(), codeActionHintLines_.end()),
+                               codeActionHintLines_.end());
+
+    codeActionHintStamp_ = stamp;
 }
 
 const std::unordered_map<std::size_t, GutterModel::InlineDiagnostic>& GutterModel::InlineDiagnosticsByLine() const {

@@ -107,6 +107,12 @@ can't linger here after it stops existing.
 **Diagnostics**
 
 `diagnostic_error` `diagnostic_warning` `diagnostic_information` `diagnostic_hint`
+`code_action_hint_foreground`
+
+`code_action_hint_foreground` is the quick-fix marker in the gutter column beside the
+severity glyph: it says a fix is on offer for that diagnostic, not how bad the
+diagnostic is, so it wants its own colour rather than a second copy of the severity
+one sitting next to it.
 
 **Debugger**
 

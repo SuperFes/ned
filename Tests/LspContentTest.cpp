@@ -272,6 +272,53 @@ TEST_CASE("ExtractCodeActions parses a CodeAction with a \"changes\" WorkspaceEd
     REQUIRE(actions[0].edits[0].edits[0].newText == "#include <cstdio>\n");
 }
 
+TEST_CASE("ExtractCodeActions keeps the ranges of the diagnostics an action says it fixes", "[Lsp]") {
+    const Json result = Json::array({
+        {{"title", "Add import: \"fmt\""},
+         {"kind", "quickfix"},
+         {"diagnostics", Json::array({
+                             {{"range", MakeRange(3, 1, 3, 4)}, {"message", "undefined: fmt"}, {"severity", 1}},
+                             {{"range", MakeRange(7, 0, 7, 3)}, {"message", "undefined: fmt"}, {"severity", 1}},
+                         })},
+         {"edit", {{"changes", {{"file:///a.go", Json::array({{{"range", MakeRange(0, 0, 0, 0)}, {"newText", "import \"fmt\"\n"}}})}}}}}},
+    });
+
+    const std::vector<CodeAction> actions = ExtractCodeActions(result, "file:///a.go");
+    REQUIRE(actions.size() == 1);
+    REQUIRE(actions[0].diagnosticRanges.size() == 2);
+    REQUIRE(actions[0].diagnosticRanges[0].first == Position{.line = 3, .character = 1});
+    REQUIRE(actions[0].diagnosticRanges[0].second == Position{.line = 3, .character = 4});
+    REQUIRE(actions[0].diagnosticRanges[1].first == Position{.line = 7, .character = 0});
+}
+
+TEST_CASE("ExtractCodeActions skips a diagnostics entry carrying no usable range", "[Lsp]") {
+    const Json result = Json::array({
+        {{"title", "Fix it"},
+         {"kind", "quickfix"},
+         {"diagnostics", Json::array({
+                             {{"message", "no range at all"}},
+                             "not an object",
+                             {{"range", "not an object either"}},
+                             {{"range", MakeRange(2, 0, 2, 5)}},
+                         })}},
+    });
+
+    const std::vector<CodeAction> actions = ExtractCodeActions(result, "file:///a.c");
+    REQUIRE(actions.size() == 1);
+    REQUIRE(actions[0].diagnosticRanges.size() == 1);
+    REQUIRE(actions[0].diagnosticRanges[0].first == Position{.line = 2, .character = 0});
+}
+
+TEST_CASE("ExtractCodeActions leaves diagnosticRanges empty for an action attached to nothing", "[Lsp]") {
+    const Json result = Json::array({
+        {{"title", "Browse documentation"}, {"kind", "source.doc"}},
+    });
+
+    const std::vector<CodeAction> actions = ExtractCodeActions(result, "file:///a.go");
+    REQUIRE(actions.size() == 1);
+    REQUIRE(actions[0].diagnosticRanges.empty());
+}
+
 TEST_CASE("ExtractCodeActions parses a \"changes\" WorkspaceEdit touching several files, one entry per URI",
           "[Lsp]") {
     const Json result = Json::array({

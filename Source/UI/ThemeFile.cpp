@@ -90,6 +90,7 @@ namespace {
         {"inlay_hint_foreground", &Theme::inlayHintForeground},
         {"inlay_hint_parameter_foreground", &Theme::inlayHintParameterForeground},
         {"code_lens_foreground", &Theme::codeLensForeground},
+        {"code_action_hint_foreground", &Theme::codeActionHintForeground},
         {"link_foreground", &Theme::linkForeground},
         {"truncation_indicator_foreground", &Theme::truncationIndicatorForeground},
         {"unsaved_change_indicator", &Theme::unsavedChangeIndicator},

@@ -96,6 +96,42 @@ measurement said "fine" while typing felt bad.
       real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have
       is an open question — spawning a live language server per code fence in an
       ordinary notes file could be noisy for illustrative/incomplete snippets.
+
+**Quick-fix gutter marker**
+
+Shipped -- slug for `git log --grep=`: `code-action-hints`. The feasibility question
+the Maybelist entry held this behind was answered by measuring rather than guessing:
+a viewport-ranged `textDocument/codeAction` carrying `context.only = ["quickfix"]`
+costs 0.4 ms median on clangd 23, 0.8 ms on gopls and 16-40 ms on
+typescript-language-server, because the server answers from the fixes it already
+computed when it published the diagnostics. The filter is load-bearing in the other
+direction too: unfiltered, a wide range draws whole-file `source.*`/`refactor.*`
+actions that attach to no diagnostic and so name no line (53 of them from gopls
+alone). Four conscious cuts left behind.
+
+- [ ] The marker only ever names a **diagnostic-attached** quick fix, because an
+      attached diagnostic is the only thing that maps an action back to a line. A
+      selection-scoped refactor (extract function/variable) and a whole-file source
+      action (organize imports) light nothing, and asking per line to find them would
+      be a request per visible line rather than one per viewport. `lsp-code-action`
+      (`C-c C-a`) still reaches all of them at point.
+- [ ] Prose-origin diagnostics are excluded from the request outright: the viewport
+      request goes to the buffer's primary language server, and only the prose
+      checker's own connection knows what a harper-ls-flagged word is. A prose
+      diagnostic's "add to dictionary"/"ignore" fix is reachable from
+      `lsp-code-action` (which does route to `kProseLanguageKey`) and never from the
+      marker. Fixing it properly means a second viewport request on that connection.
+- [ ] A marker retires when the range it sits in is re-answered, which needs a
+      diagnostics publish or an edit to re-arm. A server that silently stops offering
+      a fix without republishing its diagnostics leaves the marker up until the next
+      publish -- not observed on any of the three servers measured, since a fix going
+      away is a diagnostic changing.
+- [ ] The column is reserved from the frame after the server opens the document, so
+      opening a file in a server-backed language still shifts the gutter one column
+      once -- the same one-time shift the diff, blame and symbol columns already make.
+      Reserving it before the server attaches would mean paying a column in every
+      buffer, LSP or not.
+
 - [ ] `Lsp/Manager.cpp`'s `PathToUri` doesn't percent-encode, while its `UriToPath` now
       decodes (`lsp-document-link`, after clangd's own encoded targets proved every
       URI-carrying response was missing paths outside the unreserved set). Nothing has
@@ -1091,20 +1127,6 @@ Ideas worth remembering but not worth scoping yet — too undecided for "Open It
 not disliked enough for "Won't do". Promote or delete on revisit rather than letting
 these accumulate detail in place.
 
-- [ ] **A gutter indicator for available code actions** -- the classic 💡, and the one
-      genuinely *missing* LSP signal rather than a restyled existing one: today there is
-      no way to know a line has a quick fix without asking for one. Scoped honestly
-      (2026-09-19, while adding glyphs and colours to everything that already had data to
-      show): this is a feature, not a styling change. It needs a recurring
-      `textDocument/codeAction` request per viewport, which **must** ride
-      `Manager::UncoveredRequestRange`/`SettleCoverage` -- sending one per frame would
-      reintroduce exactly the per-frame polling `viewport-answer-retention` removed, and
-      codeAction is the more expensive request of the two. Plus a new gutter column with
-      the width plumbing in `GutterModel`, a theme colour, and an enable/disable setting
-      on the `ned/set-lsp-code-lens` pattern. Unresolved before committing to it: whether
-      a per-viewport codeAction is cheap enough on a real server to run continuously at
-      all, or whether the indicator has to be demand-driven (on idle, or on the current
-      line only) to be worth having.
 - [ ] **Jank replaces Janet** — swapping the scripting layer for
       [jank](https://github.com/jank-lang/jank), a Clojure dialect on LLVM. Full
       measured feasibility record: `Docs/JankFeasibility.md` (investigated 2026-09-08

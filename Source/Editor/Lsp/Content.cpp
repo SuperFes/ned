@@ -642,6 +642,25 @@ CodeAction ExtractSingleCodeAction(const Json& item, const std::string& ownUri) 
         action.resolvable = item.contains("kind");
     }
 
+    // code-action-hints follow-up: the diagnostics this action is a fix
+    // for, kept as ranges alone -- see CodeAction::diagnosticRanges. An
+    // entry with no usable range object is skipped, the same convention
+    // every other ExtractX here uses for a malformed member.
+    if (const auto diagnosticsIt = item.find("diagnostics");
+        diagnosticsIt != item.end() && diagnosticsIt->is_array()) {
+        for (const Json& diagnostic : *diagnosticsIt) {
+            if (!diagnostic.is_object()) {
+                continue;
+            }
+            const auto rangeIt = diagnostic.find("range");
+            if (rangeIt == diagnostic.end() || !rangeIt->is_object()) {
+                continue;
+            }
+            action.diagnosticRanges.emplace_back(PositionFromJson(rangeIt->value("start", Json::object())),
+                                                 PositionFromJson(rangeIt->value("end", Json::object())));
+        }
+    }
+
     // executeCommand follow-up: a real CodeAction nests its Command as an
     // object under "command"; a bare Command response item instead *is*
     // that Command, with "command" as the (string) command name directly on

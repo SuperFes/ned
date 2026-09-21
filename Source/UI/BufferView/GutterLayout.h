@@ -4,7 +4,7 @@
 //
 // The gutter is a row of optional columns, left to right:
 //
-//     [dap][diff][status][diagnostic][gap][digits][gap][test][coverage][symbol][fold][blame]
+//     [dap][diff][status][diagnostic][action][gap][digits][gap][test][coverage][symbol][fold][blame]
 //
 // Each is present only when it has something to show, so every column's start
 // offset depends on which of the ones before it are active. That arithmetic was
@@ -26,13 +26,14 @@ namespace ned::ui::bufferview {
 
 struct GutterLayout {
     // Width of each column, zero when it is not being drawn this frame.
-    std::size_t dapWidth      = 0;
-    std::size_t diffWidth     = 0;
-    std::size_t testWidth     = 0;
-    std::size_t coverageWidth = 0;
-    std::size_t symbolWidth   = 0;
-    std::size_t foldWidth     = 0;
-    std::size_t blameWidth    = 0;
+    std::size_t dapWidth        = 0;
+    std::size_t diffWidth       = 0;
+    std::size_t codeActionWidth = 0;
+    std::size_t testWidth       = 0;
+    std::size_t coverageWidth   = 0;
+    std::size_t symbolWidth     = 0;
+    std::size_t foldWidth       = 0;
+    std::size_t blameWidth      = 0;
     // The line-number column is a gap, the digits, and another gap; all three
     // collapse together when line numbers are off.
     std::size_t lineNumberGap = 0;
@@ -42,6 +43,7 @@ struct GutterLayout {
     std::size_t diffStart       = 0;
     std::size_t statusStart     = 0;
     std::size_t diagnosticStart = 0;
+    std::size_t codeActionStart = 0;
     std::size_t digitsStart     = 0;
     std::size_t testStart       = 0;
     std::size_t coverageStart   = 0;

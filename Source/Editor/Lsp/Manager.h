@@ -231,6 +231,15 @@ class Manager {
     // never been synced at all.
     [[nodiscard]] std::vector<std::string> ActiveServerKeysForBuffer(const text::Buffer& buffer) const;
 
+    // code-action-hints follow-up. Whether any server has this buffer open
+    // (textDocument/didOpen sent and not yet closed) -- the cheap per-frame
+    // predicate behind a gutter column that has to be reserved on the
+    // buffer's whole life rather than on whether it has something to show
+    // this instant. ActiveServerKeysForBuffer answers a related but
+    // different question (every key synced, opened or not) and allocates to
+    // do it.
+    [[nodiscard]] bool HasOpenedDocument(const text::Buffer& buffer) const;
+
     // Called just before buffer is actually closed (BufferView's existing
     // SetOnBufferClosed hook, already wired for window-splitting's own
     // per-pane retargeting -- reused here rather than adding new
@@ -1170,6 +1179,53 @@ class Manager {
     void ResolveCodeLens(text::Buffer& buffer, const ResolvedCodeLens& lens, ResolveCodeLensCallback callback,
                          const std::string& serverKey = {});
 
+    // code-action-hints follow-up. One line the server says it has a quick
+    // fix for, as the byte range of the diagnostic that fix is attached to.
+    // Nothing about the fix itself is kept: the gutter marker only claims
+    // one exists, and what it actually is comes from the on-demand
+    // RequestCodeActions the user runs when they act on the marker.
+    struct CodeActionHint {
+        std::size_t startByte;
+        std::size_t endByte;
+    };
+
+    // Called from SendViewportFeatures alongside the other three viewport
+    // requests. Viewport-ranged like RequestInlayHints, and gated by the
+    // same ViewportCoverage, with one extra gate of its own: a quick fix is
+    // attached to a diagnostic, so a viewport with no diagnostic in it has
+    // nothing to ask about and sends nothing at all. That is what keeps the
+    // cost proportional to how much is actually wrong with the file rather
+    // than to how long it is.
+    //
+    // The request always carries context.only = ["quickfix"], which is
+    // load-bearing in two directions (measured 2026-09-20 against clangd
+    // 23, gopls and typescript-language-server). Without it a viewport-wide
+    // range draws whole-file source/refactor actions that attach to no
+    // diagnostic and so name no line -- 53 of them from gopls alone. With
+    // it, every action all three servers returned carried the diagnostics
+    // it fixes, which is the only thing that maps an action back to a line,
+    // and one wide request returned the same fix set as one narrow request
+    // per diagnostic. Cost with the filter: 0.4 ms median on clangd, 0.8 ms
+    // on gopls, 16-40 ms on typescript-language-server -- affordable at
+    // viewport-settle rate because the server answers from the fixes it
+    // computed when it published the diagnostics.
+    //
+    // No-ops when disabled (CodeActionHintsEnabled) and latches a real
+    // error response into codeActionHintsUnsupported_, the same learned-once
+    // gate RequestCodeLenses/RequestInlayHints use.
+    void RequestCodeActionHints(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
+                                const std::string& serverKey);
+
+    // The retained hints for buffer, sorted by startByte, carried forward
+    // onto live content on read the way CodeLensSpans/InlayHintSpans are.
+    [[nodiscard]] const std::vector<CodeActionHint>& CodeActionHintSpans(const text::Buffer& buffer) const;
+
+    // Bumped every time a response is folded into that set. The gutter's own
+    // byte-to-line derivation keys on it: a response landing moves neither
+    // the content generation nor the diagnostics generation, so without this
+    // there is nothing for a cache stamp to notice.
+    [[nodiscard]] std::size_t CodeActionHintRevision(const text::Buffer& buffer) const;
+
     // documentLink follow-up. One server-reported link, already resolved to
     // byte offsets (ResolvedCodeLens' own layering) and, for a file:// URI,
     // to a real filesystem path (ResolvedLocation's own uri<->path boundary).
@@ -2079,6 +2135,40 @@ class Manager {
     std::unordered_map<text::Buffer*, std::size_t>                                       codeLensRequestCounter_;
     mutable std::unordered_map<text::Buffer*, std::vector<ResolvedCodeLens>>             codeLensSpans_;
     std::unordered_set<std::string>                                                      codeLensUnsupported_;
+
+    // code-action-hints follow-up. coverage_/requestCounter_/unsupported_
+    // are the same three gates inlayHintCoverage_ and its siblings are.
+    // spans_ keeps byte offsets carried forward on the edit journal rather
+    // than anchors, for semanticTokensCoverage_'s own reason: a set dropped
+    // wholesale costs a marker that reappears one round trip later, where a
+    // dropped inlay hint would reflow the text.
+    //
+    // hintsDiagnosticsGeneration_ is the gate the other viewport features
+    // have no need of: a quick fix exists because a diagnostic does, so a
+    // publish that changes the diagnostics changes the answer with no edit
+    // for a content generation to catch. Recorded per buffer and compared
+    // in RequestCodeActionHints; PushMergedDiagnostics is what actually
+    // re-arms the request, since the armed-viewport dedup would otherwise
+    // see an unchanged (generation, viewport) pair and never fire again.
+    std::unordered_map<text::Buffer*, ViewportCoverage>                    codeActionHintCoverage_;
+    std::unordered_map<text::Buffer*, std::size_t>                         codeActionHintRequestCounter_;
+    std::unordered_map<text::Buffer*, std::size_t>                         codeActionHintDiagnosticsGeneration_;
+    std::unordered_map<text::Buffer*, std::size_t>                         codeActionHintRevision_;
+    mutable std::unordered_map<text::Buffer*, std::size_t>                 codeActionHintSpansGeneration_;
+    mutable std::unordered_map<text::Buffer*, std::vector<CodeActionHint>> codeActionHintSpans_;
+    std::unordered_set<std::string>                                        codeActionHintsUnsupported_;
+
+    // SettleCoverage against this buffer's code-action-hint coverage --
+    // SettleInlayHintRequest's exact counterpart.
+    void SettleCodeActionHintRequest(text::Buffer& buffer, std::size_t requestedGeneration, bool answered,
+                                     std::size_t rangeStart, std::size_t rangeEnd);
+
+    // Folds one response into the retained set: hints inside the answered
+    // range are replaced, everything outside it is left where it is --
+    // MergeInlayHints' own rule, for the same reason (scrolling past a
+    // region must not be the same as forgetting it).
+    void MergeCodeActionHints(text::Buffer& buffer, std::vector<CodeActionHint> hints, std::size_t rangeStart,
+                              std::size_t rangeEnd);
 
     // documentLink follow-up: only the "learned once, stop asking" half of
     // the group above -- an on-demand request keeps no per-buffer spans/

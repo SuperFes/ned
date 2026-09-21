@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-216 bindings.
+217 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -504,6 +504,10 @@ Set how many recent *Messages* entries are kept in memory (default 5000) -- infi
 ## `ned/set-lsp-auto-complete`
 
 Enable or disable the automatic LSP completion popup while typing (default true). Manual completion (lsp-complete, bound to C-M-i) works regardless of this setting.
+
+## `ned/set-lsp-code-action-hints`
+
+Enable or disable the quick-fix gutter marker (default true) -- a glyph beside the diagnostic glyph on every line the language server says it has a fix for, applied with lsp-quick-fix or picked from lsp-code-action (C-c C-a), or by clicking the marker. Turning this off also stops the viewport-scoped textDocument/codeAction request behind it, which is the reason to: a server that answers that request slowly pays for it every time the view settles. A server that proves it doesn't support the method is never asked again for that connection's lifetime.
 
 ## `ned/set-lsp-code-lens`
 

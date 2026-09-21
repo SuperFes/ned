@@ -1100,6 +1100,12 @@ namespace {
         editor::lsp::SetLspCodeLensEnabled(enabled);
     }
 
+    // code-action-hints follow-up: same "just forward to the process-wide
+    // setter" shape as NedSetLspCodeLens above.
+    void NedSetLspCodeActionHints(bool enabled) {
+        editor::lsp::SetLspCodeActionHintsEnabled(enabled);
+    }
+
     // diagnostics-debounce follow-up: same "just forward to the process-wide
     // setter" shape as NedSetLspCompletionDebounce, for how long a buffer's
     // inline diagnostics wait after the server's most recent publish before
@@ -2406,6 +2412,14 @@ void InstallEditorBindings(Environment& env) {
         "they annotate (default true). Run the lens at point with lsp-run-code-lens-at-point (M-x, unbound by "
         "default). A server that proves it doesn't support the method is never asked again for that connection's "
         "lifetime.");
+    env.Register<&NedSetLspCodeActionHints>(
+        "ned", "set-lsp-code-action-hints",
+        "Enable or disable the quick-fix gutter marker (default true) -- a glyph beside the diagnostic glyph on "
+        "every line the language server says it has a fix for, applied with lsp-quick-fix or picked from "
+        "lsp-code-action (C-c C-a), or by clicking the marker. Turning this off also stops the viewport-scoped "
+        "textDocument/codeAction request behind it, which is the reason to: a server that answers that request "
+        "slowly pays for it every time the view settles. A server that proves it doesn't support the method is "
+        "never asked again for that connection's lifetime.");
     env.Register<&NedSetLspDiagnosticsDebounce>(
         "ned", "set-lsp-diagnostics-debounce",
         "Set the delay, in milliseconds, after the LSP server's most recently received diagnostics publish for a "

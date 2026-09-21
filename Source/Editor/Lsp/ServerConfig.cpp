@@ -56,6 +56,9 @@ namespace {
     std::mutex g_codeLensMutex;
     bool       g_codeLensEnabled = true;
 
+    std::mutex g_codeActionHintsMutex;
+    bool       g_codeActionHintsEnabled = true;
+
 } // namespace
 
 void SetLspServerCommand(const std::string& language, std::vector<std::string> argv) {
@@ -225,6 +228,16 @@ void SetLspCodeLensEnabled(bool enabled) {
 bool CodeLensEnabled() {
     const std::lock_guard<std::mutex> lock(g_codeLensMutex);
     return g_codeLensEnabled;
+}
+
+void SetLspCodeActionHintsEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(g_codeActionHintsMutex);
+    g_codeActionHintsEnabled = enabled;
+}
+
+bool CodeActionHintsEnabled() {
+    const std::lock_guard<std::mutex> lock(g_codeActionHintsMutex);
+    return g_codeActionHintsEnabled;
 }
 
 } // namespace ned::editor::lsp

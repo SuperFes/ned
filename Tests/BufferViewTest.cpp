@@ -405,11 +405,33 @@ int GutterWidth(std::size_t totalLines, int foldColumn = 0, int symbolColumn = 0
            kLineNumberGap + symbolColumn + foldColumn;
 }
 
+// code-action-hints follow-up: a view with a real LSP Manager wired up
+// reserves one gutter column the plain helper above doesn't -- the quick-fix
+// marker, which is present for the whole life of a buffer a server has open
+// rather than only while it has something in it (see
+// BufferView::kCodeActionWidth). Every test below that paints through a
+// FakeLspServer measures from here instead.
+int LspGutterWidth(std::size_t totalLines, int foldColumn = 0, int symbolColumn = 0) {
+    constexpr int kCodeActionWidth = 1;
+    return GutterWidth(totalLines, foldColumn, symbolColumn) + kCodeActionWidth;
+}
+
 // Row text starting right after the gutter, rather than from column 0.
 std::string ContentRowText(ned::ui::Screen& screen, int row, int width, std::size_t totalLines, int foldColumn = 0,
                            int symbolColumn = 0) {
     std::string out;
     const int   gutter = GutterWidth(totalLines, foldColumn, symbolColumn);
+    for (int col = 0; col < width; ++col) {
+        out += screen.PixelAt(gutter + col, row).character;
+    }
+    return out;
+}
+
+// ContentRowText measured from LspGutterWidth, for the same reason.
+std::string LspContentRowText(ned::ui::Screen& screen, int row, int width, std::size_t totalLines, int foldColumn = 0,
+                              int symbolColumn = 0) {
+    std::string out;
+    const int   gutter = LspGutterWidth(totalLines, foldColumn, symbolColumn);
     for (int col = 0; col < width; ++col) {
         out += screen.PixelAt(gutter + col, row).character;
     }
@@ -1590,7 +1612,7 @@ TEST_CASE("A textDocument/semanticTokens/full response overrides tree-sitter's o
 
     view.Paint(canvas); // re-paint to pick up the bumped SemanticTokensGeneration
 
-    const int gutter = GutterWidth(1, /*foldColumn=*/4);
+    const int gutter = LspGutterWidth(1, /*foldColumn=*/4);
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 6, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::Keyword))); // '1', now Keyword
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 2, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::String)));  // 'a', untouched
 
@@ -1641,7 +1663,7 @@ TEST_CASE("A textDocument/inlayHint response renders virtual text mid-line witho
 
     view.Paint(canvas);
 
-    const int gutter = GutterWidth(1);
+    const int gutter = LspGutterWidth(1);
     REQUIRE(screen.PixelAt(gutter + 0, 0).character == "x"); // real, untouched
     const ned::ui::Brush hintBrush{.background = fixture.theme.background, .foreground = fixture.theme.ghostTextForeground, .italic = true};
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 1, 0), hintBrush));
@@ -1697,7 +1719,7 @@ TEST_CASE("An inlay hint inside a selection keeps the selection's background", "
     buffer.SetPoint(buffer.Content().ByteLength()); // whole line selected
     view.Paint(canvas);
 
-    const int gutter = GutterWidth(1);
+    const int gutter = LspGutterWidth(1);
     // The real 'x' at gutter+0 is selected; the hint occupies gutter+1..+5.
     const ned::ui::Color selected = screen.PixelAt(gutter + 0, 0).background_color;
     REQUIRE(screen.PixelAt(gutter + 1, 0).character == ":");
@@ -1756,7 +1778,7 @@ TEST_CASE("Applied inlay hints relocate, not vanish, across an edit that doesn't
                               .dump());
     view.Paint(canvas);
 
-    const int gutter = GutterWidth(1);
+    const int gutter = LspGutterWidth(1);
     REQUIRE(screen.PixelAt(gutter + 1, 0).character == ":"); // applied, and on the right byte
 
     // Type well before the hint's own anchor -- "x" itself is untouched, it
@@ -1766,7 +1788,7 @@ TEST_CASE("Applied inlay hints relocate, not vanish, across an edit that doesn't
     buffer.InsertAtPoint("yy");
     view.Paint(canvas);
 
-    REQUIRE(ContentRowText(screen, 0, 13, 1) == "yyx: int = 1;");
+    REQUIRE(LspContentRowText(screen, 0, 13, 1) == "yyx: int = 1;");
 
     std::filesystem::remove(path);
 }
@@ -1809,7 +1831,7 @@ TEST_CASE("Applied inlay hints drop, not garble, across an edit that rewrites th
                               .dump());
     view.Paint(canvas);
 
-    const int gutter = GutterWidth(1);
+    const int gutter = LspGutterWidth(1);
     REQUIRE(screen.PixelAt(gutter + 1, 0).character == ":"); // applied, and on the right byte
 
     // Delete "x " (bytes [0,2)), which strictly contains byte 1 -- the
@@ -1818,7 +1840,7 @@ TEST_CASE("Applied inlay hints drop, not garble, across an edit that rewrites th
     buffer.DeleteRange(0, 2);
     view.Paint(canvas);
 
-    REQUIRE(ContentRowText(screen, 0, 4, 1) == "= 1;"); // no hint text spliced in anywhere
+    REQUIRE(LspContentRowText(screen, 0, 4, 1) == "= 1;"); // no hint text spliced in anywhere
 
     std::filesystem::remove(path);
 }
@@ -1881,7 +1903,7 @@ TEST_CASE("Virtual text honours a translucent ghost foreground", "[BufferView]")
                               .dump());
     view.Paint(canvas);
 
-    const int            gutter = GutterWidth(1);
+    const int            gutter = LspGutterWidth(1);
     const ned::ui::Cell& hint   = screen.PixelAt(gutter + 1, 0);
     REQUIRE(hint.character == ":");
     // Resolved, not passed through: the raw authored colour would render
@@ -2261,7 +2283,7 @@ TEST_CASE("Right-click in the content area shows the LSP-only rows once this buf
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas); // drives BufferView::SyncBuffer -> Manager::SyncBuffer, populating ActiveServerKeysForBuffer
 
-    const int gutter = GutterWidth(1, /*foldColumn=*/4);
+    const int gutter = LspGutterWidth(1, /*foldColumn=*/4);
     view.OnEvent(MousePress(gutter + 1, 0, ned::ui::MouseEvent::Button::Right));
 
     REQUIRE(fixture.contextMenu.has_value());
@@ -2300,7 +2322,7 @@ TEST_CASE("Right-click in the content area auto-fills real LSP quick-fixes above
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
     view.Paint(canvas); // drives SyncBuffer, so ActiveServerKeysForBuffer/hasLsp is true below
 
-    const int gutter = GutterWidth(1, /*foldColumn=*/4);
+    const int gutter = LspGutterWidth(1, /*foldColumn=*/4);
     view.OnEvent(MousePress(gutter + 1, 0, ned::ui::MouseEvent::Button::Right)); // fires RequestContextMenuCodeActions
     REQUIRE(fixture.contextMenu.has_value());
     REQUIRE(ContextMenuLabels(fixture.contextMenu) ==
@@ -10585,7 +10607,7 @@ TEST_CASE("C-M-i (lsp-complete) shows a completion popup from a real completion 
     REQUIRE(fixture.completion->rows[0].right == "() -> int");
     REQUIRE(fixture.completion->rows[0].left == "\xC6\x92"); // "ƒ" -- LSP kind 3 == Function == SymbolKind::Callable
     REQUIRE(fixture.completion->anchor.has_value());
-    REQUIRE(fixture.completion->anchor->x == static_cast<int>(GutterWidth(1)) + 2); // right after "fo"
+    REQUIRE(fixture.completion->anchor->x == static_cast<int>(LspGutterWidth(1)) + 2); // right after "fo"
     REQUIRE(fixture.completion->anchor->y == 1);                                    // one row below point's own row (0)
     REQUIRE(ContentRowText(screenBuf, 0, 6, 1) == "fo\xc2\xac   ");                 // the buffer row itself is untouched
                                                                                     // ("fo" has no trailing newline, so it
@@ -11558,7 +11580,7 @@ TEST_CASE("M-x lsp-document-highlight paints every reported occurrence with the 
     client->DispatchFrame(response.dump());
 
     view.Paint(canvas);
-    const int gutter = GutterWidth(1);
+    const int gutter = LspGutterWidth(1);
     REQUIRE(screenBuf.PixelAt(gutter + 0, 0).background_color == fixture.theme.documentHighlightBackground); // 'f' of the first "foo"
     REQUIRE(screenBuf.PixelAt(gutter + 2, 0).background_color == fixture.theme.documentHighlightBackground); // 'o'
     REQUIRE(screenBuf.PixelAt(gutter + 6, 0).background_color == fixture.theme.documentHighlightBackground); // 'f' of the second "foo"

@@ -207,6 +207,16 @@ void               SetLspInlayHintsEnabled(bool enabled); // default true
 void               SetLspCodeLensEnabled(bool enabled); // default true
 [[nodiscard]] bool CodeLensEnabled();
 
+// code-action-hints follow-up. The gutter marker saying a diagnostic on
+// this line has a server-supplied quick fix. Same reasoning as
+// SetLspCodeLensEnabled above -- default true, read-only annotation until
+// the fix is explicitly invoked (lsp-quick-fix / lsp-code-action). Turning
+// it off also stops the recurring viewport-scoped textDocument/codeAction
+// request that feeds it, which is the reason to turn it off: a server that
+// answers that request slowly pays for it on every viewport settle.
+void               SetLspCodeActionHintsEnabled(bool enabled); // default true
+[[nodiscard]] bool CodeActionHintsEnabled();
+
 } // namespace ned::editor::lsp
 
 #endif // NED_EDITOR_LSP_SERVERCONFIG_H

@@ -84,13 +84,14 @@ bufferview::GutterLayout BufferView::ComputeGutterLayout(std::size_t totalLines)
     // gutter's width never shifts while scrolling past a deeply nested region.
     // The symbol column, unlike fold, is data-driven -- see
     // GutterModel::SymbolGutterActive.
-    layout.dapWidth      = DapGutterActive() ? kDapWidth : 0;
-    layout.diffWidth     = DiffGutterActive() ? kDiffWidth : 0;
-    layout.testWidth     = gutters_.TestGutterActive() ? kTestWidth : 0;
-    layout.coverageWidth = gutters_.CoverageGutterActive() ? kCoverageWidth : 0;
-    layout.symbolWidth   = gutters_.SymbolGutterActive() ? kSymbolWidth : 0;
-    layout.foldWidth     = gutters_.FoldGutterActive() ? kMaxFoldDepthColumns : 0;
-    layout.blameWidth    = BlameGutterActive() ? kBlameWidth : 0;
+    layout.dapWidth        = DapGutterActive() ? kDapWidth : 0;
+    layout.diffWidth       = DiffGutterActive() ? kDiffWidth : 0;
+    layout.codeActionWidth = gutters_.CodeActionGutterActive() ? kCodeActionWidth : 0;
+    layout.testWidth       = gutters_.TestGutterActive() ? kTestWidth : 0;
+    layout.coverageWidth   = gutters_.CoverageGutterActive() ? kCoverageWidth : 0;
+    layout.symbolWidth     = gutters_.SymbolGutterActive() ? kSymbolWidth : 0;
+    layout.foldWidth       = gutters_.FoldGutterActive() ? kMaxFoldDepthColumns : 0;
+    layout.blameWidth      = BlameGutterActive() ? kBlameWidth : 0;
     // The digits and both surrounding gaps collapse to nothing together.
     layout.lineNumberGap = LineNumberGutterActive() ? kLineNumberGap : 0;
     layout.digits        = LineNumberGutterActive() ? std::to_string(totalLines).size() : 0;
@@ -99,7 +100,8 @@ bufferview::GutterLayout BufferView::ComputeGutterLayout(std::size_t totalLines)
     layout.diffStart       = layout.dapWidth;
     layout.statusStart     = layout.diffStart + layout.diffWidth;
     layout.diagnosticStart = layout.statusStart + kStatusWidth;
-    layout.digitsStart     = layout.diagnosticStart + kDiagnosticWidth + layout.lineNumberGap;
+    layout.codeActionStart = layout.diagnosticStart + kDiagnosticWidth;
+    layout.digitsStart     = layout.codeActionStart + layout.codeActionWidth + layout.lineNumberGap;
     layout.testStart       = layout.digitsStart + layout.digits + layout.lineNumberGap;
     layout.coverageStart   = layout.testStart + layout.testWidth;
     layout.symbolStart     = layout.coverageStart + layout.coverageWidth;

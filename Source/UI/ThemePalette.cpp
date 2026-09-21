@@ -99,6 +99,7 @@ Theme ThemeFromPalette(std::string name, const ThemePalette& p) {
         // where that is.
         .inlayHintParameterForeground  = Color::Interpolate(0.20F, p.subtleForeground, p.background),
         .codeLensForeground            = Color::Interpolate(0.35F, p.cyan, p.background),
+        .codeActionHintForeground      = p.yellow,
         .linkForeground                = p.cyan,
         .truncationIndicatorForeground = p.accent,
         .unsavedChangeIndicator        = p.orange,

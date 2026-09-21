@@ -145,6 +145,18 @@ class GutterModel {
     // affordance, which is only meaningful once a filter command is configured.
     [[nodiscard]] bool TestRunnable() const;
 
+    // --- code-action hints ---------------------------------------------------
+    // Whether the quick-fix column is drawn at all. Deliberately keyed on "a
+    // language server has this buffer open", not on "there are hints right
+    // now": a column that appeared and vanished as fixes came and went would
+    // shift every other column sideways while the user is typing. It flips
+    // once, when the server attaches, the way the symbol column flips once
+    // after the first parse.
+    [[nodiscard]] bool CodeActionGutterActive() const;
+    // The lines a server-supplied quick fix was reported for, sorted and
+    // deduplicated -- several fixes on one line is one entry.
+    [[nodiscard]] const std::vector<std::size_t>& CodeActionHintLines() const;
+
     // --- coverage ------------------------------------------------------------
     [[nodiscard]] bool                                                                     CoverageGutterActive() const;
     [[nodiscard]] const std::vector<std::pair<std::size_t, editor::coverage::LineStatus>>& CoverageLineStatuses() const;
@@ -171,6 +183,7 @@ class GutterModel {
     void EnsureSymbolLineKinds() const;
     void EnsureTestEntries() const;
     void EnsureCoverageStatuses() const;
+    void EnsureCodeActionHintLines() const;
     void EnsureInlineDiagnostics() const;
 
     EditorContext&     context_;
@@ -226,6 +239,9 @@ class GutterModel {
 
     mutable CacheStamp                                                        coverageStamp_;
     mutable std::vector<std::pair<std::size_t, editor::coverage::LineStatus>> coverageLineStatuses_;
+
+    mutable CacheStamp               codeActionHintStamp_;
+    mutable std::vector<std::size_t> codeActionHintLines_;
 
     mutable CacheStamp                                        inlineDiagnosticStamp_;
     mutable std::unordered_map<std::size_t, InlineDiagnostic> inlineDiagnosticsByLine_;

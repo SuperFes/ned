@@ -1027,6 +1027,14 @@ std::vector<std::string> Manager::ActiveServerKeysForBuffer(const text::Buffer& 
     return keys;
 }
 
+bool Manager::HasOpenedDocument(const text::Buffer& buffer) const {
+    const auto it = bufferState_.find(const_cast<text::Buffer*>(&buffer));
+    if (it == bufferState_.end()) {
+        return false;
+    }
+    return std::any_of(it->second.begin(), it->second.end(), [](const auto& entry) { return entry.second.opened; });
+}
+
 void Manager::SyncToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId,
                               const std::filesystem::path& root) {
     // progressive-huge-file-load follow-up: checked here, ahead of the
@@ -1356,6 +1364,7 @@ void Manager::ClientDisconnected(const std::string& serverKey, const std::string
     pullDiagnosticsUnsupported_.erase(connectionKeyCopy);         // a respawned server gets one fresh attempt
     inlayHintsUnsupported_.erase(connectionKeyCopy);              // ditto
     codeLensUnsupported_.erase(connectionKeyCopy);                // ditto
+    codeActionHintsUnsupported_.erase(connectionKeyCopy);         // ditto
     documentLinkUnsupported_.erase(connectionKeyCopy);            // ditto
     semanticTokensRangeUnsupported_.erase(connectionKeyCopy);     // ditto
     semanticTokensFullDeltaUnsupported_.erase(connectionKeyCopy); // ditto
@@ -1580,6 +1589,12 @@ void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     codeLensRequestCounter_.erase(&buffer);
     codeLensSpans_.erase(&buffer);
     codeLensSpansGeneration_.erase(&buffer);
+    codeActionHintCoverage_.erase(&buffer);
+    codeActionHintRequestCounter_.erase(&buffer);
+    codeActionHintDiagnosticsGeneration_.erase(&buffer);
+    codeActionHintSpans_.erase(&buffer);
+    codeActionHintSpansGeneration_.erase(&buffer);
+    codeActionHintRevision_.erase(&buffer);
 }
 
 void Manager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
@@ -1918,6 +1933,7 @@ bool Manager::SendViewportFeatures(text::Buffer& buffer, const ArmedViewportRequ
     RequestSemanticTokens(buffer, request.viewportStartByte, request.viewportEndByte, request.serverKey);
     RequestInlayHints(buffer, request.viewportStartByte, request.viewportEndByte, request.serverKey);
     RequestCodeLenses(buffer, request.serverKey);
+    RequestCodeActionHints(buffer, request.viewportStartByte, request.viewportEndByte, request.serverKey);
     return true;
 }
 
@@ -2653,6 +2669,247 @@ const std::vector<Manager::ResolvedCodeLens>& Manager::CodeLensSpans(const text:
     return it->second;
 }
 
+void Manager::RequestCodeActionHints(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
+                                     const std::string& serverKey) {
+    if (!CodeActionHintsEnabled()) {
+        return;
+    }
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        return;
+    }
+    if (codeActionHintsUnsupported_.contains(state->connectionKey)) {
+        return; // learned once that this server errors on textDocument/codeAction
+    }
+    // sync-debounce follow-up: see RequestSemanticTokens' own doc comment
+    // for why this guard exists now.
+    if (state->lastSyncedGeneration != buffer.ContentGeneration()) {
+        return;
+    }
+    // The gate the other viewport features don't need: the answer here is a
+    // function of the diagnostics, not only of the content, so a publish
+    // invalidates every range already covered even though no byte moved.
+    const std::size_t diagnosticsGeneration = buffer.DiagnosticsGeneration();
+    if (const auto it = codeActionHintDiagnosticsGeneration_.find(&buffer);
+        it == codeActionHintDiagnosticsGeneration_.end() || it->second != diagnosticsGeneration) {
+        codeActionHintDiagnosticsGeneration_[&buffer] = diagnosticsGeneration;
+        codeActionHintCoverage_.erase(&buffer);
+    }
+
+    ViewportCoverage&                                        coverage = codeActionHintCoverage_[&buffer];
+    const std::optional<std::pair<std::size_t, std::size_t>> request =
+        UncoveredRequestRange(coverage, buffer, viewportStartByte, viewportEndByte);
+    if (!request) {
+        return; // already answered, or already on the wire
+    }
+    const std::size_t requestStart = request->first;
+    const std::size_t requestEnd   = request->second;
+
+    const text::ITextStorage& content     = buffer.Content();
+    Json                      diagnostics = Json::array();
+    for (const text::Buffer::Diagnostic& diagnostic : buffer.Diagnostics()) {
+        if (diagnostic.endByte <= requestStart || diagnostic.startByte >= requestEnd) {
+            continue;
+        }
+        if (diagnostic.origin == text::Buffer::Diagnostic::Origin::Prose) {
+            // The prose checker's own connection is the only one that knows
+            // what a harper-ls-flagged word is; this request goes to the
+            // language server, which would be asked to fix something it
+            // never reported. RequestCodeActionsAtPoint routes a prose
+            // diagnostic to kProseLanguageKey for exactly this reason -- the
+            // marker simply doesn't cover them.
+            continue;
+        }
+        diagnostics.push_back(DiagnosticToLsp(diagnostic, content));
+    }
+    if (diagnostics.empty()) {
+        // Nothing here is wrong, so nothing here is fixable -- answered
+        // without a round trip. Merged as an empty answer for this range
+        // when there is anything to clear, which is what retires the
+        // markers on lines whose diagnostics the user has just fixed; a
+        // buffer that never had one is left alone rather than bumping a
+        // revision (and so re-deriving the gutter's line list) once per
+        // screenful for every clean file scrolled through.
+        if (const auto it = codeActionHintSpans_.find(&buffer); it != codeActionHintSpans_.end() && !it->second.empty()) {
+            MergeCodeActionHints(buffer, {}, requestStart, requestEnd);
+        }
+        SettleCoverage(coverage, buffer.ContentGeneration(), /*answered=*/true, requestStart, requestEnd);
+        return;
+    }
+
+    Client* client = ExistingClientForLanguage(state->connectionKey);
+    if (!client) {
+        return;
+    }
+
+    coverage.inFlight           = std::pair{requestStart, requestEnd};
+    const std::size_t requestId = ++codeActionHintRequestCounter_[&buffer];
+
+    const Position      start         = BytePositionToLsp(content, requestStart);
+    const Position      end           = BytePositionToLsp(content, requestEnd);
+    text::Buffer* const bufferPtr     = &buffer;
+    const std::string   connectionKey = state->connectionKey; // per-connection latch, see RequestSemanticTokens
+    const std::string   uri           = state->uri;
+    // The document the server will answer about -- RequestInlayHints' own
+    // layering, and O(1) for the same reason (structurally shared storage).
+    std::shared_ptr<const text::ITextStorage> requestedContent    = buffer.Content().Clone();
+    const std::size_t                         requestedGeneration = buffer.ContentGeneration();
+    const Json                                params              = {
+        {"textDocument", {{"uri", uri}}},
+        {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
+        // only=quickfix is not a cost optimization -- see this method's own
+        // doc comment in Manager.h for what an unfiltered wide range brings
+        // back instead.
+        {"context", {{"diagnostics", std::move(diagnostics)}, {"only", Json::array({"quickfix"})}}},
+    };
+    client->SendRequest(
+        "textDocument/codeAction", params,
+        [this, bufferPtr, requestId, connectionKey, uri, requestedContent, requestedGeneration,
+         requestedStartByte = requestStart,
+         requestedEndByte   = requestEnd](std::optional<Json> result, std::optional<Json> error) {
+            const auto counterIt = codeActionHintRequestCounter_.find(bufferPtr);
+            if (counterIt == codeActionHintRequestCounter_.end() || counterIt->second != requestId) {
+                return; // superseded by a newer request for this buffer
+            }
+            if (error) {
+                codeActionHintsUnsupported_.insert(connectionKey);
+                SettleCodeActionHintRequest(*bufferPtr, requestedGeneration, /*answered=*/false, requestedStartByte, requestedEndByte);
+                return;
+            }
+            if (!result) {
+                SettleCodeActionHintRequest(*bufferPtr, requestedGeneration, /*answered=*/false, requestedStartByte, requestedEndByte);
+                return;
+            }
+            // Positions are resolved against the document the server was
+            // asked about, never against whatever the buffer is now --
+            // CarryForward below is what takes them from there onto the
+            // present.
+            const text::ITextStorage&   content = *requestedContent;
+            std::vector<CodeActionHint> hints;
+            for (const CodeAction& action : ExtractCodeActions(*result, uri)) {
+                for (const auto& [rangeStart, rangeEnd] : action.diagnosticRanges) {
+                    hints.push_back(CodeActionHint{.startByte = PositionToByte(content, rangeStart),
+                                                   .endByte   = PositionToByte(content, rangeEnd)});
+                }
+            }
+            // Several fixes for one diagnostic is the common case (clangd
+            // and typescript-language-server both send "fix this" next to
+            // "fix all of these"), and the marker says only that a fix
+            // exists -- so one entry per range, not per action.
+            std::sort(hints.begin(), hints.end(), [](const CodeActionHint& a, const CodeActionHint& b) {
+                return std::pair{a.startByte, a.endByte} < std::pair{b.startByte, b.endByte};
+            });
+            hints.erase(std::unique(hints.begin(), hints.end(),
+                                    [](const CodeActionHint& a, const CodeActionHint& b) {
+                                        return a.startByte == b.startByte && a.endByte == b.endByte;
+                                    }),
+                        hints.end());
+
+            std::size_t resolvedAt = requestedGeneration;
+            const bool  carried    = CarryForward(hints, resolvedAt, *bufferPtr,
+                                                  [](CodeActionHint& hint, const std::vector<text::EditOp>& ops) {
+                                                  return RelocateRange(hint.startByte, hint.endByte, ops, text::InsideDelete::Clamp);
+                                                  });
+            if (!carried) {
+                // The journal can no longer say where these went; the
+                // markers already on screen stay, and the next settle asks
+                // again for this range.
+                SettleCodeActionHintRequest(*bufferPtr, requestedGeneration, /*answered=*/false, requestedStartByte, requestedEndByte);
+                return;
+            }
+            // The answered range travels the same path its hints did.
+            std::size_t mergeStart = requestedStartByte;
+            std::size_t mergeEnd   = requestedEndByte;
+            if (const auto ops = bufferPtr->Edits().OpsSince(requestedGeneration)) {
+                RelocateRange(mergeStart, mergeEnd, *ops, text::InsideDelete::Clamp);
+            }
+            MergeCodeActionHints(*bufferPtr, std::move(hints), mergeStart, mergeEnd);
+            SettleCodeActionHintRequest(*bufferPtr, requestedGeneration, /*answered=*/true, requestedStartByte, requestedEndByte);
+        });
+}
+
+void Manager::SettleCodeActionHintRequest(text::Buffer& buffer, std::size_t requestedGeneration, bool answered,
+                                          std::size_t rangeStart, std::size_t rangeEnd) {
+    if (const auto it = codeActionHintCoverage_.find(&buffer); it != codeActionHintCoverage_.end()) {
+        SettleCoverage(it->second, requestedGeneration, answered, rangeStart, rangeEnd);
+    }
+}
+
+void Manager::MergeCodeActionHints(text::Buffer& buffer, std::vector<CodeActionHint> hints, std::size_t rangeStart,
+                                   std::size_t rangeEnd) {
+    std::vector<CodeActionHint>& retained = codeActionHintSpans_[&buffer];
+    // Bring what is already held onto this generation before splicing the
+    // new answer into it, or the two halves would be measured in different
+    // coordinate systems.
+    if (const auto generationIt = codeActionHintSpansGeneration_.find(&buffer);
+        generationIt != codeActionHintSpansGeneration_.end()) {
+        CarryForward(retained, generationIt->second, buffer, [](CodeActionHint& hint, const std::vector<text::EditOp>& ops) {
+            return RelocateRange(hint.startByte, hint.endByte, ops, text::InsideDelete::Clamp);
+        });
+    }
+    std::vector<CodeActionHint> merged;
+    merged.reserve(retained.size() + hints.size());
+    for (const CodeActionHint& hint : retained) {
+        if (hint.startByte < rangeStart || hint.startByte >= rangeEnd) {
+            merged.push_back(hint); // outside what this response spoke about
+        }
+    }
+    merged.insert(merged.end(), hints.begin(), hints.end());
+    std::sort(merged.begin(), merged.end(), [](const CodeActionHint& a, const CodeActionHint& b) {
+        return std::pair{a.startByte, a.endByte} < std::pair{b.startByte, b.endByte};
+    });
+    // Ceiling on the retained set, EvictInlayHintsBeyondCap's rule without
+    // its anchors: the entries furthest from the range just answered for are
+    // the ones least likely to be scrolled back to. Well above any plausible
+    // screenful-times-margin of diagnostics, and far below where a linear
+    // scan of plain byte offsets is measurable.
+    constexpr std::size_t kMaxRetainedCodeActionHints = 2048;
+    if (merged.size() > kMaxRetainedCodeActionHints) {
+        const std::size_t anchorByte = rangeStart + (rangeEnd - rangeStart) / 2;
+        const auto        distance   = [anchorByte](const CodeActionHint& hint) {
+            return hint.startByte > anchorByte ? hint.startByte - anchorByte : anchorByte - hint.startByte;
+        };
+        std::nth_element(merged.begin(), merged.begin() + static_cast<std::ptrdiff_t>(kMaxRetainedCodeActionHints),
+                         merged.end(),
+                         [&distance](const CodeActionHint& a, const CodeActionHint& b) { return distance(a) < distance(b); });
+        merged.erase(merged.begin() + static_cast<std::ptrdiff_t>(kMaxRetainedCodeActionHints), merged.end());
+        std::sort(merged.begin(), merged.end(), [](const CodeActionHint& a, const CodeActionHint& b) {
+            return std::pair{a.startByte, a.endByte} < std::pair{b.startByte, b.endByte};
+        });
+    }
+    retained                                = std::move(merged);
+    codeActionHintSpansGeneration_[&buffer] = buffer.ContentGeneration();
+    ++codeActionHintRevision_[&buffer];
+}
+
+std::size_t Manager::CodeActionHintRevision(const text::Buffer& buffer) const {
+    const auto it = codeActionHintRevision_.find(const_cast<text::Buffer*>(&buffer));
+    return it != codeActionHintRevision_.end() ? it->second : 0;
+}
+
+const std::vector<Manager::CodeActionHint>& Manager::CodeActionHintSpans(const text::Buffer& buffer) const {
+    static const std::vector<CodeActionHint> kEmpty;
+    text::Buffer* const                      key = const_cast<text::Buffer*>(&buffer);
+    const auto                               it  = codeActionHintSpans_.find(key);
+    if (it == codeActionHintSpans_.end()) {
+        return kEmpty;
+    }
+    // Lazy catch-up on read, CodeLensSpans' own shape and for its reason:
+    // Manager has no hook into Buffer's edits, and replaying the few ops
+    // since is cheap amortized across a generation's reads. Clamped rather
+    // than invalidated -- a marker in a one-column gutter cannot garble the
+    // text, and one that vanished while you typed inside the flagged token
+    // would be the flicker this whole family of fixes exists to stop.
+    const auto generationIt = codeActionHintSpansGeneration_.find(key);
+    if (generationIt != codeActionHintSpansGeneration_.end()) {
+        CarryForward(it->second, generationIt->second, buffer,
+                     [](CodeActionHint& hint, const std::vector<text::EditOp>& ops) {
+                         return RelocateRange(hint.startByte, hint.endByte, ops, text::InsideDelete::Clamp);
+                     });
+    }
+    return it->second;
+}
+
 void Manager::ResolveCodeLens(text::Buffer& buffer, const ResolvedCodeLens& lens, ResolveCodeLensCallback callback,
                                  const std::string& serverKey) {
     BufferSyncState* state = ResolveSyncState(buffer, serverKey);
@@ -2818,6 +3075,15 @@ void Manager::PushMergedDiagnostics(text::Buffer& buffer) {
         }
     }
     buffer.SetDiagnostics(std::move(merged));
+
+    // code-action-hints follow-up. A quick fix exists because a diagnostic
+    // does, so the set of fixable lines just changed with no edit behind it.
+    // Dropping the armed entry is what makes the next Paint re-arm: the
+    // dedup there compares a (generation, viewport) pair that a publish
+    // leaves untouched, so without this the hint request would never fire
+    // again for an unedited buffer. Re-arming costs the other three viewport
+    // requests nothing -- each dedups on its own coverage and sends nothing.
+    armedViewportRequests_.erase(&buffer);
 }
 
 void Manager::RebaseSliceOntoLiveContent(const text::Buffer& buffer, DiagnosticSlice& slice) const {
