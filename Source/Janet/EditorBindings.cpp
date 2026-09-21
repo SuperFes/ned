@@ -1399,6 +1399,16 @@ namespace {
                                                    : std::optional(editor::BracePlacementByName(placement)));
     }
 
+    // format-buffer-tier follow-up: per-language, with the empty key as the
+    // process-wide default -- ned/set-indent-style's own convention.
+    void NedSetLspFormatBuffer(std::string language, Janet enabled) {
+        editor::lsp::SetLspFormatBufferEnabled(language, JanetToOptionalBool(enabled));
+    }
+
+    bool NedLspFormatBuffer(std::string language) {
+        return editor::lsp::FormatBufferEnabled(language);
+    }
+
     void NedSetFormatBraceCollapseEmpty(std::string captureName, Janet value) {
         editor::SetBraceCollapseEmpty(captureName, JanetToOptionalBool(value));
     }
@@ -2388,6 +2398,17 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-lsp-format-on-save",
         "Enable or disable formatting the buffer via the language server on save (default false). Ignored "
         "whenever ned/set-format-command has an external formatter configured -- that always takes precedence.");
+    env.Register<&NedSetLspFormatBuffer>(
+        "ned", "set-lsp-format-buffer",
+        "Whether format-buffer hands the given language to its language server instead of ned's own format rules "
+        "(default true). An empty language sets the process-wide default. Set it false for a language whose style "
+        "you configure with ned/set-format-* or format.janet -- a server's formatter and ned's own rules both "
+        "rewrite the whole buffer, so only one can win. nil clears: a language back to the default, the default "
+        "back to true.");
+    env.Register<&NedLspFormatBuffer>(
+        "ned", "lsp-format-buffer",
+        "Whether format-buffer defers to the language server for the given language (an empty language reads the "
+        "process-wide default).");
     env.Register<&NedSetLspOnTypeFormatting>(
         "ned", "set-lsp-on-type-formatting",
         "Enable or disable automatically formatting via the language server after typing one of its declared "

@@ -1,6 +1,7 @@
 #include "ServerConfig.h"
 
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 
@@ -37,6 +38,10 @@ namespace {
 
     std::mutex g_formatOnSaveMutex;
     bool       g_formatOnSaveEnabled = false;
+
+    std::mutex                            g_formatBufferMutex;
+    std::unordered_map<std::string, bool> g_formatBufferEnabled;
+    bool                                  g_formatBufferDefault = true;
 
     std::mutex g_onTypeFormattingMutex;
     bool       g_onTypeFormattingEnabled = false;
@@ -168,6 +173,25 @@ void SetLspFormatOnSaveEnabled(bool enabled) {
 bool FormatOnSaveEnabled() {
     const std::lock_guard<std::mutex> lock(g_formatOnSaveMutex);
     return g_formatOnSaveEnabled;
+}
+
+void SetLspFormatBufferEnabled(const std::string& language, std::optional<bool> enabled) {
+    const std::lock_guard<std::mutex> lock(g_formatBufferMutex);
+    if (language.empty()) {
+        g_formatBufferDefault = enabled.value_or(true);
+        return;
+    }
+    if (!enabled) {
+        g_formatBufferEnabled.erase(language);
+        return;
+    }
+    g_formatBufferEnabled[language] = *enabled;
+}
+
+bool FormatBufferEnabled(const std::string& language) {
+    const std::lock_guard<std::mutex> lock(g_formatBufferMutex);
+    const auto                        it = g_formatBufferEnabled.find(language);
+    return it == g_formatBufferEnabled.end() ? g_formatBufferDefault : it->second;
 }
 
 void SetLspOnTypeFormattingEnabled(bool enabled) {

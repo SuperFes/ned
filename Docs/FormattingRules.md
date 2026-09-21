@@ -63,6 +63,30 @@ used whenever no external command produced output and a server is running for th
 buffer's language) -- `save-buffer`'s own, separate LSP-format-on-save path
 (`ned/set-lsp-format-on-save`) is a different, independently-toggled mechanism.
 
+**That tier is per-language refusable, and this matters more than it looks.** A server's
+formatter and the rules on this page both rewrite the whole buffer; they cannot compose,
+so exactly one of them wins, and until `ned/set-lsp-format-buffer` existed the server
+always did. That made every rule here unreachable for any language the user also ran a
+server for -- which is most of them, and precisely the languages whose style someone
+cares enough about to configure:
+
+```janet
+(ned/set-lsp-format-buffer "php" false)   # format-buffer uses ned's own rules for PHP
+(ned/set-lsp-format-buffer "" false)      # ... for every language
+(ned/set-lsp-format-buffer "php" nil)     # clear, back to the default (true)
+```
+
+Default `true` per language and process-wide, so nobody's existing behavior changed. The
+empty language key is the process-wide default and `nil` clears, the same conventions
+`ned/set-indent-style` and every `ned/set-format-*` setter already use.
+
+The LSP tier also **falls through to Native** now rather than leaving the buffer
+untouched: a server that claimed the tier and then errored, or returned no edits at all,
+gets the same treatment a missing external formatter does. Before this, a claimed-then-
+failed request reported "LSP format failed." and did nothing, which made this page's own
+"`format-buffer` always does something useful, never just 'nothing configured'" claim
+false for exactly the case it was written to promise.
+
 `ned/set-auto-format-on-save` (default off) runs the same Native rules -- reindent, then
 Space/Break/Wrap/Blank when configured, then a Hygiene subset (trailing-whitespace trim,
 final newline) -- automatically before every save, but SCOPED to only the lines touched

@@ -153,6 +153,24 @@ void               SetLspHoverOnMouseMoveEnabled(bool enabled); // default true
 void               SetLspFormatOnSaveEnabled(bool enabled); // default false
 [[nodiscard]] bool FormatOnSaveEnabled();
 
+// format-buffer-tier follow-up. Which formatter an explicit format-buffer
+// hands the buffer to, per language -- the one tier decision that was
+// previously unstateable: a running server claimed format-buffer
+// unconditionally, so a user who had configured ned's own Space/Break/Blank/
+// Wrap rules (Docs/FormattingRules.md) could not reach them for any language
+// they also ran a server for, and those rules exist precisely because a
+// server's own formatter has no opinion to offer about them.
+//
+// Keyed the same way SetLspCommand is, with the empty key as the
+// process-wide default (ned/set-indent-style's own convention): a language
+// with no entry falls back to that, which is true unless set otherwise --
+// today's behavior, unchanged for anyone who doesn't ask. nullopt clears,
+// the same "nil clears" convention every ned/set-format-* setter uses --
+// clearing a language restores it to the default, clearing the default
+// restores the built-in true.
+void               SetLspFormatBufferEnabled(const std::string& language, std::optional<bool> enabled);
+[[nodiscard]] bool FormatBufferEnabled(const std::string& language);
+
 // on-type-formatting follow-up. Same shape/reasoning as
 // SetLspFormatOnSaveEnabled above -- opt-in (default false), since this
 // mutates buffer content as you type, not just a passive UI cue. Gated

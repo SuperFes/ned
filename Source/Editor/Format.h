@@ -31,6 +31,8 @@
 
 namespace ned::editor {
 
+struct Mode;
+
 // Applies every enabled Hygiene rule to buffer's whole content, in the same
 // order Buffer::SaveToFile's own pipeline uses (trim -> blank-line collapse
 // -> final newline) so the two never disagree about what "clean" looks
@@ -38,6 +40,33 @@ namespace ned::editor {
 // touches the buffer/undo tree not at all. Returns whether anything
 // changed.
 bool ApplyHygienePass(text::Buffer& buffer);
+
+// format-buffer's own Native tier, whole-buffer: the per-language reindent,
+// then each configured rule kind in the one order they compose in, then
+// Hygiene -- all as a single undo step. Returns whether anything changed.
+//
+// A free function rather than the body of format-buffer's lambda because two
+// call sites need it: the command itself, and BufferView's LSP-format
+// callback, which falls back here when a server that claimed the tier
+// returns nothing usable. `mode` may be null (a buffer with no major mode
+// still gets Hygiene).
+//
+// Ordering, which is load-bearing and not alphabetical: Rewrite first (a
+// pure in-place content swap that changes no line layout, so "fix content
+// equivalences before deciding layout" reads as the obvious story), then
+// Arrange (reordering whole import lines changes which lines are adjacent to
+// which -- exactly the fact Blank's rules must be settled against, not react
+// to mid-reorder), then Blank (its edit region ends at a capture's startByte
+// and sits strictly above that capture's line, never overlapping a Break/
+// Wrap/Space region for any capture this codebase names), then Wrap (it
+// rewrites a list's interior line layout wholesale, which is the structural
+// change Break's brace-placement gap and Space's token-adjacency checks need
+// to see the result of), then Break, then Space, then Align last (its column
+// computation must read wherever an anchor ended up AFTER Space's rules ran,
+// or its padding is undone or doubled by them). Every pass after the first
+// re-reads a fresh capture list from the buffer's own text: an earlier pass
+// may have shifted every byte offset after its own edits.
+bool ApplyNativeFormat(text::Buffer& buffer, const Mode* mode);
 
 } // namespace ned::editor
 

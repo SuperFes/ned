@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-218 bindings.
+220 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -152,6 +152,10 @@ Insert text at point.
 ## `ned/list-backups`
 
 Backup snapshots recoverable for the current buffer, as an array of absolute paths -- the crash-recovery autosave first if one exists, then saved versions newest-first. Empty for a pathless buffer or when nothing was backed up. Index into it with ned/recover-backup.
+
+## `ned/lsp-format-buffer`
+
+Whether format-buffer defers to the language server for the given language (an empty language reads the process-wide default).
 
 ## `ned/macro-names`
 
@@ -532,6 +536,10 @@ Set the delay, in milliseconds, after the last relevant keystroke before an auto
 ## `ned/set-lsp-diagnostics-debounce`
 
 Set the delay, in milliseconds, after the LSP server's most recently received diagnostics publish for a buffer before it's actually applied (default 500) -- keeps inline diagnostics from repainting on nearly every keystroke while typing, settling in only once the server goes quiet for this long. Non-positive values are clamped to 1.
+
+## `ned/set-lsp-format-buffer`
+
+Whether format-buffer hands the given language to its language server instead of ned's own format rules (default true). An empty language sets the process-wide default. Set it false for a language whose style you configure with ned/set-format-* or format.janet -- a server's formatter and ned's own rules both rewrite the whole buffer, so only one can win. nil clears: a language back to the default, the default back to true.
 
 ## `ned/set-lsp-format-on-save`
 

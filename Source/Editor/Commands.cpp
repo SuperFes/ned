@@ -2062,11 +2062,20 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           // signals BufferView::RunCommandAndHandleOutcome to
                           // hand off to RequestLspFormatBuffer() instead of
                           // running the Native fallback synchronously here.
+                          //
+                          // format-buffer-tier follow-up: gated on
+                          // lsp::FormatBufferEnabled(language) as well as a
+                          // running server. A server's formatter and ned's
+                          // own rules both claim the whole buffer and cannot
+                          // compose, so which one wins has to be sayable --
+                          // and for a language whose style the user has
+                          // configured here, it is ned's.
                           if (context.lspManager != nullptr && context.mode != nullptr) {
                               const std::string languageKey = LanguageKeyForMode(*context.mode);
-                              if (context.lspManager->StatusForLanguage(
+                              if (lsp::FormatBufferEnabled(languageKey) &&
+                                  context.lspManager->StatusForLanguage(
                                       context.lspManager->ConnectionKeyForBuffer(context.buffer, languageKey)) ==
-                                  lsp::Manager::Status::Running) {
+                                      lsp::Manager::Status::Running) {
                                   context.deferFormatToLsp = true;
                                   return;
                               }
@@ -2086,104 +2095,12 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               return;
                           }
 
-                          context.buffer.BeginUndoGroup();
-                          bool changed = false;
-                          if (context.mode != nullptr && context.mode->indentColumn) {
-                              changed = IndentBuffer(context.buffer, *context.mode) > 0;
-                          }
-                          // configurable-formatter-rules follow-up: the pilot Blank-,
-                          // Break- (brace placement), Wrap-, and Space-kind passes --
-                          // all a no-op for every mode but their own pilot captures
-                          // until a rule is actually configured (see
-                          // Docs/FormattingRules.md). Run after the structural reindent
-                          // (whose body indentation none of them touch) and before
-                          // Hygiene (which cleans up whatever whitespace any of them
-                          // left behind).
-                          // align/arrange/rewrite-kind follow-up: Rewrite runs FIRST --
-                          // a pure in-place content swap (a string's own delimiter
-                          // character) that never changes line layout or length in any
-                          // way every other pass here would need to react to, so its
-                          // own ordering relative to them is a non-issue; run first
-                          // purely so "fix content equivalences before deciding layout"
-                          // reads as the obvious story. Arrange runs SECOND, before
-                          // Blank -- reordering whole import lines changes which lines
-                          // are adjacent to which, exactly the fact Blank's own
-                          // min/max-before rules need to already be settled against,
-                          // not react to mid-reorder. Blank runs THIRD: its own edit
-                          // region always ends at a capture's own startByte and sits
-                          // strictly ABOVE that capture's line, never overlapping a
-                          // Break/Wrap/Space capture's region (those sit AT OR AFTER a
-                          // construct's header) for any capture this codebase names
-                          // today, so running it before them avoids those passes ever
-                          // having to account for shifted blank-line whitespace above
-                          // them. wrap-kind follow-up: Wrap runs FOURTH, before
-                          // Break/Space -- a wrap decision rewrites a list's own
-                          // interior line layout wholesale (collapsing it to one line
-                          // or chopping it to many), which is exactly the kind of
-                          // structural change Break's own brace-placement gap and
-                          // Space's own token-adjacency checks need to see the RESULT
-                          // of, not the pre-wrap shape (a chopped list's own closing
-                          // delimiter, for instance, now sits on a fresh line at the
-                          // header's indent -- Break's own placement logic for a
-                          // capture immediately following it should react to that, not
-                          // to wherever the delimiter used to be). align-kind follow-up:
-                          // Align runs LAST of these seven, after Break/Space -- its
-                          // own column computation reads wherever an anchor token's
-                          // spacing ended up AFTER Space's own before/after rules ran,
-                          // not before, or its own padding would just get undone (or
-                          // doubled) the moment a Space rule touches the same gap.
-                          // Every pass after the first reads a FRESH capture list
-                          // re-read from context.buffer.Text() rather than reusing an
-                          // earlier one -- an earlier pass may have already shifted
-                          // every byte offset after its own edits, so reusing its list
-                          // would be reading stale offsets.
-                          if (context.mode != nullptr && context.mode->formatCaptures) {
-                              const std::string                 languageKey  = LanguageKeyForMode(*context.mode);
-                              const std::vector<FormatTextEdit> rewriteEdits = ComputeRewriteEdits(
-                                  context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
-                              if (!rewriteEdits.empty()) {
-                                  ApplyFormatTextEdits(context.buffer, rewriteEdits);
-                                  changed = true;
-                              }
-                              const std::vector<FormatTextEdit> arrangeEdits = ComputeArrangeEdits(
-                                  context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
-                              if (!arrangeEdits.empty()) {
-                                  ApplyFormatTextEdits(context.buffer, arrangeEdits);
-                                  changed = true;
-                              }
-                              const std::vector<FormatTextEdit> blankEdits = ComputeBlankLineEdits(
-                                  context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
-                              if (!blankEdits.empty()) {
-                                  ApplyFormatTextEdits(context.buffer, blankEdits);
-                                  changed = true;
-                              }
-                              const std::vector<FormatTextEdit> wrapEdits = ComputeWrapEdits(
-                                  context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
-                              if (!wrapEdits.empty()) {
-                                  ApplyFormatTextEdits(context.buffer, wrapEdits);
-                                  changed = true;
-                              }
-                              const std::vector<FormatTextEdit> braceEdits = ComputeBracePlacementEdits(
-                                  context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
-                              if (!braceEdits.empty()) {
-                                  ApplyFormatTextEdits(context.buffer, braceEdits);
-                                  changed = true;
-                              }
-                              const std::vector<FormatTextEdit> spaceEdits = ComputeSpaceEdits(
-                                  context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
-                              if (!spaceEdits.empty()) {
-                                  ApplyFormatTextEdits(context.buffer, spaceEdits);
-                                  changed = true;
-                              }
-                              const std::vector<FormatTextEdit> alignEdits = ComputeAlignEdits(
-                                  context.buffer.Text(), languageKey, context.mode->formatCaptures(context.buffer.Text()));
-                              if (!alignEdits.empty()) {
-                                  ApplyFormatTextEdits(context.buffer, alignEdits);
-                                  changed = true;
-                              }
-                          }
-                          changed = ApplyHygienePass(context.buffer) || changed;
-                          context.buffer.EndUndoGroup();
+                          // The Native tier itself, and its load-bearing pass
+                          // ordering, live in Editor/Format.h -- the LSP
+                          // callback in BufferView falls back to the same
+                          // function when a server that claimed the tier
+                          // returns nothing usable.
+                          const bool changed = ApplyNativeFormat(context.buffer, context.mode);
 
                           if (context.message) {
                               *context.message = changed ? "Formatted " + context.buffer.Name()

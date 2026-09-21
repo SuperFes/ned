@@ -6,6 +6,7 @@
 // definition/peek, symbols, hierarchy, rename, linked editing, and jump history.
 //
 
+#include "Editor/Format.h"
 #include "UI/BufferView/Internal.h"
 
 namespace ned::ui {
@@ -1252,12 +1253,26 @@ void BufferView::RequestLspFormatBuffer() {
                 return; // superseded, or the active buffer changed under us
             }
             text::Buffer& buffer = *bufferPtr;
+            // format-buffer-tier follow-up: a server that claimed this tier
+            // and then produced nothing usable used to leave the buffer
+            // untouched, which made format-buffer's own "always does
+            // something" contract (Docs/FormattingRules.md) false for any
+            // language with a server running. Fall through to the Native
+            // tier instead -- the same function the command itself would
+            // have run had no server claimed it.
             if (!edits) {
-                statusMessage_ = "LSP format failed.";
+                const bool changed = editor::ApplyNativeFormat(buffer, &mode_);
+                statusMessage_     = changed ? "LSP format failed -- formatted " + buffer.Name() + " natively."
+                                             : "LSP format failed.";
+                viewport_.ScrollToShowPoint();
                 return;
             }
             if (edits->empty()) {
-                statusMessage_ = buffer.Name() + " is already formatted.";
+                const bool changed = editor::ApplyNativeFormat(buffer, &mode_);
+                statusMessage_     = changed ? "Formatted " + buffer.Name()
+                                             : buffer.Name() + " is already formatted.";
+                if (changed)
+                    viewport_.ScrollToShowPoint();
                 return;
             }
             editor::lsp::ApplyWorkspaceTextEdits(buffer, *edits); // one undo group

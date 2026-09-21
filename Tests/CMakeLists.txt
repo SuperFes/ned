@@ -134,6 +134,7 @@ add_executable(ned_tests
             FormatRewriteTest.cpp
             FileNamingTest.cpp
             FormatTest.cpp
+            FormatTierTest.cpp
             FormatKeyDocsTest.cpp
             IndentEngineTest.cpp
             IndentTest.cpp

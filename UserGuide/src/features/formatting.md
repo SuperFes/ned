@@ -15,8 +15,8 @@ opened.
 four things in order and stops at the first that produces output:
 
 1. **Your external formatter**, if `ned/set-format-command` is set.
-2. **Your language server**, if one is running for the buffer and the external command
-   didn't claim the save (`textDocument/formatting`).
+2. **Your language server**, if one is running for the buffer and you haven't refused this
+   tier for its language (`textDocument/formatting`).
 3. **ned's native chain** — the per-language reindent, then whichever of the Rewrite,
    Arrange, Blank, Wrap, Break, Space, and Align rules you've configured.
 4. **The Hygiene pass** — trailing whitespace, blank-line runs, final newline.
@@ -24,6 +24,21 @@ four things in order and stops at the first that produces output:
 Steps 3 and 4 always run when 1 and 2 are unavailable *or fail at runtime*, so
 `format-buffer` never does nothing. `indent-buffer` runs the reindent alone, if that's all
 you want.
+
+### Choosing between your rules and your language server
+
+Your server's formatter and everything below on this page both rewrite the whole buffer,
+so only one of them can win — and by default, a running server does. If you've gone to the
+trouble of configuring a style here, that's backwards, so say so per language:
+
+```janet
+(ned/set-lsp-format-buffer "php" false)   # format-buffer uses ned's rules for PHP
+(ned/set-lsp-format-buffer "" false)      # ... for every language
+```
+
+The empty language sets the process-wide default, and `nil` clears an entry back to it.
+This affects `format-buffer` only — `ned/set-lsp-format-on-save` is the separate,
+independently-toggled setting for saving, and is off by default.
 
 ## Indentation
 
