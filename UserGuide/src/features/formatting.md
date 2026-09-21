@@ -133,12 +133,39 @@ narrow it to one language's quirk.
 | Kind | Key | Configures |
 |---|---|---|
 | Space | `:space` | `:before` / `:after` / `:within` a token or delimiter pair |
-| Break | `:break` | `:placement` (`:same-line` K&R, `:next-line` Allman, `:next-line-indented` GNU), `:collapse-empty`, `:collapse-simple`, `:before`/`:after` |
+| Break | `:break` | `:placement` (`:same-line` K&R, `:next-line` Allman, `:next-line-indented` GNU), `:collapse-empty`, `:collapse-simple` |
+| Keyword break | `:break` | `:before` / `:after` on a keyword capture — puts `else`/`catch`/`finally` on its own line |
 | Wrap | `:wrap` | `:policy` (`:never` collapse a list to one line, `:always` one item per line), `:force-trailing-comma` |
 | Blank | `:blank` | `:min-before` / `:max-before` — blank lines above a construct |
 | Align | `:align` | `:enabled` — pad adjacent same-indent lines' anchors to a shared column |
 | Arrange | `:arrange` | `:enabled`, `:case-insensitive` — sort a run of adjacent siblings (imports) |
 | Rewrite | `:rewrite` | `:quote-style` (`:single`/`:double`), `:expand-elseif` |
+
+**Full Allman needs both halves.** `:placement :next-line` moves the opening brace, but a
+body capture starts *at* that brace, so nothing about it can move the `else` standing
+outside and before it. The keyword is its own capture, `break.control`, covering `else`,
+`elseif`, `catch`, `finally`, and do-while's trailing `while`:
+
+```janet
+(ned/set-format-brace-placement "brace.function" "next-line")
+(ned/set-format-brace-placement "brace.control" "next-line")
+(ned/set-format-break-before "break.control" true)
+```
+
+```php
+if ($x)
+{
+    a();
+}
+else
+{
+    b();
+}
+```
+
+`false` normalises horizontal spacing only — it won't un-break a keyword already on its
+own line, because joining `} // done` and `else` would comment the keyword out. PHP is
+the only language declaring `break.control` today.
 
 A worked example — brace style that differs between two languages sharing one rule set:
 

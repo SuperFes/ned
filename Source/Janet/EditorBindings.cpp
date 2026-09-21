@@ -1641,10 +1641,14 @@ void InstallEditorBindings(Environment& env) {
         "ned", "format-space-within", "The capture name's own overridden space-within rule, or nil if unset.");
     env.Register<&NedSetFormatBreakBefore>(
         "ned", "set-format-break-before",
-        "Override whether a mandatory newline is forced before the given capture name -- true/false, nil clears.");
+        "Override whether a newline is forced before the given capture name -- true/false, nil clears. The capture "
+        "names a keyword token (\"break.control\": else/elseif/catch/finally, do-while's while); true puts it on its "
+        "own line at the preceding closer's column (Allman), false normalises horizontal space only and never "
+        "un-breaks a keyword already on its own line.");
     env.Register<&NedSetFormatBreakAfter>(
         "ned", "set-format-break-after",
-        "Override whether a mandatory newline is forced after the given capture name -- true/false, nil clears.");
+        "Override whether a newline is forced after the given capture name -- true/false, nil clears. Same shape as "
+        "ned/set-format-break-before, on the far side of the token.");
     env.Register<&NedSetFormatBracePlacement>(
         "ned", "set-format-brace-placement",
         "Override brace placement for a brace-carrying capture name: \"same-line\" (K&R), \"next-line\" (Allman), "

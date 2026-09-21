@@ -153,6 +153,7 @@ add_library(ned_lib STATIC
         Editor/FormatRules.cpp
         Editor/FormatEdit.cpp
         Editor/FormatBracePlacement.cpp
+        Editor/FormatBreak.cpp
         Editor/FormatSpacing.cpp
         Editor/FormatBlankLines.cpp
         Editor/FormatWrap.cpp

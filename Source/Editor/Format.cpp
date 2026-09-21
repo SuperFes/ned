@@ -5,6 +5,7 @@
 #include "FormatArrange.h"
 #include "FormatBlankLines.h"
 #include "FormatBracePlacement.h"
+#include "FormatBreak.h"
 #include "FormatEdit.h"
 #include "FormatRewrite.h"
 #include "FormatSpacing.h"
@@ -72,6 +73,7 @@ bool ApplyNativeFormat(text::Buffer& buffer, const Mode* mode) {
         changed                       = RunCapturePass(buffer, *mode, languageKey, ComputeBlankLineEdits) || changed;
         changed                       = RunCapturePass(buffer, *mode, languageKey, ComputeWrapEdits) || changed;
         changed                       = RunCapturePass(buffer, *mode, languageKey, ComputeBracePlacementEdits) || changed;
+        changed                       = RunCapturePass(buffer, *mode, languageKey, ComputeBreakEdits) || changed;
         changed                       = RunCapturePass(buffer, *mode, languageKey, ComputeSpaceEdits) || changed;
         changed                       = RunCapturePass(buffer, *mode, languageKey, ComputeAlignEdits) || changed;
     }

@@ -265,7 +265,8 @@ resolves to -- `Editor/FormatRules.h`'s own resolution shape, mirroring
 
 `:space` entries: `:before`/`:after`/`:within` (true/false) -- whether a space is inserted
 before, after, or just inside the captured token/delimiter pair. `:break` entries:
-`:before`/`:after` (true/false, a mandatory or forbidden newline at that point),
+`:before`/`:after` (true/false, a newline forced or normalised away at that point -- see
+"Keyword breaks" below),
 `:placement` (`:same-line`/`:next-line`/`:next-line-indented` -- K&R/Allman/
 GNU-Whitesmiths, meaningful only on a brace-carrying capture), `:collapse-empty`/
 `:collapse-simple` (true/false -- keep an empty or single-statement block on one line).
@@ -422,6 +423,73 @@ The same rules are settable live from `init.janet`, per-field, mirroring
 (ned/set-format-space-before "cpp/control.parens" false)
 (ned/set-format-brace-placement "brace.function" "next-line")
 ```
+
+## Keyword breaks, and full Allman
+
+`:break`'s `:space`-shaped siblings `:before`/`:after` are the half of kind 3 that is not
+brace placement, and until the 2026-09-21 rollout they were the longest-standing lie on
+this page: stored, resolved, settable from Janet and from `format.janet`, and read by
+absolutely nothing. `ned/set-format-break-before`'s own docstring promised "a mandatory
+newline is forced before the given capture name" with no caveat, unlike
+`set-format-space-before`'s, which carried an honest one.
+
+What they were always for is the construct brace placement structurally cannot reach:
+
+```
+}              }
+} else   ->    else
+{              {
+```
+
+A body capture's span starts at its opening brace, so no rule about `brace.control` can
+say anything about a keyword standing outside and *before* it. `:placement :next-line`
+alone therefore gets you `} else` + a broken `{`, never Allman.
+
+So this kind needed its own capture convention, the same way every kind before it did:
+**the capture names the KEYWORD TOKEN itself.** One shared name,
+`break.control`, over every continuation keyword a language has -- `else`, `elseif`,
+`catch`, `finally`, and do-while's own trailing `while` -- rather than one name each.
+"Break before a control keyword" is a single decision in every style guide that has an
+opinion about it, and it is the same grouping `brace.control` already makes for those
+same statements' *bodies*. A language-scoped override (`php/break.control`) still narrows
+it; splitting the name per keyword is the change to make if a real case turns up, not
+before.
+
+```janet
+# .ned/format.janet -- full Allman
+{:break {"brace.function" {:placement :next-line}
+         "brace.control"  {:placement :next-line}
+         "break.control"  {:before true}}}
+```
+
+```janet
+# the same thing from init.janet
+(ned/set-format-brace-placement "brace.function" "next-line")
+(ned/set-format-brace-placement "brace.control" "next-line")
+(ned/set-format-break-before "break.control" true)
+```
+
+`true` puts the keyword on a line of its own, indented to the column of the line the
+preceding non-whitespace byte sits on -- the closer's own column, which is what Allman
+means for a continuation keyword, and which is why this reads the text rather than the
+tree (the closer is a different capture's last byte, or no capture's at all).
+
+**`false` does not mean "put it back".** It normalises horizontal whitespace only
+(`}    else` -> `} else`) and deliberately declines any gap that already spans lines --
+the same call `:collapse-simple` already makes ("declined rather than joining lines that
+might be meaningfully broken"). Un-breaking is where the real hazard lives: joining
+`} // done` and `else` would comment the keyword out. `true` needs no such check, because
+it only ever rewrites the whitespace run touching the token, so `} /* done */ else`
+leaves the comment exactly where it is and breaks after it.
+
+**PHP is the pilot**, and auditing it for this turned up a real pre-existing gap in its
+own `brace.control` set: `catch_clause` had been standing in for the whole try statement,
+so `try`, `finally`, and `do` bodies were never captured at all and no placement rule
+reached them. Fixed in the same pass -- a `try {` that refused to go Allman while its own
+`catch` obeyed was the symptom that surfaced it.
+
+No other language declares `break.control` yet. Widening it is a query-file change per
+language and nothing else: `Editor/FormatBreak.h` never mentions a language.
 
 ## Blank lines, and overriding them per language
 

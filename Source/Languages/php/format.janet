@@ -42,6 +42,14 @@
 (foreach_statement body: (compound_statement) @brace.control)
 (switch_block "{" @brace.control.open "}" @brace.control.close)
 (catch_clause body: (compound_statement) @brace.control)
+# try/finally/do bodies: the same brace.control grouping, missed when this
+# file was first written (the catch_clause line above was standing in for the
+# whole try statement). Each is the same `body: (compound_statement)` type
+# discrimination every other pattern here uses, so the colon-alternate and
+# bare-statement shapes stay unmatched exactly as they do above.
+(try_statement body: (compound_statement) @brace.control)
+(finally_clause body: (compound_statement) @brace.control)
+(do_statement body: (compound_statement) @brace.control)
 
 # elseif/else follow-up: `else_if_clause`/`else_clause` carry the EXACT
 # same brace/colon-alternate/bare-statement three-way body shape
@@ -163,3 +171,37 @@
 # Unconfigured, inert:
 #   (ned/set-format-rewrite-expand-elseif "rewrite.elseif" true)
 (else_if_clause "elseif" @rewrite.elseif)
+
+# keyword-break follow-up: the continuation KEYWORDS themselves, as their own
+# captures -- the one thing brace placement structurally cannot reach. A body
+# capture's span starts at its opening brace, so no rule about it can say
+# anything about a keyword standing outside and before it, which is exactly
+# where Allman's own `else` needs to move:
+#
+#   }              }
+#   } else   ->    else
+#   {              {
+#
+# Naming the bare token, not the clause: Editor/FormatBreak.h's :before/:after
+# rewrite the whitespace immediately outside a capture's own span, so the span
+# has to BE the keyword.
+#
+# ONE shared name across every continuation keyword, not one name each --
+# "break before a control keyword" is a single stylistic decision in every
+# style guide that has an opinion about it, and this is the same grouping
+# `brace.control` above already makes for the bodies of the same statements
+# (matching JetBrains' own "Other statements and blocks"). A project that
+# genuinely needs `else` and `catch` to differ can still scope by language;
+# splitting the name per keyword is the change to make if a real case turns
+# up, not before.
+#
+# PHP's `elseif` is one token (the alternate `else if` spelling parses as an
+# else_clause wrapping an if_statement, whose `else` the first pattern
+# catches like any other).
+# Unconfigured, inert:
+#   (ned/set-format-break-before "break.control" true)
+(else_clause "else" @break.control)
+(else_if_clause "elseif" @break.control)
+(catch_clause "catch" @break.control)
+(finally_clause "finally" @break.control)
+(do_statement "while" @break.control)

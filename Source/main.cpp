@@ -432,44 +432,12 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
                 buffer.InsertAt(0, *formatted);
             }
             else {
-                if (mode.indentColumn) {
-                    ned::editor::IndentBuffer(buffer, mode);
-                }
-                // configurable-formatter-rules follow-up: same pilot Blank-, Break-
-                // (brace placement), Wrap-, and Space-kind steps format-buffer's own
-                // Native chain runs, same order -- see that command's own comment in
-                // Commands.cpp.
-                if (mode.formatCaptures) {
-                    const std::string languageKey = ned::editor::LanguageKeyForMode(mode);
-                    const std::vector<ned::editor::FormatTextEdit> blankEdits =
-                        ned::editor::ComputeBlankLineEdits(buffer.Text(), languageKey, mode.formatCaptures(buffer.Text()));
-
-                    if (!blankEdits.empty()) {
-                        ned::editor::ApplyFormatTextEdits(buffer, blankEdits);
-                    }
-
-                    const std::vector<ned::editor::FormatTextEdit> wrapEdits =
-                        ned::editor::ComputeWrapEdits(buffer.Text(), languageKey, mode.formatCaptures(buffer.Text()));
-
-                    if (!wrapEdits.empty()) {
-                        ned::editor::ApplyFormatTextEdits(buffer, wrapEdits);
-                    }
-
-                    const std::vector<ned::editor::FormatTextEdit> braceEdits =
-                        ned::editor::ComputeBracePlacementEdits(buffer.Text(), languageKey, mode.formatCaptures(buffer.Text()));
-
-                    if (!braceEdits.empty()) {
-                        ned::editor::ApplyFormatTextEdits(buffer, braceEdits);
-                    }
-
-                    const std::vector<ned::editor::FormatTextEdit> spaceEdits =
-                        ned::editor::ComputeSpaceEdits(buffer.Text(), languageKey, mode.formatCaptures(buffer.Text()));
-
-                    if (!spaceEdits.empty()) {
-                        ned::editor::ApplyFormatTextEdits(buffer, spaceEdits);
-                    }
-                }
-                ned::editor::ApplyHygienePass(buffer);
+                // One Native chain, shared with format-buffer -- see
+                // Editor/Format.h. This used to be a hand-copied second
+                // copy of it, and had silently fallen three rule kinds
+                // behind (Rewrite, Arrange, Align) while its own comment
+                // still claimed "same order".
+                ned::editor::ApplyNativeFormat(buffer, &mode);
             }
 
             ned::editor::WriteBufferToDisk(buffer);

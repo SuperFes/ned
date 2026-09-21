@@ -402,11 +402,11 @@ configuration is Janet code, and these are the bindings it calls.
 
 `ned/set-format-break-after`
 
-:   Override whether a mandatory newline is forced after the given capture name -- true/false, nil clears.
+:   Override whether a newline is forced after the given capture name -- true/false, nil clears. Same shape as ned/set-format-break-before, on the far side of the token.
 
 `ned/set-format-break-before`
 
-:   Override whether a mandatory newline is forced before the given capture name -- true/false, nil clears.
+:   Override whether a newline is forced before the given capture name -- true/false, nil clears. The capture names a keyword token ("break.control": else/elseif/catch/finally, do-while's while); true puts it on its own line at the preceding closer's column (Allman), false normalises horizontal space only and never un-breaks a keyword already on its own line.
 
 `ned/set-format-case-convention`
 

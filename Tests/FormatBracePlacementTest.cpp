@@ -849,7 +849,10 @@ TEST_CASE("php-mode's format.janet names the full capture set over a real file",
     const auto captures = mode.formatCaptures(source);
 
     REQUIRE(CapturesNamed(captures, "brace.function").size() == 2); // shared() and f()
-    REQUIRE(CapturesNamed(captures, "brace.control").size() == 2);  // the if's body and the catch's body
+    // The if's body, the try's, and the catch's. The try was missing until
+    // the keyword-break rollout audited this file -- catch_clause alone had
+    // been standing in for the whole try statement.
+    REQUIRE(CapturesNamed(captures, "brace.control").size() == 3);
     REQUIRE(CapturesNamed(captures, "brace.class").size() == 2);    // class C and trait T
     REQUIRE(CapturesNamed(captures, "brace.interface").size() == 1);
 }
