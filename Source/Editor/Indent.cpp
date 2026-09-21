@@ -661,7 +661,8 @@ std::vector<std::pair<std::size_t, std::size_t>> VerbatimRanges(const Mode& mode
         return ranges;
     }
     for (const HighlightSpan& span : mode.highlight(bufferText, window)) {
-        if (span.syntaxClass != SyntaxClass::String || span.startByte >= span.endByte) {
+        if ((span.syntaxClass != SyntaxClass::String && span.syntaxClass != SyntaxClass::Comment) ||
+            span.startByte >= span.endByte) {
             continue;
         }
         // Only a span that crosses a line boundary can contain a line start
@@ -678,10 +679,42 @@ std::vector<std::pair<std::size_t, std::size_t>> VerbatimRanges(const Mode& mode
 }
 
 bool LineIsVerbatim(const std::vector<std::pair<std::size_t, std::size_t>>& ranges, std::size_t lineStart) {
-    return std::any_of(ranges.begin(), ranges.end(), [lineStart](const std::pair<std::size_t, std::size_t>& range) {
+    return RangeContainingLine(ranges, lineStart) != nullptr;
+}
+
+const std::pair<std::size_t, std::size_t>* RangeContainingLine(
+    const std::vector<std::pair<std::size_t, std::size_t>>& ranges, std::size_t lineStart) {
+    const auto it = std::ranges::find_if(ranges, [lineStart](const std::pair<std::size_t, std::size_t>& range) {
         return range.first < lineStart && lineStart < range.second;
     });
+    return it == ranges.end() ? nullptr : &*it;
 }
+
+namespace {
+
+    // A block comment's continuation line: the opener's own column plus one,
+    // so a leading `*` lands under the `*` of `/*`. nullopt for anything
+    // else, which IndentColumnForLine reads as "leave this line alone" --
+    // see Indent.h's own verbatim-regions comment for why that is the answer
+    // for an unornamented comment interior rather than a fallback.
+    std::optional<int> BlockCommentContinuationColumn(std::string_view                           bufferText,
+                                                      const std::pair<std::size_t, std::size_t>& range,
+                                                      std::size_t lineStart, std::size_t lineEnd) {
+        if (bufferText.substr(range.first, 2) != "/*") {
+            return std::nullopt; // a string, or a line-comment run
+        }
+        const std::size_t contentStart = FirstNonBlankByte(bufferText, lineStart, lineEnd);
+        if (contentStart >= bufferText.size() || bufferText[contentStart] != '*') {
+            return std::nullopt;
+        }
+        // The opener's column, counted in bytes from its own line start --
+        // the same plain-byte measure every other column in this engine uses.
+        const std::size_t openerLineStart = bufferText.rfind('\n', range.first);
+        const std::size_t column          = range.first - (openerLineStart == std::string_view::npos ? 0 : openerLineStart + 1);
+        return static_cast<int>(column) + 1;
+    }
+
+} // namespace
 
 std::optional<int> IndentColumnForLine(const Mode& mode, std::string_view bufferText, std::size_t lineStart,
                                        std::size_t                                             lineEnd,
@@ -690,8 +723,8 @@ std::optional<int> IndentColumnForLine(const Mode& mode, std::string_view buffer
         return std::nullopt;
     }
     if (ranges != nullptr) {
-        if (LineIsVerbatim(*ranges, lineStart)) {
-            return std::nullopt;
+        if (const std::pair<std::size_t, std::size_t>* range = RangeContainingLine(*ranges, lineStart)) {
+            return BlockCommentContinuationColumn(bufferText, *range, lineStart, lineEnd);
         }
     }
     // No precomputed ranges (the single-interactive-line path -- newline,
@@ -708,9 +741,12 @@ std::optional<int> IndentColumnForLine(const Mode& mode, std::string_view buffer
     // report "nothing is verbatim" every time. Confirmed live: this call
     // alone cost ~60ms on this project's own 168KB main.cpp, unbounded, on
     // every single keystroke.
-    else if (LineIsVerbatim(VerbatimRanges(mode, bufferText, HighlightWindow{lineStart, std::min(lineStart + 1, bufferText.size())}),
-                            lineStart)) {
-        return std::nullopt;
+    else {
+        const std::vector<std::pair<std::size_t, std::size_t>> single =
+            VerbatimRanges(mode, bufferText, HighlightWindow{lineStart, std::min(lineStart + 1, bufferText.size())});
+        if (const std::pair<std::size_t, std::size_t>* range = RangeContainingLine(single, lineStart)) {
+            return BlockCommentContinuationColumn(bufferText, *range, lineStart, lineEnd);
+        }
     }
     return mode.indentColumn(bufferText, lineStart, lineEnd);
 }

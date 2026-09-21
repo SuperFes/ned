@@ -276,6 +276,46 @@ TEST_CASE("Reindenting leaves a PHP heredoc byte-for-byte", "[Indent]") {
     CHECK(buffer.Text() == source);
 }
 
+TEST_CASE("Reindenting aligns a block comment's starred continuation lines under its opener", "[Indent]") {
+    // block-comment-alignment follow-up: the engine used to set these to the
+    // block's own indent, deleting exactly the one column that puts `*` under
+    // the `*` of `/*` -- found live on a real PHP file whose every `/** ... */`
+    // header came out flush against the margin.
+    const std::string source =
+        "<?php\nclass A\n{\n    /**\n * ragged\n           * also ragged\n */\n    public function f()\n    {\n        return 1;\n    }\n}\n";
+    ned::text::Buffer buffer("t.php");
+    buffer.InsertAtPoint(source);
+
+    ReindentWhole(buffer, ned::editor::PhpMode());
+    CHECK(buffer.Text() ==
+          "<?php\nclass A\n{\n    /**\n     * ragged\n     * also ragged\n     */\n    public function f()\n    {\n        return 1;\n    }\n}\n");
+}
+
+TEST_CASE("Reindenting leaves an unstarred block-comment interior byte-for-byte", "[Indent]") {
+    // Without the `*` ornament there is nothing to align: the interior is
+    // prose, a code sample, or ASCII art, and no indent rule here knows what
+    // any of those lined up with. Leave it exactly as written.
+    const std::string source =
+        "<?php\nfunction f()\n{\n    /* free-form\n   art |\n      here */\n    return 1;\n}\n";
+    ned::text::Buffer buffer("t.php");
+    buffer.InsertAtPoint(source);
+
+    CHECK(ReindentWhole(buffer, ned::editor::PhpMode()) == 0);
+    CHECK(buffer.Text() == source);
+}
+
+TEST_CASE("A starred line inside a multi-line STRING is never realigned", "[Indent]") {
+    // The realignment is gated on the span literally opening with `/*`, so a
+    // string whose content happens to start a line with `*` stays verbatim --
+    // the case that would turn a formatting nicety back into a correctness bug.
+    const std::string source = "def f():\n    s = \"\"\"\n * not a comment\n\"\"\"\n";
+    ned::text::Buffer buffer("t.py");
+    buffer.InsertAtPoint(source);
+
+    CHECK(ReindentWhole(buffer, ned::editor::PythonMode()) == 0);
+    CHECK(buffer.Text() == source);
+}
+
 TEST_CASE("Reindenting leaves an Org #+begin_src block's body byte-for-byte", "[Indent]") {
     // org-block-body-verbatim-protection follow-up: a batch reindent used
     // to silently flatten every source block's own indentation to column

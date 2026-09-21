@@ -52,6 +52,13 @@ want to change. The full table, with a source citation per row, is in `Docs/Form
 Two are syntax, not taste: Make requires a literal tab to introduce a recipe line, and YAML
 forbids literal tabs for indentation entirely.
 
+Reindenting never rewrites a multi-line string's interior — a docstring, a raw string
+literal, a heredoc, an Org source block — because those bytes *are* the value. Block
+comments get the one convention that has a right answer: a continuation line beginning with
+`*` is aligned one column right of its opening `/*`, and a comment interior *without* that
+ornament is left exactly as written, since prose or ASCII art has no indent this engine
+could compute.
+
 To override a whole language:
 
 ```janet

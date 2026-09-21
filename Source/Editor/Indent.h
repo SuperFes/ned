@@ -262,9 +262,28 @@ struct IndentComputation {
 // and still indents; the line its closer sits on does not, because that
 // line's leading whitespace is part of the string's value.
 //
-// Comments are deliberately not protected. Reindenting inside a block comment
-// is conventional in every editor and changes no meaning -- it is a matter of
-// taste, where this is a matter of correctness.
+// A block comment's interior is protected too, for a different reason. The
+// claim this comment used to make -- "reindenting inside a block comment is
+// conventional in every editor" -- was true of what other editors do and
+// false of what this engine did: every editor that reindents a block comment
+// ALIGNS its continuation lines (a leading `*` one column right of the
+// opening `/*`), whereas this engine set them to the block's own indent,
+// which deletes exactly the alignment column and leaves `*` flush under `/*`.
+// Found live on a real PHP file whose every `/** ... */` header was flattened
+// by one `indent-buffer`.
+//
+// So the two cases split, and `RangeContainingLine` below is what lets
+// `IndentColumnForLine` tell them apart:
+//
+//   - A continuation line whose first non-blank byte is `*` gets the real
+//     convention -- the opener's own column plus one.
+//   - Any other line inside a block comment is left exactly as it is. A
+//     comment interior without the `*` ornament is free-form prose, a code
+//     sample, or ASCII art, and no indent rule this engine has knows what any
+//     of those meant to line up with.
+//
+// A string's interior is never realigned either way: the `/*` test below
+// cannot match one.
 //
 // `window` bounds the highlight query itself (not just which of its results
 // get kept) -- CapturesInRange prunes tree traversal to what overlaps it, so
@@ -283,6 +302,13 @@ VerbatimRanges(const Mode& mode, std::string_view bufferText, HighlightWindow wi
 // Whether `lineStart` falls strictly inside one of `ranges`.
 [[nodiscard]] bool LineIsVerbatim(const std::vector<std::pair<std::size_t, std::size_t>>& ranges,
                                   std::size_t                                             lineStart);
+
+// The range `lineStart` falls strictly inside, or nullptr. `LineIsVerbatim`
+// answers the question every caller but one has; this answers "which one",
+// which `IndentColumnForLine` needs in order to read the opening delimiter
+// and the column it sits at.
+[[nodiscard]] const std::pair<std::size_t, std::size_t>*
+RangeContainingLine(const std::vector<std::pair<std::size_t, std::size_t>>& ranges, std::size_t lineStart);
 
 // **The only function that should call `Mode::indentColumn`.** Every caller --
 // the batch reindent below, `newline` and `indent-for-tab-command` in
