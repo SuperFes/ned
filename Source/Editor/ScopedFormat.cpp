@@ -6,14 +6,8 @@
 #include <vector>
 
 #include "FinalNewline.h"
-#include "FormatAlign.h"
-#include "FormatArrange.h"
-#include "FormatBlankLines.h"
-#include "FormatBracePlacement.h"
 #include "FormatEdit.h"
-#include "FormatRewrite.h"
-#include "FormatSpacing.h"
-#include "FormatWrap.h"
+#include "FormatPasses.h"
 #include "Indent.h"
 #include "TrimOnSave.h"
 
@@ -128,10 +122,10 @@ bool ApplyScopedFormatOnSave(text::Buffer& buffer, const Mode& mode) {
         }
     }
 
-    // Rewrite/Arrange/Blank/Wrap/Break/Space/Align and the scoped trim, per
-    // region, in format-buffer's own pass order -- byte-range based from
-    // here on,
-    // since Wrap/Break can add or remove lines. Re-derived fresh per
+    // Every capture-driven pass (Editor/FormatPasses.h -- the one list
+    // format-buffer and `ned --format` also run, so this path can no longer
+    // fall behind them) and then the scoped trim, per region. Byte-range
+    // based from here on, since Wrap/Break can add or remove lines. Re-derived fresh per
     // region from the (still-stable) line indices, since Indent above may
     // have shifted byte offsets within earlier regions' own lines.
     for (const auto& [startLine, endLineExclusive] : lineRanges) {
@@ -153,39 +147,11 @@ bool ApplyScopedFormatOnSave(text::Buffer& buffer, const Mode& mode) {
         // edit already is, and still applies in full via an explicit
         // format-buffer.
         if (mode.formatCaptures) {
-            const std::string text = buffer.Text();
-            scopeEnd               = ApplyContainedEdits(buffer, ComputeRewriteEdits(text, languageKey, mode.formatCaptures(text)),
-                                                         scopeStart, scopeEnd, changed);
-        }
-        if (mode.formatCaptures) {
-            const std::string text = buffer.Text();
-            scopeEnd               = ApplyContainedEdits(buffer, ComputeArrangeEdits(text, languageKey, mode.formatCaptures(text)),
-                                                         scopeStart, scopeEnd, changed);
-        }
-        if (mode.formatCaptures) {
-            const std::string text = buffer.Text();
-            scopeEnd               = ApplyContainedEdits(buffer, ComputeBlankLineEdits(text, languageKey, mode.formatCaptures(text)),
-                                                         scopeStart, scopeEnd, changed);
-        }
-        if (mode.formatCaptures) {
-            const std::string text = buffer.Text();
-            scopeEnd               = ApplyContainedEdits(buffer, ComputeWrapEdits(text, languageKey, mode.formatCaptures(text)),
-                                                         scopeStart, scopeEnd, changed);
-        }
-        if (mode.formatCaptures) {
-            const std::string text = buffer.Text();
-            scopeEnd               = ApplyContainedEdits(buffer, ComputeBracePlacementEdits(text, languageKey, mode.formatCaptures(text)),
-                                                         scopeStart, scopeEnd, changed);
-        }
-        if (mode.formatCaptures) {
-            const std::string text = buffer.Text();
-            scopeEnd               = ApplyContainedEdits(buffer, ComputeSpaceEdits(text, languageKey, mode.formatCaptures(text)),
-                                                         scopeStart, scopeEnd, changed);
-        }
-        if (mode.formatCaptures) {
-            const std::string text = buffer.Text();
-            scopeEnd               = ApplyContainedEdits(buffer, ComputeAlignEdits(text, languageKey, mode.formatCaptures(text)),
-                                                         scopeStart, scopeEnd, changed);
+            for (const FormatPass& pass : NativeFormatPasses()) {
+                const std::string text = buffer.Text();
+                scopeEnd               = ApplyContainedEdits(buffer, pass.compute(text, languageKey, mode.formatCaptures(text)),
+                                                             scopeStart, scopeEnd, changed);
+            }
         }
 
         // Scoped Hygiene: trim per-line, computed fresh against the

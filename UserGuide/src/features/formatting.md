@@ -235,7 +235,8 @@ Three independent mechanisms, in precedence order:
   before writing. Whole-buffer, and always wins.
 - **`ned/set-lsp-format-on-save`** (default off) — format via the language server on save.
   Ignored when an external command is configured.
-- **`ned/set-auto-format-on-save`** (default off) — run ned's own native rules on save, but
+- **`ned/set-auto-format-on-save`** (default off) — run ned's own native rules on save
+  (the same rule kinds `format-buffer` runs, including keyword breaks), but
   **scoped to the lines you've touched** since the buffer was last loaded or saved, so a file
   converges gradually as you work on it instead of being wholly restyled on first save. A
   rule whose edit would straddle the scope boundary is declined for the scoped pass and still

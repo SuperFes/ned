@@ -88,8 +88,8 @@ failed request reported "LSP format failed." and did nothing, which made this pa
 false for exactly the case it was written to promise.
 
 `ned/set-auto-format-on-save` (default off) runs the same Native rules -- reindent, then
-Space/Break/Wrap/Blank when configured, then a Hygiene subset (trailing-whitespace trim,
-final newline) -- automatically before every save, but SCOPED to only the lines touched
+every capture-driven pass in `Editor/FormatPasses.h`'s one shared table when configured,
+then a Hygiene subset (trailing-whitespace trim, final newline) -- automatically before every save, but SCOPED to only the lines touched
 since the buffer was last loaded/saved (`Buffer::UnsavedChangeRanges()`, snapped to whole
 lines), converging a file gradually as you touch it rather than reformatting the whole
 file on the first save. Skipped entirely whenever an external format command or a
@@ -485,6 +485,14 @@ might be meaningfully broken"). Un-breaking is where the real hazard lives: join
 `} // done` and `else` would comment the keyword out. `true` needs no such check, because
 it only ever rewrites the whitespace run touching the token, so `} /* done */ else`
 leaves the comment exactly where it is and breaks after it.
+
+All three entry points -- `format-buffer`, `ned --format`, and the scoped
+`ned/set-auto-format-on-save` path -- walk `Editor/FormatPasses.h`'s single table, so a new
+rule kind reaches all of them or none. That table exists because it used to be three
+hand-copied transcriptions, each with a comment asserting it matched the others, and two
+of the three were wrong: the CLI had fallen three kinds behind (Rewrite, Arrange and Align
+never ran headlessly) and the on-save path missed this very pass on the day it shipped.
+Neither was visible by reading any one file, since each looked complete and said so.
 
 **Every brace language declares it** -- cpp, c, javascript (and typescript/tsx through
 that same file), java, csharp, rust, kotlin, php. The keyword set per language is whatever

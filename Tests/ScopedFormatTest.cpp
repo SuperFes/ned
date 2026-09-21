@@ -17,6 +17,7 @@ using ned::editor::CppMode;
 using ned::editor::EnsureFinalNewline;
 using ned::editor::FundamentalMode;
 using ned::editor::Mode;
+using ned::editor::SetBreakBefore;
 using ned::editor::SetEnsureFinalNewline;
 using ned::editor::SetSpaceBefore;
 using ned::editor::SetTrimTrailingWhitespaceOnSave;
@@ -30,6 +31,7 @@ struct FormatRulesGuard {
     ~FormatRulesGuard() {
         SetSpaceBefore("control.parens", std::nullopt);
         SetSpaceBefore("cpp/control.parens", std::nullopt);
+        SetBreakBefore("control.keyword", std::nullopt);
     }
 };
 
@@ -88,6 +90,33 @@ TEST_CASE("ApplyScopedFormatOnSave scopes the Space rule pass the same way", "[S
     const std::string result = buffer.Text();
     REQUIRE(result.find("if(x)") != std::string::npos);  // untouched -- unchanged
     REQUIRE(result.find("if (y)") != std::string::npos); // touched -- space inserted
+}
+
+TEST_CASE("ApplyScopedFormatOnSave runs the keyword-break pass, scoped the same way", "[ScopedFormat]") {
+    // The pass this path was missing entirely: format-buffer and `ned
+    // --format` applied control.keyword, save did not. Both now walk one
+    // list (Editor/FormatPasses.h), so a new kind cannot reach two of the
+    // three entry points and quietly skip the third.
+    const FormatRulesGuard guard;
+    SetBreakBefore("control.keyword", true);
+
+    const Mode        mode = CppMode();
+    ned::text::Buffer buffer(
+        "scratch", ned::text::Rope("void a() {\n    if (x) {\n    } else {\n    }\n}\n\nvoid b() {\n    if (y) {\n    } else {\n    }\n}\n"));
+
+    const std::size_t bElse     = buffer.Text().rfind("} else {");
+    const std::size_t lineStart = buffer.Text().rfind('\n', bElse) + 1;
+    const std::size_t lineEnd   = buffer.Text().find('\n', bElse);
+    const std::string lineText  = buffer.Text().substr(lineStart, lineEnd - lineStart);
+    buffer.DeleteRange(lineStart, lineEnd - lineStart);
+    buffer.InsertAt(lineStart, lineText);
+
+    REQUIRE(ApplyScopedFormatOnSave(buffer, mode));
+
+    const std::string result = buffer.Text();
+    const std::size_t split  = result.find("void b()");
+    REQUIRE(result.substr(0, split).find("} else {") != std::string::npos);   // untouched -- unchanged
+    REQUIRE(result.substr(split).find("}\n    else {") != std::string::npos); // touched -- broken
 }
 
 TEST_CASE("ApplyScopedFormatOnSave trims trailing whitespace only on touched lines", "[ScopedFormat]") {

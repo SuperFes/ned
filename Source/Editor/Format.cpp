@@ -1,15 +1,8 @@
 #include "Format.h"
 
 #include "FinalNewline.h"
-#include "FormatAlign.h"
-#include "FormatArrange.h"
-#include "FormatBlankLines.h"
-#include "FormatBracePlacement.h"
-#include "FormatBreak.h"
 #include "FormatEdit.h"
-#include "FormatRewrite.h"
-#include "FormatSpacing.h"
-#include "FormatWrap.h"
+#include "FormatPasses.h"
 #include "Indent.h"
 #include "MaxConsecutiveBlankLines.h"
 #include "Mode.h"
@@ -68,14 +61,9 @@ bool ApplyNativeFormat(text::Buffer& buffer, const Mode* mode) {
     }
     if (mode != nullptr && mode->formatCaptures) {
         const std::string languageKey = LanguageKeyForMode(*mode);
-        changed                       = RunCapturePass(buffer, *mode, languageKey, ComputeRewriteEdits) || changed;
-        changed                       = RunCapturePass(buffer, *mode, languageKey, ComputeArrangeEdits) || changed;
-        changed                       = RunCapturePass(buffer, *mode, languageKey, ComputeBlankLineEdits) || changed;
-        changed                       = RunCapturePass(buffer, *mode, languageKey, ComputeWrapEdits) || changed;
-        changed                       = RunCapturePass(buffer, *mode, languageKey, ComputeBracePlacementEdits) || changed;
-        changed                       = RunCapturePass(buffer, *mode, languageKey, ComputeBreakEdits) || changed;
-        changed                       = RunCapturePass(buffer, *mode, languageKey, ComputeSpaceEdits) || changed;
-        changed                       = RunCapturePass(buffer, *mode, languageKey, ComputeAlignEdits) || changed;
+        for (const FormatPass& pass : NativeFormatPasses()) {
+            changed = RunCapturePass(buffer, *mode, languageKey, pass.compute) || changed;
+        }
     }
     changed = ApplyHygienePass(buffer) || changed;
     buffer.EndUndoGroup();

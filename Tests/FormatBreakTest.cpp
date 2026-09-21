@@ -5,6 +5,7 @@
 
 #include "Editor/FormatBreak.h"
 #include "Editor/FormatEdit.h"
+#include "Editor/FormatPasses.h"
 #include "Editor/FormatRules.h"
 #include "Editor/Mode.h"
 #include "Text/Buffer.h"
@@ -196,4 +197,16 @@ TEST_CASE("Go refuses a keyword break even with a capture and a rule", "[FormatB
     const std::vector<FormatCapture> captures{FormatCapture{"control.keyword", text.find("else"), text.find("else") + 4}};
     CHECK(ComputeBreakEdits(text, "go", captures).empty());
     CHECK_FALSE(ComputeBreakEdits(text, "cpp", captures).empty()); // the same input, unguarded
+}
+
+TEST_CASE("The Native pass table is the one list, in chain order", "[FormatBreak][FormatPasses]") {
+    // Pinned because the order is load-bearing (Editor/Format.h says why per
+    // pass) and because this list replaced three hand-copied transcriptions
+    // of it, two of which had silently drifted. A reorder or an addition
+    // should be a deliberate edit here, not a side effect somewhere else.
+    std::string names;
+    for (const ned::editor::FormatPass& pass : ned::editor::NativeFormatPasses()) {
+        names += std::string(pass.name) + " ";
+    }
+    CHECK(names == "rewrite arrange blank wrap brace-placement keyword-break space align ");
 }
