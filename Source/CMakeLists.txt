@@ -72,6 +72,7 @@ add_library(ned_lib STATIC
         Editor/Command.cpp
         Editor/FuzzyMatch.cpp
         Editor/SearchEverywhere.cpp
+        Editor/SearchEverywherePreview.cpp
         Editor/Keymap.cpp
         Editor/Dispatcher.cpp
         Editor/Commands.cpp

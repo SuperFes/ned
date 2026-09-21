@@ -413,9 +413,12 @@ commands, never a replacement for them.
       reach `Dispatcher` through `C-x` would mean either breaking real vim's own
       decrement-number binding or a two-key lookahead hack — not worth it now that the
       practical gap (no way to split/close/cycle windows under Vim mode) is closed.
-- [ ] **Search-everywhere preview pane** -- a File/Symbol/TextMatch row shows no
-      preview of what it points at (Telescope's, JetBrains'). All that is left of the
-      2026-09-18 remainder, and genuinely optional.
+- [ ] The search-everywhere preview footer shipped (slug for `git log --grep=`:
+      `search-everywhere-preview`) -- one conscious cut left behind. The excerpt is
+      painted in one brush, unhighlighted: a per-file `Mode::highlight` on every
+      selection change is a parse the popup cannot afford, and `ListPopupRow` carries
+      one foreground per column rather than spans, so a highlighted footer needs the
+      widget to grow a span-aware row first.
 - [ ] `describe-bindings` (`C-c ?`) and `Docs/Commands.md`'s key column both shipped --
       slug for `git log --grep=`: `describe-bindings`. Two conscious cuts left behind.
       The report's "Major mode" section is whatever mode was active when it ran, and

@@ -129,7 +129,7 @@ void ListPopup::SetModel(ListPopupModel model) {
 
 int ListPopup::ContentRowCount() const {
     int rows = static_cast<int>(model_.rows.size()) + 2; // + top/bottom border rows
-    if (model_.previewText) {
+    if (model_.previewText || !model_.previewLines.empty()) {
         // hover-tooltips follow-up: a rows-empty model (the hover-tooltip
         // shape -- previewText is the entire content) has nothing for a
         // divider to separate from, so it's skipped rather than opening
@@ -297,7 +297,7 @@ void ListPopup::Paint(Canvas c) {
     // follow-up: a rows-empty model skips the divider outright (see
     // ContentRowCount's own comment) -- there's nothing above it to separate
     // from, so the preview text starts right under the top border.
-    if (model_.previewText && row < height - 1) {
+    if ((model_.previewText || !model_.previewLines.empty()) && row < height - 1) {
         if (!model_.rows.empty()) {
             for (int x = 1; x < width - 1; ++x) {
                 c[{.x = x, .y = row}].character = text::EncodeCodepointUtf8(RoundedBorderGlyphs().horizontal);
@@ -306,7 +306,12 @@ void ListPopup::Paint(Canvas c) {
             ++row;
         }
 
-        const std::vector<std::string> lines = WrapText(*model_.previewText, width - 3); // 1-col margin each side + border
+        // search-everywhere-preview follow-up: previewLines is painted as
+        // it stands -- the wrap is what a code excerpt must not go
+        // through, which is why it is a separate field at all.
+        const std::vector<std::string> lines =
+            model_.previewText ? WrapText(*model_.previewText, width - 3) // 1-col margin each side + border
+                               : model_.previewLines;
         for (std::size_t i = 0; i < lines.size() && i < static_cast<std::size_t>(kPreviewMaxLines) && row < height - 1; ++i) {
             // More wrapped lines exist past this one -- reserve the row's
             // own last column for a "…" marker rather than slicing lines[i]

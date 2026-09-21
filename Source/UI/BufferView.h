@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <functional>
 #include <limits>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -62,6 +63,7 @@
 #include "Editor/Register.h"
 #include "Editor/RenameReview.h"
 #include "Editor/SearchEverywhere.h"
+#include "Editor/SearchEverywherePreview.h"
 #include "Editor/Snippet.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/TestRun/TestRunner.h"
@@ -2415,6 +2417,22 @@ class BufferView : public Widget {
     // remoteLocation set, so this can't touch those even though they share
     // a kind with the project-wide ones.
     void EraseSearchEverywhereRemoteCandidates(editor::SearchEverywhereKind kind);
+
+    // search-everywhere-preview follow-up: the I/O half of the popup's
+    // footer -- resolves a row to a file and a line, reads the window
+    // around it (the live buffer's content when one is open, the file
+    // otherwise, the rule every project-wide operation here follows), and
+    // hands it to Editor/SearchEverywherePreview.h for formatting. Empty
+    // for a row that points at no text at all (a command, a macro, a
+    // theme, a project).
+    //
+    // Runs on every selection change, so it never materializes a whole
+    // file for four lines: a buffer is read via LineToByteOffset (which a
+    // huge, piece-table-backed one answers without becoming resident) and
+    // a file is streamed only as far as the window's last line.
+    [[nodiscard]] std::vector<std::string>
+                                           SearchEverywherePreviewFor(const editor::SearchEverywhereCandidate& candidate);
+    [[nodiscard]] std::vector<std::string> ReadPreviewWindow(const std::filesystem::path& path, std::size_t line);
 
     void HandleExecuteCommandKey(const editor::KeyChord& chord);
 
@@ -4774,6 +4792,10 @@ class BufferView : public Widget {
     std::vector<editor::SearchEverywhereResult>       searchEverywhereRanked_;
     std::size_t                                       searchEverywhereSelection_ = 0;
     std::optional<editor::SearchEverywhereKind>       searchEverywhereKindFilter_;
+    // Arrowing down a list and back up asks for the same rows again, and a
+    // File row's window never changes while one session is open -- so the
+    // reads are memoized per (file, line) and dropped with the session.
+    std::map<std::pair<std::filesystem::path, std::size_t>, std::vector<std::string>> searchEverywherePreviewCache_;
 
     // search-everywhere-symbols-and-text follow-up: the two async top-up
     // categories, each its own DeadlineTimer/RequestSlot pair --

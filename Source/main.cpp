@@ -2280,8 +2280,14 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
     // more rows and longer entries (file paths) than a key-binding hint.
     ned::ui::ListPopup candidatePopup(theme);
     overlays.Add(candidatePopup, [panel = &candidatePopup](Size size) {
-        const int yMax   = std::max(1, size.height - 2); // above the echo area row
-        const int height = std::clamp(panel->ContentRowCount(), 3, std::min(14, size.height));
+        const int yMax = std::max(1, size.height - 2); // above the echo area row
+        // 14 = kMaxPopupRows + 2 border rows + 2 scroll-indicator rows; the
+        // search-everywhere-preview follow-up's own footer (a divider plus
+        // ListPopup::kPreviewMaxLines) is added on top rather than carved
+        // out of that, so a preview never costs a candidate row. Every
+        // model without one still measures at or under 14.
+        const int ceiling = 14 + 1 + ned::ui::ListPopup::kPreviewMaxLines;
+        const int height  = std::clamp(panel->ContentRowCount(), 3, std::min(ceiling, size.height));
         const int width  = std::min(90, size.width);
         return Box{.x_min = 0, .x_max = std::max(0, width - 1), .y_min = std::max(0, yMax - height + 1), .y_max = yMax};
     });

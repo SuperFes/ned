@@ -230,6 +230,47 @@ TEST_CASE("ListPopup truncates a preview past kPreviewMaxLines with an ellipsis 
     REQUIRE(screen.PixelAt(18, lastPreviewRow).character == "…");
 }
 
+TEST_CASE("ListPopup paints previewLines one per row, without wrapping them together", "[ListPopup]") {
+    // search-everywhere-preview follow-up: the whole reason previewLines is
+    // a separate field -- previewText's word-wrap would join these two into
+    // one row and drop the indentation on the second.
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
+    ned::ui::ListPopup popup(theme);
+    popup.SetModel(ned::ui::ListPopupModel{
+        .rows         = {{.main = "foo"}},
+        .previewLines = {"if (x) {", "    run();"},
+    });
+
+    REQUIRE(popup.ContentRowCount() == 1 + 2 + 1 + ned::ui::ListPopup::kPreviewMaxLines);
+
+    ned::ui::Screen screen = ned::ui::Screen(30, 10);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 9});
+    popup.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(4, 2).character == "\u2500"); // the divider
+    REQUIRE(screen.PixelAt(2, 3).character == "i");      // "if (x) {" starts at the text margin
+    REQUIRE(screen.PixelAt(2, 4).character == " ");      // the second line keeps its own indentation
+    REQUIRE(screen.PixelAt(6, 4).character == "r");      // ... so "run();" starts four columns in
+}
+
+TEST_CASE("ListPopup leaves previewLines alone when previewText is also set", "[ListPopup]") {
+    // The two share one footer slot; previewText wins, as its own doc
+    // comment says, rather than the two stacking into a garbled footer.
+    ned::ui::Theme     theme = ned::ui::DarkTheme();
+    ned::ui::ListPopup popup(theme);
+    popup.SetModel(ned::ui::ListPopupModel{
+        .rows         = {{.main = "foo"}},
+        .previewText  = "wrapped",
+        .previewLines = {"lines"},
+    });
+
+    ned::ui::Screen screen = ned::ui::Screen(30, 10);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 9});
+    popup.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(2, 3).character == "w");
+}
+
 TEST_CASE("ListPopup click activates the row in non-focusable mode without ever taking focus", "[ListPopup]") {
     // mouse-support follow-up.
     ned::ui::Theme     theme = ned::ui::DarkTheme();

@@ -85,6 +85,16 @@ struct ListPopupModel {
     // chosen) width -- see ListPopup.cpp's own Paint()/ContentRowCount()
     // comments for why.
     std::optional<std::string> previewText;
+
+    // search-everywhere-preview follow-up: the same footer slot, but
+    // line-oriented -- each entry is painted on its own row verbatim,
+    // truncated at the border rather than wrapped. A source-code excerpt
+    // read out of a file is the case previewText cannot serve: its
+    // word-wrap collapses indentation and joins lines, which is exactly
+    // the structure a code preview is showing. Shares previewText's
+    // divider row and kPreviewMaxLines budget, and the two are mutually
+    // exclusive -- previewText wins if a caller somehow sets both.
+    std::vector<std::string> previewLines;
 };
 
 class ListPopup : public Widget {

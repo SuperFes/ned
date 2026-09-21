@@ -8,6 +8,7 @@
 
 #include "UI/BufferView/Internal.h"
 
+#include <fstream>
 #include <thread>
 
 #include <re2/re2.h>
@@ -18,6 +19,8 @@
 #include "Editor/FormatRules.h"
 #include "Editor/HeaderSource.h"
 #include "Editor/ModeOverrides.h"
+#include "Editor/TabWidth.h"
+#include "Text/BinaryDetect.h"
 
 namespace ned::ui {
 
@@ -2136,6 +2139,10 @@ void BufferView::EndInteractiveSession() {
     searchEverywhereRanked_.clear();
     searchEverywhereSelection_ = 0;
     searchEverywhereKindFilter_.reset();
+    // search-everywhere-preview follow-up: the memoized excerpts go with
+    // the pool -- a file the next session previews may have changed on
+    // disk, and a buffer it previews may have moved its point.
+    searchEverywherePreviewCache_.clear();
     // search-everywhere-symbols-and-text follow-up: belt-and-suspenders with
     // the inputMode_ check each async handler already does on its own --
     // stops a still-pending debounce from ever firing into an ended session.
@@ -4177,13 +4184,26 @@ void BufferView::RefreshSearchEverywhereStatus() {
     }
 
     statusMessage_ = prompt_->StatusText();
-    if (onCandidatesChanged_) {
-        onCandidatesChanged_(searchEverywhereRanked_.empty()
-                                 ? std::nullopt
-                                 : std::optional(BuildSearchEverywherePopupModel(
-                                       SearchEverywhereTitle(searchEverywhereKindFilter_), searchEverywhereCandidates_,
-                                       searchEverywhereRanked_, searchEverywhereSelection_)));
+    if (!onCandidatesChanged_) {
+        return;
     }
+    if (searchEverywhereRanked_.empty()) {
+        onCandidatesChanged_(std::nullopt);
+        return;
+    }
+    ListPopupModel model = BuildSearchEverywherePopupModel(SearchEverywhereTitle(searchEverywhereKindFilter_),
+                                                           searchEverywhereCandidates_, searchEverywhereRanked_,
+                                                           searchEverywhereSelection_);
+    // search-everywhere-preview follow-up: the selected row's own excerpt,
+    // recomputed here because every path that can change the selection
+    // (arrows, Tab's filter cycle, a keystroke re-snapping to the top
+    // match, an async category's rows landing) already funnels through
+    // this function.
+    static_assert(editor::kSearchEverywherePreviewLines <= static_cast<std::size_t>(ListPopup::kPreviewMaxLines),
+                  "the preview window must fit the footer budget the widget paints");
+    model.previewLines = SearchEverywherePreviewFor(
+        searchEverywhereCandidates_[searchEverywhereRanked_[searchEverywhereSelection_].candidateIndex]);
+    onCandidatesChanged_(std::move(model));
 }
 
 void BufferView::CommitSearchEverywhereCandidate(const editor::SearchEverywhereCandidate& candidate) {
@@ -4285,6 +4305,132 @@ void BufferView::EraseSearchEverywhereRemoteCandidates(editor::SearchEverywhereK
     std::erase_if(searchEverywhereCandidates_, [kind](const editor::SearchEverywhereCandidate& candidate) {
         return candidate.kind == kind && candidate.remoteLocation.has_value();
     });
+}
+
+namespace {
+
+    // search-everywhere-preview follow-up: the window one buffer contributes,
+    // read through LineToByteOffset rather than the buffer's whole text --
+    // a huge, piece-table-backed buffer answers this without ever becoming
+    // resident, which is exactly why the preview can skip the IsHuge() guard
+    // every whole-document reader here needs.
+    std::vector<std::string> PreviewWindowFromBuffer(const text::ITextStorage& content, std::size_t line) {
+        const std::size_t lineCount = content.LineCount();
+        if (line >= lineCount) {
+            return {};
+        }
+        const std::size_t first = line - std::min(line, editor::kSearchEverywherePreviewLinesBefore);
+        const std::size_t last  = std::min(lineCount, first + editor::kSearchEverywherePreviewLines);
+
+        std::vector<std::string> window;
+        window.reserve(last - first);
+        for (std::size_t i = first; i < last; ++i) {
+            const std::size_t start = content.LineToByteOffset(i);
+            const std::size_t end   = i + 1 < lineCount ? content.LineToByteOffset(i + 1) : content.ByteLength();
+            std::string       text  = content.Substring(start, end > start ? end - start : 0);
+            if (!text.empty() && text.back() == '\n') {
+                text.pop_back();
+            }
+            window.push_back(std::move(text));
+        }
+        return window;
+    }
+
+    // The same window off disk, stopping at the last line it needs rather than
+    // reading the file -- this runs on every arrow key.
+    std::vector<std::string> PreviewWindowFromFile(const std::filesystem::path& path, std::size_t line) {
+        if (text::LooksBinary(path)) {
+            return {}; // nothing legible to show, and LooksBinary covers unreadable too
+        }
+        std::ifstream in(path, std::ios::binary);
+        if (!in) {
+            return {};
+        }
+        const std::size_t first = line - std::min(line, editor::kSearchEverywherePreviewLinesBefore);
+        const std::size_t last  = first + editor::kSearchEverywherePreviewLines;
+
+        std::vector<std::string> window;
+        std::string              text;
+        for (std::size_t i = 0; i < last && std::getline(in, text); ++i) {
+            if (i >= first) {
+                window.push_back(text);
+            }
+        }
+        return window;
+    }
+
+} // namespace
+
+std::vector<std::string> BufferView::ReadPreviewWindow(const std::filesystem::path& path, std::size_t line) {
+    const auto key    = std::pair{path, line};
+    const auto cached = searchEverywherePreviewCache_.find(key);
+    if (cached != searchEverywherePreviewCache_.end()) {
+        return cached->second;
+    }
+    // The live buffer is the authority whenever one is open -- a preview
+    // showing what is on disk beside a row whose line number came from the
+    // buffer would be pointing at the wrong text.
+    const text::Buffer*            open   = bufferList_.FindByPath(path);
+    const std::vector<std::string> window = open ? PreviewWindowFromBuffer(open->Content(), line)
+                                                 : PreviewWindowFromFile(path, line);
+    return searchEverywherePreviewCache_.emplace(key, window).first->second;
+}
+
+std::vector<std::string> BufferView::SearchEverywherePreviewFor(const editor::SearchEverywhereCandidate& candidate) {
+    // Every row resolves to the same file and line its own commit case
+    // resolves to -- the preview is showing where Enter lands, so the two
+    // read the candidate identically.
+    std::vector<std::string>   window;
+    std::optional<std::size_t> target;
+
+    switch (candidate.kind) {
+        case editor::SearchEverywhereKind::File:
+            // A file's opening lines: there is no line the row points at,
+            // so no marker column is spent distinguishing one.
+            window = ReadPreviewWindow(editor::ProjectRoot() / candidate.label, 0);
+            break;
+        case editor::SearchEverywhereKind::Buffer: {
+            const text::Buffer* found = bufferList_.Find(candidate.label);
+            if (!found) {
+                break;
+            }
+            // Where the buffer was left, not its top -- switching to a
+            // buffer resumes it at its point, so that is what the row is
+            // actually offering.
+            const std::size_t line = found->Content().ByteOffsetToLine(found->Point());
+            window                 = PreviewWindowFromBuffer(found->Content(), line);
+            target                 = std::min(line, editor::kSearchEverywherePreviewLinesBefore);
+            break;
+        }
+        case editor::SearchEverywhereKind::Symbol:
+        case editor::SearchEverywhereKind::TextMatch: {
+            if (candidate.localByteOffset) {
+                const text::ITextStorage& content = activeBuffer_.Get().Content();
+                const std::size_t         line    = content.ByteOffsetToLine(*candidate.localByteOffset);
+                window                            = PreviewWindowFromBuffer(content, line);
+                target                            = std::min(line, editor::kSearchEverywherePreviewLinesBefore);
+            }
+            else if (candidate.remoteLocation) {
+                window = ReadPreviewWindow(candidate.remoteLocation->path, candidate.remoteLocation->line);
+                target = std::min(candidate.remoteLocation->line, editor::kSearchEverywherePreviewLinesBefore);
+            }
+            break;
+        }
+        case editor::SearchEverywhereKind::Command:
+        case editor::SearchEverywhereKind::Macro:
+        case editor::SearchEverywhereKind::ServerCommand:
+        case editor::SearchEverywhereKind::Theme:
+        case editor::SearchEverywhereKind::Project:
+            // Nothing these point at is text to show: a command already
+            // carries its docstring and chord in the row itself, and a
+            // theme or project is a name, not a location.
+            break;
+    }
+
+    if (window.empty()) {
+        return {};
+    }
+    return editor::FormatSearchEverywherePreview(window, target, static_cast<std::size_t>(editor::TabWidth()));
 }
 
 void BufferView::MaybeArmSearchEverywhereWorkspaceSymbols() {

@@ -8319,6 +8319,162 @@ TEST_CASE("ned/set-search-everywhere-text-search false makes the text category i
     std::filesystem::remove_all(dir);
 }
 
+// search-everywhere-preview follow-up: the selected row's excerpt.
+
+namespace {
+
+// The text-search category runs a real background scan on any 3+ character
+// query, which would append unrelated rows to a preview test's own list.
+struct TextSearchOff {
+    TextSearchOff() : previous_(ned::editor::SearchEverywhereTextSearchEnabled()) {
+        ned::editor::SetSearchEverywhereTextSearchEnabled(false);
+    }
+    ~TextSearchOff() {
+        ned::editor::SetSearchEverywhereTextSearchEnabled(previous_);
+    }
+    bool previous_;
+};
+
+} // namespace
+
+TEST_CASE("a selected file row previews the file's opening lines", "[BufferView]") {
+    const TextSearchOff         textSearchOff;
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "ned_bufferview_test_search_everywhere_preview_file";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "preview-target.txt") << "first line\nsecond line\nthird line\nfourth line\nfifth line\n";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "preview-target");
+
+    REQUIRE(fixture.candidates);
+    REQUIRE(CandidateSelected(fixture.candidates, "preview-target.txt"));
+    // A file row has no line it points at, so no marker column is spent.
+    REQUIRE(fixture.candidates->previewLines ==
+            std::vector<std::string>{"first line", "second line", "third line", "fourth line"});
+
+    view.OnEvent(ned::ui::test::Escape());
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("a selected text-match row previews the matched line, marked, with its neighbours", "[BufferView]") {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "ned_bufferview_test_search_everywhere_preview_text";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "notes.txt")
+            << "line one\nline two\npreviewNeedleString here\nline four\nline five\n";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::ui::EventLoop  eventLoop;
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetEventLoop(&eventLoop);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "previewNeedleString");
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    REQUIRE(eventLoop.DrainPosted_());
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    REQUIRE(eventLoop.DrainPosted_());
+
+    REQUIRE(fixture.candidates);
+    REQUIRE(CandidateSelected(fixture.candidates, "previewNeedleString here"));
+    // One line of lead-in, the match, then the rest of the budget after it.
+    REQUIRE(fixture.candidates->previewLines ==
+            std::vector<std::string>{"  line two", "▸ previewNeedleString here", "  line four", "  line five"});
+
+    view.OnEvent(ned::ui::test::Escape());
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("a file row's preview reads the open buffer's live text, not what is on disk", "[BufferView]") {
+    const TextSearchOff         textSearchOff;
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / "ned_bufferview_test_search_everywhere_preview_live";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "live-preview.txt") << "on disk only\n";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    Fixture            fixture;
+    ned::text::Buffer& opened = fixture.bufferList.OpenOrCreateFile(dir / "live-preview.txt");
+    opened.SetPoint(0);
+    opened.InsertAtPoint("edited but unsaved\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "live-preview");
+
+    REQUIRE(fixture.candidates);
+    REQUIRE(CandidateSelected(fixture.candidates, "live-preview.txt"));
+    REQUIRE_FALSE(fixture.candidates->previewLines.empty());
+    REQUIRE(fixture.candidates->previewLines.front() == "edited but unsaved");
+
+    view.OnEvent(ned::ui::test::Escape());
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("a selected buffer row previews around the point that buffer was left at", "[BufferView]") {
+    const TextSearchOff textSearchOff;
+
+    Fixture            fixture;
+    ned::text::Buffer& other = fixture.bufferList.CreateBuffer("preview-buffer-row");
+    other.InsertAtPoint("alpha\nbravo\ncharlie\ndelta\necho\n");
+    other.SetPoint(other.Content().LineToByteOffset(3)); // "delta"
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "preview-buffer-row");
+
+    REQUIRE(fixture.candidates);
+    REQUIRE(CandidateSelected(fixture.candidates, "preview-buffer-row"));
+    REQUIRE(fixture.candidates->previewLines ==
+            std::vector<std::string>{"  charlie", "▸ delta", "  echo", ""});
+
+    view.OnEvent(ned::ui::test::Escape());
+}
+
+TEST_CASE("a selected command row previews nothing -- it points at no text", "[BufferView]") {
+    const TextSearchOff textSearchOff;
+
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('s'));
+    TypeText(view, "save-buffer");
+
+    REQUIRE(fixture.candidates);
+    REQUIRE(CandidateSelected(fixture.candidates, "save-buffer"));
+    REQUIRE(fixture.candidates->previewLines.empty());
+
+    view.OnEvent(ned::ui::test::Escape());
+}
+
 // search-everywhere-bindings follow-up: the chord beside a command row.
 
 TEST_CASE("search-everywhere shows a command's own keybinding in its row", "[BufferView]") {
