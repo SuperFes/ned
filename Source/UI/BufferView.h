@@ -466,6 +466,13 @@ class BufferView : public Widget {
     // completion handler uses.
     void DispatchDiffForTesting(std::vector<editor::vcs::DiffHunk> hunks);
 
+    // Public primarily for tests, same precedent again: the real path reaches
+    // the gutter model's verdict through Runner::RequestStatus's onComplete
+    // (see RequestConflictVerdictForCurrentBuffer), which needs a live
+    // EventLoop to ever fire. Sets the verdict for the currently active
+    // buffer, exactly as that completion handler does.
+    void DispatchConflictVerdictForTesting(bufferview::GutterModel::VcsConflictVerdict verdict);
+
     // Public primarily for tests, same precedent again (vocabulary-
     // completion follow-up): the real async paths reach
     // BuildVcsStatusBuffer/BuildVcsBranchesBuffer/ResolveVcsFileTarget
@@ -2850,6 +2857,18 @@ class BufferView : public Widget {
     // feature, not a user-invoked action, so it must never interrupt with
     // a status message the way vcs-show-blame's own errors do.
     void RequestDiffForCurrentBuffer();
+    // merge-conflict-vcs-gate: asks the VCS whether the active buffer's file
+    // is genuinely unmerged, and pushes the answer into the gutter model
+    // (GutterModel::SetVcsConflictVerdict, whose doc comment carries the
+    // three-valued reasoning). Rides RequestDiffForCurrentBuffer's own
+    // debounced cadence and is guarded on Buffer::HasConflictMarkers(), so
+    // the extra `git status` never runs for a buffer that has no marker text
+    // in it -- which is every buffer, nearly always. Silent on every failure
+    // for the same best-effort reason the diff request is, and deliberately
+    // leaves the previous verdict standing rather than resetting it to
+    // Unknown: the status key is shared with VcsPanel's own poll, so a
+    // collision is an expected, transient "ask again next tick", not news.
+    void RequestConflictVerdictForCurrentBuffer();
 
     // Parallel to BuildResultsBuffer, just a different per-line text shape:
     // "<path>:<1-indexed line>: <hash> <author> <date> | <source line

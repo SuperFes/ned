@@ -380,6 +380,9 @@ void VcsPanel::RefreshConflictedPaths() {
     const std::filesystem::path root = editor::ProjectRoot();
     const auto                  scan = [&](const std::vector<editor::vcs::StatusEntry>& entries) {
         for (const editor::vcs::StatusEntry& entry : entries) {
+            if (!editor::vcs::IsUnmergedStatus(entry.state)) {
+                continue;
+            }
             const std::filesystem::path absPath = (root / entry.path).lexically_normal();
             std::ifstream               file(absPath, std::ios::binary);
             if (!file) {
@@ -968,6 +971,16 @@ void VcsPanel::OpenFileEntry(const std::filesystem::path& path) {
     }
 }
 
+std::vector<std::filesystem::path> VcsPanel::MarkedConflictedPaths() const {
+    std::vector<std::filesystem::path> marked;
+    for (const std::filesystem::path& path : selected_) {
+        if (conflictedPaths_.contains(path.lexically_normal())) {
+            marked.push_back(path);
+        }
+    }
+    return marked;
+}
+
 void VcsPanel::ResolveAllConflicts(const std::filesystem::path& path, editor::ConflictResolution resolution) {
     const char* side = resolution == editor::ConflictResolution::TakeOurs ? "ours" : "theirs";
     try {
@@ -984,6 +997,62 @@ void VcsPanel::ResolveAllConflicts(const std::filesystem::path& path, editor::Co
     }
     catch (const std::exception& e) {
         statusMessage_ = e.what();
+    }
+}
+
+void VcsPanel::ResolveAllConflictsForSelectionOr(const std::filesystem::path& focused,
+                                                 editor::ConflictResolution   resolution) {
+    const std::vector<std::filesystem::path> targets = MarkedConflictedPaths();
+    if (targets.size() <= 1) {
+        // One target either way -- the marked file if that is what was
+        // marked, otherwise the row the menu was opened on. Delegating keeps
+        // the single-file wording ("no conflict hunks in x") intact rather
+        // than reporting a batch of one.
+        ResolveAllConflicts(targets.empty() ? focused : targets.front(), resolution);
+        selected_.clear();
+        return;
+    }
+
+    const char*   side   = resolution == editor::ConflictResolution::TakeOurs ? "ours" : "theirs";
+    std::size_t   hunks  = 0;
+    std::size_t   files  = 0;
+    std::size_t   failed = 0;
+    text::Buffer* first  = nullptr;
+    for (const std::filesystem::path& path : targets) {
+        try {
+            text::Buffer&     opened   = bufferList_.OpenOrCreateFile(path);
+            const std::size_t resolved = editor::ResolveAllConflictHunks(opened, resolution);
+            if (resolved == 0) {
+                continue; // already resolved since the last status refresh
+            }
+            hunks += resolved;
+            ++files;
+            if (first == nullptr) {
+                first = &opened;
+            }
+        }
+        catch (const text::BinaryFileError&) {
+            ++failed;
+        }
+        catch (const std::exception&) {
+            ++failed;
+        }
+    }
+    selected_.clear();
+
+    if (first != nullptr) {
+        // The first file resolved, not the last: a batch leaves several
+        // modified buffers to review and the one the user is dropped into
+        // should be the top of that list, not wherever the loop ended.
+        activeBufferProvider_().Set(*first);
+    }
+
+    statusMessage_ = hunks == 0 ? "no conflict hunks in the marked files"
+                                : "resolved " + std::to_string(hunks) + " conflict hunk" +
+                                      (hunks == 1 ? "" : "s") + " in " + std::to_string(files) + " files (" + side +
+                                      ") -- unsaved";
+    if (failed > 0) {
+        statusMessage_ += "; " + std::to_string(failed) + " skipped";
     }
 }
 

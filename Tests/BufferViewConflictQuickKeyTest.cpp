@@ -135,3 +135,26 @@ TEST_CASE("Ctrl-Alt-o is not a conflict quick key even with an unresolved hunk",
     view.OnEvent(ned::ui::test::CtrlAlt('o'));
     REQUIRE(fixture.buffer.Text() == text); // untouched -- Control rules out the quick-key path
 }
+
+TEST_CASE("M-o falls through when the VCS says the file is not conflicted",
+          "[BufferView][ConflictResolution]") {
+    // Marker text in a file the VCS reports as an ordinary change: the quick
+    // keys are content-scoped chrome, so they go back to meaning what they
+    // ordinarily mean. C-c x o still resolves -- that one was asked for by
+    // name (see GutterModel::ConflictHunks' own doc comment).
+    Fixture           fixture;
+    const std::string text = "before\n<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\nafter\n";
+    fixture.buffer.InsertAtPoint(text);
+    fixture.buffer.SetPoint(fixture.buffer.Text().find("ours"));
+    BufferView view = fixture.View();
+
+    view.DispatchConflictVerdictForTesting(ned::ui::bufferview::GutterModel::VcsConflictVerdict::Clean);
+    view.OnEvent(ned::ui::test::Alt('o'));
+    REQUIRE(fixture.buffer.Text() == text);
+
+    // The explicit command is deliberately not gated on the verdict.
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character('x'));
+    view.OnEvent(ned::ui::test::Character('o'));
+    REQUIRE(fixture.buffer.Text() == "before\nours\nafter\n");
+}

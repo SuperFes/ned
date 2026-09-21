@@ -112,11 +112,40 @@ class GutterModel {
     [[nodiscard]] const std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>>&
     DiagnosticLineSeverities() const;
 
-    // The buffer's merge-conflict hunks, for conflict tinting and the
-    // resolution commands. Keyed on ContentGeneration() alone and never
-    // windowed: a conflicted file is an ordinary source file in practice, and
-    // re-scanning for markers is a cheap linear pass regardless.
+    // The buffer's merge-conflict hunks, for conflict tinting and the chips
+    // painted on the marker line. Keyed on ContentGeneration() and the VCS
+    // verdict below, and never windowed: a conflicted file is an ordinary
+    // source file in practice, and re-scanning for markers is a cheap linear
+    // pass regardless.
+    //
+    // Empty under VcsConflictVerdict::Clean even when the text does parse as a
+    // conflict run: marker text alone is also what a file *about* merge
+    // conflicts (this codebase's own ROADMAP, a test fixture, a tutorial)
+    // looks like, and tinting one of those is the false positive this exists
+    // to stop. The explicit resolution commands are deliberately not gated on
+    // this -- they parse the buffer themselves (Editor/ConflictResolution.h),
+    // so C-c x n/p/o/t/b/d/k still work on a file the VCS has no opinion
+    // about. It is the automatic chrome that defers to the VCS, not the
+    // commands the user asked for by name.
     [[nodiscard]] const std::vector<text::ConflictHunk>& ConflictHunks() const;
+
+    // Whether the VCS says this buffer's file is genuinely unmerged. Three-
+    // valued rather than a bool because "no answer" is a real, common state
+    // and must not read as "not conflicted": no provider resolves for the
+    // project root, the file has no path, the status request is still in
+    // flight or failed. Unknown keeps the marker-text reading, so a conflict
+    // is never invisible while the answer is pending -- the false positive
+    // this gate removes is the cheaper mistake of the two.
+    enum class VcsConflictVerdict : std::size_t { Unknown = 0,
+                                                  Conflicted,
+                                                  Clean };
+
+    // Push-side of the verdict: BufferView owns the status request (it already
+    // owns the debounce the refresh rides on), this only stores the answer.
+    // Scoped to one buffer -- a verdict for any other buffer reads as Unknown,
+    // which is what makes a stale answer from before a buffer switch harmless.
+    void                             SetVcsConflictVerdict(const text::Buffer* buffer, VcsConflictVerdict verdict);
+    [[nodiscard]] VcsConflictVerdict VcsConflictVerdictFor(const text::Buffer* buffer) const;
 
     // --- folds ---------------------------------------------------------------
     // Whether the fold column is drawn at all: the mode has a real fold query,
@@ -202,6 +231,8 @@ class GutterModel {
 
     mutable CacheStamp                      conflictHunkStamp_;
     mutable std::vector<text::ConflictHunk> conflictHunks_;
+    const text::Buffer*                     vcsConflictBuffer_  = nullptr;
+    VcsConflictVerdict                      vcsConflictVerdict_ = VcsConflictVerdict::Unknown;
 
     mutable CacheStamp foldableBlocksStamp_;
     // The window the blocks were last derived for. The fold-entry cache keys off

@@ -2794,11 +2794,18 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
                         // C-c x o/t are still the path for a file that
                         // needs reading. Listed above Discard so the two
                         // destructive-looking rows aren't adjacent.
-                        addRow("Take All Ours", [vp, path] {
-                            vp->ResolveAllConflicts(path, ned::editor::ConflictResolution::TakeOurs);
+                        //
+                        // The label counts the Space-marked conflicted files
+                        // when there are several, because that is what the
+                        // action will act on instead of this row -- a bulk
+                        // edit across files must say so before it runs.
+                        const std::size_t marked = vp->MarkedConflictedPaths().size();
+                        const std::string scope  = marked > 1 ? " (" + std::to_string(marked) + " files)" : "";
+                        addRow("Take All Ours" + scope, [vp, path] {
+                            vp->ResolveAllConflictsForSelectionOr(path, ned::editor::ConflictResolution::TakeOurs);
                         });
-                        addRow("Take All Theirs", [vp, path] {
-                            vp->ResolveAllConflicts(path, ned::editor::ConflictResolution::TakeTheirs);
+                        addRow("Take All Theirs" + scope, [vp, path] {
+                            vp->ResolveAllConflictsForSelectionOr(path, ned::editor::ConflictResolution::TakeTheirs);
                         });
                     }
                     if (target.section != ned::ui::VcsPanelSection::Untracked) {

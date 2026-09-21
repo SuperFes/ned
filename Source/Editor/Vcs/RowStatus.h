@@ -45,6 +45,19 @@ enum class RowStatus { None,
 // changed".
 [[nodiscard]] RowStatus ClassifyPorcelainStatus(const std::string& state);
 
+// Whether a status code means "this file is unmerged" -- the VCS's own
+// answer to "is this a real merge conflict", as opposed to "this text
+// contains <<<<<<<", which a file merely *about* conflict markers also
+// satisfies. git spells an unmerged path with a 'U' in either column
+// ("UU", "AU", "UD", ...) plus the two both-sides codes that carry no 'U'
+// at all ("AA" both added, "DD" both deleted); every other porcelain code
+// is a plain staged/unstaged change. Same accepted "read git's own
+// vocabulary, not a VCS-agnostic one" simplification ClassifyPorcelainStatus
+// above already makes -- a provider whose status output cannot express
+// unmerged simply never reports one, which callers treat as "no VCS
+// opinion" rather than as "not conflicted".
+[[nodiscard]] bool IsUnmergedStatus(const std::string& state);
+
 // VCS side panel: staged/unstaged/untracked working-tree state, partitioned
 // from a flat Provider::ParseStatus result -- the panel's own tree-
 // section grouping. Interprets git's two-char "XY" porcelain code the same

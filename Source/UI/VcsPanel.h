@@ -181,6 +181,20 @@ class VcsPanel : public Widget {
     // write behind the user's back.
     void ResolveAllConflicts(const std::filesystem::path& path, editor::ConflictResolution resolution);
 
+    // The same bulk resolution across the Space-marked set, for the case one
+    // merge lands the identical mechanical conflict in several files at once
+    // (regenerated lockfiles, a bumped version string in every manifest).
+    // Marked-conflicted files win over the passed-in row when there are any,
+    // matching StageOrUnstageSelectionOrFocused's own "marks beat focus"
+    // rule; marks on files with no conflict are ignored rather than allowed
+    // to swallow the action the user just clicked on a conflicted row.
+    void ResolveAllConflictsForSelectionOr(const std::filesystem::path& focused, editor::ConflictResolution resolution);
+
+    // Which marked files are actually conflicted -- for the context menu's
+    // own label, so a bulk row says how many files it is about to touch
+    // rather than reading like the single-file action it sits next to.
+    [[nodiscard]] std::vector<std::filesystem::path> MarkedConflictedPaths() const;
+
     // Stage/unstage a specific path regardless of focus/multi-select state
     // -- StageOrUnstageSelectionOrFocused's own single-target case, exposed
     // directly for the context menu.
@@ -293,12 +307,18 @@ class VcsPanel : public Widget {
     bool                           haveStatus_ = false;
 
     // Conflict-file affordance: absolute paths (of the staged/unstaged
-    // entries currently in `sections_`) whose on-disk content contains real
-    // <<<<<<< conflict markers (Text/ThreeWayMerge.h's HasConflictMarkers,
-    // save-buffer's own guard precedent) -- recomputed on the same
-    // throttled cadence as sections_ itself, not per-frame. Untracked files
-    // are never checked -- "conflict" is a merge concept that doesn't apply
-    // to a file git doesn't know about yet.
+    // entries currently in `sections_`) the VCS reports as unmerged
+    // (Vcs/RowStatus.h's IsUnmergedStatus) AND whose on-disk content still
+    // contains real <<<<<<< conflict markers (Text/ThreeWayMerge.h's
+    // HasConflictMarkers, save-buffer's own guard precedent) -- recomputed
+    // on the same throttled cadence as sections_ itself, not per-frame.
+    // Both halves are load-bearing: the status code is what separates a
+    // real conflict from a file merely *about* conflict markers, and the
+    // marker scan is what drops an unmerged path already resolved in the
+    // worktree but not yet staged. Checking the code first is also what
+    // keeps this from reading every changed file's full content on every
+    // refresh. Untracked files are never checked -- "conflict" is a merge
+    // concept that doesn't apply to a file git doesn't know about yet.
     std::set<std::filesystem::path> conflictedPaths_;
     void                            RefreshConflictedPaths();
 

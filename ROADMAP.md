@@ -650,17 +650,25 @@ The per-hunk mouse action row and the whole-file bulk actions both shipped -- sl
 `git log --grep=`: `merge-conflict-bulk-and-chips`. The action row is *not* a row: the
 chips ride on the `<<<<<<<` marker line as end-of-line virtual text, the same trick
 `PaintEndOfLineDiagnostics` uses and for the same reason (a resolution deletes the line
-the chips sit on, and nothing below it should jump on the way). Two conscious cuts left
-behind, each its own item below.
+the chips sit on, and nothing below it should jump on the way). Both cuts it left behind
+-- the chips firing on marker text alone, and bulk resolution ignoring the marked set --
+are closed below.
 
-- [ ] The chips are painted for any buffer whose text parses as a conflict run, including
-      a file merely *about* conflict markers — the same exposure the conflict tinting
-      already has, minus read-only buffers, which are excluded. A real fix means knowing
-      the file is actually conflicted (VCS state), not just that it looks it.
-- [ ] Bulk resolution is per file, on the right-clicked row only — `VcsPanel`'s
-      multi-select (the `Space`-marked set batch stage/unstage already acts on) is not
-      consulted. Worth doing the first time a merge lands the same mechanical conflict in
-      several lockfiles at once.
+The VCS gate on the chips/tinting and bulk resolution over the marked set both shipped --
+slug for `git log --grep=`: `merge-conflict-vcs-gate`. Two conscious calls left behind,
+each its own item below.
+
+- [ ] With no VCS answer at all — no provider resolves for the project root, the buffer
+      has no path, the `git status` is still in flight or failed — the chrome falls back
+      to the marker-text reading it always had. Deliberate, and the direction the
+      three-valued verdict exists to get right: a conflict that is briefly invisible is a
+      worse failure than a doc file that briefly shows chips. The cost is that a custom
+      provider whose status output cannot express "unmerged" never suppresses anything.
+- [ ] The explicit commands (`C-c x n/p/o/t/b/d/k`) are deliberately **not** gated on the
+      verdict — they parse the buffer themselves (`Editor/ConflictResolution.h`), so they
+      still resolve a file the VCS has no opinion about. Only the automatic chrome defers.
+      Worth revisiting only if "the chips are gone but C-c x o worked" reads as a bug
+      rather than as the split it is.
 - [ ] Out of scope for v1: rebase/cherry-pick conflict *sequences* (resolve, `git rebase
       --continue`, repeat) — the hunk-resolution primitive above is what such a sequence
       would be built on later, but driving the sequence itself needs its own `VcsRunner`

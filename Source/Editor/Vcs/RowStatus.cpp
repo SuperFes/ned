@@ -18,6 +18,13 @@ RowStatus ClassifyPorcelainStatus(const std::string& state) {
     return RowStatus::Modified;
 }
 
+bool IsUnmergedStatus(const std::string& state) {
+    if (state == "??") {
+        return false; // untracked: '?' in both columns, never an unmerged path
+    }
+    return state.find('U') != std::string::npos || state == "AA" || state == "DD";
+}
+
 StatusSections PartitionVcsStatus(const std::vector<StatusEntry>& entries) {
     StatusSections sections;
     for (const StatusEntry& entry : entries) {

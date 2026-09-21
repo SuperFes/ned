@@ -187,6 +187,64 @@ void BufferView::RequestDiffForCurrentBuffer() {
             DispatchDiffForTesting(std::move(hunks)); // reused here too -- see its own doc comment
         },
         [](const std::string&) {}); // silent -- see this method's own header comment
+
+    RequestConflictVerdictForCurrentBuffer();
+}
+
+void BufferView::DispatchConflictVerdictForTesting(bufferview::GutterModel::VcsConflictVerdict verdict) {
+    gutters_.SetVcsConflictVerdict(&activeBuffer_.Get(), verdict);
+}
+
+namespace {
+
+    // Compares a buffer path (which may be relative -- `ned foo.txt`) against
+    // a root-relative path the VCS reported. weakly_canonical resolves both
+    // against the real filesystem including symlinked ancestors; a path that
+    // cannot be resolved at all falls back to a purely lexical normalization
+    // rather than failing the comparison outright.
+    [[nodiscard]] std::filesystem::path NormalizedForCompare(const std::filesystem::path& path) {
+        std::error_code             ec;
+        const std::filesystem::path resolved = std::filesystem::weakly_canonical(path, ec);
+        return ec ? path.lexically_normal() : resolved;
+    }
+
+} // namespace
+
+void BufferView::RequestConflictVerdictForCurrentBuffer() {
+    text::Buffer* buffer = &activeBuffer_.Get();
+    if (!vcsRunner_ || !buffer->Path() || !buffer->HasConflictMarkers()) {
+        // No marker text means nothing to gate -- ConflictHunks() is already
+        // empty, and asking the VCS about every buffer would spawn a `git
+        // status` per debounce tick for the whole session.
+        return;
+    }
+
+    // Resolved once here rather than inside the completion: the project root
+    // is what the status paths are relative to, and it must be the one that
+    // was current when the request went out.
+    const std::filesystem::path root   = editor::ProjectRoot();
+    const std::filesystem::path wanted = NormalizedForCompare(*buffer->Path());
+
+    vcsRunner_->RequestStatus(
+        [this, buffer, root, wanted](std::vector<editor::vcs::StatusEntry> entries) {
+            if (&activeBuffer_.Get() != buffer) {
+                return; // active buffer changed while the request was in flight -- stale
+            }
+            const bool unmerged = std::any_of(entries.begin(), entries.end(),
+                                              [&](const editor::vcs::StatusEntry& entry) {
+                                                  return editor::vcs::IsUnmergedStatus(entry.state) &&
+                                                         NormalizedForCompare(root / entry.path) == wanted;
+                                              });
+            // A file the VCS does not list at all is Clean, not Unknown: git
+            // always lists an unmerged path, so absence from a status answer
+            // we did receive is a real "no conflict here" -- an unmodified
+            // tracked file whose committed content contains marker text
+            // (documentation, a test fixture) is exactly that case.
+            gutters_.SetVcsConflictVerdict(buffer, unmerged
+                                                       ? bufferview::GutterModel::VcsConflictVerdict::Conflicted
+                                                       : bufferview::GutterModel::VcsConflictVerdict::Clean);
+        },
+        [](const std::string&) {}); // silent, previous verdict stands -- see this method's own declaration
 }
 
 void BufferView::RefreshVcsDiff() {

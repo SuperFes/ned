@@ -107,6 +107,7 @@
 #include "Editor/TestRun/TestResultsBuffer.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/DiffPatch.h"
+#include "Editor/Vcs/RowStatus.h"
 #include "Editor/Vim/Settings.h"
 #include "Editor/WhichKeySettings.h"
 #include "Editor/WhitespaceSettings.h"

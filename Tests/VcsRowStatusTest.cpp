@@ -3,6 +3,7 @@
 #include "Editor/Vcs/RowStatus.h"
 
 using ned::editor::vcs::ClassifyPorcelainStatus;
+using ned::editor::vcs::IsUnmergedStatus;
 using ned::editor::vcs::PartitionVcsStatus;
 using ned::editor::vcs::RowStatus;
 using ned::editor::vcs::StatusEntry;
@@ -20,6 +21,29 @@ TEST_CASE("ClassifyPorcelainStatus buckets git's own two-letter status codes", "
     REQUIRE(ClassifyPorcelainStatus("MD") == RowStatus::Deleted);
     // No dedicated bucket (rename) falls back to Modified.
     REQUIRE(ClassifyPorcelainStatus("R ") == RowStatus::Modified);
+}
+
+TEST_CASE("IsUnmergedStatus recognizes git's own unmerged codes", "[RowStatus]") {
+    // Every code git documents for an unmerged path.
+    REQUIRE(IsUnmergedStatus("DD"));
+    REQUIRE(IsUnmergedStatus("AU"));
+    REQUIRE(IsUnmergedStatus("UD"));
+    REQUIRE(IsUnmergedStatus("UA"));
+    REQUIRE(IsUnmergedStatus("DU"));
+    REQUIRE(IsUnmergedStatus("AA"));
+    REQUIRE(IsUnmergedStatus("UU"));
+
+    // An ordinary staged/unstaged change is not a conflict, which is the
+    // whole point: a file that merely *contains* "<<<<<<<" is " M".
+    REQUIRE_FALSE(IsUnmergedStatus(" M"));
+    REQUIRE_FALSE(IsUnmergedStatus("M "));
+    REQUIRE_FALSE(IsUnmergedStatus("MM"));
+    REQUIRE_FALSE(IsUnmergedStatus("A "));
+    REQUIRE_FALSE(IsUnmergedStatus(" D"));
+    REQUIRE_FALSE(IsUnmergedStatus("AM"));
+    REQUIRE_FALSE(IsUnmergedStatus("R "));
+    REQUIRE_FALSE(IsUnmergedStatus("??"));
+    REQUIRE_FALSE(IsUnmergedStatus(""));
 }
 
 TEST_CASE("PartitionVcsStatus splits staged/unstaged/untracked by porcelain column", "[RowStatus]") {

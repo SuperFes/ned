@@ -399,6 +399,12 @@ TEST_CASE("A file with real conflict markers gets a warning glyph and Enter jump
         out << "line one\n<<<<<<< buffer\nours\n=======\ntheirs\n>>>>>>> disk\nline two\n";
     }
     {
+        // Marker text in a file the VCS reports as an ordinary modification:
+        // a document *about* merge conflicts, not a conflicted file.
+        std::ofstream out(dir / "about.txt");
+        out << "how a conflict looks:\n<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\n";
+    }
+    {
         std::ofstream(dir / "clean.txt") << "no conflict here\n";
     }
     const CurrentPathGuard cwdGuard(dir);
@@ -411,7 +417,8 @@ TEST_CASE("A file with real conflict markers gets a warning glyph and Enter jump
     ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
     PlacePanel(panel, 30, 22);
     panel.DispatchVcsStatusForTesting({
-        {" M", "a.txt"},
+        {"UU", "a.txt"},
+        {" M", "about.txt"},
         {" M", "clean.txt"},
     });
     // DispatchVcsStatusForTesting only builds sections_ (ProjectSidebar's
@@ -426,14 +433,17 @@ TEST_CASE("A file with real conflict markers gets a warning glyph and Enter jump
     panel.Paint(canvas);
 
     // Every section header renders regardless of emptiness (BuildRows'
-    // own convention): row1 "Staged (0)", row2 "Unstaged (2)", row3
-    // a.txt, row4 clean.txt, row5 "Untracked (0)".
-    REQUIRE(RowText(screen, 3, 30).find("⚠") != std::string::npos); // a.txt
-    REQUIRE(RowText(screen, 4, 30).find("⚠") == std::string::npos); // clean.txt
+    // own convention): row1 "Staged (1)" (UU sets both porcelain columns),
+    // row2 a.txt, row3 "Unstaged (3)", row4 a.txt, row5 about.txt,
+    // row6 clean.txt, row7 "Untracked (0)".
+    REQUIRE(RowText(screen, 2, 30).find("⚠") != std::string::npos); // a.txt, staged section
+    REQUIRE(RowText(screen, 4, 30).find("⚠") != std::string::npos); // a.txt, unstaged section
+    // Marker text alone is not a conflict -- the VCS says " M", so no glyph.
+    REQUIRE(RowText(screen, 5, 30).find("⚠") == std::string::npos); // about.txt
+    REQUIRE(RowText(screen, 6, 30).find("⚠") == std::string::npos); // clean.txt
 
     panel.TakeFocus();
-    panel.OnEvent(ned::ui::test::ArrowDown()); // "Unstaged (2)" header
-    panel.OnEvent(ned::ui::test::ArrowDown()); // a.txt
+    panel.OnEvent(ned::ui::test::ArrowDown()); // a.txt, in the staged section
     panel.OnEvent(ned::ui::test::Return());
 
     REQUIRE(activeBuffer.Get().Name() == "a.txt");
@@ -1065,6 +1075,101 @@ TEST_CASE("ResolveAllConflicts resolves every hunk in a file and leaves it unsav
     std::ifstream     in(dir / "lock.txt");
     const std::string onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     CHECK(onDisk == conflicted);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Bulk resolution acts on the marked conflicted files, not the clicked row", "[VcsPanel]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_resolve_marked";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+
+    const std::string conflicted = "head\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\ntail\n";
+    for (const char* name : {"one.lock", "two.lock", "three.lock"}) {
+        std::ofstream out(dir / name);
+        out << conflicted;
+    }
+    // Marked but not conflicted -- marks on an ordinary file must not be
+    // swept into a resolution.
+    {
+        std::ofstream(dir / "plain.txt") << "nothing to resolve\n";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 40, 22);
+    panel.DispatchVcsStatusForTesting({
+        {"UU", "one.lock"},
+        {"UU", "two.lock"},
+        {"UU", "three.lock"},
+        {" M", "plain.txt"},
+    });
+    panel.RefreshConflictedPathsForTesting();
+
+    // Rows, each section sorted by name: 0 "Staged (3)", 1-3 one/three/two
+    // .lock (an unmerged code sets both porcelain columns, so every
+    // conflicted file appears in both sections), 4 "Unstaged (4)", 5-8
+    // one.lock, plain.txt, three.lock, two.lock.
+    panel.TakeFocus();
+    for (int i = 0; i < 3; ++i) {
+        panel.OnEvent(ned::ui::test::ArrowDown());
+        panel.OnEvent(ned::ui::test::Character(' '));
+    }
+    for (int i = 0; i < 3; ++i) {
+        panel.OnEvent(ned::ui::test::ArrowDown()); // row 3 -> row 6, plain.txt
+    }
+    panel.OnEvent(ned::ui::test::Character(' '));
+    REQUIRE(panel.SelectedPathsForTesting().size() == 4);
+    REQUIRE(panel.MarkedConflictedPaths().size() == 3); // plain.txt is marked but not conflicted
+
+    // The context menu was opened on one.lock; the marked set wins.
+    panel.ResolveAllConflictsForSelectionOr(dir / "one.lock", ned::editor::ConflictResolution::TakeOurs);
+
+    CHECK(statusMessage.find("3 conflict hunks in 3 files (ours)") != std::string::npos);
+    for (const char* name : {"one.lock", "two.lock", "three.lock"}) {
+        ned::text::Buffer& opened = list.OpenOrCreateFile(dir / name);
+        CHECK(opened.Text() == "head\nx\ntail\n");
+        CHECK(opened.Modified());
+    }
+    // The marked-but-unconflicted file was never touched.
+    CHECK(list.OpenOrCreateFile(dir / "plain.txt").Text() == "nothing to resolve\n");
+    CHECK_FALSE(list.OpenOrCreateFile(dir / "plain.txt").Modified());
+
+    // Dropped into the first of the batch, with the marks consumed.
+    CHECK(activeBuffer.Get().Name() == "one.lock");
+    CHECK(panel.SelectedPathsForTesting().empty());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Bulk resolution falls back to the clicked row when nothing conflicted is marked", "[VcsPanel]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_resolve_unmarked";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream out(dir / "lock.txt");
+        out << "head\n<<<<<<< ours\nx\n=======\ny\n>>>>>>> theirs\ntail\n";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 40, 22);
+
+    panel.ResolveAllConflictsForSelectionOr(dir / "lock.txt", ned::editor::ConflictResolution::TakeTheirs);
+
+    CHECK(activeBuffer.Get().Text() == "head\ny\ntail\n");
+    // Single target keeps the single-file wording rather than "in 1 files".
+    CHECK(statusMessage.find("1 conflict hunk (theirs)") != std::string::npos);
 
     std::filesystem::remove_all(dir);
 }

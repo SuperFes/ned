@@ -167,3 +167,71 @@ TEST_CASE("A read-only buffer showing marker text gets no chips", "[BufferView][
 
     CHECK(PaintedRow(screen, 0).find("[ours]") == std::string::npos);
 }
+
+// The VCS gate. Marker text alone is also what a file *about* merge
+// conflicts looks like (documentation, a test fixture, this codebase's own
+// ROADMAP), so the chrome defers to the VCS's own answer once it has one.
+
+TEST_CASE("A buffer the VCS reports as unconflicted gets no chips and no tinting",
+          "[BufferView][ConflictResolution]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\n");
+    fixture.buffer.SetPoint(0);
+    BufferView view = fixture.View();
+
+    ned::ui::Screen unknown(80, 8);
+    PaintInto(view, unknown);
+    REQUIRE(PaintedRow(unknown, 0).find("[ours]") != std::string::npos);
+    // The "ours" content line carries the ours wash while the gate says
+    // nothing -- read off the painted row, since the gutter sits left of it.
+    const int oursColumn = ChipColumn(unknown, 1, "ours");
+    REQUIRE(oursColumn > 0);
+    REQUIRE(unknown.PixelAt(oursColumn, 1).background_color == fixture.theme.conflictOursBackground);
+
+    view.DispatchConflictVerdictForTesting(ned::ui::bufferview::GutterModel::VcsConflictVerdict::Clean);
+    ned::ui::Screen clean(80, 8);
+    PaintInto(view, clean);
+
+    CHECK(PaintedRow(clean, 0).find("[ours]") == std::string::npos);
+    CHECK(PaintedRow(clean, 0).find("<<<<<<< a") != std::string::npos); // the text itself is untouched
+    CHECK(clean.PixelAt(oursColumn, 1).background_color != fixture.theme.conflictOursBackground);
+}
+
+TEST_CASE("A buffer the VCS confirms as unmerged keeps its chips", "[BufferView][ConflictResolution]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\n");
+    fixture.buffer.SetPoint(0);
+    BufferView view = fixture.View();
+
+    view.DispatchConflictVerdictForTesting(ned::ui::bufferview::GutterModel::VcsConflictVerdict::Conflicted);
+    ned::ui::Screen screen(80, 8);
+    PaintInto(view, screen);
+
+    CHECK(PaintedRow(screen, 0).find("[ours]") != std::string::npos);
+}
+
+TEST_CASE("A verdict arriving after the hunks were derived still takes effect",
+          "[BufferView][ConflictResolution]") {
+    // The cache is keyed on content generation, which the verdict's own
+    // arrival does not bump -- a gate checked outside the key would keep
+    // painting the chips it just disowned.
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\n");
+    fixture.buffer.SetPoint(0);
+    BufferView view = fixture.View();
+
+    ned::ui::Screen first(80, 8);
+    PaintInto(view, first); // derives (and memoizes) the hunks at this generation
+    REQUIRE(PaintedRow(first, 0).find("[ours]") != std::string::npos);
+
+    view.DispatchConflictVerdictForTesting(ned::ui::bufferview::GutterModel::VcsConflictVerdict::Clean);
+    ned::ui::Screen second(80, 8);
+    PaintInto(view, second);
+    CHECK(PaintedRow(second, 0).find("[ours]") == std::string::npos);
+
+    // ...and back, for the same reason in the other direction.
+    view.DispatchConflictVerdictForTesting(ned::ui::bufferview::GutterModel::VcsConflictVerdict::Conflicted);
+    ned::ui::Screen third(80, 8);
+    PaintInto(view, third);
+    CHECK(PaintedRow(third, 0).find("[ours]") != std::string::npos);
+}

@@ -118,10 +118,27 @@ const std::vector<text::ConflictHunk>& GutterModel::ConflictHunks() const {
     return conflictHunks_;
 }
 
+void GutterModel::SetVcsConflictVerdict(const text::Buffer* buffer, VcsConflictVerdict verdict) {
+    vcsConflictBuffer_  = buffer;
+    vcsConflictVerdict_ = verdict;
+}
+
+GutterModel::VcsConflictVerdict GutterModel::VcsConflictVerdictFor(const text::Buffer* buffer) const {
+    if (buffer == nullptr || buffer != vcsConflictBuffer_) {
+        return VcsConflictVerdict::Unknown;
+    }
+    return vcsConflictVerdict_;
+}
+
 void GutterModel::EnsureConflictHunks() const {
     text::Buffer& buffer = context_.activeBuffer.Get();
 
-    const CacheStamp stamp = CacheStamp::For(&buffer, {buffer.ContentGeneration()});
+    // The verdict is part of the key, not something checked after the fact:
+    // it arrives from a subprocess long after the hunks were first derived at
+    // this same content generation, and a cache that forgot it would keep
+    // showing the chips the verdict just disowned.
+    const VcsConflictVerdict verdict = VcsConflictVerdictFor(&buffer);
+    const CacheStamp         stamp   = CacheStamp::For(&buffer, {buffer.ContentGeneration(), static_cast<std::size_t>(verdict)});
     if (conflictHunkStamp_.Matches(stamp)) {
         return;
     }
@@ -131,8 +148,8 @@ void GutterModel::EnsureConflictHunks() const {
     // avoids both materializing the whole buffer via Text() and running
     // ParseConflictHunks's own full scan on every content-generation change
     // (i.e. every keystroke) for the overwhelming common case.
-    conflictHunks_ = buffer.HasConflictMarkers() ? text::ParseConflictHunks(buffer.Text())
-                                                  : std::vector<text::ConflictHunk>{};
+    const bool parse   = verdict != VcsConflictVerdict::Clean && buffer.HasConflictMarkers();
+    conflictHunks_     = parse ? text::ParseConflictHunks(buffer.Text()) : std::vector<text::ConflictHunk>{};
     conflictHunkStamp_ = stamp;
 }
 
