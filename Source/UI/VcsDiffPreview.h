@@ -51,6 +51,13 @@ class VcsDiffPreview : public Widget {
     // Matches Runner::RequestFileDiffText's own staged parameter.
     void SetModel(std::optional<VcsDiffPreviewModel> model);
 
+    // Whether there is a diff to show at all -- the composition root's own
+    // visibility sync asks this when the VCS panel becomes visible again,
+    // since VcsPanel only re-notifies a selection that actually moved.
+    [[nodiscard]] bool HasContent() const {
+        return model_.has_value();
+    }
+
     // Fired when a hunk's own [stage]/[unstage] affordance is clicked --
     // newStart is the hunk's own new-side start line, ExtractHunkPatch's
     // own 1-indexed "targetLine" convention (Runner::RequestHunkApply

@@ -97,6 +97,15 @@ class OverlayHost {
     // for the caller's normal dispatch (false).
     bool OnMouseEvent(const Event& event);
 
+    // Whether a visible overlay painted *above* `painter` covers this
+    // absolute screen point. The terminal's own hardware cursor is above
+    // every plane by construction, so it cannot be occluded by painting --
+    // the composition root asks this instead and simply doesn't place a
+    // cursor it would leave stranded on top of an overlay. A `painter` that
+    // is not a registered overlay (the buffer, a dock panel, null) is below
+    // all of them, so every visible overlay counts.
+    [[nodiscard]] bool CoversPoint(Point point, const Widget* painter = nullptr) const;
+
   private:
     struct Entry {
         Widget*               widget = nullptr;

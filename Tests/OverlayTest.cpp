@@ -190,3 +190,76 @@ TEST_CASE("OverlayHost::Hide runs the focus-return callback only for the focus h
     host.Hide(overlay);
     REQUIRE(focusReturns == 1);
 }
+
+// The buffer's current-line wash lives on the backing layer, which Flush
+// renders *below* the text plane -- so an overlay cell with no background of
+// its own defers to it, and a highlight underneath the overlay draws straight
+// through. The overlay owns the backdrop of what it covers.
+TEST_CASE("OverlayHost clears the backing layer under a visible overlay", "[Overlay]") {
+    OverlayHost host;
+    FakeOverlay overlay("X");
+    host.Add(overlay, [](Size) { return Box{.x_min = 2, .x_max = 5, .y_min = 1, .y_max = 2}; });
+    host.Reflow(Size{.width = 10, .height = 4});
+
+    Screen screen(10, 4);
+    for (int y = 0; y < 4; ++y) {
+        for (int x = 0; x < 10; ++x) {
+            screen.BackingAt(x, y).background_color = ned::ui::Color::RGB(0x304050);
+        }
+    }
+
+    host.Show(overlay);
+    host.Paint(screen);
+
+    REQUIRE(screen.BackingAt(3, 1).background_color.kind == ned::ui::Color::Kind::Default);
+    REQUIRE(screen.BackingAt(5, 2).background_color.kind == ned::ui::Color::Kind::Default);
+    // Outside the box the wash is untouched -- this clears a region, not the layer.
+    REQUIRE(screen.BackingAt(1, 1).background_color == ned::ui::Color::RGB(0x304050));
+    REQUIRE(screen.BackingAt(6, 2).background_color == ned::ui::Color::RGB(0x304050));
+    REQUIRE(screen.BackingAt(3, 3).background_color == ned::ui::Color::RGB(0x304050));
+}
+
+TEST_CASE("OverlayHost clears backing only under overlays that are actually visible", "[Overlay]") {
+    OverlayHost host;
+    FakeOverlay hidden("H");
+    host.Add(hidden, [](Size) { return Box{.x_min = 0, .x_max = 3, .y_min = 0, .y_max = 1}; });
+    host.Reflow(Size{.width = 10, .height = 4});
+
+    Screen screen(10, 4);
+    screen.BackingAt(1, 1).background_color = ned::ui::Color::RGB(0x304050);
+    host.Paint(screen);
+    REQUIRE(screen.BackingAt(1, 1).background_color == ned::ui::Color::RGB(0x304050));
+}
+
+// The terminal's hardware cursor sits above every plane, so the composition
+// root asks whether an overlay covers it rather than trying to paint over it.
+TEST_CASE("OverlayHost::CoversPoint reports overlays painted above the asking widget", "[Overlay]") {
+    OverlayHost host;
+    FakeOverlay lower("L");
+    FakeOverlay upper("U");
+    FakeOverlay outsider("O");
+    host.Add(lower, [](Size) { return Box{.x_min = 0, .x_max = 4, .y_min = 0, .y_max = 2}; });
+    host.Add(upper, [](Size) { return Box{.x_min = 2, .x_max = 6, .y_min = 1, .y_max = 3}; });
+    host.Reflow(Size{.width = 10, .height = 4});
+
+    // Nothing visible covers anything.
+    REQUIRE_FALSE(host.CoversPoint(ned::ui::Point{.x = 3, .y = 1}));
+
+    host.Show(lower);
+    host.Show(upper); // raises upper to topmost
+
+    // A widget that is not an overlay at all (the buffer, a dock panel) is
+    // below every one of them.
+    REQUIRE(host.CoversPoint(ned::ui::Point{.x = 1, .y = 0}, &outsider));
+    REQUIRE(host.CoversPoint(ned::ui::Point{.x = 6, .y = 3}, nullptr));
+    REQUIRE_FALSE(host.CoversPoint(ned::ui::Point{.x = 9, .y = 3}, nullptr));
+
+    // An overlay's own cursor is not covered by what it is painted above.
+    REQUIRE_FALSE(host.CoversPoint(ned::ui::Point{.x = 1, .y = 0}, &upper));
+    // ...but the lower one's is, where the upper overlaps it.
+    REQUIRE(host.CoversPoint(ned::ui::Point{.x = 3, .y = 1}, &lower));
+    REQUIRE_FALSE(host.CoversPoint(ned::ui::Point{.x = 0, .y = 0}, &lower));
+
+    host.Hide(upper);
+    REQUIRE_FALSE(host.CoversPoint(ned::ui::Point{.x = 3, .y = 1}, &lower));
+}

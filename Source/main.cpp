@@ -1772,6 +1772,24 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
                 });
         });
 
+    // The preview is non-focusable and has no toggle of its own, so the only
+    // thing that can dismiss it is the panel that summoned it going away --
+    // and the dock hides/collapses through several paths that deliberately
+    // fire no commit callback (session restore, a keyboard visit's
+    // PrepareForKeyboardFocus/NoteFocusReturned pair). Derived once per
+    // frame instead of chased through each of them, the same
+    // recompute-fresh convention overlay placement itself follows. Show() is
+    // gated on not already being visible because it also raises to topmost.
+    auto syncVcsDiffPreviewVisibility = [&overlays, &vcsDiffPreview, dock = leftDock.get(), panel = vcsPanel.get()] {
+        const bool panelVisible = !dock->Collapsed() && dock->ActiveContent() == panel;
+        if (!panelVisible) {
+            overlays.Hide(vcsDiffPreview);
+        }
+        else if (vcsDiffPreview.HasContent() && !overlays.IsVisible(vcsDiffPreview)) {
+            overlays.Show(vcsDiffPreview);
+        }
+    };
+
     // multiple-terminal-tabs follow-up: any number of concurrent embedded
     // shells, each its own PanelDock tab, all uniform -- closable including
     // the first, with toggle-terminal/new-terminal (below) operating over
@@ -3156,6 +3174,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
             screenBuffer.ClearCells();
         }
         head.Paint(Canvas(screenBuffer, head.Box_()));
+        syncVcsDiffPreviewVisibility();
         overlays.Paint(screenBuffer);
         // NED_DEBUG_DUMP_SCREEN=<path> rewrites that file with the glyphs of
         // the frame just painted, before it reaches any plane. Whatever it
@@ -3199,9 +3218,17 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
 
         if (const Widget* focused = FocusedWidget()) {
             if (const std::optional<Point> local = focused->CursorPosition()) {
-                const Box& box = focused->Box_();
-
-                return Point{box.x_min + local->x, box.y_min + local->y};
+                const Box&  box = focused->Box_();
+                const Point absolute{box.x_min + local->x, box.y_min + local->y};
+                // The terminal's own cursor is above every plane, so an
+                // overlay cannot paint over it: a buffer cursor left under a
+                // drawer shows through as a block sitting on top of the
+                // drawer's own text. Nothing owns that cell any more, so
+                // there is no cursor to place.
+                if (overlays.CoversPoint(absolute, focused)) {
+                    return std::nullopt;
+                }
+                return absolute;
             }
         }
 

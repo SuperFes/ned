@@ -275,6 +275,24 @@ class Screen {
         }
     }
 
+    // The same, over one region: the backdrop of a cell belongs to whatever
+    // painted it last, so a widget drawing over ground someone else already
+    // washed has to take the backing layer with it -- otherwise a
+    // translucent cell of its own defers (Flush below) to a highlight that
+    // belongs to what it is covering. OverlayHost does this for every
+    // overlay it paints; a Box outside the Screen is clipped, not an error.
+    void ClearBacking(const Box& box) {
+        const int x0 = std::max(0, box.x_min);
+        const int y0 = std::max(0, box.y_min);
+        const int x1 = std::min(width_ - 1, box.x_max);
+        const int y1 = std::min(height_ - 1, box.y_max);
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+                BackingAt(x, y) = Cell{};
+            }
+        }
+    }
+
     // The text grid's counterpart, and deliberately NOT called per frame: the
     // whole text layer is supposed to be repainted in full every frame (see
     // main.cpp's render callback), so clearing it first would be pure waste.

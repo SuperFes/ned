@@ -204,12 +204,44 @@ void OverlayHost::Paint(Screen& screen) const {
 
     for (const Entry& entry : entries_) {
         if (entry.widget->active) {
+            const Box& box = entry.widget->Box_();
             if (theme_ != nullptr) {
-                PaintShadow(screen, entry.widget->Box_(), SurfaceFor(*theme_, entry.surfaceName));
+                PaintShadow(screen, box, SurfaceFor(*theme_, entry.surfaceName));
             }
-            entry.widget->Paint(Canvas(screen, entry.widget->Box_()));
+            // An overlay owns the backdrop of every cell it covers, not just
+            // the cell. Without this, a translucent overlay cell defers (see
+            // Screen::Flush) to the backing layer underneath it -- which is
+            // whatever the buffer washed there, so a current-line highlight
+            // or a ruler runs straight through the overlay. Cleared rather
+            // than painted over: what shows through a translucent overlay
+            // should be the desktop, the same as everywhere else it is
+            // translucent.
+            screen.ClearBacking(box);
+            entry.widget->Paint(Canvas(screen, box));
         }
     }
+}
+
+bool OverlayHost::CoversPoint(Point point, const Widget* painter) const {
+    bool above = true; // until `painter` itself is found in paint order
+    for (const Entry& entry : entries_) {
+        if (entry.widget == painter) {
+            above = false;
+            continue;
+        }
+        if (!above && entry.widget->active && entry.widget->Box_().Contain(point.x, point.y)) {
+            return true;
+        }
+    }
+    if (above) {
+        // `painter` is not one of ours: below every overlay.
+        for (const Entry& entry : entries_) {
+            if (entry.widget->active && entry.widget->Box_().Contain(point.x, point.y)) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 bool OverlayHost::OnMouseEvent(const Event& event) {
