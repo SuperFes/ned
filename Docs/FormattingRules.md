@@ -447,11 +447,15 @@ alone therefore gets you `} else` + a broken `{`, never Allman.
 
 So this kind needed its own capture convention, the same way every kind before it did:
 **the capture names the KEYWORD TOKEN itself.** One shared name,
-`break.control`, over every continuation keyword a language has -- `else`, `elseif`,
+`control.keyword` -- the sibling of `control.parens` above, and deliberately NOT
+`break.control`, which this rollout first used and which differs from the existing
+`brace.control` by a single letter (caught the day it shipped, by the first person to
+configure it writing `brace.control` twice and wondering why nothing moved) -- over every
+continuation keyword a language has -- `else`, `elseif`,
 `catch`, `finally`, and do-while's own trailing `while` -- rather than one name each.
 "Break before a control keyword" is a single decision in every style guide that has an
 opinion about it, and it is the same grouping `brace.control` already makes for those
-same statements' *bodies*. A language-scoped override (`php/break.control`) still narrows
+same statements' *bodies*. A language-scoped override (`php/control.keyword`) still narrows
 it; splitting the name per keyword is the change to make if a real case turns up, not
 before.
 
@@ -459,14 +463,14 @@ before.
 # .ned/format.janet -- full Allman
 {:break {"brace.function" {:placement :next-line}
          "brace.control"  {:placement :next-line}
-         "break.control"  {:before true}}}
+         "control.keyword"  {:before true}}}
 ```
 
 ```janet
 # the same thing from init.janet
 (ned/set-format-brace-placement "brace.function" "next-line")
 (ned/set-format-brace-placement "brace.control" "next-line")
-(ned/set-format-break-before "break.control" true)
+(ned/set-format-break-before "control.keyword" true)
 ```
 
 `true` puts the keyword on a line of its own, indented to the column of the line the
@@ -482,14 +486,31 @@ might be meaningfully broken"). Un-breaking is where the real hazard lives: join
 it only ever rewrites the whitespace run touching the token, so `} /* done */ else`
 leaves the comment exactly where it is and breaks after it.
 
-**PHP is the pilot**, and auditing it for this turned up a real pre-existing gap in its
-own `brace.control` set: `catch_clause` had been standing in for the whole try statement,
-so `try`, `finally`, and `do` bodies were never captured at all and no placement rule
-reached them. Fixed in the same pass -- a `try {` that refused to go Allman while its own
-`catch` obeyed was the symptom that surfaced it.
+**Every brace language declares it** -- cpp, c, javascript (and typescript/tsx through
+that same file), java, csharp, rust, kotlin, php. The keyword set per language is whatever
+that grammar actually has: `else` everywhere, `catch`/`finally` where they exist, and
+do-while's own trailing `while`. Widening further is a query-file change and nothing else;
+`Editor/FormatBreak.h` never mentions a language.
 
-No other language declares `break.control` yet. Widening it is a query-file change per
-language and nothing else: `Editor/FormatBreak.h` never mentions a language.
+**Go declares none, and `Editor/FormatBreak.cpp` refuses `go` outright besides.** This is
+the same correctness hazard `PlacementUnsafeForLanguage` already refuses Go for, one step
+further along: automatic semicolon insertion terminates the statement at the newline after
+`}`, so a break before `else` is not a style choice but `syntax error: unexpected else`.
+The guard is deliberately doubled -- no capture to configure, and a refusal in code if one
+is ever added by mistake.
+
+**Two pre-existing gaps surfaced by auditing every language for this**, both of the same
+kind and both invisible until something needed the whole set to be right:
+
+- PHP's `brace.control` was missing `try`, `finally` and `do` bodies -- `catch_clause` had
+  been standing in for the whole try statement. A `try {` refusing to go Allman while its
+  own `catch` obeyed is what surfaced it.
+- **No language but PHP captured an else branch's own body at all.** An else-*if*'s body
+  came for free (it is a nested if statement's own consequence), but a trailing bare
+  `else { ... }` was captured by nothing in cpp, c, javascript, java, csharp, rust or
+  kotlin -- so `:placement :next-line` moved an `if`'s brace and silently left its
+  `else`'s alone in seven languages. A test had even recorded this as a deliberate scope
+  cut; it wasn't one anybody would choose, and it is closed now.
 
 ## Blank lines, and overriding them per language
 

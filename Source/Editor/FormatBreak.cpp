@@ -9,6 +9,16 @@ namespace ned::editor {
 
 namespace {
 
+    // Go's automatic semicolon insertion terminates the statement at the
+    // newline after `}`, so a break before `else` is not a style choice but
+    // "syntax error: unexpected else" -- the same hazard
+    // FormatBracePlacement.cpp's own PlacementUnsafeForLanguage already
+    // refuses Go for. go/format.janet declares no control.keyword capture at
+    // all, so this is the second line of defence rather than the only one.
+    bool BreakUnsafeForLanguage(std::string_view languageKey, bool wantBreak) {
+        return wantBreak && languageKey == "go";
+    }
+
     bool IsBreakWhitespace(char c) {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r';
     }
@@ -112,10 +122,10 @@ std::vector<FormatTextEdit> ComputeBreakEdits(std::string_view text, std::string
         if (!rule.before && !rule.after) {
             continue; // unconfigured -- no built-in default, nothing forced
         }
-        if (rule.before) {
+        if (rule.before && !BreakUnsafeForLanguage(languageKey, *rule.before)) {
             BreakBefore(edits, text, capture.startByte, *rule.before);
         }
-        if (rule.after) {
+        if (rule.after && !BreakUnsafeForLanguage(languageKey, *rule.after)) {
             BreakAfter(edits, text, capture.endByte, *rule.after);
         }
     }

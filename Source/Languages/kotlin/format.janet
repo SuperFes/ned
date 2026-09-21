@@ -157,3 +157,16 @@
 # unambiguous class_body -- folds into brace.class the same way
 # object_declaration/companion_object already do.
 (object_literal (class_body) @brace.class)
+
+# keyword-break follow-up: the continuation KEYWORDS themselves. A body
+# capture's span starts at its opening brace, so no rule about brace.* can
+# move a keyword standing outside and before it -- which is exactly where
+# Allman's own `else` needs to go. One shared name across every continuation
+# keyword, the sibling of control.parens above; see php/format.janet's own
+# comment for the full reasoning and Editor/FormatBreak.h for the pass.
+# Unconfigured, inert:
+#   (ned/set-format-break-before "control.keyword" true)
+(if_expression "else" @control.keyword)
+(catch_block "catch" @control.keyword)
+(finally_block "finally" @control.keyword)
+(do_while_statement "while" @control.keyword)

@@ -189,3 +189,22 @@
 (lambda_expression body: (block . (_) .) @brace.function.simple)
 (anonymous_method_expression (block) @brace.function)
 (anonymous_method_expression (block . (_) .) @brace.function.simple)
+
+# keyword-break follow-up: the continuation KEYWORDS themselves. A body
+# capture's span starts at its opening brace, so no rule about brace.* can
+# move a keyword standing outside and before it -- which is exactly where
+# Allman's own `else` needs to go. One shared name across every continuation
+# keyword, the sibling of control.parens above; see php/format.janet's own
+# comment for the full reasoning and Editor/FormatBreak.h for the pass.
+# Unconfigured, inert:
+#   (ned/set-format-break-before "control.keyword" true)
+(if_statement "else" @control.keyword)
+(catch_clause "catch" @control.keyword)
+(finally_clause "finally" @control.keyword)
+(do_statement "while" @control.keyword)
+
+# else-branch bodies: the same brace.control grouping as the if's own
+# consequence above. Missing until the keyword-break rollout audited every
+# language for it -- so `:placement :next-line` moved an `if`'s brace and
+# silently left its `else`'s alone, in every language but php.
+(if_statement alternative: (block) @brace.control)

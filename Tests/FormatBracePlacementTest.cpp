@@ -946,12 +946,14 @@ TEST_CASE("rust-mode's format.janet does not capture a unit or tuple struct, onl
     REQUIRE(CapturesNamed(mode.formatCaptures("struct Empty {}\n"), "brace.class").size() == 1);
 }
 
-TEST_CASE("rust-mode's format.janet does not name a distinct capture for an else/else-if branch",
-          "[FormatBracePlacement]") {
-    // Matches cpp/javascript/java's own scope cut, not PHP's colon hazard --
-    // an else-if's own body is captured because it's itself a nested
-    // if_expression's "consequence" (recursion, not a dedicated pattern),
-    // but the trailing bare "else { ... }" is not captured at all.
+TEST_CASE("rust-mode's format.janet captures an else branch's own body", "[FormatBracePlacement]") {
+    // This used to assert the opposite, recording a scope cut cpp/javascript/
+    // java shared: an else-IF's body was captured for free (it is itself a
+    // nested if_expression's "consequence"), but a trailing bare
+    // "else { ... }" was captured by nothing. The keyword-break rollout
+    // closed it in every language that had it -- the cut meant
+    // ":placement :next-line" moved an if's brace and silently left its
+    // else's alone, which is not a scope decision anyone would choose.
     const Mode        mode   = RustMode();
     const std::string source = "fn f() {\n"
                                "    if x {\n"
@@ -962,7 +964,7 @@ TEST_CASE("rust-mode's format.janet does not name a distinct capture for an else
                                "        c();\n"
                                "    }\n"
                                "}\n";
-    REQUIRE(CapturesNamed(mode.formatCaptures(source), "brace.control").size() == 2); // if's body, else-if's body
+    REQUIRE(CapturesNamed(mode.formatCaptures(source), "brace.control").size() == 3); // if, else-if, else
 }
 
 TEST_CASE("rust-mode's format.janet marks a single-statement body isSimple too", "[FormatBracePlacement]") {

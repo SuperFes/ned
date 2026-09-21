@@ -143,13 +143,13 @@ narrow it to one language's quirk.
 
 **Full Allman needs both halves.** `:placement :next-line` moves the opening brace, but a
 body capture starts *at* that brace, so nothing about it can move the `else` standing
-outside and before it. The keyword is its own capture, `break.control`, covering `else`,
+outside and before it. The keyword is its own capture, `control.keyword`, covering `else`,
 `elseif`, `catch`, `finally`, and do-while's trailing `while`:
 
 ```janet
 (ned/set-format-brace-placement "brace.function" "next-line")
 (ned/set-format-brace-placement "brace.control" "next-line")
-(ned/set-format-break-before "break.control" true)
+(ned/set-format-break-before "control.keyword" true)
 ```
 
 ```php
@@ -165,7 +165,7 @@ else
 
 `false` normalises horizontal spacing only — it won't un-break a keyword already on its
 own line, because joining `} // done` and `else` would comment the keyword out. PHP is
-the only language declaring `break.control` today.
+the only language declaring `control.keyword` today.
 
 A worked example — brace style that differs between two languages sharing one rule set:
 

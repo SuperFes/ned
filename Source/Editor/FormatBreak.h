@@ -20,7 +20,7 @@
 // The capture names the KEYWORD TOKEN itself, not a clause or a body -- a
 // new convention this kind needed for the same reason every prior kind
 // needed its own: a rule can only talk about a span some query actually
-// names. One shared name, `break.control`, covers every continuation keyword
+// names. One shared name, `control.keyword`, covers every continuation keyword
 // a language has (`else`, `elseif`, `catch`, `finally`, do-while's trailing
 // `while`), the same grouping `brace.control` already makes for those same
 // statements' bodies -- "break before a control keyword" is one decision in

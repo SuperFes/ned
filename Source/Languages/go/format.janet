@@ -106,3 +106,15 @@
 # existing comment on the mechanism).
 (func_literal body: (block) @brace.function)
 (func_literal body: (block (statement_list . (_) .)) @brace.function.simple)
+
+# keyword-break follow-up: Go declares NO control.keyword capture, and this
+# is the same correctness hazard its brace placement already documents above,
+# not a coverage gap. Go's automatic semicolon insertion terminates the
+# statement at the newline after `}`, so
+#
+#   }
+#   else {
+#
+# is not a style choice -- it is "syntax error: unexpected else". The one
+# legal spelling is `} else {`. Editor/FormatBreak.cpp refuses `go` outright
+# as well, so a query added here by mistake still cannot produce it.

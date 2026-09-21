@@ -199,9 +199,9 @@
 # else_clause wrapping an if_statement, whose `else` the first pattern
 # catches like any other).
 # Unconfigured, inert:
-#   (ned/set-format-break-before "break.control" true)
-(else_clause "else" @break.control)
-(else_if_clause "elseif" @break.control)
-(catch_clause "catch" @break.control)
-(finally_clause "finally" @break.control)
-(do_statement "while" @break.control)
+#   (ned/set-format-break-before "control.keyword" true)
+(else_clause "else" @control.keyword)
+(else_if_clause "elseif" @control.keyword)
+(catch_clause "catch" @control.keyword)
+(finally_clause "finally" @control.keyword)
+(do_statement "while" @control.keyword)

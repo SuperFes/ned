@@ -162,3 +162,22 @@
 # (backtick-delimited, never single/double-quoted), so it is never reached
 # by this capture at all -- no discriminator needed.
 (string) @rewrite.quote
+
+# keyword-break follow-up: the continuation KEYWORDS themselves. A body
+# capture's span starts at its opening brace, so no rule about brace.* can
+# move a keyword standing outside and before it -- which is exactly where
+# Allman's own `else` needs to go. One shared name across every continuation
+# keyword, the sibling of control.parens above; see php/format.janet's own
+# comment for the full reasoning and Editor/FormatBreak.h for the pass.
+# Unconfigured, inert:
+#   (ned/set-format-break-before "control.keyword" true)
+(else_clause "else" @control.keyword)
+(catch_clause "catch" @control.keyword)
+(finally_clause "finally" @control.keyword)
+(do_statement "while" @control.keyword)
+
+# else-branch bodies: the same brace.control grouping as the if's own
+# consequence above. Missing until the keyword-break rollout audited every
+# language for it -- so `:placement :next-line` moved an `if`'s brace and
+# silently left its `else`'s alone, in every language but php.
+(else_clause (statement_block) @brace.control)

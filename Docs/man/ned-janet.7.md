@@ -406,7 +406,7 @@ configuration is Janet code, and these are the bindings it calls.
 
 `ned/set-format-break-before`
 
-:   Override whether a newline is forced before the given capture name -- true/false, nil clears. The capture names a keyword token ("break.control": else/elseif/catch/finally, do-while's while); true puts it on its own line at the preceding closer's column (Allman), false normalises horizontal space only and never un-breaks a keyword already on its own line.
+:   Override whether a newline is forced before the given capture name -- true/false, nil clears. The capture names a keyword token ("control.keyword": else/elseif/catch/finally, do-while's while); true puts it on its own line at the preceding closer's column (Allman), false normalises horizontal space only and never un-breaks a keyword already on its own line.
 
 `ned/set-format-case-convention`
 
