@@ -28,6 +28,7 @@
 
 # Reference
 
+- [Invocation](invocation.md)
 - [Language Support](language-support.md)
 - [Theming](theming.md)
 - [Scripting](scripting.md)

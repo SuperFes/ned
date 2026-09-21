@@ -171,6 +171,7 @@ add_executable(ned_tests
             GrammarFileTest.cpp
             ImprintIndentTest.cpp
             CommandReferenceTest.cpp
+            InvocationReferenceTest.cpp
             ImprintBracketTest.cpp
             FormatterPropertiesTest.cpp
             ThemeKeyDocsTest.cpp

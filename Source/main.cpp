@@ -41,6 +41,7 @@
 #include "Editor/BufferSave.h"
 #include "Editor/BundledSnippets.h"
 #include "Editor/CliFormatDispatch.h"
+#include "Editor/CliOptions.h"
 #include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/Manager.h"
@@ -3347,111 +3348,14 @@ auto main(int argc, char** argv) -> int {
     // not a new failure mode to plumb through.
     std::signal(SIGPIPE, SIG_IGN);
 
-    // startup-mode-unification follow-up: one CLI::App owns every top-level
-    // flag ned recognizes, --lsp-broker/--lsp-broker-stop included --
-    // previously each was a hand-rolled `argv[1] == "..."` check run
-    // *before* any real parsing, so `ned --help` never documented them.
-    // They stay plain flags on this one App rather than becoming CLI11
-    // subcommands specifically to keep the exact existing invocations
-    // (`ned --lsp-broker`, notably self-exec'd by
-    // Lsp/BrokerConnect.cpp, and documented as a systemd ExecStart
-    // line) working unchanged -- a subcommand would mean `ned lsp-broker`
-    // instead, a real breaking syntax change for no behavioral gain here.
-    // ->excludes() catches the nonsensical case of passing more than one
-    // of the three as a real CLI11 error instead of silently letting
-    // whichever this code happened to check first win.
-    CLI::App app{"Ned -- a terminal-based, Janet-scriptable text editor.", "ned"};
-
-    // The version reported here is CMakeLists.txt's own project(Ned VERSION
-    // ...), routed through the generated NedVersion.h, so there is exactly one
-    // place to bump. Printed as "ned <version>" rather than a bare number
-    // because this is what a bug report gets pasted from.
-    app.set_version_flag("--version", std::string("ned ") + Ned::kVersion,
-                         "Print ned's version and exit");
-
-    bool                     lspBroker     = false;
-    bool                     lspBrokerStop = false;
-    bool                     foreground    = false;
-    bool                     format        = false;
-    bool                     forceHuge     = false;
-    bool                     compileLanguage = false;
-    std::string              compileOutput;
-    bool                     importLanguage = false;
-    bool                     testLanguage   = false;
-    bool                     bless          = false;
-    std::string              importName;
-    std::string              importSubdir;
-    std::string              importRef;
-    std::string              importInto;
-    bool                     forceBinary   = false;
-    bool                     noRestore     = false;
-    bool                     vimMode       = false;
-    bool                     transient     = false;
-    bool                     noTransient   = false;
-    std::string              mcpStdioRelaySocketPath;
-    std::vector<std::string> paths;
-
-    CLI::Option* lspBrokerOpt =
-        app.add_flag("--lsp-broker", lspBroker, "Run the headless LSP broker daemon and exit")
-            ->group("Startup modes");
-    app.add_flag("--lsp-broker-stop", lspBrokerStop, "Stop a running LSP broker daemon and exit")
-        ->excludes(lspBrokerOpt)
-        ->group("Startup modes");
-    app.add_flag("--foreground", foreground,
-                 "Run the LSP broker daemon in the foreground, never self-exiting when idle -- for a systemd "
-                 "--user service (see Packaging/systemd/ned-server.service) or any other real process supervisor")
-        ->excludes(lspBrokerOpt)
-        ->group("Startup modes");
-    app.add_option("--mcp-stdio-relay", mcpStdioRelaySocketPath,
-                   "Relay stdio to a running ned process's ACP MCP bridge socket, then exit (spawned by an ACP agent, not meant to be run by hand)")
-        ->excludes(lspBrokerOpt)
-        ->group("Startup modes");
-    app.add_flag("--format", format,
-                 "Format the given files headlessly and exit (External formatter, falling back to a native "
-                 "per-language reindent -- no LSP tier, no init.janet; format.janet only)")
-        ->excludes(lspBrokerOpt)
-        ->group("Startup modes");
-    app.add_flag("--force-huge", forceHuge,
-                 "With --format, reindent a file over the huge-file threshold via the lexical streaming engine "
-                 "(Native reindent only -- no external formatter, no space/break/wrap/blank rules) instead of "
-                 "skipping it")
-        ->needs("--format");
-    app.add_flag("--compile-language", compileLanguage,
-                 "Compile each given language directory's grammar.janet to its parse tables (written as `tables` "
-                 "beside it) and exit -- what the build runs for every bundled language, and the authoring loop "
-                 "for a hand-written grammar")
-        ->excludes(lspBrokerOpt)
-        ->group("Startup modes");
-    app.add_option("-o,--output", compileOutput, "With --compile-language (or as ned-langc) and a single language, write the tables to this file instead");
-    app.add_flag("--import-language", importLanguage,
-                 "Turn a tree-sitter grammar repository (a git URL or a checkout) into a ned language package: grammar.janet, "
-                 "upstream queries, corpus, staged scanner, and a language.janet skeleton -- then compile it and run its corpus")
-        ->excludes(lspBrokerOpt)
-        ->group("Startup modes");
-    app.add_option("--name", importName, "With --import-language: the language name (default: the grammar's own)");
-    app.add_option("--subdir", importSubdir, "With --import-language: the grammar's directory inside a multi-grammar repository");
-    app.add_option("--ref", importRef, "With --import-language and a git URL: the tag, branch or full commit hash to clone");
-    app.add_option("--into", importInto, "With --import-language: the languages root to write the package under (default: $XDG_CONFIG_HOME/ned/languages)");
-    app.add_flag("--test-language", testLanguage, "Run each given language package's corpus against its grammar and exit")
-        ->excludes(lspBrokerOpt)
-        ->group("Startup modes");
-    app.add_flag("--bless", bless, "With --test-language: rewrite each failing case's expected tree to what the grammar parses now");
-    app.add_flag("--force-binary", forceBinary,
-                 "Open files that look binary anyway, without an interactive confirmation");
-    app.add_flag("--no-restore", noRestore,
-                 "Don't restore the project's saved session (open buffers, breakpoints, sidebar state)");
-    app.add_flag("--transient", transient,
-                 "Store nothing about this run: no project session (neither restored nor saved), no save-place, "
-                 "no recent-files entry, no persistent undo, no backups. For running ned as another tool's "
-                 "$EDITOR -- it is applied automatically for a file a version control system names (git's "
-                 "COMMIT_EDITMSG and friends, hg, svn, jj, fossil)");
-    app.add_flag("--no-transient", noTransient,
-                 "Record this run normally even if the file opened is one a version control system names -- the "
-                 "override for --transient's own automatic detection");
-    app.add_flag("--vim", vimMode,
-                 "Start with Vim emulation on (the same setting ned/set-vim-mode controls; applied after "
-                 "init.janet loads, so this flag wins over any ned/set-vim-mode call there)");
-    app.add_option("paths", paths, "Files or directories to open");
+    // Every option -- and the description, hence the empty one here --
+    // lives in Editor/CliOptions.cpp, not in main.cpp, which isn't linked
+    // into ned_tests at all: the generated invocation reference
+    // (Tests/InvocationReferenceTest.cpp) walks the same CLI::App this
+    // parses with, so ned.1 cannot document a flag the binary lacks.
+    CLI::App             app{"", "ned"};
+    ned::editor::CliArgs cli;
+    ned::editor::BuildCli(app, cli);
 
     try {
         app.parse(argc, argv);
@@ -3473,17 +3377,17 @@ auto main(int argc, char** argv) -> int {
     // actually present on the command line still wins -- `ned-format
     // --lsp-broker` is unusual but not this dispatch's business to
     // override or refuse.
-    if (argc > 0 && ned::editor::InvokedAsNedFormat(argv[0]) && !lspBroker && !lspBrokerStop && !foreground &&
-        mcpStdioRelaySocketPath.empty()) {
-        format = true;
+    if (argc > 0 && ned::editor::InvokedAsNedFormat(argv[0]) && !cli.lspBroker && !cli.lspBrokerStop && !cli.foreground &&
+        cli.mcpStdioRelaySocketPath.empty()) {
+        cli.format = true;
     }
-    if (argc > 0 && !lspBroker && !lspBrokerStop && !foreground && mcpStdioRelaySocketPath.empty() && !format) {
+    if (argc > 0 && !cli.lspBroker && !cli.lspBrokerStop && !cli.foreground && cli.mcpStdioRelaySocketPath.empty() && !cli.format) {
         if (ned::editor::InvokedAsNedLangc(argv[0]))
-            compileLanguage = true;
+            cli.compileLanguage = true;
         else if (ned::editor::InvokedAsNedImportLanguage(argv[0]))
-            importLanguage = true;
+            cli.importLanguage = true;
         else if (ned::editor::InvokedAsNedTestLanguage(argv[0]))
-            testLanguage = true;
+            cli.testLanguage = true;
     }
 
     // `ned --lsp-broker`: runs the headless LSP broker daemon itself (see
@@ -3492,7 +3396,7 @@ auto main(int argc, char** argv) -> int {
     // auto-forks-and-execve's into when no daemon is already reachable, and
     // is equally the right ExecStart line for a `systemd --user` unit that
     // starts it explicitly at login instead.
-    if (lspBroker) {
+    if (cli.lspBroker) {
         return ned::editor::lsp::RunLspBrokerDaemon();
     }
 
@@ -3503,36 +3407,36 @@ auto main(int argc, char** argv) -> int {
     // than the ephemeral, self-terminating auto-spawn `--lsp-broker` is
     // tuned for. SIGTERM/SIGINT (BrokerDaemon::Run()) is what a supervisor
     // stop or Ctrl-C actually shuts this down with.
-    if (foreground) {
+    if (cli.foreground) {
         return ned::editor::lsp::RunLspBrokerDaemon(/*maxConcurrentServers=*/8, /*wholeDaemonIdleTimeout=*/std::chrono::milliseconds::zero());
     }
 
-    if (lspBrokerStop) {
+    if (cli.lspBrokerStop) {
         return RunLspBrokerStop();
     }
 
-    if (!mcpStdioRelaySocketPath.empty()) {
-        return RunMcpStdioRelay(mcpStdioRelaySocketPath);
+    if (!cli.mcpStdioRelaySocketPath.empty()) {
+        return RunMcpStdioRelay(cli.mcpStdioRelaySocketPath);
     }
 
-    if (compileLanguage) {
-        return ned::editor::grammar::compile::RunCompileLanguage(paths, compileOutput, std::cout, std::cerr);
+    if (cli.compileLanguage) {
+        return ned::editor::grammar::compile::RunCompileLanguage(cli.paths, cli.compileOutput, std::cout, std::cerr);
     }
-    if (importLanguage) {
-        if (paths.size() != 1) {
+    if (cli.importLanguage) {
+        if (cli.paths.size() != 1) {
             std::cerr << "ned --import-language: exactly one git URL or directory is required\n";
             return Ned::ToExitCode(Ned::ExitStatus::UsageError);
         }
         return ned::editor::grammar::compile::RunImportLanguage(
-            ned::editor::grammar::compile::ImportOptions{.source = paths.front(), .name = importName, .subdir = importSubdir, .ref = importRef, .into = importInto},
+            ned::editor::grammar::compile::ImportOptions{.source = cli.paths.front(), .name = cli.importName, .subdir = cli.importSubdir, .ref = cli.importRef, .into = cli.importInto},
             std::cout, std::cerr);
     }
-    if (testLanguage) {
-        return ned::editor::grammar::compile::RunTestLanguage(paths, bless, std::cout, std::cerr);
+    if (cli.testLanguage) {
+        return ned::editor::grammar::compile::RunTestLanguage(cli.paths, cli.bless, std::cout, std::cerr);
     }
 
-    if (format) {
-        return RunFormatFiles(paths, forceHuge);
+    if (cli.format) {
+        return RunFormatFiles(cli.paths, cli.forceHuge);
     }
 
     // Set before the editor runs rather than threaded through as a fifth
@@ -3542,10 +3446,10 @@ auto main(int argc, char** argv) -> int {
     // transient, which is the only sensible reading when the entire point
     // is that nothing about it gets recorded.
     const bool detectedVcsEditorFile =
-        !noTransient && std::ranges::any_of(paths, [](const std::string& path) { return ned::editor::IsVcsEditorFile(path); });
-    ned::editor::SetTransientMode(transient || detectedVcsEditorFile);
+        !cli.noTransient && std::ranges::any_of(cli.paths, [](const std::string& path) { return ned::editor::IsVcsEditorFile(path); });
+    ned::editor::SetTransientMode(cli.transient || detectedVcsEditorFile);
 
-    const int exitCode = RunInteractiveEditor(forceBinary, noRestore, vimMode, paths);
+    const int exitCode = RunInteractiveEditor(cli.forceBinary, cli.noRestore, cli.vimMode, cli.paths);
 
     // Everything RunInteractiveEditor owned -- EventLoop and the
     // notcurses_stop in its destructor included -- is destroyed by the time

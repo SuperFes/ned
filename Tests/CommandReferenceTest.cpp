@@ -1,11 +1,14 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Editor/Command.h"
@@ -41,6 +44,22 @@ namespace {
 namespace fs = std::filesystem;
 
 fs::path ReferencePath() { return fs::path(NED_REPO_ROOT) / "Docs" / "Commands.md"; }
+fs::path CommandsManPath() {
+    return fs::path(NED_REPO_ROOT) / "Docs" / "man" / "ned-commands.7.md";
+}
+
+// A man page's own rendering of the same list. Pandoc turns a definition list
+// into the `.TP` blocks a reader expects; the version and footer are passed by
+// CMake/ManPages.cmake at build time, so a version bump doesn't dirty this.
+std::string RenderManHeader(std::string_view name, std::string_view section, std::string_view tagline) {
+    std::ostringstream out;
+    std::string        upper(name);
+    std::ranges::transform(upper, upper.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    out << "% " << upper << "(" << section << ")\n\n"
+        << "# NAME\n\n"
+        << name << " - " << tagline << "\n\n";
+    return out.str();
+}
 
 std::string Render(const ned::editor::CommandRegistry& registry) {
     // The default global keymap only. A major mode's own layer and anything
@@ -77,12 +96,57 @@ std::string Render(const ned::editor::CommandRegistry& registry) {
     return out.str();
 }
 
+std::string RenderCommandsMan(const ned::editor::CommandRegistry& registry) {
+    const ned::editor::Keymap                globalKeymap = ned::editor::BuildDefaultGlobalKeymap();
+    const ned::editor::KeymapStack           stack({&globalKeymap});
+    const std::map<std::string, std::string> bindings = ned::editor::ShortestBindingPerCommand(stack);
+
+    std::ostringstream out;
+    out << RenderManHeader("ned-commands", "7", "every command ned(1) can run")
+        << "# DESCRIPTION\n\n"
+           "Every command reachable from `M-x`, from a keybinding, or from Janet via\n"
+           "`ned/run-command`. The key shown is the shortest sequence bound in the default global\n"
+           "keymap; a command with none is reachable from `M-x` and Janet alone. Major-mode and\n"
+           "`init.janet` bindings are not listed -- run `describe-bindings` (`C-c ?`) inside ned\n"
+           "for the live keymap stack.\n\n"
+        << "# COMMANDS\n\n";
+
+    for (const std::string& name : registry.Names()) {
+        const ned::editor::Command* command = registry.Find(name);
+        if (command == nullptr)
+            continue;
+        const auto binding = bindings.find(name);
+        out << "`" << name << "`";
+        if (binding != bindings.end())
+            out << " (`" << binding->second << "`)";
+        out << "\n\n:   " << command->Docstring() << "\n\n";
+    }
+
+    out << "# SEE ALSO\n\n**ned**(1), **ned-janet**(7)\n";
+    return out.str();
+}
+
 std::string ReadFile(const fs::path& path) {
     std::ifstream in(path, std::ios::binary);
     REQUIRE(in);
     std::ostringstream content;
     content << in.rdbuf();
     return content.str();
+}
+
+void CheckOrBless(const fs::path& path, const std::string& rendered) {
+    if (std::getenv("NED_BLESS_COMMAND_DOCS") != nullptr) {
+        fs::create_directories(path.parent_path());
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        REQUIRE(out);
+        out << rendered;
+        SUCCEED("regenerated " + path.string() + " -- read the diff");
+        return;
+    }
+
+    INFO("regenerate: NED_BLESS_COMMAND_DOCS=1 ./build/ned_tests \"[CommandDocs]\"");
+    REQUIRE(fs::exists(path));
+    CHECK(ReadFile(path) == rendered);
 }
 
 } // namespace
@@ -109,19 +173,13 @@ TEST_CASE("Every registered command carries a docstring", "[CommandDocs]") {
 TEST_CASE("Docs/Commands.md matches the live registry", "[CommandDocs]") {
     ned::editor::CommandRegistry registry;
     ned::editor::RegisterBuiltinCommands(registry);
-    const std::string rendered = Render(registry);
+    CheckOrBless(ReferencePath(), Render(registry));
+}
 
-    if (std::getenv("NED_BLESS_COMMAND_DOCS") != nullptr) {
-        std::ofstream out(ReferencePath(), std::ios::binary | std::ios::trunc);
-        REQUIRE(out);
-        out << rendered;
-        SUCCEED("regenerated Docs/Commands.md -- read the diff");
-        return;
-    }
-
-    INFO("regenerate: NED_BLESS_COMMAND_DOCS=1 ./build/ned_tests \"[CommandDocs]\"");
-    REQUIRE(fs::exists(ReferencePath()));
-    CHECK(ReadFile(ReferencePath()) == rendered);
+TEST_CASE("Docs/man/ned-commands.7.md matches the live registry", "[CommandDocs]") {
+    ned::editor::CommandRegistry registry;
+    ned::editor::RegisterBuiltinCommands(registry);
+    CheckOrBless(CommandsManPath(), RenderCommandsMan(registry));
 }
 
 // The other half: Docs/Scripting.md, from the live `ned/*` binding table.
@@ -135,6 +193,9 @@ TEST_CASE("Docs/Commands.md matches the live registry", "[CommandDocs]") {
 namespace {
 
 fs::path ScriptingPath() { return fs::path(NED_REPO_ROOT) / "Docs" / "Scripting.md"; }
+fs::path ScriptingManPath() {
+    return fs::path(NED_REPO_ROOT) / "Docs" / "man" / "ned-janet.7.md";
+}
 
 std::string RenderBindings(const std::vector<std::pair<std::string, std::string>>& bindings) {
     std::ostringstream out;
@@ -145,6 +206,21 @@ std::string RenderBindings(const std::vector<std::pair<std::string, std::string>
     for (const auto& [name, doc] : bindings) {
         out << "## `" << name << "`\n\n" << doc << "\n\n";
     }
+    return out.str();
+}
+
+std::string RenderBindingsMan(const std::vector<std::pair<std::string, std::string>>& bindings) {
+    std::ostringstream out;
+    out << RenderManHeader("ned-janet", "7", "the Janet scripting API of ned(1)")
+        << "# DESCRIPTION\n\n"
+           "Every `ned/*` function available to `$XDG_CONFIG_HOME/ned/init.janet`, a project's\n"
+           "`.ned/init.janet`, or a plugin. ned has no configuration file format of its own:\n"
+           "configuration is Janet code, and these are the bindings it calls.\n\n"
+        << "# BINDINGS\n\n";
+    for (const auto& [name, doc] : bindings) {
+        out << "`" << name << "`\n\n:   " << doc << "\n\n";
+    }
+    out << "# SEE ALSO\n\n**ned**(1), **ned-commands**(7)\n";
     return out.str();
 }
 
@@ -173,16 +249,6 @@ TEST_CASE("Docs/Scripting.md matches the live ned/* binding table", "[CommandDoc
     INFO("bindings with no docstring:" << undocumented);
     CHECK(undocumented.empty());
 
-    const std::string rendered = RenderBindings(bindings);
-    if (std::getenv("NED_BLESS_COMMAND_DOCS") != nullptr) {
-        std::ofstream out(ScriptingPath(), std::ios::binary | std::ios::trunc);
-        REQUIRE(out);
-        out << rendered;
-        SUCCEED("regenerated Docs/Scripting.md -- read the diff");
-        return;
-    }
-
-    INFO("regenerate: NED_BLESS_COMMAND_DOCS=1 ./build/ned_tests \"[CommandDocs]\"");
-    REQUIRE(fs::exists(ScriptingPath()));
-    CHECK(ReadFile(ScriptingPath()) == rendered);
+    CheckOrBless(ScriptingPath(), RenderBindings(bindings));
+    CheckOrBless(ScriptingManPath(), RenderBindingsMan(bindings));
 }

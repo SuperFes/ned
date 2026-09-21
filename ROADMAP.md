@@ -1067,21 +1067,6 @@ non-goal, see below).
       of `ALL` — a build/release-time step, nothing ned does at runtime. clang-doc was
       considered and rejected as still too early-stage (LLVM's own docs warn of bugs/
       crashes on real codebases).
-- [ ] **End-user docs: mdBook + pandoc, one Markdown source.** A `book/src/` tree (the
-      `Docs/*.md` files migrate in near-verbatim) renders via mdBook into a
-      navigable/searchable site, deployed to GitHub Pages via its first-party
-      `actions/starter-workflows/pages/mdbook.yml` template — self-hostable later too,
-      it's plain static output. Man pages come from pandoc (`pandoc -s -t man`) run over
-      a curated subset of the same source files (CLI invocation, the settings/variables
-      reference, the scripting API reference — not the whole book; prose guides don't
-      map to man's NAME/SYNOPSIS/DESCRIPTION shape). The scripting API reference page is
-      generated, not hand-written: a small `Tools/` binary linking `ned_lib`, walking
-      `CommandRegistry`/the `ned/*` Janet binding table, dumping the doc strings already
-      passed to `Register<Fn>` into a `.md` file the mdBook build consumes (mirroring
-      Helix's `cargo xtask docgen` pattern for its own keymap/command reference pages).
-      Sphinx+MyST was considered — it natively builds man+PDF+HTML from one source too —
-      but rejected in favor of mdBook to avoid adding a Python toolchain to a project
-      that currently has none, and for mdBook's first-party GitHub Pages support.
 - [ ] **Environment setup tool** (`ned-setup` or similar) — first-run detection: shell
       integration, installed language servers and debug adapters, *generating an
       editable Janet file* loaded from `init.janet`. Deliberately a standalone,

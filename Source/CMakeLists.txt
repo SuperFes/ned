@@ -212,6 +212,7 @@ add_library(ned_lib STATIC
         Editor/ScratchPad.cpp
         Editor/Backup.cpp
         Editor/CliFormatDispatch.cpp
+        Editor/CliOptions.cpp
         Editor/BufferSave.cpp
         Editor/PersistentUndo.cpp
         Editor/Project/Undo.cpp
@@ -495,6 +496,10 @@ target_link_libraries(ned_lib
         PUBLIC vterm
         PUBLIC utf8proc
         PUBLIC nlohmann_json::nlohmann_json
+        # Editor/CliOptions.h registers every top-level flag against one
+        # CLI::App; ned_tests walks that same App to generate the invocation
+        # reference, so the dependency is public, not main.cpp's alone.
+        PUBLIC CLI11::CLI11
         PRIVATE ${CMAKE_DL_LIBS}
         # internal-project-search follow-up: only ProjectSearch.cpp's own
         # implementation includes RE2 headers, so this stays off the public
@@ -512,7 +517,7 @@ endif()
 
 add_executable(ned main.cpp)
 
-target_link_libraries(ned PRIVATE ned_lib CLI11::CLI11)
+target_link_libraries(ned PRIVATE ned_lib)
 
 # Editor/DataDir.cpp's last-resort candidate (after $NED_DATA_DIR and the
 # executable-relative share/ned); the build tree's own copy is assembled by
@@ -524,8 +529,8 @@ add_dependencies(ned ned_data)
 # for `cmake --build build && ./build/ned` (this project's own documented
 # dev workflow), not fine for anything that needs a real `cmake --install`
 # (a system package, an ebuild, ...). Deliberately minimal: just the
-# executable, standard GNUInstallDirs layout, no desktop file/icon/man page
-# (see ROADMAP.md's "Documentation framework" entry for those).
+# executable, standard GNUInstallDirs layout, no desktop file or icon. Man
+# pages are opt-in and live in CMake/ManPages.cmake, not here.
 include(GNUInstallDirs)
 # notcurses-core used to be a private FetchContent'd copy, which needed its
 # own install(TARGETS ...) plus an INSTALL_RPATH pointing `ned` at a private,

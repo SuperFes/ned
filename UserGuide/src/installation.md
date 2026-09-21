@@ -106,6 +106,27 @@ Every language ned bundles is a package under `Source/Languages/<name>/` -- its 
 is `grammar.janet`, compiled to parse tables by ned itself during the build -- so this
 build touches no network at all beyond the initial `git clone`.
 
+### Installing
+
+```sh
+sudo cmake --install build
+```
+
+Installs `ned`, the `ned-format`/`ned-langc`/`ned-import-language`/`ned-test-language`
+symlinks, and the bundled data tree under `share/ned/`, in the standard GNUInstallDirs
+layout.
+
+Man pages are off by default because they need [pandoc](https://pandoc.org/):
+
+```sh
+cmake --preset default -DNED_BUILD_MAN=ON
+cmake --build build
+sudo cmake --install build
+```
+
+That adds `ned(1)` (with the four symlinks as aliases of it), `ned-commands(7)`, and
+`ned-janet(7)`.
+
 ### Running the test suite
 
 ```sh

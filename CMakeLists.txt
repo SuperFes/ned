@@ -56,6 +56,10 @@ include(CMake/LanguageTables.cmake)
 # ned/ned_lib, see Tools/CMakeLists.txt.
 add_subdirectory(Tools)
 
+# Man pages from the generated Docs/man/ sources -- opt-in, see its own
+# header comment.
+include(CMake/ManPages.cmake)
+
 if (NED_BUILD_TESTS)
     enable_testing()
     include(CTest)
