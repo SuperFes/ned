@@ -76,7 +76,11 @@ std::vector<EmbeddedDocument> BuildEmbeddedDocuments(const Mode& mode, std::stri
     if (!mode.embeddedRegions) {
         return {};
     }
-    const std::vector<InjectionRegion> regions = mode.embeddedRegions(bufferText);
+    return BuildInjectedDocuments(mode.embeddedRegions(bufferText), bufferText);
+}
+
+std::vector<EmbeddedDocument> BuildInjectedDocuments(const std::vector<InjectionRegion>& regions,
+                                                     std::string_view                    bufferText) {
     if (regions.empty()) {
         return {};
     }

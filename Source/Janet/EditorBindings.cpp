@@ -37,6 +37,7 @@
 #include "Editor/ImportFixupSettings.h"
 #include "Editor/IndentRuleOverride.h"
 #include "Editor/IndentStyle.h"
+#include "Editor/InjectedIndent.h"
 #include "Editor/InlineDebugValues.h"
 #include "Editor/InlineDiagnostics.h"
 #include "Editor/LanguageRegistry.h"
@@ -233,6 +234,12 @@ namespace {
     // capture name), or its language-scoped form ("cpp/access_specifier").
     // policy empty clears the rule; otherwise "offset" or "absolute",
     // matching IndentRulePolicy's own two values by name.
+    // injected-region-indentation follow-up: same process-wide-bool-toggle
+    // shape as NedSetVimMode -- default true, see Editor/InjectedIndent.h.
+    void NedSetIndentInjectedRegions(bool enabled) {
+        editor::SetIndentInjectedRegions(enabled);
+    }
+
     void NedSetIndentRule(std::string key, std::string policy, std::int64_t value) {
         if (policy.empty()) {
             editor::SetIndentRule(key, std::nullopt);
@@ -1639,6 +1646,12 @@ void InstallEditorBindings(Environment& env) {
         "Set the indent style smart-indentation (indent-for-tab-command/newline/indent-region/indent-buffer) writes: "
         "(mode-name-or-empty use-tabs? width). An empty mode-name sets the process-wide default (spaces, width 4); "
         "a Mode name (e.g. \"python-mode\") sets a per-mode override, checked first.");
+    env.Register<&NedSetIndentInjectedRegions>(
+        "ned", "set-indent-injected-regions",
+        "Indent a region written in an injected language by that language's own rules (default true) -- the HTML in "
+        "a PHP template, the JavaScript in an HTML <script>. The host grammar decides where the region sits, the "
+        "injected one how far into its own structure each line is. False indents by the host grammar alone, which "
+        "leaves a region's every line at the column the host put the region at.");
     env.Register<&NedSetIndentRule>(
         "ned", "set-indent-rule",
         "Override the indent of every line whose own leading construct is a given grammar node type (e.g. "

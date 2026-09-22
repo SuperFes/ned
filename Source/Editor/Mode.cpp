@@ -18,19 +18,20 @@
 
 #include "AutoPair.h"
 #include "BundledLanguages.h"
-#include "Indent.h"
-#include "Injection.h"
-#include "Key.h"
-#include "LanguageDefinition.h"
-#include "Link.h"
-#include "ModeInternal.h"
-#include "SyntaxTheme.h"
 #include "Grammar/IncrementalParse.h"
 #include "Grammar/Languages.h"
 #include "Grammar/MatchCache.h"
 #include "Grammar/Parser.h"
 #include "Grammar/QueryMatcher.h"
 #include "Grammar/Tree.h"
+#include "Indent.h"
+#include "InjectedIndent.h"
+#include "Injection.h"
+#include "Key.h"
+#include "LanguageDefinition.h"
+#include "Link.h"
+#include "ModeInternal.h"
+#include "SyntaxTheme.h"
 
 namespace ned::editor {
 
@@ -875,9 +876,9 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
     // there is an injections query; a definition that does not want its
     // regions synced (Markdown's fenced blocks, Org's SRC blocks -- see
     // LanguageDefinition::embeddedDocuments) drops it afterwards.
-    EmbeddedRegionFunction embeddedRegions;
+    EmbeddedRegionFunction injectedRegions;
     if (injectionQuery) {
-        embeddedRegions = [parser, injectionQuery, sharedParse](std::string_view bufferText) -> std::vector<InjectionRegion> {
+        injectedRegions = [parser, injectionQuery, sharedParse](std::string_view bufferText) -> std::vector<InjectionRegion> {
             const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
@@ -885,6 +886,14 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             return CollectInjectionRegions(tree.RootNode(), bufferText, *injectionQuery);
         };
     }
+
+    // The LSP-sync view of the same regions. Same closure, second name: what
+    // the two differ in is not how the regions are found but who opted in --
+    // Editor/LanguageDefinition.cpp drops this one for a definition that
+    // does not want its embedded regions synced to real servers (Markdown's
+    // fenced blocks, Org's SRC blocks), while indentation wants every
+    // language a grammar injects regardless.
+    EmbeddedRegionFunction embeddedRegions = injectedRegions;
 
     // generic-code-folding follow-up: a second Query against the same
     // parser -- shares sharedParse's cached Tree with highlight above (see
@@ -1413,6 +1422,15 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
         indentColumn           = BuildIndentFunction(parser, indentQuery, sharedParse, name, languageKey);
     }
 
+    // injected-region-indentation follow-up: a host grammar sees an injected
+    // region as one opaque token, so its own indent answer for every line of
+    // one is that region's base column -- a PHP template, which is HTML with
+    // a few `<?= ?>` islands in it, came out entirely at column 0. The
+    // wrapper composes the host's answer with the injected language's own;
+    // it is a no-op (returns indentColumn itself) for a grammar with no
+    // injections query, which is most of them. See Editor/InjectedIndent.h.
+    indentColumn = WithInjectedRegionIndent(std::move(indentColumn), injectedRegions);
+
     // scope-aware-rename follow-up: a ninth closure sharing the same
     // parser/sharedParse, same reasoning as everything above -- rename runs
     // off an explicit keystroke rather than per-Paint(), but a buffer whose
@@ -1722,6 +1740,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 .importTarget       = std::move(importTarget),
                 .importTargets      = std::move(importTargets),
                 .testDiscovery      = std::move(testDiscovery),
+                .injectedRegions    = std::move(injectedRegions),
                 .embeddedRegions    = std::move(embeddedRegions),
                 .indentColumn       = std::move(indentColumn),
                 .lineInspect        = std::move(lineInspect),

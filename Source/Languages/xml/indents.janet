@@ -4,6 +4,9 @@
 # anonymous token -- same shape as HTML's "end_tag", confirmed via a real
 # parse dump. Checked against tree-sitter-xml's own (xml subdir)
 # node-types.json.
-(element) @indent
+# Constrained to elements that HAVE a start tag -- see html-indents' own
+# comment: `EmptyElemTag` ("<c/>") is an `element` with no interior, and
+# capturing it indented its own line one level past its siblings.
+(element (STag)) @indent
 
 (element (ETag) @dedent)

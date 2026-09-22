@@ -8,6 +8,7 @@
 #include "Editor/HugeStructuralWindow.h"
 #include "Editor/Indent.h"
 #include "Editor/IndentStyle.h"
+#include "Editor/InjectedIndent.h"
 #include "Editor/Mode.h"
 #include "Editor/TabWidth.h"
 #include "Text/Buffer.h"
@@ -40,6 +41,7 @@ using ned::editor::PythonMode;
 using ned::editor::RigidShiftRegion;
 using ned::editor::RubyMode;
 using ned::editor::RustMode;
+using ned::editor::SetIndentInjectedRegions;
 using ned::editor::SetIndentStyleForMode;
 using ned::editor::TomlMode;
 using ned::editor::TsxMode;
@@ -755,6 +757,91 @@ TEST_CASE("IndentBuffer does not flatten an unfinished document", "[Indent]") {
     IndentBuffer(buffer, mode);
 
     REQUIRE(buffer.Text() == "<html>\n  <body>\n    <div>\n      <ul>\n        x\n");
+}
+
+// A self-closing tag is an `element` too, but one with no interior -- it
+// used to count itself as a level and sit one deeper than the siblings it
+// belongs beside. Constrained in html-indents.janet/xml-indents.janet to
+// elements that actually have an opening tag.
+TEST_CASE("indentColumn keeps a self-closing tag level with its siblings", "[Indent]") {
+    SECTION("html") {
+        const auto mode = HtmlMode();
+        Buffer     buffer("test.html");
+        buffer.InsertAtPoint("<div>\n<label>a</label>\n<input type=\"text\"/>\n<br>\n</div>\n");
+
+        for (const std::size_t line : {std::size_t{1}, std::size_t{2}, std::size_t{3}}) {
+            const auto [lineStart, lineEnd] = LineRange(buffer, line);
+            INFO("line " << line);
+            REQUIRE(mode.indentColumn(buffer.Text(), lineStart, lineEnd) == 2);
+        }
+    }
+
+    SECTION("xml") {
+        const auto mode = XmlMode();
+        Buffer     buffer("test.xml");
+        buffer.InsertAtPoint("<a>\n<b>x</b>\n<c/>\n</a>\n");
+
+        const auto [emptyStart, emptyEnd] = LineRange(buffer, 2); // "<c/>"
+        REQUIRE(mode.indentColumn(buffer.Text(), emptyStart, emptyEnd) == 2);
+    }
+}
+
+// A host grammar sees an injected region as one opaque token -- PHP's whole
+// HTML body is a single `text` node -- so its own indent answer for every
+// line of one is the column it put the region at, which for a PHP template
+// (HTML with `<?= ?>` islands in it) is zero for the entire file.
+// Editor/InjectedIndent.h composes the host's answer with the injected
+// language's own.
+TEST_CASE("indentColumn indents an injected region by its own language", "[Indent]") {
+    SECTION("php template: the HTML nests, across a PHP island") {
+        const auto mode = PhpMode();
+        Buffer     buffer("test.php");
+        buffer.InsertAtPoint("<div>\n<ul>\n<li><?= $row ?></li>\n</ul>\n</div>\n");
+
+        const auto [listStart, listEnd] = LineRange(buffer, 1); // "<ul>"
+        REQUIRE(mode.indentColumn(buffer.Text(), listStart, listEnd) == 2);
+        // The PHP island sits mid-line; the line is still HTML, and indents as it.
+        const auto [itemStart, itemEnd] = LineRange(buffer, 2); // "<li><?= $row ?></li>"
+        REQUIRE(mode.indentColumn(buffer.Text(), itemStart, itemEnd) == 4);
+        const auto [closeStart, closeEnd] = LineRange(buffer, 3); // "</ul>"
+        REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 2);
+    }
+
+    SECTION("html <script>: the host places the block, JavaScript nests inside it") {
+        const auto mode = HtmlMode();
+        Buffer     buffer("test.html");
+        buffer.InsertAtPoint("<body>\n<script>\nfunction f() {\nreturn 1;\n}\n</script>\n</body>\n");
+
+        const auto [openStart, openEnd] = LineRange(buffer, 2); // "function f() {"
+        REQUIRE(mode.indentColumn(buffer.Text(), openStart, openEnd) == 4);
+        const auto [bodyStart, bodyEnd] = LineRange(buffer, 3); // "return 1;"
+        REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 6);
+        const auto [braceStart, braceEnd] = LineRange(buffer, 4); // "}"
+        REQUIRE(mode.indentColumn(buffer.Text(), braceStart, braceEnd) == 4);
+    }
+
+    SECTION("a file with no injected region at all is the host's business alone") {
+        const auto mode = PhpMode();
+        Buffer     buffer("test.php");
+        buffer.InsertAtPoint("<?php\nfunction f(int $w) {\n$this->w = $w;\n}\n");
+
+        const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "$this->w = $w;"
+        REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+        const auto [closeStart, closeEnd] = LineRange(buffer, 3); // "}"
+        REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
+    }
+
+    SECTION("ned/set-indent-injected-regions false restores host-only indentation") {
+        SetIndentInjectedRegions(false);
+        const auto mode = PhpMode();
+        Buffer     buffer("test.php");
+        buffer.InsertAtPoint("<div>\n<ul>\n<li>x</li>\n</ul>\n</div>\n");
+
+        const auto [listStart, listEnd] = LineRange(buffer, 1); // "<ul>"
+        const std::optional<int> column = mode.indentColumn(buffer.Text(), listStart, listEnd);
+        SetIndentInjectedRegions(true);
+        REQUIRE(column == 0);
+    }
 }
 
 TEST_CASE("XmlMode indentColumn indents a nested element and aligns its closing tag", "[Indent]") {

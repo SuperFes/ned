@@ -754,6 +754,11 @@ struct Mode {
     // means this mode has no LSP-syncable embedded-language regions, same
     // "empty means not configured" convention as everything above -- only a
     // definition with `embeddedDocuments` set (html) keeps this.
+    // Every region this mode's grammar injects another language into,
+    // whatever the definition asked for -- what Editor/InjectedIndent.h
+    // indents by the injected language's own rules. Unset for a grammar
+    // with no injections query at all.
+    EmbeddedRegionFunction injectedRegions;
     EmbeddedRegionFunction embeddedRegions;
     // smart-indentation follow-up: empty function (the default) means
     // indent-for-tab-command/newline/indent-region/indent-buffer report

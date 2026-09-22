@@ -175,6 +175,7 @@ add_library(ned_lib STATIC
         Editor/IndentDefaults.cpp
         Editor/IndentDetect.cpp
         Editor/Indent.cpp
+        Editor/InjectedIndent.cpp
         Editor/IndentRuleOverride.cpp
         Editor/HugeFileReindent.cpp
         Editor/BlankLineCleanup.cpp

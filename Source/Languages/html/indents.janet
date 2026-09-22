@@ -10,7 +10,15 @@
 # node types for <script>/<style> (embedded-language-documents follow-up
 # handles their CONTENT's own LSP sync separately; this only indents the
 # element wrapper itself, same as any other element).
-(element) @indent
+# Constrained to elements that HAVE an opening tag rather than plain
+# `(element)`: a self-closing one ("<input .../>") is an `element` too, whose
+# only child is `self_closing_tag`, and it has no interior to indent -- left
+# unconstrained it counted itself as a level and pushed its own line one
+# deeper than its siblings. The engine's walk-start promotion handles the
+# opening-tag case (Editor/Indent.cpp) but deliberately knows only
+# "start_tag"/"STag", which is the right place to stop teaching it node
+# types -- whether a shape has an interior at all is the query's business.
+(element (start_tag)) @indent
 (script_element) @indent
 (style_element) @indent
 

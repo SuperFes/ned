@@ -484,6 +484,10 @@ configuration is Janet code, and these are the bindings it calls.
 
 :   Enable/disable vertical indentation guide glyphs at each indent-width column within a line's own leading whitespace. Default false, same opt-in reasoning as set-trailing-whitespace-highlight-enabled.
 
+`ned/set-indent-injected-regions`
+
+:   Indent a region written in an injected language by that language's own rules (default true) -- the HTML in a PHP template, the JavaScript in an HTML <script>. The host grammar decides where the region sits, the injected one how far into its own structure each line is. False indents by the host grammar alone, which leaves a region's every line at the column the host put the region at.
+
 `ned/set-indent-rule`
 
 :   Override the indent of every line whose own leading construct is a given grammar node type (e.g. "access_specifier", or "cpp/access_specifier" for a one-language override): (key policy value), policy "offset" (add value columns, positive or negative, to whatever the ordinary indent would be) or "absolute" (value IS the column, ignoring nesting depth entirely); empty policy clears the rule.

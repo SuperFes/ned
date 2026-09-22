@@ -61,6 +61,15 @@ struct EmbeddedDocument {
 // language ends up parsing the padded region.
 [[nodiscard]] std::vector<EmbeddedDocument> BuildEmbeddedDocuments(const Mode& mode, std::string_view bufferText);
 
+// The same synthesis from regions already in hand, for a caller that has its
+// own reason to look at injected regions and is not the LSP-sync path --
+// Editor/InjectedIndent.h, which indents an injected region by its own
+// language's rules and therefore wants every language a grammar injects, not
+// just the ones a definition opted into syncing (LanguageDefinition::
+// embeddedDocuments). Same merging, same width-preserving padding.
+[[nodiscard]] std::vector<EmbeddedDocument> BuildInjectedDocuments(const std::vector<InjectionRegion>& regions,
+                                                                   std::string_view                    bufferText);
+
 // nullopt if byteOffset isn't inside any document's ownedRanges (the ordinary
 // single-language case, or point sitting in the host-language chrome around
 // an embedded region) -- otherwise the owning document's language. Shared by

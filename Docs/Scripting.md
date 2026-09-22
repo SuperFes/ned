@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-223 bindings.
+224 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -476,6 +476,10 @@ Enable/disable cycling each indent guide's color by its own nesting level (Theme
 ## `ned/set-indent-guides-enabled`
 
 Enable/disable vertical indentation guide glyphs at each indent-width column within a line's own leading whitespace. Default false, same opt-in reasoning as set-trailing-whitespace-highlight-enabled.
+
+## `ned/set-indent-injected-regions`
+
+Indent a region written in an injected language by that language's own rules (default true) -- the HTML in a PHP template, the JavaScript in an HTML <script>. The host grammar decides where the region sits, the injected one how far into its own structure each line is. False indents by the host grammar alone, which leaves a region's every line at the column the host put the region at.
 
 ## `ned/set-indent-rule`
 
