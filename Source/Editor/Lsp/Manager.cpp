@@ -526,6 +526,21 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
             // workspaceFolders support back, so Manager would never find a
             // connection worth joining.
             {"workspaceFolders", true},
+            // server-refresh follow-up: each of these is the spec's own
+            // *WorkspaceClientCapabilities object for one result kind, whose
+            // only field ned has an answer for is refreshSupport. Without it
+            // a well-behaved server never sends workspace/<kind>/refresh at
+            // all, so the handlers WireNotificationHandlers registers would
+            // never fire -- the declaration is what makes a server that
+            // recomputes a whole class of results say so. Object-shaped per
+            // spec, unlike the plain-boolean siblings above; note
+            // "diagnostics" is plural here (DiagnosticWorkspaceClient-
+            // Capabilities) while the request it enables is the singular
+            // workspace/diagnostic/refresh.
+            {"semanticTokens", {{"refreshSupport", true}}},
+            {"codeLens", {{"refreshSupport", true}}},
+            {"inlayHint", {{"refreshSupport", true}}},
+            {"diagnostics", {{"refreshSupport", true}}},
             {"fileOperations", {{"willRename", true}, {"didRename", true}}}}},
           {"window", {{"workDoneProgress", true}}}}},
     };
@@ -622,6 +637,30 @@ void Manager::WireNotificationHandlers(Client& client, const std::string& server
         }
         const std::string label = params.value("label", std::string("workspace edit"));
         return Json{{"applied", applyEditHandler_(resolved, label)}};
+    });
+    // server-refresh follow-up: four requests (not notifications -- each
+    // expects a response, and its result is null by spec) a server sends when
+    // it has recomputed a whole class of results and wants them pulled again.
+    // Unhandled, they got DispatchFrame's generic MethodNotFound, which is a
+    // server-visible failure rather than silence -- and a client that never
+    // declares refreshSupport (see InitializeParams above) is never sent one
+    // in the first place. RefreshServerResults is what each kind actually
+    // re-opens.
+    client.SetRequestHandler("workspace/semanticTokens/refresh", [this, connectionKey](const Json&) {
+        RefreshServerResults(connectionKey, RefreshKind::SemanticTokens);
+        return Json(nullptr);
+    });
+    client.SetRequestHandler("workspace/codeLens/refresh", [this, connectionKey](const Json&) {
+        RefreshServerResults(connectionKey, RefreshKind::CodeLens);
+        return Json(nullptr);
+    });
+    client.SetRequestHandler("workspace/inlayHint/refresh", [this, connectionKey](const Json&) {
+        RefreshServerResults(connectionKey, RefreshKind::InlayHints);
+        return Json(nullptr);
+    });
+    client.SetRequestHandler("workspace/diagnostic/refresh", [this, connectionKey](const Json&) {
+        RefreshServerResults(connectionKey, RefreshKind::Diagnostics);
+        return Json(nullptr);
     });
     client.SetNotificationHandler("$/progress",
                                   [this, connectionKey](const Json& params) { HandleProgress(connectionKey, params); });
@@ -1988,6 +2027,75 @@ void Manager::RequestViewportFeatures(text::Buffer& buffer, std::size_t viewport
         });
 }
 
+void Manager::ReArmViewportRequestsAfterDecline(text::Buffer& buffer, std::size_t requestedGeneration) {
+    // Only the triple this response was actually about: if the buffer has
+    // been edited or scrolled since, whatever is armed now is a different
+    // request that nothing here has any reason to disturb.
+    const auto it = armedViewportRequests_.find(&buffer);
+    if (it != armedViewportRequests_.end() && it->second.generation == requestedGeneration) {
+        armedViewportRequests_.erase(it);
+    }
+}
+
+void Manager::RefreshServerResults(const std::string& connectionKey, RefreshKind kind) {
+    // Collected before anything is touched: the Diagnostics arm below
+    // re-requests through RequestPullDiagnostics, which resolves sync state
+    // and so may insert into the very map this walks.
+    std::vector<std::pair<text::Buffer*, std::string>> affected;
+    for (const auto& [bufferPtr, perServer] : bufferState_) {
+        for (const auto& [serverKey, state] : perServer) {
+            if (state.opened && state.connectionKey == connectionKey) {
+                affected.emplace_back(bufferPtr, serverKey);
+            }
+        }
+    }
+
+    for (const auto& [bufferPtr, serverKey] : affected) {
+        switch (kind) {
+        case RefreshKind::SemanticTokens:
+            // The counter bump is what makes a response already on the wire
+            // land as superseded, so it cannot re-cover the ground this just
+            // uncovered. previousSemanticTokens_ is deliberately kept: the
+            // server recomputed against its own resultId, which is exactly
+            // what the next full/delta request should still delta from.
+            ++semanticTokensRequestCounter_[bufferPtr];
+            semanticTokensCoverage_.erase(bufferPtr);
+            semanticTokensRequestedGeneration_.erase(bufferPtr);
+            break;
+        case RefreshKind::CodeLens:
+            ++codeLensRequestCounter_[bufferPtr];
+            codeLensRequestedGeneration_.erase(bufferPtr);
+            break;
+        case RefreshKind::InlayHints:
+            // Coverage, not the hints themselves: an answered-but-empty
+            // response is exactly how a server declines a hint request it
+            // cannot serve yet (phpantom_lsp, whose refresh is what this
+            // whole path exists for), and that leaves the viewport marked
+            // covered -- so dropping the armed triple alone would re-ask
+            // nothing.
+            ++inlayHintsRequestCounter_[bufferPtr];
+            inlayHintCoverage_.erase(bufferPtr);
+            break;
+        case RefreshKind::Diagnostics:
+            // Nothing re-pulls diagnostics on a cadence -- RequestPull-
+            // Diagnostics rides didOpen/didChange -- so a refresh with no
+            // edit behind it has to send one itself. A no-op when pull
+            // diagnostics are off, in which case this server is pushing
+            // and has nothing to be refreshed.
+            if (PullDiagnosticsEnabled()) {
+                RequestPullDiagnostics(*bufferPtr, serverKey);
+            }
+            continue; // not a viewport request, so nothing to re-arm
+        }
+        // RequestViewportFeatures' dedup compares a (generation, viewport)
+        // pair that a refresh leaves untouched, so without this the gate
+        // re-opened just above would never actually be asked through again
+        // for an unedited buffer -- PushMergedDiagnostics erases this entry
+        // for exactly the same reason.
+        armedViewportRequests_.erase(bufferPtr);
+    }
+}
+
 void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
                                     const std::string& serverKey) {
     if (!SemanticHighlightingEnabled()) {
@@ -2060,6 +2168,14 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
                 const auto settle = [this, bufferPtr, requestedGeneration, requestStart, requestEnd](bool answered) {
                     if (const auto it = semanticTokensCoverage_.find(bufferPtr); it != semanticTokensCoverage_.end()) {
                         SettleCoverage(it->second, requestedGeneration, answered, requestStart, requestEnd);
+                    }
+                    if (!answered) {
+                        // The range path's own fallback depends on this: a
+                        // server erroring here latches rangeUnsupported_ and
+                        // wants the full/delta request that follows, which
+                        // the armed-triple dedup would otherwise hold back
+                        // until the next edit or scroll.
+                        ReArmViewportRequestsAfterDecline(*bufferPtr, requestedGeneration);
                     }
                 };
                 if (error) {
@@ -2523,6 +2639,9 @@ void Manager::SettleInlayHintRequest(text::Buffer& buffer, std::size_t requested
     if (const auto it = inlayHintCoverage_.find(&buffer); it != inlayHintCoverage_.end()) {
         SettleCoverage(it->second, requestedGeneration, answered, rangeStart, rangeEnd);
     }
+    if (!answered) {
+        ReArmViewportRequestsAfterDecline(buffer, requestedGeneration);
+    }
 }
 
 void Manager::EvictInlayHintsBeyondCap(text::Buffer& buffer, std::vector<AnchoredInlayHint>& hints,
@@ -2832,6 +2951,9 @@ void Manager::SettleCodeActionHintRequest(text::Buffer& buffer, std::size_t requ
                                           std::size_t rangeStart, std::size_t rangeEnd) {
     if (const auto it = codeActionHintCoverage_.find(&buffer); it != codeActionHintCoverage_.end()) {
         SettleCoverage(it->second, requestedGeneration, answered, rangeStart, rangeEnd);
+    }
+    if (!answered) {
+        ReArmViewportRequestsAfterDecline(buffer, requestedGeneration);
     }
 }
 

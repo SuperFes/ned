@@ -1574,6 +1574,19 @@ class Manager {
     // push, same as any two publishes today.
     void RequestPullDiagnostics(text::Buffer& buffer, const std::string& serverKey);
 
+    // Server-initiated refresh (workspace/{semanticTokens,codeLens,inlayHint,
+    // diagnostic}/refresh). A server that recomputes a whole class of results
+    // asks the editor to pull them again rather than pushing the new answer;
+    // the request carries no payload and names no document, so this drops one
+    // kind's "already answered for this content" gate across every buffer on
+    // the connection and lets the next Paint ask again. The results already
+    // resolved are deliberately left in place: what is on screen stays until
+    // the new answer merges over it, rather than blinking out for a round
+    // trip. Diagnostics are the exception -- nothing re-pulls them on a
+    // cadence, so that kind re-requests here directly.
+    enum class RefreshKind { SemanticTokens, CodeLens, InlayHints, Diagnostics };
+    void RefreshServerResults(const std::string& connectionKey, RefreshKind kind);
+
     void HandlePublishDiagnostics(const nlohmann::json& params, const std::string& language);
 
     // embedded-language-documents follow-up: factored out of
@@ -2066,6 +2079,18 @@ class Manager {
     // is already gone.
     static void SettleCoverage(ViewportCoverage& coverage, std::size_t requestedGeneration, bool answered,
                                std::size_t rangeStart, std::size_t rangeEnd);
+
+    // A viewport-ranged request that settled *unanswered* (an error response,
+    // or a timeout) leaves RequestViewportFeatures' armed triple in place,
+    // and its dedup then suppresses every later send for that same
+    // (server, generation, viewport) triple -- so a server that declines one
+    // request and would answer the next is never asked again until an edit or
+    // a scroll changes the triple. Dropping the armed entry is what lets the
+    // next Paint re-arm. It cannot spin: each request kind's own gate (an
+    // unsupported latch, or a requested-generation stamp recorded at send
+    // time) is what decides whether the re-armed request goes out at all, and
+    // every one of them is already closed by the time a decline lands.
+    void ReArmViewportRequestsAfterDecline(text::Buffer& buffer, std::size_t requestedGeneration);
 
     // SettleCoverage against this buffer's inlayHint coverage.
     void SettleInlayHintRequest(text::Buffer& buffer, std::size_t requestedGeneration, bool answered,

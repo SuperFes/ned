@@ -5842,3 +5842,156 @@ TEST_CASE("Manager captures completionProvider from a real initialize response",
     CHECK(provider->resolveProvider);
     CHECK_FALSE(manager.CompletionProviderFor("other-lang").has_value());
 }
+
+TEST_CASE("BuildInitializeParams declares refreshSupport for every kind a server can ask to have re-pulled", "[Lsp]") {
+    // Without these a well-behaved server never sends workspace/<kind>/refresh
+    // at all, so the handlers that act on one would never fire. Object-shaped
+    // per spec (the *WorkspaceClientCapabilities types), unlike the plain
+    // booleans their siblings use -- and "diagnostics" is plural here while
+    // the request it enables is the singular workspace/diagnostic/refresh.
+    const Json  params    = ned::editor::lsp::BuildInitializeParams(std::filesystem::path("/some/project"));
+    const Json& workspace = params.at("capabilities").at("workspace");
+    for (const char* key : {"semanticTokens", "codeLens", "inlayHint", "diagnostics"}) {
+        REQUIRE(workspace.at(key).at("refreshSupport") == true);
+    }
+}
+
+TEST_CASE("workspace/inlayHint/refresh is answered with a null result and re-opens an already-answered viewport",
+          "[Lsp]") {
+    const RequestIdleGuard      idle(1);
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-hint-refresh-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;\nint y = 2;\nint z = 3;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting(
+        "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}, .rangeSupported = true});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
+    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 3));
+    REQUIRE(first.size() == 3);
+    REQUIRE(first[1]["method"] == "textDocument/inlayHint");
+
+    // An empty array is a real answer, not a decline -- which is exactly the
+    // shape a server uses when it cannot serve hints yet, and it leaves the
+    // viewport marked covered.
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", first[1]["id"]}, {"result", Json::array()}}.dump());
+    manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", 4242}, {"method", "workspace/inlayHint/refresh"}}.dump());
+    manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
+
+    const std::vector<Json> afterRefresh = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 2));
+    REQUIRE(afterRefresh.size() == 2);
+    REQUIRE(afterRefresh[0]["id"] == 4242);
+    REQUIRE(afterRefresh[0]["result"].is_null());
+    REQUIRE(!afterRefresh[0].contains("error")); // an unhandled method would have answered MethodNotFound
+    REQUIRE(afterRefresh[1]["method"] == "textDocument/inlayHint");
+}
+
+TEST_CASE("workspace/codeLens/refresh re-asks for a document whose lenses were already fetched", "[Lsp]") {
+    const RequestIdleGuard      idle(1);
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-code-lens-refresh-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestCodeLenses(buffer, "test-lang");
+    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 1));
+    REQUIRE(first.size() == 1);
+    REQUIRE(first[0]["method"] == "textDocument/codeLens");
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", first[0]["id"]}, {"result", Json::array()}}.dump());
+
+    manager.RequestCodeLenses(buffer, "test-lang"); // same content generation -- already asked
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", 7}, {"method", "workspace/codeLens/refresh"}}.dump());
+    manager.RequestCodeLenses(buffer, "test-lang");
+    const std::vector<Json> afterRefresh = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 2));
+    REQUIRE(afterRefresh.size() == 2);
+    REQUIRE(afterRefresh[0]["result"].is_null());
+    REQUIRE(afterRefresh[1]["method"] == "textDocument/codeLens");
+}
+
+TEST_CASE("workspace/diagnostic/refresh pulls diagnostics again with no edit behind it", "[Lsp]") {
+    const PullDiagnosticsEnabledGuard guard;
+    BufferList                        bufferList;
+    ned::ui::EventLoop                eventLoop;
+    Manager                           manager(bufferList, eventLoop);
+    const std::filesystem::path       path = std::filesystem::temp_directory_path() / "ned-lsp-manager-diagnostic-refresh-test.txt";
+    Buffer&                           buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("bad code");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+
+    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 2));
+    REQUIRE(first.size() == 2);
+    REQUIRE(first[1]["method"] == "textDocument/diagnostic");
+    client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"id", first[1]["id"]}, {"result", {{"kind", "full"}, {"items", Json::array()}}}}.dump());
+
+    // Nothing re-pulls diagnostics on its own cadence -- they ride
+    // didOpen/didChange -- so this is the whole of what refresh has to do.
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", 11}, {"method", "workspace/diagnostic/refresh"}}.dump());
+    // The re-request goes out ahead of the refresh's own response: the
+    // handler runs to produce that response, and sending is what it does.
+    const std::vector<Json> afterRefresh = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 2));
+    REQUIRE(afterRefresh.size() == 2);
+    REQUIRE(afterRefresh[0]["method"] == "textDocument/diagnostic");
+    REQUIRE(afterRefresh[1]["id"] == 11);
+    REQUIRE(afterRefresh[1]["result"].is_null());
+}
+
+TEST_CASE("A viewport request that settles unanswered is asked again instead of being held back by the armed triple",
+          "[Lsp]") {
+    const RequestIdleGuard      idle(1);
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-viewport-decline-retry-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;\nint y = 2;\nint z = 3;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting(
+        "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}, .rangeSupported = true});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
+    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 3));
+    REQUIRE(first.size() == 3);
+    REQUIRE(first[0]["method"] == "textDocument/semanticTokens/range");
+
+    // A real error latches this server as not honoring the range request and
+    // wants the whole-document request to follow -- which the armed
+    // (generation, viewport) triple used to suppress entirely, since neither
+    // the content nor the viewport had moved.
+    client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"id", first[0]["id"]}, {"error", {{"code", -32601}, {"message", "no range support"}}}}.dump());
+
+    // Inside the throttle window this time (the first send is milliseconds
+    // old), so the retry rides the deferred fire rather than a leading edge.
+    manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::vector<Json> retried = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 1));
+    REQUIRE(retried.size() == 1);
+    REQUIRE(retried[0]["method"] == "textDocument/semanticTokens/full");
+}

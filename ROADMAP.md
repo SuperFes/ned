@@ -164,32 +164,6 @@ alone). Four conscious cuts left behind.
       stops emitting comment tokens at all. Decide it when a server actually recolours a
       grammar `comment` cell.
 
-**Server-initiated refresh (`workspace/*/refresh`)**
-
-- [ ] ned implements none of `workspace/{inlayHint,semanticTokens,codeLens,diagnostic}/refresh`
-      and advertises no `refreshSupport` capability, so a server that recomputes a whole
-      class of results and asks the editor to re-pull them gets `Client.cpp`'s generic
-      MethodNotFound (-32601) instead -- and, seeing no `refreshSupport`, a well-behaved
-      server never asks in the first place. Found the hard way: phpantom_lsp declines an
-      `inlayHint` request whose cached symbol map is older than the buffer (correct of it
-      -- those offsets index text the buffer has already moved past, and resolving them
-      against live content puts labels inside the arguments they name) and re-pulls by
-      sending `workspace/inlayHint/refresh` once its background parse commits. ned never
-      advertises the capability, so that refresh is never sent and the declined answer is
-      the last word: hints go missing on the first keystroke and stay missing until an
-      edit happens to change the armed `(generation, viewport)` pair. The wiring is one
-      line per kind once the request is routed -- `PushMergedDiagnostics` already does
-      exactly this at `Manager.cpp:3086`, erasing `armedViewportRequests_` so the next
-      Paint re-arms, with a comment spelling out why the dedup otherwise never fires again.
-- [ ] Independent of refresh, and the reason the above is not merely cosmetic: a viewport
-      response that settles *unanswered* -- a null result, or an error -- leaves
-      `armedViewportRequests_` still holding its `(serverKey, generation, viewport)`
-      triple, so `RequestViewportFeatures`' dedup suppresses every later send for that
-      triple. `SettleCoverage(answered=false)` correctly leaves the byte range uncovered,
-      but nothing upstream re-arms. Any server that declines one request and would answer
-      the next is invisible to ned today; only a server that answers something every time
-      hides it.
-
 **Unimplemented LSP surface** — audited 2026-09-21 by grepping every method string in
 `Source/` against the 3.17 method list. Split by whether something is known to be broken
 today, merely absent, or deliberately skipped, so a later pass doesn't re-litigate the
