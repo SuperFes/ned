@@ -249,42 +249,6 @@ rather than a release's last afternoon.
       `didDeleteFiles` -- ned implements the *rename* half of this family already
       (`lsp-rename-file-notifications`); create and delete were never done. The same
       import-fixup payoff applies to both.
-- [ ] `textDocument/inlineValue` -- variable values rendered inline while stopped at a
-      breakpoint. Unusual among these in that ned already owns both ends: a DAP session
-      knows the values, and the inlay-hint rendering path already draws inline text.
-      **Unblocked 2026-09-22: `phpactor` advertises `inlineValueProvider`, and ned
-      already has a PHP mode.** `Tools/lsp-capability-probe.py phpactor --require
-      inlineValueProvider` says `true`, so there is a real server to build and verify
-      against without installing anything exotic.
-      The four other implementations found (searching for who SETS the capability
-      rather than who merely declares the type -- ocaml-lsp, nim langserver and
-      elixir-ls only declare it): AdaCore's `ada_language_server`, the Dart analysis
-      server (`textDocument/inlineValue` is ticked in `dart-lang/sdk`'s own LSP support
-      table), `FsAutoComplete`, and R's `languageserver`. ned has a mode for all five
-      languages. Ruled OUT by probe: clangd 23, gopls, pylsp,
-      typescript-language-server, lua-language-server, harper-ls and -- despite being
-      the obvious guess -- jdtls, checked including dynamic registration, which is the
-      form jdtls uses for eight other capabilities and which would have made a
-      static-only probe report a false negative.
-      A capability probe is still only the cheap half of the answer (see the tool's own
-      docstring): a capability is a promise to answer, not the shape of the answer, and
-      inlineValue's three result variants are where the design weight sits. That is the
-      next thing to measure, against phpactor, and it decides whether this is worth
-      building at all -- see the variant breakdown below.
-      The half that did not need a server shipped instead -- slug for `git log --grep=`:
-      `inline-debug-values-scoped`. That is what makes the variant breakdown the whole
-      decision, because the three do not buy equal amounts:
-      `InlineValueVariableLookup` is "look this name up in the debugger", which is
-      `Dap::Manager::FrameLocals` plus the scope resolution that just shipped -- near
-      zero gain; `InlineValueText` is a string the server composed itself; and
-      `InlineValueEvaluatableExpression` is the only one a parse tree cannot supply,
-      since it needs a DAP `evaluate` per expression per stop and the async cache that
-      implies. If phpactor returns only VariableLookup, this tier is not worth its
-      plumbing and the entry should be closed rather than deferred.
-      `workspace/inlineValue/refresh` would be a fifth `RefreshKind` alongside the four
-      in `Lsp/Manager.h`, and the request needs `context.frameId`/`stoppedLocation` from
-      DAP -- a fact `Lsp::Manager` has no access to today, so a setter at the
-      BufferView/main.cpp seam rather than an include of `Dap/Manager.h` into `Lsp/`.
 - [ ] `textDocument/documentColor` / `colorPresentation` -- colour swatches and a picker
       for CSS/theme files.
 
@@ -305,6 +269,37 @@ rather than a release's last afternoon.
       tree doesn't.
 - [ ] `textDocument/moniker` -- cross-repository symbol identity, useful only with an
       index ned has no consumer for.
+- [ ] `textDocument/inlineValue` -- **closed 2026-09-22 on a measurement, after being
+      built up to and then measured out of.** ned already owns both ends (a DAP session
+      knows the values, the inlay-hint path draws inline text), and the half that needed
+      no server shipped the same day -- slug for `git log --grep=`:
+      `inline-debug-values-scoped`. What killed the LSP half is what the request
+      actually returns. Of its three result variants, only
+      `InlineValueEvaluatableExpression` is beyond a parse tree (it needs a DAP
+      `evaluate` per expression per stop, plus the async cache that implies);
+      `InlineValueText` is a string the server composed; and
+      `InlineValueVariableLookup` is "look this name up in the debugger", which is
+      exactly `Dap::Manager::FrameLocals` plus the scope resolution ned now does
+      natively. Asked against a real PHP file, phpactor answered with seven results, all
+      seven `InlineValueVariableLookup` -- nothing ned does not already compute for
+      itself, for one language, at the cost of a round trip per viewport. Adopting it
+      would be a strict downgrade.
+      The capability hunt behind that, so nobody repeats it: probe with
+      `Tools/lsp-capability-probe.py --require inlineValueProvider`. Ruled out --
+      clangd 23, gopls, pylsp, typescript-language-server, lua-language-server,
+      harper-ls, and (the obvious guess, wrong) jdtls, checked including dynamic
+      registration, the form jdtls uses for eight other capabilities and which would
+      make a static-only probe report a false negative. The five real implementations,
+      found by searching for who SETS the capability rather than who declares the type
+      (ocaml-lsp, nim langserver and elixir-ls only declare it): phpactor,
+      AdaCore's `ada_language_server`, the Dart analysis server, `FsAutoComplete`, and
+      R's `languageserver`.
+      Reopen only on evidence that some server returns
+      `InlineValueEvaluatableExpression` in practice -- that is the one variant that
+      would buy something, and the four implementations other than phpactor were not
+      measured. `workspace/inlineValue/refresh` would be a fifth `RefreshKind`, and the
+      request needs `context.frameId`/`stoppedLocation` from DAP, a fact `Lsp::Manager`
+      cannot reach today.
 - [ ] `notebookDocument/*` -- no notebook editing surface exists to sync.
 - [ ] `textDocument/inlineCompletion` -- ACP is ned's answer to this shape.
 - [ ] Minor interop note, not a ned defect: ned answers `workspace/configuration` with
