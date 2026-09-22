@@ -242,9 +242,6 @@ rather than a release's last afternoon.
 - [ ] `inlayHint/resolve` and `workspaceSymbol/resolve` -- the lazy second half of two
       kinds ned already pulls eagerly. Both let a server defer the expensive part
       (a hint's tooltip/command, a symbol's location) until something actually needs it.
-- [ ] `workspace/diagnostic` -- workspace-wide pull diagnostics. ned pulls per document
-      (`textDocument/diagnostic`) only, so a project-wide problem list is limited to
-      files that happen to be open.
 - [ ] `workspace/willCreateFiles` / `didCreateFiles` / `willDeleteFiles` /
       `didDeleteFiles` -- ned implements the *rename* half of this family already
       (`lsp-rename-file-notifications`); create and delete were never done. The same
@@ -252,7 +249,43 @@ rather than a release's last afternoon.
 - [ ] `textDocument/documentColor` / `colorPresentation` -- colour swatches and a picker
       for CSS/theme files.
 
+**Project-wide problem list** -- shipped, slug for `git log --grep=`:
+`show project-wide diagnostics in the problem list`. Three conscious cuts left behind.
+
+- [ ] Coverage is whatever a server volunteers, and nothing else: there is no
+      project-tree crawl and no opening files behind the user's back. A server that only
+      reports on what it has been asked about therefore still gives a list scoped to open
+      buffers. The store is the seam if that is ever worth widening -- it is keyed by
+      path and by connection, not by how the diagnostic arrived, so another tier writes
+      into the same map and merges for free.
+- [ ] The store is empty after a restart until each server re-checks. Automatic for a
+      server that checks on open (rust-analyzer), but one that only checks on save leaves
+      the list blank until the user saves something. Persisting it across sessions would
+      mean trusting positions against files that may have changed while ned was not
+      running -- the same staleness problem below, minus any way to notice.
+- [ ] A recorded diagnostic's positions are the server's, against the file as it was when
+      it spoke; a file edited on disk since is flagged (`(file changed since)`, off a
+      size/mtime stamp) rather than re-resolved. Re-resolving is a read-side change with
+      no migration -- the store deliberately keeps `{line, character}` rather than byte
+      offsets precisely so that stays possible -- but nothing has needed it yet.
+
 *Deliberately skipped -- reasons recorded so these don't get re-opened:*
+
+- [ ] `workspace/diagnostic` -- **closed 2026-09-22 on a measurement, and the gap it
+      described was closed by another route.** No installed server advertises it:
+      rust-analyzer, the only one here implementing pull diagnostics at all, sets
+      `diagnosticProvider.workspaceDiagnostics: false`, and clangd/gopls/pylsp/
+      typescript-language-server/lua-language-server/phpactor/jdtls/harper-ls declare no
+      `diagnosticProvider` whatsoever (`Tools/lsp-capability-probe.py`). Worth knowing
+      for the next pass: ned's existing `textDocument/diagnostic` path is therefore
+      also unexercised against everything installed except rust-analyzer.
+      What the entry actually wanted -- a problem list that is not limited to open
+      buffers -- shipped instead off the *push* side, slug for `git log --grep=`:
+      `keep diagnostics for files with no open buffer`. Servers already volunteer
+      findings about files nobody opened (measured: rust-analyzer via cargo check,
+      gopls per package) and ned was discarding them for want of a `text::Buffer` to
+      hang them on. Reopen only if a server turns up that implements the request AND
+      reports something its own publishes do not.
 
 - [ ] `textDocument/foldingRange` -- ned folds from its own grammar (`ImprintFold.h`), for
       every language, with no server required. Worth revisiting only for a language that
