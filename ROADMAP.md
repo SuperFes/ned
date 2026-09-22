@@ -249,26 +249,6 @@ rather than a release's last afternoon.
 - [ ] `textDocument/documentColor` / `colorPresentation` -- colour swatches and a picker
       for CSS/theme files.
 
-**Project-wide problem list** -- shipped, slug for `git log --grep=`:
-`show project-wide diagnostics in the problem list`. Three conscious cuts left behind.
-
-- [ ] Coverage is whatever a server volunteers, and nothing else: there is no
-      project-tree crawl and no opening files behind the user's back. A server that only
-      reports on what it has been asked about therefore still gives a list scoped to open
-      buffers. The store is the seam if that is ever worth widening -- it is keyed by
-      path and by connection, not by how the diagnostic arrived, so another tier writes
-      into the same map and merges for free.
-- [ ] The store is empty after a restart until each server re-checks. Automatic for a
-      server that checks on open (rust-analyzer), but one that only checks on save leaves
-      the list blank until the user saves something. Persisting it across sessions would
-      mean trusting positions against files that may have changed while ned was not
-      running -- the same staleness problem below, minus any way to notice.
-- [ ] A recorded diagnostic's positions are the server's, against the file as it was when
-      it spoke; a file edited on disk since is flagged (`(file changed since)`, off a
-      size/mtime stamp) rather than re-resolved. Re-resolving is a read-side change with
-      no migration -- the store deliberately keeps `{line, character}` rather than byte
-      offsets precisely so that stays possible -- but nothing has needed it yet.
-
 *Deliberately skipped -- reasons recorded so these don't get re-opened:*
 
 - [ ] `workspace/diagnostic` -- **closed 2026-09-22 on a measurement, and the gap it
@@ -1561,6 +1541,27 @@ these accumulate detail in place.
       in ned needs explicit `GC_register_my_thread` bracketing — about eight lines of
       RAII, but at 39 call sites. Upstream was reportedly easing embedded builds around
       the time this was measured; re-check before investing in any workaround.
+- [ ] **Widening the project-wide problem list.** The list (slug for
+      `git log --grep=`: `show project-wide diagnostics in the problem list`) covers
+      whatever servers volunteer about files with no buffer open, which for a
+      whole-project checker is most of what they say. Three ways it could go further,
+      none of them started, each with the thing that would justify it:
+      **Coverage** -- a server that only reports on what it has been asked about still
+      yields a list scoped to open buffers. A project-tree crawl, or opening files
+      headlessly to provoke a check, would widen it; the store is already the seam
+      (keyed by path and connection, not by how a diagnostic arrived, so another tier
+      writes into the same map and merges for free). Justified when a server someone
+      actually uses turns out to be that quiet.
+      **Cold start** -- the store is empty after a restart until each server re-checks:
+      automatic for rust-analyzer, blank until a save for a check-on-save server.
+      Persisting it would mean trusting positions against files that may have changed
+      while ned was not running, so it wants the staleness answer below first.
+      **Staleness** -- a file edited on disk under a recorded diagnostic is flagged
+      (`(file changed since)`, off a size/mtime stamp) rather than re-resolved.
+      Re-resolving against the file as it stands is a read-side change with no
+      migration -- the store keeps `{line, character}` rather than byte offsets
+      precisely so that stays possible. Justified when the flag starts showing up often
+      enough to be noise rather than information.
 - [ ] **ned in Carbon, eventually.** Speculative and deliberately unscoped, but worth
       remembering: ned is C++23 throughout, and Carbon's entire pitch is C++ interop as a
       migration path for large existing C++ codebases — which describes this one. Carbon is
