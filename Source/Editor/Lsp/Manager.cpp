@@ -686,8 +686,9 @@ Client* Manager::ExistingClientForLanguage(const std::string& language) const {
 
 void Manager::WireNotificationHandlers(Client& client, const std::string& serverKey, const std::string& connectionKey,
                                           const Json& workspaceConfiguration) {
-    client.SetNotificationHandler("textDocument/publishDiagnostics",
-                                  [this, serverKey](const Json& params) { HandlePublishDiagnostics(params, serverKey); });
+    client.SetNotificationHandler("textDocument/publishDiagnostics", [this, serverKey, connectionKey](const Json& params) {
+        HandlePublishDiagnostics(params, serverKey, connectionKey);
+    });
     // workDoneProgress-support follow-up: the create request just
     // establishes a token the following "$/progress" notifications carry --
     // there's nothing to decide, its result is null by spec; HandleProgress
@@ -1857,7 +1858,7 @@ void Manager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     }
 }
 
-void Manager::HandlePublishDiagnostics(const Json& params, const std::string& language) {
+void Manager::HandlePublishDiagnostics(const Json& params, const std::string& language, const std::string& connectionKey) {
     if (!params.contains("uri")) {
         return;
     }
@@ -1881,8 +1882,27 @@ void Manager::HandlePublishDiagnostics(const Json& params, const std::string& la
 
     text::Buffer* buffer = bufferList_.FindByPath(*path);
     if (!buffer) {
-        return; // not an open buffer -- nothing to update
+        // project-wide-diagnostics follow-up: no buffer to hang these on,
+        // which used to end the story right here. A server that checks the
+        // whole project (measured: rust-analyzer via cargo check, gopls per
+        // package) reports most of its findings about files nobody has
+        // opened, and dropping them is what limited ned's problem list to
+        // whatever happened to be on screen.
+        //
+        // Prose diagnostics stay out: the prose checker only ever speaks
+        // about a document it was handed, so a path with no buffer is a
+        // stale publish for one that just closed, not news about the
+        // project.
+        if (language != kProseLanguageKey) {
+            RecordProjectDiagnostics(*path, params, language, connectionKey);
+        }
+        return;
     }
+
+    // A resident buffer's own diagnostics supersede anything recorded while
+    // it was closed -- clear the file out rather than letting the same
+    // finding be reported from two places at once.
+    DropProjectDiagnostics(*path);
 
     // prose-diagnostic-callout follow-up: language is the same per-server
     // key HandlePublishDiagnostics is registered under (see the
@@ -1955,6 +1975,146 @@ void Manager::HandlePublishDiagnostics(const Json& params, const std::string& la
     // application once the buffer goes quiet for a beat.
     diagnosticsDebounceTimers_[buffer].Arm(eventLoop_, std::chrono::milliseconds(DiagnosticsDebounceMs()),
                                            [this, buffer] { PushMergedDiagnostics(*buffer); });
+}
+
+namespace {
+
+    // Whether p is at or under root, decided lexically -- the same
+    // no-syscall, no-opinion-about-existence test Project/Search.cpp's own
+    // IsUnderRoot makes, kept local here rather than shared: that one is a
+    // file-in-the-search-tree question, this one is a folder-scope guard,
+    // and giving them one home would couple the LSP layer to the project
+    // searcher for four lines.
+    bool PathIsUnder(const std::filesystem::path& p, const std::filesystem::path& root) {
+        const std::filesystem::path relative = p.lexically_relative(root);
+        return !relative.empty() && *relative.begin() != "..";
+    }
+
+    // Size and last-write-time, or (0, 0) for a file that cannot be
+    // stat'd -- which compares unequal to any real stamp, so an
+    // unreadable file reads as "positions no longer current" rather than
+    // as a match.
+    std::pair<std::uintmax_t, std::int64_t> FileStamp(const std::filesystem::path& path) {
+        std::error_code      ec;
+        const std::uintmax_t size = std::filesystem::file_size(path, ec);
+        if (ec) {
+            return {0, 0};
+        }
+        const std::filesystem::file_time_type written = std::filesystem::last_write_time(path, ec);
+        if (ec) {
+            return {0, 0};
+        }
+        return {size, written.time_since_epoch().count()};
+    }
+
+} // namespace
+
+void Manager::RecordProjectDiagnostics(const std::filesystem::path& path, const Json& params, const std::string& serverKey,
+                                       const std::string& connectionKey) {
+    // Scope guard: only files this connection actually serves. A server is
+    // entitled to publish about its own stdlib or a dependency checkout,
+    // and neither belongs in this project's problem list.
+    const auto folders = connectionFolders_.find(connectionKey);
+    if (folders == connectionFolders_.end()) {
+        return;
+    }
+    std::error_code             ec;
+    const std::filesystem::path absolute = std::filesystem::absolute(path, ec).lexically_normal();
+    if (ec) {
+        return;
+    }
+    const bool served = std::any_of(folders->second.begin(), folders->second.end(),
+                                    [&absolute](const std::filesystem::path& folder) {
+                                        return PathIsUnder(absolute, folder.lexically_normal());
+                                    });
+    if (!served) {
+        return;
+    }
+
+    // An empty array is how a server says "fixed" -- erase this server's
+    // slice, and the file with it once no server has anything left to say.
+    const Json& items = params.contains("diagnostics") ? params["diagnostics"] : Json::array();
+    if (items.empty()) {
+        const auto file = projectDiagnostics_.find(absolute);
+        if (file != projectDiagnostics_.end()) {
+            file->second.erase(serverKey);
+            if (file->second.empty()) {
+                projectDiagnostics_.erase(file);
+            }
+        }
+        return;
+    }
+
+    // Cap guard: a file already in the store keeps updating regardless, so
+    // hitting the cap freezes which files are covered rather than freezing
+    // their contents.
+    if (!projectDiagnostics_.contains(absolute) && projectDiagnostics_.size() >= kMaxProjectDiagnosticFiles) {
+        if (!projectDiagnosticsCapReported_) {
+            projectDiagnosticsCapReported_ = true;
+            LogError(serverKey, "project diagnostics cap reached (" + std::to_string(kMaxProjectDiagnosticFiles) +
+                                    " files) -- further files are not tracked");
+        }
+        return;
+    }
+
+    ProjectDiagnosticSlice slice;
+    slice.diagnostics.reserve(items.size());
+    for (const Json& item : items) {
+        const Json& range = item.value("range", Json::object());
+        const Json& start = range.value("start", Json::object());
+        const Json& end   = range.value("end", Json::object());
+        slice.diagnostics.push_back(ProjectDiagnostic{
+            .start    = Position{.line      = start.value("line", static_cast<std::size_t>(0)),
+                                 .character = start.value("character", static_cast<std::size_t>(0))},
+            .end      = Position{.line      = end.value("line", static_cast<std::size_t>(0)),
+                                 .character = end.value("character", static_cast<std::size_t>(0))},
+            .severity = SeverityFromLsp(item.value("severity", 3)),
+            .message  = item.value("message", std::string()),
+        });
+    }
+    const auto [size, mtime] = FileStamp(absolute);
+    slice.fileSize           = size;
+    slice.fileMTime          = mtime;
+
+    projectDiagnostics_[absolute][serverKey] = std::move(slice);
+}
+
+void Manager::DropProjectDiagnostics(const std::filesystem::path& path) {
+    if (projectDiagnostics_.empty()) {
+        return; // the overwhelmingly common case -- don't pay for absolute() to learn it
+    }
+    std::error_code             ec;
+    const std::filesystem::path absolute = std::filesystem::absolute(path, ec).lexically_normal();
+    if (!ec) {
+        projectDiagnostics_.erase(absolute);
+    }
+}
+
+std::vector<Manager::ProjectDiagnosticFile> Manager::ProjectDiagnostics() const {
+    std::vector<ProjectDiagnosticFile> files;
+    files.reserve(projectDiagnostics_.size());
+    // projectDiagnostics_ is a std::map, so this comes out path-sorted
+    // already -- the order a problem list wants to be read in.
+    for (const auto& [path, bySource] : projectDiagnostics_) {
+        ProjectDiagnosticFile file{.path = path};
+        const auto [size, mtime] = FileStamp(path);
+        for (const auto& [serverKey, slice] : bySource) {
+            // Every server's positions were stamped against the file as it
+            // was when that server spoke; one stale slice makes the file's
+            // positions untrustworthy, which is what this flag reports.
+            if (slice.fileSize != size || slice.fileMTime != mtime) {
+                file.positionsCurrent = false;
+            }
+            file.diagnostics.insert(file.diagnostics.end(), slice.diagnostics.begin(), slice.diagnostics.end());
+        }
+        std::sort(file.diagnostics.begin(), file.diagnostics.end(),
+                  [](const ProjectDiagnostic& a, const ProjectDiagnostic& b) {
+                      return a.start.line != b.start.line ? a.start.line < b.start.line
+                                                          : a.start.character < b.start.character;
+                  });
+        files.push_back(std::move(file));
+    }
+    return files;
 }
 
 void Manager::FilterToOwnedRanges(text::Buffer* buffer, const std::string& language,

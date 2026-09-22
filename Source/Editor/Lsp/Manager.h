@@ -40,7 +40,9 @@
 
 #include <chrono>
 #include <filesystem>
+#include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1407,6 +1409,44 @@ class Manager {
     void ResolveDocumentLink(text::Buffer& buffer, const ResolvedDocumentLink& link, ResolveDocumentLinkCallback callback,
                              const std::string& serverKey = {});
 
+    // project-wide-diagnostics follow-up. One diagnostic a server published
+    // about a file that has no open buffer. Every server ned talks to
+    // volunteers these -- measured 2026-09-22, rust-analyzer and gopls both
+    // report a compile error in a file the editor never opened -- and until
+    // this existed HandlePublishDiagnostics dropped them on the floor,
+    // because a diagnostic's only home was a resident text::Buffer.
+    //
+    // Positions stay in the server's own {line, character} space instead of
+    // being resolved to byte offsets the way a buffer-backed diagnostic is:
+    // there is no content resident to resolve them against. That is also
+    // what keeps the door open for a reader to resolve them against
+    // whatever the file says when it is finally read, rather than against a
+    // snapshot taken here.
+    struct ProjectDiagnostic {
+        Position                           start;
+        Position                           end;
+        text::Buffer::Diagnostic::Severity severity = text::Buffer::Diagnostic::Severity::Information;
+        std::string                        message;
+
+        [[nodiscard]] bool operator==(const ProjectDiagnostic&) const = default;
+    };
+
+    // Every file with diagnostics but no buffer, path-sorted, each file's
+    // servers merged in the same per-source way a resident buffer's are
+    // (diagnosticsBySource_) -- one server's publish must not erase what
+    // another said about the same file.
+    struct ProjectDiagnosticFile {
+        std::filesystem::path          path;
+        std::vector<ProjectDiagnostic> diagnostics;
+        // False once the file on disk stops matching what it was when the
+        // server spoke -- see ProjectDiagnosticSlice::fileSize. A reader
+        // that cares about column accuracy consults this; a reader that
+        // only wants "which files have problems" can ignore it.
+        bool positionsCurrent = true;
+    };
+
+    [[nodiscard]] std::vector<ProjectDiagnosticFile> ProjectDiagnostics() const;
+
   private:
     // Returns the already-running client for language, or nullptr if none
     // is running and none is configured -- never spawns one. Used by
@@ -1736,7 +1776,30 @@ class Manager {
     enum class RefreshKind { SemanticTokens, CodeLens, InlayHints, Diagnostics };
     void RefreshServerResults(const std::string& connectionKey, RefreshKind kind);
 
-    void HandlePublishDiagnostics(const nlohmann::json& params, const std::string& language);
+    void HandlePublishDiagnostics(const nlohmann::json& params, const std::string& language,
+                                  const std::string& connectionKey);
+
+    // project-wide-diagnostics follow-up: HandlePublishDiagnostics' branch
+    // for a path with no open buffer. Records into projectDiagnostics_ under
+    // two guards, both about not letting a talkative server grow this
+    // without bound: the path must sit under one of the folders this
+    // connection actually serves (connectionFolders_ -- a server is free to
+    // publish about its own stdlib or a dependency checkout, and those are
+    // not this project's problem list), and the store is capped at
+    // kMaxProjectDiagnosticFiles distinct files, after which known files
+    // still update but new ones are refused.
+    //
+    // An empty diagnostics array erases the slice rather than storing zero
+    // entries: that is how a server says "fixed", and a file whose every
+    // server has gone quiet must leave the store entirely rather than
+    // lingering as an empty row.
+    void RecordProjectDiagnostics(const std::filesystem::path& path, const nlohmann::json& params,
+                                  const std::string& serverKey, const std::string& connectionKey);
+
+    // Drops every slice recorded for path -- called when a buffer opens for
+    // it, since a resident buffer's own diagnostics supersede anything
+    // recorded while it was closed, and the two must never both be reported.
+    void DropProjectDiagnostics(const std::filesystem::path& path);
 
     // embedded-language-documents follow-up: factored out of
     // HandlePublishDiagnostics so pull-diagnostics' own response handler
@@ -1957,6 +2020,35 @@ class Manager {
     // reported. PushMergedDiagnostics flattens this into the vector that
     // actually reaches buffer.SetDiagnostics.
     std::unordered_map<text::Buffer*, std::unordered_map<std::string, DiagnosticSlice>> diagnosticsBySource_;
+
+    // project-wide-diagnostics follow-up: the same per-source merge as
+    // diagnosticsBySource_ just above, for files with no buffer to hang it
+    // on -- outer key the file, inner key the server. std::map, not
+    // unordered: a problem list is read in path order, and sorting once
+    // here beats sorting on every read.
+    struct ProjectDiagnosticSlice {
+        std::vector<ProjectDiagnostic> diagnostics;
+        // The file as it was when this server spoke about it. Positions
+        // above are {line, character} against *that* file; if it changes on
+        // disk while still closed they are stale, and stamping identity
+        // here is what lets ProjectDiagnostics() say so rather than
+        // silently pointing at whatever now occupies that line. Size and
+        // mtime rather than a hash: this is checked per file on every read
+        // of the list, and a stat is what that budget affords.
+        std::uintmax_t fileSize  = 0;
+        std::int64_t   fileMTime = 0;
+    };
+    std::map<std::filesystem::path, std::map<std::string, ProjectDiagnosticSlice>> projectDiagnostics_;
+
+    // The cap behind RecordProjectDiagnostics' second guard. Generous on
+    // purpose -- a real project-wide check on a large repository legitimately
+    // names thousands of files -- but finite, since nothing else bounds what
+    // a server may publish about.
+    static constexpr std::size_t kMaxProjectDiagnosticFiles = 4096;
+
+    // One-shot, so hitting the cap reports once rather than on every publish
+    // that follows.
+    bool projectDiagnosticsCapReported_ = false;
 
     // embedded-language-documents follow-up: buffer's own true host
     // language, stamped by SyncBuffer -- what PrimarySyncState looks up
