@@ -924,6 +924,48 @@ inline std::optional<int> VisualColumn(const text::ITextStorage& content, std::s
     return col;
 }
 
+// The third member of VisualColumn's family, and the one that was missing:
+// Paint()'s horizontal-scroll fast-forward. Consumes (but never draws)
+// whatever falls before the viewport's left column, returning the offset
+// drawing should start at and the visual column that offset actually sits
+// at.
+//
+// The invariant that binds it to the other two: for the offset it returns,
+// VisualColumn(content, start, offset, ...) == the columns it reports
+// skipping -- exactly, unless the walk stopped part-way through a glyph or
+// hint wider than the columns remaining, in which case it overshoots by
+// that glyph's own width and reports the overshoot honestly. Anything else
+// means the row is drawn from a different place than the cursor is placed,
+// which is the bug this exists to make untestable-by-accident (see the call
+// site's own comment).
+struct ColumnSkip {
+    std::size_t offset  = 0;
+    int         columns = 0;
+};
+
+inline ColumnSkip SkipToColumn(const text::ITextStorage& content, std::size_t start, std::size_t end, int targetColumns,
+                               const std::vector<RenderedLink>&      lineLinks = {},
+                               const std::vector<RenderedInlayHint>& lineHints = {}) {
+    ColumnSkip result{.offset = start, .columns = 0};
+    while (result.offset < end && result.columns < targetColumns) {
+        if (const RenderedLink* link = LinkStartingAt(lineLinks, result.offset)) {
+            result.columns += DisplayColumns(link->displayText, result.columns);
+            result.offset = link->endByte;
+            continue;
+        }
+        // Ordered link-then-hint to match Paint()'s own
+        // EmitCollapsedLink/EmitInlayHint sequence: a link consumes its
+        // whole span there before any hint inside it can render.
+        if (const RenderedInlayHint* hint = InlayHintStartingAt(lineHints, result.offset)) {
+            result.columns += DisplayColumns(hint->label, result.columns);
+        }
+        const auto decoded = content.CodepointAt(result.offset);
+        result.columns += CodepointColumns(decoded.codepoint, result.columns);
+        result.offset += decoded.byteLength;
+    }
+    return result;
+}
+
 // Links follow-up: the click-translation counterpart to VisualColumn --
 // reimplements Buffer::ByteOffsetForLineAndColumn's own tab-aware walk
 // locally (mirroring its algorithm and kMaxTabAwareColumnScan-style

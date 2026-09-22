@@ -2121,18 +2121,23 @@ void BufferView::Paint(Canvas paneCanvas) {
             // variable serves both.
             int rowStartColumn = currentSegment.continuationIndent;
             if (viewport_.LeftColumn() > 0) {
-                int skipped = 0;
-                while (offset < currentSegment.endByte && skipped < static_cast<int>(viewport_.LeftColumn())) {
-                    if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
-                        skipped += DisplayColumns(link->displayText, skipped);
-                        offset = link->endByte;
-                        continue;
-                    }
-                    const auto decoded = content.CodepointAt(offset);
-                    skipped += CodepointColumns(decoded.codepoint, skipped);
-                    offset += decoded.byteLength;
-                }
-                rowStartColumn = skipped;
+                // Hints count here exactly as they do in the drawing loop
+                // below and in VisualColumn (which places the terminal
+                // cursor and decides the scroll). Leaving them out made this
+                // walk consume viewport_.LeftColumn() columns of
+                // *characters* where the drawing loop would have spent some
+                // of them on hints, so it started drawing too far into the
+                // line and the row's painted text ended short of where the
+                // cursor was placed -- by the width of the hints scrolled
+                // off to the left. Reported live 2026-09-22; measured at 64
+                // columns on a line carrying twelve clangd parameter hints.
+                // ByteOffsetForColumnInLine already carries the same fix for
+                // clicks; SkipToColumn is where the three now agree.
+                const ColumnSkip skip = SkipToColumn(content, offset, currentSegment.endByte,
+                                                     static_cast<int>(viewport_.LeftColumn()), lineLinks,
+                                                     lineState.inlayHints);
+                offset                = skip.offset;
+                rowStartColumn        = skip.columns;
             }
             // wrap-indent follow-up: currentSegment.continuationIndent is 0
             // for a line's first row always, and for every row when

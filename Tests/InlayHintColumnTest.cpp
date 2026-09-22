@@ -93,3 +93,58 @@ TEST_CASE("ByteOffsetForColumnInLine is VisualColumn's inverse under hints", "[I
         REQUIRE(ByteOffsetForColumnInLine(content, 0, kLine.size(), 13, 4, {}) == 13);
     }
 }
+
+// Paint()'s horizontal-scroll fast-forward is the third consumer of the same
+// column arithmetic, and the one that was missing hint accounting: it
+// consumed LeftColumn() columns of *characters* where the drawing loop would
+// have spent some of them on hints, so the row was drawn from further into
+// the line than the cursor was placed against. Live symptom (2026-09-22):
+// point at the end of a long line rendered 64 columns past the last painted
+// character, 64 being the total width of the hints scrolled off to the left.
+TEST_CASE("SkipToColumn lands where VisualColumn says it should", "[InlayHint]") {
+    using ned::ui::detail::SkipToColumn;
+    const ned::text::RopeStorage content{ned::text::Rope(kLine)};
+    const std::size_t           end = kLine.size();
+
+    SECTION("with no hints, skipping N columns lands at column N") {
+        for (int target = 0; target <= static_cast<int>(end); ++target) {
+            const auto skip = SkipToColumn(content, 0, end, target);
+            REQUIRE(skip.columns == target);
+            REQUIRE(VisualColumn(content, 0, skip.offset, 1000) == target);
+        }
+    }
+
+    SECTION("with hints, the offset it stops at really is at the column it reports") {
+        const std::vector<RenderedInlayHint> hints = Hints();
+        // The two measure deliberately different edges of the same offset:
+        // SkipToColumn reports where *rendering* of skip.offset begins,
+        // which is before any hint anchored there, while VisualColumn
+        // reports where the real character lands, which is after it. That
+        // gap is the whole reason Paint sets rowStartColumn from the former
+        // and places the cursor from the latter, so the identity that binds
+        // them has to name it rather than assume equality.
+        //
+        // 8 is "plane:" + "y:" -- the whole virtual width on this line, so
+        // the walk crosses both and the pre-fix drift would be widest past
+        // them.
+        for (int target = 0; target <= static_cast<int>(end) + 8; ++target) {
+            const auto skip    = SkipToColumn(content, 0, end, target, {}, hints);
+            int        expected = skip.columns;
+            if (const RenderedInlayHint* hint = ned::ui::detail::InlayHintStartingAt(hints, skip.offset)) {
+                expected += ned::ui::detail::DisplayColumns(hint->label, skip.columns);
+            }
+            REQUIRE(VisualColumn(content, 0, skip.offset, 1000, {}, hints) == expected);
+            // Never stops short: the row would start left of the scroll.
+            REQUIRE((skip.columns >= target || skip.offset == end));
+        }
+    }
+
+    SECTION("the hint's own width is included, not skipped over") {
+        const std::vector<RenderedInlayHint> hints = Hints();
+        // Column 4 is where "plane:" begins; asking for 4 columns must stop
+        // before it, and asking for 5 must have paid its full 6.
+        REQUIRE(SkipToColumn(content, 0, end, 4, {}, hints).columns == 4);
+        const auto past = SkipToColumn(content, 0, end, 5, {}, hints);
+        REQUIRE(past.columns == 4 + 6 + 1); // "plane:" then the 's' of "std_plane"
+    }
+}
