@@ -11,6 +11,7 @@
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Lsp/ServerConfig.h"
 #include "Editor/Multibuffer.h"
+#include "Editor/MultibufferLimits.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "TestEvents.h"
@@ -333,6 +334,106 @@ TEST_CASE("C-c C-v opens a file that was never opened, from a project-diagnostic
     REQUIRE(opened != nullptr); // the jump had to open it
     REQUIRE(&fixture.activeBuffer.Get() == opened);
     REQUIRE(opened->Content().ByteOffsetToLine(opened->Point()) == 1); // 0-indexed line 1 == source line 2
+
+    std::filesystem::remove_all(root);
+}
+
+// The excerpt cap is applied before any file is read, so the work is
+// proportional to what is displayed rather than to whatever a server
+// happened to report -- otherwise rendering the 500 excerpts the cap keeps
+// could cost a read of every file in the store.
+TEST_CASE("The project-diagnostics list is bounded by the excerpt cap, and reads lazily",
+          "[BufferView][Diagnostics]") {
+    using ned::editor::lsp::Manager;
+
+    struct CapGuard {
+        ~CapGuard() {
+            ned::editor::SetMultibufferMaxExcerpts(500);
+        }
+    } capGuard;
+
+    Fixture            fixture;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(fixture.bufferList, eventLoop);
+
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "ned-diagnostics-cap-project";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+
+    // Ten files, each with one diagnostic; the cap keeps three.
+    for (int i = 0; i < 10; ++i) {
+        const std::filesystem::path path = root / ("f" + std::to_string(i) + ".cpp");
+        std::ofstream(path) << "line zero\nline one\nline two\n";
+        manager.SetProjectDiagnosticsForTesting(path, "cpp",
+                                                {Manager::ProjectDiagnostic{.start    = {.line = 1, .character = 5},
+                                                                            .end      = {.line = 1, .character = 8},
+                                                                            .severity = Buffer::Diagnostic::Severity::Error,
+                                                                            .message  = "finding " + std::to_string(i)}});
+    }
+    REQUIRE(manager.ProjectDiagnostics().size() == 10);
+
+    ned::editor::SetMultibufferMaxExcerpts(3);
+
+    BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.RequestDiagnosticsBufferForTesting();
+
+    Buffer&           results = fixture.activeBuffer.Get();
+    const std::string text    = results.Text();
+
+    // Three kept, in path order, and the seven that were not are neither
+    // rendered nor read.
+    REQUIRE(results.Diagnostics().size() == 3);
+    REQUIRE(text.find("f0.cpp") != std::string::npos);
+    REQUIRE(text.find("f2.cpp") != std::string::npos);
+    REQUIRE(text.find("f9.cpp") == std::string::npos);
+
+    // The body is the diagnostic's own line, streamed from disk -- line
+    // index 1, not the first line the reader happens to reach.
+    REQUIRE(text.find("line one") != std::string::npos);
+    REQUIRE(text.find("line zero") == std::string::npos);
+
+    // And the columns resolve against that line, not the whole file.
+    for (const Buffer::Diagnostic& diagnostic : results.Diagnostics()) {
+        REQUIRE(diagnostic.endByte > diagnostic.startByte);
+    }
+
+    // The status line counts what the project has, not what fit.
+    REQUIRE(fixture.statusMessage.find("10 diagnostics") != std::string::npos);
+    REQUIRE(fixture.statusMessage.find("showing 3") != std::string::npos);
+
+    std::filesystem::remove_all(root);
+}
+
+// A file the server reported on that has since gone (or become unreadable)
+// keeps its row rather than vanishing from the list: the finding is still a
+// fact about the project, and the store's own stamp already marks the header.
+TEST_CASE("A project-diagnostics file that cannot be read still lists", "[BufferView][Diagnostics]") {
+    using ned::editor::lsp::Manager;
+
+    Fixture            fixture;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(fixture.bufferList, eventLoop);
+
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "ned-diagnostics-missing-project";
+    std::filesystem::create_directories(root);
+    const std::filesystem::path gone = root / "deleted-since.cpp";
+    std::ofstream(gone) << "int main() { return 0; }\n";
+
+    manager.SetProjectDiagnosticsForTesting(gone, "cpp",
+                                            {Manager::ProjectDiagnostic{.start    = {.line = 0, .character = 4},
+                                                                        .end      = {.line = 0, .character = 8},
+                                                                        .severity = Buffer::Diagnostic::Severity::Error,
+                                                                        .message  = "reported before it vanished"}});
+    std::filesystem::remove(gone);
+
+    BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.RequestDiagnosticsBufferForTesting();
+
+    const std::string text = fixture.activeBuffer.Get().Text();
+    REQUIRE(text.find(gone.string()) != std::string::npos);
+    REQUIRE(text.find("(file changed since)") != std::string::npos); // the stamp no longer matches
 
     std::filesystem::remove_all(root);
 }

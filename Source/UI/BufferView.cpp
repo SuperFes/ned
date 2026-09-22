@@ -1459,6 +1459,17 @@ void BufferView::RequestDiagnosticsBuffer() {
         std::size_t              endInLine   = 0;
         text::Buffer::Diagnostic diagnostic;
         bool                     stale = false; // the file changed under a recorded diagnostic
+        // A project entry knows its path and the server's own columns but
+        // not the line's text, which costs a file read -- deferred to phase
+        // two below so only the entries that survive the excerpt cap pay it.
+        bool        deferred       = false;
+        std::size_t startCharacter = 0; // UTF-16 code units, the server's own unit
+        std::size_t endCharacter   = 0;
+        // What the sort orders by within a line. Bytes for a resident
+        // buffer, UTF-16 units for a deferred one -- different units, but
+        // only ever compared against siblings on the same line of the same
+        // file, where both are monotonic in the same direction.
+        std::size_t sortColumn = 0;
     };
     std::vector<PendingDiagnostic> pending;
 
@@ -1488,6 +1499,7 @@ void BufferView::RequestDiagnosticsBuffer() {
                 .startInLine = diagnostic.startByte > lineStart ? diagnostic.startByte - lineStart : 0,
                 .endInLine   = diagnostic.endByte > lineStart ? diagnostic.endByte - lineStart : 0,
                 .diagnostic  = diagnostic,
+                .sortColumn  = diagnostic.startByte > lineStart ? diagnostic.startByte - lineStart : 0,
             });
         }
     }
@@ -1498,29 +1510,20 @@ void BufferView::RequestDiagnosticsBuffer() {
     // any path that currently has one.
     if (lspManager_ != nullptr && editor::lsp::ProjectDiagnosticsEnabled()) {
         for (const editor::lsp::Manager::ProjectDiagnosticFile& file : lspManager_->ProjectDiagnostics()) {
-            std::ifstream in(file.path, std::ios::binary);
-            if (!in) {
-                continue; // deleted or unreadable since the server spoke
-            }
-            std::ostringstream raw;
-            raw << in.rdbuf();
-            const text::RopeStorage content{text::Rope(raw.str())};
             for (const editor::lsp::Manager::ProjectDiagnostic& diagnostic : file.diagnostics) {
-                const std::size_t startByte = editor::lsp::PositionToByte(content, diagnostic.start);
-                const std::size_t endByte   = editor::lsp::PositionToByte(content, diagnostic.end);
-                const auto [line, lineStart, lineEnd] = lineOf(content, startByte);
                 pending.push_back(PendingDiagnostic{
-                    .path        = file.path,
-                    .line        = line,
-                    .bodyText    = content.Substring(lineStart, lineEnd - lineStart),
-                    .startInLine = startByte > lineStart ? startByte - lineStart : 0,
-                    .endInLine   = endByte > lineStart ? endByte - lineStart : 0,
-                    .diagnostic  = text::Buffer::Diagnostic{.startByte = 0,
-                                                            .endByte   = 0,
-                                                            .severity  = diagnostic.severity,
-                                                            .origin    = text::Buffer::Diagnostic::Origin::Code,
-                                                            .message   = diagnostic.message},
-                    .stale       = !file.positionsCurrent,
+                    .path       = file.path,
+                    .line       = diagnostic.start.line, // the server's own line, no read needed to sort by it
+                    .diagnostic = text::Buffer::Diagnostic{.startByte = 0,
+                                                           .endByte   = 0,
+                                                           .severity  = diagnostic.severity,
+                                                           .origin    = text::Buffer::Diagnostic::Origin::Code,
+                                                           .message   = diagnostic.message},
+                    .stale          = !file.positionsCurrent,
+                    .deferred       = true,
+                    .startCharacter = diagnostic.start.character,
+                    .endCharacter   = diagnostic.end.character,
+                    .sortColumn     = diagnostic.start.character,
                 });
             }
         }
@@ -1534,8 +1537,75 @@ void BufferView::RequestDiagnosticsBuffer() {
         if (a.path != b.path) {
             return a.path < b.path;
         }
-        return a.line != b.line ? a.line < b.line : a.startInLine < b.startInLine;
+        return a.line != b.line ? a.line < b.line : a.sortColumn < b.sortColumn;
     });
+
+    // The excerpt cap is applied here rather than left to BuildMultibuffer,
+    // because everything past it would otherwise cost a file read to build a
+    // row that is then discarded -- up to the whole store (thousands of
+    // files) to render the 500 MultibufferMaxExcerpts() keeps. totalFound is
+    // handed on so the composite still reports how many it stands for.
+    const std::size_t totalFound  = pending.size();
+    const std::size_t maxExcerpts = editor::MultibufferMaxExcerpts();
+    if (maxExcerpts != 0 && pending.size() > maxExcerpts) {
+        pending.resize(maxExcerpts);
+    }
+
+    // Phase two: the line text for the entries that survived, one pass per
+    // file (they are adjacent, the sort above is by path first). Streamed to
+    // the highest line actually wanted and keeping only those lines, rather
+    // than materializing the file -- a diagnostic on line 3 of a 200MB
+    // generated file must not read 200MB to render one row, and nothing here
+    // needs a whole-file storage the way the resident-buffer path has one.
+    for (std::size_t i = 0; i < pending.size();) {
+        if (!pending[i].deferred) {
+            ++i;
+            continue;
+        }
+        const std::filesystem::path& path = pending[i].path;
+        std::size_t                  end  = i;
+        std::size_t                  last = 0;
+        while (end < pending.size() && pending[end].path == path) {
+            if (pending[end].deferred) {
+                last = std::max(last, pending[end].line);
+            }
+            ++end;
+        }
+
+        std::unordered_map<std::size_t, std::string> wanted;
+        if (std::ifstream in{path, std::ios::binary}) {
+            std::string line;
+            for (std::size_t number = 0; number <= last && std::getline(in, line); ++number) {
+                if (!line.empty() && line.back() == '\r') {
+                    line.pop_back(); // a CRLF file's separator is not part of the row
+                }
+                for (std::size_t k = i; k < end; ++k) {
+                    if (pending[k].deferred && pending[k].line == number) {
+                        wanted[number] = line;
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (std::size_t k = i; k < end; ++k) {
+            if (!pending[k].deferred) {
+                continue;
+            }
+            const auto found = wanted.find(pending[k].line);
+            if (found != wanted.end()) {
+                pending[k].bodyText = found->second;
+            }
+            // The server's columns are UTF-16 code units; resolving them
+            // against the line alone is exactly what PositionToByte's
+            // plain-string form is for.
+            pending[k].startInLine =
+                editor::lsp::PositionToByte(pending[k].bodyText, editor::lsp::Position{.line = 0, .character = pending[k].startCharacter});
+            pending[k].endInLine =
+                editor::lsp::PositionToByte(pending[k].bodyText, editor::lsp::Position{.line = 0, .character = pending[k].endCharacter});
+        }
+        i = end;
+    }
 
     // One excerpt per diagnostic -- its own single source line, verbatim
     // (not a multi-line context window: the header already names the exact
@@ -1559,11 +1629,14 @@ void BufferView::RequestDiagnosticsBuffer() {
             item.path, item.line + 1, item.line + 1, std::move(header), item.bodyText, {}, /*editable=*/true});
     }
 
-    text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*diagnostics*", excerpts);
+    text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*diagnostics*", excerpts, totalFound);
     editor::SetLastResultsBuffer("*diagnostics*");
     activeBuffer_.Set(results);
-    statusMessage_ =
-        excerpts.empty() ? "No diagnostics." : std::to_string(excerpts.size()) + " diagnostic" + (excerpts.size() == 1 ? "" : "s");
+    // Counts what the project has, not what fit -- the composite's own
+    // elision line is what says how many of them are shown.
+    statusMessage_ = totalFound == 0 ? "No diagnostics."
+                                     : std::to_string(totalFound) + " diagnostic" + (totalFound == 1 ? "" : "s") +
+                                           (totalFound > excerpts.size() ? ", showing " + std::to_string(excerpts.size()) : "");
 
     // Re-attaches each original diagnostic's real severity/message onto the
     // composite buffer, translated into composite byte space, instead of a
