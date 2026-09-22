@@ -211,7 +211,7 @@ TEST_CASE("TreeView right-aligns a row's value column and clips the label before
     ned::ui::Theme    theme = ned::ui::DarkTheme();
     ned::ui::TreeView tree(theme);
     tree.SetModel(ned::ui::TreeViewModel{
-        .rows = {{.label = "averyveryverylonglabelindeed", .depth = 0, .hasChildren = false, .right = "42"}}});
+        .rows = {{.label = "averyveryverylonglabelindeed", .depth = 0, .right = "42", .hasChildren = false}}});
 
     ned::ui::Screen screen = ned::ui::Screen(20, 3);
     ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
