@@ -15,6 +15,8 @@
 #define NED_EDITOR_LSP_TRANSPORT_H
 
 #include <chrono>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -72,7 +74,9 @@ class Transport {
     // e.g. a socket). pid, if given, is reaped/killed by the destructor the
     // same way the process-spawning constructor's child is; -1 (the
     // default) means "no process to manage," skipping that logic entirely.
-    Transport(int readFd, int writeFd, pid_t pid = -1) noexcept;
+    //
+    // Not noexcept: allocates this Transport's write mutex (see WriteFrame).
+    Transport(int readFd, int writeFd, pid_t pid = -1);
 
     ~Transport() = default; // ChildProcess's own destructor does the real work
 
@@ -87,6 +91,17 @@ class Transport {
     // (write-side-hang-protection follow-up) if the child stops draining its
     // stdin for longer than stallTimeout -- same rationale/default as
     // ReadFrame's own stallTimeout parameter below.
+    //
+    // Atomic against concurrent WriteFrame calls on the same Transport: a
+    // frame is a header write followed by a payload write, and a payload
+    // over PIPE_BUF is itself several write(2)s, so two threads writing at
+    // once used to splice one frame into the middle of another and hand the
+    // peer bytes that parse as neither. The broker is the caller that makes
+    // this reachable -- its client and server reader threads both relay into
+    // the same server stdin, so a server-initiated request auto-acknowledged
+    // mid-didOpen corrupted the stream and the server answered nothing
+    // further. A single-writer caller (FramedConnection's own write queue)
+    // pays only an uncontended lock.
     void WriteFrame(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout = ProtocolWriteStallTimeoutMs()) const;
 
     // Blocks until one full LSP frame has been read from the child's
@@ -128,6 +143,11 @@ class Transport {
   private:
     process::ChildProcess child_;
     std::string           processLabel_;
+
+    // Held across WriteFrame's header+payload pair. By pointer so Transport
+    // stays movable (a std::mutex is not) -- every caller moves one at least
+    // once, into a Client or a shared_ptr, before any thread writes to it.
+    std::unique_ptr<std::mutex> writeMutex_ = std::make_unique<std::mutex>();
 };
 
 } // namespace ned::editor::lsp

@@ -1,8 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include <unistd.h>
 
@@ -224,4 +227,88 @@ TEST_CASE("Transport captures stderr on its own pipe, separate from stdout, when
     // EOF once the process exits, not any of the stderr content above
     // leaking across.
     REQUIRE_FALSE(transport.ReadFrame().has_value());
+}
+
+// broker-frame-interleaving follow-up. The broker relays into one server's
+// stdin from both its client reader thread and its server reader thread, so
+// a server-initiated request auto-acknowledged while a large didOpen was
+// still being written used to splice the ack into the middle of that frame:
+// the server saw bytes that parsed as neither, answered -32700 and went
+// silent, which surfaced only as every later request timing out. Reproduced
+// here without a broker at all -- two threads, one Transport, frames far
+// enough apart in size that the large one is several write(2)s.
+TEST_CASE("Transport::WriteFrame keeps concurrent frames from interleaving", "[Lsp]") {
+    constexpr std::size_t kLargeBytes = 256 * 1024; // over PIPE_BUF, and over a pipe's own capacity
+    constexpr int         kLargeCount = 8;
+    constexpr int         kSmallCount = 120;
+
+    const std::string largePayload(kLargeBytes, 'L');
+    const std::string smallPayload = R"({"id":0,"jsonrpc":"2.0","result":null})";
+
+    TransportPair pair = TransportPair::Create();
+
+    // Every thread records its own failure rather than throwing out of a
+    // std::thread, which would terminate the whole test binary instead of
+    // failing this case.
+    std::vector<std::string> received;
+    std::string              readerError;
+    std::string              writerError;
+
+    // Drains concurrently: a pipe holds far less than one large frame, so
+    // the writes below only make progress while something is reading.
+    std::thread readerThread([&] {
+        try {
+            for (int i = 0; i < kLargeCount + kSmallCount; ++i) {
+                std::optional<std::string> frame = pair.b.ReadFrame(std::chrono::seconds(20));
+                if (!frame) {
+                    break;
+                }
+                received.push_back(std::move(*frame));
+            }
+        }
+        catch (const std::exception& e) {
+            readerError = e.what(); // a spliced frame's header is what throws here
+        }
+    });
+
+    const auto write = [&](const std::string& payload, int count) {
+        try {
+            for (int i = 0; i < count; ++i) {
+                pair.a.WriteFrame(payload, std::chrono::seconds(20));
+            }
+        }
+        catch (const std::exception& e) {
+            writerError = e.what();
+        }
+    };
+    std::thread largeWriter([&] { write(largePayload, kLargeCount); });
+    std::thread smallWriter([&] { write(smallPayload, kSmallCount); });
+
+    largeWriter.join();
+    smallWriter.join();
+    readerThread.join();
+
+    // Compared against an empty string rather than tested with .empty(), so
+    // a failure prints the framing error itself.
+    REQUIRE(readerError == std::string());
+    REQUIRE(writerError == std::string());
+    REQUIRE(received.size() == static_cast<std::size_t>(kLargeCount + kSmallCount));
+
+    int large = 0;
+    int small = 0;
+    for (const std::string& frame : received) {
+        if (frame == largePayload) {
+            ++large;
+        }
+        else if (frame == smallPayload) {
+            ++small;
+        }
+        else {
+            // Spliced: the length its header promised, but another frame's
+            // bytes somewhere inside it.
+            FAIL("frame matched neither payload -- " << frame.size() << " bytes, starts: " << frame.substr(0, 60));
+        }
+    }
+    REQUIRE(large == kLargeCount);
+    REQUIRE(small == kSmallCount);
 }

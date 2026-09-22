@@ -107,11 +107,16 @@ Transport::Transport(const std::vector<std::string>& argv, bool captureStderr) :
                                                                                  processLabel_(argv.empty() ? std::string() : BaseName(argv[0])) {
 }
 
-Transport::Transport(int readFd, int writeFd, pid_t pid) noexcept : child_(readFd, writeFd, pid) {
+Transport::Transport(int readFd, int writeFd, pid_t pid) : child_(readFd, writeFd, pid) {
 }
 
 void Transport::WriteFrame(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout) const {
     const std::string header = "Content-Length: " + std::to_string(jsonPayload.size()) + "\r\n\r\n";
+    // Header and payload must reach the peer as one run of bytes -- see this
+    // method's own doc comment. Held across the writes themselves, so a
+    // stalled peer blocks other writers for up to stallTimeout rather than
+    // letting them interleave into a frame already in flight.
+    const std::lock_guard<std::mutex> writeLock(*writeMutex_);
     child_.WriteAll(header, stallTimeout);
     child_.WriteAll(jsonPayload, stallTimeout);
 }
