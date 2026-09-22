@@ -662,6 +662,21 @@ void Buffer::Revert() {
     UnsavedChangeRanges_.clear();
     ++UnsavedChangeGeneration_;
     DiskTimestamp_ = fresh.DiskTimestamp_;
+
+    // A revert establishes exactly the fact a save does -- this buffer and
+    // its file agree -- which is the fact SaveGeneration_ exists to publish.
+    // Measured 2026-09-22: a server whose checker runs on save (rust-analyzer's
+    // flycheck) re-publishes for didSave and for nothing else; neither the
+    // didChange carrying the new content nor a workspace/didChangeWatchedFiles
+    // naming the file moved it. Without this the barrier above would clear the
+    // stale diagnostics and leave the buffer silently unchecked until the user
+    // happened to save.
+    //
+    // Only here, not in CommitBarrier with the rest of the swap handling: of
+    // the other paths through it, the two load paths have no document open on
+    // any server yet, and a three-way merge and a snapshot restore both leave
+    // content that is *not* what is on disk (Modified() stays true for both).
+    ++SaveGeneration_;
 }
 
 std::size_t Buffer::MergeExternalChanges() {
@@ -821,6 +836,24 @@ void Buffer::CommitBarrier() {
     Edits_.Record(EditOp::Barrier(ContentGeneration_));
     Anchors_.ApplyBarrier();
     DisarmUnseenTracking(); // no offset survives a wholesale replacement
+    // Diagnostics are byte offsets into content that no longer exists, and
+    // the relocation rules the ordinary editing path applies to them
+    // (RelocateDiagnosticsForInsert/ForDelete) describe an edit, which a
+    // wholesale swap is not -- so they cannot be carried across one, only
+    // dropped. Held here rather than repeated in each caller because this is
+    // already where the barrier's other two "no offset means anything now"
+    // consequences live (the journal op and Anchors_::ApplyBarrier), and an
+    // anchored result kind gets invalidated by that call while a diagnostic,
+    // which is not anchor-backed, would otherwise be the one tracked field
+    // to survive.
+    //
+    // Nothing re-publishes on its own schedule here: the generation bump
+    // above is what makes the next SyncBuffer send a didChange, after which
+    // the server's own publish refills this. Between the two the buffer
+    // shows no diagnostics, which is honest -- the alternative was the
+    // pre-revert set pinned to whatever bytes now occupy those offsets.
+    Diagnostics_.clear();
+    ++DiagnosticsGeneration_;
 }
 
 AnchorId Buffer::CreateAnchor(std::size_t offset, AnchorPolicy policy) {

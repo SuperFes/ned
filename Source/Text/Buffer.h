@@ -570,7 +570,10 @@ class Buffer {
 
     // lsp-did-save follow-up. Bumped once per *completed* save (FinishSave,
     // which SaveToFile and the asynchronous large-file path both funnel
-    // through), never by an edit. Monotonic, same cheap
+    // through), and once per Revert() -- the counter tracks "this buffer and
+    // its file on disk now agree", which a revert establishes just as a save
+    // does, and which is what a server running an on-save checker needs told.
+    // Never by an edit. Monotonic, same cheap
     // "did-it-happen-since-I-last-looked" shape as ContentGeneration()
     // above, and for the same reason: the sync loop that has to tell a
     // language server about a save polls the buffer rather than every save

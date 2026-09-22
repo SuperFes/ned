@@ -121,3 +121,94 @@ TEST_CASE("AutoRevertBuffers reverts unmodified buffers only, and honors the tog
     std::filesystem::remove(cleanPath);
     std::filesystem::remove(editedPath);
 }
+
+// A wholesale content swap leaves every diagnostic describing bytes that no
+// longer exist -- the pre-fix symptom was a "line exceeds N characters"
+// warning sitting on a four-space "}" after the file on disk replaced the
+// one in the editor. Nothing re-publishes on its own schedule, so the stale
+// set stayed visible until the server next spoke, which for a server that
+// only runs on demand is indefinitely.
+TEST_CASE("Revert drops diagnostics resolved against the replaced content", "[AutoRevert]") {
+    const std::filesystem::path path = WriteTempFile("ned_autorevert_test_diagnostics.txt", "a long flagged line here\n");
+
+    ned::text::Buffer buffer = ned::text::Buffer::FromFile(path);
+    buffer.SetDiagnostics({ned::text::Buffer::Diagnostic{.startByte = 2,
+                                                         .endByte   = 20,
+                                                         .severity  = ned::text::Buffer::Diagnostic::Severity::Warning,
+                                                         .origin    = ned::text::Buffer::Diagnostic::Origin::Code,
+                                                         .message   = "line exceeds 120 characters"}});
+    REQUIRE(buffer.Diagnostics().size() == 1);
+    const std::size_t before = buffer.DiagnosticsGeneration();
+
+    ExternalWrite(path, "    }\n");
+    buffer.Revert();
+
+    REQUIRE(buffer.Text() == "    }\n");
+    REQUIRE(buffer.Diagnostics().empty());
+    // Bumped, so a consumer polling the generation repaints rather than
+    // keeping the set it last read.
+    REQUIRE(buffer.DiagnosticsGeneration() > before);
+
+    std::filesystem::remove(path);
+}
+
+// The same barrier covers the other two wholesale-swap paths, so neither can
+// regrow the bug independently.
+TEST_CASE("A three-way merge and a snapshot restore drop diagnostics too", "[AutoRevert]") {
+    SECTION("MergeExternalChanges") {
+        const std::filesystem::path path = WriteTempFile("ned_autorevert_test_merge_diagnostics.txt", "base\n");
+
+        ned::text::Buffer buffer = ned::text::Buffer::FromFile(path);
+        buffer.SetPoint(buffer.Size());
+        buffer.InsertAtPoint("ours\n");
+        buffer.SetDiagnostics({ned::text::Buffer::Diagnostic{
+            .startByte = 0, .endByte = 4, .severity = ned::text::Buffer::Diagnostic::Severity::Error, .message = "stale"}});
+
+        ExternalWrite(path, "base\ntheirs\n");
+        (void)buffer.MergeExternalChanges();
+
+        REQUIRE(buffer.Diagnostics().empty());
+        std::filesystem::remove(path);
+    }
+
+    SECTION("RestoreContent") {
+        const std::filesystem::path path = WriteTempFile("ned_autorevert_test_restore_diagnostics.txt", "original\n");
+
+        ned::text::Buffer buffer = ned::text::Buffer::FromFile(path);
+        buffer.SetDiagnostics({ned::text::Buffer::Diagnostic{
+            .startByte = 0, .endByte = 8, .severity = ned::text::Buffer::Diagnostic::Severity::Error, .message = "stale"}});
+
+        buffer.RestoreContent("recovered\n");
+
+        REQUIRE(buffer.Text() == "recovered\n");
+        REQUIRE(buffer.Diagnostics().empty());
+        std::filesystem::remove(path);
+    }
+}
+
+// The other half of the same bug: clearing the stale set is only correct if
+// something makes the server re-check. Measured 2026-09-22 against
+// rust-analyzer, whose flycheck re-publishes for textDocument/didSave and
+// for neither the didChange carrying the new content nor a
+// workspace/didChangeWatchedFiles naming the file -- so a revert has to
+// advance the counter Manager::MaybeSendDidSave polls, or the buffer sits
+// unchecked until the user happens to save.
+TEST_CASE("Revert advances SaveGeneration so the server is told the file on disk changed", "[AutoRevert]") {
+    const std::filesystem::path path = WriteTempFile("ned_autorevert_test_savegen.txt", "before\n");
+
+    ned::text::Buffer buffer = ned::text::Buffer::FromFile(path);
+    const std::size_t before = buffer.SaveGeneration();
+
+    // An ordinary edit must not move it -- the counter means "buffer and
+    // disk agree", which an edit is the opposite of.
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint("typing");
+    REQUIRE(buffer.SaveGeneration() == before);
+
+    ned::text::Buffer clean = ned::text::Buffer::FromFile(path);
+    ExternalWrite(path, "after\n");
+    clean.Revert();
+    REQUIRE(clean.SaveGeneration() > before);
+
+    std::filesystem::remove(path);
+}
