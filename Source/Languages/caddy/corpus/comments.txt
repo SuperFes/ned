@@ -1,0 +1,63 @@
+=================
+URL with Fragment
+=================
+
+example.com
+
+redir https://example.com/#/about 302
+
+---
+
+(source_file
+	(single_site
+		(site_address)
+		(directive
+			(directive_name)
+			(network_address)
+			(int_literal))))
+
+==============================
+Single Site Block with Comment
+==============================
+
+example.com
+
+#redir https://example.com/#/about 302
+
+---
+
+(source_file
+	(single_site
+		(site_address))
+		(comment))
+
+=================================
+Multiple Site Blocks with Comment
+=================================
+
+example.com {
+	#respond "Hello, world!"
+}
+
+foobar.com {
+	#respond "Hello, world!"
+}
+
+# foobar.com {
+#	respond "Hello, world!"
+# }
+
+---
+
+(source_file
+	(site_block
+		(site_address)
+		(block
+			(comment)))
+	(site_block
+		(site_address)
+		(block
+			(comment)))
+	(comment)
+	(comment)
+	(comment))

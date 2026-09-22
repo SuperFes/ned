@@ -149,6 +149,12 @@ TEST_CASE("Every bundled definition builds, under its own '-mode' name", "[Langu
         "gitignore",
         "nginx",
         "apacheconf",
+        "awk",
+        "cue",
+        "pkl",
+        "wgsl",
+        "jsonnet",
+        "caddy",
     };
     std::set<std::string> seen;
     for (const LanguageDefinition& definition : BundledLanguages()) {
@@ -408,6 +414,17 @@ TEST_CASE("The bundled definitions claim exactly the extensions the old table di
         {".desktop", "desktop"},
         {".directory", "desktop"},
         {".nginx", "nginx"},
+        {".awk", "awk"},
+        {".gawk", "awk"},
+        {".mawk", "awk"},
+        {".cue", "cue"},
+        {".pkl", "pkl"},
+        {".pcf", "pkl"},
+        {".wgsl", "wgsl"},
+        {".jsonnet", "jsonnet"},
+        {".libsonnet", "jsonnet"},
+        {".caddyfile", "caddy"},
+        {".Caddyfile", "caddy"},
     };
     std::map<std::string, std::string> claimed;
     for (const LanguageDefinition& definition : BundledLanguages()) {

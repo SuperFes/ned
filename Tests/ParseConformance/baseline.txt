@@ -56,6 +56,12 @@ desktop/corpus  cases=7 runs=7 passed=7 failed=0 skipped=0
 gitignore/corpus  cases=14 runs=14 passed=14 failed=0 skipped=0
 nginx/corpus  cases=30 runs=30 passed=30 failed=0 skipped=0
 apacheconf/corpus  cases=10 runs=10 passed=10 failed=0 skipped=0
+awk/corpus  cases=117 runs=117 passed=117 failed=0 skipped=0
+cue/corpus  cases=37 runs=37 passed=37 failed=0 skipped=0
+pkl/corpus  cases=662 runs=662 passed=662 failed=0 skipped=0
+wgsl/corpus  cases=10 runs=10 passed=10 failed=0 skipped=0
+jsonnet/corpus  cases=28 runs=28 passed=28 failed=0 skipped=0
+caddy/corpus  cases=45 runs=45 passed=45 failed=0 skipped=0
 gitconfig/corpus  cases=14 runs=14 passed=14 failed=0 skipped=0
 properties/corpus  cases=3 runs=3 passed=3 failed=0 skipped=0
 kdl/corpus  cases=211 runs=211 passed=211 failed=0 skipped=0
@@ -124,4 +130,4 @@ vhdl/corpus  cases=34 runs=34 passed=34 failed=0 skipped=0
 solidity/corpus  cases=125 runs=125 passed=125 failed=0 skipped=0
 gdscript/corpus  cases=167 runs=167 passed=167 failed=0 skipped=0
 matlab/corpus  cases=157 runs=157 passed=157 failed=0 skipped=0
-total  cases=11819 runs=11797 passed=11786 failed=11 skipped=28
+total  cases=12718 runs=12696 passed=12685 failed=11 skipped=28

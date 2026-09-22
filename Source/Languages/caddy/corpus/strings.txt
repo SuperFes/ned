@@ -1,0 +1,141 @@
+================
+Character Escape
+================
+
+example.com
+
+respond "\"hello"
+
+root * /var/www
+
+---
+
+(source_file
+	(single_site
+		(site_address)
+		(directive
+			(directive_name)
+			(interpreted_string_literal
+			(escape_sequence)))
+		(directive
+			(directive_name)
+			(matcher)
+			(argument))))
+
+====================
+Status Code Fallback
+====================
+
+example.com
+
+try_files {path} {path}/ /index.html =404
+
+---
+
+(source_file
+	(single_site
+		(site_address)
+		(directive
+			(directive_name)
+			(placeholder)
+			(placeholder)
+			(argument)
+			(argument)
+			(status_code_fallback))))
+
+==================
+replaceVars Syntax
+==================
+
+example.com
+
+root * @longhorn-ui@/share/share/lib/longhorn-ui
+
+---
+
+(source_file
+	(single_site
+		(site_address)
+		(directive
+			(directive_name)
+			(matcher)
+			(argument))))
+
+=======================
+Domain with Underscores
+=======================
+
+example.com
+
+reverse_proxy some_other_host:1234
+
+---
+
+(source_file
+	(single_site
+		(site_address)
+		(directive
+			(directive_name)
+			(argument))))
+
+========================
+Hashed password argument
+========================
+
+example.com
+
+basic_auth {
+    username $2a$14$HAb527dB7kq9wMpYa9Ff7.LWvUQAUEeDmXh.WDudhwcJ318l1LufO
+}
+
+---
+
+(source_file
+	(single_site
+		(site_address)
+		(directive
+			(directive_name)
+			(block
+				(directive
+					(directive_name)
+					(argument))))))
+
+====================
+MAC address argument
+====================
+
+example.com
+
+exec wakeonlan 78:f4:53:67:7a:a9 {
+    pass_thru
+}
+
+---
+
+(source_file
+	(single_site
+		(site_address)
+		(directive
+			(directive_name)
+			(argument)
+			(argument)
+			(block
+				(directive
+					(directive_name))))))
+
+===============
+Complex Headers
+===============
+
+example.com
+
+header ?Content-Type
+
+---
+
+(source_file
+	(single_site
+		(site_address)
+		(directive
+			(directive_name)
+			(argument))))

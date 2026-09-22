@@ -154,6 +154,7 @@ add_executable(ned_tests
             HtmlHighlightTest.cpp
             SystemdHighlightTest.cpp
             ConfigFormatHighlightTest.cpp
+            WgslHighlightTest.cpp
             LinkTest.cpp
             HeaderSourceTest.cpp
             PerformanceTest.cpp

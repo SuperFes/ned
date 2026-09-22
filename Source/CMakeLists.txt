@@ -312,13 +312,16 @@ add_library(ned_lib STATIC
         Editor/Languages/Scanners/AsciidocInlineScanner.cpp
         Editor/Languages/Scanners/AsciidocScanner.cpp
         Editor/Languages/Scanners/AstroScanner.cpp
+        Editor/Languages/Scanners/AwkScanner.cpp
         Editor/Languages/Scanners/BashScanner.cpp
+        Editor/Languages/Scanners/CaddyScanner.cpp
         Editor/Languages/Scanners/CMakeScanner.cpp
         Editor/Languages/Scanners/CppScanner.cpp
         Editor/Languages/Scanners/CrystalScanner.cpp
         Editor/Languages/Scanners/CSharpScanner.cpp
         Editor/Languages/Scanners/CssScanner.cpp
         Editor/Languages/Scanners/CudaScanner.cpp
+        Editor/Languages/Scanners/CueScanner.cpp
         Editor/Languages/Scanners/DartScanner.cpp
         Editor/Languages/Scanners/DockerfileScanner.cpp
         Editor/Languages/Scanners/DotenvScanner.cpp
@@ -340,6 +343,7 @@ add_library(ned_lib STATIC
         Editor/Languages/Scanners/HtmlScanner.cpp
         Editor/Languages/Scanners/JanetScanner.cpp
         Editor/Languages/Scanners/JavaScriptScanner.cpp
+        Editor/Languages/Scanners/JsonnetScanner.cpp
         Editor/Languages/Scanners/JuliaScanner.cpp
         Editor/Languages/Scanners/JustScanner.cpp
         Editor/Languages/Scanners/KdlScanner.cpp
@@ -359,6 +363,7 @@ add_library(ned_lib STATIC
         Editor/Languages/Scanners/OrgScanner.cpp
         Editor/Languages/Scanners/PerlScanner.cpp
         Editor/Languages/Scanners/PhpScanner.cpp
+        Editor/Languages/Scanners/PklScanner.cpp
         Editor/Languages/Scanners/PowershellScanner.cpp
         Editor/Languages/Scanners/PropertiesScanner.cpp
         Editor/Languages/Scanners/PurescriptScanner.cpp
@@ -383,6 +388,7 @@ add_library(ned_lib STATIC
         Editor/Languages/Scanners/TypstScanner.cpp
         Editor/Languages/Scanners/VhdlScanner.cpp
         Editor/Languages/Scanners/VueScanner.cpp
+        Editor/Languages/Scanners/WgslScanner.cpp
         Editor/Languages/Scanners/XmlScanner.cpp
         Editor/Languages/Scanners/YamlScanner.cpp
         Editor/Grammar/Tree.cpp

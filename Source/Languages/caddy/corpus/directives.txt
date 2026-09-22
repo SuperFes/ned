@@ -1,0 +1,37 @@
+=====================
+Single-site with Root
+=====================
+
+example.com
+
+root * /var/www/
+
+---
+
+(source_file
+	(single_site
+		(site_address)
+		(directive
+			(directive_name)
+			(matcher)
+			(argument))))
+
+===========================================
+Single-site with Multiple Wildcard Matchers
+===========================================
+
+example.com
+
+path *.txt *.md *.mdown /site/*
+
+---
+
+(source_file
+	(single_site
+		(site_address)
+		(directive
+			(directive_name)
+			(argument)
+			(argument)
+			(argument)
+			(argument))))

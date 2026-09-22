@@ -1,0 +1,69 @@
+===================
+Single-site Heredoc
+===================
+
+example.com
+
+respond <<EOF
+Hello, world
+EOF
+
+---
+
+(source_file
+	(single_site
+		name: (site_address)
+		body: (directive
+			name: (directive_name)
+			(heredoc
+				identifier: (heredoc_start)
+				value: (heredoc_body)
+				end_tag: (heredoc_end)))))
+
+=====================
+Heredoc in Site-block
+=====================
+
+example.com {
+	respond <<EOF
+		Hello, world
+EOF 200
+}
+
+---
+
+(source_file
+	(site_block
+		name: (site_address)
+		(block
+			body: (directive
+				name: (directive_name)
+				(heredoc
+					identifier: (heredoc_start)
+					value: (heredoc_body)
+					end_tag: (heredoc_end))
+				(int_literal)))))
+
+==============================
+Heredoc in Site-block Indented
+==============================
+
+example.com {
+	respond <<EOF
+		Hello, world
+	EOF 200
+}
+
+---
+
+(source_file
+	(site_block
+		name: (site_address)
+		(block
+			body: (directive
+				name: (directive_name)
+				(heredoc
+					identifier: (heredoc_start)
+					value: (heredoc_body)
+					end_tag: (heredoc_end))
+				(int_literal)))))

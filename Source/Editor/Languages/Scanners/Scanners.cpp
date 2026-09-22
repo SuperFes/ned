@@ -8,13 +8,16 @@
     X("asciidoc", asciidoc)               \
     X("asciidoc-inline", asciidoc_inline) \
     X("astro", astro)                     \
+    X("awk", awk)                         \
     X("bash", bash)                       \
+    X("caddy", caddy)                     \
     X("cmake", cmake)                     \
     X("cpp", cpp)                         \
     X("crystal", crystal)                 \
     X("csharp", csharp)                   \
     X("css", css)                         \
     X("cuda", cuda)                       \
+    X("cue", cue)                         \
     X("d", d)                             \
     X("dart", dart)                       \
     X("dockerfile", dockerfile)           \
@@ -36,6 +39,7 @@
     X("html", html)                       \
     X("janet", janet)                     \
     X("javascript", javascript)           \
+    X("jsonnet", jsonnet)                 \
     X("julia", julia)                     \
     X("just", just)                       \
     X("kdl", kdl)                         \
@@ -55,6 +59,7 @@
     X("org", org)                         \
     X("perl", perl)                       \
     X("php", php)                         \
+    X("pkl", pkl)                         \
     X("powershell", powershell)           \
     X("properties", properties)           \
     X("purescript", purescript)           \
@@ -79,6 +84,7 @@
     X("typst", typst)                     \
     X("vhdl", vhdl)                       \
     X("vue", vue)                         \
+    X("wgsl", wgsl)                       \
     X("xml", xml)                         \
     X("yaml", yaml)
 

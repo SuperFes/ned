@@ -110,7 +110,8 @@ below)*, Zsh *(rides bash)*, Nushell *(admitted 2026-09-18)*, PowerShell
 2026-09-18)*/Less, Vue *(admitted 2026-09-18)*, Svelte *(admitted 2026-09-18)*,
 Astro *(admitted 2026-09-18)*
 
-**GPU / hardware:** WGSL *(no corpus upstream -- parked)*, GLSL *(admitted
+**GPU / hardware:** WGSL *(admitted 2026-09-21 -- see below, via the bevy
+fork, which does ship a corpus)*, GLSL *(admitted
 2026-09-18)*, HLSL *(admitted 2026-09-18)*, CUDA *(admitted 2026-09-18)*,
 Verilog *(admitted 2026-09-18)*, SystemVerilog *(no corpus upstream -- parked;
 the Verilog grammar covers the SystemVerilog syntax its corpus exercises)*,
@@ -125,7 +126,8 @@ Health verified for a sample of these on 2026-09-11: swift `2026-09-10`,
 elixir `2026-07-20`, nix `2026-09-11`, ruby `2026-03-10`, scala `2026-08-25`,
 r `2026-06-22`, dart `2026-07-07`, solidity `2026-02-11`, nu `2026-08-13`,
 perl `2026-09-07`, powershell `2026-07-10`, ocaml `2026-08-30`. Aging but live:
-haskell `2025-08-29`, julia `2025-11-08`, zig `2025-09-10`, awk `2025-09-24`.
+haskell `2025-08-29`, julia `2025-11-08`, zig `2025-09-10`, awk `2025-09-24`
+*(admitted 2026-09-21 -- see below)*.
 The rest are unverified and get checked at admission, not now.
 
 ## Tier C — Formats and infrastructure (D1, cheap, disproportionate daily value)
@@ -135,13 +137,15 @@ immediately: a config file is *almost entirely* structure, so Tier 0 inference
 alone makes it genuinely usable.
 
 **Config:** INI/properties *(both admitted 2026-09-18 — see below)*, HCL/Terraform *(admitted 2026-09-13 — see below)*,
-Nix *(admitted 2026-09-13 — see below)*, Dhall, Jsonnet, KDL *(admitted
+Nix *(admitted 2026-09-13 — see below)*, Dhall *(screened, parked)*, Jsonnet
+*(admitted 2026-09-21 -- see below)*, KDL *(admitted
 2026-09-18)*, HOCON *(→ Graveyard)*, JSON5 *(admitted 2026-09-18)*, RON
-*(admitted 2026-09-18)*, Pkl, Nickel, editorconfig *(admitted 2026-09-18)*,
+*(admitted 2026-09-18)*, Pkl *(admitted 2026-09-21 -- see below)*, Nickel
+*(screened, parked)*, editorconfig *(admitted 2026-09-18)*,
 `.desktop` *(admitted 2026-09-21 -- see below)*, systemd units *(admitted
 2026-09-21 -- see below)*, `ssh_config` *(admitted 2026-09-18)*, nginx
 *(admitted 2026-09-21 -- see below)*, apacheconf *(admitted 2026-09-21 -- see
-below)*, Caddy,
+below)*, Caddy *(admitted 2026-09-21 -- see below)*,
 `.env` *(admitted 2026-09-18)*, `requirements.txt` *(admitted 2026-09-18)*, Kconfig *(no corpus
 upstream -- parked)*, udev *(admitted 2026-09-18)*, muttrc *(ships no
 `grammar.json` -- parked)*, xresources, `.gitconfig` *(admitted 2026-09-18)* /
@@ -674,12 +678,9 @@ property table (perl). Admission facts:
   vendored from `queries/neovim/`, locals adapted at one quantified group).
   Claims `.mlx` only: `.m` is Objective-C's.
 
-**Parked: AWK.** `Beaglefoot/tree-sitter-awk` v0.7.2 declares
-`binary_relation > piped_io_exp` in one precedence list and the reverse in
-another; the reference generator's own validation ("Conflicting orderings for
-precedences") rejects it since 0.22, and the shipped `parser.c` (ABI 14)
-predates that check. Revisit when upstream regenerates. Screened and not
-admitted: `elves/tree-sitter-elvish` (2023-07, → Graveyard),
+**AWK: admitted 2026-09-21** -- see the batch entry below; the precedence
+contradiction this entry parked it for turned out to be separable rather than
+fatal. Screened and not admitted: `elves/tree-sitter-elvish` (2023-07, → Graveyard),
 `szebniok/tree-sitter-wgsl` (no corpus, stale), `gmlarumbe/tree-sitter-systemverilog`
 (no corpus), `foxyseta/tree-sitter-prolog` (no `grammar.json`),
 `slackhq/tree-sitter-hack` (archived, → Graveyard).
@@ -791,9 +792,70 @@ now `@function`, not `@function.builtin`.
 Screened and not admitted in the same pass: `slqy123/tree-sitter-crontab`,
 `vlasikhin/tree-sitter-hosts` and `alemuller/tree-sitter-ninja` ship no corpus
 (item 8); no grammar exists at all for fstab or sudoers under the names tried.
-Caddy has two live candidates (`caddyserver/tree-sitter-caddyfile`, official,
-14-case corpus) and is a fair next pick; Jsonnet, Dhall, Nickel and Pkl all
-pass screening too and are parked as deliberate scope, not as failures.
+Caddy, Jsonnet and Pkl were admitted in the next batch below; Dhall
+(`jbellerb/tree-sitter-dhall`, 23-case corpus) and Nickel
+(`nickel-lang/tree-sitter-nickel`, 22 cases) pass screening too and stay parked
+as deliberate scope, not as failures.
+
+### awk, jsonnet, cue, pkl, caddy and wgsl: admitted 2026-09-21
+
+The batch after the config formats, screened the same way: a `test/corpus` is
+the gate, and a grammar under a licence ned cannot carry is out regardless of
+how good it is. All six have external scanners, ported into
+`Source/Editor/Languages/Scanners/` (the tree is at 82).
+
+- **awk** `Beaglefoot/tree-sitter-awk` v0.7.2 (ABI 14, 248-line scanner,
+  7-file corpus / 117 cases; upstream highlights vendored unmodified, tags
+  ned-authored over `func_def`). **The precedence contradiction that parked it
+  is fixed, not worked around.** Upstream's seventh ordering list reads
+  `[_print_args, grouping, piped_io_exp, 'binary_relation']` while the first
+  orders `binary_relation` above `piped_io_exp`; the reference generator's
+  validation rejects the pair, and ned's does too. Both orderings are real --
+  `print "x" > "file"` is a redirect, not a comparison, and
+  `print a, b | "cmd"` needs `exp_list` to win -- so the list is split in two,
+  `[_print_args grouping "binary_relation"]` and
+  `[_print_args grouping piped_io_exp]`, which states each ordering that
+  matters and never orders the contradictory pair against itself. 117/117.
+- **jsonnet** `sourcegraph/tree-sitter-jsonnet` pinned at
+  `ddd075f1939aed8147b7aa67f042eda3fce22790` (ABI 14, 176-line scanner, 7-file
+  corpus / 28 cases; upstream locals vendored unmodified). Its highlights are
+  ned's file rather than a vendored one, minus two constructs: the
+  `#is? @x parameter` directives, which ask nvim's locals what a name resolved
+  to -- an unrecognized predicate is *inert* here, so keeping them would have
+  painted every identifier a reference -- and a `"}"?` quantifier on an
+  anonymous token, outside the measured query surface. The file says so at the
+  top.
+- **cue** `eonpatapon/tree-sitter-cue` v0.1.0 (ABI 14, 225-line scanner,
+  13-file corpus / 37 cases; upstream highlights, injections and locals
+  vendored unmodified).
+- **pkl** `apple/tree-sitter-pkl` v0.21.0 (ABI 15, 353-line scanner, **662-file
+  corpus**, the largest in the tree; upstream highlights, injections and locals
+  vendored unmodified). Apache-2.0, the one non-MIT grammar here, recorded in
+  its `language.janet`. One upstream case (`string/multilineInterpolation2`)
+  ships a divider with no expected tree at all; ned blessed the tree it parses,
+  which is the right one.
+- **caddy** `caddyserver/tree-sitter-caddyfile` pinned at
+  `4ef0479e11161ef4d1b4a89ae966eb1f5f11d764` -- Caddy's own, over
+  `opa-oz/tree-sitter-caddy` (ABI 15, 251-line scanner, 14-file corpus / 45
+  cases; upstream highlights, injections and locals vendored unmodified, tags
+  ned-authored over snippets and named routes). Claimed by the `Caddyfile`
+  basename as well as the extension spellings upstream declares.
+- **wgsl** `tree-sitter-grammars/tree-sitter-wgsl-bevy` v0.1.4 (ABI 14, 73-line
+  scanner, 2-file corpus / 10 cases). The bevy fork is what unparks WGSL: the
+  grammar everyone else uses (`szebniok`) ships no corpus, and the fork is both
+  maintained and a superset -- plain WGSL plus Bevy's `#import`/`#ifdef`
+  preprocessor. It ships no queries either, so highlights are ned's own,
+  written against the grammar's node names.
+
+Screened and not admitted: **zig** (`tree-sitter-grammars/tree-sitter-zig` is
+live but still ships no corpus; `GrayJack`'s has one and is stale since
+2024-05), **GraphQL** (`bkegley`'s is MIT with no corpus, `gtsop`'s has a
+corpus but is **AGPL-3.0** against ned's MIT -- a licence, not a quality,
+rejection), **VimL** (`vigoux/tree-sitter-viml` archived), **crontab**,
+**hosts**, **Ninja** (no corpus), **fstab**/**sudoers** (no grammar exists),
+**prolog** (no candidate with both a corpus and a `grammar.json`), and
+**nginx**'s GPLv3 candidates, recorded in the batch above. Bicep, puppet, haxe
+and coffeescript all pass screening and stay parked as scope.
 
 ### R: D0+D1(tags) admitted 2026-09-14
 
