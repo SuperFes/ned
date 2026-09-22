@@ -32,39 +32,14 @@ std::size_t BufferView::AnnotationRowsForLine(std::size_t line) const {
     return gutters_.InlineDiagnosticsByLine().contains(line) ? 1 : 0;
 }
 
-std::size_t BufferView::LeadingAnnotationRowsForLine(std::size_t line) const {
+std::string BufferView::CodeLensTitleForLine(std::size_t line) const {
     if (!lspManager_ || !editor::lsp::CodeLensEnabled()) {
-        return 0;
+        return {};
     }
     text::Buffer&             buffer  = activeBuffer_.Get();
     const text::ITextStorage& content = buffer.Content();
     if (line >= content.LineCount()) {
-        return 0;
-    }
-    const std::size_t lineStart = content.LineToByteOffset(line);
-    const std::size_t lineEnd =
-        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
-    for (const auto& lens : lspManager_->CodeLensSpans(buffer)) {
-        if (lens.startByte >= lineStart && lens.startByte < lineEnd) {
-            return 1;
-        }
-        // A lens anchored at an empty line's own zero-width range (lineEnd
-        // == lineStart there) would never satisfy `< lineEnd` above --
-        // caught here instead, the same edge case InlayHintsForLine's own
-        // [lineStart, lineEnd) convention doesn't need to worry about
-        // (an inlay hint is never the only content on its own line).
-        if (lineStart == lineEnd && lens.startByte == lineStart) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-void BufferView::PaintCodeLensRow(Canvas& c, int row, std::size_t line, std::size_t gutterWidth) const {
-    text::Buffer&             buffer  = activeBuffer_.Get();
-    const text::ITextStorage& content = buffer.Content();
-    if (line >= content.LineCount() || !lspManager_) {
-        return;
+        return {};
     }
     const std::size_t lineStart = content.LineToByteOffset(line);
     const std::size_t lineEnd =
@@ -72,8 +47,16 @@ void BufferView::PaintCodeLensRow(Canvas& c, int row, std::size_t line, std::siz
 
     std::string joinedTitle;
     for (const auto& lens : lspManager_->CodeLensSpans(buffer)) {
+        // A lens anchored at an empty line's own zero-width range (lineEnd
+        // == lineStart there) would never satisfy `< lineEnd` -- the second
+        // clause catches it, the same edge case InlayHintsForLine's own
+        // [lineStart, lineEnd) convention doesn't need to worry about
+        // (an inlay hint is never the only content on its own line).
         const bool onThisLine =
             (lens.startByte >= lineStart && lens.startByte < lineEnd) || (lineStart == lineEnd && lens.startByte == lineStart);
+        // An unresolved lens has nothing to say yet: no title, so no row.
+        // Manager asks for the resolve as the viewport reaches it, and the
+        // row appears when the answer lands.
         if (!onThisLine || lens.title.empty()) {
             continue;
         }
@@ -82,8 +65,54 @@ void BufferView::PaintCodeLensRow(Canvas& c, int row, std::size_t line, std::siz
         }
         joinedTitle += lens.title;
     }
+    return joinedTitle;
+}
+
+std::size_t BufferView::LeadingAnnotationRowsForLine(std::size_t line) const {
+    return CodeLensTitleForLine(line).empty() ? 0 : 1;
+}
+
+void BufferView::PaintFoldColumnContinuation(Canvas& c, int row, std::size_t containingLine,
+                                             const bufferview::GutterLayout& gutter) const {
+    if (gutter.foldWidth == 0) {
+        return;
+    }
+    const Brush brush{.background = theme_.background, .foreground = theme_.lineNumberForeground};
+    const auto& byColumn    = gutters_.FoldLineRangesByColumn();
+    const auto  startsAfter = [](std::size_t target, const std::pair<std::size_t, std::size_t>& range) {
+        return target < range.first;
+    };
+    for (int col = 0; col < kMaxFoldDepthColumns; ++col) {
+        const int screenCol = static_cast<int>(gutter.foldStart) + col;
+        if (screenCol >= c.size().width) {
+            break;
+        }
+        // One column is one nesting depth, so its spans are disjoint and
+        // sorted: the only one that can contain this line is the last one
+        // starting at or before it. A stream cursor (PaintLineGutter's own
+        // approach) can't serve this -- a leading row is drawn before that
+        // line's cursor has advanced, and an annotation row is rare enough
+        // that the lookup costs nothing.
+        const auto& ranges = byColumn[col];
+        const auto  it     = std::upper_bound(ranges.begin(), ranges.end(), containingLine, startsAfter);
+        if (it == ranges.begin() || std::prev(it)->second <= containingLine) {
+            continue;
+        }
+        Cell& cell     = c[{.x = screenCol, .y = row}];
+        cell.character = text::EncodeCodepointUtf8(U'│');
+        brush.ApplyTo(cell);
+    }
+}
+
+void BufferView::PaintCodeLensRow(Canvas& c, int row, std::size_t line, const bufferview::GutterLayout& gutter) const {
+    const std::size_t gutterWidth = gutter.totalWidth;
+    // The fold column runs THROUGH this row: a bar that stops for the lens
+    // and resumes below it reads as two separate blocks.
+    PaintFoldColumnContinuation(c, row, line, gutter);
+
+    std::string joinedTitle = CodeLensTitleForLine(line);
     if (joinedTitle.empty()) {
-        return; // shouldn't happen (RowsForLine/LeadingAnnotationRowsForLine agree with this scan) -- leave the blanked row
+        return; // can't happen -- LeadingAnnotationRowsForLine reads this same function
     }
 
     const Brush titleBrush{.background = theme_.background,
@@ -2001,7 +2030,7 @@ void BufferView::Paint(Canvas paneCanvas) {
         }
 
         if (pendingAnnotationLine) {
-            PaintInlineDiagnosticRow(c, row, *pendingAnnotationLine, gutter.totalWidth);
+            PaintInlineDiagnosticRow(c, row, *pendingAnnotationLine, gutter);
             pendingAnnotationLine.reset();
             continue; // consumed this row; `line` already points at the next buffer line
         }
@@ -2015,7 +2044,7 @@ void BufferView::Paint(Canvas paneCanvas) {
         // this branch from re-triggering on that next iteration.
         if (line < renderEndLine && segmentIndex == 0 && line != leadingAnnotationEmittedLine &&
             LeadingAnnotationRowsForLine(line) > 0) {
-            PaintCodeLensRow(c, row, line, gutter.totalWidth);
+            PaintCodeLensRow(c, row, line, gutter);
             leadingAnnotationEmittedLine = line;
             continue;
         }
@@ -2482,7 +2511,14 @@ void BufferView::PaintConflictActionChips(Canvas& c, const std::vector<std::size
     }
 }
 
-void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, std::size_t gutterWidth) {
+void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, const bufferview::GutterLayout& gutter) {
+    const std::size_t gutterWidth = gutter.totalWidth;
+    // The fold column runs THROUGH this row. A trailing row sits between
+    // `line` and the one after it, so it belongs to whatever blocks still
+    // enclose THAT line -- a callout under a block's last line is outside
+    // the block by then.
+    PaintFoldColumnContinuation(c, row, line + 1, gutter);
+
     const auto it = gutters_.InlineDiagnosticsByLine().find(line);
     if (it == gutters_.InlineDiagnosticsByLine().end()) {
         return; // shouldn't happen (RowsForLine and Paint share the cache within one frame) -- leave the blanked row

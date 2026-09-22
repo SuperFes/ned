@@ -4316,7 +4316,7 @@ class BufferView : public Widget {
     // annotation sits below the line's LAST wrap row, where first-row
     // column positions would be a lie -- or when the span is scrolled out
     // of view), then the message, both in the severity's own theme color.
-    void PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, std::size_t gutterWidth);
+    void PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, const bufferview::GutterLayout& gutter);
 
     // codeLens follow-up. AnnotationRowsForLine's leading (above-the-line)
     // sibling -- today only a trailing row exists (the diagnostic one
@@ -4330,11 +4330,26 @@ class BufferView : public Widget {
     // 0 while editor::lsp::CodeLensEnabled() is off or lspManager_ is
     // unset.
     [[nodiscard]] std::size_t LeadingAnnotationRowsForLine(std::size_t line) const;
+    // Every lens starting on `line`, titles joined by " | ", or empty when
+    // the line has none worth a row. The single source both the row count
+    // above and PaintCodeLensRow read: a lens the server has answered but
+    // not yet RESOLVED carries no title (jdtls answers every lens that way
+    // -- range and data only), and counting one of those as a row while the
+    // paint skipped it reserved a row that stayed blank.
+    [[nodiscard]] std::string CodeLensTitleForLine(std::size_t line) const;
     // Paints one leading row for `line` at screen row `row`: every lens
     // whose range starts on `line`, titles joined by " | ", dim italic
     // text -- no carets (unlike PaintInlineDiagnosticRow, a lens isn't
     // anchored to a sub-line span, just the line as a whole).
-    void PaintCodeLensRow(Canvas& c, int row, std::size_t line, std::size_t gutterWidth) const;
+    void PaintCodeLensRow(Canvas& c, int row, std::size_t line, const bufferview::GutterLayout& gutter) const;
+    // The fold column's vertical bar on a row that belongs to a line but
+    // carries none of its content -- a lens row above it, a diagnostic
+    // annotation row below it. `containingLine` is the line whose enclosing
+    // blocks the row sits inside: the annotated line itself for a leading
+    // row, the one after it for a trailing row. Only the mid-span bar; a
+    // header's own ⊞/⊟ and a span's closing └ belong to the real line.
+    void PaintFoldColumnContinuation(Canvas& c, int row, std::size_t containingLine,
+                                     const bufferview::GutterLayout& gutter) const;
     // main-editor-sticky-scroll follow-up: draws the pinned namespace/class/
     // method breadcrumb rows into the TOP of `c` (still at its full,
     // unshifted size when this runs) and returns how many rows it drew --

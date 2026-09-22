@@ -521,7 +521,7 @@ Enable or disable the quick-fix gutter marker (default true) -- a glyph beside t
 
 ## `ned/set-lsp-code-lens`
 
-Enable or disable code lens annotations (textDocument/codeLens), rendered as a dim line above the code they annotate (default true). Run the lens at point with lsp-run-code-lens-at-point (M-x, unbound by default). A server that proves it doesn't support the method is never asked again for that connection's lifetime.
+Enable or disable code lens annotations (textDocument/codeLens), rendered as a dim line above the code they annotate (default true). Run the lens at point with lsp-run-code-lens-at-point (M-x, unbound by default). A lens the server sends without a command carries no title yet; those are resolved (codeLens/resolve) as the viewport reaches them, once each, and the row appears when the answer lands. A server that proves it doesn't support the method is never asked again for that connection's lifetime.
 
 ## `ned/set-lsp-command`
 

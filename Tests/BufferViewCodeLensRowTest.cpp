@@ -299,3 +299,98 @@ TEST_CASE("CursorPosition is unaffected when the lens sits on a line other than 
     REQUIRE(cursor.has_value());
     REQUIRE(cursor->y == 0);
 }
+
+// A lens is allowed to arrive with no command at all, to be filled in by
+// codeLens/resolve. jdtls answers EVERY lens that way -- range and data, no
+// command -- so this shape is not an edge case, it is what Java looks like.
+// Counting a row for one of those reserved a row the paint then skipped,
+// which is how a blank line appeared between an annotation and the method
+// under it (live-reported 2026-09-22 against jdtls).
+TEST_CASE("An unresolved lens gets no row, and the resolve it triggers brings one", "[BufferView][CodeLens]") {
+    LspFixture    lsp("ned_bufferview_code_lens_unresolved_test.c", "int a = 1;\nint main() {}\nint b = 2;\n");
+    FakeLspServer server = FakeLspServer::Create(lsp.manager, "c", lsp.eventLoop, lsp.client);
+    FrameReader   frames{server.serverStdinRead, {}};
+
+    Buffer&    buffer = lsp.SourceBuffer();
+    BufferView view   = lsp.fixture.View();
+    lsp.Ready(view, frames);
+
+    buffer.SetPoint(buffer.Content().LineToByteOffset(1) + 4); // point on the annotated line
+
+    const Json request = frames.WithMethod("textDocument/codeLens");
+    REQUIRE(request.contains("id"));
+    const Json unresolved{{"range", RangeJson(1, 0, 3)}, {"data", Json::array({"references"})}};
+    lsp.client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"id", request["id"]}, {"result", Json::array({unresolved})}}.dump());
+
+    ned::ui::Canvas canvas(lsp.screen, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 5});
+    view.Paint(canvas);
+
+    // Nothing to say yet, so no row: line 1's own text is still row 1.
+    const std::optional<ned::ui::Point> beforeResolve = view.CursorPosition();
+    REQUIRE(beforeResolve.has_value());
+    REQUIRE(beforeResolve->y == 1);
+
+    // ...and the lens is not simply dropped: the resolve goes out on its own,
+    // carrying the server's own lens object back verbatim.
+    const Json resolve = frames.WithMethod("codeLens/resolve");
+    REQUIRE(resolve.contains("id"));
+    REQUIRE(resolve["params"] == unresolved);
+
+    lsp.client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                                   {"id", resolve["id"]},
+                                   {"result", Json{{"range", RangeJson(1, 0, 3)},
+                                                   {"command", {{"title", "2 references"}, {"command", "noop"}}}}}}
+                                  .dump());
+    view.Paint(canvas);
+
+    const std::optional<ned::ui::Point> afterResolve = view.CursorPosition();
+    REQUIRE(afterResolve.has_value());
+    REQUIRE(afterResolve->y == 2);
+
+    std::string painted;
+    for (int x = 0; x < 40; ++x) {
+        painted += lsp.screen.PixelAt(x, 1).character;
+    }
+    REQUIRE(painted.find("▹ 2 references") != std::string::npos);
+}
+
+// A lens row is chrome drawn beside a line, not a line of its own -- the
+// fold column's vertical bar has to run through it, or a block reads as two
+// separate blocks with a gap in the middle.
+TEST_CASE("The fold column's bar runs through a code lens row", "[BufferView][CodeLens]") {
+    LspFixture    lsp("ned_bufferview_code_lens_fold_bar_test.c", "int main(void) {\n    return 0;\n}\n");
+    FakeLspServer server = FakeLspServer::Create(lsp.manager, "c", lsp.eventLoop, lsp.client);
+    FrameReader   frames{server.serverStdinRead, {}};
+
+    BufferView view = lsp.fixture.View();
+    lsp.Ready(view, frames);
+
+    const Json request = frames.WithMethod("textDocument/codeLens");
+    REQUIRE(request.contains("id"));
+    lsp.client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                                   {"id", request["id"]},
+                                   {"result", Json::array({Json{{"range", RangeJson(1, 4, 10)},
+                                                                {"command", {{"title", "1 reference"}, {"command", "noop"}}}}})}}
+                                  .dump());
+
+    ned::ui::Canvas canvas(lsp.screen, ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 5});
+    view.Paint(canvas);
+
+    // Row 0 is the function's own header line, which carries the expanded
+    // glyph -- found by scanning rather than by recomputing the gutter
+    // layout's arithmetic a second time.
+    int foldColumn = -1;
+    for (int x = 0; x < 40; ++x) {
+        if (lsp.screen.PixelAt(x, 0).character == "⊟") {
+            foldColumn = x;
+            break;
+        }
+    }
+    REQUIRE(foldColumn >= 0);
+
+    // Row 1 is the lens drawn above line 1, which sits inside the block.
+    REQUIRE(lsp.screen.PixelAt(foldColumn, 1).character == "│");
+    // Row 2 is line 1's own text, still inside it.
+    REQUIRE(lsp.screen.PixelAt(foldColumn, 2).character == "│");
+}

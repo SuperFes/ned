@@ -1268,6 +1268,10 @@ class Manager {
         Json        commandArguments;
         bool        hasCommand;
         Json        raw;
+        // Whether a codeLens/resolve for this entry is already on the wire,
+        // so ResolveViewportCodeLenses asks once per lens rather than once
+        // per frame. Reset naturally: a new response replaces the vector.
+        bool resolveRequested = false;
     };
 
     // Called once per Paint() for the active buffer, alongside
@@ -1281,7 +1285,24 @@ class Manager {
     // (CodeLensEnabled) and latches a real error response into
     // codeLensUnsupported_ so a non-implementing server is never asked
     // again for this connection's lifetime.
-    void RequestCodeLenses(text::Buffer& buffer, const std::string& serverKey);
+    void RequestCodeLenses(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
+                           const std::string& serverKey);
+
+    // A lens is allowed to arrive with no command and no title at all, to be
+    // filled in by codeLens/resolve only for the ones a client actually
+    // displays -- and jdtls answers EVERY lens that way, so without this the
+    // whole feature is silent under Java. Sends that resolve for each
+    // title-less lens the viewport reaches, once per lens, and fills the
+    // title into the stored entry (never its offsets: those have been
+    // carried forward on the edit journal while the request was in flight,
+    // and the reply's own copies are stale by however much).
+    //
+    // Viewport-scoped rather than whole-document because each resolve is
+    // real work on the server's side (a reference search, for the lens kind
+    // this exists for); called both as a response lands and as the viewport
+    // moves over lenses already in hand.
+    void ResolveViewportCodeLenses(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
+                                   const std::string& serverKey);
 
     // The most recently applied code lenses for buffer, sorted by
     // startByte -- empty if never requested, not yet answered, or the
@@ -2385,6 +2406,13 @@ class Manager {
     std::unordered_map<text::Buffer*, std::size_t>                                       codeLensRequestCounter_;
     mutable std::unordered_map<text::Buffer*, std::vector<ResolvedCodeLens>>             codeLensSpans_;
     std::unordered_set<std::string>                                                      codeLensUnsupported_;
+    // Bumped every time codeLensSpans_ is REPLACED, which
+    // codeLensSpansGeneration_ cannot stand in for (that one tracks the
+    // content the spans were carried forward to, and moves on every edit
+    // with the vector left in place). An in-flight codeLens/resolve holds it
+    // to tell "my entry is still at that index" from "the whole set was
+    // answered again while I waited".
+    std::unordered_map<text::Buffer*, std::size_t> codeLensRevision_;
 
     // code-action-hints follow-up. coverage_/requestCounter_/unsupported_
     // are the same three gates inlayHintCoverage_ and its siblings are.

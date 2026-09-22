@@ -604,6 +604,23 @@ commands, never a replacement for them.
       reach `Dispatcher` through `C-x` would mean either breaking real vim's own
       decrement-number binding or a two-key lookahead hack — not worth it now that the
       practical gap (no way to split/close/cycle windows under Vim mode) is closed.
+- [ ] **The unsaved-change gutter swatch means nothing on a read-only buffer, and the
+      column it occupies could mean something useful there.** The status column
+      (`PaintLineGutter`, `frame.unsavedChangeLineRanges` against
+      `theme_.unsavedChangeIndicator`) paints a 1-cell swatch on every line edited
+      since load/save, with no read-only check anywhere in the path -- so `*lsp log*`,
+      `*debug*`, `*messages*`, a test-results buffer and every other append-only
+      buffer stripe themselves as "you changed this", which is never true of them.
+      Two halves, and the second is the interesting one:
+      suppress the swatch when `Buffer::ReadOnly()` (the same gate `FoldGutterActive`
+      already applies to its own column), and then consider giving that freed column a
+      real job in exactly those buffers -- a *last-seen* marker showing where the
+      content stood when you last looked at the buffer, so a log you return to after a
+      minute of work shows at a glance which rows are new. `Manager::HasUnseenLogEntry`/
+      `AcknowledgeLogEntry` already track the unseen/seen edge for `*lsp log*` at
+      whole-buffer granularity, which is the same fact at the wrong resolution: what a
+      marker needs is the byte offset the buffer had reached at acknowledge time, which
+      nothing records yet.
 - [ ] The search-everywhere preview footer shipped (slug for `git log --grep=`:
       `search-everywhere-preview`) -- one conscious cut left behind. The excerpt is
       painted in one brush, unhighlighted: a per-file `Mode::highlight` on every

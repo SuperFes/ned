@@ -3744,7 +3744,7 @@ TEST_CASE("Code lenses land on the right line however far the buffer has moved",
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
-    manager.RequestCodeLenses(buffer, "test-lang");
+    manager.RequestCodeLenses(buffer, 0, buffer.Content().ByteLength(), "test-lang");
     const std::string raw = ReadRawFrame(server.serverStdinRead);
     REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["method"] == "textDocument/codeLens");
 
@@ -5896,6 +5896,66 @@ TEST_CASE("workspace/inlayHint/refresh is answered with a null result and re-ope
     REQUIRE(afterRefresh[1]["method"] == "textDocument/inlayHint");
 }
 
+// A lens with no command is a lens the client is expected to resolve before
+// showing -- and jdtls answers every one of them that way, so a client that
+// only displays what arrives inline shows nothing at all under Java. The
+// resolve goes out on its own, and its answer fills in the TITLE only: the
+// stored entry's offsets have been carried forward while the request was in
+// flight, and the reply's own copies are the stale ones it was sent with.
+TEST_CASE("A lens with no command is resolved, and the answer moves no offsets", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-codelens-resolve-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int alpha = 1;\nint beta = 2;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestCodeLenses(buffer, 0, buffer.Content().ByteLength(), "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["method"] == "textDocument/codeLens");
+
+    const Json unresolved{{"range", {{"start", {{"line", 1}, {"character", 0}}}, {"end", {{"line", 1}, {"character", 3}}}}},
+                          {"data", Json::array({"references"})}};
+    client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(raw)}, {"result", Json::array({unresolved})}}.dump());
+
+    // Nothing to show yet -- but the lens is kept, and the resolve for it
+    // goes out carrying the server's own object back verbatim.
+    REQUIRE(manager.CodeLensSpans(buffer).size() == 1);
+    REQUIRE(manager.CodeLensSpans(buffer)[0].title.empty());
+    const std::string resolveRaw   = ReadRawFrame(server.serverStdinRead);
+    const Json        resolveFrame = Json::parse(resolveRaw.substr(resolveRaw.find("\r\n\r\n") + 4));
+    REQUIRE(resolveFrame["method"] == "codeLens/resolve");
+    REQUIRE(resolveFrame["params"] == unresolved);
+
+    // Asking again for the same set must not ask the server twice.
+    manager.ResolveViewportCodeLenses(buffer, 0, buffer.Content().ByteLength(), "test-lang");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+
+    // The buffer moves on while the resolve is still in flight.
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("// header\n");
+
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(resolveRaw)},
+                               {"result", Json{{"range",
+                                                {{"start", {{"line", 1}, {"character", 0}}},
+                                                 {"end", {{"line", 1}, {"character", 3}}}}},
+                                               {"command", {{"title", "2 references"}, {"command", "noop"}}}}}}
+                              .dump());
+
+    REQUIRE(manager.CodeLensSpans(buffer).size() == 1);
+    REQUIRE(manager.CodeLensSpans(buffer)[0].title == "2 references");
+    REQUIRE(manager.CodeLensSpans(buffer)[0].hasCommand);
+    // Line 1 of the document the resolve spoke about is line 2 here.
+    REQUIRE(buffer.Content().ByteOffsetToLine(manager.CodeLensSpans(buffer)[0].startByte) == 2);
+}
+
 TEST_CASE("workspace/codeLens/refresh re-asks for a document whose lenses were already fetched", "[Lsp]") {
     const RequestIdleGuard      idle(1);
     BufferList                  bufferList;
@@ -5910,17 +5970,17 @@ TEST_CASE("workspace/codeLens/refresh re-asks for a document whose lenses were a
     manager.SyncBuffer(buffer, "test-lang");
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
-    manager.RequestCodeLenses(buffer, "test-lang");
+    manager.RequestCodeLenses(buffer, 0, buffer.Content().ByteLength(), "test-lang");
     const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 1));
     REQUIRE(first.size() == 1);
     REQUIRE(first[0]["method"] == "textDocument/codeLens");
     client->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", first[0]["id"]}, {"result", Json::array()}}.dump());
 
-    manager.RequestCodeLenses(buffer, "test-lang"); // same content generation -- already asked
+    manager.RequestCodeLenses(buffer, 0, buffer.Content().ByteLength(), "test-lang"); // same content generation -- already asked
     REQUIRE(NoFrameArrives(server.serverStdinRead));
 
     client->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", 7}, {"method", "workspace/codeLens/refresh"}}.dump());
-    manager.RequestCodeLenses(buffer, "test-lang");
+    manager.RequestCodeLenses(buffer, 0, buffer.Content().ByteLength(), "test-lang");
     const std::vector<Json> afterRefresh = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 2));
     REQUIRE(afterRefresh.size() == 2);
     REQUIRE(afterRefresh[0]["result"].is_null());

@@ -1817,6 +1817,7 @@ void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     codeLensRequestCounter_.erase(&buffer);
     codeLensSpans_.erase(&buffer);
     codeLensSpansGeneration_.erase(&buffer);
+    codeLensRevision_.erase(&buffer);
     codeActionHintCoverage_.erase(&buffer);
     codeActionHintRequestCounter_.erase(&buffer);
     codeActionHintDiagnosticsGeneration_.erase(&buffer);
@@ -2165,7 +2166,11 @@ bool Manager::SendViewportFeatures(text::Buffer& buffer, const ArmedViewportRequ
     }
     RequestSemanticTokens(buffer, request.viewportStartByte, request.viewportEndByte, request.serverKey);
     RequestInlayHints(buffer, request.viewportStartByte, request.viewportEndByte, request.serverKey);
-    RequestCodeLenses(buffer, request.serverKey);
+    RequestCodeLenses(buffer, request.viewportStartByte, request.viewportEndByte, request.serverKey);
+    // Lenses already in hand whose titles the previous viewport never
+    // asked for -- a scroll owes them a resolve even when the codeLens
+    // request above is deduped away by content generation.
+    ResolveViewportCodeLenses(buffer, request.viewportStartByte, request.viewportEndByte, request.serverKey);
     RequestCodeActionHints(buffer, request.viewportStartByte, request.viewportEndByte, request.serverKey);
     return true;
 }
@@ -2876,7 +2881,8 @@ void Manager::EvictInlayHintsBeyondCap(text::Buffer& buffer, std::vector<Anchore
     hints.erase(hints.begin() + static_cast<std::ptrdiff_t>(kMaxRetainedInlayHints), hints.end());
 }
 
-void Manager::RequestCodeLenses(text::Buffer& buffer, const std::string& serverKey) {
+void Manager::RequestCodeLenses(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
+                                const std::string& serverKey) {
     if (!CodeLensEnabled()) {
         return;
     }
@@ -2922,8 +2928,8 @@ void Manager::RequestCodeLenses(text::Buffer& buffer, const std::string& serverK
     const std::size_t                         requestedGeneration = buffer.ContentGeneration();
     client->SendRequest(
         "textDocument/codeLens", params,
-        [this, bufferPtr, requestId, connectionKey, requestedContent,
-         requestedGeneration](std::optional<Json> result, std::optional<Json> error) {
+        [this, bufferPtr, requestId, connectionKey, requestedContent, requestedGeneration, viewportStartByte,
+         viewportEndByte, serverKey](std::optional<Json> result, std::optional<Json> error) {
             const auto counterIt = codeLensRequestCounter_.find(bufferPtr);
             if (counterIt == codeLensRequestCounter_.end() || counterIt->second != requestId) {
                 return; // superseded by a newer request for this buffer
@@ -2964,7 +2970,71 @@ void Manager::RequestCodeLenses(text::Buffer& buffer, const std::string& serverK
             });
             codeLensSpans_[bufferPtr]           = std::move(resolved);
             codeLensSpansGeneration_[bufferPtr] = bufferPtr->ContentGeneration();
+            ++codeLensRevision_[bufferPtr];
+
+            // The viewport was recorded in the requested document's own
+            // coordinates, the same ones the lenses just arrived in -- both
+            // travel onto the present together, so the "is this lens on
+            // screen" test below is asked in one coordinate system.
+            std::size_t viewportStart = viewportStartByte;
+            std::size_t viewportEnd   = viewportEndByte;
+            if (const auto ops = bufferPtr->Edits().OpsSince(requestedGeneration)) {
+                RelocateRange(viewportStart, viewportEnd, *ops, text::InsideDelete::Clamp);
+            }
+            ResolveViewportCodeLenses(*bufferPtr, viewportStart, viewportEnd, serverKey);
         });
+}
+
+void Manager::ResolveViewportCodeLenses(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,
+                                        const std::string& serverKey) {
+    if (!CodeLensEnabled()) {
+        return;
+    }
+    const auto it = codeLensSpans_.find(&buffer);
+    if (it == codeLensSpans_.end()) {
+        return;
+    }
+    CodeLensSpans(buffer); // lazy catch-up, so the viewport test runs against live offsets
+
+    const std::size_t revision = codeLensRevision_[&buffer];
+    for (std::size_t index = 0; index < it->second.size(); ++index) {
+        ResolvedCodeLens& lens = it->second[index];
+        if (lens.hasCommand || lens.resolveRequested || lens.raw.is_null()) {
+            continue;
+        }
+        if (lens.endByte < viewportStartByte || lens.startByte > viewportEndByte) {
+            continue;
+        }
+        lens.resolveRequested = true; // set before sending: a synchronous failure must not re-arm it
+        ResolveCodeLens(
+            buffer, lens,
+            [this, bufferPtr = &buffer, index, revision](std::optional<ResolvedCodeLens> resolved) {
+                if (!resolved) {
+                    return;
+                }
+                const auto revisionIt = codeLensRevision_.find(bufferPtr);
+                if (revisionIt == codeLensRevision_.end() || revisionIt->second != revision) {
+                    return; // the whole set was answered again while this was in flight
+                }
+                const auto spansIt = codeLensSpans_.find(bufferPtr);
+                if (spansIt == codeLensSpans_.end() || index >= spansIt->second.size()) {
+                    return;
+                }
+                // Everything the resolve actually answered, and nothing
+                // else: startByte/endByte on the stored entry have been
+                // carried forward since the request went out, and the
+                // reply's own pair is the stale copy it was sent with.
+                ResolvedCodeLens& target = spansIt->second[index];
+                target.title             = resolved->title;
+                target.commandName       = resolved->commandName;
+                target.commandArguments  = resolved->commandArguments;
+                target.hasCommand        = resolved->hasCommand;
+                if (!resolved->raw.is_null()) {
+                    target.raw = resolved->raw;
+                }
+            },
+            serverKey);
+    }
 }
 
 const std::vector<Manager::ResolvedCodeLens>& Manager::CodeLensSpans(const text::Buffer& buffer) const {
