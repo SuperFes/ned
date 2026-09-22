@@ -611,6 +611,29 @@ void WindowManager::SetLspManager(editor::lsp::Manager* lspManager) {
         lspManager_->SetApplyEditHandler([this](const editor::lsp::Manager::ResolvedRename& edit, const std::string& label) {
             return ApplyServerPushedWorkspaceEdit(edit, label);
         });
+        // window-messages follow-up: same once-per-Manager wiring as the
+        // handler above. A server's own message has nowhere else to go --
+        // Editor/ owns no echo area, and until now these were dropped
+        // outright, so a server reporting a problem through the protocol
+        // said nothing to the user at all.
+        lspManager_->SetStatusMessageHandler([this](std::string message) { statusMessage_ = std::move(message); });
+        lspManager_->SetShowDocumentHandler([this](const editor::lsp::Manager::ShowDocumentRequest& request) {
+            Pane* pane = FocusedPane();
+            // Reported as unsuccessful rather than opened-as-empty: a server
+            // asking to show a file that isn't there has misjudged
+            // something, and creating it on its behalf would be worse than
+            // saying no.
+            if (pane == nullptr || !std::filesystem::exists(request.path)) {
+                return false;
+            }
+            // takeFocus is not honored: every pane ned could show this in is
+            // one the user is looking at, so there is no "show without
+            // focusing" to implement. The selection's start line is, via
+            // the same jump every other path+position caller makes; its
+            // character column is dropped with it.
+            pane->Buffer().JumpToPathLine(request.path, request.position ? request.position->line + 1 : 1);
+            return true;
+        });
     }
 }
 
@@ -1271,6 +1294,13 @@ void WindowManager::StartFileWatcher(EventLoop& eventLoop) {
         // that has vanished from under it.
         [this, &eventLoop](std::vector<editor::FileMove> moves) {
             eventLoop.Post([this, moves = std::move(moves)] { HandleExternalMoves(moves); });
+        },
+        // lsp-did-change-watched-files follow-up: the per-entry feed, live
+        // only while a server has watchers registered (see
+        // ResyncFileWatcher). Posted like its siblings -- Manager is
+        // main-thread-only state.
+        [this, &eventLoop](std::vector<editor::FileEvent> events) {
+            eventLoop.Post([this, events = std::move(events)] { ReportWatchedFileChanges(events); });
         });
     ResyncFileWatcher();
 }
@@ -1374,6 +1404,29 @@ void WindowManager::ResyncFileWatcher() {
         }
     }
     fileWatcher_->SetWatchedFiles(files);
+    // lsp-did-change-watched-files follow-up: per-entry events cost a
+    // main-thread wakeup for any sibling churn in a watched directory, so
+    // they stay off until a server actually registers for them. Refreshed
+    // here rather than pushed from Manager: a registration lands
+    // asynchronously after a handshake, and this already runs on the
+    // background tick as well as on every buffer open/close.
+    fileWatcher_->SetReportsDirectoryEntries(lspManager_ != nullptr && lspManager_->HasWatchedFileRegistrations());
+}
+
+void WindowManager::ReportWatchedFileChanges(const std::vector<editor::FileEvent>& events) {
+    if (lspManager_ == nullptr) {
+        return;
+    }
+    std::vector<editor::lsp::Manager::WatchedFileChange> changes;
+    changes.reserve(events.size());
+    for (const editor::FileEvent& event : events) {
+        using Kind      = editor::FileEvent::Kind;
+        const auto type = event.kind == Kind::Created   ? editor::lsp::Manager::FileChangeType::Created
+                          : event.kind == Kind::Deleted ? editor::lsp::Manager::FileChangeType::Deleted
+                                                        : editor::lsp::Manager::FileChangeType::Changed;
+        changes.push_back({.path = event.path, .type = type});
+    }
+    lspManager_->NotifyWatchedFilesChanged(changes);
 }
 
 void WindowManager::SweepExternalChanges() {

@@ -568,6 +568,16 @@ class Buffer {
     // a before/after comparison on the same instance.
     [[nodiscard]] std::size_t ContentGeneration() const;
 
+    // lsp-did-save follow-up. Bumped once per *completed* save (FinishSave,
+    // which SaveToFile and the asynchronous large-file path both funnel
+    // through), never by an edit. Monotonic, same cheap
+    // "did-it-happen-since-I-last-looked" shape as ContentGeneration()
+    // above, and for the same reason: the sync loop that has to tell a
+    // language server about a save polls the buffer rather than every save
+    // site calling it, so a save path added later is covered without
+    // remembering to wire it.
+    [[nodiscard]] std::size_t SaveGeneration() const;
+
     // The edits behind those generation bumps, for a holder that needs to
     // carry byte offsets resolved against an older one onto current content.
     //
@@ -1427,6 +1437,7 @@ class Buffer {
     // point-moving or editing call -- see their doc comment above.
     std::optional<std::size_t>        GoalColumn_;
     std::size_t                       ContentGeneration_ = 0; // see ContentGeneration()
+    std::size_t                       SaveGeneration_    = 0; // see SaveGeneration()
     EditJournal                       Edits_;                 // see Edits(); advanced with ContentGeneration_ by the Commit* helpers
     // Fed by the Commit* helpers, so every anchor moves exactly once per
     // edit and a path that forgets to relocate one cannot exist -- the same

@@ -20,6 +20,7 @@
 #ifndef NED_EDITOR_FILEWATCH_H
 #define NED_EDITOR_FILEWATCH_H
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -51,6 +52,27 @@ struct FileMove {
     std::filesystem::path to;
 };
 
+// lsp-did-change-watched-files follow-up: one entry of a watched directory
+// that changed, named individually -- what a language server's own
+// `workspace/didChangeWatchedFiles` registration asks to be told about, as
+// opposed to onChange below, which says only that *something* did.
+//
+// Reported only while SetReportsDirectoryEntries(true) is in effect (see
+// that method): every other consumer of this class cares about open buffers
+// alone, and collecting per-entry events for a directory nobody has
+// subscribed to would mean waking the main thread for sibling churn nothing
+// would do anything with.
+struct FileEvent {
+    enum class Kind { Created,
+                      Changed,
+                      Deleted };
+
+    std::filesystem::path path;
+    Kind                  kind = Kind::Changed;
+
+    bool operator==(const FileEvent&) const = default;
+};
+
 class FileWatcher {
   public:
     // onChange runs on the watcher's own background thread, at most once per
@@ -71,7 +93,12 @@ class FileWatcher {
     // IN_MOVED_FROM half alone, which still triggers onChange (the file
     // under a buffer did change) but is not a move anyone can name a
     // destination for, and is deliberately not guessed at.
-    explicit FileWatcher(std::function<void()> onChange, std::function<void(std::vector<FileMove>)> onMoved = {});
+    //
+    // onEvents, when given, runs alongside onMoved on that same thread with
+    // every directory entry the burst touched -- but only while
+    // SetReportsDirectoryEntries(true) is in effect (see FileEvent above).
+    explicit FileWatcher(std::function<void()> onChange, std::function<void(std::vector<FileMove>)> onMoved = {},
+                         std::function<void(std::vector<FileEvent>)> onEvents = {});
     // Stops the thread (bounded by the read loop's poll timeout plus the
     // debounce cap) and joins before closing the inotify fd; no callback
     // can fire after destruction returns.
@@ -89,6 +116,15 @@ class FileWatcher {
     // aliases before any directory is watched twice.
     void SetWatchedFiles(const std::vector<std::filesystem::path>& files);
 
+    // lsp-did-change-watched-files follow-up: turns per-entry reporting
+    // (onEvents) on or off. Off by default, and deliberately so: with it
+    // on, any entry of a watched directory changing wakes the main thread,
+    // where otherwise only a file some buffer actually has open does. The
+    // consumer turns it on exactly while something is subscribed to those
+    // events -- in ned, while a language server has registered file
+    // watchers of its own.
+    void SetReportsDirectoryEntries(bool enabled);
+
     [[nodiscard]] bool Active() const;
 
   private:
@@ -99,6 +135,8 @@ class FileWatcher {
 
     std::function<void()>                      onChange_;
     std::function<void(std::vector<FileMove>)> onMoved_;
+    std::function<void(std::vector<FileEvent>)> onEvents_;
+    std::atomic<bool>                           reportsDirectoryEntries_ = false;
     int                                        fd_ = -1; // declared before thread_: closed only after the join
 
     mutable std::mutex                                     mutex_; // guards the three maps
@@ -111,6 +149,17 @@ class FileWatcher {
     // unwatched.
     std::map<std::uint32_t, std::filesystem::path> pendingMoves_;
     std::vector<FileMove>                          completedMoves_;
+    // One entry per path per burst rather than per inotify event: a save
+    // is routinely a create-then-modify pair, and a server gains nothing
+    // from hearing both. Created outranks Changed for the same path (the
+    // file is new either way) and Deleted outranks both (it is gone,
+    // whatever happened first). A consequence worth knowing: an atomic
+    // write-sibling-then-rename save -- which is how ned and most other
+    // tools save -- lands as Created on a file that already existed, since
+    // that is genuinely what inotify saw. Distinguishing it would cost a
+    // stat per event to learn what every consumer does anyway, which is
+    // re-read the file.
+    std::map<std::filesystem::path, FileEvent::Kind> collectedEvents_;
 
     std::jthread thread_; // last member: stopped/joined before anything above goes away
 };

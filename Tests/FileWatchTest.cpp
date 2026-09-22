@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -341,5 +342,89 @@ TEST_CASE("Churn in a watched directory that is not a rename reports no move", "
     const std::lock_guard lock(movesMutex);
     CHECK(moves.empty());
 
+    std::filesystem::remove_all(dir);
+}
+
+// lsp-did-change-watched-files follow-up: per-entry reporting, which is what
+// a language server's own file-watcher registration is answered from.
+TEST_CASE("Per-entry events name a sibling file no buffer has open", "[FileWatch]") {
+    const std::filesystem::path dir     = MakeTempDir("ned_filewatch_entries");
+    const std::filesystem::path watched = dir / "open.txt";
+    const std::filesystem::path sibling = dir / "generated.php";
+    WriteFile(watched, "original\n");
+
+    std::mutex             mutex;
+    std::vector<FileEvent> events;
+    FileWatcher            watcher([] {}, {}, [&](std::vector<FileEvent> batch) {
+        const std::lock_guard lock(mutex);
+        events.insert(events.end(), batch.begin(), batch.end()); });
+    REQUIRE(watcher.Active());
+    watcher.SetWatchedFiles({watched});
+    watcher.SetReportsDirectoryEntries(true);
+
+    WriteFile(sibling, "<?php\n");
+
+    REQUIRE(WaitFor([&] {
+        const std::lock_guard lock(mutex);
+        return !events.empty();
+    }));
+    const std::lock_guard lock(mutex);
+    // The sibling is reported by name even though nothing has it open --
+    // the watched basename set governs onChange, not this feed.
+    const bool named = std::any_of(events.begin(), events.end(), [&](const FileEvent& event) { return event.path == sibling; });
+    CHECK(named);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Per-entry events stay off until they are asked for", "[FileWatch]") {
+    // The default: a sibling changing must not even wake the consumer, which
+    // is what keeps directory churn free for everyone with no server
+    // subscribed to it.
+    const std::filesystem::path dir     = MakeTempDir("ned_filewatch_entries_off");
+    const std::filesystem::path watched = dir / "open.txt";
+    WriteFile(watched, "original\n");
+
+    std::atomic<int> eventBatches{0};
+    std::atomic<int> changes{0};
+    FileWatcher      watcher([&] { ++changes; }, {}, [&](std::vector<FileEvent>) { ++eventBatches; });
+    watcher.SetWatchedFiles({watched});
+
+    WriteFile(dir / "generated.php", "<?php\n");
+    SettleNegative();
+    CHECK(eventBatches.load() == 0);
+    CHECK(changes.load() == 0); // unchanged behavior: a sibling alone is not a reason to sweep
+
+    // The watched file itself still fires the ordinary change callback.
+    WriteFile(watched, "edited\n");
+    REQUIRE(WaitFor([&] { return changes.load() > 0; }));
+    CHECK(eventBatches.load() == 0);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A deleted entry is reported as a deletion", "[FileWatch]") {
+    const std::filesystem::path dir     = MakeTempDir("ned_filewatch_entries_delete");
+    const std::filesystem::path watched = dir / "open.txt";
+    const std::filesystem::path doomed  = dir / "doomed.php";
+    WriteFile(watched, "original\n");
+    WriteFile(doomed, "<?php\n");
+
+    std::mutex             mutex;
+    std::vector<FileEvent> events;
+    FileWatcher            watcher([] {}, {}, [&](std::vector<FileEvent> batch) {
+        const std::lock_guard lock(mutex);
+        events.insert(events.end(), batch.begin(), batch.end()); });
+    watcher.SetWatchedFiles({watched});
+    watcher.SetReportsDirectoryEntries(true);
+
+    std::filesystem::remove(doomed);
+
+    REQUIRE(WaitFor([&] {
+        const std::lock_guard lock(mutex);
+        return std::any_of(events.begin(), events.end(), [&](const FileEvent& event) { return event.path == doomed; });
+    }));
+    const std::lock_guard lock(mutex);
+    const auto            it = std::find_if(events.begin(), events.end(), [&](const FileEvent& event) { return event.path == doomed; });
+    REQUIRE(it != events.end());
+    CHECK(it->kind == FileEvent::Kind::Deleted);
     std::filesystem::remove_all(dir);
 }

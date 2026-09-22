@@ -169,41 +169,85 @@ alone). Four conscious cuts left behind.
 today, merely absent, or deliberately skipped, so a later pass doesn't re-litigate the
 third group.
 
-*Known to cost something today, with live evidence:*
+The file-operation family is complete as of 2026-09-21 -- slug
+`file-operation-create-delete`: `didCreateFiles` (sent when a save first brings a
+buffer's file into existence -- `Manager::ReportFileCreation`), and
+`willDeleteFiles`/`didDeleteFiles` around `delete-file` (C-c C-k), which now asks a
+server for the edits that keep the rest of the project compiling before the file goes,
+exactly as a rename already did. `workspace/willCreateFiles` stays unsent and
+undeclared: ned has no explicit create-a-file action, so there is no moment *before* a
+creation to ask for edits at.
 
-- [ ] `client/registerCapability` / `client/unregisterCapability` are unhandled, so
-      `Client.cpp`'s generic path answers MethodNotFound and **every dynamic registration
-      a server makes is silently lost**. Observed on both servers tried: harper-ls logs
-      "Unable to register watch file capability: Method not found", and phpantom_lsp
-      registers `workspace/didChangeWatchedFiles` watchers for `**/*.php`,
-      `**/composer.json` and friends to no effect. A server that registers a capability
-      only dynamically (rather than declaring it in its `InitializeResult`) has that
-      feature simply missing in ned, with nothing user-visible to explain why.
-- [ ] `workspace/didChangeWatchedFiles` is never sent -- the other half of the above, and
-      the thing servers are registering *for*. A file that changes outside the buffer (a
-      branch switch, a `composer install`, a generator, another editor) never reaches the
-      server, so its index silently drifts from the tree until something forces a reparse.
-      ned already runs the inotify watcher this needs (`Editor/FileWatch.h`, driving
-      auto-revert); this is wiring an existing signal to an existing connection, not new
-      machinery.
-- [ ] `textDocument/didSave` is never sent (nor `willSave`). A server that re-runs
-      analysis on save -- which is how most linter integrations behave, phpantom_lsp's
-      PHPStan/PHPCS passes included -- never learns a save happened. `willSaveWaitUntil`
-      is separately the spec's format-on-save hook; ned deliberately runs its own
-      pipeline there instead (`format-buffer-lsp-tier`), so that one stays skipped even
-      once `didSave` lands.
-- [ ] `window/logMessage`, `window/showMessage` and `window/showMessageRequest` are all
-      dropped. What ned surfaces today is captured *stderr* (`lsp-stderr-capture`), which
-      is why the harper-ls lines above appear at all -- a server that reports a genuine
-      problem through the protocol rather than stderr says nothing to the user.
-      `window/showDocument` (a server asking the editor to open a file or URL, which
-      several code actions rely on) is unhandled for the same reason.
+Everything in the "known to cost something" group shipped 2026-09-21 -- slug for
+`git log --grep=`: `server-side-protocol-half` (`client/registerCapability`/
+`unregisterCapability`, `workspace/didChangeWatchedFiles`, `textDocument/didSave`, and
+the `window/log|show*` family). Live-verified against clangd and harper-ls: harper-ls no
+longer logs "Unable to register watch file capability", its registration is honored, and
+a deletion in a watched directory reaches it as a real `didChangeWatchedFiles`. What that
+left behind:
+
+- [ ] **Watched-file coverage is the directories an open buffer lives in, not the project
+      tree.** `Editor/FileWatch.h` watches the parent directory of each open buffer, so a
+      server's `**/*.php` registration is answered for siblings of what's open and for
+      nothing else -- a `composer install` or a generator writing somewhere no buffer is
+      open is still invisible to it. Widening this means watching the project tree
+      (ignore-rules and inotify watch budget included), which is a different piece of work
+      from the protocol half that shipped.
+- [ ] Per-entry reporting flips on at the next background tick after a server registers
+      its watchers (`WindowManager::ResyncFileWatcher`, ~5s), so file events in that
+      window are missed. Inherent to refreshing the toggle from a poll rather than a hook,
+      and harmless in practice: a server that has just registered has just finished
+      indexing the tree it would be told about.
+- [ ] `window/showMessageRequest` always answers null ("the user chose none of these").
+      `Client::RequestHandler` is synchronous, so a real modal choice can't be driven from
+      it -- the same constraint `workspace/applyEdit` works under. The message and the
+      actions it offered do reach the user; only the answer is fixed.
+- [ ] `window/showDocument` honors the path and the selection's start *line*. `takeFocus:
+      false` is ignored (every pane ned could show a document in is one the user is
+      looking at) and the selection's column is dropped with it, since the jump goes
+      through `JumpToPathLine`.
+- [ ] `window/showDocument` with `external: true` (or any non-`file:` scheme) goes
+      straight to `Editor/Link.h`'s `OpenUrl` -- the configured opener, `xdg-open` by
+      default -- with no confirmation. Deliberate: the server is a process the user
+      already configured and could launch a browser itself, and the opener is
+      exec-based (no shell) and disable-able with `(ned/set-url-open-command "")`.
+      Revisit if a "server asked to open <url>, allow?" prompt ever earns its keep.
+- [ ] A dynamic registration for anything other than `workspace/didChangeWatchedFiles` and
+      `textDocument/didSave` is recorded and logged but changes no behavior. Mostly
+      moot -- ned sends feature requests without consulting a capability and latches off
+      a real MethodNotFound response -- but a server that registers, say, on-type
+      formatting dynamically still has its trigger characters ignored, because those are
+      read from the `initialize` response only.
+- [ ] Observed consequence of `didSave`, not a ned bug: harper-ls advertises
+      `textDocumentSync.save: true` and then logs "got a `textDocument/didSave`
+      notification, but it is not implemented" on every save, which ned's stderr capture
+      dutifully files as a WARN. Anyone editing prose sees one such line per save in
+      `*Messages*`. Suppressing it would mean either second-guessing a server's own
+      advertised capability or filtering a server's log text by content; revisit only if
+      a second server does the same.
+- [ ] `textDocument/willSave` / `willSaveWaitUntil` stay unsent on purpose: the latter is
+      the spec's format-on-save hook and ned runs its own pipeline there
+      (`format-buffer-lsp-tier`), which a server offering competing edits would fight.
 
 *Absent, no equivalent elsewhere in ned:*
 
+Triaged 2026-09-21 while deciding what belonged in 0.10, so the next pass starts from
+the judgement rather than redoing it: the group below is *absent*, not broken, which is
+why none of it shipped alongside the four gaps that were. `inlayHint/resolve` and
+`workspaceSymbol/resolve` are both small and both buy latency only -- the first pair to
+pick up when there is appetite. The rest are feature-sized and want their own bake time
+rather than a release's last afternoon.
+
+
 - [ ] `textDocument/selectionRange` -- syntax-aware expand/shrink selection. ned has no
       equivalent of its own; the `selectionRange` hits in `Lsp/Content.h` are
-      `DocumentSymbol`'s field of that name, unrelated.
+      `DocumentSymbol`'s field of that name, unrelated. **Argued 2026-09-21 that this one
+      should not be an LSP feature at all**: ned parses 74 languages with its own engine,
+      so expand/shrink built on the parse tree works everywhere, offline, with no server
+      -- where the LSP version would hand the feature only to whoever happens to run a
+      server that implements it. Build it native (an `Editor/` walk over the enclosing
+      node chain, like `ImprintFold.h` does for folding); reach for the request only if a
+      server ever proves it knows something the tree doesn't.
 - [ ] `inlayHint/resolve` and `workspaceSymbol/resolve` -- the lazy second half of two
       kinds ned already pulls eagerly. Both let a server defer the expensive part
       (a hint's tooltip/command, a symbol's location) until something actually needs it.

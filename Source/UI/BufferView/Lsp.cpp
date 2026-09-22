@@ -2903,6 +2903,56 @@ void BufferView::PerformProjectRename(const std::filesystem::path& source, const
     }
 }
 
+void BufferView::PerformProjectDelete(const std::filesystem::path& target) {
+    // Walked before anything is deleted, for the same reason
+    // PerformProjectRename walks its source: a server's filter is a
+    // per-file glob, so a directory has to be named by its contents or it
+    // matches nothing at all. Afterwards there is nothing left to walk.
+    std::vector<std::filesystem::path> deletedFiles;
+    std::error_code                    ec;
+    if (std::filesystem::is_directory(target, ec)) {
+        std::error_code walkEc;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(
+                 target, std::filesystem::directory_options::skip_permission_denied, walkEc)) {
+            if (entry.is_regular_file(walkEc)) {
+                deletedFiles.push_back(entry.path());
+            }
+        }
+    }
+    else {
+        deletedFiles.push_back(target);
+    }
+
+    auto finishDelete = [this, target, deletedFiles](std::optional<editor::lsp::Manager::ResolvedRename> willDeleteEdit) {
+        // Applied before the deletion, per the spec's intended use: the
+        // edits describe what other files need in order to stop referring
+        // to this one, and a server computes them while it can still see it.
+        if (willDeleteEdit) {
+            ApplyResolvedWorkspaceEdit(*willDeleteEdit, "Fixed up references before delete");
+        }
+        try {
+            editor::DeleteProjectPath(target);
+            statusMessage_ = "Deleted " + target.string();
+            if (projectSidebar_) {
+                projectSidebar_->InvalidateTree();
+            }
+            if (lspManager_ && !deletedFiles.empty()) {
+                lspManager_->NotifyFilesDeleted(deletedFiles);
+            }
+        }
+        catch (const std::exception& e) {
+            ReportError(e.what());
+        }
+    };
+
+    if (lspManager_ && !deletedFiles.empty()) {
+        lspManager_->RequestWillDeleteFiles(deletedFiles, std::move(finishDelete));
+    }
+    else {
+        finishDelete(std::nullopt);
+    }
+}
+
 void BufferView::SetLspManager(editor::lsp::Manager* lspManager) {
     lspManager_ = lspManager;
 }

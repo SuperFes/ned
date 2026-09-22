@@ -373,6 +373,7 @@ void Buffer::FinishSave(const std::filesystem::path& path, SavePlan plan) {
     Saving_       = false;
     SaveProgress_ = nullptr;
     ++UnsavedChangeGeneration_;
+    ++SaveGeneration_;
     CaptureDiskTimestamp();
 }
 
@@ -787,6 +788,10 @@ bool Buffer::Modified() const {
 
 std::size_t Buffer::ContentGeneration() const {
     return ContentGeneration_;
+}
+
+std::size_t Buffer::SaveGeneration() const {
+    return SaveGeneration_;
 }
 
 const EditJournal& Buffer::Edits() const {

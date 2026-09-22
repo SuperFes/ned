@@ -591,6 +591,12 @@ class WindowManager {
     // the same order, just after the fact rather than before it.
     void HandleExternalMoves(const std::vector<editor::FileMove>& moves);
 
+    // lsp-did-change-watched-files follow-up: hands one burst of per-entry
+    // file events to the LSP manager, which drops everything no server
+    // registered a matching watcher for. Main thread only -- posted there
+    // by the watcher callback, like HandleExternalMoves above.
+    void ReportWatchedFileChanges(const std::vector<editor::FileEvent>& events);
+
     // sidebar-context-menu follow-up: same "route to whichever pane is
     // currently focused" shape as RequestOpenBinaryFile just above -- wired
     // to ProjectSidebar::SetOnContextMenuRequest's own popup actions in

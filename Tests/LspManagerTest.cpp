@@ -6143,3 +6143,551 @@ TEST_CASE("A server declining every request with ContentModified is retried once
     });
     REQUIRE(askedAgain);
 }
+
+// dynamic-registration follow-up: a server declaring a capability after the
+// handshake. Before this, client/registerCapability fell through to
+// DispatchFrame's generic MethodNotFound and the capability was lost with
+// nothing to explain it -- see Manager::HandleRegisterCapability.
+TEST_CASE("Manager answers client/registerCapability and records what it registered", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    const Json request = {{"jsonrpc", "2.0"},
+                          {"id", 40},
+                          {"method", "client/registerCapability"},
+                          {"params",
+                           {{"registrations",
+                             Json::array({{{"id", "watch-1"},
+                                           {"method", "workspace/didChangeWatchedFiles"},
+                                           {"registerOptions", {{"watchers", Json::array({{{"globPattern", "**/*.php"}}})}}}}})}}}};
+    client->DispatchFrame(request.dump());
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(response["id"] == 40);
+    REQUIRE(response["result"].is_null()); // void per spec -- an error response is what the server used to get
+    REQUIRE_FALSE(response.contains("error"));
+
+    REQUIRE(manager.DynamicRegistrationsFor("test-lang").size() == 1);
+    CHECK(manager.DynamicRegistrationsFor("test-lang")[0].method == "workspace/didChangeWatchedFiles");
+    CHECK(manager.HasWatchedFileRegistrations());
+}
+
+TEST_CASE("Manager drops a registration client/unregisterCapability names", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", 41},
+                               {"method", "client/registerCapability"},
+                               {"params",
+                                {{"registrations", Json::array({{{"id", "watch-1"},
+                                                                 {"method", "workspace/didChangeWatchedFiles"},
+                                                                 {"registerOptions",
+                                                                  {{"watchers", Json::array({{{"globPattern", "**/*.php"}}})}}}}})}}}}
+                              .dump());
+    (void)ReadRawFrame(server.serverStdinRead); // drain the registration's own response
+    REQUIRE(manager.HasWatchedFileRegistrations());
+
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", 42},
+                               {"method", "client/unregisterCapability"},
+                               {"params", {{"unregisterations", Json::array({{{"id", "watch-1"}, {"method", "workspace/didChangeWatchedFiles"}}})}}}}
+                              .dump());
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["result"].is_null());
+    CHECK(manager.DynamicRegistrationsFor("test-lang").empty());
+    CHECK_FALSE(manager.HasWatchedFileRegistrations());
+}
+
+// lsp-did-change-watched-files follow-up: the other half of a registration.
+TEST_CASE("Manager sends didChangeWatchedFiles only for paths a registered watcher matched", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"},
+             {"id", 43},
+             {"method", "client/registerCapability"},
+             {"params",
+              {{"registrations",
+                Json::array({{{"id", "watch-1"},
+                              {"method", "workspace/didChangeWatchedFiles"},
+                              // Brace alternation is what servers actually register with, and
+                              // fnmatch has none of its own -- see MatchesWatcherGlob.
+                              {"registerOptions", {{"watchers", Json::array({{{"globPattern", "**/*.{php,inc}"}}})}}}}})}}}}
+            .dump());
+    (void)ReadRawFrame(server.serverStdinRead); // drain the registration's own response
+
+    manager.NotifyWatchedFilesChanged({
+        {.path = "/project/src/Thing.php", .type = Manager::FileChangeType::Changed},
+        {.path = "/project/src/legacy.inc", .type = Manager::FileChangeType::Created},
+        {.path = "/project/src/other.go", .type = Manager::FileChangeType::Changed}, // no watcher wants this
+    });
+
+    const std::string raw   = ReadRawFrame(server.serverStdinRead);
+    const Json        frame = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(frame["method"] == "workspace/didChangeWatchedFiles");
+    const Json& changes = frame["params"]["changes"];
+    REQUIRE(changes.size() == 2);
+    CHECK(changes[0]["uri"] == "file:///project/src/Thing.php");
+    CHECK(changes[0]["type"] == 2); // FileChangeType::Changed, LSP's own numbering
+    CHECK(changes[1]["uri"] == "file:///project/src/legacy.inc");
+    CHECK(changes[1]["type"] == 1); // Created
+}
+
+TEST_CASE("Manager honors a watcher's kind mask and stays silent with no registration", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    // No registration yet: a server that declares its capabilities
+    // statically must not be sent a notification it never asked for.
+    manager.NotifyWatchedFilesChanged({{.path = "/project/a.php", .type = Manager::FileChangeType::Changed}});
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", 44},
+                               {"method", "client/registerCapability"},
+                               {"params",
+                                {{"registrations",
+                                  Json::array({{{"id", "watch-1"},
+                                                {"method", "workspace/didChangeWatchedFiles"},
+                                                {"registerOptions",
+                                                 // kind 1 == Created only.
+                                                 {{"watchers", Json::array({{{"globPattern", "**/*.php"}, {"kind", 1}}})}}}}})}}}}
+                              .dump());
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    manager.NotifyWatchedFilesChanged({{.path = "/project/a.php", .type = Manager::FileChangeType::Changed}});
+    REQUIRE(NoFrameArrives(server.serverStdinRead)); // the watcher asked about creation, not modification
+
+    manager.NotifyWatchedFilesChanged({{.path = "/project/a.php", .type = Manager::FileChangeType::Created}});
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["params"]["changes"].size() == 1);
+}
+
+// did-save follow-up: a server that re-runs analysis on save (which is how
+// most linter integrations behave) never learned a save happened.
+TEST_CASE("SyncBuffer sends didSave after a save when the server declared save support", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+    const auto         path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-didsave-test.txt";
+    Buffer&            buffer = bufferList.OpenOrCreateFile(path);
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetTextDocumentSaveSupportForTesting("test-lang", ned::editor::lsp::TextDocumentSaveSupport{.supported = true});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    // A save with no edit behind it bumps no content generation, so this is
+    // the path SyncBuffer would otherwise treat as a pure no-op.
+    buffer.Save();
+    manager.SyncBuffer(buffer, "test-lang");
+
+    const std::string raw   = ReadRawFrame(server.serverStdinRead);
+    const Json        frame = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(frame["method"] == "textDocument/didSave");
+    CHECK(frame["params"]["textDocument"]["uri"].get<std::string>().ends_with("ned-lsp-manager-didsave-test.txt"));
+    CHECK_FALSE(frame["params"].contains("text")); // includeText wasn't asked for
+
+    // Reported once, not on every subsequent sync.
+    manager.SyncBuffer(buffer, "test-lang");
+    CHECK(NoFrameArrives(server.serverStdinRead));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("didSave carries the document text when the server asked for includeText", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+    const auto         path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-didsave-includetext-test.txt";
+    Buffer&            buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("saved contents");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetTextDocumentSaveSupportForTesting(
+        "test-lang", ned::editor::lsp::TextDocumentSaveSupport{.supported = true, .includeText = true});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    buffer.Save();
+    manager.SyncBuffer(buffer, "test-lang");
+    const std::string raw   = ReadRawFrame(server.serverStdinRead);
+    const Json        frame = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(frame["method"] == "textDocument/didSave");
+    // The document as this client holds it, which is what the spec asks for
+    // -- the save's own ensure-final-newline pass shapes the file on disk,
+    // not the buffer.
+    CHECK(frame["params"]["text"] == "saved contents");
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("No didSave reaches a server that never advertised save support", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+    const auto         path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-didsave-unwanted-test.txt";
+    Buffer&            buffer = bufferList.OpenOrCreateFile(path);
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    buffer.Save();
+    manager.SyncBuffer(buffer, "test-lang");
+    CHECK(NoFrameArrives(server.serverStdinRead));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("A dynamic textDocument/didSave registration is honored like the static capability", "[Lsp]") {
+    // A server declaring capabilities dynamically sends no textDocumentSync
+    // at all, so the registration is the only thing that ever says "tell me
+    // about saves".
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+    const auto         path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-didsave-dynamic-test.txt";
+    Buffer&            buffer = bufferList.OpenOrCreateFile(path);
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", 45},
+                               {"method", "client/registerCapability"},
+                               {"params", {{"registrations", Json::array({{{"id", "save-1"}, {"method", "textDocument/didSave"}}})}}}}
+                              .dump());
+    (void)ReadRawFrame(server.serverStdinRead); // drain the registration's own response
+
+    buffer.Save();
+    manager.SyncBuffer(buffer, "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["method"] == "textDocument/didSave");
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("didSave follows the didChange carrying the content that was saved", "[Lsp]") {
+    // Order is the point: a server told about a save before the content it
+    // saved would re-analyze the previous text.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+    const auto         path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-didsave-order-test.txt";
+    Buffer&            buffer = bufferList.OpenOrCreateFile(path);
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetTextDocumentSaveSupportForTesting("test-lang", ned::editor::lsp::TextDocumentSaveSupport{.supported = true});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    buffer.InsertAtPoint("edited");
+    buffer.Save();
+    manager.SyncBuffer(buffer, "test-lang"); // content changed too, so this one goes through the debounce
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+
+    const std::vector<Json> frames = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 2));
+    REQUIRE(frames.size() == 2);
+    CHECK(frames[0]["method"] == "textDocument/didChange");
+    CHECK(frames[1]["method"] == "textDocument/didSave");
+    std::filesystem::remove(path);
+}
+
+// window-messages follow-up: three server->client surfaces that were dropped
+// outright, so a server reporting a problem through the protocol (rather
+// than through stderr) said nothing to the user at all.
+TEST_CASE("Manager routes window/showMessage to the status handler and the lsp log", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+
+    std::string status;
+    manager.SetStatusMessageHandler([&status](std::string message) { status = std::move(message); });
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"method", "window/showMessage"},
+                               {"params", {{"type", 2}, {"message", "index is out of date"}}}}
+                              .dump());
+
+    CHECK(status == "test-lang: index is out of date");
+    const Buffer* log = bufferList.Find(std::string(ned::editor::lsp::kLspLogBufferName));
+    REQUIRE(log != nullptr);
+    CHECK(log->Text().find("index is out of date") != std::string::npos);
+}
+
+TEST_CASE("Manager answers window/showMessageRequest with null and names the actions offered", "[Lsp]") {
+    // Client::RequestHandler is synchronous, so a modal choice driven from
+    // here isn't possible -- ned shows what was asked and answers "none",
+    // which is exactly what a dismissed message means.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+
+    std::string status;
+    manager.SetStatusMessageHandler([&status](std::string message) { status = std::move(message); });
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", 46},
+                               {"method", "window/showMessageRequest"},
+                               {"params",
+                                {{"type", 3},
+                                 {"message", "Reload the workspace?"},
+                                 {"actions", Json::array({{{"title", "Reload"}}, {{"title", "Later"}}})}}}}
+                              .dump());
+
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["result"].is_null());
+    CHECK(status == "test-lang: Reload the workspace? [Reload | Later]");
+}
+
+TEST_CASE("Manager routes window/showDocument's file uri through the handler", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+
+    std::optional<Manager::ShowDocumentRequest> shown;
+    manager.SetShowDocumentHandler([&shown](const Manager::ShowDocumentRequest& request) {
+        shown = request;
+        return true;
+    });
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", 47},
+                               {"method", "window/showDocument"},
+                               {"params",
+                                {{"uri", "file:///project/src/main.rs"},
+                                 {"takeFocus", false},
+                                 {"selection",
+                                  {{"start", {{"line", 11}, {"character", 4}}}, {"end", {{"line", 11}, {"character", 9}}}}}}}}
+                              .dump());
+
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["result"]["success"] == true);
+    REQUIRE(shown.has_value());
+    CHECK(shown->path == std::filesystem::path("/project/src/main.rs"));
+    CHECK_FALSE(shown->takeFocus);
+    REQUIRE(shown->position.has_value());
+    CHECK(shown->position->line == 11);
+}
+
+TEST_CASE("Manager reports window/showDocument as unsuccessful with no handler wired up", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"id", 48}, {"method", "window/showDocument"}, {"params", {{"uri", "file:///a.c"}}}}.dump());
+
+    const std::string raw      = ReadRawFrame(server.serverStdinRead);
+    const Json        response = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    CHECK(response["result"]["success"] == false); // never an error response, per spec
+    CHECK_FALSE(response.contains("error"));
+}
+
+TEST_CASE("BuildInitializeParams declares didSave and dynamic file-watcher registration", "[Lsp]") {
+    // Both are what make the *server* act: a server sends its own
+    // textDocumentSync.save back only to a client that says it wants
+    // didSave, and registers file watchers only against a client that
+    // accepts dynamic registrations at all.
+    const Json params = ned::editor::lsp::BuildInitializeParams("/tmp/ned-capability-declaration-test");
+    CHECK(params["capabilities"]["textDocument"]["synchronization"]["didSave"] == true);
+    CHECK(params["capabilities"]["workspace"]["didChangeWatchedFiles"]["dynamicRegistration"] == true);
+    // willSaveWaitUntil stays undeclared on purpose -- ned runs its own
+    // format-on-save pipeline rather than the spec's.
+    CHECK_FALSE(params["capabilities"]["textDocument"]["synchronization"].contains("willSaveWaitUntil"));
+}
+
+// file-operation-create-delete follow-up: the create and delete halves of
+// the family whose rename half already shipped.
+TEST_CASE("Manager::RequestWillDeleteFiles sends bare uris and resolves the server's WorkspaceEdit", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+    manager.SetFileOperationFiltersForTesting("test-lang", {.willDeleteGlobs = {"**/*.ts"}});
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    const std::filesystem::path doomed = std::filesystem::temp_directory_path() / "ned-will-delete.ts";
+
+    bool                                   invoked = false;
+    std::optional<Manager::ResolvedRename> got;
+    manager.RequestWillDeleteFiles({doomed}, [&](std::optional<Manager::ResolvedRename> result) {
+        invoked = true;
+        got     = std::move(result);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "workspace/willDeleteFiles");
+    REQUIRE(request["params"]["files"].size() == 1);
+    // A FileDelete carries one uri, where a FileRename carries oldUri/newUri.
+    const std::string uri = request["params"]["files"][0]["uri"].get<std::string>();
+    REQUIRE(uri.ends_with("ned-will-delete.ts"));
+    REQUIRE_FALSE(request["params"]["files"][0].contains("oldUri"));
+
+    const Json response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result",
+         {{"changes",
+           {{"file:///tmp/importer.ts",
+             Json::array({{{"range", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 1}, {"character", 0}}}}},
+                           {"newText", ""}}})}}}}},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.has_value());
+    REQUIRE(got->hasEdit);
+    REQUIRE(got->edits.size() == 1);
+    CHECK(got->edits[0].path == std::filesystem::path("/tmp/importer.ts"));
+}
+
+TEST_CASE("Manager::RequestWillDeleteFiles resolves inline when no server declared a willDelete filter", "[Lsp]") {
+    // The property BufferView::PerformProjectDelete relies on to stay
+    // synchronous in every build with no LSP server in play.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+    manager.SetFileOperationFiltersForTesting("test-lang", {.didRenameGlobs = {"**/*.ts"}}); // rename only
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+
+    bool                                   invoked = false;
+    std::optional<Manager::ResolvedRename> got;
+    manager.RequestWillDeleteFiles({"/tmp/ned-unwatched.ts"}, [&](std::optional<Manager::ResolvedRename> result) {
+        invoked = true;
+        got     = std::move(result);
+    });
+
+    REQUIRE(invoked); // synchronously, before any round trip
+    CHECK_FALSE(got.has_value());
+    CHECK(NoFrameArrives(server.serverStdinRead));
+}
+
+TEST_CASE("Manager::NotifyFilesDeleted and NotifyFilesCreated match their own filters, not each other's", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+    manager.SetFileOperationFiltersForTesting("create-lang", {.didCreateGlobs = {"**/*.ts"}});
+    manager.SetFileOperationFiltersForTesting("delete-lang", {.didDeleteGlobs = {"**/*.ts"}});
+
+    Client*    createClient = nullptr;
+    Client*    deleteClient = nullptr;
+    FakeServer createServer = FakeServer::Create(manager, "create-lang", eventLoop, createClient);
+    FakeServer deleteServer = FakeServer::Create(manager, "delete-lang", eventLoop, deleteClient);
+
+    manager.NotifyFilesCreated({"/tmp/ned-created.ts"});
+    const std::string createdRaw   = ReadRawFrame(createServer.serverStdinRead);
+    const Json        createdFrame = Json::parse(createdRaw.substr(createdRaw.find("\r\n\r\n") + 4));
+    CHECK(createdFrame["method"] == "workspace/didCreateFiles");
+    CHECK(createdFrame["params"]["files"][0]["uri"] == "file:///tmp/ned-created.ts");
+    CHECK_FALSE(createdFrame.contains("id")); // a notification, not a request
+    CHECK(NoFrameArrives(deleteServer.serverStdinRead));
+
+    manager.NotifyFilesDeleted({"/tmp/ned-deleted.ts"});
+    const std::string deletedRaw   = ReadRawFrame(deleteServer.serverStdinRead);
+    const Json        deletedFrame = Json::parse(deletedRaw.substr(deletedRaw.find("\r\n\r\n") + 4));
+    CHECK(deletedFrame["method"] == "workspace/didDeleteFiles");
+    CHECK(deletedFrame["params"]["files"][0]["uri"] == "file:///tmp/ned-deleted.ts");
+    CHECK(NoFrameArrives(createServer.serverStdinRead));
+}
+
+TEST_CASE("SyncBuffer reports a file the first save brought into existence", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+    manager.SetFileOperationFiltersForTesting("test-lang", {.didCreateGlobs = {"**/*.txt"}});
+
+    const auto path = std::filesystem::temp_directory_path() / "ned-lsp-manager-didcreate-test.txt";
+    std::filesystem::remove(path);
+    Buffer& buffer = bufferList.OpenOrCreateFile(path); // no file on disk yet -- C-x C-f on a new name
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);      // drain didOpen
+    REQUIRE(NoFrameArrives(server.serverStdinRead)); // nothing created yet -- the buffer is all there is
+
+    buffer.InsertAtPoint("first contents");
+    buffer.Save();
+    manager.SyncBuffer(buffer, "test-lang");
+
+    const std::vector<Json> frames = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 1));
+    REQUIRE_FALSE(frames.empty());
+    CHECK(frames[0]["method"] == "workspace/didCreateFiles");
+    CHECK(frames[0]["params"]["files"][0]["uri"].get<std::string>().ends_with("ned-lsp-manager-didcreate-test.txt"));
+
+    // Reported once: a second save of a file that now exists is not a creation.
+    buffer.InsertAtPoint("more");
+    buffer.Save();
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    for (const Json& frame : ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 1))) {
+        CHECK(frame["method"] != "workspace/didCreateFiles");
+    }
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("SyncBuffer reports no creation for a file that was already on disk", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+    manager.SetFileOperationFiltersForTesting("test-lang", {.didCreateGlobs = {"**/*.txt"}});
+
+    const auto path = std::filesystem::temp_directory_path() / "ned-lsp-manager-didcreate-existing-test.txt";
+    std::ofstream(path) << "already here\n";
+    Buffer& buffer = bufferList.OpenOrCreateFile(path);
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    buffer.Save();
+    manager.SyncBuffer(buffer, "test-lang");
+    CHECK(NoFrameArrives(server.serverStdinRead));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("BuildInitializeParams advertises the create/delete file operations but not willCreate", "[Lsp]") {
+    const Json  params  = ned::editor::lsp::BuildInitializeParams("/tmp/ned-file-operations-test");
+    const Json& fileOps = params["capabilities"]["workspace"]["fileOperations"];
+    CHECK(fileOps["didCreate"] == true);
+    CHECK(fileOps["willDelete"] == true);
+    CHECK(fileOps["didDelete"] == true);
+    // ned has no create-a-file action to request edits before, so claiming
+    // willCreate would invite a request it can never send.
+    CHECK_FALSE(fileOps.contains("willCreate"));
+}

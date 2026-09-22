@@ -1676,6 +1676,16 @@ class BufferView : public Widget {
     // it did before this follow-up existed.
     void PerformProjectRename(const std::filesystem::path& source, const std::filesystem::path& destination);
 
+    // file-operation-create-delete follow-up: delete-file's own half of the
+    // same shape -- ask every server that registered a willDelete filter
+    // for the edits that keep the rest of the project compiling once this
+    // file is gone (the import/include of what is about to disappear),
+    // apply them, delete, then notify. Same "callback fires synchronously
+    // with nullopt when no server has anything to say" property as
+    // PerformProjectRename above, so a build with no LSP manager deletes
+    // inline exactly as it did before.
+    void PerformProjectDelete(const std::filesystem::path& target);
+
     // property-drawers follow-up: org-set-property's own two-stage session,
     // RenameFileStage/HandleRenameFileKey's exact shape -- propertyStage_ ==
     // EnteringName collects the property's name into pendingPropertyName_,

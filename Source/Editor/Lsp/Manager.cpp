@@ -11,15 +11,17 @@
 #include <fnmatch.h>
 #include <unistd.h>
 
+#include "BrokerConnect.h"
 #include "Editor/BackgroundActivity.h"
+#include "Editor/DiagnosticsLog.h"
+#include "Editor/Link.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Settings.h"
 #include "Editor/TabWidth.h"
-#include "BrokerConnect.h"
 #include "Position.h"
+#include "ProseChecker.h"
 #include "RootResolver.h"
 #include "ServerConfig.h"
-#include "ProseChecker.h"
 #include "Text/BinaryDetect.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -327,6 +329,73 @@ namespace {
                            [&pathStr](const std::string& glob) { return ::fnmatch(glob.c_str(), pathStr.c_str(), 0) == 0; });
     }
 
+    // dynamic-registration follow-up. Watcher globs reach for one part of
+    // the glob grammar rename filters in practice never do -- alternation,
+    // as in "**/*.{ts,tsx}" (typescript-language-server) or
+    // "**/{composer.json,composer.lock}" (phpantom_lsp) -- and fnmatch has
+    // no brace expansion at all, so such a pattern matches nothing without
+    // this. Expands one brace group per recursion, outermost first,
+    // leaving every other construct to fnmatch exactly as
+    // MatchesFileOperationGlob does. A malformed pattern (an unclosed
+    // brace) is passed through untouched rather than guessed at.
+    bool MatchesWatcherGlob(const std::string& pathStr, const std::string& glob) {
+        const std::size_t open = glob.find('{');
+        if (open == std::string::npos) {
+            return ::fnmatch(glob.c_str(), pathStr.c_str(), 0) == 0;
+        }
+        std::size_t depth = 0;
+        std::size_t close = std::string::npos;
+        for (std::size_t i = open; i < glob.size(); ++i) {
+            if (glob[i] == '{') {
+                ++depth;
+            }
+            else if (glob[i] == '}' && --depth == 0) {
+                close = i;
+                break;
+            }
+        }
+        if (close == std::string::npos) {
+            return ::fnmatch(glob.c_str(), pathStr.c_str(), 0) == 0;
+        }
+        const std::string prefix = glob.substr(0, open);
+        const std::string suffix = glob.substr(close + 1);
+        std::size_t       start  = open + 1;
+        depth                    = 0;
+        for (std::size_t i = start; i <= close; ++i) {
+            if (glob[i] == '{') {
+                ++depth;
+            }
+            else if (glob[i] == '}' && depth > 0) {
+                --depth;
+            }
+            // Only a comma at this group's own nesting level separates its
+            // alternatives; one inside a nested group belongs to that group.
+            if ((i == close || (glob[i] == ',' && depth == 0)) && MatchesWatcherGlob(pathStr, prefix + glob.substr(start, i - start) + suffix)) {
+                return true;
+            }
+            if (glob[i] == ',' && depth == 0) {
+                start = i + 1;
+            }
+        }
+        return false;
+    }
+
+    // window-messages follow-up. LSP MessageType: 1 Error, 2 Warning,
+    // 3 Info, 4 Log, 5 Debug (3.18). Anything else is treated as Info --
+    // a message worth showing is never dropped over an unknown type.
+    LogSeverity SeverityForMessageType(const Json& params) {
+        const auto typeIt = params.find("type");
+        const int  type   = typeIt != params.end() && typeIt->is_number_integer() ? typeIt->get<int>() : 3;
+        switch (type) {
+            case 1:
+                return LogSeverity::Error;
+            case 2:
+                return LogSeverity::Warning;
+            default:
+                return LogSeverity::Info;
+        }
+    }
+
     // background-activity-spinner follow-up: same std::string materialization
     // of the shared constant Client.cpp's own copy makes.
     const std::string kLspActivity{kLspActivityName};
@@ -466,7 +535,17 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
            // "this client actually reads that field" declarations for the
            // other two the parser now keeps -- a server is entitled to omit
            // both from a client that never claims them.
-           {{"completion",
+           {// did-save follow-up: "didSave" is what makes a server send its
+            // own textDocumentSync.save back (and, for a server that
+            // declares capabilities dynamically instead, register
+            // textDocument/didSave) -- a linter-style server re-runs its
+            // analysis on save and hears about one only if this is here.
+            // willSave/willSaveWaitUntil stay undeclared deliberately: ned
+            // runs its own format-on-save pipeline (format-buffer-lsp-tier)
+            // rather than the spec's, so a server offering edits there would
+            // be competing with it.
+            {"synchronization", {{"didSave", true}, {"dynamicRegistration", true}}},
+            {"completion",
              {{"completionItem",
                {{"snippetSupport", true},
                 {"preselectSupport", true},
@@ -560,6 +639,14 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
             // workspaceFolders support back, so Manager would never find a
             // connection worth joining.
             {"workspaceFolders", true},
+            // dynamic-registration follow-up: didChangeWatchedFiles has no
+            // static server-side capability at all -- a server can only ask
+            // for file events by registering for them, and only registers
+            // if this says the client both accepts registrations and sends
+            // the notification. relativePatternSupport stays undeclared, so
+            // every watcher arrives as a plain glob string (see
+            // FileSystemWatcher::glob).
+            {"didChangeWatchedFiles", {{"dynamicRegistration", true}}},
             // server-refresh follow-up: each of these is the spec's own
             // *WorkspaceClientCapabilities object for one result kind, whose
             // only field ned has an answer for is refreshSupport. Without it
@@ -575,7 +662,12 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
             {"codeLens", {{"refreshSupport", true}}},
             {"inlayHint", {{"refreshSupport", true}}},
             {"diagnostics", {{"refreshSupport", true}}},
-            {"fileOperations", {{"willRename", true}, {"didRename", true}}}}},
+            // file-operation-create-delete follow-up: willCreate stays
+            // undeclared on purpose (ned has no create-a-file action to
+            // request edits before -- see NotifyFilesCreated's own doc
+            // comment); the other four are all sent.
+            {"fileOperations",
+             {{"willRename", true}, {"didRename", true}, {"didCreate", true}, {"willDelete", true}, {"didDelete", true}}}}},
           {"window", {{"workDoneProgress", true}}}}},
     };
     if (!initializationOptions.empty()) {
@@ -696,6 +788,45 @@ void Manager::WireNotificationHandlers(Client& client, const std::string& server
         RefreshServerResults(connectionKey, RefreshKind::Diagnostics);
         return Json(nullptr);
     });
+    // dynamic-registration follow-up: a server is entitled to declare a
+    // capability after the handshake instead of in its InitializeResult,
+    // and several do -- unhandled, every one of those registrations got
+    // DispatchFrame's generic MethodNotFound and the capability was lost
+    // with nothing user-visible to explain it. The result is null by spec;
+    // what matters is that the registration is recorded (and, for the two
+    // methods ned acts on, actually honored).
+    client.SetRequestHandler("client/registerCapability", [this, serverKey, connectionKey](const Json& params) {
+        HandleRegisterCapability(serverKey, connectionKey, params);
+        return Json(nullptr);
+    });
+    client.SetRequestHandler("client/unregisterCapability", [this, connectionKey](const Json& params) {
+        std::vector<DynamicRegistration>& registrations = dynamicRegistrations_[connectionKey];
+        for (const std::string& id : ExtractUnregistrationIds(params)) {
+            std::erase_if(registrations, [&id](const DynamicRegistration& registration) { return registration.id == id; });
+        }
+        return Json(nullptr);
+    });
+    // window-messages follow-up: three ways a server reports something to
+    // the user through the protocol rather than through stderr, all of
+    // which used to be dropped -- see HandleWindowLogMessage/
+    // HandleWindowShowMessage for which surface each lands on.
+    client.SetNotificationHandler("window/logMessage",
+                                  [this, serverKey](const Json& params) { HandleWindowLogMessage(serverKey, params); });
+    client.SetNotificationHandler("window/showMessage",
+                                  [this, serverKey](const Json& params) { HandleWindowShowMessage(serverKey, params); });
+    // The request form of the same thing, except the server offers actions
+    // and waits for the one the user picked. ned shows the message and the
+    // actions it offered, then answers null -- "the user chose none of
+    // them", which the spec allows and every server must already handle
+    // (it is what a dismissed message means). Answering anything else would
+    // mean a modal choice prompt driven from a *synchronous* request
+    // handler (Client::RequestHandler returns its result inline), which is
+    // the same constraint that keeps applyEditHandler synchronous.
+    client.SetRequestHandler("window/showMessageRequest", [this, serverKey](const Json& params) {
+        HandleWindowShowMessage(serverKey, params);
+        return Json(nullptr);
+    });
+    client.SetRequestHandler("window/showDocument", [this](const Json& params) { return HandleShowDocument(params); });
     client.SetNotificationHandler("$/progress",
                                   [this, connectionKey](const Json& params) { HandleProgress(connectionKey, params); });
     client.SetOnDisconnected([this, serverKey, connectionKey](std::string reason) {
@@ -945,6 +1076,9 @@ Client* Manager::ClientForLanguage(const std::string& serverKey, const std::file
                 if (const auto fileOpFilters = ExtractFileOperationFilters(*result)) {
                     fileOperationFilters_[connectionKey] = *fileOpFilters;
                 }
+                if (const auto saveSupport = ExtractTextDocumentSaveSupport(*result)) {
+                    textDocumentSaveSupport_[connectionKey] = *saveSupport;
+                }
                 // lsp-workspace-folders follow-up: what decides whether a
                 // later buffer under a different root joins this process or
                 // gets its own -- see TryJoinWorkspaceFolder.
@@ -1004,6 +1138,11 @@ void Manager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
     // too -- see this method's own doc comment.
     const std::filesystem::path root = ResolveCachedRoot(*buffer.Path(), language);
     bufferResolvedRoot_[&buffer]     = root;
+
+    // file-operation-create-delete follow-up: per buffer, not per
+    // connection -- didCreateFiles goes to every server whose filter
+    // matches, whether or not this buffer is open on it.
+    ReportFileCreation(buffer);
 
     SyncToServer(buffer, language, language, root);                       // primary language server
     SyncToServer(buffer, std::string(kProseLanguageKey), language, root); // prose checker, independent of the above
@@ -1152,6 +1291,10 @@ void Manager::SyncToServer(text::Buffer& buffer, const std::string& serverKey, c
         if (const auto stateIt = bufferIt->second.find(serverKey); stateIt != bufferIt->second.end()) {
             existingState = &stateIt->second;
             if (existingState->opened && existingState->lastSyncedGeneration == buffer.ContentGeneration()) {
+                // did-save follow-up: a save bumps no content generation, so
+                // this otherwise-no-op path is the only one a save that
+                // followed an already-synced buffer ever reaches.
+                MaybeSendDidSave(buffer, *existingState, nullptr);
                 return; // nothing changed since the last sync (not traced: the common per-frame no-op)
             }
         }
@@ -1240,6 +1383,10 @@ void Manager::SyncTextToServer(text::Buffer& buffer, const std::string& serverKe
                                                          });
         state.opened               = true;
         state.lastSyncedGeneration = buffer.ContentGeneration();
+        // did-save follow-up: seeded, not reported -- didOpen already
+        // carries the saved content, so a save that happened before this
+        // server ever saw the document is not news.
+        state.lastSyncedSaveGeneration = buffer.SaveGeneration();
         state.lastSyncedText       = documentText; // incremental-sync follow-up: baseline for the first didChange's diff
         // pull-diagnostics follow-up: same cadence as didOpen/didChange
         // itself, no separate debounce timer -- see RequestPullDiagnostics'
@@ -1254,6 +1401,7 @@ void Manager::SyncTextToServer(text::Buffer& buffer, const std::string& serverKe
     }
 
     if (buffer.ContentGeneration() == state.lastSyncedGeneration) {
+        MaybeSendDidSave(buffer, state, &documentText); // see SyncToServer's own call -- a save owes a notification with no edit behind it
         return; // nothing changed since the last sync
     }
 
@@ -1352,6 +1500,9 @@ void Manager::SyncTextToServer(text::Buffer& buffer, const std::string& serverKe
     }
     state.lastSyncedGeneration = buffer.ContentGeneration();
     state.lastSyncedText       = documentText;
+    // Deliberately after the didChange above: a server told about a save
+    // before the content it saved would re-analyze the previous text.
+    MaybeSendDidSave(buffer, state, &documentText);
     if (PullDiagnosticsEnabled()) {
         RequestPullDiagnostics(buffer, serverKey);
     }
@@ -1434,6 +1585,8 @@ void Manager::ClientDisconnected(const std::string& serverKey, const std::string
     executeCommandProvider_.erase(connectionKeyCopy);             // ditto -- a respawn may advertise a different command set
     textDocumentSyncKind_.erase(connectionKeyCopy);               // ditto -- a respawned server may advertise a different sync kind
     fileOperationFilters_.erase(connectionKeyCopy);               // ditto -- a respawned server may advertise different willRename/didRename filters
+    textDocumentSaveSupport_.erase(connectionKeyCopy);            // ditto -- did-save follow-up
+    dynamicRegistrations_.erase(connectionKeyCopy);               // ditto -- a respawned server re-registers as part of its own new handshake
     pullDiagnosticsUnsupported_.erase(connectionKeyCopy);         // a respawned server gets one fresh attempt
     inlayHintsUnsupported_.erase(connectionKeyCopy);              // ditto
     codeLensUnsupported_.erase(connectionKeyCopy);                // ditto
@@ -1639,6 +1792,7 @@ void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     embeddedServerKeys_.erase(&buffer);
     embeddedOwnedRanges_.erase(&buffer);
     hugeSyncSkipNotified_.erase(&buffer);
+    fileExistence_.erase(&buffer); // file-operation-create-delete follow-up -- a reopened buffer re-stats
     semanticTokensRequestedGeneration_.erase(&buffer);
     semanticTokensRequestCounter_.erase(&buffer);
     semanticTokenSpans_.erase(&buffer);
@@ -3878,15 +4032,25 @@ void Manager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, const 
                         });
 }
 
-void Manager::RequestWillRenameFiles(const std::vector<FileRenameEntry>& files, RenameCallback callback) {
+// file-operation-create-delete follow-up: the fan-out/merge body every
+// workspace/will*Files request shares. `globs` names which of the
+// connection's advertised filter lists gates this operation, `matchPaths`
+// is what those globs are matched against (a rename matches its *old*
+// path, a delete the path going away), and `fileList` is the operation's
+// own already-shaped "files" array -- the one genuinely per-operation
+// piece, since a rename entry carries oldUri/newUri where create and
+// delete carry a bare uri.
+void Manager::SendWillFileOperation(const std::string& method, FileOperationGlobList globs,
+                                    const std::vector<std::filesystem::path>& matchPaths, Json fileList,
+                                    RenameCallback callback) {
     std::vector<std::pair<std::string, Client*>> targets;
     for (const auto& [serverKey, client] : clients_) {
         const auto capsIt = fileOperationFilters_.find(serverKey);
-        if (capsIt == fileOperationFilters_.end() || capsIt->second.willRenameGlobs.empty()) {
+        if (capsIt == fileOperationFilters_.end() || (capsIt->second.*globs).empty()) {
             continue;
         }
-        const bool matchesAny = std::any_of(files.begin(), files.end(), [&](const FileRenameEntry& entry) {
-            return MatchesFileOperationGlob(entry.oldPath, capsIt->second.willRenameGlobs);
+        const bool matchesAny = std::any_of(matchPaths.begin(), matchPaths.end(), [&](const std::filesystem::path& path) {
+            return MatchesFileOperationGlob(path, capsIt->second.*globs);
         });
         if (matchesAny) {
             targets.emplace_back(serverKey, client.get());
@@ -3897,11 +4061,7 @@ void Manager::RequestWillRenameFiles(const std::vector<FileRenameEntry>& files, 
         return;
     }
 
-    Json fileList = Json::array();
-    for (const FileRenameEntry& entry : files) {
-        fileList.push_back({{"oldUri", PathToUri(entry.oldPath)}, {"newUri", PathToUri(entry.newPath)}});
-    }
-    const Json params = {{"files", fileList}};
+    const Json params = {{"files", std::move(fileList)}};
 
     // Every matching server's response is resolved/merged into one shared
     // ResolvedRename as it arrives; callback fires only once the last one
@@ -3912,83 +4072,328 @@ void Manager::RequestWillRenameFiles(const std::vector<FileRenameEntry>& files, 
     // RequestRename's single-server refuse-wholesale contract, this is
     // fundamentally a fan-out across independent servers, so one server's
     // bad answer shouldn't cost every other server's good one.
-    struct PendingWillRename {
+    struct PendingWillOperation {
         int            outstanding = 0;
         ResolvedRename merged;
         bool           anyEdit = false;
     };
-    auto pending         = std::make_shared<PendingWillRename>();
+    auto pending         = std::make_shared<PendingWillOperation>();
     pending->outstanding = static_cast<int>(targets.size());
     for (auto& [serverKey, client] : targets) {
-        client->SendRequest(
-            "workspace/willRenameFiles", params,
-            [this, serverKey, pending, callback](std::optional<Json> result, std::optional<Json> error) {
-                if (error) {
-                    LogError(serverKey, ExtractErrorMessage(*error));
-                }
-                else if (result && !result->is_null()) {
-                    const RenameResult parsed = ExtractRenameEdits(*result);
-                    if (!parsed.touchesUnsupportedForm) {
-                        std::vector<ResolvedRenameEdit> edits;
-                        bool                            ok = true;
-                        for (const RenameEdit& edit : parsed.edits) {
-                            const std::optional<std::filesystem::path> path = UriToPath(edit.uri);
-                            if (!path) {
-                                ok = false;
-                                break;
-                            }
-                            edits.push_back(ResolvedRenameEdit{.path = *path, .edits = edit.edits});
+        client->SendRequest(method, params, [this, serverKey, pending, callback](std::optional<Json> result, std::optional<Json> error) {
+            if (error) {
+                LogError(serverKey, ExtractErrorMessage(*error));
+            }
+            else if (result && !result->is_null()) {
+                const RenameResult parsed = ExtractRenameEdits(*result);
+                if (!parsed.touchesUnsupportedForm) {
+                    std::vector<ResolvedRenameEdit> edits;
+                    bool                            ok = true;
+                    for (const RenameEdit& edit : parsed.edits) {
+                        const std::optional<std::filesystem::path> path = UriToPath(edit.uri);
+                        if (!path) {
+                            ok = false;
+                            break;
                         }
-                        std::vector<ResolvedDocumentChangeOp> ops;
-                        if (ok && !parsed.documentChangeOps.empty()) {
-                            const std::optional<std::vector<ResolvedDocumentChangeOp>> resolvedOps =
-                                ResolveDocumentChangeOps(parsed.documentChangeOps);
-                            if (!resolvedOps) {
-                                ok = false;
-                            }
-                            else {
-                                ops = std::move(*resolvedOps);
-                            }
+                        edits.push_back(ResolvedRenameEdit{.path = *path, .edits = edit.edits});
+                    }
+                    std::vector<ResolvedDocumentChangeOp> ops;
+                    if (ok && !parsed.documentChangeOps.empty()) {
+                        const std::optional<std::vector<ResolvedDocumentChangeOp>> resolvedOps =
+                            ResolveDocumentChangeOps(parsed.documentChangeOps);
+                        if (!resolvedOps) {
+                            ok = false;
                         }
-                        if (ok && (!edits.empty() || !ops.empty())) {
-                            pending->merged.edits.insert(pending->merged.edits.end(), std::make_move_iterator(edits.begin()),
-                                                         std::make_move_iterator(edits.end()));
-                            pending->merged.documentChangeOps.insert(pending->merged.documentChangeOps.end(),
-                                                                     std::make_move_iterator(ops.begin()), std::make_move_iterator(ops.end()));
-                            pending->anyEdit = true;
+                        else {
+                            ops = std::move(*resolvedOps);
                         }
                     }
-                }
-                if (--pending->outstanding == 0) {
-                    if (!pending->anyEdit) {
-                        callback(std::nullopt);
-                        return;
+                    if (ok && (!edits.empty() || !ops.empty())) {
+                        pending->merged.edits.insert(pending->merged.edits.end(), std::make_move_iterator(edits.begin()),
+                                                     std::make_move_iterator(edits.end()));
+                        pending->merged.documentChangeOps.insert(pending->merged.documentChangeOps.end(),
+                                                                 std::make_move_iterator(ops.begin()),
+                                                                 std::make_move_iterator(ops.end()));
+                        pending->anyEdit = true;
                     }
-                    pending->merged.hasEdit = true;
-                    callback(std::move(pending->merged));
                 }
-            });
+            }
+            if (--pending->outstanding == 0) {
+                if (!pending->anyEdit) {
+                    callback(std::nullopt);
+                    return;
+                }
+                pending->merged.hasEdit = true;
+                callback(std::move(pending->merged));
+            }
+        });
     }
 }
 
-void Manager::NotifyFilesRenamed(const std::vector<FileRenameEntry>& files) {
-    Json fileList = Json::array();
-    for (const FileRenameEntry& entry : files) {
-        fileList.push_back({{"oldUri", PathToUri(entry.oldPath)}, {"newUri", PathToUri(entry.newPath)}});
-    }
-    const Json params = {{"files", fileList}};
+// The notification half of the same shape -- no response to merge, so the
+// whole body is "who advertised a matching filter, and send it to them".
+void Manager::SendDidFileOperation(const std::string& method, FileOperationGlobList globs,
+                                   const std::vector<std::filesystem::path>& matchPaths, Json fileList) {
+    const Json params = {{"files", std::move(fileList)}};
     for (const auto& [serverKey, client] : clients_) {
         const auto capsIt = fileOperationFilters_.find(serverKey);
-        if (capsIt == fileOperationFilters_.end() || capsIt->second.didRenameGlobs.empty()) {
+        if (capsIt == fileOperationFilters_.end() || (capsIt->second.*globs).empty()) {
             continue;
         }
-        const bool matchesAny = std::any_of(files.begin(), files.end(), [&](const FileRenameEntry& entry) {
-            return MatchesFileOperationGlob(entry.newPath, capsIt->second.didRenameGlobs);
+        const bool matchesAny = std::any_of(matchPaths.begin(), matchPaths.end(), [&](const std::filesystem::path& path) {
+            return MatchesFileOperationGlob(path, capsIt->second.*globs);
         });
         if (matchesAny) {
-            client->SendNotification("workspace/didRenameFiles", params);
+            client->SendNotification(method, params);
         }
     }
+}
+
+namespace {
+
+    // The "files" array shape create and delete share: a bare uri each,
+    // where a rename entry carries oldUri/newUri.
+    [[nodiscard]] Json UriFileList(const std::vector<std::filesystem::path>&                       paths,
+                                   const std::function<std::string(const std::filesystem::path&)>& toUri) {
+        Json files = Json::array();
+        for (const std::filesystem::path& path : paths) {
+            files.push_back({{"uri", toUri(path)}});
+        }
+        return files;
+    }
+
+} // namespace
+
+void Manager::RequestWillRenameFiles(const std::vector<FileRenameEntry>& files, RenameCallback callback) {
+    std::vector<std::filesystem::path> oldPaths;
+    Json                               fileList = Json::array();
+    for (const FileRenameEntry& entry : files) {
+        oldPaths.push_back(entry.oldPath);
+        fileList.push_back({{"oldUri", PathToUri(entry.oldPath)}, {"newUri", PathToUri(entry.newPath)}});
+    }
+    SendWillFileOperation("workspace/willRenameFiles", &FileOperationFilters::willRenameGlobs, oldPaths, std::move(fileList),
+                          std::move(callback));
+}
+
+void Manager::NotifyFilesRenamed(const std::vector<FileRenameEntry>& files) {
+    std::vector<std::filesystem::path> newPaths;
+    Json                               fileList = Json::array();
+    for (const FileRenameEntry& entry : files) {
+        newPaths.push_back(entry.newPath);
+        fileList.push_back({{"oldUri", PathToUri(entry.oldPath)}, {"newUri", PathToUri(entry.newPath)}});
+    }
+    SendDidFileOperation("workspace/didRenameFiles", &FileOperationFilters::didRenameGlobs, newPaths, std::move(fileList));
+}
+
+void Manager::ReportFileCreation(text::Buffer& buffer) {
+    if (!buffer.Path()) {
+        return;
+    }
+    const std::size_t saveGeneration = buffer.SaveGeneration();
+    const auto [it, inserted]        = fileExistence_.try_emplace(
+        &buffer, FileExistence{.lastSaveGeneration = saveGeneration, .existedOnDisk = std::filesystem::exists(*buffer.Path())});
+    if (inserted || it->second.lastSaveGeneration == saveGeneration) {
+        return; // first look (nothing was created by ned), or no save since the last one
+    }
+    it->second.lastSaveGeneration = saveGeneration;
+    if (it->second.existedOnDisk) {
+        return;
+    }
+    if (!std::filesystem::exists(*buffer.Path())) {
+        return; // the save failed, or wrote somewhere else entirely
+    }
+    it->second.existedOnDisk = true;
+    NotifyFilesCreated({*buffer.Path()});
+}
+
+void Manager::NotifyFilesCreated(const std::vector<std::filesystem::path>& paths) {
+    SendDidFileOperation("workspace/didCreateFiles", &FileOperationFilters::didCreateGlobs, paths,
+                         UriFileList(paths, PathToUri));
+}
+
+void Manager::RequestWillDeleteFiles(const std::vector<std::filesystem::path>& paths, RenameCallback callback) {
+    SendWillFileOperation("workspace/willDeleteFiles", &FileOperationFilters::willDeleteGlobs, paths,
+                          UriFileList(paths, PathToUri), std::move(callback));
+}
+
+void Manager::NotifyFilesDeleted(const std::vector<std::filesystem::path>& paths) {
+    SendDidFileOperation("workspace/didDeleteFiles", &FileOperationFilters::didDeleteGlobs, paths, UriFileList(paths, PathToUri));
+}
+
+const std::vector<DynamicRegistration>& Manager::DynamicRegistrationsFor(const std::string& connectionKey) const {
+    static const std::vector<DynamicRegistration> kNone;
+    const auto                                    it = dynamicRegistrations_.find(connectionKey);
+    return it != dynamicRegistrations_.end() ? it->second : kNone;
+}
+
+bool Manager::HasWatchedFileRegistrations() const {
+    return std::any_of(dynamicRegistrations_.begin(), dynamicRegistrations_.end(), [](const auto& entry) {
+        return std::any_of(entry.second.begin(), entry.second.end(), [](const DynamicRegistration& registration) {
+            return registration.method == "workspace/didChangeWatchedFiles" && !registration.watchers.empty();
+        });
+    });
+}
+
+void Manager::HandleRegisterCapability(const std::string& serverKey, const std::string& connectionKey, const Json& params) {
+    std::vector<DynamicRegistration>& registrations = dynamicRegistrations_[connectionKey];
+    for (DynamicRegistration& registration : ExtractRegistrations(params)) {
+        // Re-registering an id replaces it rather than accumulating: per
+        // spec an id is unique, and a server that re-registers one is
+        // restating its options, not adding a second watcher set.
+        std::erase_if(registrations,
+                      [&registration](const DynamicRegistration& existing) { return existing.id == registration.id; });
+        LogMessage(LogCategory::Lsp, LogSeverity::Info, serverKey + ": registered " + registration.method);
+        registrations.push_back(std::move(registration));
+    }
+}
+
+void Manager::HandleWindowLogMessage(const std::string& serverKey, const Json& params) {
+    const auto messageIt = params.find("message");
+    if (messageIt == params.end() || !messageIt->is_string()) {
+        return;
+    }
+    const std::string message  = messageIt->get<std::string>();
+    const LogSeverity severity = SeverityForMessageType(params);
+    LogMessage(LogCategory::Lsp, severity, serverKey + ": " + message);
+    // A server that reports an actual error through the protocol gets the
+    // same *lsp log* visibility as one whose error ned noticed itself;
+    // anything below that stays in the diagnostics log, which is where a
+    // server's running commentary belongs.
+    if (severity == LogSeverity::Error) {
+        LogError(serverKey, message);
+    }
+}
+
+void Manager::HandleWindowShowMessage(const std::string& serverKey, const Json& params) {
+    const auto messageIt = params.find("message");
+    if (messageIt == params.end() || !messageIt->is_string()) {
+        return;
+    }
+    std::string message = messageIt->get<std::string>();
+    // window/showMessageRequest shares this body: the actions it offered are
+    // named in the text, since the answer this client sends back is always
+    // "none of them" (see its own handler for why).
+    if (const auto actionsIt = params.find("actions"); actionsIt != params.end() && actionsIt->is_array()) {
+        std::string titles;
+        for (const Json& action : *actionsIt) {
+            if (!action.is_object()) {
+                continue;
+            }
+            const auto titleIt = action.find("title");
+            if (titleIt == action.end() || !titleIt->is_string()) {
+                continue;
+            }
+            if (!titles.empty()) {
+                titles += " | ";
+            }
+            titles += titleIt->get<std::string>();
+        }
+        if (!titles.empty()) {
+            message += " [" + titles + "]";
+        }
+    }
+    LogMessage(LogCategory::Lsp, SeverityForMessageType(params), serverKey + ": " + message);
+    LogError(serverKey, message); // *lsp log*: a showMessage is by definition meant to be seen
+    if (statusMessageHandler_) {
+        statusMessageHandler_(serverKey + ": " + message);
+    }
+}
+
+Json Manager::HandleShowDocument(const Json& params) {
+    const auto uriIt = params.find("uri");
+    if (uriIt == params.end() || !uriIt->is_string()) {
+        return Json{{"success", false}};
+    }
+    const std::string                          uri  = uriIt->get<std::string>();
+    const std::optional<std::filesystem::path> path = UriToPath(uri);
+    // "external" is the server asking for the platform's own handler, and a
+    // non-file URI has nothing else it could mean -- the same split
+    // documentLink already makes between a path it opens and a url it hands
+    // to Editor/Link.h.
+    if (params.value("external", false) || !path) {
+        return Json{{"success", editor::link::OpenUrl(uri)}};
+    }
+    if (!showDocumentHandler_) {
+        return Json{{"success", false}};
+    }
+    ShowDocumentRequest request{.path = *path, .takeFocus = params.value("takeFocus", true)};
+    if (const auto selectionIt = params.find("selection"); selectionIt != params.end() && selectionIt->is_object()) {
+        const auto startIt = selectionIt->find("start");
+        if (startIt != selectionIt->end() && startIt->is_object()) {
+            request.position = Position{.line      = startIt->value("line", static_cast<std::size_t>(0)),
+                                        .character = startIt->value("character", static_cast<std::size_t>(0))};
+        }
+    }
+    return Json{{"success", showDocumentHandler_(request)}};
+}
+
+void Manager::NotifyWatchedFilesChanged(const std::vector<WatchedFileChange>& changes) {
+    if (changes.empty()) {
+        return;
+    }
+    for (const auto& [connectionKey, client] : clients_) {
+        const auto registrationsIt = dynamicRegistrations_.find(connectionKey);
+        if (registrationsIt == dynamicRegistrations_.end()) {
+            continue;
+        }
+        Json events = Json::array();
+        for (const WatchedFileChange& change : changes) {
+            const unsigned    wantedBit = 1u << (static_cast<unsigned>(change.type) - 1); // Created(1)/Changed(2)/Deleted(3) -> 1/2/4
+            const std::string pathStr   = change.path.string();
+            const bool        watched   = std::any_of(
+                registrationsIt->second.begin(), registrationsIt->second.end(), [&](const DynamicRegistration& registration) {
+                    if (registration.method != "workspace/didChangeWatchedFiles") {
+                        return false;
+                    }
+                    return std::any_of(registration.watchers.begin(), registration.watchers.end(),
+                                       [&](const FileSystemWatcher& watcher) {
+                                           return (watcher.kind & wantedBit) != 0 && MatchesWatcherGlob(pathStr, watcher.glob);
+                                       });
+                });
+            if (watched) {
+                events.push_back(Json{{"uri", PathToUri(change.path)}, {"type", static_cast<int>(change.type)}});
+            }
+        }
+        if (!events.empty()) {
+            client->SendNotification("workspace/didChangeWatchedFiles", Json{{"changes", std::move(events)}});
+        }
+    }
+}
+
+void Manager::MaybeSendDidSave(text::Buffer& buffer, BufferSyncState& state, const std::string* documentText) {
+    if (!state.opened || state.lastSyncedSaveGeneration == buffer.SaveGeneration()) {
+        return;
+    }
+    state.lastSyncedSaveGeneration = buffer.SaveGeneration();
+
+    bool       wanted      = false;
+    bool       includeText = false;
+    const auto supportIt   = textDocumentSaveSupport_.find(state.connectionKey);
+    if (supportIt != textDocumentSaveSupport_.end() && supportIt->second.supported) {
+        wanted      = true;
+        includeText = supportIt->second.includeText;
+    }
+    // A dynamic registration says the same thing the static capability
+    // does, and either alone is enough -- a server declaring capabilities
+    // dynamically sends no textDocumentSync at all.
+    for (const DynamicRegistration& registration : DynamicRegistrationsFor(state.connectionKey)) {
+        if (registration.method == "textDocument/didSave") {
+            wanted      = true;
+            includeText = includeText || registration.includeText;
+        }
+    }
+    if (!wanted) {
+        return;
+    }
+    Client* client = ExistingClientForLanguage(state.connectionKey);
+    if (!client) {
+        return;
+    }
+    Json params = {{"textDocument", {{"uri", state.uri}}}};
+    if (includeText) {
+        params["text"] = documentText != nullptr ? *documentText : buffer.Text();
+    }
+    client->SendNotification("textDocument/didSave", std::move(params));
 }
 
 std::optional<std::vector<Manager::ResolvedRenameEdit>> Manager::ResolveCodeActionEdits(const CodeAction& action) {

@@ -1682,3 +1682,122 @@ TEST_CASE("ExtractCompletionProvider distinguishes an absent provider from a bar
     CHECK(bare->allCommitCharacters.empty());
     CHECK_FALSE(bare->resolveProvider);
 }
+
+// dynamic-registration follow-up: what a server sends when it declares a
+// capability after the handshake instead of in its InitializeResult.
+TEST_CASE("ExtractRegistrations reads a didChangeWatchedFiles registration's watchers", "[Lsp]") {
+    const Json params = {
+        {"registrations",
+         Json::array({{{"id", "watch-1"},
+                       {"method", "workspace/didChangeWatchedFiles"},
+                       {"registerOptions",
+                        {{"watchers", Json::array({{{"globPattern", "**/*.php"}},
+                                                   {{"globPattern", "**/composer.json"}, {"kind", 3}}})}}}}})}};
+    const auto registrations = ned::editor::lsp::ExtractRegistrations(params);
+    REQUIRE(registrations.size() == 1);
+    CHECK(registrations[0].id == "watch-1");
+    CHECK(registrations[0].method == "workspace/didChangeWatchedFiles");
+    REQUIRE(registrations[0].watchers.size() == 2);
+    CHECK(registrations[0].watchers[0].glob == "**/*.php");
+    CHECK(registrations[0].watchers[0].kind == 7); // absent means create|change|delete per spec
+    CHECK(registrations[0].watchers[1].glob == "**/composer.json");
+    CHECK(registrations[0].watchers[1].kind == 3);
+}
+
+TEST_CASE("ExtractRegistrations keeps only the pattern half of a RelativePattern", "[Lsp]") {
+    // ned never declares relativePatternSupport, so this shape shouldn't
+    // arrive at all -- one that does is read rather than dropped, since a
+    // dropped watcher is a silently unhonored registration, the exact
+    // failure this whole path exists to end.
+    const Json params        = {{"registrations",
+                                 Json::array({{{"id", "w"},
+                                               {"method", "workspace/didChangeWatchedFiles"},
+                                               {"registerOptions",
+                                                {{"watchers", Json::array({{{"globPattern",
+                                                                             {{"baseUri", "file:///project"}, {"pattern", "**/*.rs"}}}}})}}}}})}};
+    const auto registrations = ned::editor::lsp::ExtractRegistrations(params);
+    REQUIRE(registrations.size() == 1);
+    REQUIRE(registrations[0].watchers.size() == 1);
+    CHECK(registrations[0].watchers[0].glob == "**/*.rs");
+}
+
+TEST_CASE("ExtractRegistrations reads didSave's includeText and skips entries missing id or method", "[Lsp]") {
+    const Json params        = {{"registrations", Json::array({
+                                                      {{"id", "save-1"}, {"method", "textDocument/didSave"}, {"registerOptions", {{"includeText", true}}}},
+                                                      {{"id", "save-2"}, {"method", "textDocument/didSave"}},
+                                                      {{"method", "textDocument/didSave"}}, // no id: unregisterable, skipped
+                                                      {{"id", "no-method"}},                // names nothing, skipped
+                                                      Json("not-an-object"),
+                                                  })}};
+    const auto registrations = ned::editor::lsp::ExtractRegistrations(params);
+    REQUIRE(registrations.size() == 2);
+    CHECK(registrations[0].includeText);
+    CHECK_FALSE(registrations[1].includeText);
+}
+
+TEST_CASE("ExtractUnregistrationIds reads both the spec's misspelling and the obvious spelling", "[Lsp]") {
+    CHECK(ned::editor::lsp::ExtractUnregistrationIds(
+              Json{{"unregisterations", Json::array({{{"id", "a"}, {"method", "workspace/didChangeWatchedFiles"}}})}}) ==
+          std::vector<std::string>{"a"});
+    CHECK(ned::editor::lsp::ExtractUnregistrationIds(Json{{"unregistrations", Json::array({{{"id", "b"}}})}}) ==
+          std::vector<std::string>{"b"});
+    CHECK(ned::editor::lsp::ExtractUnregistrationIds(Json::object()).empty());
+}
+
+// did-save follow-up: whether a server asked to hear about saves at all.
+TEST_CASE("ExtractTextDocumentSaveSupport distinguishes the bare-boolean and SaveOptions forms", "[Lsp]") {
+    const auto boolean =
+        ned::editor::lsp::ExtractTextDocumentSaveSupport(Json{{"capabilities", {{"textDocumentSync", {{"save", true}}}}}});
+    REQUIRE(boolean.has_value());
+    CHECK(boolean->supported);
+    CHECK_FALSE(boolean->includeText);
+
+    const auto options = ned::editor::lsp::ExtractTextDocumentSaveSupport(
+        Json{{"capabilities", {{"textDocumentSync", {{"save", {{"includeText", true}}}}}}}});
+    REQUIRE(options.has_value());
+    CHECK(options->supported);
+    CHECK(options->includeText);
+
+    // An object form with save:false is a server explicitly declining.
+    const auto declined =
+        ned::editor::lsp::ExtractTextDocumentSaveSupport(Json{{"capabilities", {{"textDocumentSync", {{"save", false}}}}}});
+    REQUIRE(declined.has_value());
+    CHECK_FALSE(declined->supported);
+}
+
+TEST_CASE("ExtractTextDocumentSaveSupport yields nullopt for the legacy integer form and for absence", "[Lsp]") {
+    // The bare-integer textDocumentSync carries a change kind and nothing
+    // else -- there is no save field in it to read, which is not the same
+    // as a server declining saves.
+    CHECK_FALSE(ned::editor::lsp::ExtractTextDocumentSaveSupport(Json{{"capabilities", {{"textDocumentSync", 2}}}}).has_value());
+    CHECK_FALSE(
+        ned::editor::lsp::ExtractTextDocumentSaveSupport(Json{{"capabilities", {{"textDocumentSync", Json::object()}}}}).has_value());
+    CHECK_FALSE(ned::editor::lsp::ExtractTextDocumentSaveSupport(Json{{"capabilities", Json::object()}}).has_value());
+    CHECK_FALSE(ned::editor::lsp::ExtractTextDocumentSaveSupport(Json::object()).has_value());
+}
+
+TEST_CASE("ExtractFileOperationFilters reads the create and delete halves of the family", "[Lsp]") {
+    const auto filters = ned::editor::lsp::ExtractFileOperationFilters(
+        Json{{"capabilities",
+              {{"workspace",
+                {{"fileOperations",
+                  {{"didCreate", {{"filters", Json::array({{{"pattern", {{"glob", "**/*.rs"}}}}})}}},
+                   {"willDelete", {{"filters", Json::array({{{"pattern", {{"glob", "**/*.rs"}}}}})}}},
+                   {"didDelete", {{"filters", Json::array({{{"pattern", {{"glob", "**/*.rs"}}}}})}}}}}}}}}});
+    REQUIRE(filters.has_value());
+    CHECK(filters->didCreateGlobs == std::vector<std::string>{"**/*.rs"});
+    CHECK(filters->willDeleteGlobs == std::vector<std::string>{"**/*.rs"});
+    CHECK(filters->didDeleteGlobs == std::vector<std::string>{"**/*.rs"});
+    CHECK(filters->willRenameGlobs.empty());
+}
+
+TEST_CASE("ExtractFileOperationFilters yields nullopt for a fileOperations block ned sends none of", "[Lsp]") {
+    // willCreate is the one operation ned never sends -- a server
+    // advertising only that has told this client nothing it can act on.
+    CHECK_FALSE(ned::editor::lsp::ExtractFileOperationFilters(
+                    Json{{"capabilities",
+                          {{"workspace",
+                            {{"fileOperations",
+                              {{"willCreate", {{"filters", Json::array({{{"pattern", {{"glob", "**/*.rs"}}}}})}}}}}}}}}})
+                    .has_value());
+}

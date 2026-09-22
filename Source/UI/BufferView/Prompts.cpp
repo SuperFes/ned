@@ -3374,18 +3374,11 @@ void BufferView::ForceSaveBuffer() {
 
 bufferview::ConfirmPrompt BufferView::ConfirmDeleteFilePrompt() {
     // Captured now: ending the session clears deleteTarget_.
-    return {.cancelMessage = "Delete cancelled.", .onConfirm = [this, target = deleteTarget_] {
-                try {
-                    editor::DeleteProjectPath(target);
-                    statusMessage_ = "Deleted " + target.string();
-                    if (projectSidebar_) {
-                        projectSidebar_->InvalidateTree();
-                    }
-                }
-                catch (const std::exception& e) {
-                    ReportError(e.what());
-                }
-            }};
+    // The delete itself, the status line and the sidebar refresh all live
+    // in PerformProjectDelete now -- file-operation-create-delete
+    // follow-up, which wraps them in the server's own willDelete/didDelete
+    // round trip the same way PerformProjectRename does for a rename.
+    return {.cancelMessage = "Delete cancelled.", .onConfirm = [this, target = deleteTarget_] { PerformProjectDelete(target); }};
 }
 
 bufferview::ConfirmPrompt BufferView::ConfirmRecoverFilePrompt() {

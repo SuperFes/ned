@@ -1022,10 +1022,150 @@ std::optional<FileOperationFilters> ExtractFileOperationFilters(const Json& init
     FileOperationFilters filters;
     filters.willRenameGlobs = FileOperationGlobs(*fileOpsIt, "willRename");
     filters.didRenameGlobs  = FileOperationGlobs(*fileOpsIt, "didRename");
-    if (filters.willRenameGlobs.empty() && filters.didRenameGlobs.empty()) {
-        return std::nullopt;
+    filters.didCreateGlobs  = FileOperationGlobs(*fileOpsIt, "didCreate");
+    filters.willDeleteGlobs = FileOperationGlobs(*fileOpsIt, "willDelete");
+    filters.didDeleteGlobs  = FileOperationGlobs(*fileOpsIt, "didDelete");
+    if (filters == FileOperationFilters{}) {
+        return std::nullopt; // fileOperations advertised, but not one operation ned sends
     }
     return filters;
+}
+
+namespace {
+
+    // dynamic-registration follow-up: a GlobPattern is either the plain
+    // string this client declares support for or a {baseUri, pattern}
+    // RelativePattern -- see FileSystemWatcher::glob's own doc comment for
+    // why only the pattern half of the latter is kept.
+    [[nodiscard]] std::string GlobPatternString(const Json& globPattern) {
+        if (globPattern.is_string()) {
+            return globPattern.get<std::string>();
+        }
+        if (globPattern.is_object()) {
+            const auto patternIt = globPattern.find("pattern");
+            if (patternIt != globPattern.end() && patternIt->is_string()) {
+                return patternIt->get<std::string>();
+            }
+        }
+        return {};
+    }
+
+    [[nodiscard]] std::vector<FileSystemWatcher> WatchersFromOptions(const Json& registerOptions) {
+        std::vector<FileSystemWatcher> watchers;
+        const auto                     watchersIt = registerOptions.find("watchers");
+        if (watchersIt == registerOptions.end() || !watchersIt->is_array()) {
+            return watchers;
+        }
+        for (const Json& entry : *watchersIt) {
+            if (!entry.is_object()) {
+                continue;
+            }
+            const auto globIt = entry.find("globPattern");
+            if (globIt == entry.end()) {
+                continue;
+            }
+            std::string glob = GlobPatternString(*globIt);
+            if (glob.empty()) {
+                continue;
+            }
+            FileSystemWatcher watcher{.glob = std::move(glob)};
+            const auto        kindIt = entry.find("kind");
+            if (kindIt != entry.end() && kindIt->is_number_integer()) {
+                const int kind = kindIt->get<int>();
+                // A kind outside the three defined bits is a server asking
+                // for nothing this client can recognize; treated as the
+                // spec's own "absent means all three" rather than dropped,
+                // since dropping it would silently watch nothing.
+                watcher.kind = (kind > 0 && kind <= 7) ? static_cast<unsigned>(kind) : 7u;
+            }
+            watchers.push_back(std::move(watcher));
+        }
+        return watchers;
+    }
+
+} // namespace
+
+std::vector<DynamicRegistration> ExtractRegistrations(const Json& params) {
+    std::vector<DynamicRegistration> registrations;
+    if (!params.is_object()) {
+        return registrations;
+    }
+    const auto listIt = params.find("registrations");
+    if (listIt == params.end() || !listIt->is_array()) {
+        return registrations;
+    }
+    for (const Json& entry : *listIt) {
+        if (!entry.is_object()) {
+            continue;
+        }
+        const auto idIt     = entry.find("id");
+        const auto methodIt = entry.find("method");
+        if (idIt == entry.end() || !idIt->is_string() || methodIt == entry.end() || !methodIt->is_string()) {
+            continue;
+        }
+        DynamicRegistration registration{.id = idIt->get<std::string>(), .method = methodIt->get<std::string>()};
+        const auto          optionsIt  = entry.find("registerOptions");
+        const bool          hasOptions = optionsIt != entry.end() && optionsIt->is_object();
+        if (hasOptions && registration.method == "workspace/didChangeWatchedFiles") {
+            registration.watchers = WatchersFromOptions(*optionsIt);
+        }
+        else if (hasOptions && registration.method == "textDocument/didSave") {
+            const auto includeIt     = optionsIt->find("includeText");
+            registration.includeText = includeIt != optionsIt->end() && includeIt->is_boolean() && includeIt->get<bool>();
+        }
+        registrations.push_back(std::move(registration));
+    }
+    return registrations;
+}
+
+std::vector<std::string> ExtractUnregistrationIds(const Json& params) {
+    std::vector<std::string> ids;
+    if (!params.is_object()) {
+        return ids;
+    }
+    for (const std::string_view field : {"unregisterations", "unregistrations"}) {
+        const auto listIt = params.find(field);
+        if (listIt == params.end() || !listIt->is_array()) {
+            continue;
+        }
+        for (const Json& entry : *listIt) {
+            if (!entry.is_object()) {
+                continue;
+            }
+            const auto idIt = entry.find("id");
+            if (idIt != entry.end() && idIt->is_string()) {
+                ids.push_back(idIt->get<std::string>());
+            }
+        }
+    }
+    return ids;
+}
+
+std::optional<TextDocumentSaveSupport> ExtractTextDocumentSaveSupport(const Json& initializeResult) {
+    if (!initializeResult.is_object()) {
+        return std::nullopt;
+    }
+    const auto capabilitiesIt = initializeResult.find("capabilities");
+    if (capabilitiesIt == initializeResult.end() || !capabilitiesIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto syncIt = capabilitiesIt->find("textDocumentSync");
+    if (syncIt == capabilitiesIt->end() || !syncIt->is_object()) {
+        return std::nullopt; // absent, or the legacy bare-integer form -- neither carries a save field
+    }
+    const auto saveIt = syncIt->find("save");
+    if (saveIt == syncIt->end()) {
+        return std::nullopt;
+    }
+    if (saveIt->is_boolean()) {
+        return TextDocumentSaveSupport{.supported = saveIt->get<bool>(), .includeText = false};
+    }
+    if (saveIt->is_object()) {
+        const auto includeIt = saveIt->find("includeText");
+        return TextDocumentSaveSupport{.supported   = true,
+                                       .includeText = includeIt != saveIt->end() && includeIt->is_boolean() && includeIt->get<bool>()};
+    }
+    return std::nullopt;
 }
 
 std::optional<WorkspaceFoldersSupport> ExtractWorkspaceFoldersSupport(const Json& initializeResult) {

@@ -224,3 +224,33 @@ TEST_CASE("Save progress is exposed while saving and cleared when it finishes", 
     REQUIRE(buffer.CurrentSaveProgress() == nullptr);
     std::filesystem::remove(path);
 }
+
+// lsp-did-save follow-up: the signal the LSP sync loop polls to notice a
+// save nobody told it about. Every save path in the editor funnels through
+// FinishSave, which is why that is the only place it advances.
+TEST_CASE("SaveGeneration advances once per completed save and never on an edit", "[BufferSaveState]") {
+    const std::filesystem::path path   = TempPath("save_generation.txt");
+    Buffer                      buffer = BufferWith("content\n");
+
+    const std::size_t initial = buffer.SaveGeneration();
+    buffer.InsertAt(0, "more ");
+    REQUIRE(buffer.SaveGeneration() == initial); // an edit is not a save
+
+    buffer.SaveToFile(path, false, false);
+    const std::size_t afterFirst = buffer.SaveGeneration();
+    REQUIRE(afterFirst != initial);
+
+    // A save in flight has not happened yet -- only FinishSave says so.
+    SavePlan plan = buffer.BeginSave(path, false, false);
+    REQUIRE(buffer.SaveGeneration() == afterFirst);
+    ExecuteSavePlan(plan);
+    buffer.FinishSave(path, std::move(plan));
+    REQUIRE(buffer.SaveGeneration() != afterFirst);
+
+    // An abandoned save leaves it alone: nothing reached disk.
+    const std::size_t afterSecond = buffer.SaveGeneration();
+    SavePlan          abandoned   = buffer.BeginSave(path, false, false);
+    buffer.AbandonSave();
+    REQUIRE(buffer.SaveGeneration() == afterSecond);
+    std::filesystem::remove(path);
+}

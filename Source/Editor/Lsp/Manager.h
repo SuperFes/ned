@@ -598,6 +598,117 @@ class Manager {
     // didRename filter matches at least one entry's newPath.
     void NotifyFilesRenamed(const std::vector<FileRenameEntry>& files);
 
+    // file-operation-create-delete follow-up: the create and delete halves
+    // of the same family. Both take plain paths -- a FileCreate/FileDelete
+    // carries one uri each, where a rename carries two.
+    //
+    // NotifyFilesCreated is sent when a buffer that had no file on disk
+    // first gets one (SyncBuffer notices; ned has no explicit create-a-file
+    // action, which is also why `workspace/willCreateFiles` is never sent
+    // -- there is no moment before the creation to ask a server for edits
+    // at, since the file appears because the user saved content into it).
+    void NotifyFilesCreated(const std::vector<std::filesystem::path>& paths);
+
+    // The delete half mirrors rename's exactly: the request first (a
+    // server's chance to hand back the edits that keep the rest of the
+    // project compiling -- the import/include of what is about to
+    // disappear), then the deletion, then the notification. Same
+    // fan-out-and-merge contract as RequestWillRenameFiles, including
+    // nullopt meaning "no server had anything to say, go ahead".
+    //
+    // A directory is expanded into the files beneath it by the caller, the
+    // same way PerformProjectRename expands a renamed one and for the same
+    // reason: a server's filter is an extension glob ("**/*.ts"), which
+    // matches a file and never the directory holding it, so sending the
+    // directory's own path would quietly notify nobody.
+    void RequestWillDeleteFiles(const std::vector<std::filesystem::path>& paths, RenameCallback callback);
+    void NotifyFilesDeleted(const std::vector<std::filesystem::path>& paths);
+
+    // dynamic-registration follow-up. One file that changed on disk outside
+    // any buffer's own save, as `workspace/didChangeWatchedFiles` describes
+    // it: the path, and which of created/changed/deleted happened to it.
+    // Mirrors LSP's own FileChangeType numbering so the wire value needs no
+    // translation table.
+    enum class FileChangeType {
+        Created = 1,
+        Changed = 2,
+        Deleted = 3,
+    };
+
+    struct WatchedFileChange {
+        std::filesystem::path path;
+        FileChangeType        type = FileChangeType::Changed;
+
+        bool operator==(const WatchedFileChange&) const = default;
+    };
+
+    // Sends `workspace/didChangeWatchedFiles` to every connection whose
+    // server dynamically registered a watcher matching at least one of
+    // these changes, carrying only that connection's matching subset -- a
+    // server asked for "**/*.php" is not told about a .go file that changed
+    // in the same burst.
+    //
+    // A server learns about the tree from here and about the buffer in
+    // front of the user from didOpen/didChange/didSave; the two are
+    // deliberately separate feeds, and a change to a file ned itself has
+    // open is reported here too (a server is entitled to reconcile the
+    // notification against the document it was already sent).
+    //
+    // Nothing happens for a connection that registered no watcher, which is
+    // every connection to a server that declares its capabilities
+    // statically -- the notification is meaningful only as the other half
+    // of a registration.
+    void NotifyWatchedFilesChanged(const std::vector<WatchedFileChange>& changes);
+
+    // window-messages follow-up. A server's own `window/showMessage` (and
+    // the message half of `window/showMessageRequest`), handed to the UI
+    // layer the same way applyEditHandler is and for the same reason --
+    // Editor/ has no echo area of its own. Unset by default, in which case
+    // the message still reaches the *lsp log* buffer and the diagnostics
+    // log; only the one-line echo is lost.
+    using StatusMessageHandler = std::function<void(std::string message)>;
+    void SetStatusMessageHandler(StatusMessageHandler handler) {
+        statusMessageHandler_ = std::move(handler);
+    }
+
+    // window-messages follow-up. A server's `window/showDocument` asking the
+    // editor to show a file it names -- a code action that generates a file,
+    // a server surfacing its own log. Returns whether the document was
+    // actually shown, which is what the server is told. An http(s) URL never
+    // reaches this handler: Editor/Link.h's OpenUrl owns that case (the same
+    // split documentLink already makes between path and url).
+    //
+    // `position`, when set, is where in that file the server wants the
+    // cursor -- the start of its requested selection, in LSP coordinates,
+    // the same path+Position shape ResolvedLocation hands every other
+    // jump-to-a-file caller (whose own resolution to a byte offset happens
+    // in the UI layer, after the file is actually open). `takeFocus` false
+    // means show the document without stealing the user's place; both are
+    // advisory, and a handler that can only open the file may ignore them.
+    struct ShowDocumentRequest {
+        std::filesystem::path   path;
+        std::optional<Position> position;
+        bool                    takeFocus = true;
+    };
+    using ShowDocumentHandler = std::function<bool(const ShowDocumentRequest& request)>;
+    void SetShowDocumentHandler(ShowDocumentHandler handler) {
+        showDocumentHandler_ = std::move(handler);
+    }
+
+    // dynamic-registration follow-up. Every capability the server on this
+    // connection registered after the handshake, in registration order.
+    // Read by NotifyWatchedFilesChanged and by the did-save path; exposed
+    // publicly because a registration silently going unhonored is exactly
+    // the failure this whole follow-up is about, so it has to be
+    // assertable from a test.
+    [[nodiscard]] const std::vector<DynamicRegistration>& DynamicRegistrationsFor(const std::string& connectionKey) const;
+
+    // Whether any connection's server has registered file watchers at all.
+    // What the file-watching side asks before paying for per-entry events
+    // (Editor/FileWatch.h's SetReportsDirectoryEntries) -- with no
+    // registration anywhere, nothing would consume them.
+    [[nodiscard]] bool HasWatchedFileRegistrations() const;
+
     // formatting follow-up. Same callback shape for both -- nullopt on any
     // failure (buffer never synced, no running client, or an error
     // response), a (possibly empty) edit list otherwise. Unlike rename, a
@@ -858,6 +969,13 @@ class Manager {
     // `initialize`-response state.
     void SetFileOperationFiltersForTesting(std::string connectionKey, FileOperationFilters filters) {
         fileOperationFilters_[std::move(connectionKey)] = std::move(filters);
+    }
+
+    // did-save follow-up: same test-only injection point as
+    // SetFileOperationFiltersForTesting just above, for the piece of
+    // `initialize`-response state the didSave path reads.
+    void SetTextDocumentSaveSupportForTesting(std::string connectionKey, TextDocumentSaveSupport support) {
+        textDocumentSaveSupport_[std::move(connectionKey)] = support;
     }
 
     // lsp-workspace-folders follow-up: same test-only injection point as
@@ -1361,6 +1479,16 @@ class Manager {
         int         version              = 0;
         bool        opened               = false;
 
+        // did-save follow-up: the buffer's SaveGeneration() as of the last
+        // time this connection was told anything. A mismatch on the next
+        // sync is a save this server hasn't heard about -- polled here
+        // rather than pushed from the save sites because there are four of
+        // them (synchronous, asynchronous, forced, quit-time) and only this
+        // one place knows whether the document is even open on a given
+        // connection. Seeded from the buffer at didOpen, not from zero: a
+        // buffer opened after it was saved has nothing to report.
+        std::size_t lastSyncedSaveGeneration = 0;
+
         // sync-debounce follow-up: the content generation a currently-armed
         // syncDebounceTimers_ entry targets, distinct from
         // lastSyncedGeneration (what the server has actually been told
@@ -1627,6 +1755,70 @@ class Manager {
     void WireNotificationHandlers(Client& client, const std::string& serverKey, const std::string& connectionKey,
                                   const Json& workspaceConfiguration = Json::object());
 
+    // dynamic-registration follow-up: records what a client/registerCapability
+    // request asked for and logs the ones nothing in ned acts on, so a
+    // capability ned silently drops is at least visible in the log rather
+    // than invisible on both sides.
+    void HandleRegisterCapability(const std::string& serverKey, const std::string& connectionKey, const Json& params);
+
+    // file-operation-create-delete follow-up: which of a connection's
+    // advertised filter lists gates one operation -- a pointer-to-member so
+    // the shared senders below can be told "willRename's list" or
+    // "didDelete's list" without a second parameter to keep in step with it.
+    using FileOperationGlobList = std::vector<std::string> FileOperationFilters::*;
+
+    // The fan-out bodies every workspace/{will,did}*Files call shares; see
+    // their definitions for what each parameter carries.
+    void SendWillFileOperation(const std::string& method, FileOperationGlobList globs,
+                               const std::vector<std::filesystem::path>& matchPaths, Json fileList, RenameCallback callback);
+    void SendDidFileOperation(const std::string& method, FileOperationGlobList globs,
+                              const std::vector<std::filesystem::path>& matchPaths, Json fileList);
+
+    // file-operation-create-delete follow-up: per buffer, whether its file
+    // was on disk the last time this was looked at, and the save generation
+    // that answer belongs to. The stat runs once per buffer and then only
+    // when a save has actually happened, which is what keeps SyncBuffer's
+    // per-frame path free of filesystem calls. Erased with the buffer's
+    // other per-buffer state in NotifyBufferClosed.
+    struct FileExistence {
+        std::size_t lastSaveGeneration = 0;
+        bool        existedOnDisk      = false;
+    };
+    std::unordered_map<text::Buffer*, FileExistence> fileExistence_;
+
+    // Sends didCreateFiles the first time a save turns a buffer with no
+    // file on disk into one with a file. Called from SyncBuffer, the one
+    // place that runs per buffer rather than per connection.
+    void ReportFileCreation(text::Buffer& buffer);
+
+    // window-messages follow-up: a server talking to the user through the
+    // protocol rather than through stderr. logMessage is a record (the
+    // diagnostics log, Lsp category); showMessage is meant to be seen, so it
+    // also goes to *lsp log* and the echo area via statusMessageHandler_.
+    void HandleWindowLogMessage(const std::string& serverKey, const Json& params);
+    void HandleWindowShowMessage(const std::string& serverKey, const Json& params);
+
+    // window-messages follow-up: answers window/showDocument -- {success:
+    // bool}, per spec, never an error response.
+    [[nodiscard]] Json HandleShowDocument(const Json& params);
+
+    // did-save follow-up: sends textDocument/didSave for one already-opened
+    // (buffer, connection) pair when the buffer has been saved since this
+    // connection last heard anything, and that connection's server asked to
+    // hear about saves -- either statically (textDocumentSync.save) or by
+    // registering textDocument/didSave dynamically. Called from both sync
+    // paths, which together are the only places that know the document is
+    // open on this connection.
+    //
+    // documentText is the text already materialized by the caller, or
+    // nullptr to have it read from the buffer -- which happens only for a
+    // server that asked for includeText, so an unsaved-since-last-sync
+    // no-op never materializes a huge buffer.
+    //
+    // state.lastSyncedSaveGeneration advances even when the server wants no
+    // notification: an unwanted save is answered now, not owed forever.
+    void MaybeSendDidSave(text::Buffer& buffer, BufferSyncState& state, const std::string* documentText);
+
     // error-visibility follow-up. Called (on the main thread, via
     // Client::SetOnDisconnected's own Post-marshaled callback) the
     // moment a running server's connection ends for any reason. Erases the
@@ -1651,6 +1843,12 @@ class Manager {
     // edit-application-gaps follow-up: see SetApplyEditHandler's own doc
     // comment above.
     ApplyEditHandler applyEditHandler_;
+
+    // window-messages follow-up: see SetStatusMessageHandler/
+    // SetShowDocumentHandler's own doc comments. Both unset by default; a
+    // server message still reaches the log without them.
+    StatusMessageHandler statusMessageHandler_;
+    ShowDocumentHandler  showDocumentHandler_;
 
     // ManagerTest-broker-hermeticity follow-up: test-only override for
     // the broker socket path ClientForLanguage's TryConnectToBroker call
@@ -1881,6 +2079,21 @@ class Manager {
     // NotifyFilesRenamed's own doc comments in the public section for what
     // this drives.
     std::unordered_map<std::string, FileOperationFilters> fileOperationFilters_;
+
+    // did-save follow-up: same lifetime/erasure convention as the cache just
+    // above. Absent means the server never advertised `save` at all, which
+    // is the spec's own "don't tell me about saves" -- unlike
+    // textDocumentSyncKind_ below, there is no permissive default here,
+    // since a notification nobody asked for is the thing being avoided.
+    std::unordered_map<std::string, TextDocumentSaveSupport> textDocumentSaveSupport_;
+
+    // dynamic-registration follow-up: what each connection's server
+    // registered via client/registerCapability, in arrival order, minus
+    // anything client/unregisterCapability has since dropped. Same
+    // per-connection lifetime as every cache around it -- erased in
+    // ClientDisconnected, because a respawned server re-registers from
+    // scratch as part of its own new handshake.
+    std::unordered_map<std::string, std::vector<DynamicRegistration>> dynamicRegistrations_;
 
     // incremental-sync follow-up: same role/lifetime as the two caches just
     // above -- captured from `initialize`'s own response, erased in

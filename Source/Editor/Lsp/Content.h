@@ -601,6 +601,15 @@ enum class TextDocumentSyncKind {
 struct FileOperationFilters {
     std::vector<std::string> willRenameGlobs;
     std::vector<std::string> didRenameGlobs;
+    // file-operation-create-delete follow-up: the rest of the same family,
+    // read exactly the same way. willCreate has no list here on purpose --
+    // ned has no explicit create-a-file action to request edits *before*
+    // (a file appears when a new buffer is first saved, by which point it
+    // exists), so that half is never sent and a filter for it would be
+    // stored and never read.
+    std::vector<std::string> didCreateGlobs;
+    std::vector<std::string> willDeleteGlobs;
+    std::vector<std::string> didDeleteGlobs;
 
     bool operator==(const FileOperationFilters&) const = default;
 };
@@ -613,6 +622,66 @@ struct FileOperationFilters {
 // to Manager's decision of whether to keep an entry in its per-server
 // map at all).
 [[nodiscard]] std::optional<FileOperationFilters> ExtractFileOperationFilters(const Json& initializeResult);
+
+// dynamic-registration follow-up. One entry of a `client/registerCapability`
+// request's `registrations` array -- how a server declares a capability it
+// left out of its own InitializeResult. `method` is kept verbatim for every
+// registration, including the ones nothing in ned reads: the record is what
+// makes an unhonored capability visible in the log rather than silent. The
+// typed fields below cover only the two methods ned acts on; a registration
+// for anything else carries neither.
+struct FileSystemWatcher {
+    // A GlobPattern, always in its plain-string form: ned doesn't declare
+    // relativePatternSupport, so a conforming server never sends the
+    // {baseUri, pattern} object form. One that sends it anyway has the
+    // baseUri dropped and the pattern kept -- the same match a pattern
+    // relative to the project root would make, since that's the only base
+    // any watcher ned registers could have.
+    std::string glob;
+    // WatchKind bitmask: Create(1) | Change(2) | Delete(4). Absent means all
+    // three per spec, which is what this default encodes.
+    unsigned kind = 7;
+
+    bool operator==(const FileSystemWatcher&) const = default;
+};
+
+struct DynamicRegistration {
+    std::string id;
+    std::string method;
+    // workspace/didChangeWatchedFiles only.
+    std::vector<FileSystemWatcher> watchers;
+    // textDocument/didSave only -- its registerOptions field of the same
+    // name, asking for the document's full text alongside the notification.
+    bool includeText = false;
+
+    bool operator==(const DynamicRegistration&) const = default;
+};
+
+// Parses a `client/registerCapability` request's params. An entry missing
+// either required field (id, method) is skipped: without an id it could
+// never be unregistered, and without a method it names nothing.
+[[nodiscard]] std::vector<DynamicRegistration> ExtractRegistrations(const Json& params);
+
+// Parses a `client/unregisterCapability` request's params into the ids to
+// drop. The spec's own field name is the misspelled "unregisterations";
+// "unregistrations" is read too, because servers write both.
+[[nodiscard]] std::vector<std::string> ExtractUnregistrationIds(const Json& params);
+
+// did-save follow-up. `capabilities.textDocumentSync.save` from an
+// `initialize` response -- either a bare boolean or a SaveOptions object
+// whose `includeText` asks for the document's whole text alongside the
+// notification. nullopt when textDocumentSync is absent, is the legacy
+// bare-integer form (which has no save field at all), or carries no save
+// field: a server that never advertises `save` isn't asking to hear about
+// saves, and Manager honors that rather than notifying every connection.
+struct TextDocumentSaveSupport {
+    bool supported   = false;
+    bool includeText = false;
+
+    bool operator==(const TextDocumentSaveSupport&) const = default;
+};
+
+[[nodiscard]] std::optional<TextDocumentSaveSupport> ExtractTextDocumentSaveSupport(const Json& initializeResult);
 
 // lsp-workspace-folders follow-up. `capabilities.workspace.workspaceFolders`
 // from an `initialize` response -- whether this server can serve several

@@ -65,7 +65,8 @@ bool FileWatchEnabled() {
     return FileWatchStorage();
 }
 
-FileWatcher::FileWatcher(std::function<void()> onChange, std::function<void(std::vector<FileMove>)> onMoved) : onChange_(std::move(onChange)), onMoved_(std::move(onMoved)) {
+FileWatcher::FileWatcher(std::function<void()> onChange, std::function<void(std::vector<FileMove>)> onMoved,
+                         std::function<void(std::vector<FileEvent>)> onEvents) : onChange_(std::move(onChange)), onMoved_(std::move(onMoved)), onEvents_(std::move(onEvents)) {
     fd_ = ::inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
     if (fd_ < 0) {
         return; // inert -- the poll-tick sweep is the sole detection mechanism
@@ -80,6 +81,14 @@ FileWatcher::~FileWatcher() {
     }
     if (fd_ >= 0) {
         ::close(fd_);
+    }
+}
+
+void FileWatcher::SetReportsDirectoryEntries(bool enabled) {
+    reportsDirectoryEntries_.store(enabled, std::memory_order_relaxed);
+    if (!enabled) {
+        const std::lock_guard lock(mutex_);
+        collectedEvents_.clear();
     }
 }
 
@@ -167,6 +176,29 @@ bool FileWatcher::DrainEvents() {
                 relevant = true;
             }
 
+            // lsp-did-change-watched-files follow-up: every entry of a
+            // watched directory, not just the basenames some buffer has
+            // open -- a server's watcher is registered against the tree,
+            // and the sibling file a generator just rewrote is exactly what
+            // it registered for. This is also what makes such a burst
+            // relevant at all: without it the loop below would go back to
+            // sleep without telling anyone.
+            if (reportsDirectoryEntries_.load(std::memory_order_relaxed)) {
+                const std::filesystem::path path = dirIt->second / event->name;
+                FileEvent::Kind             kind = FileEvent::Kind::Changed;
+                if ((event->mask & (IN_CREATE | IN_MOVED_TO)) != 0) {
+                    kind = FileEvent::Kind::Created;
+                }
+                else if ((event->mask & (IN_DELETE | IN_MOVED_FROM)) != 0) {
+                    kind = FileEvent::Kind::Deleted;
+                }
+                const auto [it, inserted] = collectedEvents_.try_emplace(path, kind);
+                if (!inserted && kind != FileEvent::Kind::Changed) {
+                    it->second = kind; // see collectedEvents_' own doc comment for the precedence
+                }
+                relevant = true;
+            }
+
             // A rename's two halves share a cookie. Any entry of a watched
             // directory can start a pair, not just a watched basename: the
             // events arrive either way, and the file worth following is
@@ -210,10 +242,16 @@ void FileWatcher::ReadLoop(const std::stop_token& stopToken) {
                PollReadable(fd_, kDebounceQuietMs)) {
             DrainEvents();
         }
-        std::vector<FileMove> moves;
+        std::vector<FileMove>  moves;
+        std::vector<FileEvent> events;
         {
             const std::lock_guard lock(mutex_);
             moves.swap(completedMoves_);
+            events.reserve(collectedEvents_.size());
+            for (auto& [path, kind] : collectedEvents_) {
+                events.push_back(FileEvent{.path = path, .kind = kind});
+            }
+            collectedEvents_.clear();
             // Anything still half-paired had its other half land outside
             // every watched directory -- a real change (onChange below
             // still fires), but not a move with a destination to name.
@@ -224,6 +262,9 @@ void FileWatcher::ReadLoop(const std::stop_token& stopToken) {
         }
         if (onMoved_ && !moves.empty()) {
             onMoved_(moves);
+        }
+        if (onEvents_ && !events.empty()) {
+            onEvents_(std::move(events));
         }
         onChange_();
     }
