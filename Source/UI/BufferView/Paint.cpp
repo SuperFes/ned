@@ -2404,6 +2404,11 @@ void BufferView::PaintEndOfLineDiagnostics(Canvas& c, const std::vector<std::siz
     const int height = c.size().height;
     const int width  = c.size().width;
 
+    // Point's own line, so the right-aligned fallback below can leave it
+    // alone -- see that branch's own comment.
+    const text::Buffer& buffer    = activeBuffer_.Get();
+    const std::size_t   pointLine = buffer.Content().ByteOffsetToLine(buffer.Point());
+
     for (int row = 0; row < height; ++row) {
         if (row >= static_cast<int>(rowLine.size()) || rowLine[row] == kNoRowLine) {
             continue;
@@ -2422,7 +2427,45 @@ void BufferView::PaintEndOfLineDiagnostics(Canvas& c, const std::vector<std::siz
 
         // Two columns of gap, so the message never reads as a continuation of
         // the code it follows. Never left of the gutter, for an empty line.
-        int col = std::max(static_cast<int>(gutterWidth), rowContentEndColumn[row]) + 2;
+        const int naturalCol = std::max(static_cast<int>(gutterWidth), rowContentEndColumn[row]) + 2;
+
+        // One cell per byte, matching what the draw loop below does -- a
+        // non-ASCII message already renders a cell per byte here, and
+        // measuring it any other way would only make the two disagree.
+        const int messageCells = static_cast<int>(diagnostic.message.size());
+        const int needed       = 2 + messageCells; // glyph, gap, then the message
+
+        // The reported problem with "draw it after the content and clip":
+        // on a long, horizontally scrolled line the content fills the row,
+        // so the message was either dropped outright (naturalCol >= width)
+        // or clipped to a few useless characters. Right-aligning it against
+        // the pane's edge keeps it readable at any scroll position, at the
+        // cost of covering the tail of the code -- which is why point's own
+        // row is left alone below: that is the one line whose message the
+        // echo area is already showing in full, and the one whose text the
+        // user is most likely reading.
+        int col = naturalCol;
+        std::string shown = diagnostic.message;
+        bool elided = false;
+        if (naturalCol + messageCells > width) {
+            if (rowLine[row] == pointLine) {
+                continue; // the echo area has this one; don't cover what's being edited
+            }
+            col = width - needed;
+            if (col < static_cast<int>(gutterWidth)) {
+                // Still too wide even flush right: keep the message's TAIL,
+                // which is where a line-length or type-mismatch message puts
+                // the part that varies, and mark the cut with one leading
+                // ellipsis cell.
+                const int room = width - static_cast<int>(gutterWidth) - 2 - 1; // glyph, gap, ellipsis
+                if (room <= 0) {
+                    continue; // nothing legible would fit
+                }
+                shown  = diagnostic.message.substr(diagnostic.message.size() - static_cast<std::size_t>(room));
+                elided = true;
+                col    = static_cast<int>(gutterWidth);
+            }
+        }
         if (col >= width) {
             continue;
         }
@@ -2438,7 +2481,13 @@ void BufferView::PaintEndOfLineDiagnostics(Canvas& c, const std::vector<std::siz
         // code), and it applies at least as strongly here, where the message
         // sits on the same row as real code.
         const Brush messageBrush{.foreground = color, .italic = true};
-        for (const char ch : diagnostic.message) {
+        if (elided && col < width) {
+            Cell& cell     = c[{.x = col, .y = row}];
+            cell.character = "\u2026";
+            messageBrush.ApplyTextTo(cell);
+            ++col;
+        }
+        for (const char ch : shown) {
             if (col >= width) {
                 break;
             }
