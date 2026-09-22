@@ -86,7 +86,18 @@ bool EvaluatePredicateCall(std::string_view name, std::span<const PredicateOpera
             std::string translated = TranslateLuaPatternClasses(std::string(*operands[1].text));
             auto        cacheIt    = regexCache.find(translated);
             if (cacheIt == regexCache.end()) {
-                std::regex compiled(translated, std::regex::ECMAScript);
+                // "(?i)" is Rust/Lua/PCRE inline-flag syntax, which ECMAScript
+                // has no spelling for -- it is the flag, not a group, so it is
+                // lifted out of the pattern rather than failing to compile
+                // (the cache key keeps the original spelling, so the same
+                // pattern without the flag is a separate entry).
+                std::string      pattern = translated;
+                auto             flags   = std::regex::ECMAScript;
+                for (std::size_t at = pattern.find("(?i)"); at != std::string::npos; at = pattern.find("(?i)", at)) {
+                    pattern.erase(at, 4);
+                    flags |= std::regex::icase;
+                }
+                std::regex compiled(pattern, flags);
                 cacheIt = regexCache.emplace(std::move(translated), std::move(compiled)).first;
             }
             const bool matched = std::regex_search(operands[0].text->begin(), operands[0].text->end(), cacheIt->second);

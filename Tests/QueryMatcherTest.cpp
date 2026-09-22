@@ -725,6 +725,29 @@ TEST_CASE("QueryMatcher supports '+' for foreign queries: one maximal run, no em
 // ROADMAP entry's own "written against these two files as the test cases".
 // ---------------------------------------------------------------------------
 
+// cmake's own highlights.janet spells its builtin-command list
+// "^(?i)(set|unset|...)$" -- an inline flag ECMAScript has no syntax for.
+// Left in the pattern it throws at compile time, and a predicate that
+// throws passes, which made every command a builtin.
+TEST_CASE("QueryMatcher: #match? honours an inline (?i) flag instead of passing everything", "[QueryMatcher]") {
+    const auto language = LanguageByName("cmake");
+    REQUIRE(language);
+    const QueryMatcher matcher(*language,
+                               "(normal_command\n"
+                               "  (identifier) @function.builtin\n"
+                               "  (#match? @function.builtin \"^(?i)(set|message)$\"))\n");
+
+    const auto matchCount = [&](const std::string& source) {
+        const auto tree = ned::editor::grammar::Parser(*language).Parse(source);
+        return matcher.Matches(tree.RootNode(), source).size();
+    };
+
+    CHECK(matchCount("set(FOO 1)\n") == 1);
+    CHECK(matchCount("SET(FOO 1)\n") == 1);  // the flag is what makes this one match
+    CHECK(matchCount("Message(hi)\n") == 1);
+    CHECK(matchCount("offset(FOO 1)\n") == 0); // and this one not: the pattern is anchored, not inert
+}
+
 // tree-sitter-cmake's queries/highlights.scm ~line 131: a multi-pattern
 // group -- CACHE followed immediately by a type keyword -- nested inside
 // `argument_list`'s own children sequence. Verbatim upstream text.
