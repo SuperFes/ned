@@ -933,6 +933,18 @@ class Manager {
         onTypeFormattingTriggers_[std::move(connectionKey)] = std::move(triggers);
     }
 
+    // project-wide-diagnostics follow-up: same test-only injection point as
+    // SetOnTypeFormattingTriggersForTesting just above, for the piece of
+    // *spawn*-path state this one needs. ClientForLanguage sets
+    // connectionFolders_ unconditionally for every real connection, so
+    // production always has an entry; SetClientForTesting bypasses that
+    // path, and without this a test's publishes would all be dropped by
+    // RecordProjectDiagnostics' folder guard -- the fake would differ from
+    // the real thing in exactly the way the guard is about.
+    void SetConnectionFoldersForTesting(std::string connectionKey, std::vector<std::filesystem::path> folders) {
+        connectionFolders_[std::move(connectionKey)] = std::move(folders);
+    }
+
     // semanticTokens follow-up: same test-only injection point as
     // SetOnTypeFormattingTriggersForTesting just above, for the sibling
     // piece of `initialize`-response state.
@@ -2023,9 +2035,17 @@ class Manager {
 
     // project-wide-diagnostics follow-up: the same per-source merge as
     // diagnosticsBySource_ just above, for files with no buffer to hang it
-    // on -- outer key the file, inner key the server. std::map, not
+    // on -- outer key the file, inner key the *connection*. std::map, not
     // unordered: a problem list is read in path order, and sorting once
     // here beats sorting on every read.
+    //
+    // Keyed by connection rather than by server key, unlike
+    // diagnosticsBySource_: that one reaches its connection through the
+    // buffer's own BufferSyncState, which by definition does not exist for
+    // a file with no buffer. Two connections can serve the same server key
+    // against different roots (LSP multi-root), so the server key alone
+    // would let one clobber the other's slice and leave the survivor's
+    // entries un-erasable when the other disconnects.
     struct ProjectDiagnosticSlice {
         std::vector<ProjectDiagnostic> diagnostics;
         // The file as it was when this server spoke about it. Positions

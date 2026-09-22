@@ -1679,6 +1679,17 @@ void Manager::ClientDisconnected(const std::string& serverKey, const std::string
             diagnosticsBySource_.erase(it);
         }
     }
+    // project-wide-diagnostics follow-up: same reasoning as the
+    // diagnosticsBySource_ erase just above, one level simpler -- these
+    // slices are keyed by connection outright, so a dying connection's
+    // entries are named directly rather than reached through a buffer that,
+    // for these files, does not exist. A file left with nothing to say drops
+    // out entirely instead of lingering as an empty row.
+    for (auto it = projectDiagnostics_.begin(); it != projectDiagnostics_.end();) {
+        it->second.erase(connectionKeyCopy);
+        it = it->second.empty() ? projectDiagnostics_.erase(it) : std::next(it);
+    }
+
     // workDoneProgress-support follow-up: a dying server never sends "end"
     // for its live progress sessions -- End them here or the spinner runs
     // forever (the request-count half of the same problem is ~Client's
@@ -2031,13 +2042,13 @@ void Manager::RecordProjectDiagnostics(const std::filesystem::path& path, const 
         return;
     }
 
-    // An empty array is how a server says "fixed" -- erase this server's
+    // An empty array is how a server says "fixed" -- erase this connection's
     // slice, and the file with it once no server has anything left to say.
     const Json& items = params.contains("diagnostics") ? params["diagnostics"] : Json::array();
     if (items.empty()) {
         const auto file = projectDiagnostics_.find(absolute);
         if (file != projectDiagnostics_.end()) {
-            file->second.erase(serverKey);
+            file->second.erase(connectionKey);
             if (file->second.empty()) {
                 projectDiagnostics_.erase(file);
             }
@@ -2096,6 +2107,15 @@ std::vector<Manager::ProjectDiagnosticFile> Manager::ProjectDiagnostics() const 
     // projectDiagnostics_ is a std::map, so this comes out path-sorted
     // already -- the order a problem list wants to be read in.
     for (const auto& [path, bySource] : projectDiagnostics_) {
+        // A resident buffer's own diagnostics supersede anything recorded
+        // while it was closed, and the two must never both be reported.
+        // Gating on the read rather than on didOpen/didClose is what keeps
+        // that true without a second lifecycle hook to drift out of sync --
+        // a buffer can appear or vanish between any two publishes, and this
+        // asks the question at the only moment the answer is used.
+        if (bufferList_.FindByPath(path) != nullptr) {
+            continue;
+        }
         ProjectDiagnosticFile file{.path = path};
         const auto [size, mtime] = FileStamp(path);
         for (const auto& [serverKey, slice] : bySource) {

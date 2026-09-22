@@ -6751,3 +6751,113 @@ TEST_CASE("BuildInitializeParams advertises the create/delete file operations bu
     // willCreate would invite a request it can never send.
     CHECK_FALSE(fileOps.contains("willCreate"));
 }
+
+// project-wide-diagnostics follow-up. A server that checks the whole project
+// reports most of its findings about files nobody has opened -- measured
+// against rust-analyzer (cargo check) and gopls (per package), both of which
+// publish a compile error in a file the editor never opened. Those used to be
+// dropped, because a diagnostic's only home was a resident text::Buffer.
+namespace {
+
+// The publish notification a server sends about one file, with one
+// diagnostic per message given.
+Json ProjectPublish(const std::filesystem::path& path, const std::vector<std::string>& messages) {
+    Json items = Json::array();
+    for (const std::string& message : messages) {
+        items.push_back({{"range", {{"start", {{"line", 1}, {"character", 2}}}, {"end", {{"line", 1}, {"character", 6}}}}},
+                         {"severity", 1},
+                         {"message", message}});
+    }
+    return Json{{"jsonrpc", "2.0"},
+                {"method", "textDocument/publishDiagnostics"},
+                {"params", {{"uri", "file://" + path.string()}, {"diagnostics", items}}}};
+}
+
+} // namespace
+
+TEST_CASE("Diagnostics for a file with no open buffer are kept and reported", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "ned-project-diagnostics-test";
+    std::filesystem::create_directories(root);
+    const std::filesystem::path unopened = root / "never-opened.rs";
+    std::ofstream(unopened) << "fn value() -> i32 {\n    \"nope\"\n}\n";
+
+    Client* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "proj-lang", eventLoop, client);
+    manager.SetConnectionFoldersForTesting("proj-lang", {root});
+
+    client->DispatchFrame(ProjectPublish(unopened, {"mismatched types"}).dump());
+    WaitUntil(eventLoop, [&] { return !manager.ProjectDiagnostics().empty(); });
+
+    const auto files = manager.ProjectDiagnostics();
+    REQUIRE(files.size() == 1);
+    REQUIRE(files[0].path == unopened);
+    REQUIRE(files[0].diagnostics.size() == 1);
+    REQUIRE(files[0].diagnostics[0].message == "mismatched types");
+    // Positions stay in the server's own space: there is no resident content
+    // to resolve them against.
+    REQUIRE(files[0].diagnostics[0].start.line == 1);
+    REQUIRE(files[0].diagnostics[0].start.character == 2);
+
+    SECTION("an empty publish is how a server says fixed, and drops the file") {
+        client->DispatchFrame(ProjectPublish(unopened, {}).dump());
+        WaitUntil(eventLoop, [&] { return manager.ProjectDiagnostics().empty(); });
+        REQUIRE(manager.ProjectDiagnostics().empty());
+    }
+
+    SECTION("a resident buffer owns its own diagnostics, so the record steps aside") {
+        // Deliberately not driven by didOpen/didClose: the read is gated on
+        // whether a buffer exists at the moment the answer is used, so the
+        // same store can never double-report alongside Buffer::Diagnostics().
+        Buffer& buffer = bufferList.OpenOrCreateFile(unopened);
+        const std::string name = buffer.Name();
+        REQUIRE(manager.ProjectDiagnostics().empty());
+
+        REQUIRE(bufferList.Close(name));
+        REQUIRE(manager.ProjectDiagnostics().size() == 1); // and comes back when it closes
+    }
+
+    SECTION("a file outside every folder the connection serves is not this project's problem") {
+        const std::filesystem::path outside = std::filesystem::temp_directory_path() / "ned-project-diagnostics-outsider.rs";
+        client->DispatchFrame(ProjectPublish(outside, {"not ours"}).dump());
+        // Waits for it to show up on the same terms as the accepted one
+        // above; the assertion is that it never does.
+        WaitUntil(eventLoop, [&] { return manager.ProjectDiagnostics().size() > 1; });
+        const auto after = manager.ProjectDiagnostics();
+        REQUIRE(after.size() == 1);
+        REQUIRE(after[0].path == unopened);
+    }
+
+    std::filesystem::remove_all(root);
+}
+
+// A dead server's findings are not facts about the project any more, and
+// these entries have no buffer to reach them through -- so unlike
+// diagnosticsBySource_, which ClientDisconnected clears via each affected
+// buffer's own sync state, these are keyed by connection and named directly.
+TEST_CASE("A disconnect drops that connection's project diagnostics", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "ned-project-diagnostics-disconnect";
+    std::filesystem::create_directories(root);
+    const std::filesystem::path unopened = root / "gone.rs";
+
+    Client* client = nullptr;
+    auto    server = std::make_optional<FakeServer>(FakeServer::Create(manager, "drop-lang", eventLoop, client));
+    manager.SetConnectionFoldersForTesting("drop-lang", {root});
+
+    client->DispatchFrame(ProjectPublish(unopened, {"mismatched types"}).dump());
+    WaitUntil(eventLoop, [&] { return !manager.ProjectDiagnostics().empty(); });
+    REQUIRE(manager.ProjectDiagnostics().size() == 1);
+
+    server.reset(); // EOF on the fake server's write end -- the real disconnect path
+    WaitUntil(eventLoop, [&] { return manager.ProjectDiagnostics().empty(); });
+    REQUIRE(manager.ProjectDiagnostics().empty());
+
+    std::filesystem::remove_all(root);
+}
