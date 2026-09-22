@@ -1110,6 +1110,36 @@ class Buffer {
     // FoldGeneration()'s own "cheap, did-it-change" signal shape.
     [[nodiscard]] std::size_t UnsavedChangeGeneration() const;
 
+    // The "new since you last looked" frontier for a buffer that grows by
+    // AppendWhileReadOnly -- a live log, task output, test results. Content
+    // at or past SeenByteOffset() has arrived since the last
+    // CommitSeenContent(); everything before it was on screen at some point.
+    //
+    // Only an append can make content unseen, which is what keeps the
+    // frontier honest for free: the region is always one contiguous tail,
+    // and any edit that is not a pure tail append (a wholesale rebuild of
+    // the buffer, say) disarms tracking outright rather than leaving a
+    // frontier that now points into different text.
+    //
+    // UnseenContentTracked() additionally requires a baseline -- one
+    // completed CommitSeenContent() -- so a one-shot generated report
+    // (describe-bindings and the like) never marks itself: "new since you
+    // last looked" means nothing until you have looked once.
+    [[nodiscard]] bool        UnseenContentTracked() const;
+    [[nodiscard]] std::size_t SeenByteOffset() const;
+    // Bumped whenever SeenByteOffset()/UnseenContentTracked() change --
+    // same "cheap, did-it-change" signal shape as the generations above.
+    [[nodiscard]] std::size_t SeenGeneration() const;
+    // Record that content up to byteOffset is on screen. Accumulates the
+    // high-water mark only; the frontier itself does not move until
+    // CommitSeenContent, so a marker stays put while you are reading the
+    // buffer rather than clearing itself out from under you.
+    void NoteSeenThrough(std::size_t byteOffset);
+    // Fold the accumulated high-water mark into the frontier -- called when
+    // the buffer stops being the one a pane is showing, which is what makes
+    // the marker mean "since you last left".
+    void CommitSeenContent();
+
     // LSP client follow-up: an external tool's report about a byte range in
     // this buffer -- a plain, editor-agnostic data shape (no dependency on
     // Source/Editor/Lsp/ or anything JSON-shaped), the same "structured
@@ -1162,6 +1192,10 @@ class Buffer {
     // AppendWhileReadOnly throws std::logic_error for the opposite caller
     // mistake), then forward here.
     void InsertAtImpl(std::size_t byteOffset, std::string_view text);
+
+    // Give up on the unseen-content frontier: the content it was measured
+    // against no longer exists. See UnseenContentTracked().
+    void DisarmUnseenTracking();
 
     // disk-space-safety follow-up: "Buffer is read-only." when
     // ReadOnlyReason_ is unset, or that reason appended when it is -- every
@@ -1467,6 +1501,17 @@ class Buffer {
     // than leaving a technically-correct-but-misleading residual marker at
     // wherever the undone edit happened to sit.
     std::unique_ptr<ITextStorage> SavedSnapshot_;
+
+    // see UnseenContentTracked()'s own doc comment. UnseenTracking_ is set
+    // by AppendWhileReadOnly and cleared by any edit that is not a pure
+    // tail append (RelocateTrackedState) or by a wholesale content
+    // replacement (CommitBarrier); SeenBaseline_ is set by the first
+    // commit.
+    std::size_t SeenByteOffset_  = 0;
+    std::size_t PendingSeenByte_ = 0;
+    std::size_t SeenGeneration_  = 0;
+    bool        UnseenTracking_  = false;
+    bool        SeenBaseline_    = false;
 };
 
 } // namespace ned::text

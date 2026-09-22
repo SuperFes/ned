@@ -3198,6 +3198,14 @@ class BufferView : public Widget {
         // Resolved once per frame rather than per row; both are stamp-checked
         // accessors, but there is no reason to re-ask for every line.
         const std::vector<std::pair<std::size_t, std::size_t>>&                        unsavedChangeLineRanges;
+        // Mutually exclusive with the ranges above by construction: the
+        // ranges are empty on a read-only buffer, and only a read-only
+        // buffer ever has an unseen tail. See GutterModel::FirstUnseenLine.
+        std::optional<std::size_t> firstUnseenLine;
+        // Whether the whole unseen tail is marked, or only its first line.
+        // Resolved once per frame: the style is behind a process-wide mutex
+        // and the alternative is taking that lock once per painted row.
+        bool                                                                           unseenBand = true;
         const std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>>& diagnosticLineSeverities;
         const std::vector<std::size_t>&                                                codeActionHintLines;
     };

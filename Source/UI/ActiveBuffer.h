@@ -26,7 +26,16 @@ class ActiveBuffer {
     }
     void Set(text::Buffer& buffer) {
         const bool changed = (current_ != &buffer);
-        current_           = &buffer;
+        if (changed) {
+            // The outgoing buffer stops being on screen here, which is what
+            // makes its unseen-content frontier mean "since you last left".
+            // Done here rather than on the next Paint's own switch detection
+            // because this is the last point the outgoing buffer is
+            // guaranteed to still be alive (a close switches away first,
+            // then destroys).
+            current_->CommitSeenContent();
+        }
+        current_ = &buffer;
         if (changed && onChange_) {
             onChange_(buffer);
         }

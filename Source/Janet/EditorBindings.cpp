@@ -75,6 +75,7 @@
 #include "Editor/SearchSettings.h"
 #include "Editor/Session.h"
 #include "Editor/SnippetRegistry.h"
+#include "Editor/StatusGutterSettings.h"
 #include "Editor/StickyScrollSettings.h"
 #include "Editor/SyntaxTheme.h"
 #include "Editor/TabWidth.h"
@@ -611,6 +612,27 @@ namespace {
 
     void NedSetRelativeLineNumbers(bool enabled) {
         editor::SetRelativeLineNumbersEnabled(enabled);
+    }
+
+    void NedSetUnsavedChangeSwatch(bool enabled) {
+        editor::SetUnsavedChangeSwatchEnabled(enabled);
+    }
+
+    void NedSetUnseenContentMarker(bool enabled) {
+        editor::SetUnseenContentMarkerEnabled(enabled);
+    }
+
+    void NedSetUnseenContentMarkerStyle(std::string style) {
+        if (style == "band") {
+            editor::SetUnseenContentMarkerStyle(editor::UnseenContentMarkerStyle::Band);
+            return;
+        }
+        if (style == "boundary") {
+            editor::SetUnseenContentMarkerStyle(editor::UnseenContentMarkerStyle::Boundary);
+            return;
+        }
+        throw std::runtime_error("unknown unseen content marker style: " + style +
+                                 " (expected \"band\" or \"boundary\")");
     }
 
     void NedSetWhichKeyEnabled(bool enabled) {
@@ -2147,6 +2169,22 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-relative-line-numbers",
         "Enable/disable relative line numbers in the gutter (default false): the current line keeps its real "
         "number, every other visible line shows its distance from it, Vim's 'relativenumber' convention.");
+    env.Register<&NedSetUnsavedChangeSwatch>(
+        "ned", "set-unsaved-change-swatch",
+        "Enable/disable the status-column swatch marking every line edited since the buffer was last loaded or "
+        "saved (default true). Never shown on a read-only buffer either way -- nothing there is an edit of "
+        "yours; see set-unseen-content-marker for what that column says instead.");
+    env.Register<&NedSetUnseenContentMarker>(
+        "ned", "set-unseen-content-marker",
+        "Enable/disable the status-column marker for content appended to a read-only buffer (*lsp log*, task "
+        "output, test results) since you last looked away from it (default true). Needs a buffer you have "
+        "visited and left at least once, so a one-shot generated report never marks itself. Retune its colour "
+        "with the unseen_content_indicator theme key.");
+    env.Register<&NedSetUnseenContentMarkerStyle>(
+        "ned", "set-unseen-content-marker-style",
+        "How set-unseen-content-marker draws: \"band\" (default) marks every unseen line, \"boundary\" marks "
+        "only the first -- a \"you left off here\" rule, for a busy log where the band would be most of the "
+        "screen.");
     env.Register<&NedSetWhichKeyEnabled>(
         "ned", "set-which-key-enabled",
         "Enable/disable the which-key popup listing possible next chords while a prefix key (C-x, C-c, ...) is "

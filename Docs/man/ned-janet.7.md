@@ -822,6 +822,18 @@ The popup is never one source: a language server's items, snippet triggers for t
 
 :   Enable/disable stripping trailing spaces/tabs from every line and collapsing trailing blank lines at end-of-file, applied to a file's written content on save (default true). Disk-only, same as set-ensure-final-newline -- the buffer's own live content is never touched.
 
+`ned/set-unsaved-change-swatch`
+
+:   Enable/disable the status-column swatch marking every line edited since the buffer was last loaded or saved (default true). Never shown on a read-only buffer either way -- nothing there is an edit of yours; see set-unseen-content-marker for what that column says instead.
+
+`ned/set-unseen-content-marker`
+
+:   Enable/disable the status-column marker for content appended to a read-only buffer (*lsp log*, task output, test results) since you last looked away from it (default true). Needs a buffer you have visited and left at least once, so a one-shot generated report never marks itself. Retune its colour with the unseen_content_indicator theme key.
+
+`ned/set-unseen-content-marker-style`
+
+:   How set-unseen-content-marker draws: "band" (default) marks every unseen line, "boundary" marks only the first -- a "you left off here" rule, for a busy log where the band would be most of the screen.
+
 `ned/set-url-open-command`
 
 :   Set the command open-link-at-point launches (as its own argument, never a shell string) to open a URL -- defaults to "xdg-open"; empty string clears it entirely, disabling URL-following.

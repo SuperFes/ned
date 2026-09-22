@@ -132,6 +132,7 @@ add_library(ned_lib STATIC
         Editor/SearchEverywhereTextSearchSettings.cpp
         Editor/ClassFileSyncSettings.cpp
         Editor/CodeFoldSettings.cpp
+        Editor/StatusGutterSettings.cpp
         Editor/StickyScroll.cpp
         Editor/StickyScrollSettings.cpp
         Editor/RelativeLineNumberSettings.cpp

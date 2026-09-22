@@ -121,7 +121,11 @@ one sitting next to it.
 **Version control**
 
 `vcs_modified_foreground` `vcs_untracked_foreground` `blame_recent_foreground` `blame_old_foreground`
-`unsaved_change_indicator` `success_foreground`
+`unsaved_change_indicator` `unseen_content_indicator` `success_foreground`
+
+`unseen_content_indicator` shares the status column with `unsaved_change_indicator` but never
+the same buffer: it marks lines appended to a read-only buffer (a log, task output, test
+results) since you last looked away from it.
 
 **Org and Markdown**
 

@@ -94,6 +94,7 @@ namespace {
         {"link_foreground", &Theme::linkForeground},
         {"truncation_indicator_foreground", &Theme::truncationIndicatorForeground},
         {"unsaved_change_indicator", &Theme::unsavedChangeIndicator},
+        {"unseen_content_indicator", &Theme::unseenContentIndicator},
         {"diagnostic_error", &Theme::diagnosticError},
         {"diagnostic_warning", &Theme::diagnosticWarning},
         {"diagnostic_information", &Theme::diagnosticInformation},

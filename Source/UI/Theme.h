@@ -267,6 +267,15 @@ struct Theme {
     // doc comment).
     Color unsavedChangeIndicator;
 
+    // Status-gutter read-only follow-up: the same solid-block marker in the
+    // same column, for a line of a read-only buffer that was appended since
+    // it was last looked at (see Buffer::UnseenContentTracked). Deliberately
+    // not unsavedChangeIndicator's own accent -- the two never appear on the
+    // same buffer, but they mean opposite things (you changed this / this
+    // changed while you were away), and an informational band should not
+    // borrow the conventional modified-line color.
+    Color unseenContentIndicator;
+
     // LSP client follow-up: solid-block severity markers (same "background
     // color, not a glyph" shape as unsavedChangeIndicator above) for the
     // diagnostics gutter column -- one color per Buffer::Diagnostic::Severity

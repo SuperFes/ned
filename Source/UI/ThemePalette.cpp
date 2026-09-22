@@ -103,6 +103,7 @@ Theme ThemeFromPalette(std::string name, const ThemePalette& p) {
         .linkForeground                = p.cyan,
         .truncationIndicatorForeground = p.accent,
         .unsavedChangeIndicator        = p.orange,
+        .unseenContentIndicator        = p.cyan,
         .diagnosticError               = p.red,
         .diagnosticWarning             = p.yellow,
         .diagnosticInformation         = p.blue,

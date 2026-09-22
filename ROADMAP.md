@@ -604,23 +604,34 @@ commands, never a replacement for them.
       reach `Dispatcher` through `C-x` would mean either breaking real vim's own
       decrement-number binding or a two-key lookahead hack — not worth it now that the
       practical gap (no way to split/close/cycle windows under Vim mode) is closed.
-- [ ] **The unsaved-change gutter swatch means nothing on a read-only buffer, and the
-      column it occupies could mean something useful there.** The status column
-      (`PaintLineGutter`, `frame.unsavedChangeLineRanges` against
-      `theme_.unsavedChangeIndicator`) paints a 1-cell swatch on every line edited
-      since load/save, with no read-only check anywhere in the path -- so `*lsp log*`,
-      `*debug*`, `*messages*`, a test-results buffer and every other append-only
-      buffer stripe themselves as "you changed this", which is never true of them.
-      Two halves, and the second is the interesting one:
-      suppress the swatch when `Buffer::ReadOnly()` (the same gate `FoldGutterActive`
-      already applies to its own column), and then consider giving that freed column a
-      real job in exactly those buffers -- a *last-seen* marker showing where the
-      content stood when you last looked at the buffer, so a log you return to after a
-      minute of work shows at a glance which rows are new. `Manager::HasUnseenLogEntry`/
-      `AcknowledgeLogEntry` already track the unseen/seen edge for `*lsp log*` at
-      whole-buffer granularity, which is the same fact at the wrong resolution: what a
-      marker needs is the byte offset the buffer had reached at acknowledge time, which
-      nothing records yet.
+**Status gutter**
+
+Both halves shipped -- slug for `git log --grep=`: `status-gutter-unseen-content`. The
+swatch is suppressed on a read-only buffer, and the freed cell carries an unseen-content
+marker there instead (`Buffer::UnseenContentTracked`/`SeenByteOffset`,
+`GutterModel::FirstUnseenLine`, `ned/set-unseen-content-marker` and its `band`/`boundary`
+styles). `Buffer::AppendWhileReadOnly` turned out to be the whole answer to "which
+buffers does this mean anything for": it is the one feed that can make content unseen, so
+the unseen region is always one contiguous tail and any edit that is not a pure tail
+append disarms the frontier rather than leaving it pointing into rewritten text. Three
+conscious cuts left behind.
+
+- [ ] Only a streaming buffer marks. A read-only buffer rebuilt wholesale (`*debug*`,
+      a results buffer regenerated from scratch rather than appended to) disarms
+      tracking on the rebuild and never shows the marker -- correct, since the frontier
+      was measured against text that no longer exists, but it means the feature covers
+      `*lsp log*`/task output/test results and nothing else. A rebuild that wanted a
+      marker would need a content diff, not a byte offset.
+- [ ] The frontier is committed in `ActiveBuffer::Set`, which is the last point the
+      outgoing buffer is guaranteed alive. Two consequences: closing a pane or window
+      without switching buffers never commits, and two panes showing the same log share
+      one frontier -- whichever leaves first marks as seen whatever the other one was
+      displaying. Both need a per-pane frontier to fix, which is a map keyed by buffer
+      with the lifetime problem that implies.
+- [ ] `Manager::HasUnseenLogEntry`/`AcknowledgeLogEntry` still track the same
+      unseen/seen edge for `*lsp log*` at whole-buffer granularity, for the echo-area
+      surfacing, and are not derived from the new frontier. Two mechanisms for one
+      fact; worth merging only if they drift.
 - [ ] The search-everywhere preview footer shipped (slug for `git log --grep=`:
       `search-everywhere-preview`) -- one conscious cut left behind. The excerpt is
       painted in one brush, unhighlighted: a per-file `Mode::highlight` on every

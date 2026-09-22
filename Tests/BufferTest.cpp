@@ -1309,6 +1309,86 @@ TEST_CASE("Two AppendWhileReadOnly calls both land at the end, in order", "[Buff
     REQUIRE(buffer.Text() == "first\nsecond\n");
 }
 
+TEST_CASE("An unvisited append-driven buffer tracks nothing yet", "[Buffer]") {
+    Buffer buffer("*log*");
+    buffer.SetReadOnly(true);
+    buffer.AppendWhileReadOnly("first\n");
+
+    // No baseline: "new since you last looked" means nothing until you have
+    // looked once, which is what keeps a one-shot generated report quiet.
+    REQUIRE_FALSE(buffer.UnseenContentTracked());
+}
+
+TEST_CASE("Content appended after a commit is unseen", "[Buffer]") {
+    Buffer buffer("*log*");
+    buffer.SetReadOnly(true);
+    buffer.AppendWhileReadOnly("first\n");
+
+    buffer.NoteSeenThrough(buffer.Content().ByteLength());
+    buffer.CommitSeenContent();
+    REQUIRE(buffer.UnseenContentTracked());
+    REQUIRE(buffer.SeenByteOffset() == 6);
+
+    buffer.AppendWhileReadOnly("second\n");
+    REQUIRE(buffer.UnseenContentTracked());
+    REQUIRE(buffer.SeenByteOffset() == 6); // the frontier stays put until the next commit
+}
+
+TEST_CASE("The frontier does not move while the buffer is still on screen", "[Buffer]") {
+    Buffer buffer("*log*");
+    buffer.SetReadOnly(true);
+    buffer.AppendWhileReadOnly("first\n");
+    buffer.NoteSeenThrough(6);
+    buffer.CommitSeenContent();
+
+    buffer.AppendWhileReadOnly("second\n");
+    buffer.NoteSeenThrough(13); // painted, but the pane has not switched away yet
+
+    REQUIRE(buffer.SeenByteOffset() == 6);
+    buffer.CommitSeenContent();
+    REQUIRE(buffer.SeenByteOffset() == 13);
+}
+
+TEST_CASE("A commit never walks the frontier backwards", "[Buffer]") {
+    Buffer buffer("*log*");
+    buffer.SetReadOnly(true);
+    buffer.AppendWhileReadOnly("first\nsecond\n");
+    buffer.NoteSeenThrough(13);
+    buffer.CommitSeenContent();
+
+    buffer.NoteSeenThrough(6); // scrolled back up before leaving
+    buffer.CommitSeenContent();
+
+    REQUIRE(buffer.SeenByteOffset() == 13);
+}
+
+TEST_CASE("An edit before the frontier disarms unseen tracking", "[Buffer]") {
+    Buffer buffer("*results*");
+    buffer.SetReadOnly(true);
+    buffer.AppendWhileReadOnly("first\n");
+    buffer.NoteSeenThrough(6);
+    buffer.CommitSeenContent();
+    REQUIRE(buffer.UnseenContentTracked());
+
+    // A wholesale rebuild: the frontier was measured against text that no
+    // longer exists, so it is given up rather than left pointing into
+    // different content.
+    buffer.SetReadOnly(false);
+    buffer.InsertAt(0, "rebuilt\n");
+
+    REQUIRE_FALSE(buffer.UnseenContentTracked());
+    REQUIRE(buffer.SeenByteOffset() == 0);
+}
+
+TEST_CASE("A writable buffer never tracks unseen content", "[Buffer]") {
+    Buffer buffer("scratch");
+    buffer.InsertAtPoint("hello\n");
+    buffer.NoteSeenThrough(6);
+    buffer.CommitSeenContent();
+
+    REQUIRE_FALSE(buffer.UnseenContentTracked());
+}
+
 TEST_CASE("A fresh buffer is not loading by default", "[Buffer]") {
     Buffer buffer("scratch");
     REQUIRE_FALSE(buffer.IsLoading());

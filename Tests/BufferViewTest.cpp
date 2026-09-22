@@ -51,6 +51,7 @@
 #include "Editor/SearchEverywhereTextSearchSettings.h"
 #include "Editor/Session.h"
 #include "Editor/SnippetRegistry.h"
+#include "Editor/StatusGutterSettings.h"
 #include "Editor/TabWidth.h"
 #include "Editor/TestRun/TestResultsBuffer.h"
 #include "Editor/Variables.h"
@@ -9655,6 +9656,107 @@ TEST_CASE("The status column shows the unsaved-change indicator only on an edite
     REQUIRE(screen.PixelAt(0, 0).background_color == fixture.theme.background);             // "one" untouched
     REQUIRE(screen.PixelAt(0, 1).background_color == fixture.theme.unsavedChangeIndicator); // "two" edited
     REQUIRE(screen.PixelAt(0, 2).background_color == fixture.theme.background);             // "three" untouched
+}
+
+TEST_CASE("A read-only buffer shows no unsaved-change indicator", "[BufferView]") {
+    Fixture fixture;
+    // Every line marked as an unsaved change, then the buffer flipped
+    // read-only -- exactly how *debug* and the test-results buffer are
+    // built. None of it is an edit of the user's, so none of it is marked.
+    fixture.buffer.InsertAtPoint("one\ntwo\nthree");
+    fixture.buffer.SetReadOnly(true);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    ned::ui::Screen screen = ned::ui::Screen(20, 3);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(0, 0).background_color == fixture.theme.background);
+    REQUIRE(screen.PixelAt(0, 1).background_color == fixture.theme.background);
+    REQUIRE(screen.PixelAt(0, 2).background_color == fixture.theme.background);
+}
+
+TEST_CASE("Turning the unsaved-change swatch off blanks the status column", "[BufferView]") {
+    struct SwatchGuard {
+        SwatchGuard() {
+            ned::editor::SetUnsavedChangeSwatchEnabled(false);
+        }
+        ~SwatchGuard() {
+            ned::editor::SetUnsavedChangeSwatchEnabled(true);
+        }
+    } guard;
+
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("one\ntwo");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 1});
+    ned::ui::Screen screen = ned::ui::Screen(20, 2);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 1});
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(0, 0).background_color == fixture.theme.background);
+    REQUIRE(screen.PixelAt(0, 1).background_color == fixture.theme.background);
+}
+
+TEST_CASE("The status column marks content appended while the buffer was away", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.SetReadOnly(true);
+    fixture.buffer.AppendWhileReadOnly("one\ntwo\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 3});
+    ned::ui::Screen screen = ned::ui::Screen(20, 4);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 3});
+    view.Paint(canvas);
+
+    // First visit: no baseline yet, so nothing is "new since you last looked".
+    REQUIRE(screen.PixelAt(0, 0).background_color == fixture.theme.background);
+    REQUIRE(screen.PixelAt(0, 1).background_color == fixture.theme.background);
+
+    ned::text::Buffer elsewhere("elsewhere");
+    fixture.activeBuffer.Set(elsewhere); // leaving is what commits the frontier
+    fixture.activeBuffer.Set(fixture.buffer);
+
+    fixture.buffer.AppendWhileReadOnly("three\n");
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(0, 0).background_color == fixture.theme.background);
+    REQUIRE(screen.PixelAt(0, 1).background_color == fixture.theme.background);
+    REQUIRE(screen.PixelAt(0, 2).background_color == fixture.theme.unseenContentIndicator);
+}
+
+TEST_CASE("The boundary style marks only the first unseen line", "[BufferView]") {
+    struct StyleGuard {
+        StyleGuard() {
+            ned::editor::SetUnseenContentMarkerStyle(ned::editor::UnseenContentMarkerStyle::Boundary);
+        }
+        ~StyleGuard() {
+            ned::editor::SetUnseenContentMarkerStyle(ned::editor::UnseenContentMarkerStyle::Band);
+        }
+    } guard;
+
+    Fixture fixture;
+    fixture.buffer.SetReadOnly(true);
+    fixture.buffer.AppendWhileReadOnly("one\n");
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 3});
+    ned::ui::Screen screen = ned::ui::Screen(20, 4);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 19, .y_min = 0, .y_max = 3});
+    view.Paint(canvas);
+
+    ned::text::Buffer elsewhere("elsewhere");
+    fixture.activeBuffer.Set(elsewhere);
+    fixture.activeBuffer.Set(fixture.buffer);
+
+    fixture.buffer.AppendWhileReadOnly("two\nthree\n");
+    view.Paint(canvas);
+
+    REQUIRE(screen.PixelAt(0, 0).background_color == fixture.theme.background);
+    REQUIRE(screen.PixelAt(0, 1).background_color == fixture.theme.unseenContentIndicator);
+    REQUIRE(screen.PixelAt(0, 2).background_color == fixture.theme.background); // band would have marked this too
 }
 
 TEST_CASE("Saving clears the status column's unsaved-change indicator", "[BufferView]") {

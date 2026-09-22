@@ -820,6 +820,7 @@ void Buffer::CommitBarrier() {
     ++ContentGeneration_;
     Edits_.Record(EditOp::Barrier(ContentGeneration_));
     Anchors_.ApplyBarrier();
+    DisarmUnseenTracking(); // no offset survives a wholesale replacement
 }
 
 AnchorId Buffer::CreateAnchor(std::size_t offset, AnchorPolicy policy) {
@@ -1151,6 +1152,46 @@ std::size_t Buffer::UnsavedChangeGeneration() const {
     return UnsavedChangeGeneration_;
 }
 
+bool Buffer::UnseenContentTracked() const {
+    return UnseenTracking_ && SeenBaseline_;
+}
+
+std::size_t Buffer::SeenByteOffset() const {
+    return SeenByteOffset_;
+}
+
+std::size_t Buffer::SeenGeneration() const {
+    return SeenGeneration_;
+}
+
+void Buffer::NoteSeenThrough(std::size_t byteOffset) {
+    PendingSeenByte_ = std::max(PendingSeenByte_, std::min(byteOffset, Storage_->ByteLength()));
+}
+
+void Buffer::CommitSeenContent() {
+    if (!UnseenTracking_) {
+        return; // nothing appends to this buffer -- the frontier would mean nothing
+    }
+    const std::size_t committed = std::max(SeenByteOffset_, PendingSeenByte_);
+    if (committed == SeenByteOffset_ && SeenBaseline_) {
+        return;
+    }
+    SeenByteOffset_ = committed;
+    SeenBaseline_   = true;
+    ++SeenGeneration_;
+}
+
+void Buffer::DisarmUnseenTracking() {
+    if (!UnseenTracking_ && !SeenBaseline_ && SeenByteOffset_ == 0) {
+        return;
+    }
+    UnseenTracking_  = false;
+    SeenBaseline_    = false;
+    SeenByteOffset_  = 0;
+    PendingSeenByte_ = 0;
+    ++SeenGeneration_;
+}
+
 void Buffer::SetDiagnostics(std::vector<Diagnostic> diagnostics) {
     Diagnostics_ = std::move(diagnostics);
     ++DiagnosticsGeneration_;
@@ -1165,6 +1206,17 @@ std::size_t Buffer::DiagnosticsGeneration() const {
 }
 
 void Buffer::RelocateTrackedState(std::size_t offset, std::size_t oldLength, std::size_t newLength) {
+    // Only a pure append at the very end leaves the unseen frontier
+    // meaningful -- Storage_ is already mutated by the time this runs, so
+    // "ends at the new end" is the exact test. Anything else has rewritten
+    // text the frontier was measured against.
+    if (UnseenTracking_) {
+        const bool tailAppend =
+            oldLength == 0 && offset >= SeenByteOffset_ && offset + newLength == Storage_->ByteLength();
+        if (!tailAppend) {
+            DisarmUnseenTracking();
+        }
+    }
     if (oldLength > 0) {
         const std::size_t rangeEnd = offset + oldLength;
         Point_                     = RelocateForDelete(Point_, offset, rangeEnd);
@@ -1654,6 +1706,10 @@ void Buffer::AppendWhileReadOnly(std::string_view text) {
         throw std::logic_error("AppendWhileReadOnly called on a writable buffer.");
     }
     InsertAtImpl(Storage_->ByteLength(), text);
+    if (!UnseenTracking_) {
+        UnseenTracking_ = true; // the one feed that can make content unseen
+        ++SeenGeneration_;
+    }
 }
 
 void Buffer::InsertAtImpl(std::size_t byteOffset, std::string_view text) {

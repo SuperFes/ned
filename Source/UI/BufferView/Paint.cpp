@@ -10,6 +10,7 @@
 #include "Editor/InlineDebugValues.h"
 #include "Editor/RecencyGlow.h"
 #include "Editor/RulerSettings.h"
+#include "Editor/StatusGutterSettings.h"
 #include "UI/BreakpointGlyph.h"
 #include "UI/BufferView/Internal.h"
 
@@ -467,8 +468,16 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
         const auto it = std::lower_bound(
             frame.unsavedChangeLineRanges.begin(), frame.unsavedChangeLineRanges.end(), line,
             [](const auto& range, std::size_t targetLine) { return range.second <= targetLine; });
-        const bool  changed        = it != frame.unsavedChangeLineRanges.end() && it->first <= line;
-        const Color indicatorColor = changed ? theme_.unsavedChangeIndicator : theme_.background;
+        const bool changed = it != frame.unsavedChangeLineRanges.end() && it->first <= line;
+        // status-gutter read-only follow-up: the same cell says "this
+        // arrived while you were away" on a read-only buffer, where an
+        // unsaved-change swatch could only ever be a lie. Band marks the
+        // whole unseen tail, Boundary only its first line.
+        const bool  unseen         = frame.firstUnseenLine.has_value() &&
+                                     (frame.unseenBand ? line >= *frame.firstUnseenLine : line == *frame.firstUnseenLine);
+        const Color indicatorColor = changed  ? theme_.unsavedChangeIndicator
+                                     : unseen ? theme_.unseenContentIndicator
+                                              : theme_.background;
         const Brush statusBrush{.background = indicatorColor, .foreground = indicatorColor};
         Cell&       cell = c[{.x = static_cast<int>(frame.gutter.statusStart), .y = row}];
         cell.character   = " ";
@@ -1858,9 +1867,14 @@ void BufferView::Paint(Canvas paneCanvas) {
     // above. Empty unless a server has actually answered for this buffer.
     const std::vector<std::size_t>& codeActionHintLines = gutters_.CodeActionHintLines();
 
+    // status-gutter read-only follow-up: resolved once per frame like the
+    // ranges above; nullopt unless this buffer has an unseen tail.
+    const std::optional<std::size_t> firstUnseenLine = gutters_.FirstUnseenLine();
+    const bool                       unseenBand      = editor::GetUnseenContentMarkerStyle() == editor::UnseenContentMarkerStyle::Band;
+
     const FramePaint frame{buffer, content, gutter, totalLines,
                            point, pointLine, dapBreakpoints, unsavedChangeLineRanges,
-                           diagnosticLineSeverities, codeActionHintLines};
+                           firstUnseenLine, unseenBand, diagnosticLineSeverities, codeActionHintLines};
     // VCS blame gutter: unconditional every Paint() like the two above, but
     // this only ever clears (never repopulates) blameLineInfo_ -- see its
     // own doc comment.
@@ -2316,6 +2330,14 @@ void BufferView::Paint(Canvas paneCanvas) {
             line                     = viewport_.NextVisibleLine(line + 1, renderEndLine);
         }
     }
+
+    // status-gutter read-only follow-up: `line` is now the first line the
+    // row loop did not reach, so its start byte is exactly how far down the
+    // buffer this frame got. Accumulated as a high-water mark here and only
+    // folded into the frontier when the pane switches away
+    // (ActiveBuffer::Set), so a marker does not clear itself out from under
+    // whoever is reading it.
+    buffer.NoteSeenThrough(line < totalLines ? content.LineToByteOffset(line) : content.ByteLength());
 
     PaintBufferSurface(c);
 

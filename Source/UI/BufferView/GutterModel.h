@@ -98,7 +98,22 @@ class GutterModel {
     // Flat and disjoint by construction -- there is no nesting here the way
     // there is for fold depth -- so rendering a row is a binary search with no
     // streaming state.
+    //
+    // Empty on a read-only buffer: an append-only buffer (*lsp log*, *debug*,
+    // task output) has no edits of yours to mark, and a swatch on every one
+    // of its lines is a claim that is never true. The column is given the
+    // unseen-content marker there instead -- see FirstUnseenLine below.
     [[nodiscard]] const std::vector<std::pair<std::size_t, std::size_t>>& UnsavedChangeLineRanges() const;
+
+    // The first line of the read-only buffer's unseen tail, or nullopt when
+    // this buffer has no meaningful frontier (writable, never appended to,
+    // never left and returned to) or the feature is off. A line is unseen
+    // when its own start byte is at or past Buffer::SeenByteOffset(), so a
+    // frontier landing mid-line leaves that partly-read line seen.
+    //
+    // Keyed on ContentGeneration() and SeenGeneration(): an append bumps the
+    // first, leaving and returning bumps the second.
+    [[nodiscard]] std::optional<std::size_t> FirstUnseenLine() const;
 
     // At most one {line, severity} entry per line, sorted by line, for the
     // diagnostic column. A diagnostic's range can span lines, but the gutter
@@ -204,6 +219,7 @@ class GutterModel {
 
   private:
     void EnsureUnsavedChanges() const;
+    void EnsureFirstUnseenLine() const;
     void EnsureDiagnosticSeverities() const;
     void EnsureConflictHunks() const;
     void EnsureFoldableBlocks() const;
@@ -225,6 +241,9 @@ class GutterModel {
 
     mutable CacheStamp                                       unsavedChangeStamp_;
     mutable std::vector<std::pair<std::size_t, std::size_t>> unsavedChangeLineRanges_;
+
+    mutable CacheStamp                 firstUnseenLineStamp_;
+    mutable std::optional<std::size_t> firstUnseenLine_;
 
     mutable CacheStamp                                                              diagnosticStamp_;
     mutable std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>> diagnosticLineSeverities_;

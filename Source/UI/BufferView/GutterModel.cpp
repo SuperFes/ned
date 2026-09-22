@@ -14,6 +14,7 @@
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Lsp/ServerConfig.h"
 #include "Editor/Project/Root.h"
+#include "Editor/StatusGutterSettings.h"
 #include "Editor/TestRun/Config.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Text/ITextStorage.h"
@@ -49,12 +50,21 @@ const std::vector<std::pair<std::size_t, std::size_t>>& GutterModel::UnsavedChan
 void GutterModel::EnsureUnsavedChanges() const {
     text::Buffer& buffer = context_.activeBuffer.Get();
 
-    const CacheStamp stamp = CacheStamp::For(&buffer, {buffer.ContentGeneration(), buffer.UnsavedChangeGeneration()});
+    // ReadOnly() joins the stamp because nothing else would notice
+    // toggle-read-only: neither generation moves when the flag flips.
+    const CacheStamp stamp = CacheStamp::For(
+        &buffer, {buffer.ContentGeneration(), buffer.UnsavedChangeGeneration(), static_cast<std::size_t>(buffer.ReadOnly()),
+                  static_cast<std::size_t>(editor::UnsavedChangeSwatchEnabled())});
     if (unsavedChangeStamp_.Matches(stamp)) {
         return;
     }
 
     unsavedChangeLineRanges_.clear();
+    if (buffer.ReadOnly() || !editor::UnsavedChangeSwatchEnabled()) {
+        // see UnsavedChangeLineRanges()'s own doc comment
+        unsavedChangeStamp_ = stamp;
+        return;
+    }
     const text::ITextStorage& content = buffer.Content();
     for (const auto& [byteStart, byteEnd] : buffer.UnsavedChangeRanges()) {
         const std::size_t startLine = content.ByteOffsetToLine(byteStart);
@@ -76,6 +86,44 @@ void GutterModel::EnsureUnsavedChanges() const {
     }
 
     unsavedChangeStamp_ = stamp;
+}
+
+std::optional<std::size_t> GutterModel::FirstUnseenLine() const {
+    EnsureFirstUnseenLine();
+    return firstUnseenLine_;
+}
+
+void GutterModel::EnsureFirstUnseenLine() const {
+    text::Buffer& buffer = context_.activeBuffer.Get();
+
+    const CacheStamp stamp = CacheStamp::For(
+        &buffer, {buffer.ContentGeneration(), buffer.SeenGeneration(),
+                  static_cast<std::size_t>(editor::UnseenContentMarkerEnabled())});
+    if (firstUnseenLineStamp_.Matches(stamp)) {
+        return;
+    }
+
+    firstUnseenLine_.reset();
+    firstUnseenLineStamp_ = stamp;
+    if (!editor::UnseenContentMarkerEnabled() || !buffer.UnseenContentTracked()) {
+        return;
+    }
+
+    const text::ITextStorage& content = buffer.Content();
+    const std::size_t         seen    = buffer.SeenByteOffset();
+    if (seen >= content.ByteLength()) {
+        return; // nothing has arrived since you last looked
+    }
+
+    // A line counts as unseen only when it starts at or past the frontier:
+    // a frontier landing mid-line means that line was partly read.
+    std::size_t line = content.ByteOffsetToLine(seen);
+    if (content.LineToByteOffset(line) < seen) {
+        ++line;
+    }
+    if (line < content.LineCount()) {
+        firstUnseenLine_ = line;
+    }
 }
 
 const std::vector<std::pair<std::size_t, text::Buffer::Diagnostic::Severity>>& GutterModel::DiagnosticLineSeverities()
