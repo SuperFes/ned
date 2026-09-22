@@ -1578,6 +1578,12 @@ these accumulate detail in place.
 - LSP broker "server mode" shipped 2026-09-16 as `ned --foreground` (git log --grep=
   `foreground-mode`) — see the pre-warming follow-up below for the one piece split out
   of it.
+- `ned --foreground` takes over an ordinary broker and refuses to displace another
+  `--foreground` instance (2026-09-21, slug `foreground-one-instance`): it probes the
+  socket with a new `ned/broker-info` control request, shuts down an ephemeral daemon and
+  waits for it to actually stop before binding, and tells the user to restart their
+  service rather than starting a second always-on daemon. A daemon too old to answer
+  `ned/broker-info` reads as "unidentified" and is taken over like an ephemeral one.
 
 - [ ] **LSP broker pre-warming** (split out from "LSP broker server mode" above,
       2026-09-16) — warm the N most-recently-used projects' language servers when

@@ -9,6 +9,7 @@
 #ifndef NED_EDITOR_LSP_BROKERCONNECT_H
 #define NED_EDITOR_LSP_BROKERCONNECT_H
 
+#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -22,6 +23,45 @@ class EventLoop;
 } // namespace ned::ui
 
 namespace ned::editor::lsp {
+
+// foreground-takeover follow-up. What is listening on the broker socket
+// right now, as far as a would-be daemon needs to care.
+//
+// Unidentified is a running daemon that didn't answer ned/broker-info --
+// in practice one built before that control message existed. Treated as
+// takeable rather than left alone: an always-on instance is a deliberate,
+// supervised thing that says so, and refusing to start because something
+// unrecognizable holds the socket would strand the user with no way
+// forward but a manual kill.
+struct BrokerProbe {
+    enum class State {
+        NotRunning,   // nothing is listening
+        Unidentified, // something is, but it didn't answer
+        Ephemeral,    // an ordinary auto-spawned/`--lsp-broker` daemon
+        Supervised,   // a deliberate `--foreground` instance
+    };
+
+    State state = State::NotRunning;
+    int   pid   = 0; // 0 unless the daemon named itself
+};
+
+// Connects, asks ned/broker-info, and reads the one-frame answer. Never
+// throws and never blocks past timeout -- every failure (no socket, a
+// refused connection, a daemon that says nothing) is an ordinary answer
+// here, not an error. socketPathOverride is the same test-only seam
+// TryConnectToBroker carries, resolved internally for the same reason.
+[[nodiscard]] BrokerProbe ProbeBroker(std::optional<std::filesystem::path> socketPathOverride = std::nullopt,
+                                      std::chrono::milliseconds            timeout            = std::chrono::seconds(2));
+
+// Sends ned/broker-shutdown and then waits for the socket to actually stop
+// accepting connections -- the daemon gives every language server it holds
+// a real LSP shutdown/exit first (Broker.h's Shutdown()), so "sent" and
+// "gone" can be seconds apart, and binding in that window would fail or,
+// worse, race. True once nothing is listening, including when nothing was
+// listening to begin with; false if the daemon was still there when
+// timeout ran out.
+[[nodiscard]] bool ShutDownBrokerAndWait(std::optional<std::filesystem::path> socketPathOverride = std::nullopt,
+                                         std::chrono::milliseconds            timeout            = std::chrono::seconds(20));
 
 // Attempts to attach to an already-running LSP broker daemon (see
 // BrokerMain.h) for (projectRoot, language) over socketPath -- connects,

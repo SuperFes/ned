@@ -6,7 +6,7 @@
 
 namespace ned::editor::lsp {
 
-int RunLspBrokerDaemon(int maxConcurrentServers, std::chrono::milliseconds wholeDaemonIdleTimeout) {
+int RunLspBrokerDaemon(int maxConcurrentServers, std::chrono::milliseconds wholeDaemonIdleTimeout, bool supervised) {
     // The daemon writes to many sockets/pipes that routinely close out from
     // under it (an evicted/crashed/disconnected peer), and an unhandled
     // SIGPIPE's default action is to terminate the *entire* daemon over one
@@ -26,7 +26,8 @@ int RunLspBrokerDaemon(int maxConcurrentServers, std::chrono::milliseconds whole
     // namespace class in this file), so its threading/lifetime paths are
     // reachable from ned_tests and therefore covered by the ASan/UBSan
     // build. This function is the production entry point and nothing else.
-    BrokerDaemon daemon(BrokerDaemonOptions{.maxConcurrentServers = maxConcurrentServers, .wholeDaemonIdleTimeout = wholeDaemonIdleTimeout});
+    BrokerDaemon daemon(BrokerDaemonOptions{
+        .maxConcurrentServers = maxConcurrentServers, .wholeDaemonIdleTimeout = wholeDaemonIdleTimeout, .supervised = supervised});
     return daemon.Run();
 }
 

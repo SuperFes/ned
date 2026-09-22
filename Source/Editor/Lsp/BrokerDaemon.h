@@ -71,6 +71,17 @@ struct BrokerDaemonOptions {
     // replaced on disk. Meaningless (and a nuisance) for a test daemon
     // running out of a build tree that may be rebuilt underneath it.
     bool watchExecutableIdentity = true;
+
+    // foreground-takeover follow-up: whether this daemon is the deliberate
+    // always-on instance (`ned --foreground`, normally under a process
+    // supervisor) rather than an ephemeral auto-spawn. The daemon itself
+    // behaves identically either way -- what reads this is the
+    // ned/broker-info answer, and through it a *second* `ned --foreground`
+    // deciding whether it may take this one over (an ephemeral broker) or
+    // must refuse and leave it alone (this one, since a supervisor would
+    // just restart what it killed and two always-on daemons racing for one
+    // socket is the failure mode being prevented).
+    bool supervised = false;
 };
 
 // Owns every live connection (client sockets and real language-server

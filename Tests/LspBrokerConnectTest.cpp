@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -149,6 +150,115 @@ TEST_CASE("TryConnectToBroker gives up within its own timeout instead of hanging
     for (const int fillerFd : fillerFds) {
         ::close(fillerFd);
     }
+    ::close(listenFd);
+    ::unlink(socketPath.c_str());
+}
+
+// foreground-takeover follow-up: the asking side of ned/broker-info -- what
+// `ned --foreground` uses to tell an ephemeral broker it may replace from a
+// supervised one it must leave alone.
+TEST_CASE("ProbeBroker reports NotRunning when nothing is listening", "[BrokerConnect]") {
+    const auto probe = ned::editor::lsp::ProbeBroker(UniqueSocketPath(), std::chrono::milliseconds(200));
+    CHECK(probe.state == ned::editor::lsp::BrokerProbe::State::NotRunning);
+    CHECK(probe.pid == 0);
+}
+
+namespace {
+
+// A one-shot listener that answers a single ned/broker-info request with
+// `answer` -- or, when answer is nullopt, accepts and closes without a
+// word, which is how a daemon built before that control message behaves.
+struct InfoListener {
+    int                   listenFd = -1;
+    std::filesystem::path socketPath;
+    std::thread           thread;
+
+    InfoListener(std::filesystem::path path, std::optional<Json> answer) : socketPath(std::move(path)) {
+        ::unlink(socketPath.c_str());
+        listenFd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        REQUIRE(listenFd >= 0);
+        sockaddr_un addr{};
+        addr.sun_family = AF_UNIX;
+        std::strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
+        REQUIRE(::bind(listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+        REQUIRE(::listen(listenFd, 1) == 0);
+        thread = std::thread([this, answer = std::move(answer)] {
+            const int clientFd = ::accept(listenFd, nullptr, nullptr);
+            if (clientFd < 0) {
+                return;
+            }
+            const int dupFd = ::dup(clientFd);
+            Transport transport(clientFd, dupFd, -1);
+            if (!transport.ReadFrame()) {
+                return;
+            }
+            if (answer) {
+                transport.WriteFrame(answer->dump());
+            }
+        });
+    }
+
+    ~InfoListener() {
+        if (thread.joinable()) {
+            thread.join();
+        }
+        ::close(listenFd);
+        ::unlink(socketPath.c_str());
+    }
+
+    InfoListener(const InfoListener&)            = delete;
+    InfoListener& operator=(const InfoListener&) = delete;
+};
+
+} // namespace
+
+TEST_CASE("ProbeBroker distinguishes a supervised daemon from an ephemeral one", "[BrokerConnect]") {
+    {
+        InfoListener listener(UniqueSocketPath(),
+                              Json{{"jsonrpc", "2.0"}, {"id", 1}, {"result", {{"pid", 4321}, {"supervised", true}}}});
+        const auto   probe = ned::editor::lsp::ProbeBroker(listener.socketPath, std::chrono::seconds(2));
+        CHECK(probe.state == ned::editor::lsp::BrokerProbe::State::Supervised);
+        CHECK(probe.pid == 4321);
+    }
+    {
+        InfoListener listener(UniqueSocketPath(),
+                              Json{{"jsonrpc", "2.0"}, {"id", 1}, {"result", {{"pid", 99}, {"supervised", false}}}});
+        const auto   probe = ned::editor::lsp::ProbeBroker(listener.socketPath, std::chrono::seconds(2));
+        CHECK(probe.state == ned::editor::lsp::BrokerProbe::State::Ephemeral);
+        CHECK(probe.pid == 99);
+    }
+}
+
+TEST_CASE("ProbeBroker reports Unidentified for a daemon that never answers", "[BrokerConnect]") {
+    // A broker from a build predating ned/broker-info: it holds the socket
+    // and says nothing. Takeable, per BrokerProbe's own doc comment --
+    // refusing to start over something unrecognizable would strand the user.
+    InfoListener listener(UniqueSocketPath(), std::nullopt);
+    const auto   probe = ned::editor::lsp::ProbeBroker(listener.socketPath, std::chrono::milliseconds(300));
+    CHECK(probe.state == ned::editor::lsp::BrokerProbe::State::Unidentified);
+    CHECK(probe.pid == 0);
+}
+
+TEST_CASE("ShutDownBrokerAndWait succeeds immediately when nothing is listening", "[BrokerConnect]") {
+    CHECK(ned::editor::lsp::ShutDownBrokerAndWait(UniqueSocketPath(), std::chrono::milliseconds(500)));
+}
+
+TEST_CASE("ShutDownBrokerAndWait reports failure while a daemon keeps the socket", "[BrokerConnect]") {
+    // The property that keeps `ned --foreground` from racing a daemon that
+    // ignored the shutdown: it must not report the socket free while
+    // something is still accepting on it.
+    const std::filesystem::path socketPath = UniqueSocketPath();
+    ::unlink(socketPath.c_str());
+    const int listenFd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    REQUIRE(listenFd >= 0);
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, socketPath.c_str(), sizeof(addr.sun_path) - 1);
+    REQUIRE(::bind(listenFd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0);
+    REQUIRE(::listen(listenFd, 4) == 0);
+
+    CHECK_FALSE(ned::editor::lsp::ShutDownBrokerAndWait(socketPath, std::chrono::milliseconds(500)));
+
     ::close(listenFd);
     ::unlink(socketPath.c_str());
 }

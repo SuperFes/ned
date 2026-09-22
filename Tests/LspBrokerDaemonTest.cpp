@@ -81,9 +81,21 @@ BrokerDaemonOptions TestOptions(const std::filesystem::path& socketPath,
 // TEST_CASE. The daemon is kept alive by the shared_ptr the thread
 // captured, so a detached thread never touches a destroyed object.
 struct DaemonHarness {
+    // broker-info follow-up: what the daemon thread writes lives behind a
+    // shared_ptr rather than in this struct. The destructor below detaches
+    // that thread when the daemon hasn't stopped yet, and a detached thread
+    // outliving the TEST_CASE would otherwise write `finished`/`exitCode`
+    // into a harness whose stack frame is gone -- a stack-use-after-return
+    // ASan reports the moment any test leaves a daemon running at scope
+    // exit (the `held = daemon` capture only ever kept the *daemon* alive,
+    // never this). Both ends now own the state they touch.
+    struct RunState {
+        std::atomic<bool> finished{false};
+        std::atomic<int>  exitCode{-1};
+    };
+
     std::shared_ptr<BrokerDaemon> daemon;
-    std::atomic<bool>             finished{false};
-    std::atomic<int>              exitCode{-1};
+    std::shared_ptr<RunState>     state = std::make_shared<RunState>();
     std::thread                   thread;
     std::filesystem::path         socketPath;
     std::stringstream             capturedLog;
@@ -97,15 +109,15 @@ struct DaemonHarness {
         // about what the daemon actually did, not just that it exited.
         previousCerr = std::cerr.rdbuf(capturedLog.rdbuf());
         daemon       = std::make_shared<BrokerDaemon>(TestOptions(socketPath, wholeDaemonIdleTimeout));
-        thread       = std::thread([this, held = daemon] {
-            exitCode = held->Run();
-            finished = true;
+        thread       = std::thread([held = daemon, state = state] {
+            state->exitCode = held->Run();
+            state->finished = true;
         });
         WaitForListener();
     }
 
     ~DaemonHarness() {
-        if (finished.load() && thread.joinable()) {
+        if (state->finished.load() && thread.joinable()) {
             thread.join();
             daemon.reset(); // destroys the daemon (joining any leftover reader threads) while cerr is still captured
         }
@@ -132,7 +144,7 @@ struct DaemonHarness {
     [[nodiscard]] bool WaitForExit(std::chrono::milliseconds limit) {
         const auto deadline = std::chrono::steady_clock::now() + limit;
         while (std::chrono::steady_clock::now() < deadline) {
-            if (finished.load()) {
+            if (state->finished.load()) {
                 return true;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -211,7 +223,7 @@ TEST_CASE("The broker daemon still exits on its own after an idle sweep tears do
     }
 
     REQUIRE(harness.WaitForExit(std::chrono::seconds(20)));
-    REQUIRE(harness.exitCode.load() == 0);
+    REQUIRE(harness.state->exitCode.load() == 0);
 
     const std::string log = harness.Log();
     INFO(log);
@@ -236,7 +248,7 @@ TEST_CASE("The broker daemon survives repeated attach/spawn/idle-teardown cycles
     }
 
     REQUIRE(harness.WaitForExit(std::chrono::seconds(20)));
-    REQUIRE(harness.exitCode.load() == 0);
+    REQUIRE(harness.state->exitCode.load() == 0);
 
     const std::string log = harness.Log();
     INFO(log);
@@ -260,7 +272,7 @@ TEST_CASE("The broker daemon shuts down promptly on a ned/broker-shutdown contro
 
         REQUIRE(harness.WaitForExit(std::chrono::seconds(20)));
     }
-    REQUIRE(harness.exitCode.load() == 0);
+    REQUIRE(harness.state->exitCode.load() == 0);
 
     const std::string log = harness.Log();
     INFO(log);
@@ -284,7 +296,7 @@ TEST_CASE("A whole-daemon idle timeout of zero never fires", "[BrokerDaemon]") {
         control.RequestShutdown();
         REQUIRE(harness.WaitForExit(std::chrono::seconds(20)));
     }
-    REQUIRE(harness.exitCode.load() == 0);
+    REQUIRE(harness.state->exitCode.load() == 0);
 
     const std::string log = harness.Log();
     INFO(log);
@@ -313,10 +325,79 @@ TEST_CASE("The broker daemon shuts down promptly on SIGTERM, the same way as a c
         REQUIRE(::kill(::getpid(), SIGTERM) == 0);
         REQUIRE(harness.WaitForExit(std::chrono::seconds(20)));
     }
-    REQUIRE(harness.exitCode.load() == 0);
+    REQUIRE(harness.state->exitCode.load() == 0);
 
     const std::string log = harness.Log();
     INFO(log);
     REQUIRE(LogContains(log, "received shutdown signal"));
     REQUIRE(LogContains(log, "daemon exiting"));
+}
+
+// foreground-takeover follow-up: the daemon's own half -- answering "what
+// are you?" so a second `ned --foreground` can tell an ephemeral broker it
+// may replace from a supervised one it must not touch.
+TEST_CASE("The daemon answers ned/broker-info with its pid and its ephemeral mode", "[BrokerDaemon]") {
+    DaemonHarness    harness("info-ephemeral", std::chrono::seconds(5));
+    ClientConnection client(harness.socketPath);
+
+    client.transport->WriteFrame(Json{{"jsonrpc", "2.0"}, {"id", 7}, {"method", "ned/broker-info"}}.dump());
+    const std::optional<std::string> frame = client.transport->ReadFrame(std::chrono::seconds(2));
+    REQUIRE(frame.has_value());
+    const Json answer = Json::parse(*frame);
+    CHECK(answer["id"] == 7);
+    CHECK(answer["result"]["pid"] == static_cast<int>(::getpid())); // the test daemon runs in this process
+    CHECK(answer["result"]["supervised"] == false);
+
+    // See the unknown-control-frame case below: stopped deliberately rather
+    // than left running past the end of the TEST_CASE.
+    ClientConnection stopper(harness.socketPath);
+    stopper.RequestShutdown();
+    CHECK(harness.WaitForExit(std::chrono::seconds(5)));
+}
+
+TEST_CASE("A supervised daemon says so", "[BrokerDaemon]") {
+    const std::filesystem::path socketPath = SocketPathFor("info-supervised");
+    ::unlink(socketPath.c_str());
+    BrokerDaemonOptions options = TestOptions(socketPath, std::chrono::seconds(5));
+    options.supervised          = true;
+
+    auto        daemon = std::make_shared<BrokerDaemon>(options);
+    std::thread thread([held = daemon] { (void)held->Run(); });
+    for (int i = 0; i < 200 && !std::filesystem::exists(socketPath); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    {
+        ClientConnection client(socketPath);
+        client.transport->WriteFrame(Json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "ned/broker-info"}}.dump());
+        const std::optional<std::string> frame = client.transport->ReadFrame(std::chrono::seconds(2));
+        REQUIRE(frame.has_value());
+        CHECK(Json::parse(*frame)["result"]["supervised"] == true);
+    }
+    {
+        ClientConnection stopper(socketPath);
+        stopper.RequestShutdown();
+    }
+    thread.join();
+    ::unlink(socketPath.c_str());
+}
+
+TEST_CASE("An unknown control frame still drops the connection", "[BrokerDaemon]") {
+    // The guard that makes BrokerProbe::State::Unidentified a real state
+    // rather than a theoretical one: anything that isn't attach/shutdown/
+    // info gets nothing back, which is exactly how a daemon built before
+    // ned/broker-info behaves.
+    DaemonHarness    harness("info-unknown", std::chrono::seconds(5));
+    ClientConnection client(harness.socketPath);
+
+    client.transport->WriteFrame(Json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "ned/not-a-control-message"}}.dump());
+    CHECK_FALSE(client.transport->ReadFrame(std::chrono::seconds(2)).has_value()); // EOF, not an answer
+
+    // Stopped here rather than left to the idle timeout: a daemon still
+    // running when the harness goes out of scope is exactly what the
+    // detached-thread path above exists for, and leaving one behind in
+    // every run makes that path routine instead of exceptional.
+    ClientConnection stopper(harness.socketPath);
+    stopper.RequestShutdown();
+    CHECK(harness.WaitForExit(std::chrono::seconds(5)));
 }

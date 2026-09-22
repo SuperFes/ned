@@ -26,7 +26,13 @@ namespace ned::editor::lsp {
 // name -- the default here matches its default (1 minute, the ephemeral
 // auto-spawn/`--lsp-broker` case); main.cpp's `--foreground` passes zero
 // (never self-exit on idle) instead.
-[[nodiscard]] int RunLspBrokerDaemon(int maxConcurrentServers = 8, std::chrono::milliseconds wholeDaemonIdleTimeout = std::chrono::minutes(1));
+// supervised: whether this is the deliberate always-on instance
+// (`ned --foreground`) rather than an ephemeral auto-spawn -- reported to
+// whoever asks over ned/broker-info, which is how a second --foreground
+// knows to refuse rather than take this one over (see
+// BrokerDaemonOptions::supervised and main.cpp's RunForegroundBroker).
+[[nodiscard]] int RunLspBrokerDaemon(int maxConcurrentServers = 8, std::chrono::milliseconds wholeDaemonIdleTimeout = std::chrono::minutes(1),
+                                     bool supervised = false);
 
 } // namespace ned::editor::lsp
 

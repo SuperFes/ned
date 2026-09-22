@@ -37,7 +37,9 @@ void BuildCli(CLI::App& app, CliArgs& args) {
         ->group(kStartupModesGroup);
     app.add_flag("--foreground", args.foreground,
                  "Run the LSP broker daemon in the foreground, never self-exiting when idle -- for a systemd "
-                 "--user service (see Packaging/systemd/ned-server.service) or any other real process supervisor")
+                 "--user service (see Packaging/systemd/ned-server.service) or any other real process supervisor. "
+                 "An ordinary broker already holding the socket is shut down first and waited for; a second "
+                 "--foreground instance refuses to start, since restarting the service is what a supervisor is for")
         ->excludes(lspBrokerOpt)
         ->group(kStartupModesGroup);
     app.add_option("--mcp-stdio-relay", args.mcpStdioRelaySocketPath,

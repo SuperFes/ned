@@ -58,6 +58,7 @@
 #include "Editor/HugeFileReindent.h"
 #include "Editor/Indent.h"
 #include "Editor/Keymap.h"
+#include "Editor/Lsp/BrokerConnect.h"
 #include "Editor/Lsp/BrokerMain.h"
 #include "Editor/Lsp/BrokerSocketPath.h"
 #include "Editor/Lsp/Manager.h"
@@ -143,7 +144,55 @@ namespace {
 // recognize it. LeftDock's own ids start at 0 and only ever grow.
 constexpr std::size_t kUnregisteredPanelId = static_cast<std::size_t>(-1);
 
-// `ned --lsp-broker-stop`: connects to the running LSP broker daemon (see
+// `ned --foreground`: the always-on daemon, and the one instance rule that
+// makes "always-on" mean anything.
+//
+// There can be exactly one of these. A second one would bind nothing (the
+// socket is taken) or, worse, win a race for it and leave the supervisor's
+// copy alive but unreachable -- and since a supervisor restarts whatever it
+// is told to stop, a --foreground instance that killed another --foreground
+// instance would be fighting a process that always wins. So a supervised
+// daemon is left strictly alone and the user is told to restart the service
+// instead.
+//
+// An *ephemeral* broker (the auto-spawn a plain `ned` starts, or a manual
+// `--lsp-broker`) is a different matter: it is exactly what this instance is
+// meant to replace, it answers to nobody, and leaving it holding the socket
+// would mean the always-on daemon never starts at all. That one is asked to
+// shut down -- a real LSP shutdown/exit for every server it holds, not a
+// kill -- and waited out before binding.
+int RunForegroundBroker() {
+    const ned::editor::lsp::BrokerProbe probe     = ned::editor::lsp::ProbeBroker();
+    const std::string                   pidSuffix = probe.pid != 0 ? " (pid " + std::to_string(probe.pid) + ")" : std::string();
+
+    if (probe.state == ned::editor::lsp::BrokerProbe::State::Supervised) {
+        std::cerr << "ned: an always-on ned server is already running" << pidSuffix << ".\n"
+                  << "ned: only one --foreground instance can exist at a time -- restart that one instead, e.g.\n"
+                  << "ned:   systemctl --user restart ned-server\n"
+                  << "ned: or stop it first with `ned --lsp-broker-stop`.\n";
+        return Ned::ToExitCode(Ned::ExitStatus::Failure);
+    }
+
+    if (probe.state != ned::editor::lsp::BrokerProbe::State::NotRunning) {
+        std::cout << "ned: an LSP broker" << pidSuffix << " already holds the socket; shutting it down first...\n";
+        if (!ned::editor::lsp::ShutDownBrokerAndWait()) {
+            std::cerr << "ned: the running LSP broker" << pidSuffix << " did not exit -- refusing to race it for the socket.\n"
+                      << "ned: stop it with `ned --lsp-broker-stop` (or kill it) and try again.\n";
+            return Ned::ToExitCode(Ned::ExitStatus::Failure);
+        }
+        std::cout << "ned: the previous LSP broker has exited.\n";
+    }
+
+    // wholeDaemonIdleTimeout = 0: never self-exit on idle, unlike the
+    // ephemeral auto-spawn this just replaced. SIGTERM/SIGINT
+    // (BrokerDaemon::Run()) is what a supervisor stop or Ctrl-C shuts it
+    // down with.
+    return ned::editor::lsp::RunLspBrokerDaemon(/*maxConcurrentServers=*/8,
+                                                /*wholeDaemonIdleTimeout=*/std::chrono::milliseconds::zero(),
+                                                /*supervised=*/true);
+}
+
+// `ned --lsp-broker-stop`: connects to the running LSP broker daemon (see// `ned --lsp-broker-stop`: connects to the running LSP broker daemon (see
 // Editor/Lsp/BrokerMain.h) and sends it the ned/broker-shutdown control
 // message -- every real language-server subprocess gets a genuine LSP
 // shutdown/exit before the daemon exits (Editor/Lsp/Broker.h's own
@@ -3410,7 +3459,7 @@ auto main(int argc, char** argv) -> int {
     // tuned for. SIGTERM/SIGINT (BrokerDaemon::Run()) is what a supervisor
     // stop or Ctrl-C actually shuts this down with.
     if (cli.foreground) {
-        return ned::editor::lsp::RunLspBrokerDaemon(/*maxConcurrentServers=*/8, /*wholeDaemonIdleTimeout=*/std::chrono::milliseconds::zero());
+        return RunForegroundBroker();
     }
 
     if (cli.lspBrokerStop) {

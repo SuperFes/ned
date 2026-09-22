@@ -476,6 +476,26 @@ void BrokerDaemon::HandleClientConnection(ConnectionId connId, int fd) {
         ClientReaderFinished(connId);
         return; // never attached -- nothing to erase; the transport destructs here, closing this control connection's own fds
     }
+    // foreground-takeover follow-up: "what are you?" -- the one control
+    // message that answers rather than acts. A second `ned --foreground`
+    // asks this before deciding whether to take the running daemon over or
+    // refuse; anything that can't answer it (a daemon from a build
+    // predating this) simply drops the connection, which the asker reads
+    // as "unidentified" and treats as takeable.
+    if (method == "ned/broker-info") {
+        const Json response = {{"jsonrpc", "2.0"},
+                               {"id", firstFrame.contains("id") ? firstFrame.at("id") : Json(nullptr)},
+                               {"result", {{"pid", static_cast<int>(::getpid())}, {"supervised", options_.supervised}}}};
+        try {
+            transport->WriteFrame(response.dump());
+        }
+        catch (const std::exception&) {
+            // The asker gave up and closed the socket -- nothing to do but
+            // drop this connection, exactly as for any other write failure.
+        }
+        ClientReaderFinished(connId);
+        return; // never attached, like the shutdown control frame above
+    }
     if (method != "ned/broker-attach") {
         ClientReaderFinished(connId);
         return; // protocol violation -- drop

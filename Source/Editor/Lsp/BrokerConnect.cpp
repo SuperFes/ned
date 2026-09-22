@@ -3,6 +3,8 @@
 #include <chrono>
 #include <climits>
 #include <cstring>
+#include <filesystem>
+#include <system_error>
 #include <thread>
 
 #include <fcntl.h>
@@ -261,6 +263,156 @@ namespace {
     }
 
 } // namespace
+
+namespace {
+
+    // foreground-takeover follow-up. Resolves the socket path the same way
+    // TryConnectToBroker does -- inside the function, never as a default
+    // argument, since BrokerRuntimeDirectory() throws when no
+    // XDG_RUNTIME_DIR/XDG_STATE_HOME/HOME is set and both callers here
+    // promise not to.
+    std::optional<std::string> ResolveSocketPath(const std::optional<std::filesystem::path>& override) {
+        if (override) {
+            return override->string();
+        }
+        try {
+            return BrokerSocketPath().string();
+        }
+        catch (const std::exception&) {
+            return std::nullopt;
+        }
+    }
+
+    // Connected socket at socketPathStr, or -1. Shared by the two control
+    // helpers below, which -- unlike CanConnect above -- need the fd to
+    // actually say something over it.
+    int ConnectToBroker(const std::string& socketPathStr) {
+        const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0) {
+            return -1;
+        }
+        sockaddr_un addr{};
+        addr.sun_family = AF_UNIX;
+        if (socketPathStr.size() >= sizeof(addr.sun_path)) {
+            ::close(fd);
+            return -1;
+        }
+        std::strncpy(addr.sun_path, socketPathStr.c_str(), sizeof(addr.sun_path) - 1);
+        if (!ConnectWithTimeout(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr), kConnectTimeoutMs)) {
+            ::close(fd);
+            return -1;
+        }
+        return fd;
+    }
+
+} // namespace
+
+namespace {
+
+    // foreground-takeover follow-up. Whether *anything* still holds
+    // socketPathStr -- deliberately not CanConnect above, which answers a
+    // different question. A daemon whose accept loop has stalled fills its
+    // listen backlog and then refuses further connections with EAGAIN,
+    // which CanConnect reports exactly like "nothing is there" -- and the
+    // caller that believed it would go on to bind a socket the wedged
+    // daemon still owns. Caught by the test that drives a real listener
+    // which never accepts.
+    //
+    // ECONNREFUSED (and a missing file) is the one answer that genuinely
+    // means free: on AF_UNIX that is the kernel saying the path is bound by
+    // nobody. Everything else -- connected, in progress, backlog full --
+    // counts as held, which is the safe direction to be wrong in: the worst
+    // case is refusing to take over a socket that was about to be released.
+    bool BrokerSocketHeld(const std::string& socketPathStr) {
+        std::error_code ec;
+        if (!std::filesystem::exists(socketPathStr, ec)) {
+            return false;
+        }
+        const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0) {
+            return true; // can't tell; assume held rather than bind over a live daemon
+        }
+        sockaddr_un addr{};
+        addr.sun_family = AF_UNIX;
+        if (socketPathStr.size() >= sizeof(addr.sun_path)) {
+            ::close(fd);
+            return false;
+        }
+        std::strncpy(addr.sun_path, socketPathStr.c_str(), sizeof(addr.sun_path) - 1);
+        const bool connected    = ConnectWithTimeout(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr), kConnectTimeoutMs);
+        const int  connectErrno = errno;
+        ::close(fd);
+        return connected || connectErrno != ECONNREFUSED;
+    }
+
+} // namespace
+
+BrokerProbe ProbeBroker(std::optional<std::filesystem::path> socketPathOverride, std::chrono::milliseconds timeout) {
+    const std::optional<std::string> socketPathStr = ResolveSocketPath(socketPathOverride);
+    if (!socketPathStr) {
+        return {};
+    }
+    const int fd = ConnectToBroker(*socketPathStr);
+    if (fd < 0) {
+        return {}; // nothing listening, or it wouldn't take the connection -- either way there is no daemon to defer to
+    }
+
+    // Anything that answers at all is at least Unidentified from here on:
+    // something holds the socket, whatever it turns out to say.
+    BrokerProbe probe{.state = BrokerProbe::State::Unidentified};
+    try {
+        const int dupFd = ::dup(fd);
+        Transport transport(fd, dupFd, -1);
+        transport.WriteFrame(nlohmann::json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "ned/broker-info"}}.dump());
+        // A daemon that predates ned/broker-info drops the connection
+        // instead of answering (EOF -> nullopt), and one that is wedged
+        // says nothing at all (ReadFrame throws once timeout elapses) --
+        // both leave the probe Unidentified, which is the whole reason
+        // that state exists.
+        if (const std::optional<std::string> frame = transport.ReadFrame(timeout)) {
+            const nlohmann::json answer = nlohmann::json::parse(*frame);
+            const nlohmann::json result = answer.value("result", nlohmann::json::object());
+            probe.pid                   = result.value("pid", 0);
+            probe.state                 = result.value("supervised", false) ? BrokerProbe::State::Supervised : BrokerProbe::State::Ephemeral;
+        }
+    }
+    catch (const std::exception&) {
+        // Unidentified stands: something is there, it just didn't say what.
+    }
+    return probe;
+}
+
+bool ShutDownBrokerAndWait(std::optional<std::filesystem::path> socketPathOverride, std::chrono::milliseconds timeout) {
+    const std::optional<std::string> socketPathStr = ResolveSocketPath(socketPathOverride);
+    if (!socketPathStr) {
+        return true; // no resolvable socket path means no daemon of ours can be running behind one
+    }
+    const int fd = ConnectToBroker(*socketPathStr);
+    if (fd < 0) {
+        return true; // already gone
+    }
+    try {
+        const int dupFd = ::dup(fd);
+        Transport transport(fd, dupFd, -1);
+        transport.WriteFrame(nlohmann::json{{"jsonrpc", "2.0"}, {"method", "ned/broker-shutdown"}}.dump());
+    }
+    catch (const std::exception&) {
+        ::close(fd);
+        return false; // couldn't even ask; the caller must not assume the socket is free
+    }
+
+    // Polled rather than waited on: the daemon owns no pid we hold, and
+    // "stopped accepting" is the only property that actually matters to
+    // whoever wants to bind next.
+    constexpr auto kPollInterval = std::chrono::milliseconds(100);
+    for (auto waited = std::chrono::milliseconds(0); waited < timeout; waited += kPollInterval) {
+        std::this_thread::sleep_for(kPollInterval);
+        if (!BrokerSocketHeld(*socketPathStr)) {
+            return true;
+        }
+    }
+    return false;
+}
 
 std::unique_ptr<Client> TryConnectToBroker(const std::filesystem::path& projectRoot, const std::string& language,
                                               const std::vector<std::string>& argv, ned::ui::EventLoop& eventLoop,
