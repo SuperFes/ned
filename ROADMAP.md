@@ -252,17 +252,18 @@ rather than a release's last afternoon.
 - [ ] `textDocument/inlineValue` -- variable values rendered inline while stopped at a
       breakpoint. Unusual among these in that ned already owns both ends: a DAP session
       knows the values, and the inlay-hint rendering path already draws inline text.
-      **Deferred 2026-09-22 on a measurement, not a guess:**
-      `Tools/lsp-capability-probe.py --require inlineValueProvider` gets it from none
-      of the servers installed here (clangd 23, gopls, pylsp,
-      typescript-language-server, lua-language-server, harper-ls; rust-analyzer on this
-      machine is a rustup proxy with no component behind it, not a server that declined).
-      Re-run that before picking this up -- jdtls is the implementation worth installing
-      to probe against, and a capability probe is the cheap half of the answer (see the
-      tool's own docstring for what it cannot tell you: a capability is a promise to
-      answer, not the shape of the answer, and inlineValue's three result variants are
-      exactly where the design weight sits). The half that did not need a
-      server shipped instead -- slug for `git log --grep=`:
+      **Deferred 2026-09-22, and jdtls was checked rather than assumed:**
+      `Tools/lsp-capability-probe.py --require inlineValueProvider` gets it from none of
+      clangd 23, gopls, pylsp, typescript-language-server, lua-language-server,
+      harper-ls or jdtls -- including dynamic registration, which is the form jdtls uses
+      for eight other capabilities and would have made a static-only probe report a
+      false negative. jdtls was the candidate this entry named, so with it ruled out
+      there is no server on hand to build against at all, and no second candidate worth
+      naming. A capability probe is still only the cheap half of the answer (see the
+      tool's own docstring): a capability is a promise to answer, not the shape of the
+      answer, and inlineValue's three result variants are where the design weight
+      sits -- but that half only matters once some server says yes.
+      The half that did not need a server shipped instead -- slug for `git log --grep=`:
       `inline-debug-values-scoped` -- so what remains here is the genuinely
       server-only part: an `InlineValueEvaluatableExpression` (an expression ned would
       hand to DAP `evaluate`) and an `InlineValueText` the server composes itself,

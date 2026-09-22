@@ -22,6 +22,14 @@ that is actually installed is probed. --require exits non-zero unless every
 probed server advertises that capability, so this can gate a build step or
 answer a yes/no question from a script.
 
+A server may advertise nothing in `initialize` and register everything
+afterwards instead, so the probe sends `initialized` and then listens for
+`client/registerCapability` before reporting. Skipping that step is not a
+harmless simplification -- it reports a server as not implementing what it
+does implement. Measured: jdtls answers `initialize` with 16 providers and
+no codeAction, inlayHint or foldingRange among them, then registers those
+dynamically a moment later.
+
 What this CANNOT tell you: what a server actually returns. A capability is
 a promise to answer, not a description of the answer -- for a request whose
 result shape drives the design (inlineValue's three variants, say), a
@@ -105,7 +113,7 @@ CLIENT_CAPABILITIES = {
 }
 
 
-def probe(argv, root, timeout):
+def probe(argv, root, timeout, settle):
     """The server's advertised capabilities, or (None, why-not)."""
     if shutil.which(argv[0]) is None:
         return None, "not installed"
@@ -175,22 +183,121 @@ def probe(argv, root, timeout):
                 break
             message = json.loads(rest[:length])
             buffered = rest[length:]
-            if message.get("id") == 1 and "result" in message:
-                process.kill()
-                return message["result"].get("capabilities", {}), None
             if message.get("id") == 1 and "error" in message:
                 process.kill()
                 return None, f"initialize failed: {message['error'].get('message', '?')}"
+            if message.get("id") == 1 and "result" in message:
+                capabilities = message["result"].get("capabilities", {})
+                # `initialized` is what licenses the server to register the
+                # rest of what it does; until it is sent, a dynamically
+                # registering server looks like one that implements almost
+                # nothing.
+                send(process, {"jsonrpc": "2.0", "method": "initialized", "params": {}})
+                registered = collect_registrations(process, settle)
+                process.kill()
+                return {"static": capabilities, "dynamic": registered}, None
+            reply_to(process, message)
     process.kill()
     return None, f"no initialize result in {timeout:g}s"
 
 
-def advertised(capabilities, name):
-    """Whether `name` is really offered -- `false` and `{}` differ."""
-    value = capabilities.get(name)
-    if value is None or value is False:
-        return False
-    return True
+def send(process, message):
+    body = json.dumps(message).encode()
+    try:
+        process.stdin.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+        process.stdin.flush()
+    except OSError:
+        pass # the caller notices on the next read
+
+
+def reply_to(process, message):
+    """Answer a server->client request so the server never blocks on us.
+
+    Every answer is the emptiest legal one: this probe is not an editor, and
+    a server withholding a registration because the probe declined some
+    capability would be the same false negative from the other end.
+    """
+    if "id" not in message or "method" not in message:
+        return
+    method = message["method"]
+    if method == "workspace/configuration":
+        items = message.get("params", {}).get("items", [])
+        result = [None] * len(items)
+    elif method == "workspace/workspaceFolders":
+        result = []
+    else:
+        result = None
+    send(process, {"jsonrpc": "2.0", "id": message["id"], "result": result})
+
+
+def collect_registrations(process, settle):
+    """Methods the server registers via client/registerCapability.
+
+    Read until the server has been quiet for `settle` seconds rather than
+    for a fixed window: registrations arrive in bursts, after work the
+    server does on its own schedule (jdtls imports the project first), and a
+    fixed window either truncates a slow server or waits on a fast one.
+    """
+    registered = set()
+    buffered = b""
+    last = time.time()
+    while time.time() - last < settle:
+        ready, _, _ = select.select([process.stdout], [], [], settle)
+        if not ready:
+            break
+        chunk = process.stdout.read1(65536)
+        if not chunk:
+            break
+        last = time.time()
+        buffered += chunk
+        while b"\r\n\r\n" in buffered:
+            head, rest = buffered.split(b"\r\n\r\n", 1)
+            lengths = [line for line in head.split(b"\r\n") if line.lower().startswith(b"content-length")]
+            if not lengths:
+                return registered
+            length = int(lengths[0].split(b":")[1])
+            if len(rest) < length:
+                break
+            message = json.loads(rest[:length])
+            buffered = rest[length:]
+            if message.get("method") == "client/registerCapability":
+                for registration in message.get("params", {}).get("registrations", []):
+                    if registration.get("method"):
+                        registered.add(registration["method"])
+            reply_to(process, message)
+    return registered
+
+
+def advertised(result, name):
+    """Whether `name` is offered, statically or by dynamic registration.
+
+    `name` may be written either way round -- "inlineValueProvider" or
+    "textDocument/inlineValue" -- because which one a server uses is the
+    thing being measured, not something the caller should have to know.
+    """
+    static = result["static"]
+    value = static.get(name)
+    if value is not None and value is not False:
+        return "static"
+    stem = name[: -len("Provider")] if name.endswith("Provider") else name.rsplit("/", 1)[-1]
+    for method in result["dynamic"]:
+        if method.rsplit("/", 1)[-1] == stem:
+            return "dynamic"
+    if static.get(stem + "Provider") not in (None, False):
+        return "static"
+    return None
+
+
+def describe(result, name):
+    """What to print for one --require answer."""
+    how = advertised(result, name)
+    if how == "static":
+        return f"{name} = {json.dumps(result['static'].get(name, result['static'].get(name.rsplit('/', 1)[-1] + 'Provider')))}"
+    if how == "dynamic":
+        stem = name[: -len("Provider")] if name.endswith("Provider") else name.rsplit("/", 1)[-1]
+        method = next(m for m in sorted(result["dynamic"]) if m.rsplit("/", 1)[-1] == stem)
+        return f"{name} = registered dynamically as {method}"
+    return f"{name} = no"
 
 
 def main():
@@ -199,6 +306,8 @@ def main():
     parser.add_argument("--root", default=os.getcwd(), help="project root to initialize against (default: cwd)")
     parser.add_argument("--require", metavar="CAP", help="exit non-zero unless every probed server advertises CAP")
     parser.add_argument("--timeout", type=float, default=20.0, help="seconds to wait for initialize (default: 20)")
+    parser.add_argument("--settle", type=float, default=8.0,
+                        help="seconds of server silence that ends the dynamic-registration wait (default: 8)")
     parser.add_argument("--list", action="store_true", help="list the known server names and exit")
     arguments = parser.parse_args()
 
@@ -218,7 +327,7 @@ def main():
     probed = 0
 
     for name in wanted:
-        capabilities, why = probe(SERVERS[name], root, arguments.timeout)
+        capabilities, why = probe(SERVERS[name], root, arguments.timeout, arguments.settle)
         if capabilities is None:
             # An uninstalled server is not a finding; anything else is.
             if why != "not installed" or arguments.servers:
@@ -226,13 +335,14 @@ def main():
             continue
         probed += 1
         if arguments.require:
-            has = advertised(capabilities, arguments.require)
-            print(f"{name:{width}}  {arguments.require} = {json.dumps(capabilities.get(arguments.require))}")
-            if not has:
+            print(f"{name:{width}}  {describe(capabilities, arguments.require)}")
+            if not advertised(capabilities, arguments.require):
                 missing.append(name)
         else:
-            providers = sorted(key for key in capabilities if key.endswith("Provider") and advertised(capabilities, key))
-            print(f"{name:{width}}  {', '.join(providers) if providers else '(no providers advertised)'}")
+            offered = sorted(key for key in capabilities["static"]
+                             if key.endswith("Provider") and capabilities["static"][key] not in (None, False))
+            offered += sorted(f"{method} (dynamic)" for method in capabilities["dynamic"])
+            print(f"{name:{width}}  {', '.join(offered) if offered else '(nothing advertised)'}")
 
     sys.stdout.flush()
     if not probed:
