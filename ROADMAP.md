@@ -156,12 +156,109 @@ alone). Four conscious cuts left behind.
       which no relocation fixes -- and any edit moves point, which re-arms its own
       debounce. Suppress-and-re-request is the right model there. Revisit only if the
       one-debounce-window gap turns out to be visible in practice.
-- [ ] Related policy question surfaced by the same session: a server's semantic tokens
-      currently override any syntax class the grammar produced, including `comment`.
-      phpantom_lsp lexes `//` without a following space as code, so a commented-out
-      line renders as a call and carries a "did you mean" diagnostic. Ned's own PHP
-      grammar parses it as a comment (verified with `--test-language`). Decide whether a
-      grammar `comment` cell is ever a server's to recolour.
+- [ ] Open policy question: a server's semantic tokens currently override any syntax
+      class the grammar produced, including `comment`. No live case motivates it now --
+      the phpantom_lsp one this entry used to cite was a misdiagnosis (checked against
+      0.9.0 and 0.10.0: both classify `//x`, `#x` and `/*x*/` as `comment` and flag only
+      the uncommented call), and 0.10.0's `[semantic_tokens] mode = "contextual"` default
+      stops emitting comment tokens at all. Decide it when a server actually recolours a
+      grammar `comment` cell.
+
+**Server-initiated refresh (`workspace/*/refresh`)**
+
+- [ ] ned implements none of `workspace/{inlayHint,semanticTokens,codeLens,diagnostic}/refresh`
+      and advertises no `refreshSupport` capability, so a server that recomputes a whole
+      class of results and asks the editor to re-pull them gets `Client.cpp`'s generic
+      MethodNotFound (-32601) instead -- and, seeing no `refreshSupport`, a well-behaved
+      server never asks in the first place. Found the hard way: phpantom_lsp declines an
+      `inlayHint` request whose cached symbol map is older than the buffer (correct of it
+      -- those offsets index text the buffer has already moved past, and resolving them
+      against live content puts labels inside the arguments they name) and re-pulls by
+      sending `workspace/inlayHint/refresh` once its background parse commits. ned never
+      advertises the capability, so that refresh is never sent and the declined answer is
+      the last word: hints go missing on the first keystroke and stay missing until an
+      edit happens to change the armed `(generation, viewport)` pair. The wiring is one
+      line per kind once the request is routed -- `PushMergedDiagnostics` already does
+      exactly this at `Manager.cpp:3086`, erasing `armedViewportRequests_` so the next
+      Paint re-arms, with a comment spelling out why the dedup otherwise never fires again.
+- [ ] Independent of refresh, and the reason the above is not merely cosmetic: a viewport
+      response that settles *unanswered* -- a null result, or an error -- leaves
+      `armedViewportRequests_` still holding its `(serverKey, generation, viewport)`
+      triple, so `RequestViewportFeatures`' dedup suppresses every later send for that
+      triple. `SettleCoverage(answered=false)` correctly leaves the byte range uncovered,
+      but nothing upstream re-arms. Any server that declines one request and would answer
+      the next is invisible to ned today; only a server that answers something every time
+      hides it.
+
+**Unimplemented LSP surface** — audited 2026-09-21 by grepping every method string in
+`Source/` against the 3.17 method list. Split by whether something is known to be broken
+today, merely absent, or deliberately skipped, so a later pass doesn't re-litigate the
+third group.
+
+*Known to cost something today, with live evidence:*
+
+- [ ] `client/registerCapability` / `client/unregisterCapability` are unhandled, so
+      `Client.cpp`'s generic path answers MethodNotFound and **every dynamic registration
+      a server makes is silently lost**. Observed on both servers tried: harper-ls logs
+      "Unable to register watch file capability: Method not found", and phpantom_lsp
+      registers `workspace/didChangeWatchedFiles` watchers for `**/*.php`,
+      `**/composer.json` and friends to no effect. A server that registers a capability
+      only dynamically (rather than declaring it in its `InitializeResult`) has that
+      feature simply missing in ned, with nothing user-visible to explain why.
+- [ ] `workspace/didChangeWatchedFiles` is never sent -- the other half of the above, and
+      the thing servers are registering *for*. A file that changes outside the buffer (a
+      branch switch, a `composer install`, a generator, another editor) never reaches the
+      server, so its index silently drifts from the tree until something forces a reparse.
+      ned already runs the inotify watcher this needs (`Editor/FileWatch.h`, driving
+      auto-revert); this is wiring an existing signal to an existing connection, not new
+      machinery.
+- [ ] `textDocument/didSave` is never sent (nor `willSave`). A server that re-runs
+      analysis on save -- which is how most linter integrations behave, phpantom_lsp's
+      PHPStan/PHPCS passes included -- never learns a save happened. `willSaveWaitUntil`
+      is separately the spec's format-on-save hook; ned deliberately runs its own
+      pipeline there instead (`format-buffer-lsp-tier`), so that one stays skipped even
+      once `didSave` lands.
+- [ ] `window/logMessage`, `window/showMessage` and `window/showMessageRequest` are all
+      dropped. What ned surfaces today is captured *stderr* (`lsp-stderr-capture`), which
+      is why the harper-ls lines above appear at all -- a server that reports a genuine
+      problem through the protocol rather than stderr says nothing to the user.
+      `window/showDocument` (a server asking the editor to open a file or URL, which
+      several code actions rely on) is unhandled for the same reason.
+
+*Absent, no equivalent elsewhere in ned:*
+
+- [ ] `textDocument/selectionRange` -- syntax-aware expand/shrink selection. ned has no
+      equivalent of its own; the `selectionRange` hits in `Lsp/Content.h` are
+      `DocumentSymbol`'s field of that name, unrelated.
+- [ ] `inlayHint/resolve` and `workspaceSymbol/resolve` -- the lazy second half of two
+      kinds ned already pulls eagerly. Both let a server defer the expensive part
+      (a hint's tooltip/command, a symbol's location) until something actually needs it.
+- [ ] `workspace/diagnostic` -- workspace-wide pull diagnostics. ned pulls per document
+      (`textDocument/diagnostic`) only, so a project-wide problem list is limited to
+      files that happen to be open.
+- [ ] `workspace/willCreateFiles` / `didCreateFiles` / `willDeleteFiles` /
+      `didDeleteFiles` -- ned implements the *rename* half of this family already
+      (`lsp-rename-file-notifications`); create and delete were never done. The same
+      import-fixup payoff applies to both.
+- [ ] `textDocument/inlineValue` -- variable values rendered inline while stopped at a
+      breakpoint. Unusual among these in that ned already owns both ends: a DAP session
+      knows the values, and the inlay-hint rendering path already draws inline text.
+- [ ] `textDocument/documentColor` / `colorPresentation` -- colour swatches and a picker
+      for CSS/theme files.
+
+*Deliberately skipped -- reasons recorded so these don't get re-opened:*
+
+- [ ] `textDocument/foldingRange` -- ned folds from its own grammar (`ImprintFold.h`), for
+      every language, with no server required. Worth revisiting only for a language that
+      has a server but no ned grammar.
+- [ ] `textDocument/moniker` -- cross-repository symbol identity, useful only with an
+      index ned has no consumer for.
+- [ ] `notebookDocument/*` -- no notebook editing surface exists to sync.
+- [ ] `textDocument/inlineCompletion` -- ACP is ned's answer to this shape.
+- [ ] Minor interop note, not a ned defect: ned answers `workspace/configuration` with
+      JSON `null` per unmatched section, which the spec allows; harper-ls rejects it with
+      "Settings must be an object" on every request. Only worth revisiting if a second
+      server objects.
 
 **LSP completion fidelity**
 
