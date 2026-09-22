@@ -64,6 +64,8 @@
 #include "Editor/Link.h"
 #include "Editor/Lsp/EditApply.h"
 #include "Editor/Lsp/Manager.h"
+#include "Editor/Lsp/Position.h"
+#include "Text/RopeStorage.h"
 #include "Editor/Lsp/ServerConfig.h"
 #include "Editor/MacroRegistry.h"
 #include "Editor/MassifOutputParser.h"

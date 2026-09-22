@@ -2087,7 +2087,19 @@ void Manager::RecordProjectDiagnostics(const std::filesystem::path& path, const 
     slice.fileSize           = size;
     slice.fileMTime          = mtime;
 
-    projectDiagnostics_[absolute][serverKey] = std::move(slice);
+    projectDiagnostics_[absolute][connectionKey] = std::move(slice);
+}
+
+void Manager::SetProjectDiagnosticsForTesting(const std::filesystem::path& path, const std::string& connectionKey,
+                                             std::vector<ProjectDiagnostic> diagnostics) {
+    std::error_code             ec;
+    const std::filesystem::path absolute = std::filesystem::absolute(path, ec).lexically_normal();
+    if (ec) {
+        return;
+    }
+    const auto [size, mtime]                 = FileStamp(absolute);
+    ProjectDiagnosticSlice slice{.diagnostics = std::move(diagnostics), .fileSize = size, .fileMTime = mtime};
+    projectDiagnostics_[absolute][connectionKey] = std::move(slice);
 }
 
 void Manager::DropProjectDiagnostics(const std::filesystem::path& path) {

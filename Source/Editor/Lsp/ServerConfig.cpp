@@ -49,6 +49,9 @@ namespace {
     std::mutex g_pullDiagnosticsMutex;
     bool       g_pullDiagnosticsEnabled = false;
 
+    std::mutex g_projectDiagnosticsMutex;
+    bool       g_projectDiagnosticsEnabled = true;
+
     std::mutex g_semanticHighlightingMutex;
     bool       g_semanticHighlightingEnabled = true;
 
@@ -212,6 +215,16 @@ void SetLspPullDiagnosticsEnabled(bool enabled) {
 bool PullDiagnosticsEnabled() {
     const std::lock_guard<std::mutex> lock(g_pullDiagnosticsMutex);
     return g_pullDiagnosticsEnabled;
+}
+
+void SetProjectDiagnosticsEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(g_projectDiagnosticsMutex);
+    g_projectDiagnosticsEnabled = enabled;
+}
+
+bool ProjectDiagnosticsEnabled() {
+    const std::lock_guard<std::mutex> lock(g_projectDiagnosticsMutex);
+    return g_projectDiagnosticsEnabled;
 }
 
 void SetLspSemanticHighlightingEnabled(bool enabled) {

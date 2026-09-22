@@ -1112,6 +1112,12 @@ namespace {
         editor::lsp::SetLspPullDiagnosticsEnabled(enabled);
     }
 
+    // project-wide-diagnostics follow-up: same "just forward to the
+    // process-wide setter" shape as NedSetLspPullDiagnostics above.
+    void NedSetProjectDiagnostics(bool enabled) {
+        editor::lsp::SetProjectDiagnosticsEnabled(enabled);
+    }
+
     // semanticTokens follow-up: same "just forward to the process-wide
     // setter" shape as NedSetLspSignatureHelpAutoTrigger above.
     void NedSetLspSemanticHighlighting(bool enabled) {
@@ -2482,6 +2488,12 @@ void InstallEditorBindings(Environment& env) {
         "Enable or disable requesting diagnostics via textDocument/diagnostic on every content sync (default "
         "false). Only useful for a server that never sends its own publishDiagnostics notifications -- a server "
         "that proves it doesn't support pull either is never asked again for that connection's lifetime.");
+    env.Register<&NedSetProjectDiagnostics>(
+        "ned", "set-project-diagnostics",
+        "Include files with no buffer open in the *diagnostics* problem list (default true) -- for a server that "
+        "checks the whole project, most of what it reports is about files nobody has opened. Off scopes the list "
+        "to open buffers. Purely a display switch: the records are kept either way, so turning it back on needs no "
+        "server round trip.");
     env.Register<&NedSetLspSemanticHighlighting>(
         "ned", "set-lsp-semantic-highlighting",
         "Enable or disable server-informed syntax highlighting (textDocument/semanticTokens/full), layered on top "

@@ -1459,6 +1459,15 @@ class Manager {
 
     [[nodiscard]] std::vector<ProjectDiagnosticFile> ProjectDiagnostics() const;
 
+    // project-wide-diagnostics follow-up: records one file's diagnostics
+    // directly, stamping the file exactly as a real publish would. Lets a
+    // consumer of ProjectDiagnostics() (the *diagnostics* multibuffer) be
+    // tested for what it does with the data without also standing up a
+    // fake server to deliver it -- the delivery path has its own end-to-end
+    // coverage through a real publish frame in LspManagerTest.
+    void SetProjectDiagnosticsForTesting(const std::filesystem::path& path, const std::string& connectionKey,
+                                         std::vector<ProjectDiagnostic> diagnostics);
+
   private:
     // Returns the already-running client for language, or nullptr if none
     // is running and none is configured -- never spawns one. Used by

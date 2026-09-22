@@ -1,11 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
 #include "Editor/Mode.h"
+#include "Editor/Lsp/Manager.h"
+#include "Editor/Lsp/ServerConfig.h"
 #include "Editor/Multibuffer.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
@@ -15,6 +19,7 @@
 #include "Text/KillRing.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferView.h"
+#include "UI/EventLoop.h"
 #include "UI/Theme.h"
 
 using ned::editor::multibuffer::ClearRegistryForTesting;
@@ -199,4 +204,135 @@ TEST_CASE("C-c C-v jumps to source from a *diagnostics* multibuffer excerpt", "[
 
     REQUIRE(&fixture.activeBuffer.Get() == &a);
     REQUIRE(a.Content().ByteOffsetToLine(a.Point()) == 1); // 0-indexed line 1 == source line 2
+}
+
+// project-wide-diagnostics follow-up. The list used to cover only open
+// buffers, which meant it showed whatever happened to be on screen rather
+// than what is wrong with the project. A server that checks the whole thing
+// reports most of its findings about files nobody has opened.
+//
+// The delivery path (a real publishDiagnostics frame reaching the store) has
+// its own end-to-end coverage in LspManagerTest; this is about what the
+// *diagnostics* multibuffer then does with it.
+TEST_CASE("RequestDiagnosticsBuffer includes files that were never opened", "[BufferView][Diagnostics]") {
+    using ned::editor::lsp::Manager;
+
+    Fixture            fixture;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(fixture.bufferList, eventLoop);
+
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "ned-diagnostics-buffer-project";
+    std::filesystem::create_directories(root);
+    const std::filesystem::path unopened = root / "never-opened.cpp";
+    std::ofstream(unopened) << "int main() {\n    return \"nope\";\n}\n";
+
+    manager.SetProjectDiagnosticsForTesting(
+        unopened, "cpp",
+        {Manager::ProjectDiagnostic{.start    = {.line = 1, .character = 11},
+                                    .end      = {.line = 1, .character = 17},
+                                    .severity = Buffer::Diagnostic::Severity::Error,
+                                    .message  = "unopened-file finding"}});
+    REQUIRE(manager.ProjectDiagnostics().size() == 1);
+
+    // One open buffer with its own diagnostic, so the two sources have to
+    // merge rather than one replacing the other. Named to sort after the
+    // temp path, so the ordering assertion below is not accidental.
+    Buffer& open = fixture.bufferList.CreateBuffer("zzz-open.cpp");
+    open.SetPath("/zzz-repo/zzz-open.cpp"); // a diagnostic needs a path to name a file by
+    open.InsertAtPoint("int other() { return 0; }\n");
+    open.SetDiagnostics({Buffer::Diagnostic{.startByte = 4,
+                                            .endByte   = 9,
+                                            .severity  = Buffer::Diagnostic::Severity::Warning,
+                                            .message   = "open-buffer finding"}});
+
+    BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.RequestDiagnosticsBufferForTesting();
+
+    Buffer* results = fixture.bufferList.Find("*diagnostics*");
+    REQUIRE(results != nullptr);
+    const std::string text = results->Text();
+    REQUIRE(text.find(unopened.string()) != std::string::npos);  // the header names the file
+    REQUIRE(text.find("return \"nope\";") != std::string::npos); // the body is its real line, read from disk
+    REQUIRE(text.find("/zzz-repo/zzz-open.cpp") != std::string::npos); // merged with the open buffer's own
+
+    // Both are re-applied as real diagnostics on the composite, so the
+    // ordinary gutter/underline/next-error pipeline lights up for each.
+    REQUIRE(results->Diagnostics().size() == 2);
+    bool sawUnopened = false;
+    for (const Buffer::Diagnostic& diagnostic : results->Diagnostics()) {
+        if (diagnostic.message == "unopened-file finding") {
+            sawUnopened = true;
+            // Translated into composite space against the line's own text,
+            // not left at the server's {line, character}.
+            REQUIRE(diagnostic.endByte > diagnostic.startByte);
+        }
+    }
+    REQUIRE(sawUnopened);
+
+    SECTION("ned/set-project-diagnostics off scopes the list back to open buffers") {
+        struct Restore {
+            ~Restore() {
+                ned::editor::lsp::SetProjectDiagnosticsEnabled(true);
+            }
+        } restore;
+        ned::editor::lsp::SetProjectDiagnosticsEnabled(false);
+
+        // Not bufferList.Find("*diagnostics*"): CreateBuffer uniquifies the
+        // name, so a rebuild is a *new* buffer and Find would hand back the
+        // one the first build left behind. RequestDiagnosticsBuffer makes
+        // its result active, which is the handle that always means "the
+        // list as of the last build".
+        view.RequestDiagnosticsBufferForTesting();
+        const std::string scoped = fixture.activeBuffer.Get().Text();
+        REQUIRE(scoped.find(unopened.string()) == std::string::npos);
+        REQUIRE(scoped.find("/zzz-repo/zzz-open.cpp") != std::string::npos);
+    }
+
+    std::filesystem::remove_all(root);
+}
+
+// The affordance that makes the wider list worth having: an excerpt whose
+// file has no buffer at all still jumps, by opening it. Distinct from the
+// sibling jump test above, where the target buffer was already resident and
+// the jump only had to switch to it.
+TEST_CASE("C-c C-v opens a file that was never opened, from a project-diagnostics excerpt",
+          "[BufferView][Diagnostics]") {
+    using ned::editor::lsp::Manager;
+
+    Fixture            fixture;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(fixture.bufferList, eventLoop);
+
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "ned-diagnostics-jump-project";
+    std::filesystem::create_directories(root);
+    const std::filesystem::path unopened = root / "never-opened.cpp";
+    std::ofstream(unopened) << "int main() {\n    return \"nope\";\n}\n";
+
+    manager.SetProjectDiagnosticsForTesting(unopened, "cpp",
+                                            {Manager::ProjectDiagnostic{.start    = {.line = 1, .character = 11},
+                                                                        .end      = {.line = 1, .character = 17},
+                                                                        .severity = Buffer::Diagnostic::Severity::Error,
+                                                                        .message  = "returning a string"}});
+    REQUIRE(fixture.bufferList.FindByPath(unopened) == nullptr); // genuinely not open yet
+
+    BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.RequestDiagnosticsBufferForTesting();
+
+    Buffer& results    = fixture.activeBuffer.Get();
+    const std::size_t bodyOffset = results.Text().find("return \"nope\"");
+    REQUIRE(bodyOffset != std::string::npos);
+    results.SetPoint(bodyOffset);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Ctrl('v'));
+
+    Buffer* opened = fixture.bufferList.FindByPath(unopened);
+    REQUIRE(opened != nullptr); // the jump had to open it
+    REQUIRE(&fixture.activeBuffer.Get() == opened);
+    REQUIRE(opened->Content().ByteOffsetToLine(opened->Point()) == 1); // 0-indexed line 1 == source line 2
+
+    std::filesystem::remove_all(root);
 }

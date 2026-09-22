@@ -189,6 +189,19 @@ void               SetLspOnTypeFormattingEnabled(bool enabled); // default false
 void               SetLspPullDiagnosticsEnabled(bool enabled); // default false
 [[nodiscard]] bool PullDiagnosticsEnabled();
 
+// project-wide-diagnostics follow-up. Whether the *diagnostics* problem list
+// includes files a server reported on that have no buffer open here --
+// which for a server that checks the whole project is most of what it has to
+// say. Default on: the alternative is a "problem list" that silently means
+// "problems in what you happen to have open". Off restores exactly that, for
+// anyone who wants the list scoped to their open buffers.
+//
+// Purely a display switch, like InlineDiagnosticsEnabled: the records are
+// kept either way (they cost a publish that already arrived), so turning it
+// back on needs no re-indexing and no server round trip.
+void               SetProjectDiagnosticsEnabled(bool enabled); // default true
+[[nodiscard]] bool ProjectDiagnosticsEnabled();
+
 // semanticTokens follow-up. Same shape as SetLspSignatureHelpAutoTriggerEnabled
 // above -- default true, since this is read-only decoration (server-informed
 // highlighting layered on top of tree-sitter's own, never replacing it) with

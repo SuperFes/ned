@@ -1445,12 +1445,31 @@ void BufferView::RequestDiagnosticsBuffer() {
     // review flow, not this one). source is a raw pointer into
     // bufferList_'s own storage, valid for this whole synchronous function
     // (no callback/await in between, unlike RequestVcsFullDiffBuffer).
+    // project-wide-diagnostics follow-up: one entry per diagnostic, from
+    // either source, reduced to the two facts the excerpt and its
+    // re-applied diagnostic actually need -- the line's own text, and the
+    // flagged range as offsets *within* that line. A resident buffer and a
+    // file that was never opened differ only in where those come from, so
+    // collapsing them here is what lets everything below stay one pass.
     struct PendingDiagnostic {
-        text::Buffer*            source;
+        std::filesystem::path    path;
+        std::size_t              line = 0; // 0-based
+        std::string              bodyText;
+        std::size_t              startInLine = 0;
+        std::size_t              endInLine   = 0;
         text::Buffer::Diagnostic diagnostic;
-        std::size_t              sourceLineStart;
+        bool                     stale = false; // the file changed under a recorded diagnostic
     };
     std::vector<PendingDiagnostic> pending;
+
+    const auto lineOf = [](const text::ITextStorage& content, std::size_t offset) {
+        const std::size_t line      = content.ByteOffsetToLine(std::min(offset, content.ByteLength()));
+        const std::size_t lineStart = content.LineToByteOffset(line);
+        const std::size_t lineEnd =
+            (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+        return std::tuple{line, lineStart, lineEnd};
+    };
+
     for (const auto& bufferPtr : bufferList_.Buffers()) {
         text::Buffer& buffer = *bufferPtr;
         if (!buffer.Path() || buffer.Diagnostics().empty() || editor::multibuffer::MultibufferIndexFor(buffer)) {
@@ -1461,18 +1480,61 @@ void BufferView::RequestDiagnosticsBuffer() {
             if (diagnostic.origin != text::Buffer::Diagnostic::Origin::Code) {
                 continue;
             }
-            const std::size_t line = content.ByteOffsetToLine(std::min(diagnostic.startByte, content.ByteLength()));
-            pending.push_back(PendingDiagnostic{&buffer, diagnostic, content.LineToByteOffset(line)});
+            const auto [line, lineStart, lineEnd] = lineOf(content, diagnostic.startByte);
+            pending.push_back(PendingDiagnostic{
+                .path        = *buffer.Path(),
+                .line        = line,
+                .bodyText    = content.Substring(lineStart, lineEnd - lineStart),
+                .startInLine = diagnostic.startByte > lineStart ? diagnostic.startByte - lineStart : 0,
+                .endInLine   = diagnostic.endByte > lineStart ? diagnostic.endByte - lineStart : 0,
+                .diagnostic  = diagnostic,
+            });
+        }
+    }
+
+    // The files a server reported on that have no buffer here at all. Read
+    // from disk, which is the only copy there is -- the live-buffer rule
+    // does not apply because Manager::ProjectDiagnostics already withholds
+    // any path that currently has one.
+    if (lspManager_ != nullptr && editor::lsp::ProjectDiagnosticsEnabled()) {
+        for (const editor::lsp::Manager::ProjectDiagnosticFile& file : lspManager_->ProjectDiagnostics()) {
+            std::ifstream in(file.path, std::ios::binary);
+            if (!in) {
+                continue; // deleted or unreadable since the server spoke
+            }
+            std::ostringstream raw;
+            raw << in.rdbuf();
+            const text::RopeStorage content{text::Rope(raw.str())};
+            for (const editor::lsp::Manager::ProjectDiagnostic& diagnostic : file.diagnostics) {
+                const std::size_t startByte = editor::lsp::PositionToByte(content, diagnostic.start);
+                const std::size_t endByte   = editor::lsp::PositionToByte(content, diagnostic.end);
+                const auto [line, lineStart, lineEnd] = lineOf(content, startByte);
+                pending.push_back(PendingDiagnostic{
+                    .path        = file.path,
+                    .line        = line,
+                    .bodyText    = content.Substring(lineStart, lineEnd - lineStart),
+                    .startInLine = startByte > lineStart ? startByte - lineStart : 0,
+                    .endInLine   = endByte > lineStart ? endByte - lineStart : 0,
+                    .diagnostic  = text::Buffer::Diagnostic{.startByte = 0,
+                                                            .endByte   = 0,
+                                                            .severity  = diagnostic.severity,
+                                                            .origin    = text::Buffer::Diagnostic::Origin::Code,
+                                                            .message   = diagnostic.message},
+                    .stale       = !file.positionsCurrent,
+                });
+            }
         }
     }
 
     // Grouped per file, top-to-bottom within a file -- a scannable
     // "problems list," not whatever order each language server happened to
-    // report diagnostics in.
+    // report diagnostics in, and not two lists split by whether the file
+    // happens to be open.
     std::sort(pending.begin(), pending.end(), [](const PendingDiagnostic& a, const PendingDiagnostic& b) {
-        const std::filesystem::path& pathA = *a.source->Path();
-        const std::filesystem::path& pathB = *b.source->Path();
-        return pathA != pathB ? pathA < pathB : a.diagnostic.startByte < b.diagnostic.startByte;
+        if (a.path != b.path) {
+            return a.path < b.path;
+        }
+        return a.line != b.line ? a.line < b.line : a.startInLine < b.startInLine;
     });
 
     // One excerpt per diagnostic -- its own single source line, verbatim
@@ -1483,16 +1545,18 @@ void BufferView::RequestDiagnosticsBuffer() {
     std::vector<editor::multibuffer::ExcerptSource> excerpts;
     excerpts.reserve(pending.size());
     for (const PendingDiagnostic& item : pending) {
-        const text::ITextStorage& content = item.source->Content();
-        const std::size_t         line    = content.ByteOffsetToLine(item.sourceLineStart);
-        const std::size_t         lineEnd = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
         // U+25B8, ProjectSidebar's own disclosure triangle -- same header
         // glyph vcs-full-diff-buffer's excerpts use, for visual consistency
         // between the two multibuffer consumers.
-        std::string header = "▸ " + item.source->Path()->string() + ":" + std::to_string(line + 1);
-        std::string body   = content.Substring(item.sourceLineStart, lineEnd - item.sourceLineStart);
+        std::string header = "▸ " + item.path.string() + ":" + std::to_string(item.line + 1);
+        // A recorded diagnostic's positions were computed against the file
+        // as it was when the server spoke; if it changed on disk since,
+        // say so rather than presenting a line number as if it still held.
+        if (item.stale) {
+            header += " (file changed since)";
+        }
         excerpts.push_back(editor::multibuffer::ExcerptSource{
-            *item.source->Path(), line + 1, line + 1, std::move(header), std::move(body), {}, /*editable=*/true});
+            item.path, item.line + 1, item.line + 1, std::move(header), item.bodyText, {}, /*editable=*/true});
     }
 
     text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*diagnostics*", excerpts);
@@ -1524,10 +1588,11 @@ void BufferView::RequestDiagnosticsBuffer() {
             const std::size_t                       bodyStart = span.compositeStartByte + excerpts[i].headerText.size() + 1;
 
             const text::Buffer::Diagnostic& original   = pending[i].diagnostic;
-            std::size_t                     startDelta = original.startByte > pending[i].sourceLineStart ? original.startByte - pending[i].sourceLineStart : 0;
-            startDelta                                 = std::min(startDelta, bodyLen);
-            std::size_t endDelta                       = original.endByte > pending[i].sourceLineStart ? original.endByte - pending[i].sourceLineStart : startDelta;
-            endDelta                                   = std::min(endDelta, bodyLen);
+            std::size_t                     startDelta = std::min(pending[i].startInLine, bodyLen);
+            std::size_t                     endDelta   = std::min(pending[i].endInLine, bodyLen);
+            if (endDelta < startDelta) {
+                endDelta = startDelta;
+            }
             if (endDelta <= startDelta) {
                 endDelta = std::min(bodyLen, startDelta + 1); // widen a zero-length span, same as the inline-diagnostic underline pass
             }

@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-224 bindings.
+225 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -662,6 +662,10 @@ Buffers past this content size, in MiB, are skipped by persistent-undo saving (d
 ## `ned/set-preserve-hard-links-on-save`
 
 Whether saving a file that has more than one hard link keeps every link pointing at the same content (default true). Doing so requires rewriting the file in place instead of the usual write-a-temp-file-then-rename, which means a crash mid-save can leave that file truncated -- recoverable from a backup version. False keeps the atomic save and lets the save break the link, leaving the other names on the old content.
+
+## `ned/set-project-diagnostics`
+
+Include files with no buffer open in the *diagnostics* problem list (default true) -- for a server that checks the whole project, most of what it reports is about files nobody has opened. Off scopes the list to open buffers. Purely a display switch: the records are kept either way, so turning it back on needs no server round trip.
 
 ## `ned/set-project-open-command`
 
