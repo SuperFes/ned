@@ -60,6 +60,11 @@ SERVERS = {
     "kotlin-language-server": ["kotlin-language-server"],
     "omnisharp": ["omnisharp", "-lsp"],
     "harper-ls": ["harper-ls", "--stdio"],
+    "phpactor": ["phpactor", "language-server"],
+    "ada_language_server": ["ada_language_server"],
+    "r-languageserver": ["R", "--slave", "-e", "languageserver::run()"],
+    "dart": ["dart", "language-server", "--protocol=lsp"],
+    "fsautocomplete": ["fsautocomplete", "--adaptive-lsp-server-enabled"],
     "texlab": ["texlab"],
     "zls": ["zls"],
 }
