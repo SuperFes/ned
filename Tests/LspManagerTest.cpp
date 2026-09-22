@@ -5995,3 +5995,151 @@ TEST_CASE("A viewport request that settles unanswered is asked again instead of 
     REQUIRE(retried.size() == 1);
     REQUIRE(retried[0]["method"] == "textDocument/semanticTokens/full");
 }
+
+TEST_CASE("A ContentModified error leaves the hints already on screen alone and does not latch inlay hints off",
+          "[Lsp]") {
+    // The live shape this exists for: a server whose own index lags the
+    // buffer declines a request it would otherwise answer wrongly. Answering
+    // null instead would be read as "no hints here" and wipe the range,
+    // which is the blink -- and answering any other error code would
+    // disable hints for the rest of the connection.
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-inlay-content-modified-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("f(1);\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestInlayHints(buffer, 0, 6, "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(raw)},
+                               {"result", Json::array({{{"position", {{"line", 0}, {"character", 2}}}, {"label", "n:"}}})}}
+                              .dump());
+    REQUIRE(manager.InlayHintSpans(buffer).size() == 1);
+
+    buffer.InsertAtPoint("g();\n");
+    manager.SyncBuffer(buffer, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    (void)ReadRawFrame(server.serverStdinRead); // drain didChange
+
+    manager.RequestInlayHints(buffer, 0, 11, "test-lang");
+    const std::string declined = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(declined)},
+                               {"error", {{"code", -32801}, {"message", "content modified"}}}}
+                              .dump());
+
+    // Still there, carried onto the edited content rather than replaced by
+    // an answer the server never actually gave.
+    REQUIRE(manager.InlayHintSpans(buffer).size() == 1);
+
+    // And not latched: a further viewport still asks.
+    manager.RequestInlayHints(buffer, 0, 11, "test-lang");
+    const std::vector<Json> retried = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 1));
+    REQUIRE(retried.size() == 1);
+    REQUIRE(retried[0]["method"] == "textDocument/inlayHint");
+}
+
+TEST_CASE("A ContentModified error on semanticTokens/range keeps the range path rather than falling back to full",
+          "[Lsp]") {
+    const RequestIdleGuard      idle(1);
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-semantic-content-modified-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;\nint y = 2;\nint z = 3;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting(
+        "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}, .rangeSupported = true});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
+    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 3));
+    REQUIRE(first.size() == 3);
+    REQUIRE(first[0]["method"] == "textDocument/semanticTokens/range");
+
+    // -32601 here would latch rangeUnsupported_ and send full next; -32801
+    // says only that this one request was about a document that moved.
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", first[0]["id"]},
+                               {"error", {{"code", -32801}, {"message", "content modified"}}}}
+                              .dump());
+
+    manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::vector<Json> retried = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 1));
+    REQUIRE(retried.size() == 1);
+    REQUIRE(retried[0]["method"] == "textDocument/semanticTokens/range");
+}
+
+TEST_CASE("A server declining every request with ContentModified is retried once per triple, not forever", "[Lsp]") {
+    // Nothing latches a retryable code off, so the retry budget is the only
+    // thing standing between a permanently-declining server and a request
+    // per throttle window for as long as the buffer stays open.
+    const RequestIdleGuard      idle(1);
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-content-modified-budget-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("int x = 1;\nint y = 2;\nint z = 3;\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting(
+        "test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}, .rangeSupported = true});
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    const auto declineEverything = [&](const std::vector<Json>& frames) {
+        for (const Json& frame : frames) {
+            client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                                       {"id", frame["id"]},
+                                       {"error", {{"code", -32801}, {"message", "content modified"}}}}
+                                      .dump());
+        }
+    };
+
+    manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
+    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 3));
+    REQUIRE(first.size() == 3);
+    declineEverything(first);
+
+    manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    // Two, not three: codeLens stamped this content generation as already
+    // requested when it was first sent, and an error does not unstamp it.
+    const std::vector<Json> retried = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 2));
+    REQUIRE(retried.size() == 2); // the one retry this triple is owed
+    declineEverything(retried);
+
+    // Budget spent: the same triple asks nothing more, however many frames
+    // paint over it.
+    for (int frame = 0; frame < 3; ++frame) {
+        manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
+        eventLoop.DrainPosted_();
+    }
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+
+    // A refresh is the server itself saying the answer changed, and buys a
+    // fresh retry.
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", 99}, {"method", "workspace/inlayHint/refresh"}}.dump());
+    manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
+    WaitUntil(eventLoop, [&] { return !NoFrameArrives(server.serverStdinRead); });
+    const std::vector<Json> afterRefresh = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 3));
+    REQUIRE(afterRefresh.size() == 3); // the refresh's own response, then the two re-asked requests
+    const bool askedAgain = std::any_of(afterRefresh.begin(), afterRefresh.end(), [](const Json& frame) {
+        return frame.contains("method") && frame["method"] == "textDocument/inlayHint";
+    });
+    REQUIRE(askedAgain);
+}

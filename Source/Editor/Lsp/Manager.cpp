@@ -276,6 +276,40 @@ namespace {
         return error.value("message", error.dump());
     }
 
+    // Two JSON-RPC error codes the spec reserves for "this particular
+    // request could not be answered", as opposed to every other error, which
+    // this client reads as a server's own proof it does not implement the
+    // method and latches accordingly for the connection's lifetime:
+    //
+    //   ContentModified (-32801) -- the document moved under the server
+    //     while it was working, so its answer would describe text that no
+    //     longer exists. The spec is explicit that a client must not surface
+    //     this as a failure and should simply ask again. It is also how a
+    //     server that keeps a lagging index of its own declines a request it
+    //     would otherwise answer wrongly (phpantom_lsp's inlay hints,
+    //     which is what surfaced this).
+    //   ServerCancelled (-32802) -- the server gave up on this one request
+    //     and, per spec, is telling the client the work is still worth
+    //     re-requesting.
+    //
+    // Latching either of these disables a working feature for the rest of
+    // the session over a single busy moment. RequestCancelled (-32800) is
+    // not here on purpose: that one is the client's own cancellation coming
+    // back, and this client never sends $/cancelRequest.
+    //
+    // ned's own synthesized timeout code is deliberately left latching: a
+    // request that never came back is no evidence the method works, and the
+    // latch is the only circuit breaker against a server that hangs on one
+    // method forever.
+    bool IsRetryableRequestError(const Json& error) {
+        const auto code = error.find("code");
+        if (code == error.end() || !code->is_number_integer()) {
+            return false;
+        }
+        const std::int64_t value = code->get<std::int64_t>();
+        return value == -32801 || value == -32802;
+    }
+
     // rename-file-notifications follow-up. Matches path against every glob
     // in globs via POSIX fnmatch with no flags -- without FNM_PATHNAME, '*'
     // matches '/' too, which is what makes a "**/*.ts"-shaped LSP filter
@@ -1597,6 +1631,7 @@ void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     syncDebounceTimers_.erase(&buffer);        // sync-debounce follow-up: same rationale, for a pending didChange send
     viewportRequestTimers_.erase(&buffer);     // same rationale again, for a pending throttled viewport request
     armedViewportRequests_.erase(&buffer);
+    retriedViewportRequests_.erase(&buffer);
     viewportRequestPending_.erase(&buffer);
     lastViewportRequestAt_.erase(&buffer);
     primaryServerKey_.erase(&buffer);
@@ -1843,8 +1878,13 @@ void Manager::RequestPullDiagnostics(text::Buffer& buffer, const std::string& se
                 // diagnostics right now" empty items array) is this
                 // server's own proof it doesn't implement the method --
                 // stop asking for the rest of this connection's lifetime
-                // rather than re-erroring on every sync.
-                pullDiagnosticsUnsupported_.insert(connectionKey);
+                // rather than re-erroring on every sync. Unless it is one of
+                // the two codes that mean "not this request" rather than
+                // "not this method" (IsRetryableRequestError): the next sync
+                // asks again.
+                if (!IsRetryableRequestError(*error)) {
+                    pullDiagnosticsUnsupported_.insert(connectionKey);
+                }
                 return;
             }
             if (!result) {
@@ -2032,9 +2072,15 @@ void Manager::ReArmViewportRequestsAfterDecline(text::Buffer& buffer, std::size_
     // been edited or scrolled since, whatever is armed now is a different
     // request that nothing here has any reason to disturb.
     const auto it = armedViewportRequests_.find(&buffer);
-    if (it != armedViewportRequests_.end() && it->second.generation == requestedGeneration) {
-        armedViewportRequests_.erase(it);
+    if (it == armedViewportRequests_.end() || it->second.generation != requestedGeneration) {
+        return;
     }
+    const auto retried = retriedViewportRequests_.find(&buffer);
+    if (retried != retriedViewportRequests_.end() && retried->second == it->second) {
+        return; // this triple has had its retry -- see retriedViewportRequests_' own doc comment
+    }
+    retriedViewportRequests_[&buffer] = it->second;
+    armedViewportRequests_.erase(it);
 }
 
 void Manager::RefreshServerResults(const std::string& connectionKey, RefreshKind kind) {
@@ -2093,6 +2139,7 @@ void Manager::RefreshServerResults(const std::string& connectionKey, RefreshKind
         // for an unedited buffer -- PushMergedDiagnostics erases this entry
         // for exactly the same reason.
         armedViewportRequests_.erase(bufferPtr);
+        retriedViewportRequests_.erase(bufferPtr); // the server says the answer is different now -- a fresh retry is owed
     }
 }
 
@@ -2185,7 +2232,9 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
                     // lifetime rather than re-erroring on every viewport
                     // change. The next request for this buffer falls
                     // through to the full/delta path below instead.
-                    semanticTokensRangeUnsupported_.insert(connectionKey);
+                    if (!IsRetryableRequestError(*error)) {
+                        semanticTokensRangeUnsupported_.insert(connectionKey);
+                    }
                     settle(/*answered=*/false);
                     return;
                 }
@@ -2234,7 +2283,9 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
                     // full.delta:true but errors on the actual request
                     // falls back to plain full requests for the rest of
                     // this connection's lifetime.
-                    semanticTokensFullDeltaUnsupported_.insert(connectionKey);
+                    if (!IsRetryableRequestError(*error)) {
+                        semanticTokensFullDeltaUnsupported_.insert(connectionKey);
+                    }
                     return;
                 }
                 if (!result) {
@@ -2406,7 +2457,15 @@ void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartB
                 // doesn't implement the method -- stop asking for the rest
                 // of this connection's lifetime rather than re-erroring on
                 // every viewport change.
-                inlayHintsUnsupported_.insert(connectionKey);
+                if (!IsRetryableRequestError(*error)) {
+                    inlayHintsUnsupported_.insert(connectionKey);
+                }
+                // Nothing is merged on this path, which is the point: the
+                // hints already on screen stay where they are (anchored, so
+                // they relocate with the edit) instead of being replaced by
+                // an empty answer. That is the whole difference between a
+                // server declining with ContentModified and one declining
+                // with a null result.
                 SettleInlayHintRequest(*bufferPtr, requestedGeneration, /*answered=*/false, requestedStartByte, requestedEndByte);
                 return;
             }
@@ -2716,7 +2775,9 @@ void Manager::RequestCodeLenses(text::Buffer& buffer, const std::string& serverK
                 return; // superseded by a newer request for this buffer
             }
             if (error) {
-                codeLensUnsupported_.insert(connectionKey);
+                if (!IsRetryableRequestError(*error)) {
+                    codeLensUnsupported_.insert(connectionKey);
+                }
                 return;
             }
             if (!result) {
@@ -2891,7 +2952,9 @@ void Manager::RequestCodeActionHints(text::Buffer& buffer, std::size_t viewportS
                 return; // superseded by a newer request for this buffer
             }
             if (error) {
-                codeActionHintsUnsupported_.insert(connectionKey);
+                if (!IsRetryableRequestError(*error)) {
+                    codeActionHintsUnsupported_.insert(connectionKey);
+                }
                 SettleCodeActionHintRequest(*bufferPtr, requestedGeneration, /*answered=*/false, requestedStartByte, requestedEndByte);
                 return;
             }
@@ -3112,7 +3175,9 @@ void Manager::RequestDocumentLinks(text::Buffer& buffer, DocumentLinkCallback ca
                         [this, bufferPtr, connectionKey, callback = std::move(callback)](std::optional<Json> result,
                                                                                          std::optional<Json> error) {
                             if (error) {
-                                documentLinkUnsupported_.insert(connectionKey);
+                                if (!IsRetryableRequestError(*error)) {
+                                    documentLinkUnsupported_.insert(connectionKey);
+                                }
                                 LogError(connectionKey, ExtractErrorMessage(*error));
                                 callback({});
                                 return;

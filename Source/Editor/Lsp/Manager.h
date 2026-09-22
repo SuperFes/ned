@@ -1821,6 +1821,18 @@ class Manager {
         [[nodiscard]] bool operator==(const ArmedViewportRequest&) const = default;
     };
     std::unordered_map<text::Buffer*, ArmedViewportRequest>                  armedViewportRequests_;
+
+    // The one triple a buffer has already been granted a retry for, so a
+    // declined request is re-asked exactly once rather than forever. This is
+    // load-bearing only for the retryable error codes
+    // (IsRetryableRequestError): every other error latches its feature off
+    // for the connection, which is its own stopping condition, but a server
+    // answering ContentModified to everything would otherwise be re-asked
+    // once per throttle window for as long as the buffer sits open. A
+    // genuine change (an edit, a scroll) is a different triple and gets its
+    // own retry; a server-initiated refresh clears this outright, since that
+    // is the server itself saying the answer is different now.
+    std::unordered_map<text::Buffer*, ArmedViewportRequest>                  retriedViewportRequests_;
     std::unordered_map<text::Buffer*, ned::ui::DeadlineTimer>                viewportRequestTimers_;
     std::unordered_set<text::Buffer*>                                        viewportRequestPending_;
     std::unordered_map<text::Buffer*, std::chrono::steady_clock::time_point> lastViewportRequestAt_;
