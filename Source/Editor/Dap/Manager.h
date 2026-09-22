@@ -710,6 +710,14 @@ class Manager {
     // first answer for a name wins here).
     [[nodiscard]] const std::map<std::string, std::string>& FrameLocals() const;
 
+    // Bumped every time FrameLocals() actually CHANGES -- the same "cheap
+    // did-it-change counter" shape Lsp::Manager::SemanticTokensGeneration
+    // already is, and deliberately not frameLocalsGeneration_ below, which
+    // bumps when a refresh is ISSUED: the map fills in asynchronously
+    // afterwards, so a cache keyed on that one would latch the empty map it
+    // saw at the bump and never notice the values arriving.
+    [[nodiscard]] std::size_t FrameLocalsRevision() const;
+
     // Off by default, and deliberately: keeping this cache current costs a
     // scopes request plus one variables request per non-expensive scope on
     // every single stop, which is pure waste for any embedder that never
@@ -834,6 +842,10 @@ class Manager {
     // debug-panel (inline values): repopulates frameLocals_ for
     // stoppedFrameId_. A no-op that just clears when nothing is stopped.
     void RefreshFrameLocals();
+    // The one place frameLocals_ is emptied, so FrameLocalsRevision cannot
+    // miss a clear -- a cache that missed one would keep painting the
+    // values of a frame that no longer exists.
+    void ClearFrameLocals();
     // RunToCursor's own cleanup: erases the pending temporary breakpoint (if
     // any) from the store, pushing the change to a live adapter when
     // pushToAdapter is set (HandleStoppedEvent's case -- the session is
@@ -986,6 +998,7 @@ class Manager {
     // after a resume or a frame change is dropped rather than painted.
     std::map<std::string, std::string> frameLocals_;
     std::uint64_t                      frameLocalsGeneration_ = 0;
+    std::size_t                        frameLocalsRevision_   = 0; // see FrameLocalsRevision
     bool                               frameLocalsTracking_   = false;
 
     std::vector<std::string> watches_; // slice 4; persisted across restarts (round 2) -- see AddWatch/Watches/RestoreWatches

@@ -301,6 +301,7 @@ add_executable(ned_tests
             DapConfigTest.cpp
             DapClientTest.cpp
             DapManagerTest.cpp
+            InlineDebugValuesTest.cpp
             PointerGraphNodeTest.cpp
             SparklineTest.cpp
             MemoryImageTest.cpp

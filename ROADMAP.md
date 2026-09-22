@@ -239,15 +239,6 @@ pick up when there is appetite. The rest are feature-sized and want their own ba
 rather than a release's last afternoon.
 
 
-- [ ] `textDocument/selectionRange` -- syntax-aware expand/shrink selection. ned has no
-      equivalent of its own; the `selectionRange` hits in `Lsp/Content.h` are
-      `DocumentSymbol`'s field of that name, unrelated. **Argued 2026-09-21 that this one
-      should not be an LSP feature at all**: ned parses 74 languages with its own engine,
-      so expand/shrink built on the parse tree works everywhere, offline, with no server
-      -- where the LSP version would hand the feature only to whoever happens to run a
-      server that implements it. Build it native (an `Editor/` walk over the enclosing
-      node chain, like `ImprintFold.h` does for folding); reach for the request only if a
-      server ever proves it knows something the tree doesn't.
 - [ ] `inlayHint/resolve` and `workspaceSymbol/resolve` -- the lazy second half of two
       kinds ned already pulls eagerly. Both let a server defer the expensive part
       (a hint's tooltip/command, a symbol's location) until something actually needs it.
@@ -261,6 +252,18 @@ rather than a release's last afternoon.
 - [ ] `textDocument/inlineValue` -- variable values rendered inline while stopped at a
       breakpoint. Unusual among these in that ned already owns both ends: a DAP session
       knows the values, and the inlay-hint rendering path already draws inline text.
+      **Deferred 2026-09-22 on a measurement, not a guess:** probing every server
+      installed here with an `inlineValue`-advertising `initialize` returned
+      `inlineValueProvider` from none of them (clangd 23, gopls, pylsp,
+      typescript-language-server, lua-language-server; rust-analyzer returned no
+      `initialize` result inside 20s and was not chased). jdtls is the implementation
+      worth re-probing against before this is picked up. The half that did not need a
+      server shipped instead -- slug for `git log --grep=`:
+      `inline-debug-values-scoped` -- so what remains here is the genuinely
+      server-only part: an `InlineValueEvaluatableExpression` (an expression ned would
+      hand to DAP `evaluate`) and an `InlineValueText` the server composes itself,
+      neither of which a parse tree can supply. `workspace/inlineValue/refresh` would be
+      a fifth `RefreshKind` alongside the four in `Lsp/Manager.h`.
 - [ ] `textDocument/documentColor` / `colorPresentation` -- colour swatches and a picker
       for CSS/theme files.
 
@@ -269,6 +272,16 @@ rather than a release's last afternoon.
 - [ ] `textDocument/foldingRange` -- ned folds from its own grammar (`ImprintFold.h`), for
       every language, with no server required. Worth revisiting only for a language that
       has a server but no ned grammar.
+- [ ] `textDocument/selectionRange` -- ned already has a native equivalent, for the same
+      reason folding does: `expand-selection`/`shrink-selection` (`M-=`/`M--`, slug for
+      `git log --grep=`: `structural-selection-expansion`) walk the enclosing named-node
+      chain of ned's own tree, so they work in every parsed language, offline, with no
+      server -- where the request would hand the feature only to whoever happens to run a
+      server that implements it. `Mode::expandSelection` adds a step no grammar has a node
+      for (the interior of a delimited body, expand-region's "inside pairs") off the
+      imprint table. The `selectionRange` hits in `Lsp/Content.h` are `DocumentSymbol`'s
+      unrelated field of that name. Revisit only if a server proves it knows something the
+      tree doesn't.
 - [ ] `textDocument/moniker` -- cross-repository symbol identity, useful only with an
       index ned has no consumer for.
 - [ ] `notebookDocument/*` -- no notebook editing surface exists to sync.
@@ -660,13 +673,18 @@ anything is launched. Cuts left behind, each its own item below.
       a container is always an earlier row than its children. True by construction today
       (`AppendVariableRows` is a pre-order walk); a future row source that isn't would
       silently mis-indent rather than fail.
-- [ ] Inline debug values match a local to a line by whole-word text search, not by
-      parsing (`BufferView::PaintInlineDebugValues`). The adapter reports names, not
-      positions, and a structural match would need the grammar to agree with the
-      debugger's own notion of scope to be any more correct. Degrades to a value shown
-      against a line mentioning the same word in a comment or string -- visible noise,
-      never a wrong value. At most three per line, and only in the file the debuggee is
-      actually stopped in.
+- [ ] Inline debug values resolve a local to a line through the language's own locals
+      query (`Editor/InlineDebugValues.h`'s `ResolveInlineDebugValues`, slug for
+      `git log --grep=`: `inline-debug-values-scoped`), which needs one -- so the
+      whole-word text search it replaced is still the tier a mode without a locals query
+      gets, and so is a huge buffer, which is never handed a whole-document query at
+      all. That tier keeps its old failure mode: a value against a line mentioning the
+      same word in a comment or a string. Two conscious calls in the scoped tier: a mode
+      that HAS a locals query but captured nothing draws nothing rather than falling
+      back (precision over recall -- the query has said there is no binding here), and
+      only the innermost binding the stop can see is annotated, because the adapter
+      reports one value per name and that is the one it means. At most three per line,
+      and only in the file the debuggee is actually stopped in.
 - [ ] Inline values show only the focused frame's *locals*, never a watch or an
       arbitrary expression, and never a field of a composite. The flat name→value map
       they read is exactly what the non-expensive scopes report.

@@ -2060,28 +2060,6 @@ inline bool InRange(std::size_t byteOffset, const text::ConflictHunk::Range& ran
     return byteOffset >= range.start && byteOffset < range.end;
 }
 
-// debug-panel (inline values): does `text` contain `word` bounded by
-// non-identifier characters on both sides? Deliberately not a parse -- see
-// BufferView::PaintInlineDebugValues' own doc comment for why a textual
-// match is the right tool here and what it costs.
-inline bool ContainsWholeWord(std::string_view text, std::string_view word) {
-    if (word.empty() || word.size() > text.size()) {
-        return false;
-    }
-    const auto isIdentifier = [](char character) {
-        return (static_cast<unsigned char>(character) & 0x80U) != 0 || std::isalnum(static_cast<unsigned char>(character)) != 0 ||
-               character == '_' || character == '$';
-    };
-    for (std::size_t at = text.find(word); at != std::string_view::npos; at = text.find(word, at + 1)) {
-        const bool leftClear  = at == 0 || !isIdentifier(text[at - 1]);
-        const bool rightClear = at + word.size() >= text.size() || !isIdentifier(text[at + word.size()]);
-        if (leftClear && rightClear) {
-            return true;
-        }
-    }
-    return false;
-}
-
 // An adapter's value can be multi-line (a struct dump) or very long; an
 // inline annotation has one row and a shared line to fit in.
 inline std::string FirstLineOf(std::string value, std::size_t limit = 24) {

@@ -2146,6 +2146,12 @@ TEST_CASE("FrameLocals is populated on a stop and cleared when the debuggee resu
     REQUIRE(fixture.manager.FrameLocals().at("count") == "3");
     REQUIRE(fixture.manager.FrameLocals().at("buf") == "0x7f");
 
+    // The revision moved when the values ARRIVED, which is the whole
+    // reason it exists: BufferView's inline-value cache keys on it, and
+    // the issue-time generation had already moved before this response.
+    const std::size_t filled = fixture.manager.FrameLocalsRevision();
+    REQUIRE(filled > 0);
+
     // Resuming makes them meaningless, not stale -- the frame may be gone.
     fixture.manager.StartOrContinue("dap-manager-test-frame-locals");
     const Json resume = fixture.reader.Next();
@@ -2153,6 +2159,9 @@ TEST_CASE("FrameLocals is populated on a stop and cleared when the debuggee resu
     fixture.client->DispatchFrame(ResponseFrame(resume["seq"].get<int>(), "continue", true));
     REQUIRE(fixture.manager.State() == Manager::SessionState::Running);
     REQUIRE(fixture.manager.FrameLocals().empty());
+    // Emptying them is a change too -- a cache that missed this would keep
+    // painting the values of a frame that no longer exists.
+    REQUIRE(fixture.manager.FrameLocalsRevision() > filled);
     SetLaunchConfig("dap-manager-test-frame-locals", "");
 }
 

@@ -440,6 +440,18 @@ const std::map<std::string, std::string>& Manager::FrameLocals() const {
     return frameLocals_;
 }
 
+std::size_t Manager::FrameLocalsRevision() const {
+    return frameLocalsRevision_;
+}
+
+void Manager::ClearFrameLocals() {
+    if (frameLocals_.empty()) {
+        return;
+    }
+    frameLocals_.clear();
+    ++frameLocalsRevision_;
+}
+
 void Manager::SetFrameLocalsTrackingEnabled(bool enabled) {
     if (frameLocalsTracking_ == enabled) {
         return;
@@ -452,7 +464,7 @@ void Manager::RefreshFrameLocals() {
     // Every outstanding response belongs to the frame that was focused when
     // it was issued; bumping first is what makes a stale one droppable.
     ++frameLocalsGeneration_;
-    frameLocals_.clear();
+    ClearFrameLocals();
     if (!frameLocalsTracking_ || !client_ || state_ != SessionState::Stopped || !stoppedFrameId_) {
         return;
     }
@@ -469,13 +481,17 @@ void Manager::RefreshFrameLocals() {
                 if (generation != frameLocalsGeneration_) {
                     return;
                 }
+                bool changed = false;
                 for (Variable& variable : variables) {
                     if (variable.name.empty()) {
                         continue;
                     }
                     // emplace, not assign: scopes arrive innermost first, so
                     // the first answer for a shadowed name is the right one.
-                    frameLocals_.emplace(std::move(variable.name), std::move(variable.value));
+                    changed |= frameLocals_.emplace(std::move(variable.name), std::move(variable.value)).second;
+                }
+                if (changed) {
+                    ++frameLocalsRevision_;
                 }
             });
         }
@@ -1290,7 +1306,7 @@ void Manager::MarkResumed() {
     // exist any more. Bumping the generation also drops any response still
     // in flight from the stop just left.
     ++frameLocalsGeneration_;
-    frameLocals_.clear();
+    ClearFrameLocals();
 }
 
 std::string Manager::SendStep(const std::string& command, const std::string& label) {
@@ -1956,7 +1972,7 @@ void Manager::EndSession(std::string reason) {
     // this run, so keeping one would arm the next session against an id it
     // never issued -- see ToggleDataBreakpoint's own doc comment.
     dataBreakpoints_.clear();
-    frameLocals_.clear();
+    ClearFrameLocals();
     ++frameLocalsGeneration_;
     isAttach_ = false;
     // lsp-use-after-free follow-up: client_ used to move into retired_ here

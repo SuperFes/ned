@@ -23,6 +23,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -47,6 +48,7 @@
 #include "Editor/ExpandableTree.h"
 #include "Editor/ImportFixup.h"
 #include "Editor/IncrementalSearch.h"
+#include "Editor/InlineDebugValues.h"
 #include "Editor/Link.h"
 #include "Editor/LinkedEditingSession.h"
 #include "Editor/LocalScopes.h"
@@ -3766,6 +3768,26 @@ class BufferView : public Widget {
     mutable std::optional<std::filesystem::path> dapPathKeyRawPath_;
     mutable std::string                          dapPathKey_;
 
+    // PaintInlineDebugValues' resolved annotations, and the stamps that say
+    // they are still the right ones. The scoped tier runs the locals query
+    // and resolves a binding per visible local, which is far too much to
+    // repeat on a cursor-blink repaint -- and needs to be repeated almost
+    // never, since a stopped debuggee means the text is not moving. The
+    // viewport span is part of the key because scrolling asks about
+    // different lines, not because anything else changed.
+    struct InlineDebugValueCache {
+        const text::Buffer*                   buffer            = nullptr;
+        std::size_t                           contentGeneration = 0;
+        std::size_t                           localsRevision    = 0;
+        std::string                           stopKey;
+        std::size_t                           stopLine  = 0;
+        std::size_t                           firstLine = 0;
+        std::size_t                           lastLine  = 0;
+        bool                                  valid     = false;
+        std::vector<editor::InlineDebugValue> values;
+    };
+    InlineDebugValueCache inlineDebugValueCache_;
+
     // DAP round 2: valid only while inputMode_ == InputMode::DapThreadSelect
     // -- same "populated by the entry point, consumed by
     // Refresh*/Handle*Key" convention pendingAcpPermissionOptions_ above
@@ -4411,14 +4433,20 @@ class BufferView : public Widget {
     // shape and its reasoning: never a row of its own, so a value appearing
     // or changing while stepping doesn't shove the code below it around.
     //
-    // A local is matched against a line by whole-word text search, not by
-    // parsing: the adapter reports names, not positions, and the grammar
-    // would have to agree with the debugger's own notion of scope for a
-    // structural match to be any more correct than this one. The failure
-    // mode is a value shown against a line that mentions the same word in a
-    // comment or a string -- visible noise, never a wrong value.
+    // Which locals a line mentions is editor::ResolveInlineDebugValues'
+    // question, not this method's -- see Editor/InlineDebugValues.h for the
+    // two tiers and why a mode with a locals query gets the scoped one.
+    // All this owns is the cache below and the drawing.
     void PaintInlineDebugValues(Canvas& c, const std::vector<std::size_t>& rowLine,
                                 const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);
+
+    // PaintInlineDebugValues' cache lookup: the annotations for `lines`,
+    // recomputed only when the buffer, its content, the stop, the frame's
+    // values or the visible span actually moved. Picks the scoped or
+    // textual tier off mode_.localScopes.
+    const std::vector<editor::InlineDebugValue>&
+    ResolvedInlineDebugValues(const std::map<std::string, std::string>& locals, const std::string& stopKey,
+                              std::size_t stopLine, std::span<const editor::InlineDebugValueLine> lines);
 
     void PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::size_t>& rowLine,
                                       const std::vector<int>& rowContentEndColumn, std::size_t gutterWidth);

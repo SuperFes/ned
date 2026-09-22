@@ -2760,16 +2760,19 @@ void BufferView::PaintInlineDebugValues(Canvas& c, const std::vector<std::size_t
     const int                 height  = c.size().height;
     const int                 width   = c.size().width;
 
+    // One entry per buffer line whose text ends on a visible row, carrying
+    // that row so the drawing pass below doesn't have to find it again.
+    // The line's LAST row, same rule the diagnostics use: a wrapped line's
+    // annotation belongs after the end of its text.
+    std::vector<editor::InlineDebugValueLine> lines;
+    std::vector<int>                          rowForLine;
     for (int row = 0; row < height; ++row) {
         if (row >= static_cast<int>(rowLine.size()) || rowLine[row] == kNoRowLine) {
             continue;
         }
-        // The line's last row, same rule the diagnostics use: a wrapped
-        // line's annotation belongs after the end of its text.
         if (row + 1 < height && row + 1 < static_cast<int>(rowLine.size()) && rowLine[row + 1] == rowLine[row]) {
             continue;
         }
-
         const std::size_t lineStart = content.LineToByteOffset(rowLine[row]);
         const std::size_t lineEnd   = (rowLine[row] + 1 < content.LineCount())
                                           ? content.LineToByteOffset(rowLine[row] + 1) - 1
@@ -2777,26 +2780,32 @@ void BufferView::PaintInlineDebugValues(Canvas& c, const std::vector<std::size_t
         if (lineEnd <= lineStart) {
             continue;
         }
-        const std::string lineText = content.Substring(lineStart, lineEnd - lineStart);
+        lines.push_back(editor::InlineDebugValueLine{.line = rowLine[row], .startByte = lineStart, .endByte = lineEnd});
+        rowForLine.push_back(row);
+    }
+    if (lines.empty()) {
+        return;
+    }
 
-        // At most a few per line: a dense line mentioning six locals would
-        // otherwise annotate itself into unreadability.
-        constexpr int kMaxPerLine = 3;
-        std::string   annotation;
-        int           shown = 0;
-        for (const auto& [name, value] : locals) {
-            if (shown >= kMaxPerLine) {
-                break;
-            }
-            if (!ContainsWholeWord(lineText, name)) {
-                continue;
-            }
-            annotation += (annotation.empty() ? "" : "  ") + name + " = " + FirstLineOf(value);
-            shown += 1;
+    const std::vector<editor::InlineDebugValue>& values =
+        ResolvedInlineDebugValues(locals, stop->first, stop->second, lines);
+    if (values.empty()) {
+        return;
+    }
+
+    // Annotations arrive in the order `lines` were given, several per line,
+    // so one pass builds each line's text and the next draws it.
+    std::size_t at = 0;
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        std::string annotation;
+        while (at < values.size() && values[at].line == lines[index].line) {
+            annotation += (annotation.empty() ? "" : "  ") + values[at].name + " = " + FirstLineOf(values[at].value);
+            ++at;
         }
         if (annotation.empty()) {
             continue;
         }
+        const int row = rowForLine[index];
 
         // Two columns of gap, so the annotation never reads as a
         // continuation of the code it follows -- the inline diagnostics'
@@ -2819,6 +2828,78 @@ void BufferView::PaintInlineDebugValues(Canvas& c, const std::vector<std::size_t
             ++col;
         }
     }
+}
+
+const std::vector<editor::InlineDebugValue>&
+BufferView::ResolvedInlineDebugValues(const std::map<std::string, std::string>& locals, const std::string& stopKey,
+                                      std::size_t stopLine, std::span<const editor::InlineDebugValueLine> lines) {
+    const text::Buffer&    buffer = activeBuffer_.Get();
+    InlineDebugValueCache& cache  = inlineDebugValueCache_;
+    if (cache.valid && cache.buffer == &buffer && cache.contentGeneration == buffer.ContentGeneration() &&
+        cache.localsRevision == dapManager_->FrameLocalsRevision() && cache.stopKey == stopKey &&
+        cache.stopLine == stopLine && cache.firstLine == lines.front().line && cache.lastLine == lines.back().line) {
+        return cache.values;
+    }
+
+    // The scoped tier is the whole point of resolving rather than matching,
+    // and two buffers cannot have it -- see Editor/InlineDebugValues.h's own
+    // InlineDebugValueTier comment for why the fallback stays rather than
+    // the feature going dark for them. A mode with no locals query is the
+    // first. The second is a huge buffer, which is never handed a
+    // whole-document query at all (ResolveLocalBindingAtPoint's own rule),
+    // and unlike a rename this one can fall back rather than refuse: the
+    // textual tier reads nothing but the lines already on screen.
+    const editor::InlineDebugValueTier tier = (mode_.localScopes && !buffer.Content().IsHuge())
+                                                  ? editor::InlineDebugValueTier::Scoped
+                                                  : editor::InlineDebugValueTier::Textual;
+
+    // Which is why the two tiers read different amounts of the buffer.
+    // Scoped needs the whole document -- a binding's scope routinely
+    // encloses far more than the viewport, and the locals query is
+    // whole-document anyway. Textual needs the visible span and nothing
+    // else, so it takes that alone and rebases the line ranges onto it,
+    // which is what makes the huge-buffer fallback a fallback rather than
+    // the same whole-file copy under another name. `line` is opaque to the
+    // resolver and echoed back untouched, so only the byte ranges move.
+    std::string                               text;
+    std::vector<editor::InlineDebugValueLine> scopedLines;
+    std::size_t                               base = 0;
+    if (tier == editor::InlineDebugValueTier::Scoped) {
+        text = buffer.Content().Substring(0, buffer.Content().ByteLength());
+    }
+    else {
+        base = lines.front().startByte;
+        text = buffer.Content().Substring(base, lines.back().endByte - base);
+        scopedLines.reserve(lines.size());
+        for (const editor::InlineDebugValueLine& line : lines) {
+            scopedLines.push_back(editor::InlineDebugValueLine{
+                .line = line.line, .startByte = line.startByte - base, .endByte = line.endByte - base});
+        }
+        lines = scopedLines;
+    }
+
+    std::vector<editor::LocalCapture> captures;
+    if (tier == editor::InlineDebugValueTier::Scoped) {
+        captures = mode_.localScopes(text);
+    }
+
+    // The stopped line's own start is what decides which binding of a
+    // shadowed name the frame's values belong to. DAP lines are 1-based.
+    // Meaningless under Textual, which ignores it.
+    const std::size_t stopRow = stopLine > 0 ? stopLine - 1 : 0;
+    const std::size_t stopByte =
+        stopRow < buffer.Content().LineCount() ? buffer.Content().LineToByteOffset(stopRow) : 0;
+
+    cache.values            = editor::ResolveInlineDebugValues(text, captures, tier, locals, stopByte, lines);
+    cache.buffer            = &buffer;
+    cache.contentGeneration = buffer.ContentGeneration();
+    cache.localsRevision    = dapManager_->FrameLocalsRevision();
+    cache.stopKey           = stopKey;
+    cache.stopLine          = stopLine;
+    cache.firstLine         = lines.front().line;
+    cache.lastLine          = lines.back().line;
+    cache.valid             = true;
+    return cache.values;
 }
 
 void BufferView::PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::size_t>& rowLine,
