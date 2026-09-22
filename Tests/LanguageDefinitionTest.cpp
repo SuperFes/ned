@@ -145,6 +145,10 @@ TEST_CASE("Every bundled definition builds, under its own '-mode' name", "[Langu
         "gdscript",
         "matlab",
         "systemd",
+        "desktop",
+        "gitignore",
+        "nginx",
+        "apacheconf",
     };
     std::set<std::string> seen;
     for (const LanguageDefinition& definition : BundledLanguages()) {
@@ -401,6 +405,9 @@ TEST_CASE("The bundled definitions claim exactly the extensions the old table di
         {".link", "systemd"},
         {".nspawn", "systemd"},
         {".dnssd", "systemd"},
+        {".desktop", "desktop"},
+        {".directory", "desktop"},
+        {".nginx", "nginx"},
     };
     std::map<std::string, std::string> claimed;
     for (const LanguageDefinition& definition : BundledLanguages()) {

@@ -1,0 +1,54 @@
+==================
+Handle comments but only on beginning of line
+:cst
+==================
+
+Foo
+#foo
+ #foo
+Foo#bar
+
+<Directory#bar>
+</Directory#bar> 
+
+<Directory bar#boo>
+</Directory> 
+
+<Directory #bar>
+</Directory> 
+
+---
+0:0   - 14:0    source_file
+1:0   - 2:0       simple_directive
+1:0   - 1:3         name: non_quoted_simple_directive_name `Foo`
+2:0   - 3:0       comment
+2:0   - 2:5         `#foo\n`
+3:1   - 4:0       comment
+3:1   - 3:6         `#foo\n`
+4:0   - 5:0       simple_directive
+4:0   - 4:7         name: non_quoted_simple_directive_name `Foo#bar`
+6:0   - 8:0       tag_directive
+6:0   - 6:1         "<"
+6:1   - 6:14        name: tag_name `Directory#bar`
+6:14  - 6:15        ">"
+7:0   - 7:2         "</"
+7:2   - 7:15        end_name: tag_name `Directory#bar`
+7:15  - 7:16        ">"
+9:0   - 11:0      tag_directive
+9:0   - 9:1         "<"
+9:1   - 9:10        name: tag_name `Directory`
+9:11  - 9:18        tag_param
+9:11  - 9:18          non_string_tag_param `bar#boo`
+9:18  - 9:19        ">"
+10:0  - 10:2        "</"
+10:2  - 10:11       end_name: tag_name `Directory`
+10:11 - 10:12       ">"
+12:0  - 14:0      tag_directive
+12:0  - 12:1        "<"
+12:1  - 12:10       name: tag_name `Directory`
+12:11 - 12:15       tag_param
+12:11 - 12:15         non_string_tag_param `#bar`
+12:15 - 12:16       ">"
+13:0  - 13:2        "</"
+13:2  - 13:11       end_name: tag_name `Directory`
+13:11 - 13:12       ">"

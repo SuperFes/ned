@@ -45,6 +45,7 @@
     X("markdown", markdown)               \
     X("markdown-inline", markdown_inline) \
     X("matlab", matlab)                   \
+    X("nginx", nginx)                     \
     X("nim", nim)                         \
     X("nix", nix)                         \
     X("nu", nu)                           \

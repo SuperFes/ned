@@ -138,12 +138,15 @@ alone makes it genuinely usable.
 Nix *(admitted 2026-09-13 — see below)*, Dhall, Jsonnet, KDL *(admitted
 2026-09-18)*, HOCON *(→ Graveyard)*, JSON5 *(admitted 2026-09-18)*, RON
 *(admitted 2026-09-18)*, Pkl, Nickel, editorconfig *(admitted 2026-09-18)*,
-`.desktop`, systemd units *(admitted 2026-09-21 -- see below)*, `ssh_config`
-*(admitted 2026-09-18)*, nginx, Caddy,
+`.desktop` *(admitted 2026-09-21 -- see below)*, systemd units *(admitted
+2026-09-21 -- see below)*, `ssh_config` *(admitted 2026-09-18)*, nginx
+*(admitted 2026-09-21 -- see below)*, apacheconf *(admitted 2026-09-21 -- see
+below)*, Caddy,
 `.env` *(admitted 2026-09-18)*, `requirements.txt` *(admitted 2026-09-18)*, Kconfig *(no corpus
 upstream -- parked)*, udev *(admitted 2026-09-18)*, muttrc *(ships no
 `grammar.json` -- parked)*, xresources, `.gitconfig` *(admitted 2026-09-18)* /
-`.gitignore` *(→ Graveyard)* / `.gitattributes` *(admitted 2026-09-18)*
+`.gitignore` *(admitted 2026-09-21 -- see below, out of the Graveyard)* /
+`.gitattributes` *(admitted 2026-09-18)*
 
 **Build systems:** CMake *(→ Tier A)*, Make *(admitted 2026-09-13 — see
 below)*, Meson *(admitted 2026-09-18)*, Ninja, Starlark/Bazel *(admitted
@@ -293,9 +296,10 @@ Screened and not admitted in the same pass: `tree-sitter-grammars/tree-sitter-kc
 `-gn` and `-bitbake` are live but ship **no corpus** (policy item 8);
 `neomutt/tree-sitter-muttrc` ships no `src/grammar.json` (the import reads
 the generated grammar, not `grammar.js`); `shunsambongi/tree-sitter-gitignore`
-and `antosha417/tree-sitter-hocon` are stale since 2022 (→ Graveyard). Ninja,
-xresources and Caddy have no grammar under the names tried; revisit with a
-specific repository.
+and `antosha417/tree-sitter-hocon` are stale since 2022 (→ Graveyard;
+gitignore came back out of it on 2026-09-21, see below -- nothing else exists
+for the format). Ninja, xresources and Caddy have no grammar under the names
+tried; revisit with a specific repository.
 
 ### 2026-09-18 batch 2: properties, kdl, starlark, just, editorconfig, ron, earthfile, dotenv
 
@@ -725,6 +729,72 @@ extensions plus networkd's `.network`/`.netdev`/`.link`, `.nspawn` and
 `.dnssd`, and the distinctive manager `*.conf` basenames -- `system.conf` and
 `user.conf` are too generic to take, the same caveat as `ssh_config`.
 
+### .desktop, .gitignore, nginx and apacheconf: admitted 2026-09-21
+
+The rest of the config column that had a usable grammar behind it. Each was
+screened the same way: alternatives without a `test/corpus` were rejected
+outright (policy item 8), which is what decided all three.
+
+- **desktop** `ValdezFOmar/tree-sitter-desktop` v1.1.1 (ABI 15, no scanner,
+  1-file corpus / 7 cases; upstream highlights *and* injections vendored
+  unmodified -- an `Exec=` value injects bash, and `Type`/`Version`/`TryExec`/
+  `Path`/`URL`/`Categories` values are keyed off the entry's own key). The
+  grammar models the locale suffix (`Name[es_MX.UTF-8@modifier]`), field codes
+  (`%F`, `%U`) and escapes, which is the whole reason this is not ini. Upstream
+  spells the group header `@markup.heading`, a name that reaches a class only
+  through `:capture-classes`, so the definition maps it to `:type` -- the class
+  ini, toml and systemd give their sections. Claims `.desktop` and `.directory`.
+- **gitignore** `shunsambongi/tree-sitter-gitignore` pinned at
+  `f4685bf11ac466dd278449bcfe5fd014e94aa504` (ABI 13, no scanner, 1-file corpus
+  / 14 cases). **Out of the Graveyard**: it is stale since 2022 and policy item
+  4 says Graveyard *unless nothing else exists*, which is exactly the case here
+  -- and the format has not moved either, so staleness costs nothing. Queries
+  are ned's own (it ships none): negation, wildcards, separators, bracket
+  expressions and character classes -- the parts of a pattern that change what
+  it matches. Claims git's syntax wherever it is reused (`.dockerignore`,
+  `.npmignore`, `.eslintignore`, `.prettierignore`, `.helmignore`, `.ignore`,
+  `.fdignore`, `.rgignore`); `.git/info/exclude` is not claimed, "exclude"
+  being too generic a basename.
+- **nginx** `opa-oz/tree-sitter-nginx` v1.0.1 (ABI 15, 151-line scanner ported
+  to `Source/Editor/Languages/Scanners/NginxScanner.cpp`, 4-file corpus / 30
+  cases; upstream highlights and injections vendored unmodified). Chosen over
+  `HappyEmu/tree-sitter-nginx` and its fork, which are **GPLv3** against ned's
+  MIT, and over the corpus-less remainder. The grammar types the values it
+  knows -- booleans, durations, sizes, log levels, connection methods, files
+  and masks -- rather than treating a directive as words, which is what makes
+  it worth a package. Tags are ned-authored over the block structure
+  (`http`/`server`/`upstream`/`map`/... and each `location` route). nginx has no
+  extension convention, so only `nginx.conf`, `mime.types` and `.nginx` are
+  claimed; a bare `*.conf` belongs to nobody in particular.
+
+- **apacheconf** `prigaux/tree-sitter-apacheconf` pinned at
+  `a3c5f64c7afa88b5fb70ae18043e042e3e840113` (ABI 15, no scanner, 6-file corpus
+  / 10 cases; MIT per `package.json`, no `LICENSE` file; upstream highlights
+  vendored unmodified, tags ned-authored over the `<VirtualHost>`/`<Directory>`/
+  `<Location>` sections). The only apache grammar with a corpus. Its highlight
+  query separates httpd's own directive list (`@keyword`) from anything else
+  (`@function`) through a `#match?` spelled with an inline `(?i)` flag, which
+  ECMAScript has no syntax for -- see below. Claims `.htaccess`, `httpd.conf`,
+  `apache2.conf` and httpd's own included `httpd-vhosts.conf`/`httpd-ssl.conf`;
+  `vhosts.d/*.conf` and `sites-available/*` have no claimable shape.
+
+**One engine fix came out of this batch.** `#match?` compiled its pattern as
+plain ECMAScript, so `(?i)` -- Rust/Lua/PCRE inline-flag syntax -- threw
+`regex_error`, and a throwing predicate passes: the pattern applied to
+everything it was written to *exclude*. `QueryPredicates.cpp` now lifts the
+flag out of the pattern and compiles with `std::regex::icase`. apacheconf is
+where it was found; cmake (`^(?i)(set|unset|...)$`, every command highlighted
+as a builtin) and commonlisp's upstream tags were already silently affected,
+and the oracle snapshot moved accordingly -- a user-defined cmake function is
+now `@function`, not `@function.builtin`.
+
+Screened and not admitted in the same pass: `slqy123/tree-sitter-crontab`,
+`vlasikhin/tree-sitter-hosts` and `alemuller/tree-sitter-ninja` ship no corpus
+(item 8); no grammar exists at all for fstab or sudoers under the names tried.
+Caddy has two live candidates (`caddyserver/tree-sitter-caddyfile`, official,
+14-case corpus) and is a fair next pick; Jsonnet, Dhall, Nickel and Pkl all
+pass screening too and are parked as deliberate scope, not as failures.
+
 ### R: D0+D1(tags) admitted 2026-09-14
 
 `r-lib/tree-sitter-r` v1.3.0 (the posit/RStudio-maintained official grammar,
@@ -937,7 +1007,6 @@ nobody re-litigates them from scratch.
 | `mitchellh/tree-sitter-proto` | Stale since 2024-06 | Same |
 | `MunifTanjim/tree-sitter-lua` | Personal fork, 1★, superseded | Use `tree-sitter-grammars/tree-sitter-lua` |
 | `the-mikedavis/tree-sitter-git-commit` | Archived (13★) | Superseded by `gbprod/tree-sitter-gitcommit` |
-| `shunsambongi/tree-sitter-gitignore` | Stale since 2022-05 | A maintained fork appears; `.gitignore` is one pattern per line and reads fine as plain text meanwhile |
 | `antosha417/tree-sitter-hocon` | Stale since 2022-11 | A maintained fork appears |
 | `monaqa/tree-sitter-mermaid` | Stale since 2024-04 | A maintained fork appears; Mermaid rides Markdown fences as plain text meanwhile |
 | `lyndsysimon/tree-sitter-plantuml` | Stale since 2021-12 | A maintained fork appears |

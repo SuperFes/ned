@@ -44,7 +44,7 @@ TEST_CASE("Every bundled grammar with external tokens has its scanner in the reg
         CHECK(scanner->scan != nullptr);
         CHECK(data->externalScanner.scan != nullptr);
     }
-    CHECK(withScanner == 75);
+    CHECK(withScanner == 76); // +1 nginx
     CHECK(FindBundledScanner("no-such-language") == nullptr);
 }
 

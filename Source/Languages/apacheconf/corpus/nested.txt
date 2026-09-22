@@ -1,0 +1,20 @@
+==================
+Nested
+==================
+
+<Foo>
+  <Bar>
+    Boo
+  </Bar>
+</Foo>
+
+---
+    (source_file
+      (tag_directive
+        (tag_name)
+        (tag_directive
+          (tag_name)
+          (simple_directive
+            (non_quoted_simple_directive_name))
+          (tag_name))
+        (tag_name)))

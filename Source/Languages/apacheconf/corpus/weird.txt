@@ -1,0 +1,193 @@
+==================
+Quoted simple directives
+:cst
+==================
+
+"Foo"
+"Foo"bar
+"Foo""bar"
+"Foo" "bar"
+'Foo' 'bar'
+
+---
+0:0  - 6:0    source_file
+1:0  - 2:0      simple_directive
+1:0  - 1:5        name: string
+1:0  - 1:1          "\""
+1:1  - 1:4          doublequote_string_content `Foo`
+1:4  - 1:5          "\""
+2:0  - 3:0      simple_directive
+2:0  - 2:5        name: string
+2:0  - 2:1          "\""
+2:1  - 2:4          doublequote_string_content `Foo`
+2:4  - 2:5          "\""
+2:5  - 2:8        simple_param
+2:5  - 2:8          non_string_param `bar`
+3:0  - 4:0      simple_directive
+3:0  - 3:5        name: string
+3:0  - 3:1          "\""
+3:1  - 3:4          doublequote_string_content `Foo`
+3:4  - 3:5          "\""
+3:5  - 3:10       simple_param
+3:5  - 3:10         string
+3:5  - 3:6            "\""
+3:6  - 3:9            doublequote_string_content `bar`
+3:9  - 3:10           "\""
+4:0  - 5:0      simple_directive
+4:0  - 4:5        name: string
+4:0  - 4:1          "\""
+4:1  - 4:4          doublequote_string_content `Foo`
+4:4  - 4:5          "\""
+4:6  - 4:11       simple_param
+4:6  - 4:11         string
+4:6  - 4:7            "\""
+4:7  - 4:10           doublequote_string_content `bar`
+4:10 - 4:11           "\""
+5:0  - 6:0      simple_directive
+5:0  - 5:5        name: string
+5:0  - 5:1          "'"
+5:1  - 5:4          singlequote_string_content `Foo`
+5:4  - 5:5          "'"
+5:6  - 5:11       simple_param
+5:6  - 5:11         string
+5:6  - 5:7            "'"
+5:7  - 5:10           singlequote_string_content `bar`
+5:10 - 5:11           "'"
+
+
+==================
+Quote inside word! (simple directives)
+:cst
+==================
+
+Foo"bar
+Foo"bar"boo
+
+Foo bar"boo
+Foo bar"boo"
+"Foo"bar"boo"
+
+---
+0:0  - 7:0    source_file
+1:0  - 2:0      simple_directive
+1:0  - 1:7        name: non_quoted_simple_directive_name `Foo\"bar`
+2:0  - 3:0      simple_directive
+2:0  - 2:11       name: non_quoted_simple_directive_name `Foo\"bar\"boo`
+4:0  - 5:0      simple_directive
+4:0  - 4:3        name: non_quoted_simple_directive_name `Foo`
+4:4  - 4:11       simple_param
+4:4  - 4:11         non_string_param `bar\"boo`
+5:0  - 6:0      simple_directive
+5:0  - 5:3        name: non_quoted_simple_directive_name `Foo`
+5:4  - 5:12       simple_param
+5:4  - 5:12         non_string_param `bar\"boo\"`
+6:0  - 7:0      simple_directive
+6:0  - 6:5        name: string
+6:0  - 6:1          "\""
+6:1  - 6:4          doublequote_string_content `Foo`
+6:4  - 6:5          "\""
+6:5  - 6:13       simple_param
+6:5  - 6:13         non_string_param `bar\"boo\"`
+
+==================
+Weird tag names
+:cst
+==================
+
+<"Directory">
+</"Directory">
+
+<Directory/>
+</Directory/>
+
+<Dir>ectory>
+</Dir>ectory>
+
+<" foo>
+</">
+
+---
+0:0  - 12:0   source_file
+1:0  - 3:0      tag_directive
+1:0  - 1:1        "<"
+1:1  - 1:12       name: tag_name `\"Directory\"`
+1:12 - 1:13       ">"
+2:0  - 2:2        "</"
+2:2  - 2:13       end_name: tag_name `\"Directory\"`
+2:13 - 2:14       ">"
+4:0  - 6:0      tag_directive
+4:0  - 4:1        "<"
+4:1  - 4:11       name: tag_name `Directory/`
+4:11 - 4:12       ">"
+5:0  - 5:2        "</"
+5:2  - 5:12       end_name: tag_name `Directory/`
+5:12 - 5:13       ">"
+7:0  - 9:0      tag_directive
+7:0  - 7:1        "<"
+7:1  - 7:11       name: tag_name `Dir>ectory`
+7:11 - 7:12       ">"
+8:0  - 8:2        "</"
+8:2  - 8:12       end_name: tag_name `Dir>ectory`
+8:12 - 8:13       ">"
+10:0 - 12:0     tag_directive
+10:0 - 10:1       "<"
+10:1 - 10:2       name: tag_name `\"`
+10:3 - 10:6       tag_param
+10:3 - 10:6         non_string_tag_param `foo`
+10:6 - 10:7       ">"
+11:0 - 11:2       "</"
+11:2 - 11:3       end_name: tag_name `\"`
+11:3 - 11:4       ">"
+
+==================
+Weird tag directive params
+:cst
+==================
+
+<Dir>ectory>
+</Dir>ectory>
+
+<Directory a>a>
+</Directory>
+
+<Directory >a>
+</Directory>
+
+<Directory > >
+</Directory >
+
+---
+0:0   - 12:0    source_file
+1:0   - 3:0       tag_directive
+1:0   - 1:1         "<"
+1:1   - 1:11        name: tag_name `Dir>ectory`
+1:11  - 1:12        ">"
+2:0   - 2:2         "</"
+2:2   - 2:12        end_name: tag_name `Dir>ectory`
+2:12  - 2:13        ">"
+4:0   - 6:0       tag_directive
+4:0   - 4:1         "<"
+4:1   - 4:10        name: tag_name `Directory`
+4:11  - 4:14        tag_param
+4:11  - 4:14          non_string_tag_param `a>a`
+4:14  - 4:15        ">"
+5:0   - 5:2         "</"
+5:2   - 5:11        end_name: tag_name `Directory`
+5:11  - 5:12        ">"
+7:0   - 9:0       tag_directive
+7:0   - 7:1         "<"
+7:1   - 7:10        name: tag_name `Directory`
+7:11  - 7:13        tag_param
+7:11  - 7:13          non_string_tag_param `>a`
+7:13  - 7:14        ">"
+8:0   - 8:2         "</"
+8:2   - 8:11        end_name: tag_name `Directory`
+8:11  - 8:12        ">"
+10:0  - 12:0      tag_directive
+10:0  - 10:1        "<"
+10:1  - 10:10       name: tag_name `Directory`
+10:11 - 10:12       tag_param `>`
+10:13 - 10:14       ">"
+11:0  - 11:2        "</"
+11:2  - 11:11       end_name: tag_name `Directory`
+11:12 - 11:13       ">"

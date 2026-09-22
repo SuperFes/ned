@@ -211,5 +211,5 @@ TEST_CASE("Every bundled language with a grammar has a readable grammar.janet", 
         CHECK_FALSE(grammar.rules.empty());
         ++found;
     }
-    CHECK(found == 112); // 37 at the divorce, +74 across the 2026-09-18 pump batches, +1 systemd
+    CHECK(found == 116); // 37 at the divorce, +74 across the 2026-09-18 pump batches, +5 config formats (systemd, desktop, gitignore, nginx, apacheconf)
 }

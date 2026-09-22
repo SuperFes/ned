@@ -349,6 +349,7 @@ add_library(ned_lib STATIC
         Editor/Languages/Scanners/MarkdownInlineScanner.cpp
         Editor/Languages/Scanners/MarkdownScanner.cpp
         Editor/Languages/Scanners/MatlabScanner.cpp
+        Editor/Languages/Scanners/NginxScanner.cpp
         Editor/Languages/Scanners/NimScanner.cpp
         Editor/Languages/Scanners/NixScanner.cpp
         Editor/Languages/Scanners/NuScanner.cpp
