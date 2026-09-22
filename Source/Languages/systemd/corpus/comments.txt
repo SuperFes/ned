@@ -1,0 +1,36 @@
+================
+Hash comment
+================
+
+# This is a comment
+
+---
+
+(document
+  (comment))
+
+================
+Semicolon comment
+================
+
+; This is a comment
+
+---
+
+(document
+  (comment))
+
+================
+Multiple comments
+================
+
+# First comment
+; Second comment
+# Third comment
+
+---
+
+(document
+  (comment)
+  (comment)
+  (comment))

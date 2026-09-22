@@ -1,0 +1,115 @@
+================
+Realistic service file
+================
+
+[Unit]
+Description=My Application
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=app
+ExecStart=/usr/bin/myapp --config /etc/myapp.conf
+Restart=on-failure
+RestartSec=5s
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+
+---
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value))))
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (number_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (boolean_value))))
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))))
+
+================
+Timer unit
+================
+
+[Unit]
+Description=Run backup daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
+---
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value))))
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (boolean_value))))
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))))

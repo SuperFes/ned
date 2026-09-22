@@ -1,0 +1,213 @@
+================================================================================
+Line continuation
+================================================================================
+
+[Service]
+ExecStart=/usr/bin/myapp \
+    --config /etc/myapp.conf \
+    --verbose
+
+--------------------------------------------------------------------------------
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)
+        (line_continuation)
+        (text_value)
+        (line_continuation)
+        (text_value)))))
+
+================================================================================
+Specifiers and environment variables
+================================================================================
+
+[Service]
+ExecStart=/usr/bin/backup %i $BACKUP_ROOT ${BACKUP_OPTS}
+WorkingDirectory=/srv/%N
+Description=100%% done
+
+--------------------------------------------------------------------------------
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)
+        (specifier)
+        (env_variable)
+        (env_variable)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)
+        (specifier)))
+    (directive
+      (directive_name)
+      (directive_value
+        (number_value)
+        (specifier)
+        (text_value)))))
+
+================================================================================
+Quoted values and escapes
+================================================================================
+
+[Service]
+Environment="LOG=/var/log/app.log" 'MODE=fast'
+ExecStart=/bin/sh -c "echo \"hello\""
+ExecStart=/bin/echo a\ b
+
+--------------------------------------------------------------------------------
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (quoted_string)
+        (quoted_string)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)
+        (quoted_string)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)
+        (escape_sequence)
+        (text_value)))))
+
+================================================================================
+Hash and semicolon inside a value
+================================================================================
+
+[Unit]
+Description=Fetch http://example.com/#anchor
+ExecStart=/bin/sh -c a;b
+
+--------------------------------------------------------------------------------
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))))
+
+================================================================================
+Exec prefixes and repeated keys
+================================================================================
+
+[Service]
+ExecStartPre=-/usr/bin/rm -f /run/app.pid
+ExecStart=@/usr/bin/app appname
+ExecStart=+/usr/bin/privileged
+EnvironmentFile=-/etc/default/app
+
+--------------------------------------------------------------------------------
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))))
+
+================================================================================
+Custom section and dotted names
+================================================================================
+
+[X-Custom.Section]
+Vendor-Key=value
+
+--------------------------------------------------------------------------------
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))))
+
+================================================================================
+Values that only look boolean or numeric
+================================================================================
+
+[Service]
+Restart=on-failure
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=90s
+MemoryMax=512M
+CPUQuota=50%
+RestartSec=1.5
+
+--------------------------------------------------------------------------------
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (boolean_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (number_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (number_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (number_value)
+        (text_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))))
+

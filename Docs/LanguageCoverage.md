@@ -138,7 +138,8 @@ alone makes it genuinely usable.
 Nix *(admitted 2026-09-13 — see below)*, Dhall, Jsonnet, KDL *(admitted
 2026-09-18)*, HOCON *(→ Graveyard)*, JSON5 *(admitted 2026-09-18)*, RON
 *(admitted 2026-09-18)*, Pkl, Nickel, editorconfig *(admitted 2026-09-18)*,
-`.desktop`, systemd units, `ssh_config` *(admitted 2026-09-18)*, nginx, Caddy,
+`.desktop`, systemd units *(admitted 2026-09-21 -- see below)*, `ssh_config`
+*(admitted 2026-09-18)*, nginx, Caddy,
 `.env` *(admitted 2026-09-18)*, `requirements.txt` *(admitted 2026-09-18)*, Kconfig *(no corpus
 upstream -- parked)*, udev *(admitted 2026-09-18)*, muttrc *(ships no
 `grammar.json` -- parked)*, xresources, `.gitconfig` *(admitted 2026-09-18)* /
@@ -683,6 +684,46 @@ admitted: `elves/tree-sitter-elvish` (2023-07, → Graveyard),
 tree-sitter's own query language (`.scm` -- which ned authors 79 of and
 currently edits without highlighting). All of these ride the existing injection
 engine (`Editor/Injection.h`) rather than needing a mode of their own.
+
+### systemd units: admitted 2026-09-21
+
+`adamrunner/tree-sitter-systemd` pinned at commit
+`e92ff198aa8ac6f8e8975c457acc06596211253b` (2026-02-28; the repository has no
+tags, so this is a SHA pin like gitconfig's) -- ABI 15, no scanner, 4-file
+corpus (14 cases), MIT per its `package.json` and `tree-sitter.json`, though
+it ships no `LICENSE` file. 0 stars, and the two better-known alternatives
+(`suimong/`, `10fish/`) ship **no corpus at all**, failing policy item 8; this
+one passes it and the grammar is ~110 lines, so what was adopted is a seed for
+a `grammar.janet` ned owns rather than a dependency.
+
+Rejecting the INI shortcut was the actual decision: unit files carry line
+continuations, `%`-specifiers, `$VAR`/`${VAR}` references, quoted values and
+exec prefixes that `ini` has no nodes for, and a continuation line parses as
+an error against it.
+
+Three corrections to the imported grammar, each with corpus cases:
+
+- **Token precedence removed from the value tokens.** Upstream gave
+  `boolean_value` precedence 2 and `text_value` -1, and precedence beats match
+  length, so `Restart=on-failure` lexed as a boolean `on` followed by
+  `-failure`. With every value token at the same precedence the longest match
+  wins and rule order breaks the tie: `on-failure` is one text value, a bare
+  `off` is still a boolean.
+- **`#` and `;` are ordinary characters inside a value.** systemd only honours
+  a comment on a line of its own; upstream excluded both from `text_value`, so
+  `Description=Fetch http://example.com/#anchor` produced an error node.
+- **A backslash is a continuation only at end of line**, an escape anywhere
+  else (`ExecStart=/bin/echo a\ b`), and the `%` unit left `100%%` erroring --
+  the unit is gone and a lone `%` is plain text, which leaves `%%` to the
+  specifier token.
+
+Queries are ned's own (the repository ships none): highlights over sections,
+directive names, booleans, sizes/durations, specifiers, environment
+references, quoted values and escapes; tags reads a section as a namespace
+over its directives, the same call ini's made. Claims the eleven unit
+extensions plus networkd's `.network`/`.netdev`/`.link`, `.nspawn` and
+`.dnssd`, and the distinctive manager `*.conf` basenames -- `system.conf` and
+`user.conf` are too generic to take, the same caveat as `ssh_config`.
 
 ### R: D0+D1(tags) admitted 2026-09-14
 

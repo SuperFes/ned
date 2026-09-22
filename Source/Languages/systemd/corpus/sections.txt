@@ -1,0 +1,75 @@
+================
+Single section
+================
+
+[Unit]
+Description=My Service
+
+---
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))))
+
+================
+Multiple sections
+================
+
+[Unit]
+Description=My Service
+
+[Service]
+ExecStart=/usr/bin/foo
+
+[Install]
+WantedBy=multi-user.target
+
+---
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value))))
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value))))
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))))
+
+================
+Section with comment
+================
+
+[Unit]
+# A comment
+Description=Test
+
+---
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (comment)
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)))))

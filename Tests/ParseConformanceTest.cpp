@@ -135,6 +135,7 @@ const std::vector<CorpusSource>& CorpusSources() {
         {"ssh_config/corpus", "ssh_config"},
         {"requirements/corpus", "requirements"},
         {"udev/corpus", "udev"},
+        {"systemd/corpus", "systemd"},
         {"gitconfig/corpus", "gitconfig"},
         {"properties/corpus", "properties"},
         {"kdl/corpus", "kdl"},

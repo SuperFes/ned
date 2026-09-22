@@ -152,6 +152,7 @@ add_executable(ned_tests
             InjectionTest.cpp
             EmbeddedDocumentsTest.cpp
             HtmlHighlightTest.cpp
+            SystemdHighlightTest.cpp
             LinkTest.cpp
             HeaderSourceTest.cpp
             PerformanceTest.cpp

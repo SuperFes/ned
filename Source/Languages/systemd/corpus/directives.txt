@@ -1,0 +1,147 @@
+================
+Empty value directive
+================
+
+[Service]
+ExecStart=
+
+---
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name))))
+
+================
+Boolean values
+================
+
+[Service]
+PrivateTmp=yes
+NoNewPrivileges=true
+RemainAfterExit=off
+
+---
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (boolean_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (boolean_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (boolean_value)))))
+
+================
+Number values with units
+================
+
+[Service]
+TimeoutStartSec=30s
+MemoryLimit=512M
+RestartSec=5
+
+---
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (number_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (number_value)))
+    (directive
+      (directive_name)
+      (directive_value
+        (number_value)))))
+
+================
+Specifiers
+================
+
+[Service]
+ExecStart=/usr/bin/%p
+PIDFile=/run/%n.pid
+
+---
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)
+        (specifier)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)
+        (specifier)
+        (text_value)))))
+
+================
+Environment variables
+================
+
+[Service]
+ExecStart=/usr/bin/app $HOME
+Environment=PATH=${HOME}/bin
+
+---
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)
+        (env_variable)))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)
+        (env_variable)
+        (text_value)))))
+
+================
+Quoted strings
+================
+
+[Service]
+ExecStart=/bin/sh -c "echo hello"
+Environment='FOO=bar'
+
+---
+
+(document
+  (section
+    (section_header
+      (section_name))
+    (directive
+      (directive_name)
+      (directive_value
+        (text_value)
+        (quoted_string)))
+    (directive
+      (directive_name)
+      (directive_value
+        (quoted_string)))))
