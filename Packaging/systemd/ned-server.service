@@ -25,7 +25,7 @@ Type=simple
 ExecStart=ned --foreground
 KillMode=control-group
 TimeoutStopSec=10
-Restart=on-failure
+Restart=always
 
 [Install]
 WantedBy=default.target
