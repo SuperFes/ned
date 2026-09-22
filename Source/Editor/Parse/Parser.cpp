@@ -2,6 +2,8 @@
 
 #include "Editor/Parse/LexDfa.h"
 
+#include <algorithm>
+
 #include <cstring>
 #include <stdexcept>
 
@@ -9,6 +11,26 @@ namespace ned::editor::parse {
 
 namespace {
 
+    // Bounds on the EOF completion pass (Engine::CloseOpenConstructsAtEof).
+    // Each closure leaves the stack strictly shallower, so the outer loop
+    // terminates on its own and kMaxEofClosures only caps what a
+    // pathologically nested document can ask for. The other two bound the
+    // search for ONE closer: how many terminals it may spell (XML and JSX
+    // need three -- "</", the name, ">"), and how many candidates it tries
+    // at each position of that spelling.
+    constexpr unsigned kMaxEofClosures  = 64;
+    constexpr unsigned kMaxCloserTokens = 3;
+    constexpr unsigned kMaxCloserBranch = 4;
+    // A closer that takes more than one token spells itself out the same way
+    // every time ("</" is followed by a name, a name by ">"), so the
+    // positions after the first barely need to branch at all.
+    constexpr unsigned kMaxCloserBranchDeeper = 2;
+    // Constructs one PARSE will close at EOF, across every version and every
+    // pass. Each closure already leaves the stack strictly shallower; this
+    // bounds what a badly broken document can draw anyway.
+    constexpr unsigned kMaxEofClosuresPerParse = 128;
+    // Reductions ParseCanFinish will chain before giving up on the answer.
+    constexpr unsigned kMaxFinishReductions     = 256;
     constexpr unsigned kMaxVersionCount         = 6;
     constexpr unsigned kMaxVersionCountOverflow = 4;
     constexpr unsigned kMaxSummaryDepth         = 16;
@@ -980,6 +1002,390 @@ void Engine::Recover(StackVersion version, Subtree lookahead) {
         stack_->SetLastExternalToken(version, SubtreeLastExternalToken(lookahead));
 }
 
+// Reduces everything `version` can reduce without a lookahead, and returns
+// the stack depth that leaves it at.
+//
+// "Regardless of lookahead" can leave the continuation worth keeping in a
+// version DoAllPotentialReductions forked off rather than in the one passed
+// in: a state with both shift and reduce actions keeps its unreduced self
+// and puts each reduction in a new version. The shallowest of that family
+// is the most-closed reading of the same input, which is the one the EOF
+// pass is after, so this collapses the family back onto `version`.
+//
+// `version` must be the newest one on the stack -- every caller here has
+// just copied it -- so that the family is exactly the versions above it.
+unsigned Engine::SettleReductions(StackVersion version) {
+    DoAllPotentialReductions(version, 0);
+
+    StackVersion shallowest = version;
+    unsigned     bestDepth  = stack_->Depth(version);
+    for (StackVersion candidate = version + 1; candidate < stack_->VersionCount(); candidate++) {
+        const unsigned candidateDepth = stack_->Depth(candidate);
+        if (candidateDepth < bestDepth) {
+            bestDepth  = candidateDepth;
+            shallowest = candidate;
+        }
+    }
+
+    if (shallowest != version)
+        stack_->RenumberVersion(shallowest, version);
+    while (stack_->VersionCount() > version + 1)
+        stack_->RemoveVersion(stack_->VersionCount() - 1);
+
+    return bestDepth;
+}
+
+// Whether `version` could consume the end token from where it stands --
+// after every reduction that token licenses, is it actually accepted?
+//
+// The weaker question ("does this state have any action for the end token")
+// is not the same thing and cannot stand in for it: a reduce action on the
+// end token only means the stack can fold once more, and folding a
+// construct the repair itself invented leaves the parse exactly where it
+// was. That is what lets a closer that costs its own depth back still count
+// ("};" finishing a C++ class shifts the ";" on before the declaration it
+// completes reduces away) without also blessing one that closes nothing.
+//
+// Asked on a copy: the reductions here are how the question is answered,
+// not a move the parse gets to keep.
+bool Engine::ParseCanFinish(StackVersion version, abi::Symbol endSymbol) {
+    const StackVersion probe     = stack_->CopyVersion(version);
+    bool               canFinish = false;
+
+    for (unsigned step = 0; step < kMaxFinishReductions && !canFinish; step++) {
+        TableEntry entry;
+        LanguageTableEntry(language_, stack_->State(probe), endSymbol, &entry);
+
+        bool reduced = false;
+        for (std::uint32_t i = 0; i < entry.actionCount && !canFinish && !reduced; i++) {
+            switch (entry.actions[i].type) {
+                case abi::ParseActionTypeAccept:
+                case abi::ParseActionTypeShift:
+                    canFinish = true;
+                    break;
+
+                case abi::ParseActionTypeReduce: {
+                    const abi::ParseAction action = entry.actions[i];
+                    const StackVersion     reductionVersion =
+                        Reduce(probe, action.reduce.symbol, action.reduce.childCount, action.reduce.dynamicPrecedence,
+                               action.reduce.productionId, false, false);
+                    if (reductionVersion == kStackVersionNone)
+                        break;
+                    stack_->RenumberVersion(reductionVersion, probe);
+                    reduced = true;
+                    break;
+                }
+
+                default:
+                    break;
+            }
+        }
+
+        if (!reduced)
+            break;
+    }
+
+    while (stack_->VersionCount() > version + 1)
+        stack_->RemoveVersion(stack_->VersionCount() - 1);
+    return canFinish;
+}
+
+// The largest production any reduction in `state` completes -- zero if it
+// has none. Memoized: the candidate lists below ask this of the same handful
+// of states repeatedly, and it is a pure function of the tables.
+std::uint32_t Engine::LargestReductionIn(abi::StateId state) {
+    const auto cached = stateReductionSizes_.find(state);
+    if (cached != stateReductionSizes_.end())
+        return cached->second;
+
+    std::uint32_t largest = 0;
+    for (abi::Symbol lookaheadSymbol = 1; lookaheadSymbol < static_cast<abi::Symbol>(language_->tokenCount);
+         lookaheadSymbol++) {
+        TableEntry entry;
+        LanguageTableEntry(language_, state, lookaheadSymbol, &entry);
+        for (std::uint32_t i = 0; i < entry.actionCount; i++) {
+            if (entry.actions[i].type == abi::ParseActionTypeReduce)
+                largest = std::max(largest, static_cast<std::uint32_t>(entry.actions[i].reduce.childCount));
+        }
+    }
+
+    stateReductionSizes_.emplace(state, largest);
+    return largest;
+}
+
+// The terminals worth trying as a closer from `state`, in the order to try
+// them.
+//
+// Order is what makes the search below cheap and its answers stable, since
+// that search stops at the first candidate that proves itself: a C++ state
+// inside two open braces offers 133 of them, and only "}" closes anything.
+// Three things decide it, in order:
+//
+//  - a terminal that reduces straight onto the end token is one
+//    HandleError's own single-token search would already have found and
+//    taken, so those come first, in its order (ascending symbol) -- a
+//    document ordinary recovery could repair is then repaired identically;
+//  - then by the largest production the terminal stands to complete, which
+//    puts a block's "}" ahead of a statement's ";";
+//  - ascending symbol otherwise, so the choice never depends on table
+//    layout.
+//
+// Terminals that reduce nothing at all stay in the list, at the back: they
+// are no way to START a closer, but a closer spelled in several tokens
+// needs them in the middle ("</" reduces nothing until a name and a ">"
+// follow it). The one real exclusion is an extra -- a comment, XML's
+// CharData -- which shifts without leaving the state, so inserting one
+// spells nothing and only invites the search to try it again from the same
+// place.
+//
+// All of it is a hint: CloseInnermostConstruct proves every insertion
+// against the stack before keeping it.
+const std::vector<abi::Symbol>& Engine::EofClosingCandidates(abi::StateId state) {
+    const auto cached = eofClosers_.find(state);
+    if (cached != eofClosers_.end())
+        return cached->second;
+
+    struct Ranked {
+        bool          repairsInPlace; // what HandleError's own one-token search would take
+        std::uint32_t weight;         // largest production it stands to complete
+        abi::Symbol   symbol;
+    };
+
+    std::vector<Ranked> ranked;
+    for (abi::Symbol symbol = 1; symbol < static_cast<abi::Symbol>(language_->tokenCount); symbol++) {
+        TableEntry entry;
+        LanguageTableEntry(language_, state, symbol, &entry);
+        if (entry.actionCount == 0)
+            continue;
+
+        std::uint32_t weight = 0;
+        for (std::uint32_t i = 0; i < entry.actionCount; i++) {
+            if (entry.actions[i].type == abi::ParseActionTypeReduce)
+                weight = std::max(weight, static_cast<std::uint32_t>(entry.actions[i].reduce.childCount));
+        }
+
+        const abi::StateId stateAfterSymbol = LanguageNextState(language_, state, symbol);
+        if (stateAfterSymbol == state && weight == 0)
+            continue;
+
+        bool repairsInPlace = false;
+        if (stateAfterSymbol != 0 && stateAfterSymbol != state) {
+            weight         = std::max(weight, LargestReductionIn(stateAfterSymbol));
+            repairsInPlace = LanguageHasReduceAction(language_, stateAfterSymbol, abi::kBuiltinSymbolEnd);
+        }
+
+        ranked.push_back({.repairsInPlace = repairsInPlace, .weight = weight, .symbol = symbol});
+    }
+
+    std::sort(ranked.begin(), ranked.end(), [](const Ranked& left, const Ranked& right) {
+        if (left.repairsInPlace != right.repairsInPlace)
+            return left.repairsInPlace;
+        if (!left.repairsInPlace && left.weight != right.weight)
+            return left.weight > right.weight;
+        return left.symbol < right.symbol;
+    });
+
+    std::vector<abi::Symbol> candidates;
+    candidates.reserve(ranked.size());
+    for (const Ranked& entry : ranked)
+        candidates.push_back(entry.symbol);
+
+    return eofClosers_.emplace(state, std::move(candidates)).first->second;
+}
+
+// Spells out one closer for the construct `version` sits inside, as up to
+// `tokenBudget` MISSING terminals, and applies it to `version` on success.
+//
+// A closer earns its insertion by leaving the stack shallower than
+// `depthToBeat` -- it closed a construct -- or by leaving the document
+// finished (ParseCanFinish), which is how a closer that costs its own depth
+// back still counts. Neither test can be fooled by a token that merely
+// continues a construct, and neither is a heuristic: both are read off the
+// stack the insertion actually produced.
+//
+// Most closers are one token. The budget exists for the ones that are not:
+// XML and JSX end an element with "</", its name and ">", and only the last
+// of the three pays anything back, so they are unreachable one token at a
+// time. Tried depth-first over the ranked candidates, widest-first by the
+// caller's iterative deepening, so the common single-token case costs one
+// trial and the rest stay rare.
+//
+// `version` must be the newest one on the stack; each trial copies it, and
+// a failed trial is removed, so the stack is left exactly as it was found.
+unsigned Engine::CloseInnermostConstruct(StackVersion version, abi::Symbol endSymbol, unsigned depthToBeat,
+                                         unsigned tokenBudget, bool firstToken, Length padding,
+                                         std::uint32_t lookaheadBytes) {
+    const abi::StateId state = stack_->State(version);
+    const unsigned     depth = stack_->Depth(version);
+
+    const unsigned branchLimit = firstToken ? kMaxCloserBranch : kMaxCloserBranchDeeper;
+    unsigned       branched    = 0;
+
+    for (const abi::Symbol symbol : EofClosingCandidates(state)) {
+        if (branched >= branchLimit)
+            break;
+
+        const StackVersion trial = stack_->CopyVersion(version);
+
+        // Take the token the way the parse loop would: the reductions its
+        // own lookahead licenses first, then the shift.
+        if (!DoAllPotentialReductions(trial, symbol)) {
+            while (stack_->VersionCount() > version + 1)
+                stack_->RemoveVersion(stack_->VersionCount() - 1);
+            continue;
+        }
+
+        const abi::StateId shiftState = LanguageNextState(language_, stack_->State(trial), symbol);
+        if (shiftState == 0) {
+            while (stack_->VersionCount() > version + 1)
+                stack_->RemoveVersion(stack_->VersionCount() - 1);
+            continue;
+        }
+
+        stack_->Push(trial, SubtreeNewMissingLeaf(&treePool_, symbol, padding, lookaheadBytes, language_), false,
+                     shiftState);
+        const unsigned trialDepth = SettleReductions(trial);
+        const bool     closed     = trialDepth < depthToBeat || ParseCanFinish(trial, endSymbol);
+
+        // A token that leaves the parser exactly where it started -- an
+        // extra, or a repetition that reduces straight back -- has spelled
+        // nothing, so it neither closes anything nor deserves a place in the
+        // branch budget the real candidates are competing for.
+        const bool progressed = stack_->State(trial) != state || trialDepth != depth;
+
+        const unsigned spelledRest =
+            closed || !progressed || tokenBudget <= 1
+                ? 0
+                : CloseInnermostConstruct(trial, endSymbol, depthToBeat, tokenBudget - 1, false, padding, lookaheadBytes);
+
+        if (closed || spelledRest > 0) {
+            stack_->RenumberVersion(trial, version);
+            return 1 + spelledRest;
+        }
+
+        if (progressed)
+            branched++;
+
+        while (stack_->VersionCount() > version + 1)
+            stack_->RemoveVersion(stack_->VersionCount() - 1);
+    }
+
+    return 0;
+}
+
+// Closes open constructs on one reading of the stack until the document is
+// finished, and reports how many tokens that took (zero if it could not
+// finish, in which case the caller drops this reading whole).
+unsigned Engine::CloseEveryOpenConstruct(StackVersion version, abi::Symbol endSymbol, Length padding,
+                                         std::uint32_t lookaheadBytes) {
+    unsigned spelled = 0;
+
+    for (unsigned closure = 0; closure < kMaxEofClosures; closure++) {
+        if (ParseCanFinish(version, endSymbol))
+            break;
+
+        const unsigned depth = stack_->Depth(version);
+
+        unsigned closerTokens = 0;
+        for (unsigned budget = 1; budget <= kMaxCloserTokens && closerTokens == 0; budget++)
+            closerTokens = CloseInnermostConstruct(version, endSymbol, depth, budget, true, padding, lookaheadBytes);
+
+        if (closerTokens == 0)
+            break;
+        spelled += closerTokens;
+        eofClosuresApplied_++;
+    }
+
+    return spelled > 0 && ParseCanFinish(version, endSymbol) ? spelled : 0;
+}
+
+// Closes the constructs a document leaves open at its end, by inserting the
+// tokens it still owes as MISSING ones.
+//
+// A file being edited is nearly always unfinished at EOF -- the braces,
+// tags or blocks above the cursor have no closing token yet. HandleError's
+// own missing-token search only ever repairs the INNERMOST one, because its
+// test ("does inserting this token let the parse reduce with the CURRENT
+// lookahead") can only pass at the outermost nesting level: the end token
+// is not a valid lookahead inside a block, so the tables carry no action
+// for it there. Everything left unreduced was then wrapped in one flat
+// ERROR by Recover -- which is what cost every consumer that reads nesting
+// the structure it reads. Indent felt it worst: a file with two open blocks
+// answered column 0 on every line, and reindenting it stripped the
+// indentation it already had.
+//
+// Runs on copies throughout, so a pass that cannot finish the job leaves
+// the stack exactly as it found it and ordinary recovery still gets its
+// turn. EOF only: mid-file recovery already repairs well, one error at a
+// time.
+bool Engine::CloseOpenConstructsAtEof(StackVersion version, Subtree lookahead) {
+    if (eofClosuresApplied_ >= kMaxEofClosuresPerParse)
+        return false;
+
+    const abi::Symbol endSymbol = SubtreeLeafSymbol(lookahead);
+
+    // The missing tokens' padding positions them within the next included
+    // range -- relevant only under ranged parsing, zero otherwise -- exactly
+    // as HandleError's own insertion computes it.
+    const Length position = stack_->Position(version);
+    lexer_.Reset(position);
+    lexer_.MarkEnd();
+    const Length        padding        = LengthSub(lexer_.tokenEndPosition, position);
+    const std::uint32_t lookaheadBytes = SubtreeTotalBytes(lookahead) + SubtreeLookaheadBytes(lookahead);
+
+    // Settling the stack without a lookahead does not yield one reading but
+    // a family of them -- a state with both shift and reduce actions keeps
+    // its unreduced self and puts each reduction in a version of its own --
+    // and which member the closer is reachable from is not knowable up
+    // front. Crystal's unterminated string is reachable only from the
+    // reduced member, C++'s unclosed blocks only from the unreduced one, and
+    // the two are the same depth. So every member gets its own attempt, in
+    // the order HandleError's own single-token search would have taken them.
+    const StackVersion familyBegin = stack_->VersionCount();
+    const StackVersion working     = stack_->CopyVersion(version);
+    DoAllPotentialReductions(working, 0);
+    const std::uint32_t familyEnd = stack_->VersionCount();
+
+    // Fewest inserted tokens wins, not first found: a document is owed one
+    // specific set of tokens, and a repair that spells out more than that is
+    // inventing something the file never had. Rust's "({ ... })" is owed a
+    // ";", and a member that would rather read the parentheses as a call's
+    // argument list and hand it a "(" and a ")" as well must not outrank it
+    // just for coming first in the family.
+    StackVersion best        = kStackVersionNone;
+    unsigned     bestSpelled = 0;
+    for (StackVersion member = familyBegin; member < familyEnd; member++) {
+        const StackVersion attempt = stack_->CopyVersion(member);
+        const unsigned     spelled = CloseEveryOpenConstruct(attempt, endSymbol, padding, lookaheadBytes);
+
+        if (spelled > 0 && (best == kStackVersionNone || spelled < bestSpelled)) {
+            const StackVersion previousBest = best;
+            best                            = attempt;
+            bestSpelled                     = spelled;
+            if (previousBest != kStackVersionNone) {
+                // Every attempt is copied onto the top, so dropping an
+                // earlier one shifts this one down into its place.
+                stack_->RemoveVersion(previousBest);
+                best--;
+            }
+            continue;
+        }
+
+        stack_->RemoveVersion(attempt);
+    }
+
+    if (best != kStackVersionNone) {
+        stack_->RenumberVersion(best, version);
+        while (stack_->VersionCount() > familyBegin)
+            stack_->RemoveVersion(stack_->VersionCount() - 1);
+        return true;
+    }
+
+    while (stack_->VersionCount() > familyBegin)
+        stack_->RemoveVersion(stack_->VersionCount() - 1);
+    return false;
+}
+
 void Engine::HandleError(StackVersion version, Subtree lookahead) {
     const std::uint32_t previousVersionCount = stack_->VersionCount();
 
@@ -1174,6 +1580,16 @@ bool Engine::Advance(StackVersion version, bool allowNodeReuse) {
             continue;
         }
 
+        // At EOF, first try to close whatever the document left open rather
+        // than handing the whole stack to error recovery -- see
+        // CloseOpenConstructsAtEof. On success the state can act on the end
+        // token again and the ordinary reduce/accept path below takes over.
+        if (SubtreeIsEof(lookahead) && CloseOpenConstructsAtEof(version, lookahead)) {
+            state = stack_->State(version);
+            LanguageTableEntry(language_, state, SubtreeLeafSymbol(lookahead), &tableEntry);
+            continue;
+        }
+
         // A real error: pause this version; recovery starts if every
         // version ends up paused.
         stack_->Pause(version, lookahead);
@@ -1298,6 +1714,7 @@ GreenTree Engine::Parse(std::string_view text) {
 
 GreenTree Engine::Parse(std::string_view text, const GreenTree& oldTree) {
     lexer_.SetText(text);
+    eofClosuresApplied_ = 0;
 
     ExternalScannerCreate();
     ReusableNodeClear(&reusableNode_);

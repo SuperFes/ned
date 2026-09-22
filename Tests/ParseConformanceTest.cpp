@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
@@ -390,6 +391,46 @@ TEST_CASE("Ned parse engine matches the bundled corpora", "[ParseEngine][Corpus]
                (corpus == "haskell/corpus" && file == "varsym.txt");
     };
 
+    // Cases whose expectation records what tree-sitter did with a document
+    // that simply is not finished, and which ned's EOF completion pass
+    // (Engine::CloseOpenConstructsAtEof) deliberately no longer reproduces:
+    // where the reference gave up and wrapped the rest of the file in an
+    // ERROR, ned closes the constructs the file left open and marks the
+    // tokens it still owes MISSING. That is the whole point of the pass --
+    // it is what lets indent, folds and breadcrumbs read a file while it is
+    // being typed -- so these are listed one by one rather than waved
+    // through by corpus, and each is still held to the shape below.
+    const auto isEofCompletionDivergence = [](std::string_view corpus, std::string_view file, std::string_view name) {
+        struct Case {
+            std::string_view corpus;
+            std::string_view file;
+            std::string_view name;
+        };
+        static constexpr std::array<Case, 17> kCases = {{
+            {"yaml/corpus", "06_structures.txt", "Invalid Tag Shorthands"},
+            {"gitcommit/corpus", "subject.txt", "fix #36"},
+            {"latex/corpus", "commands.txt", "Command with incomplete argument"},
+            {"latex/corpus", "groups.txt", "Unbalanced curly braces"},
+            {"latex/corpus", "math.txt", "Inline formula closed with double dollar"},
+            {"nim/corpus", "errors.txt", "Error within variant object declaration"},
+            {"crystal/corpus", "errors.txt", "unterminated regex"},
+            {"crystal/corpus", "errors.txt", "unterminated percent literal array"},
+            {"crystal/corpus", "todo.txt", "macro calls with keyword type declaration args"},
+            {"elixir/corpus", "integration/spec.txt", "[error] type guard cannot end with keyword separator"},
+            {"erlang/corpus", "fault_tolerance.txt", "incomplete behaviour attribute WIP"},
+            {"erlang/corpus", "fault_tolerance.txt", "missing dot after variable (limitation)"},
+            {"elm/corpus", "glsl.txt", "Simple glsl function no end"},
+            {"purescript/corpus", "exp_do_ado.txt", "Ado-notation, single line"},
+            {"perl/corpus", "variables", "Double dollar edge cases"},
+            {"matlab/corpus", "call.txt", "Function Call: Line Continuation"},
+            {"matlab/corpus", "strings.txt", "Strings: Invalid termination"},
+        }};
+        for (const Case& listed : kCases)
+            if (listed.corpus == corpus && listed.file == file && listed.name == name)
+                return true;
+        return false;
+    };
+
     std::size_t                                                totalRuns = 0;
     std::vector<std::string>                                   failures;
     std::map<std::string, std::pair<std::size_t, std::size_t>> perCorpus; // {failed, run}
@@ -445,6 +486,22 @@ TEST_CASE("Ned parse engine matches the bundled corpora", "[ParseEngine][Corpus]
                     }
 
                     const std::string actual = ActualOutput(tree, item);
+                    if (actual != item.expected &&
+                        isEofCompletionDivergence(source.directory, item.file, item.name)) {
+                        // The trade the pass makes, stated as a contract: the
+                        // case is still an error, ned says which tokens the
+                        // document owes, and it never wraps in an ERROR
+                        // anything the reference managed to parse.
+                        INFO("case:     " << source.directory << "/" << item.file << ": " << item.name
+                                          << "\nexpected: " << item.expected << "\nned:      " << actual);
+                        CHECK(tree.HasError());
+                        CHECK(actual.find("MISSING") != std::string::npos);
+                        CHECK((item.expected.find("(ERROR") != std::string::npos ||
+                               actual.find("(ERROR") == std::string::npos));
+                        ++perCorpus[std::string(source.directory)].first;
+                        continue;
+                    }
+
                     if (actual != item.expected) {
                         recordFailure("");
                         if (std::getenv("NED_PARSE_CONFORMANCE_VERBOSE") != nullptr) {
@@ -1187,6 +1244,7 @@ TEST_CASE("Recovery corpus trees match their blessed goldens", "[ParseRecovery]"
         {".json", "json"},
         {".sh", "bash"},
         {".md", "markdown"},
+        {".html", "html"},
     };
 
     const bool blessing = std::getenv("NED_BLESS_PARSE_RECOVERY") != nullptr;
@@ -1198,7 +1256,7 @@ TEST_CASE("Recovery corpus trees match their blessed goldens", "[ParseRecovery]"
         if (entry.is_regular_file())
             files.push_back(entry.path());
     std::sort(files.begin(), files.end());
-    REQUIRE(files.size() >= 14);
+    REQUIRE(files.size() >= 17);
 
     std::map<std::string, std::unique_ptr<ned::editor::parse::Engine>, std::less<>> engines;
     for (const fs::path& file : files) {
@@ -1239,6 +1297,47 @@ TEST_CASE("Recovery corpus trees match their blessed goldens", "[ParseRecovery]"
     }
     if (blessing)
         SUCCEED("blessed " + expectedDir.string());
+}
+
+// The property the goldens above pin for the unfinished-file cases, stated
+// directly: a file that simply has not been finished yet -- the normal state
+// of one being typed -- keeps its real nesting, with the tokens it still
+// owes marked MISSING, instead of collapsing into a flat ERROR.
+//
+// Before the EOF completion pass (Engine::CloseOpenConstructsAtEof), only
+// the INNERMOST unclosed construct could be repaired this way, so every one
+// of these parsed as a single ERROR spanning the file -- and every
+// structural consumer that reads nesting (indent above all: a two-block
+// file indented at column 0 throughout) read nothing.
+TEST_CASE("Recovery closes what an unfinished file leaves open", "[ParseRecovery]") {
+    struct Expectation {
+        std::string_view language;
+        std::string_view file;
+        std::string_view innermost; // the node the LAST unclosed construct must still form
+    };
+    const std::vector<Expectation> expectations = {
+        {"cpp", "unclosed-nested-blocks.cpp", "compound_statement"},
+        {"javascript", "unclosed-nested-callback.js", "statement_block"},
+        {"html", "unclosed-tags.html", "element"},
+        {"rust", "missing-brace.rs", "block"},
+    };
+    for (const Expectation& expectation : expectations) {
+        const std::optional<Language> language = LanguageByName(expectation.language);
+        REQUIRE(language.has_value());
+        ned::editor::parse::Engine engine(language->Raw());
+        const std::string          source =
+            ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "ParseRecovery" / "corpus" / std::string(expectation.file));
+        const ned::editor::parse::GreenTree tree = engine.Parse(source);
+        const std::string                   sexp = ned::editor::parse::SubtreeToSexp(tree.Root(), tree.Language());
+        INFO(expectation.file << ": " << sexp);
+
+        // Unfinished, not broken: the tree owes tokens (MISSING) but no part
+        // of it was given up on (ERROR).
+        CHECK(tree.HasError());
+        CHECK(sexp.find("(MISSING") != std::string::npos);
+        CHECK(sexp.find("(ERROR") == std::string::npos);
+        CHECK(sexp.find(expectation.innermost) != std::string::npos);
+    }
 }
 
 // Recovery-quality properties the goldens above also imply, stated

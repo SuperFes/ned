@@ -1,0 +1,1 @@
+(document (element (start_tag (tag_name) (attribute (attribute_name) (quoted_attribute_value (attribute_value)))) (element (start_tag (tag_name)) (element (start_tag (tag_name)) (text) (end_tag (tag_name))) (MISSING _implicit_end_tag)) (MISSING _implicit_end_tag)))

@@ -704,6 +704,59 @@ TEST_CASE("HtmlMode indentColumn indents a nested element and aligns its closing
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd) == 0);
 }
 
+// The state a file is in for most of its life: being typed, with the
+// constructs above the cursor not closed yet. That used to park the parse's
+// whole stack in one flat ERROR node (nothing @indent-captured left to walk),
+// so every line in the file answered column 0 -- and indent-buffer/on-save
+// format did not merely fail to indent such a file, it stripped the
+// indentation already in it. Engine::CloseOpenConstructsAtEof is what keeps
+// the nesting readable here; these pin the symptom rather than the tree.
+TEST_CASE("indentColumn keeps indenting while a document is still unfinished", "[Indent]") {
+    SECTION("html, two tags still open") {
+        const auto mode = HtmlMode();
+        Buffer     buffer("test.html");
+        buffer.InsertAtPoint("<div>\n<ul>\n<li>one</li>\n");
+
+        const auto [ulStart, ulEnd] = LineRange(buffer, 1); // "<ul>"
+        REQUIRE(mode.indentColumn(buffer.Text(), ulStart, ulEnd) == 2);
+        const auto [liStart, liEnd] = LineRange(buffer, 2); // "<li>one</li>"
+        REQUIRE(mode.indentColumn(buffer.Text(), liStart, liEnd) == 4);
+    }
+
+    SECTION("c++, two blocks still open") {
+        const auto mode = CppMode();
+        Buffer     buffer("test.cpp");
+        buffer.InsertAtPoint("struct Widget {\nvoid resize(int w) {\nwidth_ = w;\n");
+
+        const auto [signatureStart, signatureEnd] = LineRange(buffer, 1); // "void resize(int w) {"
+        REQUIRE(mode.indentColumn(buffer.Text(), signatureStart, signatureEnd) == 4);
+        const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "width_ = w;"
+        REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 8);
+    }
+
+    SECTION("rust, one block still open") {
+        const auto mode = RustMode();
+        Buffer     buffer("test.rs");
+        buffer.InsertAtPoint("fn first() -> i32 {\nlet x = 1;\n");
+
+        const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "let x = 1;"
+        REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd) == 4);
+    }
+}
+
+// The destructive half of the same bug: a whole-buffer reindent of an
+// unfinished file must leave its existing indentation alone rather than
+// flatten it.
+TEST_CASE("IndentBuffer does not flatten an unfinished document", "[Indent]") {
+    const auto mode = HtmlMode();
+    Buffer     buffer("test.html");
+    buffer.InsertAtPoint("<html>\n  <body>\n    <div>\n      <ul>\n        x\n");
+
+    IndentBuffer(buffer, mode);
+
+    REQUIRE(buffer.Text() == "<html>\n  <body>\n    <div>\n      <ul>\n        x\n");
+}
+
 TEST_CASE("XmlMode indentColumn indents a nested element and aligns its closing tag", "[Indent]") {
     const auto mode = XmlMode();
     Buffer     buffer("test.xml");

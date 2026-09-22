@@ -1418,6 +1418,17 @@ just fixing-and-forgetting or letting it fade from memory between sessions. Fixe
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
 
+- **UBSan: `TypstScanner.cpp` loads invalid `enum container` values (2494, 2501, 2557).**
+  Three `runtime error: load of value 8, which is not a valid value for type 'enum
+  container'` reports every sanitizer run of `Ned parse engine matches the bundled
+  corpora`. The scanner keeps its container stack in a `vec_u32` and casts entries back
+  to the enum (`scanner_container_at`), so a value the enum has no name for is loaded as
+  one; upstream tree-sitter-typst's scanner has the same shape. Tests pass -- the value
+  falls through to `default:` in both switches that read it. Verified pre-existing on
+  2026-09-22 (reproduced on a clean tree with the EOF-completion work stashed), so it is
+  not fallout from that change. Fix is to store and compare the raw `uint32_t`, or widen
+  the enum to cover what is pushed.
+
 - **`BufferView's highlight cache updates after an edit changes the buffer's content`
   is intermittently flaky under `--order rand`.** Found 2026-09-15 while stress-testing
   the new Wrap rule kind's own `--order rand` reruns -- confirmed unrelated to that work

@@ -93,6 +93,20 @@ class Stack {
     [[nodiscard]] Length Position(StackVersion version) const {
         return heads_[version].node->position;
     }
+    // Number of nodes between this version's head and the stack's root --
+    // how many constructs are open on it. Follows the first link at each
+    // step, which is the same spine PopCount walks for a non-ambiguous
+    // stack; ambiguous versions are only ever compared against themselves
+    // here, so a consistent spine is all this needs to be.
+    [[nodiscard]] unsigned Depth(StackVersion version) const {
+        unsigned         depth = 0;
+        const StackNode* node  = heads_[version].node;
+        while (node != nullptr && node->linkCount > 0) {
+            node = node->links[0].node;
+            depth++;
+        }
+        return depth;
+    }
     [[nodiscard]] Subtree LastExternalToken(StackVersion version) const {
         return heads_[version].lastExternalToken;
     }

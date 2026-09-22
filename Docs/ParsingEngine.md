@@ -1153,6 +1153,34 @@ live, and it stays a separate decision:
   Recommendation: stay GLR, and add grammar-declared anchor sets for resync plus
   missing-token insertion scored against the parse table.
 
+  *Half done, 2026-09-22 -- the missing-token half, at the end of the file.*
+  A document being typed is unfinished at EOF, and the inherited recovery
+  repaired only the innermost unclosed construct: its test asks whether
+  inserting one token lets the parse reduce *with the current lookahead*, and
+  the end token is not a valid lookahead inside a block, so nothing nested
+  qualified. Everything still open was wrapped in one flat `ERROR`, which cost
+  every consumer that reads nesting its input -- two open braces, or two open
+  tags, and `Mode::indentColumn` answered column 0 for every line in the file.
+  `Engine::CloseOpenConstructsAtEof` (`Editor/Parse/Parser.cpp`) closes them
+  instead, inserting the tokens the file owes as MISSING ones, one construct at
+  a time, until the parse can finish.
+
+  Scored against the parse table exactly as recommended, but *verified* against
+  the stack rather than trusted: a candidate is kept only if the stack it
+  produces is strictly shallower (it closed something) or the document is
+  finished. The table score only orders the candidates so the search stops on
+  its first or second try -- at a C++ EOF inside two open braces, 133 terminals
+  have a valid transition and one of them is `}`. Closers spelled in several
+  tokens are reached by iterative deepening (XML and JSX need `</`, a name and
+  `>`, and only the last pays anything back), the reading with the fewest
+  inserted tokens wins so a repair cannot invent a construct the file never
+  had, and the whole pass runs on copies, so one that cannot finish leaves
+  ordinary recovery its turn.
+
+  Anchor sets for mid-file resync remain open; mid-file recovery already
+  repairs one error at a time reasonably well, and this pass deliberately does
+  not touch it.
+
 ### Grammar packaging, if and when Phase 4 happens
 
 *Done, 2026-09-17/18:* a language is a directory package (`language.janet`,

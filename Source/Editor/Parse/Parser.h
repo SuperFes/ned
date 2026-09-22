@@ -1,6 +1,8 @@
 #pragma once
 
 #include <string_view>
+#include <unordered_map>
+#include <vector>
 
 #include "Editor/Parse/Abi.h"
 #include "Editor/Parse/Green.h"
@@ -99,6 +101,19 @@ class Engine {
                            std::uint16_t productionId, bool isFragile, bool endOfNonTerminalExtra);
     void            Accept(StackVersion version, Subtree lookahead);
     bool            DoAllPotentialReductions(StackVersion startingVersion, abi::Symbol lookaheadSymbol);
+
+    // The EOF completion pass -- see CloseOpenConstructsAtEof (Parser.cpp).
+    unsigned                        SettleReductions(StackVersion version);
+    std::uint32_t                   LargestReductionIn(abi::StateId state);
+    bool                            ParseCanFinish(StackVersion version, abi::Symbol endSymbol);
+    const std::vector<abi::Symbol>& EofClosingCandidates(abi::StateId state);
+    unsigned                        CloseInnermostConstruct(StackVersion version, abi::Symbol endSymbol, unsigned depthToBeat,
+                                                            unsigned tokenBudget, bool firstToken, Length padding,
+                                                            std::uint32_t lookaheadBytes);
+    unsigned                        CloseEveryOpenConstruct(StackVersion version, abi::Symbol endSymbol, Length padding,
+                                                            std::uint32_t lookaheadBytes);
+    bool                            CloseOpenConstructsAtEof(StackVersion version, Subtree lookahead);
+
     bool            RecoverToState(StackVersion version, unsigned depth, abi::StateId goalState);
     void            Recover(StackVersion version, Subtree lookahead);
     void            HandleError(StackVersion version, Subtree lookahead);
@@ -112,6 +127,13 @@ class Engine {
     static void          ReusableNodeAdvance(ReusableNode* self);
     static bool          ReusableNodeDescend(ReusableNode* self);
     static void          ReusableNodeAdvancePastLeaf(ReusableNode* self);
+
+    // Per-state closing-terminal candidates for the EOF completion pass, in
+    // the order it tries them. A pure function of the parse tables, so it is
+    // built once per state and reused for the life of the engine.
+    std::unordered_map<abi::StateId, std::vector<abi::Symbol>> eofClosers_;
+    std::unordered_map<abi::StateId, std::uint32_t>            stateReductionSizes_;
+    unsigned                                                   eofClosuresApplied_ = 0;
 
     const abi::LanguageData*    language_;
     Lexer                       lexer_;

@@ -35,13 +35,15 @@ sql/corpus  cases=412 runs=412 passed=412 failed=0 skipped=0
 toml/corpus  cases=17 runs=17 passed=17 failed=0 skipped=0
 typescript/corpus  cases=112 runs=112 passed=112 failed=0 skipped=0
 xml/corpus  cases=22 runs=16 passed=16 failed=0 skipped=6
-yaml/corpus  cases=130 runs=130 passed=130 failed=0 skipped=0
+yaml/corpus  cases=130 runs=130 passed=129 failed=1 skipped=0
+  FAIL 06_structures.txt: Invalid Tag Shorthands
 dockerfile/corpus  cases=113 runs=113 passed=113 failed=0 skipped=0
 make/corpus  cases=99 runs=99 passed=99 failed=0 skipped=0
 hcl/corpus  cases=102 runs=102 passed=102 failed=0 skipped=0
 nix/corpus  cases=54 runs=54 passed=54 failed=0 skipped=0
 ruby/corpus  cases=290 runs=290 passed=290 failed=0 skipped=0
-gitcommit/corpus  cases=64 runs=64 passed=64 failed=0 skipped=0
+gitcommit/corpus  cases=64 runs=64 passed=63 failed=1 skipped=0
+  FAIL subject.txt: fix #36
 gitrebase/corpus  cases=15 runs=15 passed=15 failed=0 skipped=0
 r/corpus  cases=89 runs=89 passed=89 failed=0 skipped=0
 ini/corpus  cases=11 runs=11 passed=11 failed=0 skipped=0
@@ -71,7 +73,10 @@ editorconfig/corpus  cases=29 runs=29 passed=29 failed=0 skipped=0
 ron/corpus  cases=13 runs=13 passed=13 failed=0 skipped=0
 earthfile/corpus  cases=96 runs=96 passed=96 failed=0 skipped=0
 dotenv/corpus  cases=11 runs=11 passed=11 failed=0 skipped=0
-latex/corpus  cases=104 runs=104 passed=104 failed=0 skipped=0
+latex/corpus  cases=104 runs=104 passed=101 failed=3 skipped=0
+  FAIL commands.txt: Command with incomplete argument
+  FAIL groups.txt: Unbalanced curly braces
+  FAIL math.txt: Inline formula closed with double dollar
 rst/corpus  cases=40 runs=40 passed=40 failed=0 skipped=0
 typst/corpus  cases=430 runs=430 passed=428 failed=2 skipped=0
   FAIL negative.scm: negative/000
@@ -84,9 +89,13 @@ http/corpus  cases=26 runs=26 passed=26 failed=0 skipped=0
 pem/corpus  cases=3 runs=3 passed=3 failed=0 skipped=0
 csv/corpus  cases=8 runs=8 passed=8 failed=0 skipped=0
 swift/corpus  cases=238 runs=238 passed=238 failed=0 skipped=0
-nim/corpus  cases=72 runs=72 passed=72 failed=0 skipped=0
+nim/corpus  cases=72 runs=72 passed=71 failed=1 skipped=0
+  FAIL errors.txt: Error within variant object declaration
 odin/corpus  cases=2 runs=2 passed=2 failed=0 skipped=0
-crystal/corpus  cases=245 runs=245 passed=245 failed=0 skipped=0
+crystal/corpus  cases=245 runs=245 passed=242 failed=3 skipped=0
+  FAIL errors.txt: unterminated percent literal array
+  FAIL errors.txt: unterminated regex
+  FAIL todo.txt: macro calls with keyword type declaration args
 d/corpus  cases=218 runs=218 passed=218 failed=0 skipped=0
 fortran/corpus  cases=137 runs=137 passed=137 failed=0 skipped=0
 objc/corpus  cases=75 runs=75 passed=75 failed=0 skipped=0
@@ -98,10 +107,15 @@ v/corpus  cases=336 runs=336 passed=336 failed=0 skipped=0
 scala/corpus  cases=273 runs=272 passed=272 failed=0 skipped=1
 haskell/corpus  cases=725 runs=725 passed=724 failed=1 skipped=0
   FAIL varsym.txt: varsym: error: carrow
-elixir/corpus  cases=292 runs=292 passed=292 failed=0 skipped=0
-erlang/corpus  cases=228 runs=228 passed=228 failed=0 skipped=0
-elm/corpus  cases=119 runs=119 passed=119 failed=0 skipped=0
-purescript/corpus  cases=147 runs=147 passed=147 failed=0 skipped=0
+elixir/corpus  cases=292 runs=292 passed=291 failed=1 skipped=0
+  FAIL integration/spec.txt: [error] type guard cannot end with keyword separator
+erlang/corpus  cases=228 runs=228 passed=226 failed=2 skipped=0
+  FAIL fault_tolerance.txt: incomplete behaviour attribute WIP
+  FAIL fault_tolerance.txt: missing dot after variable (limitation)
+elm/corpus  cases=119 runs=119 passed=118 failed=1 skipped=0
+  FAIL glsl.txt: Simple glsl function no end
+purescript/corpus  cases=147 runs=147 passed=146 failed=1 skipped=0
+  FAIL exp_do_ado.txt: Ado-notation, single line
 rescript/corpus  cases=142 runs=142 passed=142 failed=0 skipped=0
 gleam/corpus  cases=70 runs=70 passed=70 failed=0 skipped=0
 commonlisp/corpus  cases=42 runs=42 passed=42 failed=0 skipped=0
@@ -112,7 +126,8 @@ fsharp/corpus  cases=340 runs=340 passed=340 failed=0 skipped=0
 ocaml/corpus  cases=94 runs=100 passed=100 failed=0 skipped=0
 ocaml-interface/corpus  cases=2 runs=2 passed=2 failed=0 skipped=0
 groovy/corpus  cases=87 runs=87 passed=87 failed=0 skipped=0
-perl/corpus  cases=283 runs=283 passed=283 failed=0 skipped=0
+perl/corpus  cases=283 runs=283 passed=282 failed=1 skipped=0
+  FAIL variables: Double dollar edge cases
 julia/corpus  cases=63 runs=63 passed=63 failed=0 skipped=0
 dart/corpus  cases=187 runs=187 passed=187 failed=0 skipped=0
 tcl/corpus  cases=19 runs=19 passed=19 failed=0 skipped=0
@@ -129,5 +144,7 @@ verilog/corpus  cases=70 runs=70 passed=70 failed=0 skipped=0
 vhdl/corpus  cases=34 runs=34 passed=34 failed=0 skipped=0
 solidity/corpus  cases=125 runs=125 passed=125 failed=0 skipped=0
 gdscript/corpus  cases=167 runs=167 passed=167 failed=0 skipped=0
-matlab/corpus  cases=157 runs=157 passed=157 failed=0 skipped=0
-total  cases=12718 runs=12696 passed=12685 failed=11 skipped=28
+matlab/corpus  cases=157 runs=157 passed=155 failed=2 skipped=0
+  FAIL call.txt: Function Call: Line Continuation
+  FAIL strings.txt: Strings: Invalid termination
+total  cases=12718 runs=12696 passed=12668 failed=28 skipped=28
