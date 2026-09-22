@@ -252,12 +252,16 @@ rather than a release's last afternoon.
 - [ ] `textDocument/inlineValue` -- variable values rendered inline while stopped at a
       breakpoint. Unusual among these in that ned already owns both ends: a DAP session
       knows the values, and the inlay-hint rendering path already draws inline text.
-      **Deferred 2026-09-22 on a measurement, not a guess:** probing every server
-      installed here with an `inlineValue`-advertising `initialize` returned
-      `inlineValueProvider` from none of them (clangd 23, gopls, pylsp,
-      typescript-language-server, lua-language-server; rust-analyzer returned no
-      `initialize` result inside 20s and was not chased). jdtls is the implementation
-      worth re-probing against before this is picked up. The half that did not need a
+      **Deferred 2026-09-22 on a measurement, not a guess:**
+      `Tools/lsp-capability-probe.py --require inlineValueProvider` gets it from none
+      of the servers installed here (clangd 23, gopls, pylsp,
+      typescript-language-server, lua-language-server, harper-ls; rust-analyzer on this
+      machine is a rustup proxy with no component behind it, not a server that declined).
+      Re-run that before picking this up -- jdtls is the implementation worth installing
+      to probe against, and a capability probe is the cheap half of the answer (see the
+      tool's own docstring for what it cannot tell you: a capability is a promise to
+      answer, not the shape of the answer, and inlineValue's three result variants are
+      exactly where the design weight sits). The half that did not need a
       server shipped instead -- slug for `git log --grep=`:
       `inline-debug-values-scoped` -- so what remains here is the genuinely
       server-only part: an `InlineValueEvaluatableExpression` (an expression ned would
