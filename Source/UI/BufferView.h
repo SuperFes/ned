@@ -2945,6 +2945,16 @@ class BufferView : public Widget {
     // rendering path or hardcoded color needed.
     void RequestDiagnosticsBuffer();
 
+    // The visual column Paint's own row begins at for a row starting at
+    // segmentStart -- viewport_.LeftColumn() adjusted for the overshoot its
+    // fast-forward takes when a glyph or hint straddles that column. Every
+    // screen-column mapping has to share this origin with the painted row;
+    // taking LeftColumn() directly is what put the terminal cursor up to a
+    // hint label's width away from the character it was on.
+    [[nodiscard]] int RowStartColumn(std::size_t segmentStart, std::size_t segmentEnd,
+                                     const std::vector<bufferview::RenderedLink>&      lineLinks,
+                                     const std::vector<bufferview::RenderedInlayHint>& lineHints) const;
+
     // scheduling/recurrence follow-up: org-agenda's own entry point -- a
     // sectioned Editor/Multibuffer.h view (one excerpt per
     // editor::AgendaItem, grouped Overdue/Today/Upcoming/Undated per

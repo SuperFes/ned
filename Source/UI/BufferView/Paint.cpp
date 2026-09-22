@@ -3146,6 +3146,25 @@ void BufferView::PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::
     }
 }
 
+// The visual column Paint's own row actually begins at, for a row starting
+// at segmentStart. Not simply viewport_.LeftColumn(): the fast-forward walk
+// stops on a glyph or hint boundary and overshoots when one straddles that
+// column, and every screen-column mapping has to be taken from where it
+// landed rather than from where it was aiming, or it disagrees with the
+// painted row by the overshoot.
+//
+// 0 when nothing is scrolled off (and under wrap, where LeftColumn() is
+// always 0), which makes this a no-op for every unscrolled row.
+int BufferView::RowStartColumn(std::size_t segmentStart, std::size_t segmentEnd, const std::vector<RenderedLink>& lineLinks,
+                               const std::vector<RenderedInlayHint>& lineHints) const {
+    if (viewport_.LeftColumn() == 0) {
+        return 0;
+    }
+    const text::ITextStorage& content = activeBuffer_.Get().Content();
+    return SkipToColumn(content, segmentStart, segmentEnd, static_cast<int>(viewport_.LeftColumn()), lineLinks, lineHints)
+        .columns;
+}
+
 std::optional<Point> BufferView::CursorPosition() const {
     // A pure, independently-callable query, deliberately NOT a value cached
     // as a Paint() side effect -- main.cpp's render() calls this once,
@@ -3200,6 +3219,7 @@ std::optional<Point> BufferView::CursorPosition() const {
     // behaves at a wrapped line break.
     std::size_t rowWithinLine     = 0;
     std::size_t segmentStart      = lineStart;
+    std::size_t segmentEnd        = lineEnd; // the row-start walk's own bound -- see RowStartColumn below
     int         continuationIndent = 0; // wrap-indent follow-up: 0 unless point lands on an actual continuation row
     if (viewport_.EffectiveWrapLines() && sizeIsKnown) {
         const int                      fullWidth = std::max(1, sizeNow.width - static_cast<int>(gutterWidth));
@@ -3209,6 +3229,7 @@ std::optional<Point> BufferView::CursorPosition() const {
             if (point >= segments[i].startByte && (point < segments[i].endByte || (isLast && point == segments[i].endByte))) {
                 rowWithinLine      = i;
                 segmentStart       = segments[i].startByte;
+                segmentEnd         = segments[i].endByte;
                 continuationIndent = segments[i].continuationIndent;
                 break;
             }
@@ -3248,12 +3269,21 @@ std::optional<Point> BufferView::CursorPosition() const {
 
     const std::vector<RenderedInlayHint> lineHints = InlayHintsForLineRange(lineStart, lineEnd);
     const std::optional<int>             visualCol = VisualColumn(content, segmentStart, point, maxColumns, lineLinks, lineHints);
-    if (!visualCol || *visualCol < static_cast<int>(viewport_.LeftColumn())) {
-        return std::nullopt; // scrolled off the left edge -- shouldn't happen once viewport_.LeftColumn() is correct, but a safe guard
+    // Paint does not begin the row at viewport_.LeftColumn(): its
+    // fast-forward stops on a glyph or hint boundary, which overshoots
+    // whenever one straddles that column, and it then draws from where it
+    // actually landed. Measuring the cursor against LeftColumn() instead of
+    // against that same landing column puts it the overshoot's width away
+    // from the character it is on -- up to a whole hint label (measured
+    // 2026-09-22: 7 columns off at one terminal width, 1 at the next, none
+    // at the one after, which is what made it look intermittent).
+    const int rowStartColumn = RowStartColumn(segmentStart, segmentEnd, lineLinks, lineHints);
+    if (!visualCol || *visualCol < rowStartColumn) {
+        return std::nullopt; // scrolled off the left edge
     }
 
-    const std::size_t col =
-        gutterWidth + static_cast<std::size_t>(continuationIndent) + static_cast<std::size_t>(*visualCol) - viewport_.LeftColumn();
+    const std::size_t col = gutterWidth + static_cast<std::size_t>(continuationIndent) +
+                            static_cast<std::size_t>(*visualCol - rowStartColumn);
     if (sizeIsKnown && col >= static_cast<std::size_t>(sizeNow.width)) {
         return std::nullopt; // scrolled off horizontally to the right
     }
