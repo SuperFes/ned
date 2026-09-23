@@ -25,6 +25,9 @@ add_executable(ned_tests
             RenameReviewTest.cpp
             ClassFileSyncTest.cpp
             ImportFixupTest.cpp
+            ChangeSignatureQueryTest.cpp
+            ChangeSignatureTest.cpp
+            ChangeSignatureDiscoveryTest.cpp
             BufferViewRenameSymbolTest.cpp
             BufferViewCaseFixTest.cpp
             BufferViewClassFileSyncTest.cpp

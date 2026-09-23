@@ -62,6 +62,12 @@ struct QueryFiles {
     std::vector<std::string> imports;
     std::vector<std::string> tags;
     std::vector<std::string> tests;
+    // change-signature follow-up: "@signature.definition"/"@signature.name"/
+    // "@signature.parameters" -> Mode::signatures.
+    std::vector<std::string> signatures;
+    // change-signature follow-up: "@call.definition"/"@call.callee"/
+    // "@call.arguments" -> Mode::calls.
+    std::vector<std::string> calls;
     std::vector<std::string> indents;
     std::vector<std::string> locals;
     std::vector<std::string> injections;

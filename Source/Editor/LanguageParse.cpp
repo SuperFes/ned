@@ -66,6 +66,10 @@ namespace {
             return &files.tags;
         if (kind == "tests")
             return &files.tests;
+        if (kind == "signatures")
+            return &files.signatures;
+        if (kind == "calls")
+            return &files.calls;
         if (kind == "indents")
             return &files.indents;
         if (kind == "locals")
@@ -77,8 +81,9 @@ namespace {
         return nullptr;
     }
 
-    constexpr std::string_view kQueryKinds[] = {"highlights", "folds",  "imports", "tags",   "tests",
-                                                "indents",    "locals", "injections", "format"};
+    constexpr std::string_view kQueryKinds[] = {"highlights", "folds",      "imports", "tags",       "tests",
+                                                "signatures", "calls",      "indents", "locals",     "injections",
+                                                "format"};
 
 } // namespace
 
@@ -226,7 +231,8 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
                     kind.IsKeyword() ? QueryListFor(definition.queries, kind.text) : nullptr;
                 if (list == nullptr) {
                     Fail(directoryName, kind.line,
-                         ":queries keys are :highlights/:folds/:imports/:tags/:tests/:indents/:locals/:injections/:format");
+                         ":queries keys are :highlights/:folds/:imports/:tags/:tests/:signatures/:calls/:indents/"
+                         ":locals/:injections/:format");
                 }
                 *list = ExpectStrings(directoryName, paths, ":queries");
             }

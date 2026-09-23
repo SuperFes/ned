@@ -124,6 +124,8 @@ add_library(ned_lib STATIC
         Editor/CodeFold.cpp
         Editor/LocalScopes.cpp
         Editor/RenameReview.cpp
+        Editor/ChangeSignature.cpp
+        Editor/ChangeSignatureSettings.cpp
         Editor/ClassFileSync.cpp
         Editor/ImportFixup.cpp
         Editor/ImportFixupSettings.cpp

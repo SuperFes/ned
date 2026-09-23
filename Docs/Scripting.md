@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-227 bindings.
+228 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -292,6 +292,10 @@ Override one capture name's strikethrough trait (true/false) -- nil clears.
 ## `ned/set-capture-underlined`
 
 Override one capture name's underlined trait (true/false) -- nil clears.
+
+## `ned/set-change-signature-max-files`
+
+How many project files one change-signature's call-site scan will consider (default 20000; 0 means unlimited). Raise it for a very large repository, lower it if the scan feels slow.
 
 ## `ned/set-class-file-sync`
 

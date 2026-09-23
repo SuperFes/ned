@@ -177,10 +177,10 @@ Mode ModeFromDefinition(const LanguageDefinition& definition) {
 
 namespace {
 
-    // The nine kinds, compiled; kept alive for the duration of the build
+    // The eleven kinds, compiled; kept alive for the duration of the build
     // (GrammarModeFromLanguage retains none of the text).
     struct CompiledQueries {
-        QueryText highlights, folds, imports, tags, tests, indents, locals, injections, format;
+        QueryText highlights, folds, imports, tags, tests, signatures, calls, indents, locals, injections, format;
 
         [[nodiscard]] GrammarQuerySources Views() const {
             return {.highlights = highlights.text,
@@ -188,6 +188,8 @@ namespace {
                     .imports    = imports.text,
                     .tags       = tags.text,
                     .tests      = tests.text,
+                    .signatures = signatures.text,
+                    .calls      = calls.text,
                     .indents    = indents.text,
                     .locals     = locals.text,
                     .injections = injections.text,
@@ -201,6 +203,8 @@ namespace {
                 .imports    = CompileQueryFiles(files.imports),
                 .tags       = CompileQueryFiles(files.tags),
                 .tests      = CompileQueryFiles(files.tests),
+                .signatures = CompileQueryFiles(files.signatures),
+                .calls      = CompileQueryFiles(files.calls),
                 .indents    = CompileQueryFiles(files.indents),
                 .locals     = CompileQueryFiles(files.locals),
                 .injections = CompileQueryFiles(files.injections),
@@ -229,7 +233,8 @@ namespace {
     [[noreturn]] void RethrowLocated(const LanguageDefinition& definition, const grammar::Language& language,
                                      const CompiledQueries& compiled, const grammar::QueryMatcherError& error) {
         for (const QueryText* text : {&compiled.highlights, &compiled.folds, &compiled.imports, &compiled.tags, &compiled.tests,
-                                      &compiled.indents, &compiled.locals, &compiled.injections, &compiled.format}) {
+                                      &compiled.signatures, &compiled.calls, &compiled.indents, &compiled.locals,
+                                      &compiled.injections, &compiled.format}) {
             if (text->text.empty()) {
                 continue;
             }

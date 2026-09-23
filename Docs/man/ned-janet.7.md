@@ -300,6 +300,10 @@ configuration is Janet code, and these are the bindings it calls.
 
 :   Override one capture name's underlined trait (true/false) -- nil clears.
 
+`ned/set-change-signature-max-files`
+
+:   How many project files one change-signature's call-site scan will consider (default 20000; 0 means unlimited). Raise it for a very large repository, lower it if the scan feels slow.
+
 `ned/set-class-file-sync`
 
 :   Enable/disable offering, unprompted, to keep a file's name and the single type declared inside it in agreement (default true) -- after renaming a class/enum/struct/record, a y/n to rename the file after it; after renaming the file, a y/n to rename the type. Both fire only when the file was demonstrably named after that type a moment ago and no longer is, and never when the file holds more than one top-level type -- whether a file *should* be named after its type is a per-project question this does not try to answer. Turning it off stops the offers only: rename-file-to-match-type and rename-type-to-match-file keep working when you ask for them, and are more permissive than the offers are.

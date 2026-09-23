@@ -788,6 +788,92 @@ void ExpandPairwiseBindings(const grammar::Node& container, const std::string& q
     }
 }
 
+// change-signature follow-up: given a parameter's own `declarator:` field
+// (or the field a wrapper declarator's own `declarator:` field points to),
+// descends through pointer/reference/array wrapper declarators to the
+// identifier they name -- the same declarator shapes cpp/locals.janet's own
+// parameter patterns enumerate one at a time, restated here as a walk
+// instead of a pattern per shape since there is no capture list to
+// correlate against, only a single Node in hand. A shape this doesn't
+// recognise (an abstract declarator, a function-pointer parameter's own
+// function_declarator, or a declarator with no identifier at all) returns a
+// null Node -- the caller reports that parameter as nameless rather than
+// guessing.
+grammar::Node UnwrapDeclaratorName(grammar::Node node) {
+    for (int guard = 0; guard < 8 && !node.IsNull(); ++guard) {
+        if (node.Type() == "identifier" || node.Type() == "field_identifier") {
+            return node;
+        }
+        grammar::Node inner = node.ChildByFieldName("declarator");
+        if (inner.IsNull() && node.Type() == "reference_declarator") {
+            // No `declarator:` field on this shape -- its inner declarator
+            // is a bare positional child instead (grammar.janet's own
+            // `(:seq (:choice "&" "&&") _declarator)`, no :field).
+            node.ForEachChild([&](const grammar::Node& child) {
+                if (inner.IsNull() && child.IsNamed() && !child.IsExtra()) {
+                    inner = child;
+                }
+            });
+        }
+        if (inner.IsNull()) {
+            return grammar::Node(parse::NodeNull());
+        }
+        node = inner;
+    }
+    return grammar::Node(parse::NodeNull());
+}
+
+// change-signature follow-up: walks a captured `parameter_list` node's own
+// children directly (ForEachChild's O(n) shape, same as
+// ExpandPairwiseBindings above) rather than via a second query -- a
+// parameter's full text, its name (if any) and its default value (if any)
+// are all properties of ONE already-captured node, not something a query
+// predicate can express. A child that is neither a parameter_declaration
+// family node nor the bare "..." token (a comma, a paren) is skipped.
+std::vector<SignatureParameter> ParametersFromList(const grammar::Node& parameterList) {
+    std::vector<SignatureParameter> parameters;
+    for (std::size_t i = 0; i < parameterList.ChildCount(); ++i) {
+        const grammar::Node child = parameterList.Child(i);
+        if (child.IsExtra()) {
+            continue;
+        }
+        if (!child.IsNamed()) {
+            if (child.Type() == "...") {
+                // A trailing ellipsis with no wrapping
+                // variadic_parameter_declaration node at all.
+                parameters.push_back(
+                    SignatureParameter{.startByte = child.StartByte(), .endByte = child.EndByte(), .isVariadic = true});
+            }
+            continue;
+        }
+
+        SignatureParameter parameter{.startByte = child.StartByte(), .endByte = child.EndByte()};
+        if (child.Type() == "variadic_parameter_declaration") {
+            parameter.isVariadic = true;
+            parameters.push_back(parameter);
+            continue;
+        }
+        const grammar::Node declarator = child.ChildByFieldName("declarator");
+        if (!declarator.IsNull()) {
+            const grammar::Node paramName = UnwrapDeclaratorName(declarator);
+            if (!paramName.IsNull()) {
+                parameter.nameStartByte = paramName.StartByte();
+                parameter.nameEndByte   = paramName.EndByte();
+            }
+        }
+        if (child.Type() == "optional_parameter_declaration") {
+            const grammar::Node defaultValue = child.ChildByFieldName("default_value");
+            if (!defaultValue.IsNull()) {
+                parameter.hasDefaultValue  = true;
+                parameter.defaultStartByte = defaultValue.StartByte();
+                parameter.defaultEndByte   = defaultValue.EndByte();
+            }
+        }
+        parameters.push_back(parameter);
+    }
+    return parameters;
+}
+
 Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language, const GrammarQuerySources& queries,
                                 ModeBuildContext* context) {
     const auto parser = std::make_shared<grammar::Parser>(language);
@@ -1464,6 +1550,152 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
         };
     }
 
+    // change-signature follow-up: same MatchCache-through-Reconcile shape as
+    // testDiscovery just above, called only when change-signature actually
+    // runs (on point, and once per touched file during its project-wide
+    // call-site scan) -- never once per Paint(), so a plain per-match Node
+    // re-derivation (ParametersFromList) is the honest cost rather than
+    // something worth threading through the per-subtree-fact-memoization
+    // machinery. All three captures (@signature.definition/name/parameters)
+    // come from the SAME pattern match, unlike test.definition/test.name
+    // above, so there is no separate correlation pass -- just one marker per
+    // match with its full capture trio.
+    SignatureFunction signatures;
+    if (!queries.signatures.empty()) {
+        const auto signatureQuery      = std::make_shared<grammar::QueryMatcher>(language, queries.signatures);
+        const auto signatureMatchCache = std::make_shared<grammar::MatchCache>();
+        signatures = [parser, signatureQuery, sharedParse,
+                     signatureMatchCache](std::string_view bufferText) -> std::vector<SignatureMarker> {
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
+            if (tree.IsNull()) {
+                return {};
+            }
+
+            std::vector<SignatureMarker> markers;
+            for (const grammar::QueryMatch& match :
+                 signatureMatchCache->Reconcile(*signatureQuery, tree, bufferText, sharedParse->LastEdit())) {
+                SignatureMarker marker{};
+                bool            haveDefinition  = false;
+                bool            haveName        = false;
+                std::size_t     parametersStart = 0;
+                std::size_t     parametersEnd   = 0;
+                bool            haveParameters  = false;
+                for (const grammar::QueryMatchCapture& capture : match.captures) {
+                    if (capture.name == "signature.definition") {
+                        marker.startByte = capture.startByte;
+                        marker.endByte   = capture.endByte;
+                        haveDefinition   = true;
+                    }
+                    else if (capture.name == "signature.name") {
+                        marker.nameStartByte = capture.startByte;
+                        marker.nameEndByte   = capture.endByte;
+                        haveName             = true;
+                    }
+                    else if (capture.name == "signature.parameters") {
+                        parametersStart = capture.startByte;
+                        parametersEnd   = capture.endByte;
+                        haveParameters  = true;
+                    }
+                }
+                if (!haveDefinition || !haveName || !haveParameters) {
+                    continue; // a pattern that matched without its full capture trio
+                }
+
+                const grammar::Node parameterList =
+                    tree.RootNode().NamedDescendantForByteRange(parametersStart, parametersEnd);
+                if (parameterList.IsNull() || parameterList.StartByte() != parametersStart ||
+                    parameterList.EndByte() != parametersEnd) {
+                    continue; // re-derivation failed -- report no parameters rather than guess
+                }
+                marker.parameters = ParametersFromList(parameterList);
+                markers.push_back(std::move(marker));
+            }
+
+            // main-editor-sticky-scroll follow-up's own cpp-tags.scm case,
+            // restated here: a with-body definition matches both the
+            // function_definition-anchored pattern (the wide range) and the
+            // bare function_declarator-anchored pattern needed for a
+            // bodyless prototype's OWN range -- same name, one nested inside
+            // the other. Collapse down to the wider marker, same technique
+            // symbolKind's own buildMarkers uses just above.
+            std::erase_if(markers, [&markers](const SignatureMarker& marker) {
+                return std::any_of(markers.begin(), markers.end(), [&marker](const SignatureMarker& other) {
+                    return &other != &marker && other.nameStartByte == marker.nameStartByte &&
+                           other.nameEndByte == marker.nameEndByte && other.startByte <= marker.startByte &&
+                           marker.endByte <= other.endByte &&
+                           (other.startByte != marker.startByte || other.endByte != marker.endByte);
+                });
+            });
+            std::sort(markers.begin(), markers.end(),
+                      [](const SignatureMarker& a, const SignatureMarker& b) { return a.startByte < b.startByte; });
+            return markers;
+        };
+    }
+
+    // change-signature follow-up: same shape as `signatures` just above,
+    // over calls.janet instead -- one marker per match, its argument list
+    // walked the same way ParametersFromList walks a parameter list.
+    CallExpressionFunction calls;
+    if (!queries.calls.empty()) {
+        const auto callQuery      = std::make_shared<grammar::QueryMatcher>(language, queries.calls);
+        const auto callMatchCache = std::make_shared<grammar::MatchCache>();
+        calls = [parser, callQuery, sharedParse, callMatchCache](std::string_view bufferText) -> std::vector<CallMarker> {
+            const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
+            if (tree.IsNull()) {
+                return {};
+            }
+
+            std::vector<CallMarker> markers;
+            for (const grammar::QueryMatch& match :
+                 callMatchCache->Reconcile(*callQuery, tree, bufferText, sharedParse->LastEdit())) {
+                CallMarker  marker{};
+                bool        haveDefinition = false;
+                bool        haveCallee     = false;
+                std::size_t argumentsStart = 0;
+                std::size_t argumentsEnd   = 0;
+                bool        haveArguments  = false;
+                for (const grammar::QueryMatchCapture& capture : match.captures) {
+                    if (capture.name == "call.definition") {
+                        marker.startByte = capture.startByte;
+                        marker.endByte   = capture.endByte;
+                        haveDefinition   = true;
+                    }
+                    else if (capture.name == "call.callee") {
+                        marker.calleeStartByte = capture.startByte;
+                        marker.calleeEndByte   = capture.endByte;
+                        haveCallee             = true;
+                    }
+                    else if (capture.name == "call.arguments") {
+                        argumentsStart = capture.startByte;
+                        argumentsEnd   = capture.endByte;
+                        haveArguments  = true;
+                    }
+                }
+                if (!haveDefinition || !haveCallee || !haveArguments) {
+                    continue;
+                }
+
+                const grammar::Node argumentList =
+                    tree.RootNode().NamedDescendantForByteRange(argumentsStart, argumentsEnd);
+                if (argumentList.IsNull() || argumentList.StartByte() != argumentsStart ||
+                    argumentList.EndByte() != argumentsEnd) {
+                    continue;
+                }
+                for (std::size_t i = 0; i < argumentList.ChildCount(); ++i) {
+                    const grammar::Node child = argumentList.Child(i);
+                    if (!child.IsNamed() || child.IsExtra()) {
+                        continue;
+                    }
+                    marker.arguments.push_back(CallArgument{.startByte = child.StartByte(), .endByte = child.EndByte()});
+                }
+                markers.push_back(std::move(marker));
+            }
+            std::sort(markers.begin(), markers.end(),
+                      [](const CallMarker& a, const CallMarker& b) { return a.startByte < b.startByte; });
+            return markers;
+        };
+    }
+
     // smart-indentation follow-up: an eighth closure sharing the same
     // parser/sharedParse as everything above, for the same "don't trigger a
     // redundant full reparse on the same Paint() cycle" reason. Built when an
@@ -1810,6 +2042,8 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 .importTarget           = std::move(importTarget),
                 .importTargets          = std::move(importTargets),
                 .testDiscovery          = std::move(testDiscovery),
+                .signatures             = std::move(signatures),
+                .calls                  = std::move(calls),
                 .injectedRegions        = std::move(injectedRegions),
                 .embeddedRegions        = std::move(embeddedRegions),
                 .indentColumn           = std::move(indentColumn),

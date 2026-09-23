@@ -476,6 +476,89 @@ struct TestMarker {
 // test discovery configured for this mode," the standing convention.
 using TestDiscoveryFunction = std::function<std::vector<TestMarker>(std::string_view bufferText)>;
 
+// change-signature follow-up: one parameter from a function-like definition
+// or bodyless prototype's own parameter list -- see Editor/ChangeSignature.h,
+// which turns a pair of these lists (the function's current one and
+// whatever the user retyped) into a position mapping. [startByte, endByte)
+// is the WHOLE parameter's own source text (type, name, default alike --
+// what a rewrite would copy verbatim); [nameStartByte, nameEndByte) is just
+// its identifier, left zero-length for a parameter with no name at all (an
+// abstract declarator in a bodyless prototype, `void f(int);`) --
+// ChangeSignature can only match a parameter across old/new by name, so a
+// nameless one is never kept, only dropped, and can never be typed as a NEW
+// parameter either (there is no name to give a call-site argument).
+// hasDefaultValue/[defaultStartByte, defaultEndByte) mirror C++'s own
+// optional_parameter_declaration `default_value:` field. isVariadic marks a
+// `...` parameter -- neither a name nor a default make sense for one, and
+// ChangeSignature declines outright rather than guess at rewriting a
+// variadic call site.
+struct SignatureParameter {
+    std::size_t startByte;
+    std::size_t endByte;
+    std::size_t nameStartByte   = 0;
+    std::size_t nameEndByte     = 0;
+    bool        hasDefaultValue = false;
+    std::size_t defaultStartByte = 0;
+    std::size_t defaultEndByte   = 0;
+    bool        isVariadic       = false;
+};
+
+// change-signature follow-up: one function-like definition or bodyless
+// prototype. [startByte, endByte) is the whole definition/prototype (mirrors
+// SymbolMarker's own range); [nameStartByte, nameEndByte) is its own name
+// identifier, unqualified -- a Class::method's own scope qualifier is not
+// captured, since ChangeSignature only ever needs the simple name to match
+// call-site candidates and same-named overloads by.
+struct SignatureMarker {
+    std::size_t                     startByte;
+    std::size_t                     endByte;
+    std::size_t                     nameStartByte;
+    std::size_t                     nameEndByte;
+    std::vector<SignatureParameter> parameters;
+};
+
+// Given a buffer's full text, returns every function-like definition or
+// bodyless prototype in it, in tree order -- one entry per
+// "@signature.definition"/"@signature.name"/"@signature.parameters" capture
+// group from the language's own signatures.janet (a ned-local capture
+// convention, same "no upstream equivalent" shape as tests.janet). Empty
+// function (the default) means "no signature query configured for this
+// mode," the standing convention.
+using SignatureFunction = std::function<std::vector<SignatureMarker>(std::string_view bufferText)>;
+
+// change-signature follow-up: one argument expression within a call site's
+// own argument list, in call order -- RewriteArgumentList
+// (Editor/ChangeSignature.h) reorders/drops/defaults directly against this
+// list, copying each kept argument's exact source text rather than
+// re-deriving it.
+struct CallArgument {
+    std::size_t startByte;
+    std::size_t endByte;
+};
+
+// One call expression. [startByte, endByte) is the whole call;
+// [calleeStartByte, calleeEndByte) is just the identifier being called -- a
+// member call's own object expression (`obj.`/`obj->`) or scope qualifier
+// (`Foo::`) is not included, since ChangeSignature only ever matches by
+// simple name.
+struct CallMarker {
+    std::size_t               startByte;
+    std::size_t               endByte;
+    std::size_t               calleeStartByte;
+    std::size_t               calleeEndByte;
+    std::vector<CallArgument> arguments;
+};
+
+// Given a buffer's full text, returns every call expression in it, in tree
+// order, from the language's own calls.janet
+// ("@call.definition"/"@call.callee"/"@call.arguments" captures) --
+// deliberately not filtered by callee name here (a query predicate only
+// ever compares to a literal string, so it cannot name an arbitrary target
+// function; see calls.janet's own header comment). A caller filters by name
+// afterward. Empty function (the default) means "no calls query configured
+// for this mode."
+using CallExpressionFunction = std::function<std::vector<CallMarker>(std::string_view bufferText)>;
+
 // scope-aware-rename follow-up: what a language's locals.scm captured at one
 // node -- the tree-sitter/Neovim "@local.scope"/"@local.definition*"/
 // "@local.reference" convention (the one query kind here that IS an upstream
@@ -771,6 +854,15 @@ struct Mode {
     // convention as everything above -- run-test-at-point reports it, and
     // BufferView's test gutter simply never activates.
     TestDiscoveryFunction testDiscovery;
+    // change-signature follow-up: empty function (the default) means no
+    // signatures.janet configured for this mode, same "empty means not
+    // configured" convention as everything above -- change-signature
+    // reports it plainly instead of guessing at a parameter list.
+    SignatureFunction signatures;
+    // change-signature follow-up: empty function (the default) means no
+    // calls.janet configured for this mode -- change-signature has no
+    // call-site tier without one, same convention as `signatures` above.
+    CallExpressionFunction calls;
     // embedded-language-documents follow-up: empty function (the default)
     // means this mode has no LSP-syncable embedded-language regions, same
     // "empty means not configured" convention as everything above -- only a
@@ -868,6 +960,12 @@ struct GrammarQuerySources {
     // a "@test.definition"/"@test.name"-capture query -> Mode::testDiscovery
     // (test-runner integration)
     std::string_view tests;
+    // a "@signature.definition"/"@signature.name"/"@signature.parameters"
+    // -capture query -> Mode::signatures (change-signature follow-up)
+    std::string_view signatures;
+    // a "@call.definition"/"@call.callee"/"@call.arguments"-capture query ->
+    // Mode::calls (change-signature follow-up)
+    std::string_view calls;
     // an "@indent"/"@dedent"-capture query -> Mode::indentColumn
     // (smart-indentation follow-up, see Editor/Indent.h)
     std::string_view indents;

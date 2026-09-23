@@ -19,6 +19,7 @@
 #include "Editor/Backup.h"
 #include "Editor/BlankLineCleanup.h"
 #include "Editor/CaptureClassifiers.h"
+#include "Editor/ChangeSignatureSettings.h"
 #include "Editor/ClassFileSyncSettings.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
@@ -608,6 +609,10 @@ namespace {
 
     void NedSetImportFixupMaxFiles(std::int64_t count) {
         editor::SetImportFixupMaxFiles(count > 0 ? static_cast<std::size_t>(count) : 0);
+    }
+
+    void NedSetChangeSignatureMaxFiles(std::int64_t count) {
+        editor::SetChangeSignatureMaxFiles(count > 0 ? static_cast<std::size_t>(count) : 0);
     }
 
     void NedSetMultibufferAutoCollapseExcerptCap(std::int64_t count) {
@@ -2200,6 +2205,10 @@ void InstallEditorBindings(Environment& env) {
         "How many project files one rename's import scan will consider (default 20000; 0 means unlimited). Only "
         "files whose language has an import query are counted at all. Raise it for a very large repository, lower "
         "it if a rename feels slow.");
+    env.Register<&NedSetChangeSignatureMaxFiles>(
+        "ned", "set-change-signature-max-files",
+        "How many project files one change-signature's call-site scan will consider (default 20000; 0 means "
+        "unlimited). Raise it for a very large repository, lower it if the scan feels slow.");
     env.Register<&NedSetStickyScrollEnabled>(
         "ned", "set-sticky-scroll-enabled",
         "Enable/disable pinned namespace/class/method breadcrumb rows at the top of a pane while scrolled into "

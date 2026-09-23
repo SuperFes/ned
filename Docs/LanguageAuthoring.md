@@ -219,7 +219,11 @@ needs a cast, an enum assigned an `int`. The bundled scanners under
 
 ned's queries are Janet files, one per kind, discovered beside `language.janet`:
 `highlights.janet`, `tags.janet`, `indents.janet`, `locals.janet`, `injections.janet`,
-`imports.janet`, `tests.janet`, `format.janet`. An `upstream/<kind>.janet` is read
+`imports.janet`, `tests.janet`, `format.janet`, `signatures.janet`, `calls.janet`
+(change-signature's own pair -- `@signature.definition`/`@signature.name`/
+`@signature.parameters` and `@call.definition`/`@call.callee`/`@call.arguments`,
+`Source/Languages/cpp/` the only bundled language with either so far). An
+`upstream/<kind>.janet` is read
 first and ned's own file after it, so a grammar's shipped queries are consumed
 unmodified and ned's additions are a delta. `Docs/Scripting.md`'s `ned/register-language`
 entry lists every `language.janet` key; the bundled languages are the reference for the
