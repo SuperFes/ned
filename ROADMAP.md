@@ -107,16 +107,6 @@ whole-document highlight 50.7 ms -> 14.8 ms, keystroke+repaint on a 9 KiB C++ fi
 
 **Quick-fix gutter marker**
 
-Shipped -- slug for `git log --grep=`: `code-action-hints`. The feasibility question
-the Maybelist entry held this behind was answered by measuring rather than guessing:
-a viewport-ranged `textDocument/codeAction` carrying `context.only = ["quickfix"]`
-costs 0.4 ms median on clangd 23, 0.8 ms on gopls and 16-40 ms on
-typescript-language-server, because the server answers from the fixes it already
-computed when it published the diagnostics. The filter is load-bearing in the other
-direction too: unfiltered, a wide range draws whole-file `source.*`/`refactor.*`
-actions that attach to no diagnostic and so name no line (53 of them from gopls
-alone). Four conscious cuts left behind.
-
 - [ ] The marker only ever names a **diagnostic-attached** quick fix, because an
       attached diagnostic is the only thing that maps an action back to a line. A
       selection-scoped refactor (extract function/variable) and a whole-file source
@@ -142,7 +132,6 @@ alone). Four conscious cuts left behind.
       `debug-panel`: it is reserved for any language with a configured DAP adapter,
       because that column is where the first breakpoint gets clicked, so gating it on
       one already existing was a chicken-and-egg.)
-
 - [ ] `Lsp/Manager.cpp`'s `PathToUri` doesn't percent-encode, while its `UriToPath` now
       decodes (`lsp-document-link`, after clangd's own encoded targets proved every
       URI-carrying response was missing paths outside the unreserved set). Nothing has
@@ -171,37 +160,6 @@ alone). Four conscious cuts left behind.
       the uncommented call), and 0.10.0's `[semantic_tokens] mode = "contextual"` default
       stops emitting comment tokens at all. Decide it when a server actually recolours a
       grammar `comment` cell.
-
-**Unimplemented LSP surface** — audited 2026-09-21 by grepping every method string in
-`Source/` against the 3.17 method list. Split by whether something is known to be broken
-today, merely absent, or deliberately skipped, so a later pass doesn't re-litigate the
-third group.
-
-The file-operation family is complete as of 2026-09-21 -- slug
-`file-operation-create-delete`: `didCreateFiles` (sent when a save first brings a
-buffer's file into existence -- `Manager::ReportFileCreation`), and
-`willDeleteFiles`/`didDeleteFiles` around `delete-file` (C-c C-k), which now asks a
-server for the edits that keep the rest of the project compiling before the file goes,
-exactly as a rename already did. `workspace/willCreateFiles` stays unsent and
-undeclared: ned has no explicit create-a-file action, so there is no moment *before* a
-creation to ask for edits at.
-
-Everything in the "known to cost something" group shipped 2026-09-21 -- slug for
-`git log --grep=`: `server-side-protocol-half` (`client/registerCapability`/
-`unregisterCapability`, `workspace/didChangeWatchedFiles`, `textDocument/didSave`, and
-the `window/log|show*` family). Live-verified against clangd and harper-ls: harper-ls no
-longer logs "Unable to register watch file capability", its registration is honored, and
-a deletion in a watched directory reaches it as a real `didChangeWatchedFiles`. What that
-left behind:
-
-Watched-file coverage now extends to the whole project tree, not just the directories open
-buffers live in -- slug for `git log --grep=`: `project-tree-watch`. `FileWatcher::
-SetWatchedFiles` takes a second, wholesale-watched directory list (every entry reported,
-no basename filter) built from `BuildProjectTree(editor::ProjectRoot())`, which already
-prunes dot-directories and `.gitignore` matches; only active while a server has a real
-`workspace/didChangeWatchedFiles` registration (`HasWatchedFileRegistrations()`), so a
-project with no such registration pays nothing extra. Two conscious calls left behind:
-
 - [ ] **The tree snapshot refreshes every ~30s (6 auto-save ticks), not on every change.**
       Computed off `autoSaveThread_` rather than inside `ResyncFileWatcher` (called after
       every debounced file-watcher burst) specifically so a real recursive filesystem walk
@@ -260,128 +218,7 @@ The rest of what the server-side protocol half left behind, unrelated to watch c
       the spec's format-on-save hook and ned runs its own pipeline there
       (`format-buffer-lsp-tier`), which a server offering competing edits would fight.
 
-*Absent, no equivalent elsewhere in ned:*
-
-Triaged 2026-09-21 while deciding what belonged in 0.10, so the next pass starts from
-the judgement rather than redoing it: what is left here is *absent*, not broken. The
-file-operation and colour halves of that triage have since shipped; of the pair
-standing here, the half that was pure latency plumbing has too.
-
-`workspaceSymbol/resolve` shipped 2026-09-23 -- slug for `git log --grep=`:
-`workspace-symbol-resolve`. A WorkspaceSymbol whose location omits a range
-(`SymbolEntry::hasRange=false`) now resolves its real range from
-search-everywhere's own accept path, the one place a stand-in position (top of
-file) actually mattered -- not eagerly per row, which would have defeated the
-"lazy" half of the point. Gated on `workspaceSymbolProviderFor(...)
-->resolveProvider`, `ResolveCompletionItem`'s exact shape and capability-at-
-the-call-site stance.
-
-*Deliberately skipped -- reasons recorded so these don't get re-opened:*
-
-- [ ] `inlayHint/resolve` -- **closed 2026-09-23 on a measurement.**
-      `Tools/lsp-capability-probe.py --require inlayHintProvider` against every
-      installed server: clangd and typescript-language-server advertise a bare
-      `true` (no `resolveProvider`), gopls advertises `{}` (same), and
-      lua-language-server is the only one that sets `resolveProvider: true`. A
-      live probe against clangd (a real parameter-hint request on a two-argument
-      call) confirms the bare-`true` case isn't hiding an inline tooltip either
-      -- the response carries `label`/`kind`/padding and nothing else. Building
-      this would mean parsing `InlayHint::tooltip`/`raw`, a capability extractor,
-      a `ResolveInlayHint` request, and -- the actually expensive part -- teaching
-      the mouse-hover popup to hit-test `RenderedVirtualText` spans instead of
-      just buffer byte offsets (`RequestHoverAtOffset` only does the latter
-      today), all to light up for one installed server with an unverified
-      payload even there. Reopen only on evidence a server actually installed
-      here returns a real tooltip through it.
-- [ ] `workspace/diagnostic` -- **closed 2026-09-22 on a measurement, and the gap it
-      described was closed by another route.** No installed server advertises it:
-      rust-analyzer, the only one here implementing pull diagnostics at all, sets
-      `diagnosticProvider.workspaceDiagnostics: false`, and clangd/gopls/pylsp/
-      typescript-language-server/lua-language-server/phpactor/jdtls/harper-ls declare no
-      `diagnosticProvider` whatsoever (`Tools/lsp-capability-probe.py`). Worth knowing
-      for the next pass: ned's existing `textDocument/diagnostic` path is therefore
-      also unexercised against everything installed except rust-analyzer.
-      What the entry actually wanted -- a problem list that is not limited to open
-      buffers -- shipped instead off the *push* side, slug for `git log --grep=`:
-      `keep diagnostics for files with no open buffer`. Servers already volunteer
-      findings about files nobody opened (measured: rust-analyzer via cargo check,
-      gopls per package) and ned was discarding them for want of a `text::Buffer` to
-      hang them on. Reopen only if a server turns up that implements the request AND
-      reports something its own publishes do not.
-
-- [ ] `textDocument/foldingRange` -- ned folds from its own grammar (`ImprintFold.h`), for
-      every language, with no server required. Worth revisiting only for a language that
-      has a server but no ned grammar.
-- [ ] `textDocument/selectionRange` -- ned already has a native equivalent, for the same
-      reason folding does: `expand-selection`/`shrink-selection` (`M-=`/`M--`, slug for
-      `git log --grep=`: `structural-selection-expansion`) walk the enclosing named-node
-      chain of ned's own tree, so they work in every parsed language, offline, with no
-      server -- where the request would hand the feature only to whoever happens to run a
-      server that implements it. `Mode::expandSelection` adds a step no grammar has a node
-      for (the interior of a delimited body, expand-region's "inside pairs") off the
-      imprint table. The `selectionRange` hits in `Lsp/Content.h` are `DocumentSymbol`'s
-      unrelated field of that name. Revisit only if a server proves it knows something the
-      tree doesn't.
-- [ ] `textDocument/moniker` -- cross-repository symbol identity, useful only with an
-      index ned has no consumer for.
-- [ ] `textDocument/inlineValue` -- **closed 2026-09-22 on a measurement, after being
-      built up to and then measured out of.** ned already owns both ends (a DAP session
-      knows the values, the inlay-hint path draws inline text), and the half that needed
-      no server shipped the same day -- slug for `git log --grep=`:
-      `inline-debug-values-scoped`. What killed the LSP half is what the request
-      actually returns. Of its three result variants, only
-      `InlineValueEvaluatableExpression` is beyond a parse tree (it needs a DAP
-      `evaluate` per expression per stop, plus the async cache that implies);
-      `InlineValueText` is a string the server composed; and
-      `InlineValueVariableLookup` is "look this name up in the debugger", which is
-      exactly `Dap::Manager::FrameLocals` plus the scope resolution ned now does
-      natively. Asked against a real PHP file, phpactor answered with seven results, all
-      seven `InlineValueVariableLookup` -- nothing ned does not already compute for
-      itself, for one language, at the cost of a round trip per viewport. Adopting it
-      would be a strict downgrade.
-      The capability hunt behind that, so nobody repeats it: probe with
-      `Tools/lsp-capability-probe.py --require inlineValueProvider`. Ruled out --
-      clangd 23, gopls, pylsp, typescript-language-server, lua-language-server,
-      harper-ls, and (the obvious guess, wrong) jdtls, checked including dynamic
-      registration, the form jdtls uses for eight other capabilities and which would
-      make a static-only probe report a false negative. The five real implementations,
-      found by searching for who SETS the capability rather than who declares the type
-      (ocaml-lsp, nim langserver and elixir-ls only declare it): phpactor,
-      AdaCore's `ada_language_server`, the Dart analysis server, `FsAutoComplete`, and
-      R's `languageserver`.
-      Reopen only on evidence that some server returns
-      `InlineValueEvaluatableExpression` in practice -- that is the one variant that
-      would buy something, and the four implementations other than phpactor were not
-      measured. `workspace/inlineValue/refresh` would be a fifth `RefreshKind`, and the
-      request needs `context.frameId`/`stoppedLocation` from DAP, a fact `Lsp::Manager`
-      cannot reach today.
-- [ ] `notebookDocument/*` -- no notebook editing surface exists to sync.
-- [ ] `textDocument/inlineCompletion` -- ACP is ned's answer to this shape.
-- [ ] Minor interop note, not a ned defect: ned answers `workspace/configuration` with
-      JSON `null` per unmatched section, which the spec allows; harper-ls rejects it with
-      "Settings must be an object" on every request. Only worth revisiting if a second
-      server objects.
-
 **Colour swatches**
-
-Shipped -- slug for `git log --grep=`: `color-swatches`. A cell painted in the colour
-every visible literal names, plus `color-at-point` (`C-c #`) to rewrite one in another
-notation. Built native-first and LSP-second, which is the opposite of how the roadmap
-entry it closes was written, on a measurement: of every server installed here, exactly
-one (lua-language-server) advertises `colorProvider`, and no CSS-family server is
-installed at all (`Tools/lsp-capability-probe.py`). An LSP-only build would therefore
-have shipped swatches in Lua and nowhere else. `Editor/ColorLiteral.h` is the recogniser
-(pure, unit-tested), `Lsp::Manager::DocumentColorSpans` the additive server tier, and
-`Editor/ColorSwatchSettings.h` the `block`/`underlay` switch. A swatch rides the same
-per-line span list an inlay hint does (`bufferview::RenderedVirtualText`) rather than a
-second virtual-text mechanism, so the four column walks that have to count it already
-do. Two recorded decisions worth not re-litigating: a presentation's own `textEdit`
-range is ignored (it can only ever be the range ned already found, and honouring it
-would let a server move an edit made in place), and a server-reported colour is dropped
-outright once anything is typed inside it rather than clamped like a code lens -- a
-swatch claims *these bytes* spell that colour, and ned's own scan has the right answer
-for the edited text anyway. Three conscious cuts left behind; the fourth (no
-interactive picker) closed 2026-09-22 -- see below.
 
 - [ ] `lab()` / `lch()` / `oklab()` / `oklch()` are not recognised. Parsing them is
       trivial; the round trip is not. Those spaces are wider than sRGB, so offering
@@ -404,34 +241,6 @@ interactive picker) closed 2026-09-22 -- see below.
       more place.
 
 **Colour picker**
-
-Shipped -- slug for `git log --grep=`: `color-picker`. `pick-color` (`C-c #`, taken from
-`color-at-point`, which keeps its name on `M-x`) opens `UI/ColorPicker.h`, a focus-taking
-overlay on ThemeGallery's shape: seven channel rows (R/G/B, H/S/L, alpha), a before/after
-preview, and a WCAG readout of the colour against the theme's text and background. Each
-slider track is painted as *that channel's own ramp* rather than a filled bar -- "what
-would this row's colour be at each position" is the question a picker exists to answer,
-and the cost is one `HslToRgb` per cell. Point on no literal opens on a neutral grey and
-inserts rather than replaces, which makes it a way to write a colour you do not have yet.
-Four decisions worth not re-litigating:
-
-- The picker holds *both* representations, RGB authoritative for the value and HSL
-  authoritative for the H/S/L rows, and retains hue across any edit that lands on a grey.
-  `RgbToHsl` is lossy at the achromatic extremes (documented on the function, now public
-  alongside `HslToRgb` in `Editor/ColorLiteral.h`), so a colour driven to black through
-  the L slider would otherwise come back with hue 0 and never return. Saturation is *not*
-  retained -- a grey genuinely has none, and a row claiming otherwise would lie.
-- The notation is inside the picker (`Tab`), not a second menu: the value row always
-  shows the exact text an accept writes, and it follows a colour across the
-  opaque/alpha boundary via `AlphaSibling` so nudging the alpha row does not silently
-  reset a chosen `hsl()` to hex.
-- The buffer is never edited while adjusting -- one edit on accept, so the undo tree
-  gets one entry rather than one per arrow key and the swatch scan is not re-run per
-  keystroke. No live preview in the buffer for the same reason.
-- The contrast readout answers `-`, not a number, when the theme's background is the
-  terminal's own with nothing detected behind it. `ContrastRatio` returns its *maximum*
-  (21.0) for an unmeasurable pair, which would have painted a perfect score where there
-  is no score at all -- caught in the first live run, not by a test.
 
 - [ ] No LSP tier: the picker offers ned's own notations only. A colour a server *names*
       (`rebeccapurple`) is a conversion, which is what `color-at-point` is for, and
@@ -456,10 +265,6 @@ Four decisions worth not re-litigating:
 
 **Merged completion sources**
 
-Shipped -- slug for `git log --grep=`: `completion-source-merge`. `Editor/Completion.h`
-is the source-neutral candidate type, `Editor/CompletionSources.h` the four producers
-and the merge. Two conscious cuts left behind.
-
 - [ ] Buffer words are collected from `Buffer::Text()` -- a whole-document copy -- on
       every completion request, which is why a huge buffer (`ITextStorage::IsHuge()`)
       is skipped outright rather than scanned incrementally. A windowed scan (the
@@ -475,149 +280,104 @@ and the merge. Two conscious cuts left behind.
 
 ### Parsing Engine: Trait Vocabulary over Per-Language Queries
 
-Full design in `Docs/ParsingEngine.md`. Phases 0 through 4b are complete; design history
-is pruned here per this file's own convention — see `git log --grep="Phase [0-9]"` and
-`Docs/ParsingEngine.md` for the full record. Chain, briefest form: Tier 0 infers delimited
-bodies/spans/nesting/delimiters straight from `grammar.json`; Tier 1 is composable
-declared traits, authored as Janet data (`.scm` left the repo 2026-09-12); Tier 2 is Janet
-escapes for arithmetic/host-state predicates a query can't express (Org's TODO keywords).
-`QueryMatcher` replaced `ts_query` as the production matcher (Phase 4a, 2026-09-12, later
-given a 60x cursor-walk fix). Phase 4b (2026-09-13) replaced the tree-sitter runtime
-itself with `Source/Editor/Parse/` (`ned::editor::parse`), a from-scratch green/red tree +
-GLR stack + incremental reuse + error recovery engine interpreting each grammar's own
-ABI-13/14/15 tables directly — gated on upstream conformance (~2,800 cases across all 24
-grammars), incremental-vs-scratch and red-layer differentials, and a `[Performance]` win
-over the old runtime it replaced. `MatchCache` (2026-09-13) followed as the per-subtree
-fact-memoization payoff Phase 4b's stable node identity made possible, wired through
-`symbolKind`, `localScopes`, fold, `testDiscovery`, and indent's query path (highlight is
-deliberately excluded — already windowed via `MatchesInRange`, see the keystroke-
-performance section above).
-
-Two items remain open, both conscious calls rather than defaults:
-
-- [ ] **Keeping tree-sitter grammar ingestion is a hard constraint** -- at import time
-      now, not runtime: `ned --import-language` converts a repository's `grammar.json`
-      to `grammar.janet` once, and ned's own generator (`Editor/Grammar/Compile/`) and
-      engine (`Editor/Parse/`) do the rest (2026-09-17/18: no tree-sitter code, headers or
-      runtime anywhere in the tree; 74 languages bundled through that path). It still
-      forecloses the resilient-LL path (matklad's) that would give better error recovery,
-      because LL means hand-written grammars and therefore losing every language nobody
-      here personally writes a grammar for.
-- [ ] **Not extracting this as a standalone library.** The engine has legitimate pull into
-      ned specifics (Janet host callouts, `Mode`'s capability surface, `SyntaxClass`);
-      designing library-first would make it worse at the job it exists for. Extract later
-      if it earns it.
-- [ ] **Table-generator outliers** (measured 2026-09-18 at the Tier B systems batch,
-      single-core CPU, `ned --compile-language`): ada 149s for only 2,207 parse states
-      (its case-insensitive keyword tokens -- `[pP][aA][cC][kK][aA][gG][eE]` and every
-      other reserved word -- multiply lex-state construction and token-conflict work),
-      nim 70s / 20,305 states, odin 60s / 9,611, kotlin 40s, crystal 30s. Absorbed by the
-      parallel build-time compile (`CMake/LanguageTables.cmake`), so nothing is checked
-      in; profile with `perf record --call-graph dwarf` before touching it -- the known
-      remaining cost is item-set construction (`ParseItem::Order` / `TokenSet::Compare`
-      under `std::map`), and ada suggests the lex side has its own hot spot.
+- [ ] **Table-generator optimizations** (measured 2026-09-18 at the Tier B systems batch,
+    single-core CPU, `ned --compile-language`): ada 149s for only 2,207 parse states
+    (its case-insensitive keyword tokens -- `[pP][aA][cC][kK][aA][gG][eE]` and every
+    other reserved word -- multiply lex-state construction and token-conflict work),
+    nim 70s / 20,305 states, odin 60s / 9,611, kotlin 40s, crystal 30s. Absorbed by the
+    parallel build-time compile (`CMake/LanguageTables.cmake`), so nothing is checked
+    in; profile with `perf record --call-graph dwarf` before touching it -- the known
+    remaining cost is item-set construction (`ParseItem::Order` / `TokenSet::Compare`
+    under `std::map`), and ada suggests the lex side has its own hot spot.
 - [ ] **QueryMatcher supertype-scoped names are membership-only.** `(expression/variable)`
-      (2026-09-18, for haskell's upstream highlights) checks that `variable` is one of
-      `expression`'s declared subtypes at compile time and then matches by the subtype's
-      symbol; whether the node actually sits under a hidden `expression` in the tree is
-      not consulted, so `(pattern/variable)` and `(expression/variable)` match the same
-      nodes. The cursor stack carries the hidden ancestors (tree_cursor.c's field walk
-      already climbs them), so a positional check is a small addition if a query ever
-      needs the distinction.
-
-**Language coverage** — full catalogue in `Docs/LanguageCoverage.md`: the depth ladder
-(D0 structural / D1 navigational / D2 integrated / D3 bespoke), Tier A flagship through
-Tier D parked, a graveyard with revisit triggers, and an 8-point grammar admission policy.
-The reframe that makes it affordable: **a tier is a commitment to a depth, not a decision
-about whether a language works at all** — D0 falls out of Tier 0 inference for free, so
-"basically every known language" becomes a real target rather than a boast, and the honest
-answer to a request for an obscure DSL becomes "yes, next release".
-
-- [ ] Admission policy worth knowing before adding any grammar: **prefer
-      `tree-sitter-grammars/*` over the original personal repo, and never use star count as
-      a health signal.** Measured 2026-09-11 — `alemuller/tree-sitter-make` is 51★ and stale
-      since 2024-01 while `tree-sitter-grammars/tree-sitter-make` is 17★ and current;
-      `MunifTanjim/tree-sitter-lua` is a 1★ fork against the org's 104★. Use `pushed_at` and
-      `archived`, pin by tag, and record ABI version + external-scanner LOC + corpus presence
-      at admission.
+    (2026-09-18, for haskell's upstream highlights) checks that `variable` is one of
+    `expression`'s declared subtypes at compile time and then matches by the subtype's
+    symbol; whether the node actually sits under a hidden `expression` in the tree is
+    not consulted, so `(pattern/variable)` and `(expression/variable)` match the same
+    nodes. The cursor stack carries the hidden ancestors (tree_cursor.c's field walk
+    already climbs them), so a positional check is a small addition if a query ever
+    needs the distinction.
+- [ ] Admission policy worth knowing before adding any grammar: **never use star count as
+    a health signal.** Use `pushed_at` and `archived`, pin by tag, and record ABI version
+        + external-scanner LOC + corpus presence at admission.
 
 ### Refactoring
 
 **Sidecar metadata: association without binding**
 
 - [ ] The eight existing tenants are **not** migrated onto anchors, and that is a cost
-      finding rather than a leftover: each accessor (`Diagnostics()`, `SnippetRanges()`,
-      `ExcerptRanges()`, `SecondaryCursors()`, `FoldMarkerAt()`) has 58-108 call sites and
-      returns a reference to stored state, so a migration means either touching all of
-      them or materializing a vector per read -- and `Diagnostics()`/`SecondaryCursors()`
-      are read inside `Paint()` loops. They already relocate correctly through the one
-      feed, so the churn buys nothing visible. Snippet ranges were the candidate
-      exception — "migrate them and nested placeholders fall out" — and building nesting
-      for real showed that to be wrong (`git log --grep=nested-snippet-stops`): `Buffer`
-      already relocated each endpoint independently under its own gravity, so anchors
-      offered nothing it lacked. What nesting actually needed was *carried ancestry*
-      (which field encloses which — a placeholder that is exactly one nested stop shares
-      its parent's span, so geometry can't say) plus a gravity that changes on every TAB,
-      and `AnchorSet::Create` fixes a policy for the anchor's lifetime. A tenant whose
-      gravity is dynamic is the shape anchors do **not** fit today; that is the finding,
-      and it applies to any future migration candidate too.
+    finding rather than a leftover: each accessor (`Diagnostics()`, `SnippetRanges()`,
+    `ExcerptRanges()`, `SecondaryCursors()`, `FoldMarkerAt()`) has 58-108 call sites and
+    returns a reference to stored state, so a migration means either touching all of
+    them or materializing a vector per read -- and `Diagnostics()`/`SecondaryCursors()`
+    are read inside `Paint()` loops. They already relocate correctly through the one
+    feed, so the churn buys nothing visible. Snippet ranges were the candidate
+    exception — "migrate them and nested placeholders fall out" — and building nesting
+    for real showed that to be wrong (`git log --grep=nested-snippet-stops`): `Buffer`
+    already relocated each endpoint independently under its own gravity, so anchors
+    offered nothing it lacked. What nesting actually needed was *carried ancestry*
+    (which field encloses which — a placeholder that is exactly one nested stop shares
+    its parent's span, so geometry can't say) plus a gravity that changes on every TAB,
+    and `AnchorSet::Create` fixes a policy for the anchor's lifetime. A tenant whose
+    gravity is dynamic is the shape anchors do **not** fit today; that is the finding,
+    and it applies to any future migration candidate too.
 - [ ] **`IncrementalParseCache` re-derives an edit the buffer already recorded exactly.**
-      `Editor/Grammar/IncrementalParse.h` keeps `lastText_` -- a second full copy of the
-      document -- and reconstructs one changed region per call by common-prefix/suffix
-      diffing it, which is what `Buffer::Edits()` has held exactly since
-      `sidecar-anchors`. Cost, not wrongness: the reconstruction is conservative (two
-      distant edits widen to one span covering both, so the parser reuses fewer subtrees
-      but never a wrong one). The reason it diffs is a real constraint, not an oversight
-      -- every `Mode` capability is a pure function of "the buffer's full current text",
-      with no `Buffer&` and no edit-delta parameter, which is what keeps `Mode` a
-      copyable value type a test can drive with a bare string. So this is a change to
-      that seam, not to this file. Worth doing only once the doubled resident text
-      actually shows up in a measurement (`Tests/KeystrokeBench.cpp`, a large file, RSS
-      per open buffer) rather than on principle.
+    `Editor/Grammar/IncrementalParse.h` keeps `lastText_` -- a second full copy of the
+    document -- and reconstructs one changed region per call by common-prefix/suffix
+    diffing it, which is what `Buffer::Edits()` has held exactly since
+    `sidecar-anchors`. Cost, not wrongness: the reconstruction is conservative (two
+    distant edits widen to one span covering both, so the parser reuses fewer subtrees
+    but never a wrong one). The reason it diffs is a real constraint, not an oversight
+    -- every `Mode` capability is a pure function of "the buffer's full current text",
+    with no `Buffer&` and no edit-delta parameter, which is what keeps `Mode` a
+    copyable value type a test can drive with a bare string. So this is a change to
+    that seam, not to this file. Worth doing only once the doubled resident text
+    actually shows up in a measurement (`Tests/KeystrokeBench.cpp`, a large file, RSS
+    per open buffer) rather than on principle.
 - [ ] **The background-loop-plus-`EventLoop::Post` machine is hand-rolled in five more
-      places.** `Editor/Protocol/FramedConnection.h` exists because three protocol
-      clients each rebuilt the same thing and a member-declaration-order invariant was
-      defended only by a comment repeated in three files. `Editor/Mcp/BridgeServer` is a
-      fourth copy of exactly that -- jthread read loop, `shared_ptr<bool> alive_` captured
-      by value into every `Post`, and the same "declared last so its destructor runs after
-      the body has unblocked it" comment -- and `Terminal/PtyProcess`, `Tasks/TaskProcess`,
-      `FileWatch` and `ModePrewarm` each carry a thinner version. `FramedConnection`
-      cannot be reused as-is: it owns one spawned `TransportT` by value (which is what
-      enforces the destruction order), while the bridge accepts N socket connections and
-      the other four aren't framed protocols at all. So the honest options are extracting
-      the per-connection half into something the bridge can hold one of per accepted
-      connection, or leaving it -- not a migration. Nothing here is known-broken; the
-      cost is that the next bug of the shape `lsp-use-after-free` was has five places to
-      hide in instead of one.
+    places.** `Editor/Protocol/FramedConnection.h` exists because three protocol
+    clients each rebuilt the same thing and a member-declaration-order invariant was
+    defended only by a comment repeated in three files. `Editor/Mcp/BridgeServer` is a
+    fourth copy of exactly that -- jthread read loop, `shared_ptr<bool> alive_` captured
+    by value into every `Post`, and the same "declared last so its destructor runs after
+    the body has unblocked it" comment -- and `Terminal/PtyProcess`, `Tasks/TaskProcess`,
+    `FileWatch` and `ModePrewarm` each carry a thinner version. `FramedConnection`
+    cannot be reused as-is: it owns one spawned `TransportT` by value (which is what
+    enforces the destruction order), while the bridge accepts N socket connections and
+    the other four aren't framed protocols at all. So the honest options are extracting
+    the per-connection half into something the bridge can hold one of per accepted
+    connection, or leaving it -- not a migration. Nothing here is known-broken; the
+    cost is that the next bug of the shape `lsp-use-after-free` was has five places to
+    hide in instead of one.
 - [ ] Anchors have no Janet surface. Deliberate for now: the C++ seam has one consumer
-      shape so far, and a scripted holder that leaks handles leaks them forever (there is
-      no RAII handle -- `Buffer` is move-only and an anchor outliving its owner would
-      dangle across a `Clone()`). Revisit when a plugin actually wants to mark a position.
+    shape so far, and a scripted holder that leaks handles leaks them forever (there is
+    no RAII handle -- `Buffer` is move-only and an anchor outliving its owner would
+    dangle across a `Clone()`). Revisit when a plugin actually wants to mark a position.
 - [ ] Explicitly *not* a fix for stale server data: an anchor placed at a wrong offset
-      stays faithfully wrong, which is exactly what the 2026-09-18 phpantom_lsp session
-      turned out to be (the server's own `character` values disagreed with its own
-      document; ned's conversion and relocation were both correct).
+    stays faithfully wrong, which is exactly what the 2026-09-18 phpantom_lsp session
+    turned out to be (the server's own `character` values disagreed with its own
+    document; ned's conversion and relocation were both correct).
 - [ ] A Lisp binding vector's names are captured by unrolled per-pair-index patterns
-      (`clojure-locals.scm`, `janet-locals.scm`), because the whole-vector form a query
-      would naturally express captures a bare-symbol *value* as a definition and turns a
-      rename of the outer binding it names into a partial one. The unrolling stops at
-      eight pairs, and destructuring (`[{:keys [x y]} m]`) is not captured at all; both
-      degrade to "declines" rather than to a wrong rename. Lifting either needs something
-      the query language cannot say, so it would mean a capture kind `LocalScopes.h`
-      understands positionally -- not worth it until a real file hits the cap
-      (`lisp-shell-locals`).
+    (`clojure-locals.scm`, `janet-locals.scm`), because the whole-vector form a query
+    would naturally express captures a bare-symbol *value* as a definition and turns a
+    rename of the outer binding it names into a partial one. The unrolling stops at
+    eight pairs, and destructuring (`[{:keys [x y]} m]`) is not captured at all; both
+    degrade to "declines" rather than to a wrong rename. Lifting either needs something
+    the query language cannot say, so it would mean a capture kind `LocalScopes.h`
+    understands positionally -- not worth it until a real file hits the cap
+    (`lisp-shell-locals`).
 - [ ] Fish's `set -l -x count 0` (a scope flag not adjacent to its own target) and
-      `read -l line` are not captured as definitions -- the first because the pattern
-      anchors the name to the flag before it, the second because there is no `set`
-      command node to hang off. Both decline rather than mis-resolve
-      (`lisp-shell-locals`).
+    `read -l line` are not captured as definitions -- the first because the pattern
+    anchors the name to the flag before it, the second because there is no `set`
+    command node to hang off. Both decline rather than mis-resolve
+    (`lisp-shell-locals`).
 - [ ] A use that textually precedes its own binding in a whole-scope-binding language
-      (Python's function scope, JavaScript `var` hoisting) is detected and *declined*
-      rather than resolved -- `LocalBinding::usedBeforeDefinition`, the one case where
-      the resolver's position rule knowingly gives up. Resolving it properly means
-      knowing per language whether binding is declaration-point or whole-scope, which is
-      a real per-language fact this deliberately did not invent a place to record
-      (`scope-aware-rename`).
+    (Python's function scope, JavaScript `var` hoisting) is detected and *declined*
+    rather than resolved -- `LocalBinding::usedBeforeDefinition`, the one case where
+    the resolver's position rule knowingly gives up. Resolving it properly means
+    knowing per language whether binding is declaration-point or whole-scope, which is
+    a real per-language fact this deliberately did not invent a place to record
+    (`scope-aware-rename`).
 - [ ] A huge buffer (`ITextStorage::IsHuge()`) never gets the scope-aware tier at all.
       Unlike the fold/symbol/test gutters beside it, this one cannot window: a binding's
       occurrence set is only complete if the whole file was parsed, so a windowed answer
@@ -734,17 +494,21 @@ commands, never a replacement for them.
       reach `Dispatcher` through `C-x` would mean either breaking real vim's own
       decrement-number binding or a two-key lookahead hack — not worth it now that the
       practical gap (no way to split/close/cycle windows under Vim mode) is closed.
-**Status gutter**
+- [ ] **Vim `:` command line has no completion, and no registry to drive one from.**
+      `Engine::ExecuteExCommand` matches `ExCommand::name` against string literals in a
+      long if-chain (`w`/`wq`/`q`/`sp`/`g`/`normal`/...) with no single place that lists
+      the known command names or what they do — the same thing `M-x`'s registry already
+      carries. Turning that if-chain into a small static `{names, short doc, handler}`
+      table would both read better and unlock command-name completion: while
+      `HandleCommandLineKey` is still building the first token of `commandLineText_` (no
+      space yet, past any leading range/`%`/`'<,'>`), a non-focusable `ListPopup` fed by
+      that table through the same `CandidateList` fuzzy ranking `M-x`/project-find-file/
+      switch-to-buffer already share could narrow-and-preview it live, Tab to accept.
+      Has to fall back to plain text the moment a space, a `:s`-style punctuation
+      delimiter, or a bang appears — unlike `M-x`'s bare command names, a `:` line
+      carries ranges/args/shell-outs that can't go through a fuzzy matcher.
 
-Both halves shipped -- slug for `git log --grep=`: `status-gutter-unseen-content`. The
-swatch is suppressed on a read-only buffer, and the freed cell carries an unseen-content
-marker there instead (`Buffer::UnseenContentTracked`/`SeenByteOffset`,
-`GutterModel::FirstUnseenLine`, `ned/set-unseen-content-marker` and its `band`/`boundary`
-styles). `Buffer::AppendWhileReadOnly` turned out to be the whole answer to "which
-buffers does this mean anything for": it is the one feed that can make content unseen, so
-the unseen region is always one contiguous tail and any edit that is not a pure tail
-append disarms the frontier rather than leaving it pointing into rewritten text. Three
-conscious cuts left behind.
+**Status gutter**
 
 - [ ] Only a streaming buffer marks. A read-only buffer rebuilt wholesale (`*debug*`,
       a results buffer regenerated from scratch rather than appended to) disarms
@@ -817,18 +581,8 @@ conscious cuts left behind.
       but not acted on — a persistable id still needs the next session to be the same
       build of the same program, which nothing here can check. Revisit only if an adapter
       that sets it turns out to make re-arming after a restart genuinely tedious.
-**Debug panel**
 
-Shipped -- slug for `git log --grep=`: `debug-panel`. `Source/UI/DebugPanel.h`, the third
-`LeftDock` rail panel beside Files and VCS, over `TreeView` rather than `ListPopup`
-because it is sections containing files containing breakpoints. One panel rather than one
-per store, for the reason VS Code's own Run-and-Debug sidebar is one: a rail glyph per DAP
-concern would be four glyphs that say nothing whenever no session is live, and the
-sections share a single refresh path. Sections: call stack (threads, their frames), the
-focused frame's scopes and variables, watches, all four breakpoint stores, and the two
-inventory listings. The breakpoint half works with no session at all -- line and function
-breakpoints are process-wide and persisted, so this is where they get armed before
-anything is launched. Cuts left behind, each its own item below.
+**Debug panel**
 
 - [ ] The panel's Watches section and the `*debug*` buffer's own now show the same
       expressions through two entirely separate fetch paths (`DebugPanel::FetchWatchValues`
@@ -931,33 +685,6 @@ anything is launched. Cuts left behind, each its own item below.
 
 **Alternate "modern" keymap (VS Code/JetBrains-style)**
 
-Shipped -- slug for `git log --grep=`: `modern-keymap-style`. The itch: Emacs's
-C-w/M-w/C-y read as arbitrary next to the now-universal C-x/C-c/C-v cut/copy/paste
-convention. `ned/set-vim-mode` is retired in favor of one three-way
-`ned/set-keymap-style` (`"emacs"`/`"vim"`/`"modern"`, `--keymap-style` on the CLI) --
-`Editor/KeymapStyle.h`, the `KeymapStyle::Vim` case just drives the same internal
-`vim::ModeEnabled()` flag the Vim engine always polled, so nothing about Vim mode
-itself changed. `KeymapStyle::Modern` is a small fixed override table
-(`BuildModernOverrideKeymap`, `Editor/Commands.h`) consulted directly in
-`BufferView::OnKeyEvent` ahead of `Dispatcher` -- the same "checked live every
-keystroke, no keymap object ever rebuilt" shape Vim mode already used, not a second
-`Keymap` layer threaded through `KeymapStack` (which would have needed a way to push a
-Janet-triggered setting change into an object several constructors deep). Two
-structural findings the audit above got right: C-x/C-c are real Emacs *prefix* keys
-here with ~135 combined `C-c <key>`/`C-x <key>` sequences hanging off them (VCS, debug
-panel, org, projects, color tools, ...), and `Keymap::Resolve` fires a shorter match
-immediately rather than waiting for more input -- so binding bare C-c/C-x as leaf
-commands makes every one of those sequences genuinely unreachable by keystroke, not
-just shadowed. Deliberately not fixed: every one of those commands is still reachable
-by name via `M-x`/search-everywhere, which is the scope cut that keeps this a keybinding
-convention rather than a second command set. `modern-copy`/`modern-cut`/`modern-paste`
-are real commands of their own, not `kill-ring-save`/`kill-region`/`yank` aliases --
-"nothing selected copies/cuts the current line" and "paste replaces an active
-selection" are genuine modern-editor conventions neither Emacs command has, sharing the
-kill ring and system clipboard with `yank`/`yank-pop` regardless.
-[UserGuide's Modern Keymap page](UserGuide/src/features/modern-keymap.md) has the full
-chord table. One cut left behind:
-
 - [ ] `C-Tab`/`C-S-Tab` (tab-next/tab-previous, replacing the now-unreachable `C-x
       LEFT`/`C-x RIGHT`) carry the same terminal-support caveat every other
       Ctrl+Shift-letter chord in the Emacs default already does (`C-S-DOWN`/`C-S-UP`) --
@@ -971,18 +698,6 @@ chord table. One cut left behind:
       real terminal paste turn out to be used together often enough to matter.
 
 ### Merge Conflict Resolution Mode (New Feature)
-
-The per-hunk mouse action row and the whole-file bulk actions both shipped -- slug for
-`git log --grep=`: `merge-conflict-bulk-and-chips`. The action row is *not* a row: the
-chips ride on the `<<<<<<<` marker line as end-of-line virtual text, the same trick
-`PaintEndOfLineDiagnostics` uses and for the same reason (a resolution deletes the line
-the chips sit on, and nothing below it should jump on the way). Both cuts it left behind
--- the chips firing on marker text alone, and bulk resolution ignoring the marked set --
-are closed below.
-
-The VCS gate on the chips/tinting and bulk resolution over the marked set both shipped --
-slug for `git log --grep=`: `merge-conflict-vcs-gate`. Two conscious calls left behind,
-each its own item below.
 
 - [ ] With no VCS answer at all — no provider resolves for the project root, the buffer
       has no path, the `git status` is still in flight or failed — the chrome falls back
@@ -1114,11 +829,6 @@ a third bespoke implementation — worth designing the renderer as its own reusa
 rather than embedding it directly in `NotebookView` for exactly this reason.
 
 ### Named Projects & Multi-Project Sidebar (New Feature)
-
-Local-only slice shipped (`Editor/Project/Registry.h`, `switch-project`/`open-project`
-on `C-c P s`/`C-c P o`, `Editor/TerminalTabLauncher.h` for opening a picked project in a
-new terminal tab — tmux, screen, Konsole, WezTerm, Ghostty, kitty live-verified; GNOME
-Terminal shipped but unverified) — see `git log --grep=named-projects`.
 
 Still open, all genuinely gated on Remote Development below (a registry entry's root
 staying local-only for now is a storage-shape choice, not a hole in what shipped):
@@ -1518,23 +1228,6 @@ concrete, and deliberately not before:
 
 ### Notcurses Patches Worth Upstreaming (Watch List)
 
-Not one of these, recorded here because it looked like one and wasn't: every
-`S-F<n>` binding in the default keymap (`dap-stop`, `dap-step-out`, and
-`toggle-debug-panel` as of `debug-panel`) was silently dead, and Notcurses was
-reporting faithfully. A terminal without the kitty keyboard protocol cannot say
-"Shift+F9" -- it sends a *different function key* and no modifier bit, which is
-what terminfo's `kf13`..`kf24` have always meant. `KeyTranslation.cpp`'s own
-`SpecialKeyFor` stopped at F12 and returned `nullopt`, dropping the keystroke
-before any keymap saw it. Measured with a throwaway probe against a real
-terminal (Shift+F9 -> F21, Ctrl+F9 -> F33, Ctrl+Shift+F9 -> F45, Alt+F9 -> F57,
-every one with `modifiers == 0`) and folded back onto F1-F12 plus the modifiers
-each range implies -- see `DecodeExtendedFunctionKey`. The one cost is that a
-physical F13..F24 key can no longer be bound separately from Shift+F1..F12,
-which is the conflation terminfo itself already makes.
-
-Not submitted anywhere yet — a deliberate choice (2026-09-06), not an oversight. Recorded
-so the research doesn't have to be redone before actually opening anything.
-
 The mechanical barrier is gone now: `Patches/notcurses/` carries all three as real
 `git am`-able files with proper commit messages, generated from the CMake scripts by
 `Patches/notcurses/regenerate.sh` and verified to apply against pristine v3.0.17. Opening
@@ -1829,16 +1522,6 @@ these accumulate detail in place.
         Collaboration/multi-client synced debugging (a bespoke sketch-annotation,
         synced-viewing feature seen in some existing GDB frontends) doesn't fit ned's
         single-user terminal model — considered and set aside, not planned.
-- LSP broker "server mode" shipped 2026-09-16 as `ned --foreground` (git log --grep=
-  `foreground-mode`) — see the pre-warming follow-up below for the one piece split out
-  of it.
-- `ned --foreground` takes over an ordinary broker and refuses to displace another
-  `--foreground` instance (2026-09-21, slug `foreground-one-instance`): it probes the
-  socket with a new `ned/broker-info` control request, shuts down an ephemeral daemon and
-  waits for it to actually stop before binding, and tells the user to restart their
-  service rather than starting a second always-on daemon. A daemon too old to answer
-  `ned/broker-info` reads as "unidentified" and is taken over like an ephemeral one.
-
 - [ ] **LSP broker pre-warming** (split out from "LSP broker server mode" above,
       2026-09-16) — warm the N most-recently-used projects' language servers when
       `ned --foreground` starts, using `Editor/Project/Registry.h`'s existing
@@ -1855,12 +1538,6 @@ these accumulate detail in place.
       attach writing its resolved config to a small state file the daemon can read at
       its own startup) before this can be built without either violating that policy or
       guessing.
-
-Also shipped, one slug each for `git log --grep=`: `broker-reader-deadlock` (that same
-daemon deadlocking in its own idle sweep — the bug is why `Tests/LspBrokerDaemonTest.cpp`
-and the daemon's ASan coverage exist at all, both of which any server-mode work should
-build on), `code-coverage-gutter`.
-
 - [ ] Raw per-file `.gcov` output has no parser — `Editor/Coverage/OutputParser.h`
       handles lcov's `.info` format only (which covers `lcov`, `llvm-cov export
       -format=lcov`, and `gcovr --lcov`). `.gcov` is a directory-scan problem rather than
@@ -1887,6 +1564,93 @@ build on), `code-coverage-gutter`.
 - **Accessibility (screen-reader support)** — a Notcurses raw-cell-grid TUI has no
   accessibility tree of any kind; not evaluated or pursued. Named here so it's a
   conscious gap rather than an oversight (2026-08-25 audit).
+
+
+### Potentionally forever skipping -- reasons recorded in case these get re-opened:
+
+- [ ] `inlayHint/resolve` -- **closed 2026-09-23 on a measurement.**
+    `Tools/lsp-capability-probe.py --require inlayHintProvider` against every
+    installed server: clangd and typescript-language-server advertise a bare
+    `true` (no `resolveProvider`), gopls advertises `{}` (same), and
+    lua-language-server is the only one that sets `resolveProvider: true`. A
+    live probe against clangd (a real parameter-hint request on a two-argument
+    call) confirms the bare-`true` case isn't hiding an inline tooltip either
+    -- the response carries `label`/`kind`/padding and nothing else. Building
+    this would mean parsing `InlayHint::tooltip`/`raw`, a capability extractor,
+    a `ResolveInlayHint` request, and -- the actually expensive part -- teaching
+    the mouse-hover popup to hit-test `RenderedVirtualText` spans instead of
+    just buffer byte offsets (`RequestHoverAtOffset` only does the latter
+    today), all to light up for one installed server with an unverified
+    payload even there. Reopen only on evidence a server actually installed
+    here returns a real tooltip through it.
+- [ ] `workspace/diagnostic` -- **closed 2026-09-22 on a measurement, and the gap it
+    described was closed by another route.** No installed server advertises it:
+    rust-analyzer, the only one here implementing pull diagnostics at all, sets
+    `diagnosticProvider.workspaceDiagnostics: false`, and clangd/gopls/pylsp/
+    typescript-language-server/lua-language-server/phpactor/jdtls/harper-ls declare no
+    `diagnosticProvider` whatsoever (`Tools/lsp-capability-probe.py`). Worth knowing
+    for the next pass: ned's existing `textDocument/diagnostic` path is therefore
+    also unexercised against everything installed except rust-analyzer.
+    What the entry actually wanted -- a problem list that is not limited to open
+    buffers -- shipped instead off the *push* side, slug for `git log --grep=`:
+    `keep diagnostics for files with no open buffer`. Servers already volunteer
+    findings about files nobody opened (measured: rust-analyzer via cargo check,
+    gopls per package) and ned was discarding them for want of a `text::Buffer` to
+    hang them on. Reopen only if a server turns up that implements the request AND
+    reports something its own publishes do not.
+
+- [ ] `textDocument/foldingRange` -- ned folds from its own grammar (`ImprintFold.h`), for
+    every language, with no server required. Worth revisiting only for a language that
+    has a server but no ned grammar.
+- [ ] `textDocument/selectionRange` -- ned already has a native equivalent, for the same
+    reason folding does: `expand-selection`/`shrink-selection` (`M-=`/`M--`, slug for
+    `git log --grep=`: `structural-selection-expansion`) walk the enclosing named-node
+    chain of ned's own tree, so they work in every parsed language, offline, with no
+    server -- where the request would hand the feature only to whoever happens to run a
+    server that implements it. `Mode::expandSelection` adds a step no grammar has a node
+    for (the interior of a delimited body, expand-region's "inside pairs") off the
+    imprint table. The `selectionRange` hits in `Lsp/Content.h` are `DocumentSymbol`'s
+    unrelated field of that name. Revisit only if a server proves it knows something the
+    tree doesn't.
+- [ ] `textDocument/moniker` -- cross-repository symbol identity, useful only with an
+    index ned has no consumer for.
+- [ ] `textDocument/inlineValue` -- **closed 2026-09-22 on a measurement, after being
+    built up to and then measured out of.** ned already owns both ends (a DAP session
+    knows the values, the inlay-hint path draws inline text), and the half that needed
+    no server shipped the same day -- slug for `git log --grep=`:
+    `inline-debug-values-scoped`. What killed the LSP half is what the request
+    actually returns. Of its three result variants, only
+    `InlineValueEvaluatableExpression` is beyond a parse tree (it needs a DAP
+    `evaluate` per expression per stop, plus the async cache that implies);
+    `InlineValueText` is a string the server composed; and
+    `InlineValueVariableLookup` is "look this name up in the debugger", which is
+    exactly `Dap::Manager::FrameLocals` plus the scope resolution ned now does
+    natively. Asked against a real PHP file, phpactor answered with seven results, all
+    seven `InlineValueVariableLookup` -- nothing ned does not already compute for
+    itself, for one language, at the cost of a round trip per viewport. Adopting it
+    would be a strict downgrade.
+    The capability hunt behind that, so nobody repeats it: probe with
+    `Tools/lsp-capability-probe.py --require inlineValueProvider`. Ruled out --
+    clangd 23, gopls, pylsp, typescript-language-server, lua-language-server,
+    harper-ls, and (the obvious guess, wrong) jdtls, checked including dynamic
+    registration, the form jdtls uses for eight other capabilities and which would
+    make a static-only probe report a false negative. The five real implementations,
+    found by searching for who SETS the capability rather than who declares the type
+    (ocaml-lsp, nim langserver and elixir-ls only declare it): phpactor,
+    AdaCore's `ada_language_server`, the Dart analysis server, `FsAutoComplete`, and
+    R's `languageserver`.
+    Reopen only on evidence that some server returns
+    `InlineValueEvaluatableExpression` in practice -- that is the one variant that
+    would buy something, and the four implementations other than phpactor were not
+    measured. `workspace/inlineValue/refresh` would be a fifth `RefreshKind`, and the
+    request needs `context.frameId`/`stoppedLocation` from DAP, a fact `Lsp::Manager`
+    cannot reach today.
+- [ ] `notebookDocument/*` -- no notebook editing surface exists to sync.
+- [ ] `textDocument/inlineCompletion` -- ACP is ned's answer to this shape.
+- [ ] Minor interop note, not a ned defect: ned answers `workspace/configuration` with
+    JSON `null` per unmatched section, which the spec allows; harper-ls rejects it with
+    "Settings must be an object" on every request. Only worth revisiting if a second
+    server objects.
 
 ## Notes for Whoever Builds Next
 
