@@ -194,13 +194,36 @@ longer logs "Unable to register watch file capability", its registration is hono
 a deletion in a watched directory reaches it as a real `didChangeWatchedFiles`. What that
 left behind:
 
-- [ ] **Watched-file coverage is the directories an open buffer lives in, not the project
-      tree.** `Editor/FileWatch.h` watches the parent directory of each open buffer, so a
-      server's `**/*.php` registration is answered for siblings of what's open and for
-      nothing else -- a `composer install` or a generator writing somewhere no buffer is
-      open is still invisible to it. Widening this means watching the project tree
-      (ignore-rules and inotify watch budget included), which is a different piece of work
-      from the protocol half that shipped.
+Watched-file coverage now extends to the whole project tree, not just the directories open
+buffers live in -- slug for `git log --grep=`: `project-tree-watch`. `FileWatcher::
+SetWatchedFiles` takes a second, wholesale-watched directory list (every entry reported,
+no basename filter) built from `BuildProjectTree(editor::ProjectRoot())`, which already
+prunes dot-directories and `.gitignore` matches; only active while a server has a real
+`workspace/didChangeWatchedFiles` registration (`HasWatchedFileRegistrations()`), so a
+project with no such registration pays nothing extra. Two conscious calls left behind:
+
+- [ ] **The tree snapshot refreshes every ~30s (6 auto-save ticks), not on every change.**
+      Computed off `autoSaveThread_` rather than inside `ResyncFileWatcher` (called after
+      every debounced file-watcher burst) specifically so a real recursive filesystem walk
+      never lands on the main thread. A brand-new subdirectory's contents can therefore
+      take up to ~30s to become watched; an already-watched directory's own changes are
+      seen the moment inotify reports them, unaffected. Revisit only if that staleness
+      proves annoying in practice -- the alternative (reacting to `IN_ISDIR`-flagged create
+      events for near-instant coverage) needs real machinery of its own: a race-window
+      rescan for `mkdir -p`, and stale-path bookkeeping across a watched directory's own
+      rename, neither of which this pass built.
+- [ ] **A hard cap (`kMaxTreeWatchedDirectories`, 8000) bounds inotify watch usage,
+      conservatively below the historic Linux `max_user_watches` default of 8192** so ned
+      alone never exhausts a stock system's per-user budget before any other running
+      application's own watches. An open buffer's own directory always wins a truncation;
+      past the cap, some project directories simply go unwatched for the per-entry LSP
+      path, which -- unlike AutoRevert/AutoMerge -- has no poll-tick fallback to catch what
+      inotify missed. `WatchBudgetExceeded()` is edge-triggered into one `DiagnosticsLog`
+      line per transition rather than silent, since this is a standing gap worth a durable
+      record, not a transient failure like a single missing directory.
+
+The rest of what the server-side protocol half left behind, unrelated to watch coverage:
+
 - [ ] Per-entry reporting flips on at the next background tick after a server registers
       its watchers (`WindowManager::ResyncFileWatcher`, ~5s), so file events in that
       window are missed. Inherent to refreshing the toggle from a poll rather than a hook,

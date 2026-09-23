@@ -23,6 +23,7 @@
 #ifndef NED_UI_WINDOWMANAGER_H
 #define NED_UI_WINDOWMANAGER_H
 
+#include <atomic>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -878,6 +879,15 @@ class WindowManager {
     // single-slot and already claimed, and the poll sweep covers the gap),
     // and after each watcher-fired sweep (a sweep can revert a buffer whose
     // file was replaced, and buffers close). No-op before StartFileWatcher.
+    //
+    // project-tree-watch follow-up: also feeds fileWatcher_ the last
+    // BuildProjectTree(editor::ProjectRoot()) snapshot as its treeDirectories
+    // argument, but only while some server actually wants per-entry
+    // coverage (lspManager_->HasWatchedFileRegistrations()) -- a project
+    // with no such registration pays nothing extra. The snapshot itself is
+    // refreshed off the auto-save background thread, not here: see
+    // StartAutoSaveTimer's tick for why a real filesystem walk doesn't
+    // belong in a function called after every debounced file-change burst.
     void ResyncFileWatcher();
 
     [[nodiscard]] std::unique_ptr<Pane> MakePane(text::Buffer& buffer, editor::Mode mode);
@@ -1051,6 +1061,23 @@ class WindowManager {
     // before this watcher is destroyed -- a post landing in that window is
     // dropped, never dispatched against dead state.
     std::unique_ptr<editor::FileWatcher> fileWatcher_;
+
+    // project-tree-watch follow-up. Read (relaxed) on autoSaveThread_ to
+    // decide whether the tick below is worth a real filesystem walk at
+    // all; written (relaxed) from ResyncFileWatcher on the main thread.
+    // Relaxed is enough: the two sides never need to observe each other's
+    // write mid-tick, only eventually, the same tolerance the poll-tick
+    // sweep already has for everything else inotify can miss.
+    std::atomic<bool> wantsProjectTreeWatch_ = false;
+    // Last BuildProjectTree(editor::ProjectRoot()) directory list, main-
+    // thread-owned (only ever touched from a Posted lambda). Cleared
+    // whenever wantsProjectTreeWatch_ goes false so re-entering coverage
+    // starts from a fresh walk rather than a stale one.
+    std::vector<std::filesystem::path> projectTreeWatchDirectories_;
+    // Edge-triggered against fileWatcher_->WatchBudgetExceeded() so a
+    // capped project logs once on the way in and once on the way back out,
+    // not every refresh.
+    bool projectTreeWatchWasCapped_ = false;
 };
 
 } // namespace ned::ui

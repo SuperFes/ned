@@ -19,7 +19,9 @@
 #include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
 #include "Editor/PersistentUndo.h"
+#include "Editor/Project/Root.h"
 #include "Editor/Project/Session.h"
+#include "Editor/Project/Tree.h"
 #include "Editor/RecentFiles.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
@@ -32,6 +34,13 @@ namespace {
     // See WindowManager::StartAutoSaveTimer's own header comment for why
     // this moved here, verbatim, from BufferView.
     constexpr std::chrono::milliseconds kScratchAutoSaveInterval{5000};
+
+    // project-tree-watch follow-up: BuildProjectTree(editor::ProjectRoot())
+    // refreshes every 6th tick (~30s at kScratchAutoSaveInterval) rather
+    // than every tick -- a brand-new subdirectory's contents can take up
+    // to this long to become watched; an already-watched directory's own
+    // changes are unaffected, seen the moment inotify reports them.
+    constexpr int kProjectTreeWatchRefreshTicks = 6;
 
     // The one-column/one-row divider between a split's two children --
     // chrome-redesign follow-up: drawn with the theme's border brush so
@@ -1223,12 +1232,41 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
     autoSaveThread_ = std::jthread([this, &eventLoop](std::stop_token stopToken) {
         std::mutex                  mutex;
         std::condition_variable_any cv;
+        // project-tree-watch follow-up: BuildProjectTree is a real
+        // recursive filesystem walk, so it runs here -- off the main
+        // thread -- rather than inside ResyncFileWatcher, which is called
+        // after every debounced file-change burst as well as every tick.
+        // Refreshed far less often than the tick itself (kProjectTreeWatch-
+        // RefreshTicks below): a project's directory shape rarely changes
+        // second to second, and the cost is proportional to project size.
+        int ticksSinceProjectTreeWatchRefresh = 0;
         while (!stopToken.stop_requested()) {
             std::unique_lock lock(mutex);
             if (cv.wait_for(lock, stopToken, kScratchAutoSaveInterval, [&stopToken] { return stopToken.stop_requested(); })) {
                 return;
             }
-            eventLoop.Post([this] {
+
+            std::optional<std::vector<std::filesystem::path>> refreshedProjectTreeWatch;
+            if (wantsProjectTreeWatch_.load(std::memory_order_relaxed)) {
+                if (++ticksSinceProjectTreeWatchRefresh >= kProjectTreeWatchRefreshTicks) {
+                    ticksSinceProjectTreeWatchRefresh = 0;
+                    std::vector<std::filesystem::path> directories;
+                    for (editor::ProjectTreeEntry& entry : editor::BuildProjectTree(editor::ProjectRoot())) {
+                        if (entry.isDirectory) {
+                            directories.push_back(std::move(entry.path));
+                        }
+                    }
+                    refreshedProjectTreeWatch = std::move(directories);
+                }
+            }
+            else {
+                ticksSinceProjectTreeWatchRefresh = 0; // re-entering coverage starts from a fresh walk, not a stale one
+            }
+
+            eventLoop.Post([this, refreshedProjectTreeWatch = std::move(refreshedProjectTreeWatch)]() mutable {
+                if (refreshedProjectTreeWatch) {
+                    projectTreeWatchDirectories_ = std::move(*refreshedProjectTreeWatch);
+                }
                 editor::AutoSaveScratchBuffers(bufferList_);
                 // backup-and-recovery follow-up: crash-recovery snapshots
                 // for regular file buffers ride the same tick (skips
@@ -1418,14 +1456,40 @@ void WindowManager::ResyncFileWatcher() {
             }
         }
     }
-    fileWatcher_->SetWatchedFiles(files);
     // lsp-did-change-watched-files follow-up: per-entry events cost a
     // main-thread wakeup for any sibling churn in a watched directory, so
     // they stay off until a server actually registers for them. Refreshed
     // here rather than pushed from Manager: a registration lands
     // asynchronously after a handshake, and this already runs on the
     // background tick as well as on every buffer open/close.
-    fileWatcher_->SetReportsDirectoryEntries(lspManager_ != nullptr && lspManager_->HasWatchedFileRegistrations());
+    const bool wantsTreeWatch = editor::FileWatchEnabled() && lspManager_ != nullptr && lspManager_->HasWatchedFileRegistrations();
+    wantsProjectTreeWatch_.store(wantsTreeWatch, std::memory_order_relaxed);
+    if (!wantsTreeWatch) {
+        // Drop the cache rather than let it go stale silently: re-entering
+        // coverage later (a server re-registers) should start from a fresh
+        // walk, not one that could be arbitrarily old.
+        projectTreeWatchDirectories_.clear();
+    }
+    fileWatcher_->SetWatchedFiles(files, projectTreeWatchDirectories_);
+    fileWatcher_->SetReportsDirectoryEntries(wantsTreeWatch);
+
+    // project-tree-watch follow-up: edge-triggered so a project past the
+    // inotify watch budget logs once, not every refresh -- there is no
+    // poll-tick fallback for the per-entry LSP path the way there is for
+    // AutoRevert/AutoMerge, so this is a real, standing coverage gap worth
+    // a durable record rather than silent tolerance.
+    if (const bool capped = fileWatcher_->WatchBudgetExceeded(); capped != projectTreeWatchWasCapped_) {
+        projectTreeWatchWasCapped_ = capped;
+        if (capped) {
+            editor::LogMessage(editor::LogCategory::General, editor::LogSeverity::Warning,
+                               "file watch: project tree exceeds the inotify watch budget -- some directories are "
+                               "not covered by server-side file-watch registrations");
+        }
+        else {
+            editor::LogMessage(editor::LogCategory::General, editor::LogSeverity::Info,
+                               "file watch: project tree watch coverage is back within budget");
+        }
+    }
 }
 
 void WindowManager::ReportWatchedFileChanges(const std::vector<editor::FileEvent>& events) {

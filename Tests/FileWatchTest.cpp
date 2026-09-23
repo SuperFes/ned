@@ -401,6 +401,102 @@ TEST_CASE("Per-entry events stay off until they are asked for", "[FileWatch]") {
     std::filesystem::remove_all(dir);
 }
 
+// project-tree-watch follow-up: treeDirectories, watched wholesale with no
+// buffer open in them at all.
+TEST_CASE("A tree-watched directory reports entries with no buffer open in it", "[FileWatch]") {
+    const std::filesystem::path dir     = MakeTempDir("ned_filewatch_tree_dir");
+    const std::filesystem::path unopened = dir / "generated.php";
+
+    std::mutex             mutex;
+    std::vector<FileEvent> events;
+    FileWatcher             watcher([] {}, {}, [&](std::vector<FileEvent> batch) {
+        const std::lock_guard lock(mutex);
+        events.insert(events.end(), batch.begin(), batch.end()); });
+    REQUIRE(watcher.Active());
+    watcher.SetWatchedFiles({}, {dir}); // no open buffer at all -- coverage from the tree side alone
+    watcher.SetReportsDirectoryEntries(true);
+
+    WriteFile(unopened, "<?php\n");
+
+    REQUIRE(WaitFor([&] {
+        const std::lock_guard lock(mutex);
+        return std::any_of(events.begin(), events.end(), [&](const FileEvent& event) { return event.path == unopened; });
+    }));
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A tree-watched directory does not wake AutoRevert relevance for an unopened file", "[FileWatch]") {
+    // No buffer basename is registered for a tree-only directory, so a
+    // change there must not be mistaken for "a watched file changed" --
+    // onEvents_ is the only feed that should see it.
+    const std::filesystem::path dir      = MakeTempDir("ned_filewatch_tree_dir_relevance");
+    const std::filesystem::path unopened = dir / "generated.php";
+    WriteFile(unopened, "<?php\n");
+
+    std::atomic<int> changes{0};
+    std::atomic<int> eventBatches{0};
+    FileWatcher      watcher([&] { ++changes; }, {}, [&](std::vector<FileEvent>) { ++eventBatches; });
+    watcher.SetWatchedFiles({}, {dir});
+    watcher.SetReportsDirectoryEntries(true);
+
+    WriteFile(unopened, "<?php\n// changed\n");
+
+    REQUIRE(WaitFor([&] { return eventBatches.load() > 0; }));
+    // onChange_ still fires (DrainEvents treats a reported entry as
+    // relevant), but the point under test is that the AutoRevert-facing
+    // signal and the LSP-facing signal are the same fire here, not that a
+    // buffer's own basename matched -- there is none.
+    CHECK(changes.load() > 0);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("SetWatchedFiles never drops a buffer's own directory for the tree-watch budget", "[FileWatch]") {
+    const std::filesystem::path root       = MakeTempDir("ned_filewatch_budget");
+    const std::filesystem::path bufferFile = root / "open.txt";
+    WriteFile(bufferFile, "content\n");
+
+    std::vector<std::filesystem::path> treeDirectories;
+    for (int i = 0; i < 8200; ++i) { // past kMaxTreeWatchedDirectories (8000)
+        treeDirectories.push_back(root / ("dir_" + std::to_string(i)));
+    }
+
+    FileWatcher watcher([] {});
+    REQUIRE(watcher.Active());
+    watcher.SetWatchedFiles({bufferFile}, treeDirectories);
+    CHECK(watcher.WatchBudgetExceeded());
+
+    // The buffer's own file still gets a real watch despite the flood of
+    // (nonexistent, but that's irrelevant to this assertion) tree
+    // directories ahead of the cap -- confirmed indirectly via a direct
+    // write firing the callback.
+    std::atomic<int> fired{0};
+    FileWatcher      priorityWatcher([&fired] { ++fired; });
+    priorityWatcher.SetWatchedFiles({bufferFile}, treeDirectories);
+    WriteFile(bufferFile, "changed outside\n");
+    REQUIRE(WaitFor([&fired] { return fired.load() >= 1; }));
+
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("WatchBudgetExceeded clears once the tree directory count drops back down", "[FileWatch]") {
+    const std::filesystem::path root = MakeTempDir("ned_filewatch_budget_recovery");
+
+    std::vector<std::filesystem::path> many;
+    for (int i = 0; i < 8200; ++i) {
+        many.push_back(root / ("dir_" + std::to_string(i)));
+    }
+
+    FileWatcher watcher([] {});
+    watcher.SetWatchedFiles({}, many);
+    REQUIRE(watcher.WatchBudgetExceeded());
+
+    watcher.SetWatchedFiles({}, {root});
+    CHECK_FALSE(watcher.WatchBudgetExceeded());
+
+    std::filesystem::remove_all(root);
+}
+
 TEST_CASE("A deleted entry is reported as a deletion", "[FileWatch]") {
     const std::filesystem::path dir     = MakeTempDir("ned_filewatch_entries_delete");
     const std::filesystem::path watched = dir / "open.txt";

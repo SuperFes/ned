@@ -114,7 +114,27 @@ class FileWatcher {
     // list are cheap). Paths are weakly_canonical-normalized -- the same
     // comparison BufferList's dedupe-by-path uses -- collapsing symlink
     // aliases before any directory is watched twice.
-    void SetWatchedFiles(const std::vector<std::filesystem::path>& files);
+    //
+    // project-tree-watch follow-up: treeDirectories is watched wholesale --
+    // every entry reported via onEvents, not just files' own basenames --
+    // on top of files' per-basename dirs, and always loses to them when the
+    // combined set would exceed kMaxTreeWatchedDirectories (an open
+    // buffer's own directory is never the one dropped). This is what
+    // SetReportsDirectoryEntries(true) needs to answer a server's
+    // `**/*.ext`-shaped registration beyond the directories open buffers
+    // happen to live in -- see WatchBudgetExceeded's own doc comment for
+    // what happens past the cap.
+    void SetWatchedFiles(const std::vector<std::filesystem::path>& files,
+                         const std::vector<std::filesystem::path>& treeDirectories = {});
+
+    // Whether the most recent SetWatchedFiles call had to drop directories
+    // to stay within kMaxTreeWatchedDirectories. A dropped directory is not
+    // retried until it (or something ahead of it in the caller's list)
+    // falls out of a later call -- there is no poll-tick fallback for the
+    // per-entry LSP path the way there is for AutoRevert/AutoMerge, so a
+    // project past the cap has a real, standing coverage gap the caller
+    // should log once rather than silently accept.
+    [[nodiscard]] bool WatchBudgetExceeded() const;
 
     // lsp-did-change-watched-files follow-up: turns per-entry reporting
     // (onEvents) on or off. Off by default, and deliberately so: with it
@@ -137,6 +157,7 @@ class FileWatcher {
     std::function<void(std::vector<FileMove>)> onMoved_;
     std::function<void(std::vector<FileEvent>)> onEvents_;
     std::atomic<bool>                           reportsDirectoryEntries_ = false;
+    std::atomic<bool>                           watchBudgetExceeded_     = false;
     int                                        fd_ = -1; // declared before thread_: closed only after the join
 
     mutable std::mutex                                     mutex_; // guards the three maps

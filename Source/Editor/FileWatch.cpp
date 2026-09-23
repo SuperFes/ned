@@ -37,6 +37,14 @@ namespace {
     constexpr std::uint32_t kWatchMask =
         IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE | IN_ONLYDIR;
 
+    // project-tree-watch follow-up: conservative, below the historic Linux
+    // default max_user_watches (8192, still the default on many distros and
+    // containers) so ned alone never exhausts a stock system's per-user
+    // inotify budget before any other running application's own watches.
+    // Only load-bearing once a server asks for whole-tree coverage -- the
+    // buffer-parent-dir set alone never comes remotely close.
+    constexpr std::size_t kMaxTreeWatchedDirectories = 8000;
+
     // EINTR-retrying single-fd poll (ChildProcess::WaitReadable's idiom);
     // true on readable, false on timeout or error (an error here just means
     // the next read reports it).
@@ -96,12 +104,25 @@ bool FileWatcher::Active() const {
     return fd_ >= 0;
 }
 
-void FileWatcher::SetWatchedFiles(const std::vector<std::filesystem::path>& files) {
+void FileWatcher::SetWatchedFiles(const std::vector<std::filesystem::path>& files,
+                                  const std::vector<std::filesystem::path>& treeDirectories) {
     if (fd_ < 0) {
         return;
     }
 
     std::map<std::filesystem::path, std::set<std::string>> wanted;
+    // Files' own directories are added first, unbounded -- an open buffer's
+    // directory is never the one a budget cap drops. addOrder mirrors the
+    // priority a capped `wanted` is filled in, since map<path,...> iterates
+    // by path, not by the order that matters here.
+    std::vector<std::filesystem::path> addOrder;
+    const auto                         want = [&](const std::filesystem::path& dir) -> std::set<std::string>& {
+        const auto [it, inserted] = wanted.try_emplace(dir);
+        if (inserted) {
+            addOrder.push_back(dir);
+        }
+        return it->second;
+    };
     for (const std::filesystem::path& file : files) {
         std::error_code              ec;
         const std::filesystem::path  canonical = std::filesystem::weakly_canonical(file, ec);
@@ -109,7 +130,15 @@ void FileWatcher::SetWatchedFiles(const std::vector<std::filesystem::path>& file
         if (!resolved.has_parent_path() || !resolved.has_filename()) {
             continue;
         }
-        wanted[resolved.parent_path()].insert(resolved.filename().string());
+        want(resolved.parent_path()).insert(resolved.filename().string());
+    }
+    bool truncated = false;
+    for (const std::filesystem::path& dir : treeDirectories) {
+        if (wanted.size() >= kMaxTreeWatchedDirectories && !wanted.contains(dir)) {
+            truncated = true;
+            continue;
+        }
+        want(dir); // watched wholesale -- an empty basename set means "every entry", see DrainEvents
     }
 
     const std::lock_guard lock(mutex_);
@@ -122,7 +151,7 @@ void FileWatcher::SetWatchedFiles(const std::vector<std::filesystem::path>& file
         wdToDir_.erase(it->second);
         it = dirToWd_.erase(it);
     }
-    for (const auto& [dir, basenames] : wanted) {
+    for (const std::filesystem::path& dir : addOrder) {
         if (dirToWd_.contains(dir)) {
             continue; // an unchanged dir keeps its watch; IN_IGNORED-dropped ones retry here
         }
@@ -134,6 +163,11 @@ void FileWatcher::SetWatchedFiles(const std::vector<std::filesystem::path>& file
         wdToDir_[wd]  = dir;
     }
     dirToBasenames_ = std::move(wanted);
+    watchBudgetExceeded_.store(truncated, std::memory_order_relaxed);
+}
+
+bool FileWatcher::WatchBudgetExceeded() const {
+    return watchBudgetExceeded_.load(std::memory_order_relaxed);
 }
 
 bool FileWatcher::DrainEvents() {
