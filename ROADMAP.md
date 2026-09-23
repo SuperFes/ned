@@ -72,19 +72,17 @@ whole-document highlight 50.7 ms -> 14.8 ms, keystroke+repaint on a 9 KiB C++ fi
       these become incremental -- MatchCache-style reuse keyed on the edit -- rather than
       windowed. Nothing pulled yet; typing no longer feels bad, which is what would drive
       it.
-- [ ] **A cheap single, chain-less `Parent()` call is still unaddressed.** `sexpMotion`'s
-      own O(depth^2) is closed: `NodePrevSiblingImpl`/`NodeNextSiblingImpl` used to call
-      `NodeParent` (a full root-to-self descent) once per invocation regardless, so
-      climbing an already-collected ancestor chain by sibling rather than by parent paid
-      that descent again at every level. `NodeNextSiblingFromParent`/
+- [ ] `sexpMotion`'s own O(depth^2) is closed: `NodePrevSiblingImpl`/`NodeNextSiblingImpl`
+      used to call `NodeParent` (a full root-to-self descent) once per invocation
+      regardless, so climbing an already-collected ancestor chain by sibling rather than
+      by parent paid that descent again at every level. `NodeNextSiblingFromParent`/
       `NodePrevSiblingFromParent` (`Editor/Parse/Node.h`, plus the named
       `grammar::Node::NextNamedSibling(parent)`/`PrevNamedSibling(parent)` overloads) take
       the caller's already-known parent instead, and `sexpMotion`'s two ancestor-chain
-      loops (Mode.cpp) pass the chain link they already have. What is left is a genuinely
-      isolated call with no chain in hand at all -- `CLike.cpp`'s one `NextNamedSibling()`,
-      single uses in `QueryMatcher.cpp`/`QueryPredicates.cpp` -- each still a full descent,
-      and a true O(1) parent needs a memo per tree, which is shared mutable state the
-      parse layer does not have today. Not pulled: nothing left calls it in a loop.
+      loops (Mode.cpp) pass the chain link they already have. A true O(1) single `Parent()`
+      call for a caller with no chain in hand at all moved to the Maybelist -- nothing
+      left calls it in a loop, so it was never worth the shared-mutable-state cost of
+      building it.
 - [ ] One measured non-fix worth not re-trying: rewriting `ImprintBracket`'s
       `DelimitersOf` `Child(i)` loops as `ForEachChild` cursor passes made a fold scan
       ~25% *slower* (2952 -> 3714 us). A closer is nearly always a node's last child and
@@ -1646,6 +1644,17 @@ Ideas worth remembering but not worth scoping yet — too undecided for "Open It
 not disliked enough for "Won't do". Promote or delete on revisit rather than letting
 these accumulate detail in place.
 
+- [ ] **A true O(1) `Parent()` call** (`parse::NodeParent`) — every call is still a full
+      root-to-self descent; a caller climbing a known chain now has parent-aware sibling
+      lookups to avoid re-paying it (`NodeNextSiblingFromParent`/`NodePrevSiblingFromParent`,
+      closed the one loop that needed them, `sexpMotion`), but a genuinely isolated call
+      with no chain in hand (`CLike.cpp`'s one `NextNamedSibling()`, single uses in
+      `QueryMatcher.cpp`/`QueryPredicates.cpp`) still pays O(depth) every time. Making
+      that O(1) needs a memo per tree, which means shared mutable state on `TreeData` --
+      today `const` and shared cross-thread via `shared_ptr` with no locking, exactly the
+      shape that has produced real bugs before (the dynamic-mode-race SIGSEGV, the
+      `LspManager` UAF). Revisit only if a genuinely hot single-call site shows up; no
+      measured cost drives it today.
 - [ ] **Jank replaces Janet** — swapping the scripting layer for
       [jank](https://github.com/jank-lang/jank), a Clojure dialect on LLVM. Full
       measured feasibility record: `Docs/JankFeasibility.md` (investigated 2026-09-08
