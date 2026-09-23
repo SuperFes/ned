@@ -54,6 +54,7 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include "Editor/ColorLiteral.h"
 #include "Editor/Mode.h"
 #include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
@@ -1332,6 +1333,52 @@ class Manager {
     void ResolveCodeLens(text::Buffer& buffer, const ResolvedCodeLens& lens, ResolveCodeLensCallback callback,
                          const std::string& serverKey = {});
 
+    // documentColor follow-up. One colour the server found, resolved to byte
+    // offsets the same way ResolvedCodeLens is, and carried onto live content
+    // on read.
+    //
+    // This tier is additive, never authoritative: ned recognises colour
+    // literals itself (Editor/ColorLiteral.h) and would draw swatches with no
+    // server running at all. What a server adds is the colours its own
+    // language knows about that no lexical scan can see. Measured 2026-09-22
+    // against every server installed here (Tools/lsp-capability-probe.py),
+    // exactly one -- lua-language-server -- advertises colorProvider, which is
+    // precisely why the native tier carries the feature and this one decorates
+    // it.
+    struct ResolvedDocumentColor {
+        std::size_t startByte = 0;
+        std::size_t endByte   = 0;
+        ColorValue  color;
+    };
+
+    // Called once per Paint() for the active buffer alongside
+    // RequestCodeLenses, and gated the same way: whole-document scope (as
+    // textDocument/documentColor has no range parameter), so the dedup gate is
+    // buffer.ContentGeneration() alone, it no-ops when swatches are disabled,
+    // and a real error response latches into documentColorUnsupported_ so a
+    // non-implementing server is asked exactly once.
+    void RequestDocumentColors(text::Buffer& buffer, const std::string& serverKey);
+
+    // The server's most recently reported colours for buffer, sorted by
+    // startByte -- empty if never requested, not yet answered, or the server
+    // reported none.
+    [[nodiscard]] const std::vector<ResolvedDocumentColor>& DocumentColorSpans(const text::Buffer& buffer) const;
+
+    // color-at-point's server tier: the notations this server would write
+    // `color` in, for the literal occupying [startByte, endByte). Sent on
+    // demand rather than per-frame, the same shape RequestDocumentLinks has,
+    // and answered with the text of each presentation only -- see
+    // ExtractColorPresentations for why nothing else survives the parse.
+    //
+    // The callback always runs, with an empty list when there is no server,
+    // it does not implement the request, or it answered with nothing: the
+    // caller has its own presentations either way and must not be left
+    // waiting on a server that will never reply.
+    using ColorPresentationCallback = std::function<void(std::vector<std::string> presentations)>;
+    void RequestColorPresentations(text::Buffer& buffer, const ColorValue& color, std::size_t startByte,
+                                   std::size_t endByte, ColorPresentationCallback callback,
+                                   const std::string& serverKey = {});
+
     // code-action-hints follow-up. One line the server says it has a quick
     // fix for, as the byte range of the diagnostic that fix is attached to.
     // Nothing about the fix itself is kept: the gutter marker only claims
@@ -2395,6 +2442,17 @@ class Manager {
     [[nodiscard]] static bool RelocateRange(std::size_t& startByte, std::size_t& endByte,
                                             const std::vector<text::EditOp>& ops, text::InsideDelete insideDelete);
 
+    // RelocateRange, plus "and nothing was typed inside it either". A range
+    // whose length changed is one whose own text was edited, and a result that
+    // describes text is then describing something that is no longer there --
+    // the documentColor case: a swatch claims that *these bytes* spell that
+    // colour, so `#ff00aa` growing to `#ff0000aa` under typing makes the claim
+    // false rather than merely imprecise. Nothing wants this for a result that
+    // only points at a location (a lens, a hint), which is why it is a second
+    // function rather than a stricter default.
+    [[nodiscard]] static bool RelocateUneditedRange(std::size_t& startByte, std::size_t& endByte,
+                                                    const std::vector<text::EditOp>& ops);
+
     // One retained inlay hint. The label is the flattened display text
     // (ResolvedInlayHint's own doc comment above); the position is an anchor
     // the buffer relocates through every edit, so nothing here replays a
@@ -2527,6 +2585,15 @@ class Manager {
     std::unordered_map<text::Buffer*, std::size_t>                                       codeLensRequestCounter_;
     mutable std::unordered_map<text::Buffer*, std::vector<ResolvedCodeLens>>             codeLensSpans_;
     std::unordered_set<std::string>                                                      codeLensUnsupported_;
+    // documentColor follow-up: the same five-member set the code lenses use,
+    // minus a revision counter -- nothing keys a cache on these arriving (a
+    // swatch is painted inside a line it already owns, so a response landing
+    // moves no rows and invalidates no geometry).
+    mutable std::unordered_map<text::Buffer*, std::size_t>                        documentColorGeneration_;
+    std::unordered_map<text::Buffer*, std::size_t>                                documentColorRequestedGeneration_;
+    std::unordered_map<text::Buffer*, std::size_t>                                documentColorRequestCounter_;
+    mutable std::unordered_map<text::Buffer*, std::vector<ResolvedDocumentColor>> documentColorSpans_;
+    std::unordered_set<std::string>                                               documentColorUnsupported_;
     // Bumped every time codeLensSpans_ is REPLACED, which
     // codeLensSpansGeneration_ cannot stand in for (that one tracks the
     // content the spans were carried forward to, and moves on every edit

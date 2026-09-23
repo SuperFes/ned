@@ -147,7 +147,7 @@ add_executable(ned_tests
             OrgClockTest.cpp
             TableTest.cpp
             MarkdownTest.cpp
-            InlayHintColumnTest.cpp
+            VirtualTextColumnTest.cpp
             MarkdownHighlightTest.cpp
             InjectionTest.cpp
             EmbeddedDocumentsTest.cpp
@@ -236,6 +236,9 @@ add_executable(ned_tests
             ProjectSearchTest.cpp
             ProjectAgendaTest.cpp
             CaseCheckTest.cpp
+            ColorLiteralTest.cpp
+            BufferViewColorSwatchTest.cpp
+            BufferViewColorAtPointTest.cpp
             ProjectReplaceTest.cpp
             ProjectTreeTest.cpp
             ProjectRootTest.cpp

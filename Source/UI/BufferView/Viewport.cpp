@@ -443,8 +443,8 @@ void Viewport::ScrollToShowPointHorizontally() {
     const std::size_t lineEnd =
         (pointLine + 1 < content.LineCount()) ? content.LineToByteOffset(pointLine + 1) - 1 : content.ByteLength();
     const std::vector<RenderedLink>      lineLinks = LinksForLine(links_, lineStart, lineEnd, point);
-    const std::vector<RenderedInlayHint> lineHints =
-        host_.inlayHintsForLine ? host_.inlayHintsForLine(lineStart, lineEnd) : std::vector<RenderedInlayHint>{};
+    const std::vector<RenderedVirtualText> lineVirtualText =
+        host_.virtualTextForLine ? host_.virtualTextForLine(lineStart, lineEnd) : std::vector<RenderedVirtualText>{};
 
     // Point's true column from the start of the line, unbounded (well,
     // bounded only by the line's own length, not the viewport) -- needed to
@@ -453,7 +453,7 @@ void Viewport::ScrollToShowPointHorizontally() {
     // long line still only walks as far as point itself, same cost class as
     // every other per-line scan in this file.
     const std::optional<int> visualCol =
-        VisualColumn(content, lineStart, point, std::numeric_limits<int>::max(), lineLinks, lineHints);
+        VisualColumn(content, lineStart, point, std::numeric_limits<int>::max(), lineLinks, lineVirtualText);
     if (!visualCol) {
         return; // shouldn't happen with an unbounded maxColumns, but a safe no-op
     }
@@ -652,9 +652,9 @@ std::size_t Viewport::ByteOffsetForPoint(Point at) const {
         clickColumn                   = (column > continuationIndent) ? column - continuationIndent : 0;
     }
 
-    const std::vector<RenderedInlayHint> lineHints =
-        host_.inlayHintsForLine ? host_.inlayHintsForLine(lineStart, lineEnd) : std::vector<RenderedInlayHint>{};
-    return ByteOffsetForColumnInLine(content, segStart, segEnd, clickColumn, editor::TabWidth(), lineLinks, lineHints);
+    const std::vector<RenderedVirtualText> lineVirtualText =
+        host_.virtualTextForLine ? host_.virtualTextForLine(lineStart, lineEnd) : std::vector<RenderedVirtualText>{};
+    return ByteOffsetForColumnInLine(content, segStart, segEnd, clickColumn, editor::TabWidth(), lineLinks, lineVirtualText);
 }
 
 const std::vector<std::pair<std::size_t, std::size_t>>& Viewport::HiddenLineRanges() const {

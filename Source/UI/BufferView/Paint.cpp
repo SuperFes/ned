@@ -50,7 +50,7 @@ std::string BufferView::CodeLensTitleForLine(std::size_t line) const {
     for (const auto& lens : lspManager_->CodeLensSpans(buffer)) {
         // A lens anchored at an empty line's own zero-width range (lineEnd
         // == lineStart there) would never satisfy `< lineEnd` -- the second
-        // clause catches it, the same edge case InlayHintsForLine's own
+        // clause catches it, the same edge case VirtualTextForLine's own
         // [lineStart, lineEnd) convention doesn't need to worry about
         // (an inlay hint is never the only content on its own line).
         const bool onThisLine =
@@ -798,9 +798,18 @@ void BufferView::BeginLineRender(LineRenderState& state, std::size_t line, std::
     // yet -- InlayHintSpans itself is O(1) (no cache to poll a
     // generation counter for), so no extra staleness bookkeeping
     // is needed here unlike the tree-sitter highlight cache.
-    state.inlayHints =
-        InlayHintsForLine(lspManager_ ? lspManager_->InlayHintSpans(frame.buffer) : std::vector<editor::lsp::Manager::ResolvedInlayHint>{},
-                          lineStart, lineEnd);
+    // Colour swatches join the same list here rather than through a
+    // mechanism of their own; see RenderTypes.h for why.
+    state.virtualText = VirtualTextForRange(frame.buffer, frame.content, lineStart, lineEnd);
+    state.colorUnderlays.clear();
+    if (editor::ColorSwatchesEnabled() &&
+        editor::GetColorSwatchStyle() == editor::ColorSwatchStyle::Underlay) {
+        for (const editor::ColorLiteral& literal :
+             ColorLiteralsInRange(frame.buffer, frame.content, lineStart, lineEnd)) {
+            state.colorUnderlays.push_back(RenderedColorUnderlay{
+                .startByte = literal.begin, .endByte = literal.end, .color = SwatchColor(theme_, literal.color)});
+        }
+    }
     // Whitespace-visualization follow-up: skipped (both fields
     // left at their "empty run" default) unless at least one of
     // the two features is on, so a default-off installation pays
@@ -1434,6 +1443,23 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
                 break;
         }
     }
+    else if (const auto underlay =
+                 std::find_if(lineState.colorUnderlays.begin(), lineState.colorUnderlays.end(),
+                              [offset](const RenderedColorUnderlay& wash) {
+                                  return offset >= wash.startByte && offset < wash.endByte;
+                              });
+             underlay != lineState.colorUnderlays.end()) {
+        // ColorSwatchStyle::Underlay: the literal reports its own colour by
+        // wearing it. Assigned outright rather than tinted over the syntax
+        // brush the way every other wash here is -- a tinted swatch would be
+        // naming a colour the literal does not say. (Its own alpha is already
+        // resolved: SwatchColor blends that down over the theme background
+        // when the span is built.) The foreground then has to be pulled back
+        // to legibility, since this wash is whatever the file happened to
+        // contain rather than anything a theme chose.
+        brush.background = underlay->color;
+        brush.foreground = EnsureContrast(brush.foreground, brush.background, 4.5);
+    }
     else if (editor::TrailingWhitespaceHighlightEnabled() && offset >= lineState.trailingWhitespaceStart) {
         // Whitespace-visualization follow-up: lowest priority of
         // this chain, same reasoning as every case above it --
@@ -1589,14 +1615,30 @@ void BufferView::EmitCodepointCells(Canvas& c, int row, int& col, const text::IT
     }
 }
 
-// Draws the inlay hint anchored at `offset`, if there is one, advancing col
-// past it. Unlike a collapsed link this is virtual text *alongside* the real
-// byte still at `offset`, not a replacement for it, so the caller goes on to
-// render that byte afterwards. Deliberately not routed through the syntax
-// brush: a hint gets a fixed dimmed brush, since it is synthetic text rather
-// than anything the grammar saw.
-void BufferView::EmitInlayHint(Canvas& c, int row, int& col, std::size_t offset,
-                               const LineRenderState& lineState) const {
+// Draws the virtual text anchored at `offset`, if there is any, advancing col
+// past it -- a colour swatch first, then an inlay hint's label. Unlike a
+// collapsed link this is virtual text *alongside* the real byte still at
+// `offset`, not a replacement for it, so the caller goes on to render that
+// byte afterwards. Deliberately not routed through the syntax brush: this is
+// synthetic text rather than anything the grammar saw.
+void BufferView::EmitVirtualText(Canvas& c, int row, int& col, std::size_t offset,
+                                 const LineRenderState& lineState) const {
+    const RenderedVirtualText* virtualText = VirtualTextStartingAt(lineState.virtualText, offset);
+    if (virtualText == nullptr) {
+        return;
+    }
+
+    // The swatch is the one piece of virtual text whose whole content is its
+    // colour, so it paints a full cell rather than a glyph over a sampled
+    // background -- the surrounding washes deliberately do not show through
+    // it, since a selection tinting a swatch would be reporting the wrong
+    // colour.
+    if (virtualText->swatch && col < c.size().width) {
+        Cell& cell     = c[{.x = col, .y = row}];
+        cell.character = " ";
+        Brush{.background = *virtualText->swatch, .foreground = *virtualText->swatch}.ApplyTo(cell);
+        ++col;
+    }
     // inlayHint follow-up: unlike the link branch above, this
     // does NOT `continue` -- a hint is virtual text alongside
     // the real byte still at offset, not a replacement for it,
@@ -1607,34 +1649,32 @@ void BufferView::EmitInlayHint(Canvas& c, int row, int& col, std::size_t offset,
     // virtual text, not a real SyntaxClass). Never emits a
     // raw control byte, matching every other glyph-writing loop
     // in this function.
-    if (const RenderedInlayHint* hint = InlayHintStartingAt(lineState.inlayHints, offset)) {
-        std::size_t      hintTextOffset = 0;
-        const text::Rope hintRope(hint->label);
-        while (hintTextOffset < hintRope.ByteLength() && col < c.size().width) {
-            const auto glyph = hintRope.CodepointAt(hintTextOffset);
-            if (glyph.codepoint >= 0x20 && glyph.codepoint != 0x7F) {
-                // translucency phase 6 (virtual text): the background comes
-                // from the anchoring byte's own BrushForCell rather than
-                // being theme_.background outright. A hint is virtual text
-                // drawn *inside* a real line, so whatever wash that line is
-                // under -- a selection, an isearch hit, a snippet field, a
-                // conflict tint -- covers the hint's columns too. Assigning
-                // the theme background punched a visible hole through the
-                // selection at exactly the hint's own width.
-                //
-                // Sampled per column, not once: those washes are Surfaces
-                // now, and a gradient one differs across the hint.
-                const Color beneath = BrushForCell(offset, lineState, c, col, row).background;
-                const Brush hintBrush{.background = beneath,
-                                      .foreground = GhostForegroundOver(beneath, InlayHintForeground(hint->kind)),
-                                      .italic     = true};
-                Cell&       cell = c[{.x = col, .y = row}];
-                cell.character   = text::EncodeCodepointUtf8(glyph.codepoint);
-                hintBrush.ApplyTo(cell);
-                ++col;
-            }
-            hintTextOffset += glyph.byteLength;
+    std::size_t      labelOffset = 0;
+    const text::Rope label(virtualText->label);
+    while (labelOffset < label.ByteLength() && col < c.size().width) {
+        const auto glyph = label.CodepointAt(labelOffset);
+        if (glyph.codepoint >= 0x20 && glyph.codepoint != 0x7F) {
+            // translucency phase 6 (virtual text): the background comes
+            // from the anchoring byte's own BrushForCell rather than
+            // being theme_.background outright. A hint is virtual text
+            // drawn *inside* a real line, so whatever wash that line is
+            // under -- a selection, an isearch hit, a snippet field, a
+            // conflict tint -- covers the hint's columns too. Assigning
+            // the theme background punched a visible hole through the
+            // selection at exactly the hint's own width.
+            //
+            // Sampled per column, not once: those washes are Surfaces
+            // now, and a gradient one differs across the hint.
+            const Color beneath = BrushForCell(offset, lineState, c, col, row).background;
+            const Brush hintBrush{.background = beneath,
+                                  .foreground = GhostForegroundOver(beneath, InlayHintForeground(virtualText->kind)),
+                                  .italic     = true};
+            Cell&       cell = c[{.x = col, .y = row}];
+            cell.character   = text::EncodeCodepointUtf8(glyph.codepoint);
+            hintBrush.ApplyTo(cell);
+            ++col;
         }
+        labelOffset += glyph.byteLength;
     }
 }
 
@@ -2135,7 +2175,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                 // clicks; SkipToColumn is where the three now agree.
                 const ColumnSkip skip = SkipToColumn(content, offset, currentSegment.endByte,
                                                      static_cast<int>(viewport_.LeftColumn()), lineLinks,
-                                                     lineState.inlayHints);
+                                                     lineState.virtualText);
                 offset                = skip.offset;
                 rowStartColumn        = skip.columns;
             }
@@ -2159,7 +2199,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                     continue; // the link stood in for these bytes
                 }
 
-                EmitInlayHint(c, row, col, offset, lineState);
+                EmitVirtualText(c, row, col, offset, lineState);
 
                 const auto decoded = content.CodepointAt(offset);
 
@@ -2627,15 +2667,15 @@ void BufferView::PaintInlineDiagnosticRow(Canvas& c, int row, std::size_t line, 
         const std::vector<RenderedLink> lineLinks = LinksForLine(viewport_.Links(), lineStart, lineEnd, buffer.Point());
         // An underline has to land under the characters it marks, which the
         // hints on this line have already pushed right.
-        const std::vector<RenderedInlayHint> lineHints = InlayHintsForLineRange(lineStart, lineEnd);
+        const std::vector<RenderedVirtualText> lineVirtualText = VirtualTextForLineRange(lineStart, lineEnd);
 
         // Same viewport_.LeftColumn()-aware bound/offset arithmetic CursorPosition uses.
         const int                bound = width + static_cast<int>(viewport_.LeftColumn());
         const std::optional<int> startCol =
-            VisualColumn(content, lineStart, std::min(diagnostic.startByte, lineEnd), bound, lineLinks, lineHints);
+            VisualColumn(content, lineStart, std::min(diagnostic.startByte, lineEnd), bound, lineLinks, lineVirtualText);
         if (startCol && *startCol >= static_cast<int>(viewport_.LeftColumn())) {
             const std::optional<int> endCol =
-                VisualColumn(content, lineStart, std::min(diagnostic.endByte, lineEnd), bound, lineLinks, lineHints);
+                VisualColumn(content, lineStart, std::min(diagnostic.endByte, lineEnd), bound, lineLinks, lineVirtualText);
             const int screenStart = static_cast<int>(gutterWidth) + *startCol - static_cast<int>(viewport_.LeftColumn());
             // A span running past the visual-column bound (endCol nullopt)
             // degrades to a single caret at its start rather than flooding
@@ -3205,12 +3245,12 @@ void BufferView::PaintProseDiagnosticCallouts(Canvas& c, const std::vector<std::
 // 0 when nothing is scrolled off (and under wrap, where LeftColumn() is
 // always 0), which makes this a no-op for every unscrolled row.
 int BufferView::RowStartColumn(std::size_t segmentStart, std::size_t segmentEnd, const std::vector<RenderedLink>& lineLinks,
-                               const std::vector<RenderedInlayHint>& lineHints) const {
+                               const std::vector<RenderedVirtualText>& lineVirtualText) const {
     if (viewport_.LeftColumn() == 0) {
         return 0;
     }
     const text::ITextStorage& content = activeBuffer_.Get().Content();
-    return SkipToColumn(content, segmentStart, segmentEnd, static_cast<int>(viewport_.LeftColumn()), lineLinks, lineHints)
+    return SkipToColumn(content, segmentStart, segmentEnd, static_cast<int>(viewport_.LeftColumn()), lineLinks, lineVirtualText)
         .columns;
 }
 
@@ -3316,8 +3356,8 @@ std::optional<Point> BufferView::CursorPosition() const {
     const int maxColumns = sizeIsKnown ? sizeNow.width - static_cast<int>(gutterWidth) + static_cast<int>(viewport_.LeftColumn())
                                        : std::numeric_limits<int>::max();
 
-    const std::vector<RenderedInlayHint> lineHints = InlayHintsForLineRange(lineStart, lineEnd);
-    const std::optional<int>             visualCol = VisualColumn(content, segmentStart, point, maxColumns, lineLinks, lineHints);
+    const std::vector<RenderedVirtualText> lineVirtualText = VirtualTextForLineRange(lineStart, lineEnd);
+    const std::optional<int>               visualCol       = VisualColumn(content, segmentStart, point, maxColumns, lineLinks, lineVirtualText);
     // Paint does not begin the row at viewport_.LeftColumn(): its
     // fast-forward stops on a glyph or hint boundary, which overshoots
     // whenever one straddles that column, and it then draws from where it
@@ -3326,7 +3366,7 @@ std::optional<Point> BufferView::CursorPosition() const {
     // from the character it is on -- up to a whole hint label (measured
     // 2026-09-22: 7 columns off at one terminal width, 1 at the next, none
     // at the one after, which is what made it look intermittent).
-    const int rowStartColumn = RowStartColumn(segmentStart, segmentEnd, lineLinks, lineHints);
+    const int rowStartColumn = RowStartColumn(segmentStart, segmentEnd, lineLinks, lineVirtualText);
     if (!visualCol || *visualCol < rowStartColumn) {
         return std::nullopt; // scrolled off the left edge
     }
@@ -3339,16 +3379,106 @@ std::optional<Point> BufferView::CursorPosition() const {
     return Point{.x = static_cast<int>(col), .y = static_cast<int>(visibleRow) + stickyRowCount_};
 }
 
-std::vector<bufferview::RenderedInlayHint> BufferView::InlayHintsForLineRange(std::size_t lineStart,
-                                                                              std::size_t lineEnd) const {
-    // Same source Paint() renders hints from, so the two can never disagree
-    // about where a hint sits or how wide it is -- which is the whole point:
-    // the cursor's column and the painted text have to be computed from one
-    // set of facts.
-    if (lspManager_ == nullptr) {
+std::vector<bufferview::RenderedVirtualText> BufferView::VirtualTextForLineRange(std::size_t lineStart,
+                                                                                 std::size_t lineEnd) const {
+    const text::Buffer& buffer = activeBuffer_.Get();
+    return VirtualTextForRange(buffer, buffer.Content(), lineStart, lineEnd);
+}
+
+std::vector<editor::ColorLiteral> BufferView::ColorLiteralsInRange(const text::Buffer&       buffer,
+                                                                   const text::ITextStorage& content,
+                                                                   std::size_t lineStart, std::size_t lineEnd) const {
+    if (lineEnd <= lineStart) {
         return {};
     }
-    return InlayHintsForLine(lspManager_->InlayHintSpans(activeBuffer_.Get()), lineStart, lineEnd);
+    // Two bounds, and both are load-bearing. Scanning only the lines on
+    // screen is what makes this affordable on a huge file with no cache of
+    // its own. Capping each of those lines is what makes it affordable on a
+    // pathologically long one: the Substring below is a real copy out of the
+    // rope, so an uncapped scan of a five-million-byte line would redo five
+    // million bytes of work every frame -- the exact regression
+    // PerformanceTest.cpp's "pathologically long single line" case exists to
+    // catch, and did. Wider than any real terminal line, the same reasoning
+    // (and the same tradeoff) behind Buffer.cpp's kMaxTabAwareColumnScan: a
+    // colour literal past this column earns no swatch.
+    //
+    // The cap is a function of the line alone, deliberately, and never of the
+    // viewport's own scroll: both producers of this list -- BeginLineRender
+    // and the column arithmetic behind the cursor -- have to agree on it
+    // exactly, and a window that moved with the horizontal scroll would give
+    // them two different answers within one frame.
+    constexpr std::size_t kMaxColorScanBytes = 8192;
+
+    const std::size_t                 scanLength = std::min(lineEnd - lineStart, kMaxColorScanBytes);
+    const std::string                 text       = content.Substring(lineStart, scanLength);
+    std::vector<editor::ColorLiteral> literals =
+        editor::ScanColorLiterals(text, mode_.colorLiterals);
+    for (editor::ColorLiteral& literal : literals) {
+        literal.begin += lineStart;
+        literal.end += lineStart;
+    }
+
+    // The server tier, merged over the native one. A server's finding wins
+    // where the two overlap -- it is the one that can see a colour ned's
+    // lexical scan cannot -- and a native literal it did not report is kept,
+    // since the great majority of servers report nothing at all (measured:
+    // of every server installed here, only lua-language-server advertises
+    // colorProvider). Additive in both directions, never authoritative in
+    // either.
+    if (lspManager_ != nullptr) {
+        for (const editor::lsp::Manager::ResolvedDocumentColor& reported :
+             lspManager_->DocumentColorSpans(buffer)) {
+            if (reported.endByte <= lineStart || reported.startByte >= lineEnd) {
+                continue;
+            }
+            std::erase_if(literals, [&reported](const editor::ColorLiteral& literal) {
+                return literal.begin < reported.endByte && reported.startByte < literal.end;
+            });
+            literals.push_back(editor::ColorLiteral{.begin  = reported.startByte,
+                                                    .end    = reported.endByte,
+                                                    .color  = reported.color,
+                                                    .syntax = editor::ColorSyntax::Unknown});
+        }
+        std::sort(literals.begin(), literals.end(),
+                  [](const editor::ColorLiteral& a, const editor::ColorLiteral& b) { return a.begin < b.begin; });
+    }
+    return literals;
+}
+
+std::vector<bufferview::RenderedVirtualText> BufferView::VirtualTextForRange(const text::Buffer&       buffer,
+                                                                             const text::ITextStorage& content,
+                                                                             std::size_t               lineStart,
+                                                                             std::size_t               lineEnd) const {
+    // Same source Paint() renders from, so the two can never disagree about
+    // where virtual text sits or how wide it is -- which is the whole point:
+    // the cursor's column and the painted text have to be computed from one
+    // set of facts.
+    std::vector<RenderedVirtualText> rendered;
+    if (lspManager_ != nullptr) {
+        rendered = VirtualTextForLine(lspManager_->InlayHintSpans(buffer), lineStart, lineEnd);
+    }
+
+    if (!editor::ColorSwatchesEnabled() || editor::GetColorSwatchStyle() != editor::ColorSwatchStyle::Block) {
+        return rendered;
+    }
+
+    for (const editor::ColorLiteral& literal : ColorLiteralsInRange(buffer, content, lineStart, lineEnd)) {
+        const Color swatch = SwatchColor(theme_, literal.color);
+        // An inlay hint can already be anchored where a literal begins, and
+        // VirtualTextStartingAt hands out exactly one entry per offset -- so
+        // the swatch joins that entry rather than becoming a second one the
+        // column arithmetic would never see.
+        const auto existing = std::find_if(rendered.begin(), rendered.end(),
+                                           [&](const RenderedVirtualText& entry) {
+                                               return entry.byteOffset == literal.begin;
+                                           });
+        if (existing != rendered.end()) {
+            existing->swatch = swatch;
+            continue;
+        }
+        rendered.push_back(RenderedVirtualText{.byteOffset = literal.begin, .swatch = swatch});
+    }
+    return rendered;
 }
 
 bool BufferView::InSelection(std::size_t byteOffset) const {

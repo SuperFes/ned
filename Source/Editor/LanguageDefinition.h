@@ -30,6 +30,7 @@
 #include <utility>
 #include <vector>
 
+#include "ColorLiteral.h"
 #include "ImportResolutionConfig.h"
 #include "Mode.h"
 
@@ -95,6 +96,11 @@ struct LanguageDefinition {
     std::string lineCommentPrefix;
     AutoPairSet autoPairs = AutoPairSet::Default;
     bool        wrapLines = false;
+    // Which colour-literal spellings this language admits beyond the two that
+    // are unambiguous everywhere (6/8-digit hex, functional notation). A
+    // stylesheet sets both; see Editor/ColorLiteral.h for why they are not
+    // universal.
+    ColorLiteralOptions colorLiterals;
     // Whether the injections query's regions are exposed as
     // Mode::embeddedRegions for LSP sync. Off by default: a Markdown fenced
     // block is highlighted as its language but not sent to that language's

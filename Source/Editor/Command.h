@@ -355,6 +355,14 @@ enum class InteractiveRequest { None,
                                 // (see that method's own doc comment for the deliberate v1
                                 // "only the first lens" simplification).
                                 LspRunCodeLensAtPoint,
+                                // documentColor follow-up: one-shot direct action, the
+                                // shape LspCodeAction has -- BufferView::RequestColorAtPoint
+                                // finds the colour literal under point and opens the
+                                // presentation list (the other notations the same colour can
+                                // be written in). Not LSP-gated: ned recognises the literal
+                                // itself, and a server that answers colorPresentation only
+                                // adds rows.
+                                ColorAtPoint,
                                 // error-visibility follow-up: another one-shot direct action,
                                 // same shape as ProjectAgenda -- BufferView finds-or-creates
                                 // the shared *lsp log* buffer (lsp::kLspLogBufferName) and

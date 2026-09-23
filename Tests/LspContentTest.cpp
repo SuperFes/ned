@@ -12,8 +12,10 @@ using ned::editor::lsp::DocumentChangeOp;
 using ned::editor::lsp::DocumentHighlight;
 using ned::editor::lsp::ExtractCodeActions;
 using ned::editor::lsp::ExtractCodeLenses;
+using ned::editor::lsp::ExtractColorPresentations;
 using ned::editor::lsp::ExtractCompletionItems;
 using ned::editor::lsp::ExtractDefinitionLocations;
+using ned::editor::lsp::ExtractDocumentColors;
 using ned::editor::lsp::ExtractDocumentHighlights;
 using ned::editor::lsp::ExtractDocumentLinks;
 using ned::editor::lsp::ExtractFileOperationFilters;
@@ -43,8 +45,8 @@ using ned::editor::lsp::ExtractWorkspaceFoldersSupport;
 using ned::editor::lsp::HierarchyCall;
 using ned::editor::lsp::HierarchyItem;
 using ned::editor::lsp::Json;
-using ned::editor::lsp::Position;
 using ned::editor::lsp::OnTypeFormattingTriggers;
+using ned::editor::lsp::Position;
 using ned::editor::lsp::RenameResult;
 using ned::editor::lsp::SemanticTokensDeltaEdit;
 using ned::editor::lsp::SemanticTokensLegend;
@@ -1339,6 +1341,44 @@ TEST_CASE("ExtractSingleCodeLens leaves hasCommand false for an unresolved lens 
     REQUIRE_FALSE(lens.hasCommand);
     REQUIRE(lens.title.empty());
     REQUIRE(lens.raw == item); // round-trips verbatim for a later resolve
+}
+
+TEST_CASE("ExtractDocumentColors reads range and colour, and defaults a missing alpha to opaque", "[Lsp]") {
+    const Json result = Json::array({
+        {{"range", MakeRange(0, 4, 0, 11)},
+         {"color", {{"red", 1.0}, {"green", 0.0}, {"blue", 2.0 / 3.0}, {"alpha", 0.5}}}},
+        // No alpha: a server omitting it means "no alpha here", and reading
+        // that as 0 would paint the swatch invisible.
+        {{"range", MakeRange(1, 0, 1, 7)}, {"color", {{"red", 0.0}, {"green", 1.0}, {"blue", 0.0}}}},
+        {{"color", {{"red", 1.0}}}},        // no range -- skipped
+        {{"range", MakeRange(2, 0, 2, 3)}}, // no colour -- skipped
+    });
+
+    const auto colors = ExtractDocumentColors(result);
+    REQUIRE(colors.size() == 2);
+    REQUIRE(colors[0].start.line == 0);
+    REQUIRE(colors[0].start.character == 4);
+    REQUIRE(colors[0].end.character == 11);
+    REQUIRE(colors[0].red == 1.0);
+    REQUIRE(colors[0].alpha == 0.5);
+    REQUIRE(colors[1].alpha == 1.0);
+
+    REQUIRE(ExtractDocumentColors(Json()).empty());
+    REQUIRE(ExtractDocumentColors(Json::object()).empty());
+}
+
+TEST_CASE("ExtractColorPresentations prefers a textEdit's newText and falls back to the label", "[Lsp]") {
+    const Json result = Json::array({
+        {{"label", "#ff00aa"}},
+        {{"label", "ignored"}, {"textEdit", {{"range", MakeRange(0, 0, 0, 7)}, {"newText", "rgb(255, 0, 170)"}}}},
+        {{"label", ""}},    // nothing to insert -- skipped
+        {{"notALabel", 1}}, // ditto
+        "not an object",
+    });
+
+    const auto presentations = ExtractColorPresentations(result);
+    REQUIRE(presentations == std::vector<std::string>{"#ff00aa", "rgb(255, 0, 170)"});
+    REQUIRE(ExtractColorPresentations(Json()).empty());
 }
 
 TEST_CASE("ExtractCodeLenses skips an entry missing \"range\" and returns empty for a non-array result", "[Lsp]") {

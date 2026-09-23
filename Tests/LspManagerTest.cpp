@@ -3790,6 +3790,80 @@ TEST_CASE("Code lenses land on the right line however far the buffer has moved",
     REQUIRE(lineOf(manager.CodeLensSpans(buffer)[0].startByte) == 4);
 }
 
+TEST_CASE("Document colours land on the text they describe, and an edit inside one drops it", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-documentcolor-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("a = #ff00aa\nb = 2\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestDocumentColors(buffer, "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["method"] == "textDocument/documentColor");
+
+    // The buffer moves on while the server is still thinking.
+    buffer.SetPoint(0);
+    buffer.InsertAtPoint("// header\n");
+
+    client->DispatchFrame(Json{
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"range", {{"start", {{"line", 0}, {"character", 4}}}, {"end", {{"line", 0}, {"character", 11}}}}},
+                                 {"color", {{"red", 1.0}, {"green", 0.0}, {"blue", 2.0 / 3.0}, {"alpha", 1.0}}}}})},
+    }
+                              .dump());
+
+    REQUIRE(manager.DocumentColorSpans(buffer).size() == 1);
+    const auto& reported = manager.DocumentColorSpans(buffer).front();
+    REQUIRE(buffer.Content().Substring(reported.startByte, reported.endByte - reported.startByte) == "#ff00aa");
+    REQUIRE(ned::editor::ColorChannelToByte(reported.color.red) == 0xff);
+    REQUIRE(ned::editor::ColorChannelToByte(reported.color.blue) == 0xaa);
+
+    // Invalidated rather than clamped, unlike a code lens: a swatch claims
+    // that these exact bytes spell that colour, so an edit inside them has
+    // made the claim false.
+    buffer.SetPoint(reported.startByte + 2);
+    buffer.InsertAtPoint("00");
+    REQUIRE(manager.DocumentColorSpans(buffer).empty());
+}
+
+TEST_CASE("A server that declines documentColor is asked exactly once", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-documentcolor-latch-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("a = #ff00aa\n");
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
+
+    manager.RequestDocumentColors(buffer, "test-lang");
+    const std::string raw = ReadRawFrame(server.serverStdinRead);
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                               {"id", RequestIdFromFrame(raw)},
+                               {"error", {{"code", -32601}, {"message", "method not found"}}}}
+                              .dump());
+
+    // A new content generation would otherwise be a fresh reason to ask.
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint("b = 2\n");
+    manager.SyncBuffer(buffer, "test-lang");
+    while (!NoFrameArrives(server.serverStdinRead)) {
+        (void)ReadRawFrame(server.serverStdinRead); // drain the didChange
+    }
+    manager.RequestDocumentColors(buffer, "test-lang");
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}
+
 // buffer-anchored-lsp-results: this used to assert that the whole set was
 // withheld once the buffer moved -- the honest answer while nothing could
 // relocate the spans, and one that meant the server's contribution blinked
@@ -4092,12 +4166,15 @@ TEST_CASE("RequestViewportFeatures sends the first viewport at once and collapse
     // Leading edge: the first frame at a new pair is a discrete jump as far
     // as this can tell, and goes straight out.
     manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
-    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 3));
-    REQUIRE(first.size() == 3);
+    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 4));
+    REQUIRE(first.size() == 4);
     REQUIRE(first[0]["method"] == "textDocument/semanticTokens/range");
     REQUIRE(first[0]["params"]["range"]["start"]["line"] == 0);
     REQUIRE(first[1]["method"] == "textDocument/inlayHint");
     REQUIRE(first[2]["method"] == "textDocument/codeLens");
+    // Whole-document, and last: documentColor takes no range, so the
+    // viewport only paced it.
+    REQUIRE(first[3]["method"] == "textDocument/documentColor");
 
     // The rest of the scroll, inside that window: nothing is sent from the
     // frames themselves, and the deferred fire carries the last pair only.
@@ -5874,8 +5951,8 @@ TEST_CASE("workspace/inlayHint/refresh is answered with a null result and re-ope
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
     manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
-    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 3));
-    REQUIRE(first.size() == 3);
+    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 4));
+    REQUIRE(first.size() == 4);
     REQUIRE(first[1]["method"] == "textDocument/inlayHint");
 
     // An empty array is a real answer, not a decline -- which is exactly the
@@ -6036,8 +6113,8 @@ TEST_CASE("A viewport request that settles unanswered is asked again instead of 
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
     manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
-    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 3));
-    REQUIRE(first.size() == 3);
+    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 4));
+    REQUIRE(first.size() == 4);
     REQUIRE(first[0]["method"] == "textDocument/semanticTokens/range");
 
     // A real error latches this server as not honoring the range request and
@@ -6124,8 +6201,8 @@ TEST_CASE("A ContentModified error on semanticTokens/range keeps the range path 
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
     manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
-    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 3));
-    REQUIRE(first.size() == 3);
+    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 4));
+    REQUIRE(first.size() == 4);
     REQUIRE(first[0]["method"] == "textDocument/semanticTokens/range");
 
     // -32601 here would latch rangeUnsupported_ and send full next; -32801
@@ -6171,8 +6248,8 @@ TEST_CASE("A server declining every request with ContentModified is retried once
     };
 
     manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");
-    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 3));
-    REQUIRE(first.size() == 3);
+    const std::vector<Json> first = ParseAllFrames(ReadRawFramesUntil(server.serverStdinRead, 4));
+    REQUIRE(first.size() == 4);
     declineEverything(first);
 
     manager.RequestViewportFeatures(buffer, 0, 11, "test-lang");

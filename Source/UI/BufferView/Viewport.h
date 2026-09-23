@@ -66,7 +66,7 @@ class Viewport {
         // them out put point's column short by the width of every hint to
         // its left. Unset is a safe no-op (an empty list), like every other
         // hook here.
-        std::function<std::vector<RenderedInlayHint>(std::size_t lineStart, std::size_t lineEnd)> inlayHintsForLine;
+        std::function<std::vector<RenderedVirtualText>(std::size_t lineStart, std::size_t lineEnd)> virtualTextForLine;
         // Scrolling invalidates a hover popup anchored to a screen position.
         std::function<void()> dismissHover;
     };

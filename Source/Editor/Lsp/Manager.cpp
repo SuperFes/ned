@@ -13,6 +13,7 @@
 
 #include "BrokerConnect.h"
 #include "Editor/BackgroundActivity.h"
+#include "Editor/ColorSwatchSettings.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Link.h"
 #include "Editor/Project/Root.h"
@@ -589,6 +590,9 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
               {"formats", Json::array({"relative"})}}},
             {"inlayHint", Json::object()},
             {"codeLens", Json::object()},
+            // documentColor follow-up: bare {} -- the request has no optional
+            // client-side features to negotiate.
+            {"colorProvider", Json::object()},
             {"publishDiagnostics", Json::object()},
             {"codeAction",
              {{"codeActionLiteralSupport",
@@ -1591,6 +1595,7 @@ void Manager::ClientDisconnected(const std::string& serverKey, const std::string
     pullDiagnosticsUnsupported_.erase(connectionKeyCopy);         // a respawned server gets one fresh attempt
     inlayHintsUnsupported_.erase(connectionKeyCopy);              // ditto
     codeLensUnsupported_.erase(connectionKeyCopy);                // ditto
+    documentColorUnsupported_.erase(connectionKeyCopy);           // ditto
     codeActionHintsUnsupported_.erase(connectionKeyCopy);         // ditto
     documentLinkUnsupported_.erase(connectionKeyCopy);            // ditto
     semanticTokensRangeUnsupported_.erase(connectionKeyCopy);     // ditto
@@ -1830,6 +1835,10 @@ void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     codeLensSpans_.erase(&buffer);
     codeLensSpansGeneration_.erase(&buffer);
     codeLensRevision_.erase(&buffer);
+    documentColorRequestedGeneration_.erase(&buffer);
+    documentColorRequestCounter_.erase(&buffer);
+    documentColorSpans_.erase(&buffer);
+    documentColorGeneration_.erase(&buffer);
     codeActionHintCoverage_.erase(&buffer);
     codeActionHintRequestCounter_.erase(&buffer);
     codeActionHintDiagnosticsGeneration_.erase(&buffer);
@@ -2364,6 +2373,10 @@ bool Manager::SendViewportFeatures(text::Buffer& buffer, const ArmedViewportRequ
     // request above is deduped away by content generation.
     ResolveViewportCodeLenses(buffer, request.viewportStartByte, request.viewportEndByte, request.serverKey);
     RequestCodeActionHints(buffer, request.viewportStartByte, request.viewportEndByte, request.serverKey);
+    // Whole-document, unlike its four neighbours: textDocument/documentColor
+    // takes no range, so the viewport is only what paced the request, not
+    // what scoped it.
+    RequestDocumentColors(buffer, request.serverKey);
     return true;
 }
 
@@ -2937,6 +2950,15 @@ bool Manager::RelocateRange(std::size_t& startByte, std::size_t& endByte, const 
     return true;
 }
 
+bool Manager::RelocateUneditedRange(std::size_t& startByte, std::size_t& endByte,
+                                    const std::vector<text::EditOp>& ops) {
+    const std::size_t length = endByte - startByte;
+    if (!RelocateRange(startByte, endByte, ops, text::InsideDelete::Invalidate)) {
+        return false;
+    }
+    return endByte - startByte == length;
+}
+
 const std::vector<Manager::ResolvedInlayHint>& Manager::InlayHintSpans(const text::Buffer& buffer) const {
     static const std::vector<ResolvedInlayHint> kEmpty;
     text::Buffer* const                         key       = const_cast<text::Buffer*>(&buffer);
@@ -3263,6 +3285,151 @@ const std::vector<Manager::ResolvedCodeLens>& Manager::CodeLensSpans(const text:
                      });
     }
     return it->second;
+}
+
+void Manager::RequestDocumentColors(text::Buffer& buffer, const std::string& serverKey) {
+    if (!ColorSwatchesEnabled()) {
+        return;
+    }
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        return;
+    }
+    if (documentColorUnsupported_.contains(state->connectionKey)) {
+        return; // learned once that this server doesn't support textDocument/documentColor
+    }
+    // sync-debounce follow-up: see RequestSemanticTokens' own doc comment
+    // for why this guard exists now.
+    if (state->lastSyncedGeneration != buffer.ContentGeneration()) {
+        return;
+    }
+    if (const auto it = documentColorRequestedGeneration_.find(&buffer);
+        it != documentColorRequestedGeneration_.end() && it->second == buffer.ContentGeneration()) {
+        return; // already requested for this exact content
+    }
+    Client* client = ExistingClientForLanguage(state->connectionKey);
+    if (!client) {
+        return;
+    }
+
+    documentColorRequestedGeneration_[&buffer] = buffer.ContentGeneration();
+    const std::size_t requestId                = ++documentColorRequestCounter_[&buffer];
+
+    text::Buffer* const                       bufferPtr           = &buffer;
+    const std::string                         connectionKey       = state->connectionKey;
+    const Json                                params              = {{"textDocument", {{"uri", state->uri}}}};
+    std::shared_ptr<const text::ITextStorage> requestedContent    = buffer.Content().Clone();
+    const std::size_t                         requestedGeneration = buffer.ContentGeneration();
+    client->SendRequest(
+        "textDocument/documentColor", params,
+        [this, bufferPtr, requestId, connectionKey, requestedContent,
+         requestedGeneration](std::optional<Json> result, std::optional<Json> error) {
+            const auto counterIt = documentColorRequestCounter_.find(bufferPtr);
+            if (counterIt == documentColorRequestCounter_.end() || counterIt->second != requestId) {
+                return; // superseded by a newer request for this buffer
+            }
+            if (error) {
+                if (!IsRetryableRequestError(*error)) {
+                    documentColorUnsupported_.insert(connectionKey);
+                }
+                return;
+            }
+            if (!result) {
+                return;
+            }
+            const std::vector<ColorInformation> colors  = ExtractDocumentColors(*result);
+            const text::ITextStorage&           content = *requestedContent;
+
+            std::vector<ResolvedDocumentColor> resolved;
+            resolved.reserve(colors.size());
+            for (const ColorInformation& color : colors) {
+                resolved.push_back(ResolvedDocumentColor{
+                    .startByte = PositionToByte(content, color.start),
+                    .endByte   = PositionToByte(content, color.end),
+                    .color     = ColorValue{.red   = color.red,
+                                            .green = color.green,
+                                            .blue  = color.blue,
+                                            .alpha = color.alpha},
+                });
+            }
+            std::sort(resolved.begin(), resolved.end(),
+                      [](const ResolvedDocumentColor& a, const ResolvedDocumentColor& b) {
+                          return a.startByte < b.startByte;
+                      });
+
+            std::size_t resolvedAt = requestedGeneration;
+            CarryForward(resolved, resolvedAt, *bufferPtr,
+                         [](ResolvedDocumentColor& color, const std::vector<text::EditOp>& ops) {
+                             // Dropped on any edit inside it, not clamped like
+                             // a code lens: a swatch claims that *these bytes*
+                             // spell that colour. A lens survives being
+                             // slightly wrong about its row; a swatch
+                             // reporting the pre-edit colour of text you are
+                             // typing over is simply lying -- and ned's own
+                             // scan has the right answer for that text already.
+                             return RelocateUneditedRange(color.startByte, color.endByte, ops);
+                         });
+            documentColorSpans_[bufferPtr]      = std::move(resolved);
+            documentColorGeneration_[bufferPtr] = bufferPtr->ContentGeneration();
+        });
+}
+
+const std::vector<Manager::ResolvedDocumentColor>& Manager::DocumentColorSpans(const text::Buffer& buffer) const {
+    static const std::vector<ResolvedDocumentColor> kEmpty;
+    text::Buffer* const                             key = const_cast<text::Buffer*>(&buffer);
+    const auto                                      it  = documentColorSpans_.find(key);
+    if (it == documentColorSpans_.end()) {
+        return kEmpty;
+    }
+    // The same lazy catch-up CodeLensSpans does, and for the same reason:
+    // Manager has no hook into Buffer's edits, so the replay happens on read,
+    // amortized over however many reads a generation sees.
+    const auto generationIt = documentColorGeneration_.find(key);
+    if (generationIt != documentColorGeneration_.end()) {
+        CarryForward(it->second, generationIt->second, buffer,
+                     [](ResolvedDocumentColor& color, const std::vector<text::EditOp>& ops) {
+                         return RelocateUneditedRange(color.startByte, color.endByte, ops);
+                     });
+    }
+    return it->second;
+}
+
+void Manager::RequestColorPresentations(text::Buffer& buffer, const ColorValue& color, std::size_t startByte,
+                                        std::size_t endByte, ColorPresentationCallback callback,
+                                        const std::string& serverKey) {
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened || documentColorUnsupported_.contains(state->connectionKey)) {
+        callback({});
+        return;
+    }
+    if (state->lastSyncedGeneration != buffer.ContentGeneration()) {
+        // The server is answering about a document that is not this one; its
+        // notations for a range it cannot see are worth nothing.
+        callback({});
+        return;
+    }
+    Client* client = ExistingClientForLanguage(state->connectionKey);
+    if (!client) {
+        callback({});
+        return;
+    }
+
+    const text::ITextStorage& content = buffer.Content();
+    const Position            start   = BytePositionToLsp(content, startByte);
+    const Position            end     = BytePositionToLsp(content, endByte);
+    const Json                params  = {
+        {"textDocument", {{"uri", state->uri}}},
+        {"color", {{"red", color.red}, {"green", color.green}, {"blue", color.blue}, {"alpha", color.alpha}}},
+        {"range", {{"start", {{"line", start.line}, {"character", start.character}}}, {"end", {{"line", end.line}, {"character", end.character}}}}},
+    };
+    client->SendRequest("textDocument/colorPresentation", params,
+                        [callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error || !result) {
+                                callback({});
+                                return;
+                            }
+                            callback(ExtractColorPresentations(*result));
+                        });
 }
 
 void Manager::RequestCodeActionHints(text::Buffer& buffer, std::size_t viewportStartByte, std::size_t viewportEndByte,

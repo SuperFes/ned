@@ -141,6 +141,18 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
         else if (key == "wrap-lines") {
             definition.wrapLines = ExpectBool(directoryName, value, ":wrap-lines");
         }
+        else if (key == "color-literals") {
+            if (!value.IsTuple()) {
+                Fail(directoryName, value.line, ":color-literals is a tuple of :short-hex / :named");
+            }
+            for (const Value& entry : value.items) {
+                if (!entry.IsKeyword() || (entry.text != "short-hex" && entry.text != "named")) {
+                    Fail(directoryName, entry.line, ":color-literals entries are :short-hex or :named");
+                }
+                (entry.text == "short-hex" ? definition.colorLiterals.shortHex
+                                           : definition.colorLiterals.namedColors) = true;
+            }
+        }
         else if (key == "imprint") {
             definition.imprint = ExpectBool(directoryName, value, ":imprint");
         }

@@ -198,7 +198,7 @@ configuration is Janet code, and these are the bindings it calls.
 
 `ned/register-language`
 
-:   Register a language from a directory holding its language.janet -- the exact layout ned's own bundled languages use (Source/Languages/`<name>`/), so everything a definition can say works: extensions and filenames (claimed automatically, no separate set-mode-for-extension call needed), comment syntax, keymap, query files discovered beside it as `<kind>`.janet with an upstream/ subdirectory checked first, escapes, LSP root markers, import resolution, injection aliases, snippets. The directory's basename is the language name and its mode is named `<name>`-mode; a registered name shadows a bundled one, so redefining a bundled language is expected use, as is re-registering. Two keys exist for exactly this path: a directory with its own grammar.janet (or the `tables` ned --compile-language writes from it) brings its own grammar, with :scanner-library naming the shared library exporting ned_scanner_`<grammar>` when the grammar has external tokens (omit both to use a bundled grammar), and :queries-dir names a foreign tree-sitter-layout directory (e.g. /usr/share/tree-sitter/queries/`<lang>`) scanned per kind as `<kind>`.janet or `<kind>`.scm for whatever discovery didn't find. Throws with a file:line message on a malformed definition. Directories under $XDG_CONFIG_HOME/ned/languages/ and a trusted project's .ned/languages/ load automatically at startup through this same path.
+:   Register a language from a directory holding its language.janet -- the exact layout ned's own bundled languages use (Source/Languages/`<name>`/), so everything a definition can say works: extensions and filenames (claimed automatically, no separate set-mode-for-extension call needed), comment syntax, keymap, query files discovered beside it as `<kind>`.janet with an upstream/ subdirectory checked first, escapes, LSP root markers, import resolution, injection aliases, snippets, and :color-literals (a tuple of :short-hex and/or :named, widening which colour-literal spellings earn a swatch beyond the two every language gets). The directory's basename is the language name and its mode is named `<name>`-mode; a registered name shadows a bundled one, so redefining a bundled language is expected use, as is re-registering. Two keys exist for exactly this path: a directory with its own grammar.janet (or the `tables` ned --compile-language writes from it) brings its own grammar, with :scanner-library naming the shared library exporting ned_scanner_`<grammar>` when the grammar has external tokens (omit both to use a bundled grammar), and :queries-dir names a foreign tree-sitter-layout directory (e.g. /usr/share/tree-sitter/queries/`<lang>`) scanned per kind as `<kind>`.janet or `<kind>`.scm for whatever discovery didn't find. Throws with a file:line message on a malformed definition. Directories under $XDG_CONFIG_HOME/ned/languages/ and a trusted project's .ned/languages/ load automatically at startup through this same path.
 
 `ned/register-macro`
 
@@ -323,6 +323,14 @@ configuration is Janet code, and these are the bindings it calls.
 `ned/set-code-folding-enabled`
 
 :   Enable/disable the gutter code-folding affordance for modes with a fold query (default true).
+
+`ned/set-color-swatch-style`
+
+:   How a colour swatch draws: "block" (default) puts a filled cell before the literal, costing one column the way an inlay hint does; "underlay" washes the literal's own characters in the colour instead, shifting nothing on screen.
+
+`ned/set-color-swatches`
+
+:   Enable/disable inline colour swatches -- a cell painted in the colour named by every colour literal in view (#ff00aa, rgb(...), hsl(...), and in a stylesheet also #f0a and tomato; default true). Found by ned itself, so it works with no language server running; a server that answers textDocument/documentColor adds whatever else it knows about. Turning this off also stops that request. color-at-point (C-c #) rewrites the literal under point in another notation.
 
 `ned/set-coverage-file`
 

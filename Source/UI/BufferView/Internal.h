@@ -46,6 +46,8 @@
 #include "Editor/BufferSave.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
+#include "Editor/ColorLiteral.h"
+#include "Editor/ColorSwatchSettings.h"
 #include "Editor/CompletionSources.h"
 #include "Editor/Coverage/Config.h"
 #include "Editor/DabbrevComplete.h"
@@ -65,7 +67,6 @@
 #include "Editor/Lsp/EditApply.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Lsp/Position.h"
-#include "Text/RopeStorage.h"
 #include "Editor/Lsp/ServerConfig.h"
 #include "Editor/MacroRegistry.h"
 #include "Editor/MassifOutputParser.h"
@@ -119,6 +120,7 @@
 #include "Janet/InitFile.h"
 #include "Text/BinaryDetect.h"
 #include "Text/Grapheme.h"
+#include "Text/RopeStorage.h"
 #include "Text/Utf8.h"
 #include "UI/Border.h"
 #include "UI/EchoArea.h"
@@ -132,8 +134,9 @@ namespace ned::ui::detail {
 // Moved to BufferView/RenderTypes.h now that painting, the viewport and the
 // per-line render state all name them; pulled back in here so the helpers below
 // keep spelling them unqualified.
-using bufferview::RenderedInlayHint;
+using bufferview::RenderedColorUnderlay;
 using bufferview::RenderedLink;
+using bufferview::RenderedVirtualText;
 using bufferview::WrapSegment;
 
 // Plain, non-modifier printable input: the only kind of chord that should
@@ -797,6 +800,31 @@ inline int DisplayColumns(const std::string& text, int startColumn = 0) {
     return column - startColumn;
 }
 
+// How many columns one RenderedVirtualText occupies, starting at `column` --
+// its swatch cell, if it has one, plus its label. The single place that
+// answer is computed: Paint()'s render loop and all four column walks
+// (VisualColumn, ByteOffsetForColumnInLine, SkipToColumn, the wrap
+// segmentation) call this rather than measuring the label themselves, which
+// is what keeps them from disagreeing when an offset carries both a swatch
+// and an inlay hint.
+// The cell colour a colour literal's swatch is painted in. Alpha is composited
+// rather than flattened away: a translucent literal (`#11223380`, `rgba(...)`)
+// means a colour you would see the page through, and blending it down over the
+// editor's own background is what reports that honestly -- a fully transparent
+// one therefore shows as the background itself, which is what it is. Blended
+// here rather than left for the screen, the same OverlayBackground discipline
+// every other translucent wash in this file follows.
+inline Color SwatchColor(const Theme& theme, const editor::ColorValue& color) {
+    return OverlayBackground(theme, Color::RGB(editor::ColorChannelToByte(color.red),
+                                               editor::ColorChannelToByte(color.green),
+                                               editor::ColorChannelToByte(color.blue))
+                                        .WithAlpha(editor::ColorChannelToByte(color.alpha)));
+}
+
+inline int VirtualTextColumns(const RenderedVirtualText& virtualText, int column) {
+    const int swatchColumns = virtualText.swatch ? 1 : 0;
+    return swatchColumns + DisplayColumns(virtualText.label, column + swatchColumns);
+}
 
 // Filters org::ParseLinks's whole-buffer result down to just the links
 // fully inside [lineStart, lineEnd) that should render collapsed --
@@ -835,27 +863,26 @@ inline const RenderedLink* LinkStartingAt(const std::vector<RenderedLink>& links
     return nullptr;
 }
 
-
-inline std::vector<RenderedInlayHint> InlayHintsForLine(const std::vector<editor::lsp::Manager::ResolvedInlayHint>& hints,
-                                                        std::size_t lineStart, std::size_t lineEnd) {
-    std::vector<RenderedInlayHint> rendered;
+inline std::vector<RenderedVirtualText> VirtualTextForLine(const std::vector<editor::lsp::Manager::ResolvedInlayHint>& hints,
+                                                           std::size_t lineStart, std::size_t lineEnd) {
+    std::vector<RenderedVirtualText> rendered;
     for (const editor::lsp::Manager::ResolvedInlayHint& hint : hints) {
         if (hint.byteOffset >= lineStart && hint.byteOffset < lineEnd) {
-            rendered.push_back(RenderedInlayHint{.byteOffset = hint.byteOffset, .label = hint.label, .kind = hint.kind});
+            rendered.push_back(RenderedVirtualText{.byteOffset = hint.byteOffset, .label = hint.label, .kind = hint.kind});
         }
     }
     return rendered;
 }
 
-// Finds the RenderedInlayHint (if any) anchored exactly at offset --
+// Finds the RenderedVirtualText (if any) anchored exactly at offset --
 // same linear-scan-over-a-small-per-line-list shape LinkStartingAt
 // uses. Unlike LinkStartingAt, a caller finding one here does NOT skip
 // past offset -- the hint renders as extra cells *before* the real
 // character still at offset, which keeps rendering normally right
 // after (a hint is virtual text alongside real content, not a
 // replacement for it).
-inline const RenderedInlayHint* InlayHintStartingAt(const std::vector<RenderedInlayHint>& hints, std::size_t offset) {
-    for (const RenderedInlayHint& hint : hints) {
+inline const RenderedVirtualText* VirtualTextStartingAt(const std::vector<RenderedVirtualText>& hints, std::size_t offset) {
+    for (const RenderedVirtualText& hint : hints) {
         if (hint.byteOffset == offset) {
             return &hint;
         }
@@ -882,7 +909,7 @@ inline const RenderedInlayHint* InlayHintStartingAt(const std::vector<RenderedIn
 // line containing a collapsed link.
 inline std::optional<int> VisualColumn(const text::ITextStorage& content, std::size_t lineStart, std::size_t byteOffset,
                                        int maxColumns, const std::vector<RenderedLink>& lineLinks = {},
-                                       const std::vector<RenderedInlayHint>& lineHints = {}) {
+                                       const std::vector<RenderedVirtualText>& lineVirtualText = {}) {
     int         col    = 0;
     std::size_t offset = lineStart;
     while (offset < byteOffset) {
@@ -898,8 +925,8 @@ inline std::optional<int> VisualColumn(const text::ITextStorage& content, std::s
         // in the line, so an Enter split appeared in the wrong place and the
         // horizontal-scroll decision under-estimated how far right point
         // really was.
-        if (const RenderedInlayHint* hint = InlayHintStartingAt(lineHints, offset)) {
-            col += DisplayColumns(hint->label, col);
+        if (const RenderedVirtualText* hint = VirtualTextStartingAt(lineVirtualText, offset)) {
+            col += VirtualTextColumns(*hint, col);
         }
         if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
             col += DisplayColumns(link->displayText, col);
@@ -911,7 +938,7 @@ inline std::optional<int> VisualColumn(const text::ITextStorage& content, std::s
         offset += decoded.byteLength;
     }
     // A hint anchored exactly at byteOffset still renders *before* the real
-    // character there (EmitInlayHint advances col past the hint, then falls
+    // character there (EmitVirtualText advances col past the hint, then falls
     // through to draw the real byte at the same offset right after) -- so
     // byteOffset's own real column sits past it too. Excluding it here was
     // the actual bug behind the cursor drawing on top of the hint's own
@@ -920,8 +947,8 @@ inline std::optional<int> VisualColumn(const text::ITextStorage& content, std::s
     // cursor's inverted cell, a selection wash) already lands past the
     // hint, and only this computation -- which is what places the native
     // terminal cursor -- disagreed with them.
-    if (const RenderedInlayHint* hint = InlayHintStartingAt(lineHints, byteOffset)) {
-        col += DisplayColumns(hint->label, col);
+    if (const RenderedVirtualText* hint = VirtualTextStartingAt(lineVirtualText, byteOffset)) {
+        col += VirtualTextColumns(*hint, col);
     }
     return col;
 }
@@ -946,8 +973,8 @@ struct ColumnSkip {
 };
 
 inline ColumnSkip SkipToColumn(const text::ITextStorage& content, std::size_t start, std::size_t end, int targetColumns,
-                               const std::vector<RenderedLink>&      lineLinks = {},
-                               const std::vector<RenderedInlayHint>& lineHints = {}) {
+                               const std::vector<RenderedLink>&        lineLinks       = {},
+                               const std::vector<RenderedVirtualText>& lineVirtualText = {}) {
     ColumnSkip result{.offset = start, .columns = 0};
     while (result.offset < end && result.columns < targetColumns) {
         if (const RenderedLink* link = LinkStartingAt(lineLinks, result.offset)) {
@@ -956,10 +983,10 @@ inline ColumnSkip SkipToColumn(const text::ITextStorage& content, std::size_t st
             continue;
         }
         // Ordered link-then-hint to match Paint()'s own
-        // EmitCollapsedLink/EmitInlayHint sequence: a link consumes its
+        // EmitCollapsedLink/EmitVirtualText sequence: a link consumes its
         // whole span there before any hint inside it can render.
-        if (const RenderedInlayHint* hint = InlayHintStartingAt(lineHints, result.offset)) {
-            result.columns += DisplayColumns(hint->label, result.columns);
+        if (const RenderedVirtualText* hint = VirtualTextStartingAt(lineVirtualText, result.offset)) {
+            result.columns += VirtualTextColumns(*hint, result.columns);
         }
         const auto decoded = content.CodepointAt(result.offset);
         result.columns += CodepointColumns(decoded.codepoint, result.columns);
@@ -986,8 +1013,8 @@ constexpr std::size_t kMaxTabAwareColumnScan = 512;
 
 inline std::size_t ByteOffsetForColumnInLine(const text::ITextStorage& content, std::size_t lineStart, std::size_t lineEnd,
                                              std::size_t targetColumn, int tabWidth,
-                                             const std::vector<RenderedLink>&      lineLinks,
-                                             const std::vector<RenderedInlayHint>& lineHints = {}) {
+                                             const std::vector<RenderedLink>&        lineLinks,
+                                             const std::vector<RenderedVirtualText>& lineVirtualText = {}) {
     std::size_t offset       = lineStart;
     std::size_t visualColumn = 0;
     std::size_t steps        = 0;
@@ -995,8 +1022,8 @@ inline std::size_t ByteOffsetForColumnInLine(const text::ITextStorage& content, 
         // VisualColumn's inverse has to skip the same virtual cells, or a
         // click lands on a different character than the one under the mouse
         // by the total width of the hints to its left.
-        if (const RenderedInlayHint* hint = InlayHintStartingAt(lineHints, offset)) {
-            const std::size_t hintColumns = static_cast<std::size_t>(DisplayColumns(hint->label, static_cast<int>(visualColumn)));
+        if (const RenderedVirtualText* hint = VirtualTextStartingAt(lineVirtualText, offset)) {
+            const std::size_t hintColumns = static_cast<std::size_t>(VirtualTextColumns(*hint, static_cast<int>(visualColumn)));
             if (targetColumn < visualColumn + hintColumns) {
                 return offset; // the click landed on the hint itself -- the real character it annotates
             }

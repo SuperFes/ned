@@ -118,6 +118,10 @@ for the live keymap stack.
 
 :   Toggle folding the code block (or, in a multibuffer, the excerpt) starting on the line at point.
 
+`color-at-point` (`C-c #`)
+
+:   Rewrite the colour literal under point in another notation (hex, rgb(), hsl(), hwb(), a CSS colour name), chosen from a list.
+
 `convert-line-endings-to-cr`
 
 :   Save this buffer with CR (classic Mac) line endings.

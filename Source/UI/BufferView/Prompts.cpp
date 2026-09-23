@@ -2033,6 +2033,11 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::LspRunCodeLensAtPoint:
             RequestCodeLensAtPoint();
             return;
+        // documentColor follow-up: same one-shot shape, and the only one of
+        // these that needs no server at all -- see RequestColorAtPoint.
+        case editor::InteractiveRequest::ColorAtPoint:
+            RequestColorAtPoint();
+            return;
     }
 
     statusMessage_ = (inputMode_ == InputMode::QueryReplace) ? queryReplace_->StatusText() : SearchStatusText();
@@ -5155,6 +5160,15 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
             HandleCodeActionSelectKey(enter);
             return;
         }
+        case InputMode::ColorPresentationSelect: {
+            // Same plain 1:1 list as the code actions just above.
+            if (index >= pendingColorPresentations_.size()) {
+                return;
+            }
+            colorPresentationSelection_ = index;
+            HandleColorPresentationSelectKey(enter);
+            return;
+        }
         case InputMode::FindFile:
         case InputMode::OpenProjectPath:
         case InputMode::FindScratch: {
@@ -5230,6 +5244,9 @@ void BufferView::ScrollCandidatePopup(int steps) {
                 break;
             case InputMode::LspCodeActionSelect:
                 HandleCodeActionSelectKey(nav);
+                break;
+            case InputMode::ColorPresentationSelect:
+                HandleColorPresentationSelectKey(nav);
                 break;
             case InputMode::FindFile:
             case InputMode::OpenProjectPath:

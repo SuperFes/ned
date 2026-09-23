@@ -3052,6 +3052,18 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::LspQuickFix;
                       });
 
+    // documentColor follow-up: the edit half of the colour swatches. Needs no
+    // language server -- Editor/ColorLiteral.h recognises the literal and
+    // computes the other notations it can be written in; a server answering
+    // textDocument/colorPresentation contributes extra rows where one is
+    // running. See BufferView::RequestColorAtPoint.
+    registry.Register("color-at-point",
+                      "Rewrite the colour literal under point in another notation (hex, rgb(), hsl(), hwb(), a "
+                      "CSS colour name), chosen from a list.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ColorAtPoint;
+                      });
+
     // codeLens follow-up: unbound by default, same as expand-snippet --
     // M-x only. See BufferView::RequestCodeLensAtPoint's own doc comment
     // for the "only the first lens on the line" v1 scope cut.
@@ -4890,6 +4902,9 @@ Keymap BuildDefaultGlobalKeymap() {
     // C-h prefix swallows the Backspace that terminals sending ^H for it
     // would otherwise deliver. "C-c ?" is free and reads as help.
     keymap.Bind(ParseKeySequence("C-c ?"), "describe-bindings");
+    // "#" for the literal it acts on -- C-c C-o, the mnemonic first choice,
+    // is find-scratch.
+    keymap.Bind(ParseKeySequence("C-c #"), "color-at-point");
     keymap.Bind(ParseKeySequence("C-x k"), "kill-buffer");
     keymap.Bind(ParseKeySequence("C-c a"), "org-agenda"); // real Org's own actual binding
     // capture-templates follow-up: real Org's own org-capture is "C-c c",

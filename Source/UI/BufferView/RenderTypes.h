@@ -13,7 +13,10 @@
 #define NED_UI_BUFFERVIEW_RENDERTYPES_H
 
 #include <cstddef>
+#include <optional>
 #include <string>
+
+#include "UI/Widget.h"
 
 namespace ned::ui::bufferview {
 
@@ -27,14 +30,39 @@ struct RenderedLink {
     std::string displayText;
 };
 
-// An LSP inlay hint (byte offset + label) filtered down to one line -- the same
-// "filter once per line, consult per codepoint" shape the highlight spans and
-// links already use. Unlike a RenderedLink this never consumes or replaces real
-// bytes; it is drawn between them.
-struct RenderedInlayHint {
+// Synthetic cells drawn before the real byte at `byteOffset`, filtered down to
+// one line -- the same "filter once per line, consult per codepoint" shape the
+// highlight spans and links already use. Unlike a RenderedLink this never
+// consumes or replaces real bytes; it is drawn between them.
+//
+// Two sources feed it and an offset may carry both: an LSP inlay hint supplies
+// `label`, and a colour literal beginning at this offset supplies `swatch`
+// (Editor/ColorLiteral.h). They share one type, and therefore one span list,
+// because every piece of the column arithmetic -- VisualColumn,
+// ByteOffsetForColumnInLine, SkipToColumn, the wrap segmentation -- has to
+// count these cells or the cursor drifts left of the character it is on. That
+// was a real reported bug once already; a second, parallel virtual-text
+// mechanism would be a second chance to reintroduce it. Ask
+// VirtualTextColumns() for the width, never DisplayColumns(label) directly.
+struct RenderedVirtualText {
     std::size_t byteOffset;
     std::string label;
     int         kind = 0; // lsp::InlayHint::kind -- chooses the colour, nothing else
+    // The colour a literal here names, drawn as one filled cell ahead of
+    // `label`. Unset for anything that is not a colour literal, and for every
+    // literal when the swatch style is Underlay (which washes the literal's
+    // own cells instead, costing no columns).
+    std::optional<Color> swatch;
+};
+
+// A colour literal's own byte range, washed in the colour it names -- what
+// ColorSwatchStyle::Underlay draws instead of a swatch cell. Deliberately not
+// a RenderedVirtualText: it occupies no columns of its own, so none of the
+// column arithmetic has to know about it.
+struct RenderedColorUnderlay {
+    std::size_t startByte;
+    std::size_t endByte; // exclusive
+    Color       color;
 };
 
 // The [startByte, endByte) content range one wrapped canvas row draws. There is

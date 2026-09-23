@@ -1205,6 +1205,11 @@ class BufferView : public Widget {
                            // more than one action came back -- a single action, or one picked from
                            // this list, applies directly with no separate y/n confirmation.
                            LspCodeActionSelect,
+                           // documentColor follow-up: the colour-presentation list --
+                           // LspCodeActionSelect's numbered-list shape, but entered
+                           // synchronously, since the notations a colour can be written in
+                           // are computed here rather than asked for.
+                           ColorPresentationSelect,
                            // go-to-definition follow-up: same "entered only from inside the
                            // async response callback" shape as LspCodeActionSelect above --
                            // Select when RequestDefinitionAtPoint's response names more than one
@@ -1737,6 +1742,31 @@ class BufferView : public Widget {
     // confirmation -- see RequestCodeActionsAtPoint's doc comment); Escape/C-g
     // cancels back to Normal.
     void HandleCodeActionSelectKey(const editor::KeyChord& chord);
+
+    // documentColor follow-up: finds the colour literal under point (ned's
+    // own recogniser, widened by the buffer's language server where one
+    // answers textDocument/documentColor), then opens the list of other
+    // notations the same colour can be written in. Reports and does nothing
+    // when point is not on a literal.
+    //
+    // Unlike the code-action path this needs no round trip to enter its
+    // session: ColorPresentations() is a pure function of the colour, so the
+    // list is ready the moment the command runs. A server's own
+    // colorPresentation rows are merged in from its response, which is why
+    // the session is entered from a callback rather than inline.
+    void RequestColorAtPoint();
+    // Repaints the presentation list -- called on entry and after every
+    // highlight move, the same shape RefreshCodeActionSelectStatus has. Each
+    // row carries its own swatch, since the labels alone
+    // ("hsl(320, 100%, 50%)") are not something anyone reads as a colour.
+    void RefreshColorPresentationStatus();
+    void HandleColorPresentationSelectKey(const editor::KeyChord& chord);
+    // Replaces the literal's own byte range with `text`. A plain buffer edit
+    // rather than an LSP text edit even when the row came from a server:
+    // colorPresentation's own textEdit is by definition a rewrite of the same
+    // range ned already found, and routing it through the LSP edit applier
+    // would make a server able to move it.
+    void ApplyColorPresentation(const std::string& text);
 
     // right-click-context-menu follow-up: one row of the context menu --
     // see contextMenuEntries_'s own doc comment (near its declaration,
@@ -2952,8 +2982,8 @@ class BufferView : public Widget {
     // taking LeftColumn() directly is what put the terminal cursor up to a
     // hint label's width away from the character it was on.
     [[nodiscard]] int RowStartColumn(std::size_t segmentStart, std::size_t segmentEnd,
-                                     const std::vector<bufferview::RenderedLink>&      lineLinks,
-                                     const std::vector<bufferview::RenderedInlayHint>& lineHints) const;
+                                     const std::vector<bufferview::RenderedLink>&        lineLinks,
+                                     const std::vector<bufferview::RenderedVirtualText>& lineVirtualText) const;
 
     // scheduling/recurrence follow-up: org-agenda's own entry point -- a
     // sectioned Editor/Multibuffer.h view (one excerpt per
@@ -3250,10 +3280,13 @@ class BufferView : public Widget {
     struct LineRenderState {
         std::vector<editor::HighlightSpan>               spans;
         std::vector<bufferview::RenderedLink>            links;
-        std::vector<bufferview::RenderedInlayHint>       inlayHints;
+        std::vector<bufferview::RenderedVirtualText>     virtualText;
         std::vector<bufferview::WrapSegment>             segments;
         std::vector<std::pair<std::size_t, std::size_t>> diagnosticSpans;
         std::vector<std::pair<std::size_t, std::size_t>> documentHighlightSpans;
+        // Non-empty only under ColorSwatchStyle::Underlay, where a colour
+        // literal washes its own cells instead of earning a swatch column.
+        std::vector<bufferview::RenderedColorUnderlay> colorUnderlays;
         // Byte offsets, not lengths: where the line's trailing whitespace run
         // begins and where its leading indent ends. Both collapse to an empty
         // run unless whitespace highlighting or indent guides are on.
@@ -3383,7 +3416,7 @@ class BufferView : public Widget {
                                          const LineRenderState& lineState, int columnOffset) const;
     // Draws the inlay hint anchored at `offset`, if any. Virtual text alongside
     // the real byte, not a replacement, so the caller still renders that byte.
-    void EmitInlayHint(Canvas& c, int row, int& col, std::size_t offset, const LineRenderState& lineState) const;
+    void EmitVirtualText(Canvas& c, int row, int& col, std::size_t offset, const LineRenderState& lineState) const;
 
     // Paints the fold ellipsis and any preview of what is hidden, after a line's
     // own content. Belongs on the line's last visual row: it means "content
@@ -4323,12 +4356,25 @@ class BufferView : public Widget {
     void                      EnsureInlineDiagnosticCache() const;
     [[nodiscard]] std::size_t AnnotationRowsForLine(std::size_t line) const;
 
-    // The inlay hints anchored inside one line, in the same RenderedInlayHint
-    // shape Paint() renders from -- the viewport's own column maths needs
-    // them, since a hint occupies real cells before the character it
-    // annotates.
-    [[nodiscard]] std::vector<bufferview::RenderedInlayHint> InlayHintsForLineRange(std::size_t lineStart,
-                                                                                    std::size_t lineEnd) const;
+    // The virtual text anchored inside one line -- inlay hints, colour
+    // swatches -- in the same RenderedVirtualText shape Paint() renders from.
+    // The viewport's own column maths needs it, since virtual text occupies
+    // real cells before the character it annotates.
+    [[nodiscard]] std::vector<bufferview::RenderedVirtualText> VirtualTextForLineRange(std::size_t lineStart,
+                                                                                       std::size_t lineEnd) const;
+    // The same, for a buffer and storage the caller already has in hand --
+    // BeginLineRender paints from the FramePaint's own pair rather than from
+    // activeBuffer_, and the two must produce identical spans.
+    [[nodiscard]] std::vector<bufferview::RenderedVirtualText> VirtualTextForRange(
+        const text::Buffer& buffer, const text::ITextStorage& content, std::size_t lineStart,
+        std::size_t lineEnd) const;
+    // The colour literals inside [lineStart, lineEnd): ned's own scan of the
+    // text (Editor/ColorLiteral.h), widened by whatever the buffer's language
+    // server reported for the same range. Offsets are absolute.
+    [[nodiscard]] std::vector<editor::ColorLiteral> ColorLiteralsInRange(const text::Buffer&       buffer,
+                                                                         const text::ITextStorage& content,
+                                                                         std::size_t               lineStart,
+                                                                         std::size_t               lineEnd) const;
     // Paints one annotation row for `line` at screen row `row`: carets
     // under the diagnostic's visual span (skipped when wrap is on -- the
     // annotation sits below the line's LAST wrap row, where first-row
@@ -4805,6 +4851,18 @@ class BufferView : public Widget {
     // exact staleness-guard shape.
     std::vector<editor::lsp::CodeAction> pendingCodeActions_;
     std::size_t                          codeActionSelection_ = 0;
+
+    // documentColor follow-up: the same pending-list/selection pair, for the
+    // colour presentations. The byte range is captured when the session
+    // opens and is what the chosen text replaces -- a buffer edit between
+    // opening the list and choosing from it would invalidate it, which is
+    // why HandleColorPresentationSelectKey is the only thing that can act on
+    // it and any other key ends the session.
+    std::vector<editor::ColorPresentation> pendingColorPresentations_;
+    std::size_t                            colorPresentationSelection_ = 0;
+    std::size_t                            pendingColorBegin_          = 0;
+    std::size_t                            pendingColorEnd_            = 0;
+    editor::ColorValue                     pendingColorValue_;
     bufferview::RequestSlot              codeActionRequest_;
 
     // right-click-context-menu follow-up: contextMenuEntries_/

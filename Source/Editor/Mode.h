@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include "Editor/ColorLiteral.h"
 #include "Editor/Imprint.h"
 #include "Keymap.h"
 
@@ -790,6 +791,11 @@ struct Mode {
     // per-file override (Editor/WrapOverrides.h)
     // takes precedence over this default when one is configured.
     bool wrapLines = false;
+    // Which colour-literal spellings this mode's buffers admit -- the
+    // swatch scan and `color-at-point` both read it. Defaults to the
+    // universally unambiguous set; a stylesheet's definition widens it.
+    // See Editor/ColorLiteral.h.
+    ColorLiteralOptions colorLiterals;
 };
 
 // LSP/DAP client follow-up: ServerConfig.h/Config.h's language keys

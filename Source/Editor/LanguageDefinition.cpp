@@ -33,6 +33,7 @@ namespace {
     void ApplyDefinition(Mode& mode, const LanguageDefinition& definition) {
         mode.lineCommentPrefix = definition.lineCommentPrefix;
         mode.wrapLines         = definition.wrapLines;
+        mode.colorLiterals     = definition.colorLiterals;
         mode.autoPairs         = definition.autoPairs == AutoPairSet::Lisp ? LispAutoPairs() : DefaultAutoPairs();
         for (const auto& [sequence, command] : definition.keymap) {
             mode.keymap.Bind(ParseKeySequence(sequence), command);

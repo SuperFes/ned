@@ -22,6 +22,7 @@
 #include "Editor/ClassFileSyncSettings.h"
 #include "Editor/Clipboard.h"
 #include "Editor/CodeFoldSettings.h"
+#include "Editor/ColorSwatchSettings.h"
 #include "Editor/Coverage/Config.h"
 #include "Editor/Dap/Config.h"
 #include "Editor/DiagnosticsLog.h"
@@ -640,6 +641,23 @@ namespace {
         }
         throw std::runtime_error("unknown unseen content marker style: " + style +
                                  " (expected \"band\" or \"boundary\")");
+    }
+
+    void NedSetColorSwatches(bool enabled) {
+        editor::SetColorSwatchesEnabled(enabled);
+    }
+
+    void NedSetColorSwatchStyle(std::string style) {
+        if (style == "block") {
+            editor::SetColorSwatchStyle(editor::ColorSwatchStyle::Block);
+            return;
+        }
+        if (style == "underlay") {
+            editor::SetColorSwatchStyle(editor::ColorSwatchStyle::Underlay);
+            return;
+        }
+        throw std::runtime_error("unknown color swatch style: " + style +
+                                 " (expected \"block\" or \"underlay\")");
     }
 
     void NedSetWhichKeyEnabled(bool enabled) {
@@ -2204,6 +2222,18 @@ void InstallEditorBindings(Environment& env) {
         "How set-unseen-content-marker draws: \"band\" (default) marks every unseen line, \"boundary\" marks "
         "only the first -- a \"you left off here\" rule, for a busy log where the band would be most of the "
         "screen.");
+    env.Register<&NedSetColorSwatches>(
+        "ned", "set-color-swatches",
+        "Enable/disable inline colour swatches -- a cell painted in the colour named by every colour literal in "
+        "view (#ff00aa, rgb(...), hsl(...), and in a stylesheet also #f0a and tomato; default true). Found by "
+        "ned itself, so it works with no language server running; a server that answers "
+        "textDocument/documentColor adds whatever else it knows about. Turning this off also stops that "
+        "request. color-at-point (C-c #) rewrites the literal under point in another notation.");
+    env.Register<&NedSetColorSwatchStyle>(
+        "ned", "set-color-swatch-style",
+        "How a colour swatch draws: \"block\" (default) puts a filled cell before the literal, costing one "
+        "column the way an inlay hint does; \"underlay\" washes the literal's own characters in the colour "
+        "instead, shifting nothing on screen.");
     env.Register<&NedSetWhichKeyEnabled>(
         "ned", "set-which-key-enabled",
         "Enable/disable the which-key popup listing possible next chords while a prefix key (C-x, C-c, ...) is "
@@ -2258,7 +2288,9 @@ void InstallEditorBindings(Environment& env) {
         "languages use (Source/Languages/`<name>`/), so everything a definition can say works: extensions and "
         "filenames (claimed automatically, no separate set-mode-for-extension call needed), comment syntax, "
         "keymap, query files discovered beside it as `<kind>`.janet with an upstream/ subdirectory checked first, "
-        "escapes, LSP root markers, import resolution, injection aliases, snippets. The directory's basename is "
+        "escapes, LSP root markers, import resolution, injection aliases, snippets, and :color-literals "
+        "(a tuple of :short-hex and/or :named, widening which colour-literal spellings earn a swatch beyond the "
+        "two every language gets). The directory's basename is "
         "the language name and its mode is named `<name>`-mode; a registered name shadows a bundled one, so "
         "redefining a bundled language is expected use, as is re-registering. Two keys exist for exactly this "
         "path: a directory with its own grammar.janet (or the `tables` ned --compile-language writes from it) brings "

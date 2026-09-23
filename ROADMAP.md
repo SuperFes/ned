@@ -232,22 +232,14 @@ left behind:
 *Absent, no equivalent elsewhere in ned:*
 
 Triaged 2026-09-21 while deciding what belonged in 0.10, so the next pass starts from
-the judgement rather than redoing it: the group below is *absent*, not broken, which is
-why none of it shipped alongside the four gaps that were. `inlayHint/resolve` and
-`workspaceSymbol/resolve` are both small and both buy latency only -- the first pair to
-pick up when there is appetite. The rest are feature-sized and want their own bake time
-rather than a release's last afternoon.
-
+the judgement rather than redoing it: what is left here is *absent*, not broken. The
+file-operation and colour halves of that triage have since shipped; the one pair still
+standing is small and buys latency only, which is what makes it the next thing to pick
+up when there is appetite rather than something needing its own bake time.
 
 - [ ] `inlayHint/resolve` and `workspaceSymbol/resolve` -- the lazy second half of two
       kinds ned already pulls eagerly. Both let a server defer the expensive part
       (a hint's tooltip/command, a symbol's location) until something actually needs it.
-- [ ] `workspace/willCreateFiles` / `didCreateFiles` / `willDeleteFiles` /
-      `didDeleteFiles` -- ned implements the *rename* half of this family already
-      (`lsp-rename-file-notifications`); create and delete were never done. The same
-      import-fixup payoff applies to both.
-- [ ] `textDocument/documentColor` / `colorPresentation` -- colour swatches and a picker
-      for CSS/theme files.
 
 *Deliberately skipped -- reasons recorded so these don't get re-opened:*
 
@@ -319,6 +311,50 @@ rather than a release's last afternoon.
       JSON `null` per unmatched section, which the spec allows; harper-ls rejects it with
       "Settings must be an object" on every request. Only worth revisiting if a second
       server objects.
+
+**Colour swatches**
+
+Shipped -- slug for `git log --grep=`: `color-swatches`. A cell painted in the colour
+every visible literal names, plus `color-at-point` (`C-c #`) to rewrite one in another
+notation. Built native-first and LSP-second, which is the opposite of how the roadmap
+entry it closes was written, on a measurement: of every server installed here, exactly
+one (lua-language-server) advertises `colorProvider`, and no CSS-family server is
+installed at all (`Tools/lsp-capability-probe.py`). An LSP-only build would therefore
+have shipped swatches in Lua and nowhere else. `Editor/ColorLiteral.h` is the recogniser
+(pure, unit-tested), `Lsp::Manager::DocumentColorSpans` the additive server tier, and
+`Editor/ColorSwatchSettings.h` the `block`/`underlay` switch. A swatch rides the same
+per-line span list an inlay hint does (`bufferview::RenderedVirtualText`) rather than a
+second virtual-text mechanism, so the four column walks that have to count it already
+do. Two recorded decisions worth not re-litigating: a presentation's own `textEdit`
+range is ignored (it can only ever be the range ned already found, and honouring it
+would let a server move an edit made in place), and a server-reported colour is dropped
+outright once anything is typed inside it rather than clamped like a code lens -- a
+swatch claims *these bytes* spell that colour, and ned's own scan has the right answer
+for the edited text anyway. Four conscious cuts left behind.
+
+- [ ] `lab()` / `lch()` / `oklab()` / `oklch()` are not recognised. Parsing them is
+      trivial; the round trip is not. Those spaces are wider than sRGB, so offering
+      "the same colour as `#rrggbb`" for an out-of-gamut `oklch()` would silently
+      rewrite a P3 colour as its clipped sRGB twin -- data loss wearing a conversion's
+      clothes. Admitting them needs a gamut-mapping policy first, which is its own
+      decision, not a chore.
+- [ ] The scan reads at most 8 KiB of each visible line, the same bounded-walk tradeoff
+      `kMaxTabAwareColumnScan` makes: a literal past that column earns no swatch. The
+      bound exists because the scan is a real copy out of the rope and
+      `PerformanceTest.cpp`'s pathologically-long-line case caught the uncapped version
+      redoing five million bytes per frame. Minified CSS is the one real file this
+      costs. Widening it means windowing on the horizontal scroll, and both producers
+      of the span list would have to agree on that window within a frame or the cursor
+      drifts -- which is the whole reason the cap is a function of the line alone.
+- [ ] Wrap segmentation still does not count virtual text against a row's width
+      (`ComputeWrapSegments` sees links and codepoints, not `RenderedVirtualText`), so a
+      soft-wrapped line carrying swatches or inlay hints breaks a little later than it
+      should. Pre-existing -- inlay hints have always had it -- and now visible in one
+      more place.
+- [ ] No interactive picker. `color-at-point` converts between notations; it cannot
+      *change* a colour. A ThemeGallery-style overlay with live R/G/B or H/S/L
+      adjustment and a contrast readout against the surrounding line is the obvious
+      next thing and needs a new focus-taking widget, which is why it is not this.
 
 **LSP completion fidelity**
 

@@ -1396,6 +1396,62 @@ std::vector<CodeLens> ExtractCodeLenses(const Json& result) {
     return lenses;
 }
 
+std::vector<ColorInformation> ExtractDocumentColors(const Json& result) {
+    std::vector<ColorInformation> colors;
+    if (!result.is_array()) {
+        return colors;
+    }
+    colors.reserve(result.size());
+    for (const Json& item : result) {
+        if (!item.is_object()) {
+            continue;
+        }
+        const auto rangeIt = item.find("range");
+        const auto colorIt = item.find("color");
+        if (rangeIt == item.end() || !rangeIt->is_object() || colorIt == item.end() || !colorIt->is_object()) {
+            continue;
+        }
+        colors.push_back(ColorInformation{
+            .start = PositionFromJson(rangeIt->value("start", Json::object())),
+            .end   = PositionFromJson(rangeIt->value("end", Json::object())),
+            .red   = colorIt->value("red", 0.0),
+            .green = colorIt->value("green", 0.0),
+            .blue  = colorIt->value("blue", 0.0),
+            // Alpha defaults to opaque rather than transparent: a server
+            // omitting it means "no alpha here", and reading that as 0 would
+            // paint every such swatch invisible.
+            .alpha = colorIt->value("alpha", 1.0),
+        });
+    }
+    return colors;
+}
+
+std::vector<std::string> ExtractColorPresentations(const Json& result) {
+    std::vector<std::string> presentations;
+    if (!result.is_array()) {
+        return presentations;
+    }
+    presentations.reserve(result.size());
+    for (const Json& item : result) {
+        if (!item.is_object()) {
+            continue;
+        }
+        // The spec's own fallback order: textEdit.newText is what would be
+        // inserted, and `label` stands in when there is no edit.
+        std::string text;
+        if (const auto editIt = item.find("textEdit"); editIt != item.end() && editIt->is_object()) {
+            text = editIt->value("newText", std::string());
+        }
+        if (text.empty()) {
+            text = item.value("label", std::string());
+        }
+        if (!text.empty()) {
+            presentations.push_back(std::move(text));
+        }
+    }
+    return presentations;
+}
+
 namespace {
 
     // call/type-hierarchy follow-up. Parses one CallHierarchyItem/

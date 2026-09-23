@@ -883,6 +883,38 @@ struct CodeLens {
 // missing "range" is skipped, not treated as a parse error.
 [[nodiscard]] std::vector<CodeLens> ExtractCodeLenses(const Json& result);
 
+// documentColor follow-up. One colour the server found in the document, with
+// its components in 0..1 -- the wire's own scale, and the same one
+// Editor/ColorLiteral.h's ColorValue uses, so the server tier and ned's own
+// recogniser produce directly comparable results.
+struct ColorInformation {
+    Position start;
+    Position end;
+    double   red   = 0.0;
+    double   green = 0.0;
+    double   blue  = 0.0;
+    double   alpha = 1.0;
+
+    bool operator==(const ColorInformation&) const = default;
+};
+
+// Parses a textDocument/documentColor response: ColorInformation[] | null. An
+// entry missing "range" or "color" is skipped, not treated as a parse error,
+// the same convention ExtractCodeLenses uses.
+[[nodiscard]] std::vector<ColorInformation> ExtractDocumentColors(const Json& result);
+
+// Parses a textDocument/colorPresentation response: ColorPresentation[] | null,
+// flattened to the text each entry would insert.
+//
+// Only the text survives the parse, deliberately. A presentation's `textEdit`
+// is by definition a rewrite of the range the request named -- the one ned
+// already found the literal at -- so its range carries no information ned does
+// not have, and honouring it would let a server move an edit the user thought
+// they were making in place. `additionalTextEdits` are dropped for the same
+// reason a colour conversion has no business touching anything else; no
+// server has been observed to send one.
+[[nodiscard]] std::vector<std::string> ExtractColorPresentations(const Json& result);
+
 // call/type-hierarchy follow-up. CallHierarchyItem and TypeHierarchyItem are
 // wire-identical per the LSP spec (name/kind/detail/uri/range/
 // selectionRange/tags?/data?) -- one shared shape, the same "identical wire

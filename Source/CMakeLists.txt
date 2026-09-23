@@ -133,6 +133,8 @@ add_library(ned_lib STATIC
         Editor/ClassFileSyncSettings.cpp
         Editor/CodeFoldSettings.cpp
         Editor/StatusGutterSettings.cpp
+        Editor/ColorLiteral.cpp
+        Editor/ColorSwatchSettings.cpp
         Editor/StickyScroll.cpp
         Editor/StickyScrollSettings.cpp
         Editor/RelativeLineNumberSettings.cpp
@@ -448,6 +450,7 @@ add_library(ned_lib STATIC
         UI/BufferView/Lsp.cpp
         UI/BufferView/Rename.cpp
         UI/BufferView/ClassFileSync.cpp
+        UI/BufferView/Color.cpp
         UI/BufferView/VcsDap.cpp
         UI/BufferView/Buffers.cpp
         UI/BufferView/CandidateList.cpp
