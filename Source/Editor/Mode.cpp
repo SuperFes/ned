@@ -1263,11 +1263,19 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             }
             // AncestorChain follow-up: one descent for the whole climb
             // instead of one re-descent from the root per Parent() step.
+            // Parent()-single-call follow-up: each step's parent is the
+            // next link in the chain (null past the root), so pass it in
+            // rather than letting NextNamedSibling() re-derive it with its
+            // own root-to-self descent -- otherwise this loop is
+            // O(depth^2) again despite the chain being collected in one
+            // pass.
             std::vector<grammar::Node> chain;
             at.AncestorChain(chain);
             chain.insert(chain.begin(), at);
-            for (const grammar::Node& node : chain) {
-                grammar::Node sibling = node.NextNamedSibling();
+            const grammar::Node nullParent(parse::NodeNull());
+            for (std::size_t i = 0; i < chain.size(); ++i) {
+                const grammar::Node& parent  = i + 1 < chain.size() ? chain[i + 1] : nullParent;
+                grammar::Node        sibling = chain[i].NextNamedSibling(parent);
                 if (!sibling.IsNull() && sibling.StartByte() >= p) {
                     return sibling.EndByte();
                 }
@@ -1297,11 +1305,14 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
         }
         // AncestorChain follow-up: one descent for the whole climb instead
         // of one re-descent from the root per Parent() step.
+        // Parent()-single-call follow-up: see the forward case above.
         std::vector<grammar::Node> chain;
         at.AncestorChain(chain);
         chain.insert(chain.begin(), at);
-        for (const grammar::Node& node : chain) {
-            grammar::Node sibling = node.PrevNamedSibling();
+        const grammar::Node nullParent(parse::NodeNull());
+        for (std::size_t i = 0; i < chain.size(); ++i) {
+            const grammar::Node& parent  = i + 1 < chain.size() ? chain[i + 1] : nullParent;
+            grammar::Node        sibling = chain[i].PrevNamedSibling(parent);
             if (!sibling.IsNull() && sibling.EndByte() <= p) {
                 return sibling.StartByte();
             }

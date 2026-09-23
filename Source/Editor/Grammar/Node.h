@@ -124,6 +124,15 @@ class Node {
     [[nodiscard]] Node NextNamedSibling() const;
     [[nodiscard]] Node PrevNamedSibling() const;
 
+    // Parent()-single-call follow-up: same as the two above, but for a
+    // caller climbing an AncestorChain() that already has each node's
+    // parent in hand -- skips the sibling search's own Parent() re-descent.
+    // `parent` must be this node's actual parent (a null Node when this
+    // node is the tree root); passing the wrong one silently searches the
+    // wrong level.
+    [[nodiscard]] Node NextNamedSibling(const Node& parent) const;
+    [[nodiscard]] Node PrevNamedSibling(const Node& parent) const;
+
     // The smallest named node whose byte range fully contains [start, end].
     // A null Node (see IsNull()) if the tree has no such node (e.g. an
     // out-of-range request).

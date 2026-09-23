@@ -65,8 +65,16 @@ Node Node::NextNamedSibling() const {
     return Node(parse::NodeNextNamedSibling(node_));
 }
 
+Node Node::NextNamedSibling(const Node& parent) const {
+    return Node(parse::NodeNextNamedSiblingFromParent(node_, parent.node_));
+}
+
 Node Node::PrevNamedSibling() const {
     return Node(parse::NodePrevNamedSibling(node_));
+}
+
+Node Node::PrevNamedSibling(const Node& parent) const {
+    return Node(parse::NodePrevNamedSiblingFromParent(node_, parent.node_));
 }
 
 Node Node::NamedDescendantForByteRange(std::size_t start, std::size_t end) const {

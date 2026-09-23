@@ -58,6 +58,21 @@ RedNode       NodeNextSibling(RedNode self);
 RedNode       NodeNextNamedSibling(RedNode self);
 RedNode       NodePrevSibling(RedNode self);
 RedNode       NodePrevNamedSibling(RedNode self);
+
+// Parent()-single-call follow-up: the four above, but for a caller that
+// already holds `self`'s parent (e.g. one link of an ancestor chain from
+// NodeAncestorChain()) and wants to skip the sibling search's own
+// NodeParent() re-descent -- each of the four above pays that full
+// root-to-self descent internally on every call, which is what made a loop
+// climbing an ancestor chain by sibling rather than by parent (Mode.cpp's
+// sexpMotion) O(depth^2) again even after the chain itself is collected in
+// one pass. Pass NodeNull() explicitly when self genuinely has no parent
+// (self is the tree root) -- there is no "unknown, please compute it"
+// sentinel here.
+RedNode       NodeNextSiblingFromParent(RedNode self, RedNode parent);
+RedNode       NodeNextNamedSiblingFromParent(RedNode self, RedNode parent);
+RedNode       NodePrevSiblingFromParent(RedNode self, RedNode parent);
+RedNode       NodePrevNamedSiblingFromParent(RedNode self, RedNode parent);
 RedNode       NodeDescendantForByteRange(RedNode self, std::uint32_t start, std::uint32_t end);
 RedNode       NodeNamedDescendantForByteRange(RedNode self, std::uint32_t start, std::uint32_t end);
 

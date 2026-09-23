@@ -72,17 +72,19 @@ whole-document highlight 50.7 ms -> 14.8 ms, keystroke+repaint on a 9 KiB C++ fi
       these become incremental -- MatchCache-style reuse keyed on the edit -- rather than
       windowed. Nothing pulled yet; typing no longer feels bad, which is what would drive
       it.
-- [ ] **A cheap single `Parent()` call is still unaddressed.** The chain shape is fixed
-      (`parse::NodeAncestorChain`/`grammar::Node::AncestorChain`, collecting a whole
-      ancestor climb in one root-to-self descent instead of one re-descent per
-      `.Parent()` link -- `Editor/Indent.cpp`'s two walks, Mode.cpp's expand-selection/
-      pairwise-binding/sexp-motion walks, and the CLike/Org/Markdown indent ancestor
-      walks all migrated), but a single isolated `Parent()` call is still a full descent,
-      and `NodePrevSiblingImpl`/`NodeNextSiblingImpl` still call `NodeParent` once
-      internally on every invocation -- so a loop that climbs by sibling rather than by
-      parent (Mode.cpp's `sexpMotion`) still re-descends per level for that half. A cheap
-      *parent* (not just chain) needs a memo per tree, which is shared mutable state the
-      parse layer does not have today.
+- [ ] **A cheap single, chain-less `Parent()` call is still unaddressed.** `sexpMotion`'s
+      own O(depth^2) is closed: `NodePrevSiblingImpl`/`NodeNextSiblingImpl` used to call
+      `NodeParent` (a full root-to-self descent) once per invocation regardless, so
+      climbing an already-collected ancestor chain by sibling rather than by parent paid
+      that descent again at every level. `NodeNextSiblingFromParent`/
+      `NodePrevSiblingFromParent` (`Editor/Parse/Node.h`, plus the named
+      `grammar::Node::NextNamedSibling(parent)`/`PrevNamedSibling(parent)` overloads) take
+      the caller's already-known parent instead, and `sexpMotion`'s two ancestor-chain
+      loops (Mode.cpp) pass the chain link they already have. What is left is a genuinely
+      isolated call with no chain in hand at all -- `CLike.cpp`'s one `NextNamedSibling()`,
+      single uses in `QueryMatcher.cpp`/`QueryPredicates.cpp` -- each still a full descent,
+      and a true O(1) parent needs a memo per tree, which is shared mutable state the
+      parse layer does not have today. Not pulled: nothing left calls it in a loop.
 - [ ] One measured non-fix worth not re-trying: rewriting `ImprintBracket`'s
       `DelimitersOf` `Child(i)` loops as `ForEachChild` cursor passes made a fold scan
       ~25% *slower* (2952 -> 3714 us). A closer is nearly always a node's last child and

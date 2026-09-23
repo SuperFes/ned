@@ -119,12 +119,16 @@ namespace {
         return false;
     }
 
-    RedNode NodePrevSiblingImpl(RedNode self, bool includeAnonymous) {
+    // Parent()-single-call follow-up: the search itself, taking `parent`
+    // rather than re-deriving it via NodeParent(self)'s own root-to-self
+    // descent. NodePrevSiblingImpl below is this with that descent restored,
+    // for callers that don't already have the parent in hand.
+    RedNode NodeSiblingBeforeImpl(RedNode self, RedNode parent, bool includeAnonymous) {
         const Subtree       selfSubtree   = NodeSubtree(self);
         const bool          selfIsEmpty   = SubtreeTotalBytes(selfSubtree) == 0;
         const std::uint32_t targetEndByte = NodeEndByte(self);
 
-        RedNode node                  = NodeParent(self);
+        RedNode node                  = parent;
         RedNode earlierNode           = NodeNull();
         bool    earlierNodeIsRelevant = false;
 
@@ -185,10 +189,16 @@ namespace {
         return NodeNull();
     }
 
-    RedNode NodeNextSiblingImpl(RedNode self, bool includeAnonymous) {
+    RedNode NodePrevSiblingImpl(RedNode self, bool includeAnonymous) {
+        return NodeSiblingBeforeImpl(self, NodeParent(self), includeAnonymous);
+    }
+
+    // Parent()-single-call follow-up: see NodeSiblingBeforeImpl above.
+    // NodeNextSiblingImpl below is this with the descent restored.
+    RedNode NodeSiblingAfterImpl(RedNode self, RedNode parent, bool includeAnonymous) {
         const std::uint32_t targetEndByte = NodeEndByte(self);
 
-        RedNode node                = NodeParent(self);
+        RedNode node                = parent;
         RedNode laterNode           = NodeNull();
         bool    laterNodeIsRelevant = false;
 
@@ -246,6 +256,10 @@ namespace {
         }
 
         return NodeNull();
+    }
+
+    RedNode NodeNextSiblingImpl(RedNode self, bool includeAnonymous) {
+        return NodeSiblingAfterImpl(self, NodeParent(self), includeAnonymous);
     }
 
     RedNode NodeDescendantForByteRangeImpl(RedNode self, std::uint32_t rangeStart, std::uint32_t rangeEnd,
@@ -536,6 +550,26 @@ RedNode NodePrevSibling(RedNode self) {
 }
 RedNode NodePrevNamedSibling(RedNode self) {
     return NodePrevSiblingImpl(self, false);
+}
+
+// Parent()-single-call follow-up: the four above, but for a caller that
+// already holds `self`'s parent (e.g. one link of an ancestor chain from
+// NodeAncestorChain()) and wants to skip the sibling search's own
+// NodeParent() re-descent. Pass NodeNull() explicitly when self genuinely
+// has no parent (self is the tree root) -- there is no "unknown, please
+// compute it" sentinel here, so a caller without the parent in hand should
+// use the four above instead.
+RedNode NodeNextSiblingFromParent(RedNode self, RedNode parent) {
+    return NodeSiblingAfterImpl(self, parent, true);
+}
+RedNode NodeNextNamedSiblingFromParent(RedNode self, RedNode parent) {
+    return NodeSiblingAfterImpl(self, parent, false);
+}
+RedNode NodePrevSiblingFromParent(RedNode self, RedNode parent) {
+    return NodeSiblingBeforeImpl(self, parent, true);
+}
+RedNode NodePrevNamedSiblingFromParent(RedNode self, RedNode parent) {
+    return NodeSiblingBeforeImpl(self, parent, false);
 }
 
 RedNode NodeDescendantForByteRange(RedNode self, std::uint32_t start, std::uint32_t end) {
