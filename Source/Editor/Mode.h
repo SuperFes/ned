@@ -659,6 +659,26 @@ using EmbeddedRegionFunction = std::function<std::vector<InjectionRegion>(std::s
 // own content column, not a multiple of one fixed indent width).
 using IndentFunction = std::function<std::optional<int>(std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd)>;
 
+// The byte ranges whose structure the parse could not establish, in source
+// order. A batch reindent (Indent.h's IndentRegion) leaves the lines inside
+// them exactly as the author typed them: where the structure is unknown, the
+// text's own indentation is the only evidence there is.
+//
+// This is an error's BLAST RADIUS, not the error node's own range, and the
+// two differ by language. A brace language recovers locally -- the braces
+// around the error still nest, which is why 26 of this project's own .cpp
+// files carry an ERROR node and reindent correctly regardless. A language
+// whose structure IS its indentation (YAML, Python) has no such fence: one
+// stray dedent re-roots everything after it, so every following line resolves
+// to level 0 and a reindent flattens the document. There the radius runs from
+// the first error to the end of the text. Measured, not assumed: a real
+// 950-line hiera file lost 1372 lines of indentation to one dedented line.
+//
+// The interactive path deliberately ignores all of this -- a half-typed
+// construct is unparseable most of the time it is being typed, and TAB still
+// has to answer.
+using UnreliableIndentFunction = std::function<std::vector<std::pair<std::size_t, std::size_t>>(std::string_view bufferText)>;
+
 // Debugging wishlist (line-inspect follow-up): same 3-arg per-line shape as
 // IndentFunction above, returning byte ranges of candidate sub-expressions
 // on [lineStart, lineEnd) worth evaluating in a stopped debug session
@@ -768,6 +788,9 @@ struct Mode {
     // fall back to their pre-existing literal-tab/bare-newline behavior
     // unchanged.
     IndentFunction indentColumn;
+    // Empty function = this mode has no parse to be wrong about, so a batch
+    // reindent skips nothing.
+    UnreliableIndentFunction unreliableIndentRanges;
     // Debugging wishlist (line-inspect follow-up): empty function (the
     // default) means dap-line-inspect reports there's no expression
     // extraction configured for this mode, same "empty means not

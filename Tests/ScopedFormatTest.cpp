@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <string_view>
 
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatRules.h"
@@ -22,6 +23,7 @@ using ned::editor::SetEnsureFinalNewline;
 using ned::editor::SetSpaceBefore;
 using ned::editor::SetTrimTrailingWhitespaceOnSave;
 using ned::editor::TrimTrailingWhitespaceOnSave;
+using ned::editor::YamlMode;
 
 namespace {
 
@@ -66,6 +68,65 @@ TEST_CASE("ApplyScopedFormatOnSave reindents only the region touched since the l
     const std::string result = buffer.Text();
     REQUIRE(result.find("\nint x = 1;\n") != std::string::npos);   // untouched function: still misindented
     REQUIRE(result.find("\n    int Y = 2;\n") != std::string::npos); // touched function: reindented
+}
+
+// Reported live: editing one value inside a yaml sequence item's mapping and
+// saving dedented that line to the sequence's own column, breaking the
+// document -- every save, on the line just typed.
+TEST_CASE("ApplyScopedFormatOnSave leaves an edited yaml sequence item's key where it belongs",
+          "[ScopedFormat]") {
+    const Mode        mode   = YamlMode();
+    const std::string source = "plan:\n"
+                               "  - domain_key: xlned\n"
+                               "    rewrites:\n"
+                               "      - src_path: /ipn.php\n"
+                               "        dst_path: /postback/routing\n"
+                               "        dst_backend: api\n";
+    ned::text::Buffer buffer("scratch", ned::text::Rope(source));
+
+    const std::size_t valueOffset = buffer.Text().find("/postback/routing");
+    buffer.SetPoint(valueOffset);
+    buffer.DeleteRange(valueOffset, std::string_view("/postback/routing").size());
+    buffer.InsertAtPoint("/postback/paypal-routing");
+
+    // Nothing to fix: the pass reports no change, and the text is untouched.
+    REQUIRE_FALSE(ApplyScopedFormatOnSave(buffer, mode));
+
+    REQUIRE(buffer.Text() == "plan:\n"
+                             "  - domain_key: xlned\n"
+                             "    rewrites:\n"
+                             "      - src_path: /ipn.php\n"
+                             "        dst_path: /postback/paypal-routing\n"
+                             "        dst_backend: api\n");
+}
+
+// The save that follows a dedent must not finish the job: the line the
+// author moved is the one whose structure is now unknown, and reindenting it
+// from the recovered tree slams it to column 0.
+TEST_CASE("ApplyScopedFormatOnSave does not reindent a yaml line it cannot place", "[ScopedFormat]") {
+    const Mode        mode   = YamlMode();
+    const std::string source = "plan:\n"
+                               "  - domain_key: xlned\n"
+                               "    rewrites:\n"
+                               "      - src_path: /ipn.php\n"
+                               "        dst_path: /postback/routing\n"
+                               "        dst_backend: api\n";
+    ned::text::Buffer buffer("scratch", ned::text::Rope(source));
+
+    // Two columns off -- what a stray backspace in the leading whitespace
+    // leaves behind, and enough to make the document invalid.
+    const std::size_t lineStart = buffer.Text().find("        dst_path");
+    buffer.SetPoint(lineStart);
+    buffer.DeleteRange(lineStart, 2);
+
+    ApplyScopedFormatOnSave(buffer, mode);
+
+    REQUIRE(buffer.Text() == "plan:\n"
+                             "  - domain_key: xlned\n"
+                             "    rewrites:\n"
+                             "      - src_path: /ipn.php\n"
+                             "      dst_path: /postback/routing\n"
+                             "        dst_backend: api\n");
 }
 
 TEST_CASE("ApplyScopedFormatOnSave scopes the Space rule pass the same way", "[ScopedFormat]") {

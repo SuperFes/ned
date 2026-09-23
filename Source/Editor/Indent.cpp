@@ -878,6 +878,19 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
                                                                  initialContent.LineToByteOffset(windowStartLine)))
              : VerbatimRanges(mode, nonHugeText);
 
+    // Where the parse failed, the author's own indentation is the only
+    // structure there is -- see Mode.h's UnreliableIndentFunction. Measured
+    // over the same frozen text as `verbatim` above, for the same reason.
+    const std::vector<std::pair<std::size_t, std::size_t>> unreliable =
+        !mode.unreliableIndentRanges ? std::vector<std::pair<std::size_t, std::size_t>>{}
+        : huge                       ? mode.unreliableIndentRanges(initialContent.Substring(
+                                           initialContent.LineToByteOffset(windowStartLine),
+                                           (windowEndLineExclusive < initialContent.LineCount()
+                                                ? initialContent.LineToByteOffset(windowEndLineExclusive)
+                                                : initialContent.ByteLength()) -
+                                               initialContent.LineToByteOffset(windowStartLine)))
+                                     : mode.unreliableIndentRanges(nonHugeText);
+
     buffer.BeginUndoGroup();
     std::size_t changed = 0;
     // Bottom-to-top: reindenting a line's own leading whitespace never
@@ -893,6 +906,14 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
         std::size_t       lineEnd   = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
         if (line + 1 < content.LineCount() && lineEnd > lineStart) {
             --lineEnd; // exclude the line's own trailing '\n'
+        }
+
+        // A line the parse could not place keeps the indentation it has:
+        // guessing rewrites a file the author is halfway through typing.
+        const std::size_t errorProbe =
+            huge ? lineStart - buffer.Content().LineToByteOffset(windowStartLine) : lineStart;
+        if (RangeContainingLine(unreliable, errorProbe) != nullptr) {
+            continue;
         }
 
         std::optional<int> column;

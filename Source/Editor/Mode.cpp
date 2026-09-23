@@ -975,6 +975,40 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
         fold = imprint::MergeFoldSources({std::move(fold), std::move(fromImprint)});
     }
 
+    // Where a batch reindent must keep its hands off -- see Mode.h's
+    // UnreliableIndentFunction for the rule and why the radius is
+    // per-language. The table answers "is this language's structure its own
+    // indentation": an indentation body (no introducer of its own) is
+    // exactly the construct that has no closing fence to recover at.
+    const bool indentationDefined =
+        std::ranges::any_of(imprint::TableFor(languageKey), [](const auto& entry) {
+            return entry.second.kind == imprint::DelimiterKind::Indent && !entry.second.openerIsFirst;
+        });
+    UnreliableIndentFunction unreliableIndentRanges =
+        [parser, sharedParse,
+         indentationDefined](std::string_view bufferText) -> std::vector<std::pair<std::size_t, std::size_t>> {
+        const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
+        if (tree.IsNull()) {
+            return {};
+        }
+        std::vector<std::pair<std::size_t, std::size_t>> ranges;
+        tree.RootNode().WalkSubtree(
+            [&](const grammar::Node& node, std::size_t) {
+                if (node.Type() != std::string_view("ERROR")) {
+                    return;
+                }
+                if (!ranges.empty() && node.StartByte() < ranges.back().second) {
+                    return; // nested inside one already reported
+                }
+                ranges.emplace_back(node.StartByte(), node.EndByte());
+            },
+            [](const grammar::Node&, std::size_t) {});
+        if (ranges.empty() || !indentationDefined) {
+            return ranges;
+        }
+        return {{ranges.front().first, bufferText.size()}};
+    };
+
     // gutter-symbol-kind follow-up: a query against the same parser -- shares
     // sharedParse's cached Tree with highlight/fold above. Only built when a
     // tags query source was actually given; otherwise mode.symbolKind stays
@@ -1728,25 +1762,26 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                                     .embeddedLanguageCache = embeddedLanguageCache};
     }
 
-    return Mode{.name               = std::move(name),
-                .keymap             = Keymap(),
-                .highlight          = std::move(highlight),
-                .fold               = std::move(fold),
-                .expandSelection    = std::move(expandSelection),
-                .sexpMotion         = std::move(sexpMotion),
-                .autoPairs          = DefaultAutoPairs(),
-                .symbolKind         = std::move(symbolKind),
-                .symbolKindInWindow = std::move(symbolKindInWindow),
-                .importTarget       = std::move(importTarget),
-                .importTargets      = std::move(importTargets),
-                .testDiscovery      = std::move(testDiscovery),
-                .injectedRegions    = std::move(injectedRegions),
-                .embeddedRegions    = std::move(embeddedRegions),
-                .indentColumn       = std::move(indentColumn),
-                .lineInspect        = std::move(lineInspect),
-                .localScopes        = std::move(localScopes),
-                .matchingDelimiters = std::move(matchingDelimiters),
-                .formatCaptures     = std::move(formatCaptures)};
+    return Mode{.name                   = std::move(name),
+                .keymap                 = Keymap(),
+                .highlight              = std::move(highlight),
+                .fold                   = std::move(fold),
+                .expandSelection        = std::move(expandSelection),
+                .sexpMotion             = std::move(sexpMotion),
+                .autoPairs              = DefaultAutoPairs(),
+                .symbolKind             = std::move(symbolKind),
+                .symbolKindInWindow     = std::move(symbolKindInWindow),
+                .importTarget           = std::move(importTarget),
+                .importTargets          = std::move(importTargets),
+                .testDiscovery          = std::move(testDiscovery),
+                .injectedRegions        = std::move(injectedRegions),
+                .embeddedRegions        = std::move(embeddedRegions),
+                .indentColumn           = std::move(indentColumn),
+                .unreliableIndentRanges = std::move(unreliableIndentRanges),
+                .lineInspect            = std::move(lineInspect),
+                .localScopes            = std::move(localScopes),
+                .matchingDelimiters     = std::move(matchingDelimiters),
+                .formatCaptures         = std::move(formatCaptures)};
 }
 
 Mode GrammarMode(std::string name, std::string_view languageName, const GrammarQuerySources& queries) {

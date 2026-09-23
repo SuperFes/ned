@@ -1153,6 +1153,46 @@ TEST_CASE("End to end: IndentBuffer leaves a nested yaml sequence-of-mappings al
     REQUIRE(buffer.Text() == source);
 }
 
+// A dedented line makes the rest of a YAML document unparseable, and the
+// recovery re-roots everything after it -- so every following line resolves
+// to level 0. Reindenting from that tree flattened a real 950-line hiera
+// file. A reindent that cannot know the structure leaves the text alone.
+TEST_CASE("IndentBuffer leaves an unparseable yaml document exactly as written", "[Indent]") {
+    const auto        mode   = YamlMode();
+    const std::string broken = "plan:\n"
+                               "  - domain_key: xlned\n"
+                               "    rewrites:\n"
+                               "      - src_path: /ipn.php\n"
+                               "    dst_path: /postback/routing\n" // dedented: invalid from here on
+                               "        dst_backend: api\n"
+                               "  - domain_key: pureusenet\n"
+                               "    short_name: pur\n";
+    Buffer            buffer("test.yaml");
+    buffer.InsertAtPoint(broken);
+
+    REQUIRE(IndentBuffer(buffer, mode) == 0);
+    REQUIRE(buffer.Text() == broken);
+}
+
+// The counterpart, and the reason the radius is per-language rather than
+// "any error stops everything": braces fence a parse error in, so the code
+// around one still reindents. 26 of this project's own .cpp files carry an
+// ERROR node.
+TEST_CASE("IndentBuffer still reindents around a fenced-in parse error", "[Indent]") {
+    const auto mode = CppMode();
+    Buffer     buffer("test.cpp");
+    buffer.InsertAtPoint("void a() {\n"
+                         "int x = 1;\n"
+                         "}\n"
+                         "@@@\n"
+                         "void b() {\n"
+                         "int y = 2;\n"
+                         "}\n");
+
+    REQUIRE(IndentBuffer(buffer, mode) > 0);
+    REQUIRE(buffer.Text().find("\n    int y = 2;\n") != std::string::npos);
+}
+
 TEST_CASE("YamlMode indentColumn puts a sequence item's later keys under its first key", "[Indent]") {
     const auto mode = YamlMode();
     Buffer     buffer("test.yaml");
