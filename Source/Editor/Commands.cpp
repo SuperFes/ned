@@ -3327,6 +3327,20 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::RenameSymbol;
                       });
 
+    // change-signature follow-up: no language server implements this (see
+    // ROADMAP.md's Refactoring section) -- ned's own transform, C++ only for
+    // now. Prompts with the current parameter list; the position mapping,
+    // project-wide call-site search and arity-mismatch gate all run before
+    // anything opens in the "*signature*" review.
+    registry.Register("change-signature",
+                      "Add, remove or reorder the parameters of the function at point, rewriting every call site "
+                      "and other same-name definition found in the project through a reviewable multibuffer "
+                      "(C-c C-c to apply). C++ only; declines rather than guesses at a variadic parameter, a new "
+                      "parameter with no default, or a same-named definition with a different parameter count.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ChangeSignature;
+                      });
+
     // prepareRename/linkedEditingRange follow-up: see InteractiveRequest::
     // LspLinkedEditingRange's own doc comment in Command.h -- BufferView::
     // RequestLinkedEditingRangeAtPoint owns the actual request and the

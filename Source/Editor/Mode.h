@@ -514,6 +514,15 @@ struct SignatureMarker {
     std::size_t                     endByte;
     std::size_t                     nameStartByte;
     std::size_t                     nameEndByte;
+    // The parameter_list node's own range, parens included -- always
+    // "(" at parametersStartByte and ")" at parametersEndByte - 1 (a real
+    // parameter_list is never anything else), so a caller rewriting the
+    // list wholesale (change-signature) can always replace
+    // [parametersStartByte + 1, parametersEndByte - 1) with new text, even
+    // when `parameters` is empty (`void f()`), with no need to anchor on
+    // the first/last parameter's own range.
+    std::size_t                     parametersStartByte;
+    std::size_t                     parametersEndByte;
     std::vector<SignatureParameter> parameters;
 };
 
@@ -546,6 +555,13 @@ struct CallMarker {
     std::size_t               endByte;
     std::size_t               calleeStartByte;
     std::size_t               calleeEndByte;
+    // The argument_list node's own range, parens included -- same
+    // "always '(' .. ')'" guarantee SignatureMarker::parametersStartByte/
+    // parametersEndByte carries, and for the same reason: a caller
+    // rewriting the whole argument list (change-signature) needs a range
+    // that is right even when `arguments` is empty.
+    std::size_t               argumentsStartByte;
+    std::size_t               argumentsEndByte;
     std::vector<CallArgument> arguments;
 };
 

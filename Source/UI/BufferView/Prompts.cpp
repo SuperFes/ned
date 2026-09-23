@@ -747,6 +747,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::RenameSymbol:
             RequestRenameSymbolAtPoint();
             return;
+        case editor::InteractiveRequest::ChangeSignature:
+            RequestChangeSignatureAtPoint();
+            return;
         case editor::InteractiveRequest::RenameFileToMatchType:
             RequestRenameFileToMatchType();
             return;
@@ -2361,6 +2364,8 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "lsp-rename";
         case InputMode::RenameLocalNewName:
             return "rename-symbol";
+        case InputMode::ChangeSignatureNewSignature:
+            return "change-signature";
         case InputMode::TaskName:
             return "task-name";
         case InputMode::ReplName:
@@ -2521,6 +2526,8 @@ std::optional<bufferview::TextEntryPrompt> BufferView::TextEntryPromptFor(InputM
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Rename"};
         case InputMode::RenameLocalNewName:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Rename"};
+        case InputMode::ChangeSignatureNewSignature:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "New signature"};
         case InputMode::OrgDeadline:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Deadline"};
         case InputMode::OrgSchedule:
@@ -2731,6 +2738,13 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
         // fully synchronous -- the binding was already resolved before the
         // prompt opened, so Enter is the whole rename.
         ApplyLocalRename(input);
+    }
+    else if (inputMode_ == InputMode::ChangeSignatureNewSignature) {
+        // change-signature follow-up: also fully synchronous -- unlike a
+        // rename this never applies directly, only opens the *signature*
+        // review (BuildChangeSignatureReview), since a signature change can
+        // touch several files project-wide.
+        ApplyChangeSignature(input);
     }
     else if (inputMode_ == InputMode::LspRenameNewName) {
         // Fire-and-forget, same async shape as RequestCodeActionsAtPoint:

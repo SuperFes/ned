@@ -147,3 +147,38 @@ TEST_CASE("CppMode calls finds bare, qualified and member call expressions with 
     CHECK(Slice(text, ptrAdd.arguments[0].startByte, ptrAdd.arguments[0].endByte) == "7");
     CHECK(Slice(text, ptrAdd.arguments[1].startByte, ptrAdd.arguments[1].endByte) == "foo(8, 9)");
 }
+
+TEST_CASE("SignatureMarker/CallMarker parameters/arguments ranges cover the parens even when empty",
+          "[ChangeSignature]") {
+    const auto  mode = CppMode();
+    const std::string sigText = "void run() {\n}\n";
+    const auto sigMarkers = mode.signatures(sigText);
+    REQUIRE(sigMarkers.size() == 1);
+    CHECK(sigMarkers[0].parameters.empty());
+    // "()" -- the interior [parametersStartByte + 1, parametersEndByte - 1)
+    // is empty, but the parens themselves are still found.
+    CHECK(Slice(sigText, sigMarkers[0].parametersStartByte, sigMarkers[0].parametersEndByte) == "()");
+
+    const std::string callText = "void run() { go(); }";
+    const auto callMarkers = mode.calls(callText);
+    REQUIRE(callMarkers.size() == 1);
+    CHECK(callMarkers[0].arguments.empty());
+    CHECK(Slice(callText, callMarkers[0].argumentsStartByte, callMarkers[0].argumentsEndByte) == "()");
+}
+
+TEST_CASE("SignatureMarker parametersStartByte/EndByte span exactly the parameter list's own parens",
+          "[ChangeSignature]") {
+    const auto  mode = CppMode();
+    const std::string text = "int add(int a, int b) {\n    return a + b;\n}\n";
+    const auto markers = mode.signatures(text);
+    REQUIRE(markers.size() == 1);
+    CHECK(Slice(text, markers[0].parametersStartByte, markers[0].parametersEndByte) == "(int a, int b)");
+}
+
+TEST_CASE("CallMarker argumentsStartByte/EndByte span exactly the call's own parens", "[ChangeSignature]") {
+    const auto  mode = CppMode();
+    const std::string text = "void run() { add(1, 2); }";
+    const auto markers = mode.calls(text);
+    REQUIRE(markers.size() == 1);
+    CHECK(Slice(text, markers[0].argumentsStartByte, markers[0].argumentsEndByte) == "(1, 2)");
+}

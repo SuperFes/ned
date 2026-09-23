@@ -452,6 +452,7 @@ add_library(ned_lib STATIC
         UI/BufferView/Prompts.cpp
         UI/BufferView/Lsp.cpp
         UI/BufferView/Rename.cpp
+        UI/BufferView/ChangeSignature.cpp
         UI/BufferView/ClassFileSync.cpp
         UI/BufferView/Color.cpp
         UI/BufferView/VcsDap.cpp

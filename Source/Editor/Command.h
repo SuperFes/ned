@@ -443,6 +443,12 @@ enum class InteractiveRequest { None,
                                 // otherwise -- so a loop variable costs no round trip, and a
                                 // symbol other files can see still gets the server's answer.
                                 RenameSymbol,
+                                // change-signature follow-up: RenameSymbol's own precedent --
+                                // BufferView::RequestChangeSignatureAtPoint resolves the
+                                // innermost Mode::signatures marker at point and opens the
+                                // "New signature: " prompt, prefilled with the current
+                                // parameter list.
+                                ChangeSignature,
                                 // class-file-sync follow-up: the two explicit,
                                 // best-effort halves of keeping a file's name and the
                                 // type declared inside it in agreement. Both are

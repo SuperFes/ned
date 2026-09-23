@@ -106,6 +106,10 @@ for the live keymap stack.
 
 :   Capitalize from point to the end of the next word, moving over it.
 
+`change-signature`
+
+:   Add, remove or reorder the parameters of the function at point, rewriting every call site and other same-name definition found in the project through a reviewable multibuffer (C-c C-c to apply). C++ only; declines rather than guesses at a variadic parameter, a new parameter with no default, or a same-named definition with a different parameter count.
+
 `check-format-conventions`
 
 :   Scan the project for names that don't conform to their configured case convention (see ned/set-format-case-convention), into *case violations*.

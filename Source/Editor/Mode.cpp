@@ -1607,7 +1607,9 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     parameterList.EndByte() != parametersEnd) {
                     continue; // re-derivation failed -- report no parameters rather than guess
                 }
-                marker.parameters = ParametersFromList(parameterList);
+                marker.parametersStartByte = parametersStart;
+                marker.parametersEndByte   = parametersEnd;
+                marker.parameters          = ParametersFromList(parameterList);
                 markers.push_back(std::move(marker));
             }
 
@@ -1681,6 +1683,8 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     argumentList.EndByte() != argumentsEnd) {
                     continue;
                 }
+                marker.argumentsStartByte = argumentsStart;
+                marker.argumentsEndByte   = argumentsEnd;
                 for (std::size_t i = 0; i < argumentList.ChildCount(); ++i) {
                     const grammar::Node child = argumentList.Child(i);
                     if (!child.IsNamed() || child.IsExtra()) {

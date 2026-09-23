@@ -1269,6 +1269,16 @@ class BufferView : public Widget {
                            // binding isn't file-local, or isn't resolvable without a
                            // language server's wider view.
                            RenameLocalNewName,
+                           // change-signature follow-up: RenameLocalNewName's own
+                           // precedent for a prompt that needs no server request --
+                           // Enter parses the retyped parameter list back through the
+                           // mode's own signatures query (the synthetic-wrapper trick
+                           // Editor/ChangeSignature.h's header comment describes),
+                           // builds the position mapping, and opens the *signature*
+                           // review; nothing is applied directly the way a local
+                           // rename is, since a signature change can touch several
+                           // files project-wide.
+                           ChangeSignatureNewSignature,
                            // open-binary-anyway follow-up: entered only from
                            // inside HandlePromptKey's FindFile branch, when
                            // BufferList::OpenOrCreateFile throws
@@ -2309,6 +2319,35 @@ class BufferView : public Widget {
     // Widget.h", "Detected move of Widget.h") -- the only thing that differs
     // between the in-editor rename and the externally-detected move.
     bool BuildImportFixupReview(const editor::importfix::FixupPlan& plan, const std::string& what);
+    // change-signature follow-up (BufferView/ChangeSignature.cpp): given a
+    // function's own OLD signature (targetFile/targetText/targetSignature --
+    // resolved elsewhere, at point) and the NEW signature text the user
+    // retyped, runs the project-wide candidate search, the arity-mismatch
+    // gate (Editor/ChangeSignature.h::DiscoverSignatureAndCallSites), the
+    // position-mapping planner, and every call-site/signature-site rewrite,
+    // then opens them in the same review multibuffer machinery as a rename.
+    // False (with a status message explaining why) on any whole-operation
+    // decline -- a variadic parameter, an unmatched new parameter with no
+    // default, an ambiguous name, or an arity mismatch against another
+    // same-named definition found in the project.
+    bool BuildChangeSignatureReview(const std::filesystem::path& targetFile, const std::string& targetText,
+                                    const editor::SignatureMarker& targetSignature, const std::string& newSignatureText);
+    // change-signature follow-up: change-signature's own entry point,
+    // RequestRenameSymbolAtPoint's precedent -- resolves the innermost
+    // Mode::signatures marker containing point in the active buffer (a
+    // buffer with no path, no signatures query, no marker at point, or a
+    // variadic parameter anywhere in it declines up front rather than
+    // opening a doomed prompt), prefills the "New signature: " prompt
+    // (inputMode_ = ChangeSignatureNewSignature) with the current
+    // parameter list's own text, and stores it in pendingChangeSignature_.
+    void RequestChangeSignatureAtPoint();
+    // HandlePromptKey's Enter branch for ChangeSignatureNewSignature calls
+    // this once the new text is typed. Re-resolves pendingChangeSignature_
+    // fresh against the buffer's current text and refuses on any
+    // disagreement, the same guard ApplyLocalRename applies for the same
+    // reason -- being wrong here corrupts a review's offsets, not just
+    // shows something stale.
+    void ApplyChangeSignature(const std::string& newSignatureText);
     // The candidate walk plus the plan (Editor/ImportFixup.h), reading live
     // buffer content for any file that is open. Empty -- costing nothing --
     // when ned/set-import-fixup is off or nothing moved. MUST be called
@@ -5052,6 +5091,16 @@ class BufferView : public Widget {
     // so ordinary rename-symbol invocations (no pending case fix) are
     // unaffected.
     std::optional<std::string> pendingRenamePrefillOverride_;
+    // change-signature follow-up: the file/text/marker
+    // RequestChangeSignatureAtPoint resolved, held only while the
+    // ChangeSignatureNewSignature prompt is up. Same re-resolve-and-compare
+    // guard pendingLocalRename_ gets, and for the same reason.
+    struct PendingChangeSignature {
+        std::filesystem::path   file;
+        std::string             text;
+        editor::SignatureMarker signature;
+    };
+    std::optional<PendingChangeSignature> pendingChangeSignature_;
     // rename-review follow-up: the rows BuildRenameReview stitched, index-
     // aligned with the review buffer's own ExcerptRanges() (which is why the
     // excerpt cap is applied there rather than left to BuildMultibuffer).

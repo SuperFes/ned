@@ -444,6 +444,7 @@ bool BufferView::HandleChord(const editor::KeyChord& chord) {
         case InputMode::InsertMacroDefinition:
         case InputMode::LspRenameNewName:
         case InputMode::RenameLocalNewName:
+        case InputMode::ChangeSignatureNewSignature:
         case InputMode::OrgDeadline:
         case InputMode::OrgSchedule:
         case InputMode::ProjectSearch:

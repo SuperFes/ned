@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-327 commands.
+328 commands.
 
 ## `acp-rewind`
 
@@ -143,6 +143,10 @@ Cancel the test run started by run-tests.
 Key: `M-c`
 
 Capitalize from point to the end of the next word, moving over it.
+
+## `change-signature`
+
+Add, remove or reorder the parameters of the function at point, rewriting every call site and other same-name definition found in the project through a reviewable multibuffer (C-c C-c to apply). C++ only; declines rather than guesses at a variadic parameter, a new parameter with no default, or a same-named definition with a different parameter count.
 
 ## `check-format-conventions`
 
