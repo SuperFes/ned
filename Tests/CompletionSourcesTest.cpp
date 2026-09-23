@@ -102,7 +102,7 @@ TEST_CASE("SnippetCompletions sees the global tier and requires a prefix", "[Com
 }
 
 TEST_CASE("JanetBindingCompletions drops an exactly-typed name", "[CompletionSources]") {
-    const std::vector<std::string> names = {"ned/set-vim-mode", "ned/set-theme"};
+    const std::vector<std::string> names = {"ned/set-keymap-style", "ned/set-theme"};
 
     CHECK(Labels(JanetBindingCompletions(names, "ned/set-")).size() == 2);
     CHECK(JanetBindingCompletions(names, "ned/set-theme").empty());

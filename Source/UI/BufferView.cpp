@@ -727,6 +727,11 @@ bool BufferView::HandleChord(const editor::KeyChord& chord) {
         }
         return HandleVimKey(chord);
     }
+    if (editor::GetKeymapStyle() == editor::KeymapStyle::Modern && dispatcher_.Pending().empty()) {
+        if (HandleModernKey(chord)) {
+            return true;
+        }
+    }
     return DispatchChordNormally(chord);
 }
 
@@ -880,6 +885,26 @@ bool BufferView::DispatchChordNormally(const editor::KeyChord& chord) {
         onPrefixHintChangedCopy(std::nullopt);
     }
     return true;
+}
+
+bool BufferView::HandleModernKey(const editor::KeyChord& chord) {
+    // Deliberately a single-chord Resolve, never fed to dispatcher_ itself:
+    // BuildModernOverrideKeymap only ever binds bare chords (no prefixes),
+    // and looking these up outside the Dispatcher/KeymapStack machinery
+    // means a bare C-c/C-x/C-v firing immediately here can never be seen as
+    // the first key of some *other* layer's longer sequence -- see
+    // BuildModernOverrideKeymap's own header comment for why that's the
+    // deliberate, load-bearing trade this keymap style is making.
+    static const editor::Keymap  modernKeymap = editor::BuildModernOverrideKeymap();
+    const editor::Keymap::Lookup lookup       = modernKeymap.Resolve({chord});
+    if (lookup.result != editor::Keymap::LookupResult::Match) {
+        return false;
+    }
+    editor::CommandContext context = MakeContext();
+    return RunCommandAndHandleOutcome(context, [&] {
+        dispatcher_.Registry().Invoke(lookup.commandName, context);
+        return true;
+    });
 }
 
 WhichKeyHint BufferView::BuildWhichKeyHint() const {

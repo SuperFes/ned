@@ -1535,6 +1535,15 @@ class BufferView : public Widget {
     // window-management caution as DispatchChordNormally's own doc comment) -- always
     // this call's own return, nothing after.
     bool HandleVimKey(const editor::KeyChord& chord);
+    // KeymapStyle::Modern follow-up: called instead of DispatchChordNormally
+    // from the same Normal-mode tail, when editor::GetKeymapStyle() ==
+    // KeymapStyle::Modern and dispatcher_ isn't mid some other layer's
+    // multi-chord sequence. Resolves chord against BuildModernOverrideKeymap
+    // (Commands.h) directly rather than through dispatcher_ -- see its own
+    // doc comment. Returns false (falls through to DispatchChordNormally,
+    // exactly like an unrecognized chord under Vim) for anything that
+    // keymap doesn't bind.
+    bool HandleModernKey(const editor::KeyChord& chord);
     // paste-perf-and-drag-drop follow-up: OnPaste's own real implementation,
     // factored out so it's directly unit-testable without needing real
     // focus/EventLoop machinery. Fast path (inputMode_ == InputMode::Normal,

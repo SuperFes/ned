@@ -58,6 +58,7 @@
 #include "Editor/HugeFileReindent.h"
 #include "Editor/Indent.h"
 #include "Editor/Keymap.h"
+#include "Editor/KeymapStyle.h"
 #include "Editor/Lsp/BrokerConnect.h"
 #include "Editor/Lsp/BrokerMain.h"
 #include "Editor/Lsp/BrokerSocketPath.h"
@@ -94,7 +95,6 @@
 #include "Editor/TransientSession.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/Runner.h"
-#include "Editor/Vim/Settings.h"
 
 #include "Editor/LanguageRegistry.h"
 #include "Janet/EditorBindings.h"
@@ -531,7 +531,7 @@ int MinimapOverlayReserve() {
 // what actually calls ~EventLoop() (notcurses_stop) and tears down every
 // child process, and it can only happen once this function returns, not
 // from inside it.
-int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const std::vector<std::string>& paths) {
+int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& keymapStyle, const std::vector<std::string>& paths) {
     std::setlocale(LC_ALL, "");
 
     Ned::Application::SetTitle("Ned");
@@ -838,15 +838,17 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
         ned::editor::SaveProjectTrust();
     }
 
-    // --vim: applied after every trusted init.janet/project-plugin load above
-    // (same "explicit invocation-time flag wins over config" precedent as
-    // --force-binary/--no-restore, just later here since this one has a real
-    // config-file equivalent -- ned/set-vim-mode -- to actually override).
-    // An untrusted project init.janet's own call, approved later via its
-    // deferred y/n/a prompt once the UI exists, still wins after that --
-    // deliberately: trusting a file is a decision this flag shouldn't preempt.
-    if (vimMode) {
-        ned::editor::vim::SetModeEnabled(true);
+    // --keymap-style: applied after every trusted init.janet/project-plugin
+    // load above (same "explicit invocation-time flag wins over config"
+    // precedent as --force-binary/--no-restore, just later here since this
+    // one has a real config-file equivalent -- ned/set-keymap-style -- to
+    // actually override). An untrusted project init.janet's own call,
+    // approved later via its deferred y/n/a prompt once the UI exists,
+    // still wins after that -- deliberately: trusting a file is a decision
+    // this flag shouldn't preempt. Empty means the flag wasn't passed at
+    // all (CliOptions.cpp's CLI::IsMember already rejects anything else).
+    if (!keymapStyle.empty()) {
+        ned::editor::SetKeymapStyle(*ned::editor::ParseKeymapStyle(keymapStyle));
     }
 
     // Same "explicit invocation-time flag wins over config" placement as
@@ -3532,7 +3534,7 @@ auto main(int argc, char** argv) -> int {
         !cli.noTransient && std::ranges::any_of(cli.paths, [](const std::string& path) { return ned::editor::IsVcsEditorFile(path); });
     ned::editor::SetTransientMode(cli.transient || detectedVcsEditorFile);
 
-    const int exitCode = RunInteractiveEditor(cli.forceBinary, cli.noRestore, cli.vimMode, cli.paths);
+    const int exitCode = RunInteractiveEditor(cli.forceBinary, cli.noRestore, cli.keymapStyle, cli.paths);
 
     // Everything RunInteractiveEditor owned -- EventLoop and the
     // notcurses_stop in its destructor included -- is destroyed by the time

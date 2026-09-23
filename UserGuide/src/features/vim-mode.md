@@ -3,8 +3,13 @@
 ned includes a full Vim modal-editing emulation, off by default:
 
 ```janet
-(ned/set-vim-mode true)
+(ned/set-keymap-style "vim")
 ```
+
+`ned/set-keymap-style` also has a `"modern"` value — see
+[Modern Keymap](modern-keymap.md) — for editing conventions closer to VS Code/JetBrains
+than to Vim; the two are mutually exclusive keymap styles, not layered on top of each
+other.
 
 This is a genuine reimplementation of Vim's grammar — Normal, Insert, Visual, Replace,
 and command-line modes, motions, text objects, and operators — not a thin remapping of

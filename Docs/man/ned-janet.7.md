@@ -516,6 +516,10 @@ configuration is Janet code, and these are the bindings it calls.
 
 :   Enable/disable inline diagnostics (the LSP message shown against the line it flags; default true).
 
+`ned/set-keymap-style`
+
+:   Select the active keybinding convention: "emacs" (default), "vim", or "modern". "vim" is Vim-style modal editing (Normal/Insert/Visual/Replace/command-line) -- Insert mode still runs through ned's own Emacs-bound keymap underneath (self-insert-command, auto-pair, snippets, LSP completion all keep working), only Normal/Visual/Replace/command-line dispatch is Vim's own. "modern" remaps the universal cut/copy/paste/undo/redo/select-all/save/find chords (C-x/C-c/C-v/C-z/C-y/C-a/C-s/C-f) to their conventional meaning; every command those displace (and every other C-c/C-x <key> binding, which becomes unreachable by keystroke once C-c/C-x are leaf commands) stays reachable by name via M-x or search-everywhere.
+
 `ned/set-line-ending-policy`
 
 :   "preserve" (default) keeps each buffer's own detected/converted line ending on save; "lf"/"crlf"/"cr" force every save to that ending regardless of what was detected. Per-buffer convert-line-endings-to-lf/-crlf/-cr override a single buffer's own ending independent of this process-wide policy.
@@ -853,10 +857,6 @@ The popup is never one source: a language server's items, snippet triggers for t
 `ned/set-url-open-command`
 
 :   Set the command open-link-at-point launches (as its own argument, never a shell string) to open a URL -- defaults to "xdg-open"; empty string clears it entirely, disabling URL-following.
-
-`ned/set-vim-mode`
-
-:   Enable or disable Vim-style modal editing (Normal/Insert/Visual/Replace/command-line, default false). Insert mode still runs through ned's own Emacs-bound keymap underneath (self-insert-command, auto-pair, snippets, LSP completion all keep working) -- only Normal/Visual/Replace/command-line dispatch is Vim's own.
 
 `ned/set-which-key-enabled`
 

@@ -41,6 +41,7 @@
 #include "Editor/InjectedIndent.h"
 #include "Editor/InlineDebugValues.h"
 #include "Editor/InlineDiagnostics.h"
+#include "Editor/KeymapStyle.h"
 #include "Editor/LanguageRegistry.h"
 #include "Editor/LineEndingPolicy.h"
 #include "Editor/Link.h"
@@ -89,7 +90,6 @@
 #include "Editor/ToolchainIncludePaths.h"
 #include "Editor/TrimOnSave.h"
 #include "Editor/Vcs/ProviderRegistry.h"
-#include "Editor/Vim/Settings.h"
 #include "Editor/WhichKeySettings.h"
 #include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapIndent.h"
@@ -262,10 +262,14 @@ namespace {
         editor::SetFillColumn(static_cast<int>(columns));
     }
 
-    // Vim-mode follow-up: same process-wide-bool-toggle shape as
-    // NedSetLspAutoComplete -- default false, see Editor/Vim/Settings.h.
-    void NedSetVimMode(bool enabled) {
-        editor::vim::SetModeEnabled(enabled);
+    // modern-keymap-style follow-up: retires the standalone Vim-mode
+    // boolean in favor of one three-way setting -- see Editor/KeymapStyle.h.
+    void NedSetKeymapStyle(std::string style) {
+        const std::optional<editor::KeymapStyle> parsed = editor::ParseKeymapStyle(style);
+        if (!parsed) {
+            throw std::runtime_error("unknown keymap style: " + style + " (expected \"emacs\", \"vim\", or \"modern\")");
+        }
+        editor::SetKeymapStyle(*parsed);
     }
 
     void NedSetProjectSearchThreads(std::int64_t threads) {
@@ -1825,11 +1829,15 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetFillColumn>(
         "ned", "set-fill-column",
         "Set the target line width (in codepoints) fill-paragraph (M-q) wraps prose/comments to (default 70).");
-    env.Register<&NedSetVimMode>(
-        "ned", "set-vim-mode",
-        "Enable or disable Vim-style modal editing (Normal/Insert/Visual/Replace/command-line, default false). "
-        "Insert mode still runs through ned's own Emacs-bound keymap underneath (self-insert-command, auto-pair, "
-        "snippets, LSP completion all keep working) -- only Normal/Visual/Replace/command-line dispatch is Vim's own.");
+    env.Register<&NedSetKeymapStyle>(
+        "ned", "set-keymap-style",
+        "Select the active keybinding convention: \"emacs\" (default), \"vim\", or \"modern\". \"vim\" is Vim-style "
+        "modal editing (Normal/Insert/Visual/Replace/command-line) -- Insert mode still runs through ned's own "
+        "Emacs-bound keymap underneath (self-insert-command, auto-pair, snippets, LSP completion all keep working), "
+        "only Normal/Visual/Replace/command-line dispatch is Vim's own. \"modern\" remaps the universal cut/copy/"
+        "paste/undo/redo/select-all/save/find chords (C-x/C-c/C-v/C-z/C-y/C-a/C-s/C-f) to their conventional "
+        "meaning; every command those displace (and every other C-c/C-x <key> binding, which becomes unreachable "
+        "by keystroke once C-c/C-x are leaf commands) stays reachable by name via M-x or search-everywhere.");
     env.Register<&NedSetLogCategoryVisible>(
         "ned", "set-log-category-visible",
         "Show/hide one category (\"general\"/\"janet\"/\"lsp\"/\"dap\"/\"acp\"/\"vcs\"/\"task\"/\"subprocess\") in the "

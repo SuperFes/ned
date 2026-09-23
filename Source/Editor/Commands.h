@@ -48,6 +48,18 @@ void RegisterBuiltinCommands(CommandRegistry& registry);
 // self-insert-command.
 [[nodiscard]] Keymap BuildDefaultGlobalKeymap();
 
+// KeymapStyle::Modern's own layer (KeymapStyle.h) -- consulted ahead of
+// BuildDefaultGlobalKeymap, never in place of it, so every binding this
+// doesn't mention (arrow keys, Home/End, Page Up/Down, ...) still comes from
+// the Emacs default underneath. Bare C-c/C-x/C-v become leaf commands here,
+// which makes every longer C-c/C-x <key> sequence in the Emacs default
+// keymap unreachable by keystroke under this style -- Resolve fires the
+// shorter match immediately rather than waiting to see if more keys follow
+// (Keymap.h's own doc comment). Deliberate: those commands stay reachable
+// by name via M-x/search-everywhere, and giving each one a second, modern-
+// style chord is the "full 1:1 remap" scope this cut is choosing not to be.
+[[nodiscard]] Keymap BuildModernOverrideKeymap();
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_COMMANDS_H

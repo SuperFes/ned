@@ -88,9 +88,11 @@ void BuildCli(CLI::App& app, CliArgs& args) {
     app.add_flag("--no-transient", args.noTransient,
                  "Record this run normally even if the file opened is one a version control system names -- the "
                  "override for --transient's own automatic detection");
-    app.add_flag("--vim", args.vimMode,
-                 "Start with Vim emulation on (the same setting ned/set-vim-mode controls; applied after "
-                 "init.janet loads, so this flag wins over any ned/set-vim-mode call there)");
+    app.add_option("--keymap-style", args.keymapStyle,
+                   "Start with this keybinding convention: \"emacs\" (default), \"vim\", or \"modern\" (the same "
+                   "setting ned/set-keymap-style controls; applied after init.janet loads, so this flag wins over "
+                   "any ned/set-keymap-style call there)")
+        ->check(CLI::IsMember({"emacs", "vim", "modern"}));
     app.add_option("paths", args.paths, "Files or directories to open");
 }
 

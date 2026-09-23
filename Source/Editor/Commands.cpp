@@ -251,7 +251,7 @@ namespace {
     // silently growing a kill entry.
     bool IsKillCommand(const std::string& name) {
         return name == "kill-line" || name == "kill-region" || name == "kill-word" || name == "backward-kill-word" ||
-               name == "zap-to-char";
+               name == "zap-to-char" || name == "modern-cut";
     }
 
     // multi-cursor-round-2 follow-up: like PerCursor, but for a kill/copy
@@ -757,6 +757,94 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             ++i;
         });
     });
+
+    // KeymapStyle::Modern's own trio (KeymapStyle.h) -- copy/cut/paste with
+    // the "no selection means act on the current line" fallback every
+    // modern editor gives Ctrl+C/Ctrl+X, and a paste that replaces an
+    // active region first rather than yank's own Emacs-style leave-it-alone
+    // behavior. Sharing KillPerCursor/the kill ring with kill-ring-save/
+    // kill-region/yank rather than a separate system-clipboard-only path
+    // means yank-pop still cycles a modern-cut/modern-copy entry, and a
+    // modern-paste still sees whatever another application put on the
+    // system clipboard, exactly as yank does.
+    registry.Register("modern-copy",
+                      "Copy the region into the kill ring; with no active region, copy the current line "
+                      "(including its trailing newline) instead. KeymapStyle::Modern's C-c.",
+                      [](CommandContext& context) {
+                          KillPerCursor(context, [](CommandContext& context) -> std::optional<std::string> {
+                              if (context.buffer.HasMark()) {
+                                  const auto [start, end] = context.buffer.Region();
+                                  std::string text        = context.buffer.Content().Substring(start, end - start);
+                                  context.buffer.ClearMark();
+                                  return text;
+                              }
+                              const text::ITextStorage& content = context.buffer.Content();
+                              const LineSpan            span    = GetLineSpan(content, content.ByteOffsetToLine(context.buffer.Point()));
+                              const std::size_t         spanEnd = span.hasTrailingNewline ? span.contentEnd + 1 : span.contentEnd;
+                              return content.Substring(span.start, spanEnd - span.start);
+                          });
+                      });
+
+    registry.Register("modern-cut",
+                      "Cut the region into the kill ring; with no active region, cut the current line "
+                      "(including its trailing newline) instead. KeymapStyle::Modern's C-x.",
+                      [](CommandContext& context) {
+                          bool prepend = false;
+                          KillPerCursor(
+                              context,
+                              [&prepend](CommandContext& context) -> std::optional<std::string> {
+                                  if (context.buffer.HasMark()) {
+                                      const auto [start, end] = context.buffer.Region();
+                                      prepend                 = context.buffer.Point() == end;
+                                      std::string text        = context.buffer.DeleteRange(start, end - start);
+                                      context.buffer.ClearMark();
+                                      return text;
+                                  }
+                                  const text::ITextStorage& content = context.buffer.Content();
+                                  const LineSpan            span    = GetLineSpan(content, content.ByteOffsetToLine(context.buffer.Point()));
+                                  const std::size_t         spanEnd = span.hasTrailingNewline ? span.contentEnd + 1 : span.contentEnd;
+                                  return context.buffer.DeleteRange(span.start, spanEnd - span.start);
+                              },
+                              &prepend);
+                      });
+
+    registry.Register(
+        "modern-paste", "Replace the active region (if any) with the most recent kill-ring entry, then paste. KeymapStyle::Modern's C-v.",
+        [](CommandContext& context) {
+            // Same interprogram-paste-function convention as yank -- see its
+            // own comment just above for why this pushes rather than reads
+            // the system clipboard directly.
+            if (std::optional<std::string> pasted = PasteFromSystemClipboard()) {
+                if (context.killRing.Empty() || *pasted != context.killRing.Current()) {
+                    context.killRing.Kill(std::move(*pasted));
+                }
+            }
+            if (context.killRing.Empty()) {
+                context.buffer.ClearMark();
+                return;
+            }
+            const auto deleteMarkedRegion = [](CommandContext& context) {
+                if (context.buffer.HasMark()) {
+                    const auto [start, end] = context.buffer.Region();
+                    context.buffer.DeleteRange(start, end - start);
+                }
+                context.buffer.ClearMark();
+            };
+            if (!context.buffer.HasSecondaryCursors()) {
+                deleteMarkedRegion(context);
+                context.buffer.InsertAtPoint(context.killRing.Current());
+                return;
+            }
+            const std::vector<std::string>& pieces      = context.killRing.CurrentPieces();
+            const std::size_t               cursorCount = 1 + context.buffer.SecondaryCursors().size();
+            const bool                      perCursor   = pieces.size() == cursorCount;
+            std::size_t                     i           = 0;
+            context.buffer.ForEachCursor([&] {
+                deleteMarkedRegion(context);
+                context.buffer.InsertAtPoint(perCursor ? pieces[i] : context.killRing.Current());
+                ++i;
+            });
+        });
 
     // Emacs' C-SPC C-SPC idiom: a second press with the (still-empty) mark
     // at point deactivates it, so an accidental mark is cancelable from the
@@ -5081,6 +5169,43 @@ Keymap BuildDefaultGlobalKeymap() {
         chord.Codepoint = codepoint;
         keymap.Bind({chord}, "self-insert-command");
     }
+
+    return keymap;
+}
+
+Keymap BuildModernOverrideKeymap() {
+    Keymap keymap;
+
+    // The universal cut/copy/paste/undo/redo/select-all/save/find triad-plus
+    // that motivated this style -- each one relocates an Emacs default
+    // binding that already existed (C-v was scroll-page-down, C-z was
+    // suspend-frame, C-a was beginning-of-line, C-s/C-f were isearch-
+    // forward/forward-char) rather than inventing a new command, except the
+    // copy/cut/paste trio itself (Commands.cpp, just above), which needs its
+    // own "no selection means the current line" fallback no existing Emacs
+    // command has.
+    keymap.Bind(ParseKeySequence("C-c"), "modern-copy");
+    keymap.Bind(ParseKeySequence("C-x"), "modern-cut");
+    keymap.Bind(ParseKeySequence("C-v"), "modern-paste");
+    keymap.Bind(ParseKeySequence("C-z"), "undo");
+    keymap.Bind(ParseKeySequence("C-y"), "redo");
+    keymap.Bind(ParseKeySequence("C-a"), "mark-whole-buffer");
+    keymap.Bind(ParseKeySequence("C-s"), "save-buffer");
+    keymap.Bind(ParseKeySequence("C-f"), "isearch-forward");
+    keymap.Bind(ParseKeySequence("C-o"), "find-file");
+    // C-w: real Emacs' kill-region here, but a modern editor's C-w closes
+    // the current file instead -- cut moved to C-x above, matching the
+    // universal convention this whole style exists for.
+    keymap.Bind(ParseKeySequence("C-w"), "kill-buffer");
+    // Free in the Emacs default (C-_ is undo's other binding, not this) --
+    // toggle-comment is the one binding here matching real modern-editor
+    // convention on a chord Emacs itself has no opinion about.
+    keymap.Bind(ParseKeySequence("C-/"), "toggle-line-comment");
+    // Replaces C-x LEFT/RIGHT (tab-previous/tab-next in the Emacs default),
+    // unreachable here once C-x is a leaf command -- see this function's
+    // own header comment.
+    keymap.Bind(ParseKeySequence("C-TAB"), "tab-next");
+    keymap.Bind(ParseKeySequence("C-S-TAB"), "tab-previous");
 
     return keymap;
 }

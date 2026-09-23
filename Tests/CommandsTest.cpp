@@ -532,6 +532,145 @@ TEST_CASE("M-w copies the region via kill-ring-save", "[Commands]") {
     REQUIRE(fixture.killRing.Current() == "hello");
 }
 
+// --- KeymapStyle::Modern's copy/cut/paste trio --------------------------
+
+TEST_CASE("modern-copy copies the region, same as kill-ring-save, when one is active", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello world");
+    fixture.buffer.SetPoint(6);
+    fixture.buffer.SetMark(0);
+    registry.Invoke("modern-copy", context);
+
+    REQUIRE(fixture.buffer.Text() == "hello world");
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+    REQUIRE(fixture.killRing.Current() == "hello ");
+}
+
+TEST_CASE("modern-copy with no active region copies the current line, trailing newline included", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("first\nsecond\nthird");
+    fixture.buffer.SetPoint(9); // mid "second"
+    registry.Invoke("modern-copy", context);
+
+    REQUIRE(fixture.buffer.Text() == "first\nsecond\nthird"); // unchanged -- copy, not cut
+    REQUIRE(fixture.killRing.Current() == "second\n");
+}
+
+TEST_CASE("modern-copy on the last line, which has no trailing newline, copies just that line", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("first\nlast");
+    fixture.buffer.SetPoint(8);
+    registry.Invoke("modern-copy", context);
+
+    REQUIRE(fixture.killRing.Current() == "last");
+}
+
+TEST_CASE("modern-cut deletes the region, same as kill-region, when one is active", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("hello world");
+    fixture.buffer.SetPoint(6);
+    fixture.buffer.SetMark(0);
+    registry.Invoke("modern-cut", context);
+
+    REQUIRE(fixture.buffer.Text() == "world");
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+    REQUIRE(fixture.killRing.Current() == "hello ");
+}
+
+TEST_CASE("modern-cut with no active region deletes the current line, trailing newline included", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.buffer.InsertAtPoint("first\nsecond\nthird");
+    fixture.buffer.SetPoint(9); // mid "second"
+    registry.Invoke("modern-cut", context);
+
+    REQUIRE(fixture.buffer.Text() == "first\nthird");
+    REQUIRE(fixture.killRing.Current() == "second\n");
+}
+
+TEST_CASE("modern-paste replaces the active region instead of leaving it, unlike yank", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.killRing.Kill("world");
+    fixture.buffer.InsertAtPoint("hello there");
+    fixture.buffer.SetPoint(11);
+    fixture.buffer.SetMark(6); // "there" selected
+    registry.Invoke("modern-paste", context);
+
+    REQUIRE(fixture.buffer.Text() == "hello world");
+    REQUIRE_FALSE(fixture.buffer.HasMark());
+}
+
+TEST_CASE("modern-paste with no active region behaves like yank", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+
+    fixture.killRing.Kill("hello");
+    registry.Invoke("modern-paste", context);
+
+    REQUIRE(fixture.buffer.Text() == "hello");
+}
+
+TEST_CASE("BuildModernOverrideKeymap binds the universal cut/copy/paste/undo/redo/select-all/save/find chords",
+          "[Commands]") {
+    const Keymap keymap = BuildModernOverrideKeymap();
+
+    const auto Bound = [&](std::string_view sequence) {
+        return keymap.Resolve(ParseKeySequence(sequence));
+    };
+
+    CHECK(Bound("C-c").commandName == "modern-copy");
+    CHECK(Bound("C-x").commandName == "modern-cut");
+    CHECK(Bound("C-v").commandName == "modern-paste");
+    CHECK(Bound("C-z").commandName == "undo");
+    CHECK(Bound("C-y").commandName == "redo");
+    CHECK(Bound("C-a").commandName == "mark-whole-buffer");
+    CHECK(Bound("C-s").commandName == "save-buffer");
+    CHECK(Bound("C-f").commandName == "isearch-forward");
+}
+
+TEST_CASE("BuildModernOverrideKeymap's C-c/C-x are leaf commands, not prefixes", "[Commands]") {
+    const Keymap keymap = BuildModernOverrideKeymap();
+
+    // Resolve on the bare chord alone must already report Match, not Prefix
+    // -- see the function's own header comment for why a longer sequence
+    // built on top of C-c/C-x (as the Emacs default keymap has dozens of)
+    // could never actually fire once this layer is active.
+    CHECK(keymap.Resolve(ParseKeySequence("C-c")).result == Keymap::LookupResult::Match);
+    CHECK(keymap.Resolve(ParseKeySequence("C-x")).result == Keymap::LookupResult::Match);
+}
+
 TEST_CASE("M-/ and ESC / both invoke redo", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);

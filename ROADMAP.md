@@ -928,21 +928,40 @@ anything is launched. Cuts left behind, each its own item below.
       beyond hand-writing `init.janet` — real live-editing already exists for themes
       specifically (`save-theme`/`ned/theme-set`); a general settings surface would
       generalize that. Vague, unscoped.
-- [ ] **Alternate "modern" keymap (VS Code/JetBrains-style)** — tabled 2026-09-04
-      discussion. The itch: Emacs's C-w/M-w/C-y read as arbitrary next to the
-      now-universal C-x/C-c/C-v cut/copy/paste convention. Audited and found to be a
-      real structural conflict, not a simple rebind: C-x and C-c are Emacs *prefix*
-      keys here (C-x owns file/window ops, C-c is this codebase's own mode/user prefix
-      with dozens of bindings), and C-v is already bound (scroll-page-down). Retrofitting
-      the default keymap would evict all of those, not just rename two keys. C-w/C-y
-      also aren't plain cut/paste — they're `KillRing` ops (a ring, not a single slot),
-      so a literal rebind needs to keep kill-ring semantics under new trigger keys, not
-      just alias them. Right approach if this gets picked back up: a third selectable
-      full keymap (`ned/set-keymap-style` or similar: `emacs` default, `vim`, `modern`)
-      reusing the existing command set wholesale, the same shape `ned/set-vim-mode`
-      already proves out — not a patch on the Emacs default, since that default stays
-      load-bearing for `C-c`'s existing feature bindings either way. Not started; no
-      keymap table drafted yet.
+
+**Alternate "modern" keymap (VS Code/JetBrains-style)**
+
+Shipped -- slug for `git log --grep=`: `modern-keymap-style`. The itch: Emacs's
+C-w/M-w/C-y read as arbitrary next to the now-universal C-x/C-c/C-v cut/copy/paste
+convention. `ned/set-vim-mode` is retired in favor of one three-way
+`ned/set-keymap-style` (`"emacs"`/`"vim"`/`"modern"`, `--keymap-style` on the CLI) --
+`Editor/KeymapStyle.h`, the `KeymapStyle::Vim` case just drives the same internal
+`vim::ModeEnabled()` flag the Vim engine always polled, so nothing about Vim mode
+itself changed. `KeymapStyle::Modern` is a small fixed override table
+(`BuildModernOverrideKeymap`, `Editor/Commands.h`) consulted directly in
+`BufferView::OnKeyEvent` ahead of `Dispatcher` -- the same "checked live every
+keystroke, no keymap object ever rebuilt" shape Vim mode already used, not a second
+`Keymap` layer threaded through `KeymapStack` (which would have needed a way to push a
+Janet-triggered setting change into an object several constructors deep). Two
+structural findings the audit above got right: C-x/C-c are real Emacs *prefix* keys
+here with ~135 combined `C-c <key>`/`C-x <key>` sequences hanging off them (VCS, debug
+panel, org, projects, color tools, ...), and `Keymap::Resolve` fires a shorter match
+immediately rather than waiting for more input -- so binding bare C-c/C-x as leaf
+commands makes every one of those sequences genuinely unreachable by keystroke, not
+just shadowed. Deliberately not fixed: every one of those commands is still reachable
+by name via `M-x`/search-everywhere, which is the scope cut that keeps this a keybinding
+convention rather than a second command set. `modern-copy`/`modern-cut`/`modern-paste`
+are real commands of their own, not `kill-ring-save`/`kill-region`/`yank` aliases --
+"nothing selected copies/cuts the current line" and "paste replaces an active
+selection" are genuine modern-editor conventions neither Emacs command has, sharing the
+kill ring and system clipboard with `yank`/`yank-pop` regardless.
+[UserGuide's Modern Keymap page](UserGuide/src/features/modern-keymap.md) has the full
+chord table. One cut left behind:
+
+- [ ] `C-Tab`/`C-S-Tab` (tab-next/tab-previous, replacing the now-unreachable `C-x
+      LEFT`/`C-x RIGHT`) carry the same terminal-support caveat every other
+      Ctrl+Shift-letter chord in the Emacs default already does (`C-S-DOWN`/`C-S-UP`) --
+      untested against a real legacy (non-kitty-protocol) terminal.
 - [ ] **Bracketed-paste multi-cursor distribution** (paste-perf-and-drag-drop
       follow-up, scoped down 2026-09-06). A real terminal paste (via
       `BufferView::HandleBulkPastedText`/`Buffer::InsertAtPoint` fast path) inserts at

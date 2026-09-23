@@ -110,9 +110,9 @@ Store nothing about this run: no project session (neither restored nor saved), n
 
 Record this run normally even if the file opened is one a version control system names -- the override for --transient's own automatic detection
 
-### `--vim`
+### `--keymap-style TEXT:{emacs,vim,modern}`
 
-Start with Vim emulation on (the same setting ned/set-vim-mode controls; applied after init.janet loads, so this flag wins over any ned/set-vim-mode call there)
+Start with this keybinding convention: "emacs" (default), "vim", or "modern" (the same setting ned/set-keymap-style controls; applied after init.janet loads, so this flag wins over any ned/set-keymap-style call there)
 
 ## Positional arguments
 

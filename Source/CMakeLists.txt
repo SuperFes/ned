@@ -139,6 +139,7 @@ add_library(ned_lib STATIC
         Editor/StickyScrollSettings.cpp
         Editor/RelativeLineNumberSettings.cpp
         Editor/WhichKeySettings.cpp
+        Editor/KeymapStyle.cpp
         Editor/Org.cpp
         Editor/OrgCapture.cpp
         Editor/Snippet.cpp

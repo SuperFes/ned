@@ -23,6 +23,7 @@
 - [Snippets](features/snippets.md)
 - [Org Mode](features/org-mode.md)
 - [Vim Mode](features/vim-mode.md)
+- [Modern Keymap](features/modern-keymap.md)
 - [Tasks and Tests](features/tasks-and-tests.md)
 - [Terminal and Agents](features/terminal-and-agents.md)
 

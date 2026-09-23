@@ -41,7 +41,7 @@ struct CliArgs {
     bool                     noRestore    = false;
     bool                     transient    = false;
     bool                     noTransient  = false;
-    bool                     vimMode      = false;
+    std::string              keymapStyle; // "emacs"/"vim"/"modern"; empty means "leave it to init.janet/default"
     std::vector<std::string> paths;
 };
 

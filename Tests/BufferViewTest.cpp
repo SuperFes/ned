@@ -32,6 +32,7 @@
 #include "Editor/FormatOnSave.h"
 #include "Editor/InlineDebugValues.h"
 #include "Editor/InlineDiagnostics.h"
+#include "Editor/KeymapStyle.h"
 #include "Editor/Link.h"
 #include "Editor/Lsp/Client.h"
 #include "Editor/Lsp/Manager.h"
@@ -136,6 +137,24 @@ class VimModeGuard {
 
   private:
     bool previous_;
+};
+
+// GetKeymapStyle()/SetKeymapStyle() is process-wide state too (Editor/
+// KeymapStyle.h) -- same restore-whatever-was-there shape as VimModeGuard
+// just above.
+class KeymapStyleGuard {
+  public:
+    explicit KeymapStyleGuard(ned::editor::KeymapStyle style) : previous_(ned::editor::GetKeymapStyle()) {
+        ned::editor::SetKeymapStyle(style);
+    }
+    ~KeymapStyleGuard() {
+        ned::editor::SetKeymapStyle(previous_);
+    }
+    KeymapStyleGuard(const KeymapStyleGuard&)            = delete;
+    KeymapStyleGuard& operator=(const KeymapStyleGuard&) = delete;
+
+  private:
+    ned::editor::KeymapStyle previous_;
 };
 
 // UrlOpenCommand is process-wide state too (see Editor/Link.h's own doc
@@ -1154,6 +1173,59 @@ TEST_CASE("Quit leaves a shutting-down status message for the final frame", "[Bu
     view.OnEvent(ned::ui::test::Ctrl('x'));
     view.OnEvent(ned::ui::test::Ctrl('c'));
     REQUIRE(fixture.statusMessage == "Shutting down...");
+}
+
+// --- KeymapStyle::Modern ------------------------------------------------
+
+TEST_CASE("Under KeymapStyle::Modern, C-c copies via modern-copy instead of the Emacs default's kill-ring-save prefix",
+          "[BufferView]") {
+    KeymapStyleGuard    styleGuard(ned::editor::KeymapStyle::Modern);
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    fixture.buffer.InsertAtPoint("hello");
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+
+    REQUIRE(fixture.buffer.Text() == "hello"); // copy, not cut
+    REQUIRE(fixture.killRing.Current() == "hello");
+}
+
+TEST_CASE("Under KeymapStyle::Modern, C-c never becomes a pending prefix -- C-c C-l dispatches two separate commands",
+          "[BufferView]") {
+    // BuildDefaultGlobalKeymap binds bare C-c as a prefix (C-c C-l is
+    // open-link-at-point, C-c ? is describe-bindings, ...) and bare C-l on
+    // its own to recenter; under Modern, C-c fires modern-copy immediately,
+    // so this C-l is never the second half of a "C-c C-l" sequence -- it's
+    // an ordinary, separately-dispatched recenter. This is the live,
+    // end-to-end version of the plain Keymap::Resolve claim
+    // "BuildModernOverrideKeymap's C-c/C-x are leaf commands, not prefixes"
+    // already covers in CommandsTest.cpp.
+    KeymapStyleGuard    styleGuard(ned::editor::KeymapStyle::Modern);
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    fixture.buffer.InsertAtPoint("hello");
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    REQUIRE(fixture.killRing.Current() == "hello"); // C-c already ran modern-copy on its own
+
+    view.OnEvent(ned::ui::test::Ctrl('l'));
+    REQUIRE(fixture.statusMessage.find("undefined") == std::string::npos); // recenter, not an unbound "C-c C-l"
+}
+
+TEST_CASE("Under the default KeymapStyle::Emacs, C-c C-l still runs open-link-at-point as a real prefix sequence",
+          "[BufferView]") {
+    Fixture             fixture; // no KeymapStyleGuard -- Emacs is the default
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+
+    fixture.buffer.InsertAtPoint("hello");
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    REQUIRE(fixture.killRing.Empty()); // modern-copy never ran -- C-c is just a pending prefix here
+
+    view.OnEvent(ned::ui::test::Ctrl('l'));
+    REQUIRE(fixture.statusMessage == "No link at point."); // open-link-at-point actually ran
 }
 
 // vim-quit-window-semantics follow-up: ":q" is real vim's window-close, which quits the

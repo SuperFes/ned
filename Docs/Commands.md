@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-324 commands.
+327 commands.
 
 ## `acp-rewind`
 
@@ -879,6 +879,18 @@ Resolve the conflict hunk at point by taking "ours".
 Key: `C-c x t`
 
 Resolve the conflict hunk at point by taking "theirs".
+
+## `modern-copy`
+
+Copy the region into the kill ring; with no active region, copy the current line (including its trailing newline) instead. KeymapStyle::Modern's C-c.
+
+## `modern-cut`
+
+Cut the region into the kill ring; with no active region, cut the current line (including its trailing newline) instead. KeymapStyle::Modern's C-x.
+
+## `modern-paste`
+
+Replace the active region (if any) with the most recent kill-ring entry, then paste. KeymapStyle::Modern's C-v.
 
 ## `move-line-down`
 
