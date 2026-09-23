@@ -42,6 +42,7 @@ using ned::editor::lsp::ExtractSingleDocumentLink;
 using ned::editor::lsp::ExtractSymbols;
 using ned::editor::lsp::ExtractTextDocumentSyncKind;
 using ned::editor::lsp::ExtractWorkspaceFoldersSupport;
+using ned::editor::lsp::ExtractWorkspaceSymbolProvider;
 using ned::editor::lsp::HierarchyCall;
 using ned::editor::lsp::HierarchyItem;
 using ned::editor::lsp::Json;
@@ -53,6 +54,7 @@ using ned::editor::lsp::SemanticTokensLegend;
 using ned::editor::lsp::SymbolEntry;
 using ned::editor::lsp::SymbolKindLabel;
 using ned::editor::lsp::TextDocumentSyncKind;
+using ned::editor::lsp::WorkspaceSymbolProviderInfo;
 
 TEST_CASE("ExtractHoverText handles a bare string contents field", "[Lsp]") {
     const Json result = {{"contents", "hello world"}};
@@ -855,16 +857,53 @@ TEST_CASE("ExtractSymbols parses a flat SymbolInformation[] response using each 
     REQUIRE(entries[0].position.line == 3);
 }
 
-TEST_CASE("ExtractSymbols treats a WorkspaceSymbol with a range-less location as position {0, 0}", "[Lsp]") {
-    const Json result = Json::array({
-        {{"name", "unresolvedSymbol"}, {"kind", 12}, {"location", {{"uri", "file:///b.cpp"}}}},
-    });
+TEST_CASE("ExtractSymbols treats a WorkspaceSymbol with a range-less location as position {0, 0}, hasRange=false",
+          "[Lsp]") {
+    const Json item   = {{"name", "unresolvedSymbol"}, {"kind", 12}, {"location", {{"uri", "file:///b.cpp"}}}};
+    const Json result = Json::array({item});
 
     const std::vector<SymbolEntry> entries = ExtractSymbols(result);
     REQUIRE(entries.size() == 1);
     REQUIRE(entries[0].uri == "file:///b.cpp");
     REQUIRE(entries[0].position.line == 0);
     REQUIRE(entries[0].position.character == 0);
+    REQUIRE_FALSE(entries[0].hasRange);
+    // workspaceSymbol-resolve follow-up: the item verbatim, so
+    // Manager::ResolveWorkspaceSymbol can send it back unchanged.
+    REQUIRE(entries[0].raw == item);
+}
+
+TEST_CASE("ExtractSymbols marks a SymbolInformation with a real range as hasRange=true, raw left null", "[Lsp]") {
+    const Json result = Json::array({
+        {{"name", "resolvedSymbol"},
+         {"kind", 12},
+         {"location",
+          {{"uri", "file:///c.cpp"}, {"range", {{"start", {{"line", 1}, {"character", 2}}}, {"end", {{"line", 1}, {"character", 8}}}}}}}},
+    });
+
+    const std::vector<SymbolEntry> entries = ExtractSymbols(result);
+    REQUIRE(entries.size() == 1);
+    REQUIRE(entries[0].hasRange);
+    REQUIRE(entries[0].raw.is_null());
+}
+
+TEST_CASE("ExtractWorkspaceSymbolProvider handles the boolean, object, and absent forms", "[Lsp]") {
+    // A bare `true` still means "supported, no resolve" -- clangd sends this shape.
+    const Json boolResult = {{"capabilities", {{"workspaceSymbolProvider", true}}}};
+    const auto boolInfo   = ExtractWorkspaceSymbolProvider(boolResult);
+    REQUIRE(boolInfo.has_value());
+    REQUIRE_FALSE(boolInfo->resolveProvider);
+
+    const Json objectResult = {{"capabilities", {{"workspaceSymbolProvider", {{"resolveProvider", true}}}}}};
+    const auto objectInfo   = ExtractWorkspaceSymbolProvider(objectResult);
+    REQUIRE(objectInfo.has_value());
+    REQUIRE(objectInfo->resolveProvider);
+
+    const Json falseResult = {{"capabilities", {{"workspaceSymbolProvider", false}}}};
+    REQUIRE_FALSE(ExtractWorkspaceSymbolProvider(falseResult).has_value());
+
+    const Json absentResult = {{"capabilities", Json::object()}};
+    REQUIRE_FALSE(ExtractWorkspaceSymbolProvider(absentResult).has_value());
 }
 
 TEST_CASE("ExtractSymbols skips a malformed entry and returns empty for a non-array result", "[Lsp]") {

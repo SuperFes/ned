@@ -241,13 +241,28 @@ left behind:
 
 Triaged 2026-09-21 while deciding what belonged in 0.10, so the next pass starts from
 the judgement rather than redoing it: what is left here is *absent*, not broken. The
-file-operation and colour halves of that triage have since shipped; the one pair still
-standing is small and buys latency only, which is what makes it the next thing to pick
-up when there is appetite rather than something needing its own bake time.
+file-operation and colour halves of that triage have since shipped; of the pair
+standing here, the half that was pure latency plumbing has too.
 
-- [ ] `inlayHint/resolve` and `workspaceSymbol/resolve` -- the lazy second half of two
-      kinds ned already pulls eagerly. Both let a server defer the expensive part
-      (a hint's tooltip/command, a symbol's location) until something actually needs it.
+`workspaceSymbol/resolve` shipped 2026-09-23 -- slug for `git log --grep=`:
+`workspace-symbol-resolve`. A WorkspaceSymbol whose location omits a range
+(`SymbolEntry::hasRange=false`) now resolves its real range from
+search-everywhere's own accept path, the one place a stand-in position (top of
+file) actually mattered -- not eagerly per row, which would have defeated the
+"lazy" half of the point. Gated on `workspaceSymbolProviderFor(...)
+->resolveProvider`, `ResolveCompletionItem`'s exact shape and capability-at-
+the-call-site stance.
+
+- [ ] `inlayHint/resolve` is still absent, and turned out to be a different-shaped
+      problem than its sibling above: ned's own `InlayHint` doesn't carry a
+      tooltip/command at all today (a documented v1 scope cut in
+      `ExtractInlayHints`' own comment), and there is no hover-style surface an
+      inlay hint's resolved tooltip would render into -- the mouse-hover popup
+      (`RequestHoverAtOffset`) hit-tests the buffer's own byte offsets, not a
+      virtual-text span, so wiring a hint into it means teaching that path to
+      hit-test `RenderedVirtualText` first. Worth picking up once "show an inlay
+      hint's tooltip on hover" is a wanted feature in its own right, not before --
+      the resolve request buys nothing without it.
 
 *Deliberately skipped -- reasons recorded so these don't get re-opened:*
 

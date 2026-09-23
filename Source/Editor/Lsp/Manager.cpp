@@ -1072,6 +1072,9 @@ Client* Manager::ClientForLanguage(const std::string& serverKey, const std::file
                 if (const auto completionProvider = ExtractCompletionProvider(*result)) {
                     completionProvider_[connectionKey] = *completionProvider;
                 }
+                if (const auto workspaceSymbolProvider = ExtractWorkspaceSymbolProvider(*result)) {
+                    workspaceSymbolProvider_[connectionKey] = *workspaceSymbolProvider;
+                }
                 if (const auto serverCommands = ExtractExecuteCommandProvider(*result)) {
                     executeCommandProvider_[connectionKey] = *serverCommands;
                 }
@@ -1587,6 +1590,7 @@ void Manager::ClientDisconnected(const std::string& serverKey, const std::string
     semanticTokensLegend_.erase(connectionKeyCopy);
     onTypeFormattingTriggers_.erase(connectionKeyCopy);
     completionProvider_.erase(connectionKeyCopy);                 // ditto -- a respawn may declare different triggers, or lose resolveProvider
+    workspaceSymbolProvider_.erase(connectionKeyCopy);            // ditto -- a respawn may lose resolveProvider
     executeCommandProvider_.erase(connectionKeyCopy);             // ditto -- a respawn may advertise a different command set
     textDocumentSyncKind_.erase(connectionKeyCopy);               // ditto -- a respawned server may advertise a different sync kind
     fileOperationFilters_.erase(connectionKeyCopy);               // ditto -- a respawned server may advertise different willRename/didRename filters
@@ -1763,6 +1767,11 @@ std::optional<SemanticTokensLegend> Manager::SemanticTokensLegendFor(const std::
 std::optional<CompletionProviderInfo> Manager::CompletionProviderFor(const std::string& connectionKey) const {
     const auto it = completionProvider_.find(connectionKey);
     return it != completionProvider_.end() ? std::optional(it->second) : std::nullopt;
+}
+
+std::optional<WorkspaceSymbolProviderInfo> Manager::WorkspaceSymbolProviderFor(const std::string& connectionKey) const {
+    const auto it = workspaceSymbolProvider_.find(connectionKey);
+    return it != workspaceSymbolProvider_.end() ? std::optional(it->second) : std::nullopt;
 }
 
 std::vector<std::string> Manager::ServerCommandsFor(const std::string& connectionKey) const {
@@ -5019,7 +5028,8 @@ void Manager::RequestDocumentSymbols(text::Buffer& buffer, SymbolCallback callba
                                                                     .containerName = entry.containerName,
                                                                     .kind          = entry.kind,
                                                                     .path          = *path,
-                                                                    .position      = entry.position});
+                                                                    .position      = entry.position,
+                                                                    .raw           = entry.raw}); // always null here -- a DocumentSymbol never omits range
                                 }
                             }
                             callback(std::move(resolved));
@@ -5059,10 +5069,61 @@ void Manager::RequestWorkspaceSymbols(text::Buffer& buffer, const std::string& q
                                                                     .containerName = entry.containerName,
                                                                     .kind          = entry.kind,
                                                                     .path          = *path,
-                                                                    .position      = entry.position});
+                                                                    .position      = entry.position,
+                                                                    .raw           = entry.raw}); // non-null iff hasRange was false -- see ResolveWorkspaceSymbol
                                 }
                             }
                             callback(std::move(resolved));
+                        });
+}
+
+void Manager::ResolveWorkspaceSymbol(text::Buffer& buffer, const SymbolResult& symbol, ResolveSymbolCallback callback,
+                                       const std::string& serverKey) {
+    if (symbol.raw.is_null()) {
+        callback(std::nullopt); // already had a real range -- nothing to resolve
+        return;
+    }
+    BufferSyncState* state = ResolveSyncState(buffer, serverKey);
+    if (!state || !state->opened) {
+        callback(std::nullopt);
+        return;
+    }
+    Client* client = ExistingClientForLanguage(state->connectionKey);
+    if (!client) {
+        callback(std::nullopt);
+        return;
+    }
+
+    const std::string language = state->connectionKey;
+    client->SendRequest("workspaceSymbol/resolve", symbol.raw,
+                        [this, language, callback = std::move(callback)](std::optional<Json> result, std::optional<Json> error) {
+                            if (error) {
+                                LogError(language, ExtractErrorMessage(*error));
+                                callback(std::nullopt);
+                                return;
+                            }
+                            if (!result) {
+                                callback(std::nullopt);
+                                return;
+                            }
+                            // The response is one WorkspaceSymbol, not an array -- ExtractSymbols'
+                            // own wire shape wrapped in a single-element array to reuse its parsing.
+                            const std::vector<SymbolEntry> entries = ExtractSymbols(Json::array({*result}));
+                            if (entries.empty()) {
+                                callback(std::nullopt); // unparseable/malformed response
+                                return;
+                            }
+                            const SymbolEntry&                          entry = entries.front();
+                            const std::optional<std::filesystem::path> path  = UriToPath(entry.uri);
+                            if (!path) {
+                                callback(std::nullopt);
+                                return;
+                            }
+                            callback(SymbolResult{.name          = entry.name,
+                                                  .containerName = entry.containerName,
+                                                  .kind          = entry.kind,
+                                                  .path          = *path,
+                                                  .position      = entry.position});
                         });
 }
 

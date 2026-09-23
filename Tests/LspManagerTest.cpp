@@ -2325,6 +2325,115 @@ TEST_CASE("Manager::RequestWorkspaceSymbols sends workspace/symbol with the quer
     REQUIRE(got[0].containerName == "ui");
     REQUIRE(got[0].path == resultPath);
     REQUIRE(got[0].position.line == 4);
+    REQUIRE(got[0].raw.is_null()); // this WorkspaceSymbol sent its own range -- nothing to resolve later
+}
+
+TEST_CASE("Manager::RequestWorkspaceSymbols keeps the item's own raw JSON for a range-less WorkspaceSymbol",
+          "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned-lsp-manager-wssymbol-rangeless-test.txt";
+    Buffer&                     buffer = bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("x");
+
+    Client* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    std::vector<Manager::SymbolResult> got;
+    manager.RequestWorkspaceSymbols(buffer, "Wid", [&](std::vector<Manager::SymbolResult> symbols) { got = std::move(symbols); });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const std::string resultUri = "file://" + (std::filesystem::temp_directory_path() / "ned-lsp-manager-wssymbol-rangeless-result.cpp").string();
+    const Json        response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result", Json::array({{{"name", "Widget"}, {"kind", 5}, {"location", {{"uri", resultUri}}}, {"data", {{"symbolId", 7}}}}})},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(got.size() == 1);
+    REQUIRE_FALSE(got[0].raw.is_null());
+    REQUIRE(got[0].raw["data"]["symbolId"] == 7);
+}
+
+TEST_CASE("Manager::ResolveWorkspaceSymbol round-trips the symbol's own raw JSON", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-wssymbol-resolve-test.txt");
+    buffer.InsertAtPoint("x");
+
+    Client* client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SyncBuffer(buffer, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead);
+
+    Manager::SymbolResult symbol;
+    symbol.name = "Widget";
+    symbol.raw  = Json{{"name", "Widget"}, {"location", {{"uri", "file:///widget.cpp"}}}, {"data", {{"symbolId", 42}}}};
+
+    bool                                       invoked = false;
+    std::optional<Manager::SymbolResult> got;
+    manager.ResolveWorkspaceSymbol(buffer, symbol, [&](std::optional<Manager::SymbolResult> resolved) {
+        invoked = true;
+        got     = std::move(resolved);
+    });
+
+    const std::string raw     = ReadRawFrame(server.serverStdinRead);
+    const Json        request = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(request["method"] == "workspaceSymbol/resolve");
+    REQUIRE(request["params"]["data"]["symbolId"] == 42); // the whole item goes back verbatim
+
+    const Json response = {
+        {"jsonrpc", "2.0"},
+        {"id", RequestIdFromFrame(raw)},
+        {"result",
+         {{"name", "Widget"},
+          {"kind", 5},
+          {"location",
+           {{"uri", "file:///widget.cpp"}, {"range", {{"start", {{"line", 9}, {"character", 2}}}, {"end", {{"line", 9}, {"character", 8}}}}}}}}},
+    };
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(invoked);
+    REQUIRE(got.has_value());
+    CHECK(got->path == "/widget.cpp");
+    CHECK(got->position.line == 9);
+    CHECK(got->position.character == 2);
+}
+
+TEST_CASE("Manager::ResolveWorkspaceSymbol answers nullopt for a symbol with no raw JSON", "[Lsp]") {
+    // A symbol whose location already carried a range -- SymbolResult::raw
+    // left null, same convention as CompletionItem's synthesized-item case.
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+    Buffer&            buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-lsp-wssymbol-resolve-noop-test.txt");
+
+    Manager::SymbolResult symbol;
+    symbol.name = "AlreadyResolved";
+
+    bool invoked = false;
+    manager.ResolveWorkspaceSymbol(buffer, symbol, [&](std::optional<Manager::SymbolResult> resolved) {
+        invoked = true;
+        CHECK_FALSE(resolved.has_value());
+    });
+    CHECK(invoked);
+}
+
+TEST_CASE("Manager captures workspaceSymbolProvider from a real initialize response", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+
+    manager.SetWorkspaceSymbolProviderForTesting("test-lang", ned::editor::lsp::WorkspaceSymbolProviderInfo{.resolveProvider = true});
+    const auto info = manager.WorkspaceSymbolProviderFor("test-lang");
+    REQUIRE(info.has_value());
+    REQUIRE(info->resolveProvider);
+    REQUIRE_FALSE(manager.WorkspaceSymbolProviderFor("unknown-lang").has_value());
 }
 
 TEST_CASE("Manager::RequestPrepareCallHierarchy sends textDocument/prepareCallHierarchy and resolves the item's uri "

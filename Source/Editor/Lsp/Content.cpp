@@ -452,8 +452,10 @@ namespace {
             return;
         }
         Position position{}; // value-initialized to {0, 0} -- see this function's own doc comment on WorkspaceSymbol's optional range
+        bool     hasRange = false;
         if (const auto rangeIt = locationIt->find("range"); rangeIt != locationIt->end() && rangeIt->is_object()) {
             position = PositionFromJson(rangeIt->value("start", Json::object()));
+            hasRange = true;
         }
         out.push_back(SymbolEntry{
             .name          = nameIt->get<std::string>(),
@@ -461,6 +463,8 @@ namespace {
             .kind          = item.value("kind", 0),
             .uri           = uriIt->get<std::string>(),
             .position      = position,
+            .hasRange      = hasRange,
+            .raw           = hasRange ? Json() : item, // only an unresolved WorkspaceSymbol needs its verbatim echo kept
         });
     }
 
@@ -897,6 +901,27 @@ std::optional<CompletionProviderInfo> ExtractCompletionProvider(const Json& init
     }
     info.resolveProvider = providerIt->value("resolveProvider", false);
     return info;
+}
+
+std::optional<WorkspaceSymbolProviderInfo> ExtractWorkspaceSymbolProvider(const Json& initializeResult) {
+    if (!initializeResult.is_object()) {
+        return std::nullopt;
+    }
+    const auto capabilitiesIt = initializeResult.find("capabilities");
+    if (capabilitiesIt == initializeResult.end() || !capabilitiesIt->is_object()) {
+        return std::nullopt;
+    }
+    const auto providerIt = capabilitiesIt->find("workspaceSymbolProvider");
+    if (providerIt == capabilitiesIt->end()) {
+        return std::nullopt;
+    }
+    if (providerIt->is_boolean()) {
+        return providerIt->get<bool>() ? std::optional(WorkspaceSymbolProviderInfo{}) : std::nullopt;
+    }
+    if (!providerIt->is_object()) {
+        return std::nullopt;
+    }
+    return WorkspaceSymbolProviderInfo{.resolveProvider = providerIt->value("resolveProvider", false)};
 }
 
 std::optional<std::vector<std::string>> ExtractExecuteCommandProvider(const Json& initializeResult) {

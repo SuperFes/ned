@@ -85,6 +85,14 @@ struct SearchEverywhereCandidate {
     // stay unset for Command/Macro/File/Buffer.
     std::optional<std::size_t>              localByteOffset; // jump within the current buffer
     std::optional<SearchEverywhereLocation> remoteLocation;  // jump to another file
+
+    // workspaceSymbol-resolve follow-up: target's own "opaque routing token,
+    // never interpreted here" convention, just typed for indexing instead of
+    // routing by name. Set only for a Symbol candidate whose remoteLocation
+    // is a stand-in (top of file) a resolve request could still sharpen --
+    // an index into a side table the owner keeps (BufferView's own
+    // searchEverywhereUnresolvedSymbols_).
+    std::optional<std::size_t> remoteSymbolResolveToken;
 };
 
 struct SearchEverywhereResult {

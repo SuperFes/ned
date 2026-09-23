@@ -756,6 +756,13 @@ class Manager {
         int                   kind = 0;
         std::filesystem::path path;
         Position           position;
+        // workspaceSymbol-resolve follow-up: SymbolEntry::raw's exact
+        // carry-through -- null unless this came from a WorkspaceSymbol
+        // whose location omitted a range (position above is then a
+        // stand-in), in which case it's what ResolveWorkspaceSymbol sends
+        // back verbatim. ResolveCompletionItem's "raw null means nothing to
+        // resolve" convention.
+        Json raw;
     };
     using SymbolCallback = std::function<void(std::vector<SymbolResult> symbols)>;
 
@@ -775,6 +782,22 @@ class Manager {
     // doc comment above.
     void RequestWorkspaceSymbols(text::Buffer& buffer, const std::string& query, SymbolCallback callback,
                                  const std::string& serverKey = {});
+
+    // workspaceSymbol-resolve follow-up. Sends workspaceSymbol/resolve with
+    // symbol.raw verbatim -- ResolveCompletionItem's exact shape and
+    // rationale, for the sibling protocol step: a server that deferred a
+    // WorkspaceSymbol's range (SymbolResult.raw non-null) fills it in only
+    // when a caller is actually about to jump there, rather than for every
+    // row a workspace-symbol query lists. nullopt on any failure (buffer
+    // never synced, no running client, an error response, or a symbol
+    // carrying no raw JSON to send back -- one whose range was already
+    // known).
+    //
+    // Callers must gate on WorkspaceSymbolProviderFor(...)->resolveProvider
+    // themselves -- ResolveCompletionItem's own stance, restated there.
+    using ResolveSymbolCallback = std::function<void(std::optional<SymbolResult> resolved)>;
+    void ResolveWorkspaceSymbol(text::Buffer& buffer, const SymbolResult& symbol, ResolveSymbolCallback callback,
+                                const std::string& serverKey = {});
 
     // call/type-hierarchy follow-up. A HierarchyItem (Content.h) with its
     // own uri resolved to a real filesystem path -- SymbolResult's own
@@ -961,6 +984,13 @@ class Manager {
         completionProvider_[std::move(connectionKey)] = std::move(info);
     }
 
+    // workspaceSymbol-resolve follow-up: same test-only injection point as
+    // SetCompletionProviderForTesting just above, for the piece of
+    // `initialize`-response state WorkspaceSymbolProviderFor reads.
+    void SetWorkspaceSymbolProviderForTesting(std::string connectionKey, WorkspaceSymbolProviderInfo info) {
+        workspaceSymbolProvider_[std::move(connectionKey)] = std::move(info);
+    }
+
     // search-everywhere-server-commands follow-up: same test-only injection
     // point as SetCompletionProviderForTesting just above, for the piece of
     // `initialize`-response state ServerCommandsFor reads.
@@ -1113,6 +1143,12 @@ class Manager {
     // completionProvider, which BufferView treats as "keep the pre-existing
     // hardcoded trigger set" rather than "never complete."
     [[nodiscard]] std::optional<CompletionProviderInfo> CompletionProviderFor(const std::string& connectionKey) const;
+
+    // workspaceSymbol-resolve follow-up: same shape and lifetime as
+    // CompletionProviderFor just above, for capabilities.
+    // workspaceSymbolProvider -- gates ResolveWorkspaceSymbol the same way
+    // CompletionProviderInfo::resolveProvider gates ResolveCompletionItem.
+    [[nodiscard]] std::optional<WorkspaceSymbolProviderInfo> WorkspaceSymbolProviderFor(const std::string& connectionKey) const;
 
     // search-everywhere-server-commands follow-up: same shape and lifetime
     // as the accessors above, for capabilities.executeCommandProvider.
@@ -2257,6 +2293,11 @@ class Manager {
     // CompletionProviderFor's own doc comment in the public section for the
     // three things it decides.
     std::unordered_map<std::string, CompletionProviderInfo> completionProvider_;
+
+    // workspaceSymbol-resolve follow-up: same role/lifetime/erasure
+    // convention as completionProvider_ just above -- see
+    // WorkspaceSymbolProviderFor's own doc comment in the public section.
+    std::unordered_map<std::string, WorkspaceSymbolProviderInfo> workspaceSymbolProvider_;
 
     // search-everywhere-server-commands follow-up: same role/lifetime/
     // erasure convention as the caches just above -- see ServerCommandsFor's

@@ -4297,6 +4297,31 @@ void BufferView::CommitSearchEverywhereCandidate(const editor::SearchEverywhereC
                 viewport_.ScrollToShowPoint();
                 statusMessage_.clear();
             }
+            else if (candidate.remoteSymbolResolveToken && lspManager_ &&
+                     *candidate.remoteSymbolResolveToken < searchEverywhereUnresolvedSymbols_.size()) {
+                // workspaceSymbol-resolve follow-up: this row's range was a
+                // stand-in (top of file) -- ask the server for the real one
+                // now that it's actually about to be jumped to, and fall
+                // back to the stand-in on any failure rather than refusing
+                // the jump outright.
+                const editor::SearchEverywhereLocation fallback     = *candidate.remoteLocation;
+                text::Buffer&                          buffer       = activeBuffer_.Get();
+                text::Buffer* const                    bufferPtr    = &buffer;
+                lspManager_->ResolveWorkspaceSymbol(
+                    buffer, searchEverywhereUnresolvedSymbols_[*candidate.remoteSymbolResolveToken],
+                    [this, bufferPtr, fallback](std::optional<editor::lsp::Manager::SymbolResult> resolved) {
+                        if (bufferPtr != &activeBuffer_.Get()) {
+                            return; // buffer switched while the resolve was in flight
+                        }
+                        if (resolved) {
+                            JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.path = resolved->path, .position = resolved->position});
+                        }
+                        else {
+                            JumpToDefinition(editor::lsp::Manager::ResolvedLocation{
+                                .path = fallback.path, .position = {.line = fallback.line, .character = fallback.character}});
+                        }
+                    });
+            }
             else if (candidate.remoteLocation) {
                 JumpToDefinition(editor::lsp::Manager::ResolvedLocation{
                     .path     = candidate.remoteLocation->path,
@@ -4351,6 +4376,13 @@ void BufferView::EraseSearchEverywhereRemoteCandidates(editor::SearchEverywhereK
     std::erase_if(searchEverywhereCandidates_, [kind](const editor::SearchEverywhereCandidate& candidate) {
         return candidate.kind == kind && candidate.remoteLocation.has_value();
     });
+    // workspaceSymbol-resolve follow-up: the side table every surviving
+    // Symbol row's remoteSymbolResolveToken indexes into -- dropped in
+    // lockstep with the rows above so a token from the batch being erased
+    // can never outlive it and point into the next one.
+    if (kind == editor::SearchEverywhereKind::Symbol) {
+        searchEverywhereUnresolvedSymbols_.clear();
+    }
 }
 
 namespace {
@@ -4509,7 +4541,7 @@ void BufferView::RequestSearchEverywhereWorkspaceSymbols() {
 
     lspManager_->RequestWorkspaceSymbols(
         buffer, query,
-        [this, bufferPtr, token](std::vector<editor::lsp::Manager::SymbolResult> symbols) {
+        [this, bufferPtr, token, serverKey](std::vector<editor::lsp::Manager::SymbolResult> symbols) {
             if (searchEverywhereWorkspaceSymbolRequest_.IsStale(token)) {
                 return; // superseded by a newer request
             }
@@ -4517,13 +4549,28 @@ void BufferView::RequestSearchEverywhereWorkspaceSymbols() {
                 return; // session ended, or buffer switched, while this was in flight
             }
             EraseSearchEverywhereRemoteCandidates(editor::SearchEverywhereKind::Symbol);
+            // workspaceSymbol-resolve follow-up: CompletionTriggerCharacters'
+            // own serverKey/connectionKey shape -- resolveProvider is read
+            // once per batch, not per row, since every row in one response
+            // came from the same connection.
+            const std::string languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
+            const bool        canResolveRange =
+                lspManager_->WorkspaceSymbolProviderFor(lspManager_->ConnectionKeyForBuffer(*bufferPtr, languageKey))
+                    .value_or(editor::lsp::WorkspaceSymbolProviderInfo{})
+                    .resolveProvider;
             for (const editor::lsp::Manager::SymbolResult& symbol : symbols) {
+                std::optional<std::size_t> resolveToken;
+                if (canResolveRange && !symbol.raw.is_null()) {
+                    resolveToken = searchEverywhereUnresolvedSymbols_.size();
+                    searchEverywhereUnresolvedSymbols_.push_back(symbol);
+                }
                 searchEverywhereCandidates_.push_back(
                     {.kind   = editor::SearchEverywhereKind::Symbol,
                      .label  = symbol.name,
                      .detail = symbol.containerName.empty() ? symbol.path.filename().string() : symbol.containerName,
                      .remoteLocation =
-                         editor::SearchEverywhereLocation{symbol.path, symbol.position.line, symbol.position.character}});
+                         editor::SearchEverywhereLocation{symbol.path, symbol.position.line, symbol.position.character},
+                     .remoteSymbolResolveToken = resolveToken});
             }
             RefreshSearchEverywhereStatus();
         },

@@ -468,6 +468,16 @@ struct SymbolEntry {
     std::string uri;
     Position position; // jump target: a DocumentSymbol's selectionRange.start, or a SymbolInformation/WorkspaceSymbol's range.start
 
+    // workspaceSymbol-resolve follow-up. false only for a WorkspaceSymbol
+    // whose "location" was {uri} alone (no range) -- position above is then
+    // a stand-in (top of file), not a real jump target, and raw is the item
+    // verbatim so Manager::ResolveWorkspaceSymbol can send it back on
+    // workspaceSymbol/resolve, CompletionItem::raw's exact precedent.
+    // Always true (raw left null) for a DocumentSymbol/SymbolInformation
+    // entry, neither of which ever omit range.
+    bool hasRange = true;
+    Json raw;
+
     bool operator==(const SymbolEntry&) const = default;
 };
 
@@ -490,14 +500,29 @@ struct SymbolEntry {
 //   - 3.17 WorkspaceSymbol[] (same as SymbolInformation, but "location" may
 //     be {uri} alone with no range for a symbol the server hasn't resolved
 //     the precise range for yet) -- treated as position {0, 0} rather than
-//     skipped: the symbol itself is still real and worth listing/jumping to
-//     the top of its file, workspaceSymbol/resolve for the precise range is
-//     a documented v1 cut (this client never sends it).
+//     skipped (hasRange=false, raw kept verbatim): the symbol itself is
+//     still real and worth listing/jumping to the top of its file, and
+//     Manager::ResolveWorkspaceSymbol can ask for the precise range when a
+//     caller is actually about to jump there.
 // An entry missing "name" is skipped, not a parse error. Returned in
 // response order -- document order for documentSymbol, already
 // server-ranked-against-its-query order for workspace/symbol; no
 // client-side re-sorting either way.
 [[nodiscard]] std::vector<SymbolEntry> ExtractSymbols(const Json& result, const std::string& ownUri = {});
+
+// workspaceSymbol-resolve follow-up. `capabilities.workspaceSymbolProvider`
+// from an `initialize` response -- boolean | WorkspaceSymbolOptions per
+// spec, so a bare `true` still means "supported, no resolve" rather than
+// nullopt (ExtractCompletionProvider's own object-only convention doesn't
+// apply here, since the boolean form is common and real -- clangd sends
+// it). nullopt only when the provider is absent or `false`.
+struct WorkspaceSymbolProviderInfo {
+    bool resolveProvider = false; // ...resolveProvider -- whether workspaceSymbol/resolve may be sent at all
+
+    bool operator==(const WorkspaceSymbolProviderInfo&) const = default;
+};
+
+[[nodiscard]] std::optional<WorkspaceSymbolProviderInfo> ExtractWorkspaceSymbolProvider(const Json& initializeResult);
 
 // semantic-tokens/on-type-formatting follow-up. Two pieces of an
 // `initialize` response's `capabilities` this client cannot proceed without

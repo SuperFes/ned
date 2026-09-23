@@ -5157,6 +5157,20 @@ class BufferView : public Widget {
     // reads are memoized per (file, line) and dropped with the session.
     std::map<std::pair<std::filesystem::path, std::size_t>, std::vector<std::string>> searchEverywherePreviewCache_;
 
+    // workspaceSymbol-resolve follow-up: the side table
+    // SearchEverywhereCandidate::remoteSymbolResolveToken indexes into --
+    // one entry per workspace-symbol row whose range came back unresolved
+    // and whose server advertised resolveProvider. Rebuilt alongside the
+    // Symbol-kind remote candidates it belongs to (same lifetime, cleared
+    // together in EraseSearchEverywhereRemoteCandidates), so a token is
+    // never stale across a re-query. Deliberately NOT cleared by
+    // EndInteractiveSession, unlike searchEverywhereCandidates_ itself --
+    // HandleSearchEverywhereKey copies the selected candidate out before
+    // ending the session and then calls CommitSearchEverywhereCandidate,
+    // which for a Symbol row with a token still needs this table to resolve
+    // against.
+    std::vector<editor::lsp::Manager::SymbolResult> searchEverywhereUnresolvedSymbols_;
+
     // search-everywhere-symbols-and-text follow-up: the two async top-up
     // categories, each its own DeadlineTimer/RequestSlot pair --
     // RequestWorkspaceSymbolsForCurrentQuery's own precedent (never shared
