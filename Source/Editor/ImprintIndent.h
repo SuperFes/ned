@@ -38,6 +38,13 @@
 //     a compact YAML mapping inside a sequence item) has its header on that
 //     same row. In an indentation language the body IS the indentation, so a
 //     body indented relative to nothing is not a container.
+//   - A mid-line indentation body anchors its interior to its own COLUMN
+//     rather than contributing a level (`anchorsAtOwnColumn`). The text
+//     before it on its row -- YAML's `- ` marker -- fixes where its first
+//     member sits, so `other` in `- key: v` belongs under `key` wherever
+//     `key` happens to be, which level arithmetic cannot say: a level would
+//     also collapse into the enclosing sequence's own, since the two open on
+//     one row. This is `@aligned`'s rule for a body whose opener is empty.
 //
 // Nothing about alignment: `@aligned`, `@align.barrier` and `@indent.body` stay
 // declared per language, as `Indent.h` says they should.
@@ -79,6 +86,10 @@ struct ImprintContainer {
     std::size_t      endByte   = 0;
     std::string_view type;
     std::size_t      interiorStart = 0;
+    // An indentation body that begins mid-line: its interior aligns to
+    // startByte's own visual column instead of counting as a level. See the
+    // header's own bullet.
+    bool anchorsAtOwnColumn = false;
     // for-loop-header-imprint follow-up: set only when the closer is
     // followed by a real, unrelated trailing field (a for-loop's own body
     // statement) -- nullopt in the overwhelmingly common case where the

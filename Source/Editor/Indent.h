@@ -143,6 +143,12 @@ struct IndentCaptures {
     std::unordered_set<NodeKey, NodeKeyHash>              aligned;    // "aligned"
     std::unordered_set<NodeKey, NodeKeyHash>              body;       // "indent.body"
     std::unordered_set<NodeKey, NodeKeyHash>              barrier;    // "align.barrier"
+    // An indentation body that begins mid-line (Editor/ImprintIndent.h's
+    // anchorsAtOwnColumn): its interior aligns to the container's own visual
+    // column, the same short-circuit "aligned" performs for a container whose
+    // opener has content after it. Imprint-only -- a query says this by
+    // capturing "@aligned", which needs a real opener to align past.
+    std::unordered_set<NodeKey, NodeKeyHash>              columnAnchored;
     std::unordered_set<NodeKey, NodeKeyHash>              suppressed; // "indent.suppress" -- only ever consulted by AddImprintCaptures
     std::vector<Dedent>                                   dedents;    // "dedent"
     // for-loop-header-imprint follow-up: an OPTIONAL cap on a container's own

@@ -1129,6 +1129,39 @@ TEST_CASE("YamlMode indentColumn indents a nested sequence item", "[Indent]") {
     REQUIRE(mode.indentColumn(buffer.Text(), itemStart, itemEnd) == 2); // yaml's own built-in default is width 2 (IndentDefaults.h)
 }
 
+// End to end, over a real buffer rather than a column list: the shape a
+// production hiera file is written in -- sequences of mappings, nested
+// sequences under a key -- must survive a full reindent byte for byte. A
+// sequence item's mapping used to lose the dash's own column here, which
+// silently broke every such file on save.
+TEST_CASE("End to end: IndentBuffer leaves a nested yaml sequence-of-mappings alone", "[Indent]") {
+    const auto        mode   = YamlMode();
+    const std::string source = "plan:\n"
+                               "  - domain_key: xlned\n"
+                               "    rewrites:\n"
+                               "      - src_domain: xlned.example.io\n"
+                               "        src_path: /ipn.php\n"
+                               "        dst_backend: api\n"
+                               "    aliases:\n"
+                               "      - one\n"
+                               "      - two\n";
+    Buffer            buffer("test.yaml");
+    buffer.InsertAtPoint(source);
+
+    IndentBuffer(buffer, mode);
+
+    REQUIRE(buffer.Text() == source);
+}
+
+TEST_CASE("YamlMode indentColumn puts a sequence item's later keys under its first key", "[Indent]") {
+    const auto mode = YamlMode();
+    Buffer     buffer("test.yaml");
+    buffer.InsertAtPoint("plan:\n  - key: v\n    other: w\n");
+
+    const auto [start, end] = LineRange(buffer, 2); // "    other: w"
+    REQUIRE(mode.indentColumn(buffer.Text(), start, end) == 4);
+}
+
 TEST_CASE("YamlMode indentColumn takes a following mapping's level for a comment as the "
           "first line of that mapping, not the parent key's own level",
           "[Indent]") {

@@ -214,6 +214,9 @@ void AddImprintCaptures(IndentCaptures& captures, const grammar::Tree& tree, std
             if (container.interiorEnd) {
                 captures.interiorEnd.emplace(key, *container.interiorEnd);
             }
+            if (container.anchorsAtOwnColumn) {
+                captures.columnAnchored.insert(key);
+            }
         }
     }
     // A suppressed container's closer still dedents: the `}` of a top-level
@@ -290,6 +293,7 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
     const auto isAlignedCaptured    = [&captures, &keyOf](const grammar::Node& node) { return captures.aligned.contains(keyOf(node)); };
     const auto isBodyIndentCaptured = [&captures, &keyOf](const grammar::Node& node) { return captures.body.contains(keyOf(node)); };
     const auto isBarrierCaptured    = [&captures, &keyOf](const grammar::Node& node) { return captures.barrier.contains(keyOf(node)); };
+    const auto isColumnAnchored     = [&captures, &keyOf](const grammar::Node& node) { return captures.columnAnchored.contains(keyOf(node)); };
 
     // Resolves `position` (either a real line's contentStart, or -- for the
     // dedent branch below -- an align target's own StartByte, computing "as
@@ -399,6 +403,16 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
                 // regardless of what (if anything) follows the opener on
                 // its own line.
                 const int column = ContainerOwnColumn(node, bufferText, style.width) + 2;
+                return IndentComputation{IndentComputation::Kind::Column, column + IndentColumnForLevel(level, style)};
+            }
+            // A mid-line indentation body (YAML's `- key: v`): its interior
+            // sits under its own first member wherever the marker before it
+            // put that member, so the answer is a column, not a level. Ahead
+            // of @aligned because this body's opener is empty -- aligning
+            // "past the opener" would land one column inside its own first
+            // member. Barrier-gated for @aligned's own reason.
+            if (isColumnAnchored(node) && !opensAtPosition && !crossedBarrier && interiorContains(node, position)) {
+                const int column = ContainerOwnColumn(node, bufferText, style.width);
                 return IndentComputation{IndentComputation::Kind::Column, column + IndentColumnForLevel(level, style)};
             }
             if (isAlignedCaptured(node) && !opensAtPosition && !crossedBarrier) {

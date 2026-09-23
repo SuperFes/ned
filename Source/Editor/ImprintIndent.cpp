@@ -15,7 +15,7 @@ namespace {
     // Whether an indentation body is indented relative to something -- see
     // the header. Mid-line, the row's earlier content is the header; on its
     // own line, FoldAnchorStart's search for a shallower line above answers.
-    bool HasHeader(const DelimitedBody& body, std::size_t startByte, std::string_view text) {
+    bool BeginsMidLine(std::size_t startByte, std::string_view text) {
         if (startByte == 0 || startByte > text.size()) {
             return false;
         }
@@ -23,6 +23,16 @@ namespace {
             if (text[i - 1] != ' ' && text[i - 1] != '\t') {
                 return true;
             }
+        }
+        return false;
+    }
+
+    bool HasHeader(const DelimitedBody& body, std::size_t startByte, std::string_view text) {
+        if (startByte == 0 || startByte > text.size()) {
+            return false;
+        }
+        if (BeginsMidLine(startByte, text)) {
+            return true;
         }
         return FoldAnchorStart(body, startByte, text) != startByte;
     }
@@ -77,8 +87,9 @@ namespace {
                 }
             }
             else if (!body.openerIsFirst && HasHeader(body, node.StartByte(), text)) {
-                out.containers.push_back(
-                    ImprintContainer{node.StartByte(), node.EndByte(), node.Type(), node.StartByte()});
+                out.containers.push_back(ImprintContainer{node.StartByte(), node.EndByte(), node.Type(),
+                                                          node.StartByte(),
+                                                          BeginsMidLine(node.StartByte(), text)});
             }
         }
     }

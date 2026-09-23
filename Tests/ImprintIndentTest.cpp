@@ -101,6 +101,26 @@ TEST_CASE("A mid-line indentation body has its header on its own row", "[Indent]
     CHECK(ColumnOf(yaml, "- key: v\n  other: w\n", 1) == Width(yaml));
 }
 
+TEST_CASE("A mid-line indentation body anchors its interior to its own column", "[Indent][Imprint]") {
+    // The dash's column decides where the item's mapping begins, so its
+    // later lines belong under that mapping's first key -- not one level
+    // past the sequence, which is where level counting lands (the two open
+    // on one row, and a row is counted once).
+    const Mode yaml = ned::editor::YamlMode();
+    CHECK(ColumnOf(yaml, "plan:\n  - key: v\n    other: w\n", 2) == 4);
+    // Nothing about the marker's own width is a level multiple.
+    CHECK(ColumnOf(yaml, "plan:\n  -   key: v\n      other: w\n", 2) == 6);
+    // A sequence under the anchored mapping still adds its own level, and
+    // the mapping inside THAT item anchors again.
+    const std::string nested = "plan:\n  - key: v\n    nested:\n      - x: 1\n        y: 2\n";
+    CHECK(ColumnOf(yaml, nested, 2) == 4);
+    CHECK(ColumnOf(yaml, nested, 3) == 6);
+    CHECK(ColumnOf(yaml, nested, 4) == 8);
+    // A dash alone on its row leaves the mapping starting its own line --
+    // an ordinary level, unchanged by any of this.
+    CHECK(ColumnOf(yaml, "plan:\n  -\n    key: v\n    other: w\n", 3) == 4);
+}
+
 TEST_CASE("A comment between a header and its body does not hide the header", "[Indent][Imprint][CodeFold]") {
     const Mode        python = ned::editor::PythonMode();
     const std::string text   = "def f():\n"
