@@ -39,7 +39,7 @@ namespace ned::editor::grammar {
 //
 // Throws nothing -- a shape this doesn't understand yields fewer entries
 // rather than an error.
-[[nodiscard]] std::map<std::string, imprint::DelimitedBody> InferDelimitedBodies(const compile::GrammarFile& grammar);
+[[nodiscard]] imprint::ImprintTable InferDelimitedBodies(const compile::GrammarFile& grammar);
 
 } // namespace ned::editor::grammar
 

@@ -67,7 +67,7 @@ json Grammar(const json& rules, const json& externals = json::array()) {
 
 // The crafted cases are written as grammar.json objects; inference reads a
 // GrammarFile, so they go through the same importer a real grammar.json does.
-std::map<std::string, DelimitedBody> InferDelimitedBodies(const json& grammar) {
+ned::editor::imprint::ImprintTable InferDelimitedBodies(const json& grammar) {
     return ned::editor::grammar::InferDelimitedBodies(
         ned::editor::grammar::compile::ParseGrammarJson(nlohmann::ordered_json::parse(grammar.dump())));
 }
@@ -531,11 +531,11 @@ TEST_CASE("Every deleted indent capture's node still indents from the imprint", 
 
 namespace {
 
-bool IsFoldable(const ned::editor::grammar::Node&                              node,
-                const std::map<std::string, ned::editor::imprint::DelimitedBody>& bodies,
-                const ned::editor::imprint::FoldPolicy&                           policy) {
+bool IsFoldable(const ned::editor::grammar::Node&         node,
+                const ned::editor::imprint::ImprintTable& bodies,
+                const ned::editor::imprint::FoldPolicy&   policy) {
     if (node.IsNull()) return false;
-    const auto it = bodies.find(std::string(node.Type()));
+    const auto it = bodies.find(node.Type());
     return it != bodies.end() && ned::editor::imprint::ShouldFold(it->second, policy);
 }
 
@@ -553,10 +553,10 @@ bool IsFoldable(const ned::editor::grammar::Node&                              n
 // and it was wrong in a way worth recording: a Python class body and its own
 // last method's body legitimately share an end byte, so the class body
 // vanished. Containment says nothing; direct parentage does.
-bool HasFoldableBodyChild(const ned::editor::grammar::Node&                              node,
-                          const std::map<std::string, ned::editor::imprint::DelimitedBody>& bodies,
-                          const ned::editor::imprint::FoldPolicy&                           policy,
-                          std::string_view                                                  text) {
+bool HasFoldableBodyChild(const ned::editor::grammar::Node&         node,
+                          const ned::editor::imprint::ImprintTable& bodies,
+                          const ned::editor::imprint::FoldPolicy&   policy,
+                          std::string_view                          text) {
     const auto anchored = [&](const ned::editor::grammar::Node& n) {
         const auto it = bodies.find(std::string(n.Type()));
         return it == bodies.end() ? n.StartByte()
@@ -569,19 +569,19 @@ bool HasFoldableBodyChild(const ned::editor::grammar::Node&                     
         children.push_back(ned::editor::imprint::ChildBody{folds, folds ? anchored(child) : child.StartByte(),
                                                            child.EndByte()});
     }
-    const auto self = bodies.find(std::string(node.Type()));
+    const auto self = bodies.find(node.Type());
     return ned::editor::imprint::SupersededByChildBody(self->second, anchored(node), node.EndByte(),
                                                        children, text);
 }
 
-void CollectFoldable(const ned::editor::grammar::Node&                              node,
-                     const std::map<std::string, ned::editor::imprint::DelimitedBody>& bodies,
-                     const ned::editor::imprint::FoldPolicy&                           policy,
-                     std::string_view                                                  text,
-                     std::vector<std::pair<std::size_t, std::size_t>>&                 out) {
+void CollectFoldable(const ned::editor::grammar::Node&                 node,
+                     const ned::editor::imprint::ImprintTable&         bodies,
+                     const ned::editor::imprint::FoldPolicy&           policy,
+                     std::string_view                                  text,
+                     std::vector<std::pair<std::size_t, std::size_t>>& out) {
     if (node.IsNull()) return;
     if (IsFoldable(node, bodies, policy) && !HasFoldableBodyChild(node, bodies, policy, text)) {
-        const auto it = bodies.find(std::string(node.Type()));
+        const auto it = bodies.find(node.Type());
         out.emplace_back(ned::editor::imprint::FoldAnchorStart(it->second, node.StartByte(), text), node.EndByte());
     }
     for (std::size_t i = 0; i < node.ChildCount(); ++i)

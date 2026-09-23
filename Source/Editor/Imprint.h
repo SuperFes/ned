@@ -40,6 +40,7 @@
 #define NED_EDITOR_IMPRINT_H
 
 #include <cstddef>
+#include <map>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -151,6 +152,14 @@ struct DelimiterPair {
 struct FoldPolicy {
     bool foldArgumentLists = true;
 };
+
+// A language's imprint, keyed by node type name. The comparator is
+// transparent because every lookup is against a node's own type (a
+// string_view into the grammar's static name table), and a plain
+// std::map<std::string, ...> would materialize a std::string -- a heap
+// allocation for any type name past the small-string bound -- per node per
+// walk.
+using ImprintTable = std::map<std::string, DelimitedBody, std::less<>>;
 
 // Whether `body` should be offered as a fold under `policy`. Pure; takes the
 // inferred facts rather than a grammar, so a caller can reuse one imprint

@@ -41,12 +41,9 @@ namespace {
         return std::nullopt;
     }
 
-    void Collect(const grammar::Node& node, const std::map<std::string, DelimitedBody>& table,
-                 std::string_view text, ImprintIndentCaptures& out) {
-        if (node.IsNull()) {
-            return;
-        }
-        if (const auto entry = table.find(std::string(node.Type())); entry != table.end()) {
+    void CollectOne(const grammar::Node& node, const ImprintTable& table, std::string_view text,
+                    ImprintIndentCaptures& out) {
+        if (const auto entry = table.find(node.Type()); entry != table.end()) {
             const DelimitedBody& body = entry->second;
             if (body.kind != DelimiterKind::Indent) {
                 if (const std::optional<DelimiterPair> pair = DelimitersOf(node, body)) {
@@ -84,7 +81,15 @@ namespace {
                     ImprintContainer{node.StartByte(), node.EndByte(), node.Type(), node.StartByte()});
             }
         }
-        node.ForEachChild([&](grammar::Node child) { Collect(child, table, text, out); });
+    }
+
+    // One cursor for the whole subtree, in the same pre-order the recursion
+    // it replaced produced -- see Node::WalkSubtree for why the recursion
+    // itself was the cost.
+    void Collect(const grammar::Node& root, const ImprintTable& table, std::string_view text,
+                 ImprintIndentCaptures& out) {
+        root.WalkSubtree([&](const grammar::Node& node, std::size_t) { CollectOne(node, table, text, out); },
+                         [](const grammar::Node&, std::size_t) {});
     }
 
 } // namespace

@@ -7,6 +7,8 @@
 #include "Editor/ChunkedHighlight.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
+#include "Editor/Grammar/IncrementalParse.h"
+#include "Editor/Grammar/Languages.h"
 #include "Editor/HighlightCache.h"
 #include "Editor/Keymap.h"
 #include "Editor/Mode.h"
@@ -322,4 +324,118 @@ TEST_CASE(". KEYBENCH: per-keystroke cost through the real paint path", "[.][key
     // highlight/parse cost from everything else the frame does.
     mode = ned::editor::Mode{.name = "fundamental-mode"};
     bench("no syntax mode      ");
+}
+
+// The C++ half of the attribution above, which only ever measured markdown.
+// Same question, asked of the language the parse-bound-highlighting roadmap
+// item is actually about: of the milliseconds a keystroke costs in a real
+// source file, how many are the re-parse, and how many are the per-frame
+// queries riding on it.
+TEST_CASE(". KEYBENCH: C++ per-keystroke attribution", "[.][keybench]") {
+    std::ifstream      in("Source/UI/BufferView/Paint.cpp");
+    std::ostringstream content;
+    content << in.rdbuf();
+    const std::string source = content.str();
+    REQUIRE(source.size() > 10000);
+
+    const auto slice = [&](std::size_t lines) {
+        std::size_t count = 0;
+        for (std::size_t i = 0; i < source.size(); ++i) {
+            if (source[i] == '\n' && ++count >= lines) {
+                return source.substr(0, i + 1);
+            }
+        }
+        return source;
+    };
+
+    const auto timeIt = [](const char* label, int iterations, auto&& fn) {
+        fn(0);
+        const auto begin = std::chrono::steady_clock::now();
+        for (int i = 0; i < iterations; ++i) {
+            fn(i + 1);
+        }
+        const auto each =
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin).count() /
+            iterations;
+        WARN("    " << label << ": " << each << " us");
+    };
+
+    for (const std::size_t lines : {500U, 2000U}) {
+        std::string text = slice(lines);
+        WARN("  " << lines << " lines (" << (text.size() / 1024) << " KiB C++)");
+
+        // A viewport-sized window over the middle of the file, the shape
+        // BufferView::VisibleHighlightWindow produces.
+        const std::size_t            mid = text.size() / 2;
+        ned::editor::HighlightWindow window{.startByte = mid > 8192 ? mid - 8192 : 0, .endByte = mid + 8192};
+
+        // The parse alone, through the same IncrementalParseCache every
+        // Mode capability shares -- no query at all.
+        {
+            const auto language = ned::editor::grammar::LanguageByName("cpp");
+            REQUIRE(language.has_value());
+            ned::editor::grammar::Parser                parser{*language};
+            ned::editor::grammar::IncrementalParseCache cache;
+            std::string                                 edited = text;
+            timeIt("incremental re-parse alone", 20, [&](int i) {
+                edited.insert(mid, 1, static_cast<char>('a' + (i % 26)));
+                return cache.Update(parser, edited).IsNull();
+            });
+        }
+
+        ned::editor::Mode mode   = ned::editor::CppMode();
+        std::string       edited = text;
+        timeIt("highlight(window) + its parse", 20, [&](int i) {
+            edited.insert(mid, 1, static_cast<char>('a' + (i % 26)));
+            return mode.highlight(edited, window).size();
+        });
+        timeIt("  then fold            ", 20, [&](int i) {
+            edited.insert(mid, 1, static_cast<char>('a' + (i % 26)));
+            const std::size_t h = mode.highlight(edited, window).size();
+            return h + (mode.fold ? mode.fold(edited).size() : 0U);
+        });
+        timeIt("  then symbolKindInWindow", 20, [&](int i) {
+            edited.insert(mid, 1, static_cast<char>('a' + (i % 26)));
+            const std::size_t h = mode.highlight(edited, window).size();
+            return h + (mode.symbolKindInWindow ? mode.symbolKindInWindow(edited, window).size() : 0U);
+        });
+        timeIt("  then indent(one line) ", 20, [&](int i) {
+            edited.insert(mid, 1, static_cast<char>('a' + (i % 26)));
+            const std::size_t h = mode.highlight(edited, window).size();
+            return h + (mode.indentColumn && mode.indentColumn(edited, mid, mid + 40) ? 1U : 0U);
+        });
+        timeIt("  then localScopes      ", 20, [&](int i) {
+            edited.insert(mid, 1, static_cast<char>('a' + (i % 26)));
+            const std::size_t h = mode.highlight(edited, window).size();
+            return h + (mode.localScopes ? mode.localScopes(edited).size() : 0U);
+        });
+        timeIt("highlight(whole document)", 10, [&](int i) {
+            edited.insert(mid, 1, static_cast<char>('a' + (i % 26)));
+            return mode.highlight(edited, ned::editor::HighlightWindow{}).size();
+        });
+    }
+}
+
+// The whole-document half of a C++ frame, alone: unlike highlight and
+// symbolKind, the fold scan is not viewport-windowed, so it walks the entire
+// tree on every keystroke. Split out from the attribution above because it
+// is the biggest single item left and profiling it wants nothing else in
+// the sample.
+TEST_CASE(". KEYBENCH: C++ fold only", "[.][keybench]") {
+    std::ifstream      in("Source/UI/BufferView/Paint.cpp");
+    std::ostringstream content;
+    content << in.rdbuf();
+    std::string text = content.str().substr(0, 107 * 1024);
+
+    ned::editor::Mode mode = ned::editor::CppMode();
+    const std::size_t mid  = text.size() / 2;
+    mode.fold(text); // warm
+    const auto begin = std::chrono::steady_clock::now();
+    for (int i = 0; i < 100; ++i) {
+        text.insert(mid, 1, static_cast<char>('a' + (i % 26)));
+        mode.fold(text);
+    }
+    WARN("  fold: "
+         << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin).count() / 100
+         << " us");
 }

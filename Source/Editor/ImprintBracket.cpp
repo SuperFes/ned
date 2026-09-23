@@ -26,41 +26,41 @@ namespace {
         return at == std::string_view::npos ? std::nullopt : std::optional<char>(kOpeners[at]);
     }
 
-std::optional<DelimiterPair> PairFor(const grammar::Node& node,
-                                     const std::map<std::string, DelimitedBody>& table) {
-    const auto entry = table.find(std::string(node.Type()));
-    if (entry == table.end()) {
-        return std::nullopt;
+    std::optional<DelimiterPair> PairFor(const grammar::Node& node,
+                                         const ImprintTable&  table) {
+        const auto entry = table.find(node.Type());
+        if (entry == table.end()) {
+            return std::nullopt;
+        }
+        return DelimitersOf(node, entry->second);
     }
-    return DelimitersOf(node, entry->second);
-}
 
 // Deepest-first, so an inner pair wins over the outer one that contains it.
-void Search(const grammar::Node& node, const std::map<std::string, DelimitedBody>& table, std::size_t point,
-            std::optional<DelimiterPair>& onDelimiter, std::optional<DelimiterPair>& adjacent) {
-    if (node.IsNull() || point < node.StartByte() || point > node.EndByte()) {
-        return;
-    }
-    node.ForEachChild([&](grammar::Node child) { Search(child, table, point, onDelimiter, adjacent); });
-    if (onDelimiter.has_value()) {
-        return; // an inner match already won
-    }
+    void Search(const grammar::Node& node, const ImprintTable& table, std::size_t point,
+                std::optional<DelimiterPair>& onDelimiter, std::optional<DelimiterPair>& adjacent) {
+        if (node.IsNull() || point < node.StartByte() || point > node.EndByte()) {
+            return;
+        }
+        node.ForEachChild([&](grammar::Node child) { Search(child, table, point, onDelimiter, adjacent); });
+        if (onDelimiter.has_value()) {
+            return; // an inner match already won
+        }
 
-    const std::optional<DelimiterPair> pair = PairFor(node, table);
-    if (!pair.has_value()) {
-        return;
+        const std::optional<DelimiterPair> pair = PairFor(node, table);
+        if (!pair.has_value()) {
+            return;
+        }
+        const bool onOpen  = point >= pair->openStart && point < pair->openEnd;
+        const bool onClose = point >= pair->closeStart && point < pair->closeEnd;
+        if (onOpen || onClose) {
+            onDelimiter = pair;
+            return;
+        }
+        // Immediately after either delimiter -- the caret-just-past-a-brace case.
+        if (!adjacent.has_value() && (point == pair->openEnd || point == pair->closeEnd)) {
+            adjacent = pair;
+        }
     }
-    const bool onOpen  = point >= pair->openStart && point < pair->openEnd;
-    const bool onClose = point >= pair->closeStart && point < pair->closeEnd;
-    if (onOpen || onClose) {
-        onDelimiter = pair;
-        return;
-    }
-    // Immediately after either delimiter -- the caret-just-past-a-brace case.
-    if (!adjacent.has_value() && (point == pair->openEnd || point == pair->closeEnd)) {
-        adjacent = pair;
-    }
-}
 
 } // namespace
 
@@ -68,6 +68,12 @@ std::optional<DelimiterPair> DelimitersOf(const grammar::Node& node) {
     if (node.IsNull() || node.ChildCount() < 2) {
         return std::nullopt;
     }
+    // Child(i) from the end rather than a ForEachChild pass, deliberately and
+    // measured (2026-09-22): a closer is nearly always the last child and its
+    // opener the first, so this stops after two lookups where a cursor pass
+    // visits every child and costs a fold scan of a 107 KiB C++ file ~25%
+    // more. The "prefer ForEachChild" rule on Node::Child is about loops that
+    // walk ALL children, which this is not.
     for (std::size_t i = node.ChildCount(); i-- > 0;) {
         const grammar::Node close = node.Child(i);
         if (close.IsNull() || close.IsNamed()) {

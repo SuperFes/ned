@@ -25,7 +25,7 @@ namespace ned::editor::imprint {
 // imprint reads nothing out of, or that has no grammar at all. An empty
 // result is a real answer, not an error: it means the caller falls back to
 // whatever it did before, which is the hand-written query.
-[[nodiscard]] const std::map<std::string, DelimitedBody>& TableFor(std::string_view language);
+[[nodiscard]] const ImprintTable& TableFor(std::string_view language);
 
 } // namespace ned::editor::imprint
 

@@ -389,8 +389,8 @@ namespace {
 
 } // namespace
 
-std::map<std::string, imprint::DelimitedBody> InferDelimitedBodies(const compile::GrammarFile& grammar) {
-    std::map<std::string, imprint::DelimitedBody> found;
+imprint::ImprintTable InferDelimitedBodies(const compile::GrammarFile& grammar) {
+    imprint::ImprintTable found;
 
     RuleMap rules;
     for (const auto& [name, rule] : grammar.rules)

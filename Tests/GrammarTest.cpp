@@ -223,6 +223,55 @@ TEST_CASE("QueryMatcher::Captures evaluates #has-parent?/#has-ancestor? -- immed
     REQUIRE(hasAncestorObject.Captures(tree.RootNode(), text).size() == 2);
 }
 
+// The has-ancestor family reads its chain off the path the query walk
+// arrived by rather than from NodeParent, which re-descends from the tree
+// root on every step. These two cases are the ones where that path is not
+// simply "the node the pattern matched": a capture nested below the pattern
+// root, and a walk entered below the tree root (an injected region), whose
+// entry node has ancestors the cursor knows nothing about.
+TEST_CASE("QueryMatcher::Captures answers #has-ancestor? for a capture nested below the pattern root",
+          "[Grammar]") {
+    const Language    language = *LanguageByName("json");
+    Parser            parser(language);
+    const std::string text = R"({"a": [1, 2]})";
+    Tree              tree = parser.Parse(text);
+
+    QueryMatcher nested(language, R"(((pair value: (array (number) @n)) (#has-ancestor? @n object)))");
+    REQUIRE(nested.Captures(tree.RootNode(), text).size() == 2);
+
+    QueryMatcher nestedImmediate(language, R"(((pair value: (array (number) @n)) (#has-parent? @n array)))");
+    REQUIRE(nestedImmediate.Captures(tree.RootNode(), text).size() == 2);
+
+    QueryMatcher notNested(language, R"(((pair value: (array (number) @n)) (#has-ancestor? @n string)))");
+    REQUIRE(notNested.Captures(tree.RootNode(), text).empty());
+}
+
+TEST_CASE("QueryMatcher::Captures answers #has-ancestor? about structure above the node it was entered at",
+          "[Grammar]") {
+    const Language    language = *LanguageByName("json");
+    Parser            parser(language);
+    const std::string text = R"({"a": [1, 2]})";
+    Tree              tree = parser.Parse(text);
+
+    // The array, reached the way an injected region's root is: the object
+    // above it is outside the walk entirely.
+    const Node object = tree.RootNode().Child(0);
+    REQUIRE(object.Type() == "object");
+    const Node array = object.Child(1).ChildByFieldName("value");
+    REQUIRE(array.Type() == "array");
+
+    QueryMatcher aboveEntry(language, "((number) @n (#has-ancestor? @n object))");
+    REQUIRE(aboveEntry.Captures(array, text).size() == 2);
+
+    QueryMatcher rootAboveEntry(language, "((number) @n (#has-ancestor? @n document))");
+    REQUIRE(rootAboveEntry.Captures(array, text).size() == 2);
+
+    // And still answers no for a type that is nowhere in that chain, rather
+    // than treating "outside the walk" as "matches".
+    QueryMatcher notAboveEntry(language, "((number) @n (#has-ancestor? @n string))");
+    REQUIRE(notAboveEntry.Captures(array, text).empty());
+}
+
 TEST_CASE("QueryMatcher::Captures evaluates a variadic #has-parent?/#not-has-parent? as any-of "
           "over its trailing type operands (nvim's own convention, e.g. cpp/highlights.janet:370's "
           "3-operand (#has-parent? @c template_method function_declarator))",

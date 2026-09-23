@@ -53,34 +53,39 @@ them. Compositing design and the measurements behind it: `Docs/Translucency.md`,
 `Tests/KeystrokeBench.cpp` is the instrument for all three — it exists because every CPU
 measurement said "fine" while typing felt bad.
 
-- [ ] **Highlighting is still parse-bound for large non-markdown files.** The windowing
-	above bounds the *query*; the incremental re-parse underneath it is what dominates
-      for C++. The engine is ned's own since Phase 4b, so the re-parse itself is now
-      attackable directly (subtree reuse already ships). `MatchCache` (2026-09-13) shipped
-      the per-subtree fact memoization lever, but deliberately does not cover highlight —
-      `MatchesInRange` windowing already bounds that query, so this remains a re-parse-cost
-      problem with no lever pulled yet. Measured decision on the old double-walk complaint
-      (2026-09-13): `IncrementalParseCache`'s prefix/suffix diff costs about one more
-      linear text pass per keystroke — noise next to the parse — so the edit-driven API
-      was never worth reshaping `Mode`'s capability surface for on its own, and MatchCache
-      landed without it (byte-range reconciliation against `Matches()`'s own output).
-      **Still open (2026-09-13 profiling pass):** re-profiling the real, viewport-windowed
-      keystroke path (not the whole-document diagnostic calls elsewhere in this file, which
-      dominate a naive `perf record` of the whole suite and were mistaken for the real cost
-      on a first pass) confirms the dominant cost is genuinely the incremental re-parse plus
-      `Rope::CodepointAt`/`AppendToString` text-copy overhead, not left-over query work — no
-      change here. One adjacent, actually-fixed bug found along the way: `ImprintFold.cpp`/
-      `ImprintIndent.cpp`/`ImprintBracket.cpp`'s own tree walks called `Node::Child(i)` in a
-      loop, the exact "restarts from the first child every call" shape `QueryMatcher.cpp`'s
-      own 60x cursor-walk fix (2026-09-12) already fixed once, just never carried over to
-      the imprint walkers — fixed via a new `Node::ForEachChild` cursor-based helper
-      (`Editor/Grammar/Node.h`). Confirmed unsafe to apply the same fix to
-      `Parse/Node.cpp`'s `NodeDescendantForByteRangeImpl`, which looks identical but isn't:
-      `TreeCursor` walks only *visible* nodes (transparently descending through hidden
-      wrapper nodes), while that function needs the raw structural children — visible and
-      hidden — with unfiltered byte positions. Tried it anyway; `ParseConformanceTest`'s red-
-      layer-vs-upstream gate caught 20 real "named descendant mismatch" failures across
-      bash/css/fish before it shipped, which is exactly what that gate is for.
+The entry that stood here until 2026-09-22 said the incremental re-parse is what
+dominates a keystroke on a large C++ file. It does not, and the correction is the only
+part worth keeping: timed separately (the C++ attribution case in `Tests/KeystrokeBench.cpp`),
+the re-parse is ~0.36 ms of a ~13 ms keystroke on a 107 KiB file and the per-frame queries
+are all of the rest. The costs that turned out to be real are fixed -- slug for
+`git log --grep=`: `query-walk-ancestry`; windowed highlight 6.9 ms -> 2.8 ms,
+whole-document highlight 50.7 ms -> 14.8 ms, keystroke+repaint on a 9 KiB C++ file
+6.1 ms -> 2.7 ms. Three items left behind.
+
+- [ ] **Fold, locals and indent still walk the whole document per keystroke.** Only
+      highlight and symbolKind are viewport-windowed, so a 107 KiB C++ file pays ~3.0 ms
+      for the fold scan and ~3.4 ms for the locals query on every edit, and indent adds
+      ~5 ms on the Enter path. Windowing them is not the obvious fix it looks like:
+      `GutterModel`'s huge-file path already shows what a truncated fold window costs (a
+      block whose closer falls outside the window folds to the window edge, which is why
+      that path drops any range abutting its own tail). The real question is whether
+      these become incremental -- MatchCache-style reuse keyed on the edit -- rather than
+      windowed. Nothing pulled yet; typing no longer feels bad, which is what would drive
+      it.
+- [ ] **`NodeParent` is still a root-down re-descent for everyone else.** The query walk
+      now hands its predicates the ancestor path it already holds, but any caller without
+      a walk to read from (`Editor/Indent.cpp`'s ancestor loop, `grammar::Node::Parent`)
+      still pays a full descent from the tree root per step, so an ancestor chain costs
+      O(depth^2 * breadth). A cheap fix exists for the chain shape specifically (collect
+      the whole chain in one descent instead of one descent per link); a cheap *parent*
+      is a memo per tree, which is shared mutable state the parse layer does not have
+      today.
+- [ ] One measured non-fix worth not re-trying: rewriting `ImprintBracket`'s
+      `DelimitersOf` `Child(i)` loops as `ForEachChild` cursor passes made a fold scan
+      ~25% *slower* (2952 -> 3714 us). A closer is nearly always a node's last child and
+      its opener the first, so the reverse `Child(i)` scan stops after two lookups where
+      a cursor pass visits every child. `Node::Child`'s "prefer ForEachChild" rule is
+      about loops that walk ALL children; this is not one.
 
 ### Language Intelligence
 

@@ -22,7 +22,7 @@ namespace {
         return std::string(language);
     }
 
-    std::map<std::string, DelimitedBody> Infer(std::string_view language) {
+    ImprintTable Infer(std::string_view language) {
         const std::string grammarName = GrammarNameFor(language);
         if (grammarName.empty())
             return {};
@@ -37,14 +37,14 @@ namespace {
         }
     }
 
-    std::mutex                                                  g_mutex;
-    std::map<std::string, std::map<std::string, DelimitedBody>> g_tables;
+    std::mutex                                       g_mutex;
+    std::map<std::string, ImprintTable, std::less<>> g_tables;
 
 } // namespace
 
-const std::map<std::string, DelimitedBody>& TableFor(std::string_view language) {
+const ImprintTable& TableFor(std::string_view language) {
     const std::lock_guard<std::mutex> lock(g_mutex);
-    if (const auto it = g_tables.find(std::string(language)); it != g_tables.end())
+    if (const auto it = g_tables.find(language); it != g_tables.end())
         return it->second;
     return g_tables.emplace(std::string(language), Infer(language)).first->second;
 }

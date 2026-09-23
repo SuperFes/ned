@@ -21,8 +21,22 @@ namespace {
         return ParsedPredicateName{.baseName = negated ? name.substr(4) : name, .negated = negated};
     }
 
-    bool NodeHasAncestorOfType(parse::RedNode node, std::string_view typeName, bool immediateOnly) {
-        for (parse::RedNode current = parse::NodeParent(node); !parse::NodeIsNull(current); current = parse::NodeParent(current)) {
+    // Over the chain the caller already holds when there is one -- a query
+    // walk knows the path it arrived by. NodeParent otherwise, which
+    // re-descends from the tree root on every single step.
+    bool NodeHasAncestorOfType(const PredicateOperand& operand, std::string_view typeName, bool immediateOnly) {
+        if (!operand.ancestors.empty()) {
+            for (const parse::RedNode ancestor : operand.ancestors) {
+                if (parse::NodeType(ancestor) == typeName) {
+                    return true;
+                }
+                if (immediateOnly) {
+                    return false;
+                }
+            }
+            return false;
+        }
+        for (parse::RedNode current = parse::NodeParent(operand.node); !parse::NodeIsNull(current); current = parse::NodeParent(current)) {
             if (parse::NodeType(current) == typeName) {
                 return true;
             }
@@ -61,6 +75,24 @@ std::string TranslateLuaPatternClasses(std::string pattern) {
     return pattern;
 }
 
+std::optional<std::regex> CompilePredicateRegex(std::string_view pattern) {
+    // "(?i)" is Rust/Lua/PCRE inline-flag syntax, which ECMAScript has no
+    // spelling for -- it is the flag, not a group, so it is lifted out of
+    // the pattern rather than failing to compile.
+    std::string translated = TranslateLuaPatternClasses(std::string(pattern));
+    auto        flags      = std::regex::ECMAScript;
+    for (std::size_t at = translated.find("(?i)"); at != std::string::npos; at = translated.find("(?i)", at)) {
+        translated.erase(at, 4);
+        flags |= std::regex::icase;
+    }
+    try {
+        return std::regex(translated, flags);
+    }
+    catch (const std::regex_error&) {
+        return std::nullopt; // a Lua-only construct std::regex can't parse -- don't block on it
+    }
+}
+
 bool EvaluatePredicateCall(std::string_view name, std::span<const PredicateOperand> operands,
                            std::unordered_map<std::string, std::regex>& regexCache) {
     const auto [baseName, negated] = ParsePredicateName(name);
@@ -82,30 +114,27 @@ bool EvaluatePredicateCall(std::string_view name, std::span<const PredicateOpera
         if (!operands[0].text || !operands[1].text) {
             return true;
         }
-        try {
-            std::string translated = TranslateLuaPatternClasses(std::string(*operands[1].text));
-            auto        cacheIt    = regexCache.find(translated);
+        if (operands[1].regexInvalid) {
+            return true; // precompiled and rejected -- same inert result as failing here
+        }
+        const std::regex* compiled = operands[1].regex;
+        if (compiled == nullptr) {
+            // No precompiled pattern (a capture as the pattern operand, or a
+            // caller that does not precompile): translate and compile here,
+            // keyed by the pattern as written.
+            std::string key     = std::string(*operands[1].text);
+            auto        cacheIt = regexCache.find(key);
             if (cacheIt == regexCache.end()) {
-                // "(?i)" is Rust/Lua/PCRE inline-flag syntax, which ECMAScript
-                // has no spelling for -- it is the flag, not a group, so it is
-                // lifted out of the pattern rather than failing to compile
-                // (the cache key keeps the original spelling, so the same
-                // pattern without the flag is a separate entry).
-                std::string      pattern = translated;
-                auto             flags   = std::regex::ECMAScript;
-                for (std::size_t at = pattern.find("(?i)"); at != std::string::npos; at = pattern.find("(?i)", at)) {
-                    pattern.erase(at, 4);
-                    flags |= std::regex::icase;
+                std::optional<std::regex> built = CompilePredicateRegex(*operands[1].text);
+                if (!built) {
+                    return true;
                 }
-                std::regex compiled(pattern, flags);
-                cacheIt = regexCache.emplace(std::move(translated), std::move(compiled)).first;
+                cacheIt = regexCache.emplace(std::move(key), std::move(*built)).first;
             }
-            const bool matched = std::regex_search(operands[0].text->begin(), operands[0].text->end(), cacheIt->second);
-            return negated ? !matched : matched;
+            compiled = &cacheIt->second;
         }
-        catch (const std::regex_error&) {
-            return true; // a Lua-only pattern construct std::regex can't parse -- don't block on it
-        }
+        const bool matched = std::regex_search(operands[0].text->begin(), operands[0].text->end(), *compiled);
+        return negated ? !matched : matched;
     }
 
     if (baseName == "any-of?") {
@@ -139,7 +168,7 @@ bool EvaluatePredicateCall(std::string_view name, std::span<const PredicateOpera
                 continue;
             }
             sawTypeOperand = true;
-            if (NodeHasAncestorOfType(operands[0].node, *operands[i].text, baseName == "has-parent?")) {
+            if (NodeHasAncestorOfType(operands[0], *operands[i].text, baseName == "has-parent?")) {
                 has = true;
                 break;
             }
@@ -151,6 +180,12 @@ bool EvaluatePredicateCall(std::string_view name, std::span<const PredicateOpera
     }
 
     return true; // unrecognized predicate name (e.g. "set!") -- inert
+}
+
+bool PredicateMatchesRegex(std::string_view name, std::size_t operandCount) {
+    const auto [baseName, negated] = ParsePredicateName(name);
+    (void)negated; // a negated match is the same evaluation, inverted
+    return (baseName == "match?" || baseName == "lua-match?") && operandCount == 2;
 }
 
 bool PredicateReadsOutsideSubtree(std::string_view name, std::size_t operandCount) {

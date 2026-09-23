@@ -48,12 +48,38 @@ struct PredicateOperand {
     std::optional<std::string_view> text;
     parse::RedNode                  node      = parse::NodeNull();
     bool                            isCapture = false;
+
+    // The has-ancestor family only: this operand's own ancestors, nearest
+    // first, when the caller already knows them. NodeParent re-descends
+    // from the tree root on every single step, so a caller that walks the
+    // tree -- which therefore already holds the path it arrived by --
+    // hands it over here instead. Empty means "caller has none", which is
+    // also what a root node's chain looks like; both answer through the
+    // NodeParent walk, which is one step for a root.
+    std::span<const parse::RedNode> ancestors;
+
+    // #match?/#lua-match?'s pattern operand only: the regex that operand's
+    // text compiles to, precompiled once by the caller rather than
+    // translated and hashed on every evaluation. Null asks
+    // EvaluatePredicateCall to compile it itself (cached in regexCache);
+    // `regexInvalid` says the caller tried and it does not compile, the
+    // same inert pass-through a compile failure here produces.
+    const std::regex* regex        = nullptr;
+    bool              regexInvalid = false;
 };
 
 // Lua's %-prefixed character classes translated to the nearest ECMAScript
 // bracket expression -- see Query.cpp's original comment for scope and the
 // deliberate non-translation of everything else.
 [[nodiscard]] std::string TranslateLuaPatternClasses(std::string pattern);
+
+// One #match?/#lua-match? pattern compiled the way EvaluatePredicateCall
+// compiles it -- Lua classes translated, inline "(?i)" lifted to the
+// icase flag. nullopt for a pattern std::regex cannot parse, which the
+// predicate treats as inert rather than as a failed match. Exposed so a
+// caller holding the pattern ahead of time (a compiled query) can do this
+// once per pattern instead of once per evaluation.
+[[nodiscard]] std::optional<std::regex> CompilePredicateRegex(std::string_view pattern);
 
 // Evaluates one "#name? operand..." call. True when the predicate passes
 // AND when it isn't recognized (including #set! and nvim's capture-text
@@ -76,6 +102,14 @@ struct PredicateOperand {
 // same subtree can answer an ancestor query differently across reparses
 // even when the subtree itself is byte-for-byte unchanged.
 [[nodiscard]] bool PredicateReadsOutsideSubtree(std::string_view name, std::size_t operandCount);
+
+// Whether a "#name? operand..." call, AS ACTUALLY EVALUATED, matches its
+// first operand's text against the second one as a regex -- i.e. whether
+// precompiling that second operand with CompilePredicateRegex is what this
+// call will use. Lives here, beside the evaluator, so "which call is a
+// regex call" is answered in one place rather than re-derived by whoever
+// precompiles.
+[[nodiscard]] bool PredicateMatchesRegex(std::string_view name, std::size_t operandCount);
 
 } // namespace ned::editor::grammar
 

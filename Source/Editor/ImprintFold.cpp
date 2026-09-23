@@ -17,13 +17,16 @@ namespace ned::editor::imprint {
 
 namespace {
 
-    void Collect(const grammar::Node& node, const std::map<std::string, DelimitedBody>& table,
-                 const FoldPolicy& policy, std::string_view text,
-                 std::vector<std::pair<std::size_t, std::size_t>>& out) {
-        if (node.IsNull())
-            return;
+    // One node's foldability, which both the node's own decision and its
+    // parent's SupersededByChildBody check need.
+    struct Candidate {
+        const DelimitedBody* body  = nullptr; // null: not a foldable type at all
+        std::size_t          start = 0;       // the anchored start; the node's own otherwise
+    };
 
-        const auto entry = table.find(std::string(node.Type()));
+    Candidate CandidateFor(const grammar::Node& node, const ImprintTable& table, const FoldPolicy& policy,
+                           std::string_view text) {
+        const auto entry = table.find(node.Type());
         // The table answers for the node TYPE; a bracket body still has to
         // carry its brackets in this instance. Kotlin's `function_body` is
         // `{ ... }` OR `= expr`, and a multi-line expression body was being
@@ -32,30 +35,45 @@ namespace {
         // rules out; a keyword body (`if ... fi`) is checked the same way
         // against the pair the table recorded. An indentation body is
         // exempt: its closer is a dedent, which is not a token at all.
-        const bool foldable = entry != table.end() && ShouldFold(entry->second, policy) &&
-                              (entry->second.kind == DelimiterKind::Indent ||
-                               DelimitersOf(node, entry->second).has_value());
-
-        if (foldable) {
-            const std::size_t      start = FoldAnchorStart(entry->second, node.StartByte(), text);
-            std::vector<ChildBody> children;
-            children.reserve(node.ChildCount());
-            node.ForEachChild([&](grammar::Node child) {
-                const auto found = table.find(std::string(child.Type()));
-                const bool childFolds =
-                    found != table.end() && ShouldFold(found->second, policy) &&
-                    (found->second.kind == DelimiterKind::Indent || DelimitersOf(child, found->second).has_value());
-                children.push_back(ChildBody{childFolds,
-                                             childFolds ? FoldAnchorStart(found->second, child.StartByte(), text)
-                                                        : child.StartByte(),
-                                             child.EndByte()});
-            });
-            if (!SupersededByChildBody(entry->second, start, node.EndByte(), children, text)) {
-                out.emplace_back(start, node.EndByte());
-            }
+        if (entry == table.end() || !ShouldFold(entry->second, policy) ||
+            (entry->second.kind != DelimiterKind::Indent && !DelimitersOf(node, entry->second).has_value())) {
+            return Candidate{nullptr, node.StartByte()};
         }
+        return Candidate{&entry->second, FoldAnchorStart(entry->second, node.StartByte(), text)};
+    }
 
-        node.ForEachChild([&](grammar::Node child) { Collect(child, table, policy, text, out); });
+    // One frame per open depth, reused across siblings so a node's child list
+    // keeps its capacity rather than reallocating per foldable node.
+    struct Frame {
+        Candidate              candidate;
+        std::size_t            endByte = 0;
+        std::vector<ChildBody> children;
+    };
+
+    void Collect(const grammar::Node& root, const ImprintTable& table, const FoldPolicy& policy,
+                 std::string_view text, std::vector<std::pair<std::size_t, std::size_t>>& out) {
+        std::vector<Frame> frames;
+        root.WalkSubtree(
+            [&](const grammar::Node& node, std::size_t depth) {
+                if (frames.size() <= depth) {
+                    frames.resize(depth + 1);
+                }
+                Frame& frame    = frames[depth];
+                frame.candidate = CandidateFor(node, table, policy, text);
+                frame.endByte   = node.EndByte();
+                frame.children.clear();
+                if (depth > 0 && frames[depth - 1].candidate.body != nullptr) {
+                    frames[depth - 1].children.push_back(
+                        ChildBody{frame.candidate.body != nullptr, frame.candidate.start, frame.endByte});
+                }
+            },
+            [&](const grammar::Node&, std::size_t depth) {
+                const Frame& frame = frames[depth];
+                if (frame.candidate.body != nullptr &&
+                    !SupersededByChildBody(*frame.candidate.body, frame.candidate.start, frame.endByte, frame.children, text)) {
+                    out.emplace_back(frame.candidate.start, frame.endByte);
+                }
+            });
     }
 
 } // namespace

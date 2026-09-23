@@ -20,9 +20,9 @@
 #define NED_EDITOR_GRAMMAR_NODE_H
 
 #include <cstddef>
-#include <functional>
 #include <string_view>
 
+#include "Editor/Parse/Cursor.h"
 #include "Editor/Parse/Node.h"
 
 namespace ned::editor::grammar {
@@ -65,7 +65,19 @@ class Node {
     // (upstream tree-sitter's own ts_node_child cost), making such a loop
     // quadratic in child count -- the same shape QueryMatcher.cpp's Walk
     // fixed once already (see its comment for the measured cost).
-    void ForEachChild(const std::function<void(Node)>& visitor) const;
+    // Templated for the same reason WalkSubtree is: the visitor is called
+    // once per child, and every caller is known at compile time.
+    template <typename Visitor>
+    void ForEachChild(Visitor&& visit) const {
+        parse::TreeCursor cursor(node_);
+        if (!cursor.GotoFirstChild()) {
+            return;
+        }
+        do {
+            visit(Node(cursor.CurrentNode()));
+        }
+        while (cursor.GotoNextSibling());
+    }
 
     // structural-selection-expansion follow-up. True for a real grammar rule
     // (e.g. "binary_expression"), false for an anonymous/punctuation token
@@ -125,6 +137,44 @@ class Node {
     // that drives the engine's own node/cursor API directly. Not for use
     // outside Source/Editor/Grammar/.
     [[nodiscard]] parse::RedNode Raw() const noexcept;
+
+    // Pre-order over this node's whole subtree through ONE cursor:
+    // `enter(node, depth)` on the way down, `exit(node, depth)` once that
+    // node's children are done (`depth` 0 at this node). The obvious
+    // recursion -- ForEachChild calling itself -- instead builds a fresh
+    // cursor per node, each one a heap allocation and a re-descent from
+    // that node's first child, which is what made the imprint walks
+    // (ImprintFold/ImprintIndent) the dominant per-keystroke cost of a
+    // large file. Templated rather than std::function-taking because every
+    // caller is known here and the visitor is called once per node.
+    template <typename Enter, typename Exit>
+    void WalkSubtree(Enter&& enter, Exit&& exit) const {
+        if (IsNull()) {
+            return;
+        }
+        parse::TreeCursor cursor(node_);
+        std::size_t       depth      = 0;
+        bool              mayDescend = true;
+        enter(*this, depth);
+        for (;;) {
+            if (mayDescend && cursor.GotoFirstChild()) {
+                ++depth;
+                enter(Node(cursor.CurrentNode()), depth);
+                continue;
+            }
+            exit(Node(cursor.CurrentNode()), depth);
+            if (cursor.GotoNextSibling()) {
+                enter(Node(cursor.CurrentNode()), depth);
+                mayDescend = true;
+                continue;
+            }
+            if (!cursor.GotoParent()) {
+                break; // back at this node, whose own exit was just called
+            }
+            --depth;
+            mayDescend = false; // the node below is exhausted; this one's children are done
+        }
+    }
 
     // smart-indentation follow-up: tree-sitter's own stable node identity
     // (TSNode's public `id` field) -- unlike a (startByte, endByte) byte

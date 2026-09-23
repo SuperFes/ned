@@ -84,6 +84,13 @@ namespace {
         std::string                  name;
         std::vector<CompiledOperand> operands;
         int                          line = 0;
+        // #match?/#lua-match? with a literal pattern operand: compiled once
+        // here rather than translated, hashed and looked up on every
+        // evaluation (measured: ~9% of a windowed highlight run).
+        // `regexInvalid` is a pattern std::regex rejects, which makes the
+        // call inert -- the same result evaluating it would reach.
+        std::optional<std::regex> regex;
+        bool                      regexInvalid = false;
     };
 
     struct Pattern {
@@ -161,6 +168,17 @@ struct QueryMatcher::Impl {
     // match, which is the second key of capture emission order (see
     // CollectCaptures).
     mutable std::vector<parse::RedNode> matchedTrail;
+
+    // Root-first path to the node the walk is currently running patterns at,
+    // last element included. The has-ancestor family reads its ancestors off
+    // this instead of NodeParent, which re-descends from the tree root on
+    // every step. Empty outside a walk, which makes those predicates fall
+    // back to NodeParent on their own.
+    mutable std::vector<parse::RedNode> walkPath;
+
+    // Scratch, reused across predicate evaluations.
+    mutable std::vector<PredicateOperand> operandScratch;
+    mutable std::vector<parse::RedNode>   ancestorScratch;
 
     // ------------------------------------------------------------------
     // Compilation.
@@ -628,6 +646,17 @@ struct QueryMatcher::Impl {
         }
 
         for (Pattern& pattern : patterns) {
+            for (CompiledPredicate& predicate : pattern.predicates) {
+                if (!PredicateMatchesRegex(predicate.name, predicate.operands.size()) ||
+                    predicate.operands[1].isCapture) {
+                    continue; // a capture as the pattern is only known per match
+                }
+                predicate.regex        = CompilePredicateRegex(predicate.operands[1].text);
+                predicate.regexInvalid = !predicate.regex.has_value();
+            }
+        }
+
+        for (Pattern& pattern : patterns) {
             for (const CompiledPredicate& predicate : pattern.predicates) {
                 if (PredicateReadsOutsideSubtree(predicate.name, predicate.operands.size())) {
                     pattern.readsOutsideSubtree = true;
@@ -1007,6 +1036,39 @@ struct QueryMatcher::Impl {
         return field;
     }
 
+    // `node`'s ancestors, nearest first, from the path the walk arrived by.
+    // Left empty when there is no walk in progress or `node` is not inside
+    // the walked node after all -- both make the evaluator derive the chain
+    // from NodeParent itself.
+    void AncestorChain(parse::RedNode node, std::vector<parse::RedNode>& out) const {
+        out.clear();
+        if (walkPath.empty()) {
+            return;
+        }
+        const parse::RedNode walked = walkPath.back();
+        const bool           deeper = !parse::NodeEq(node, walked);
+        if (deeper) {
+            // A capture can sit anywhere inside the subtree its pattern
+            // matched; only that part of the chain is not already on the
+            // path. Same descent NodeParent does, rooted at the walked node
+            // rather than at the tree root.
+            for (parse::RedNode current = walked;;) {
+                const parse::RedNode child = parse::NodeChildWithDescendant(current, node);
+                if (parse::NodeIsNull(child) || child.id == current.id) {
+                    out.clear();
+                    return;
+                }
+                if (child.id == node.id) {
+                    break;
+                }
+                out.push_back(child);
+                current = child;
+            }
+            std::reverse(out.begin(), out.end());
+        }
+        out.insert(out.end(), deeper ? walkPath.rbegin() : walkPath.rbegin() + 1, walkPath.rend());
+    }
+
     template <typename Sink>
     void RunAtNode(parse::RedNode node, parse::abi::FieldId nodeField, Sink& sink) const {
         std::vector<Binding> bindings;
@@ -1082,24 +1144,39 @@ struct QueryMatcher::Impl {
             return;
         }
         // The entry node's own field comes from a one-time parent scan --
-        // the cursor only knows fields below its construction point.
+        // the cursor only knows fields below its construction point. Its
+        // ancestors are seeded the same way and for the same reason: an
+        // entry node that is not the tree root (an injected region) has a
+        // chain above it the cursor knows nothing about, and a truncated
+        // chain would answer has-ancestor? with a wrong "no".
+        walkPath.clear();
+        for (parse::RedNode above = parse::NodeParent(node); !parse::NodeIsNull(above); above = parse::NodeParent(above)) {
+            walkPath.push_back(above);
+        }
+        std::reverse(walkPath.begin(), walkPath.end());
+        walkPath.push_back(node);
+
         RunAtNode(node, FieldOfNode(node), sink);
         parse::TreeCursor cursor(node);
         bool              mayDescend = true;
         for (;;) {
             if (mayDescend && cursor.GotoFirstChild()) {
+                walkPath.push_back(cursor.CurrentNode());
                 mayDescend = VisitCurrent(cursor, startByte, endByte, sink);
                 continue;
             }
             if (cursor.GotoNextSibling()) {
-                mayDescend = VisitCurrent(cursor, startByte, endByte, sink);
+                walkPath.back() = cursor.CurrentNode();
+                mayDescend      = VisitCurrent(cursor, startByte, endByte, sink);
                 continue;
             }
             if (!cursor.GotoParent()) {
                 break; // back at the entry node: done
             }
+            walkPath.pop_back();
             mayDescend = false; // the parent's subtree below is exhausted; advance
         }
+        walkPath.clear();
     }
 
     // ------------------------------------------------------------------
@@ -1129,7 +1206,8 @@ struct QueryMatcher::Impl {
 
     bool EvaluatePatternPredicates(std::size_t patternIndex, const std::vector<Binding>& bindings) const {
         for (const CompiledPredicate& predicate : patterns[patternIndex].predicates) {
-            std::vector<PredicateOperand> operands;
+            std::vector<PredicateOperand>& operands = operandScratch;
+            operands.clear();
             operands.reserve(predicate.operands.size());
             for (const CompiledOperand& compiled : predicate.operands) {
                 PredicateOperand operand;
@@ -1142,6 +1220,17 @@ struct QueryMatcher::Impl {
                     operand.text = compiled.text;
                 }
                 operands.push_back(operand);
+            }
+            if (predicate.regex.has_value() || predicate.regexInvalid) {
+                // Set only for a #match?/#lua-match? with a literal pattern,
+                // which is always its trailing operand of exactly two.
+                operands.back().regex        = predicate.regex ? &*predicate.regex : nullptr;
+                operands.back().regexInvalid = predicate.regexInvalid;
+            }
+            if (PredicateReadsOutsideSubtree(predicate.name, predicate.operands.size()) && !operands.empty() &&
+                !parse::NodeIsNull(operands.front().node)) {
+                AncestorChain(operands.front().node, ancestorScratch);
+                operands.front().ancestors = ancestorScratch;
             }
             if (!EvaluatePredicateCall(predicate.name, operands, regexCache)) {
                 return false;
