@@ -6010,6 +6010,31 @@ TEST_CASE("RequestCloseBuffer closing the active buffer switches to another rema
     REQUIRE(&activeBuffer.Get() == &other);
 }
 
+// The switch away from a closing buffer has to happen while that buffer is
+// still alive: ActiveBuffer::Set reads the outgoing buffer (it commits its
+// unseen-content frontier), so reassigning after BufferList::Close has
+// already destroyed it is a use-after-free -- one an optimized build cannot
+// see at all. This pins the ORDER rather than waiting for a sanitizer run to
+// notice the read.
+TEST_CASE("RequestCloseBuffer switches away before the closing buffer is destroyed", "[BufferView]") {
+    Fixture               fixture;
+    ned::text::Buffer&    scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::text::Buffer&    other   = fixture.bufferList.CreateBuffer("other");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    bool switchedWhileAlive = false;
+    activeBuffer.SetOnChange([&](ned::text::Buffer&) {
+        switchedWhileAlive = (fixture.bufferList.Find("scratch") != nullptr);
+    });
+
+    view.RequestCloseBuffer(scratch);
+
+    CHECK(switchedWhileAlive);
+    CHECK(&activeBuffer.Get() == &other);
+}
+
 TEST_CASE("RequestCloseBuffer closing the only remaining buffer replaces it with a fresh scratch buffer",
           "[BufferView]") {
     Fixture               fixture;

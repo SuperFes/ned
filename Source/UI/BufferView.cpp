@@ -1869,16 +1869,23 @@ void BufferView::CloseBufferNow(text::Buffer& buffer) {
     // Window-splitting follow-up: fired before the actual erase, while
     // `buffer` is still genuinely alive -- so a multi-pane owner can
     // retarget any *other* pane whose own ActiveBuffer also pointed at it.
-    // This BufferView's own activeBuffer_ is already handled below,
-    // independently of this hook.
+    // This BufferView's own activeBuffer_ is handled just below, before the
+    // erase for the same reason.
     if (onBufferClosed_) {
         onBufferClosed_(buffer);
     }
 
-    bufferList_.Close(name);
+    // Before the erase, not after: switching away reads the outgoing buffer
+    // (ActiveBuffer::Set commits its unseen-content frontier), so doing it
+    // once bufferList_.Close has destroyed `buffer` is a use-after-free --
+    // ASan-confirmed across eleven tests, and invisible in an optimized
+    // build. Every OTHER pane is already retargeted while the buffer is
+    // alive (WindowManager::ReassignPanesShowing, via the hook above); this
+    // is the one pane that was not.
     if (wasActive && replacement != nullptr) {
         activeBuffer_.Set(*replacement);
     }
+    bufferList_.Close(name);
     statusMessage_.clear();
 }
 
