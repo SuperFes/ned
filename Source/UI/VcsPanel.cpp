@@ -3,8 +3,6 @@
 
 #include <algorithm>
 #include <exception>
-#include <fstream>
-#include <iterator>
 #include <map>
 #include <unordered_map>
 #include <utility>
@@ -12,9 +10,9 @@
 #include "Border.h"
 #include "Editor/Key.h"
 #include "Editor/Project/Root.h"
+#include "Editor/Vcs/ConflictedFiles.h"
 #include "KeyTranslation.h"
 #include "Text/BinaryDetect.h"
-#include "Text/ThreeWayMerge.h"
 #include "Text/Utf8.h"
 
 namespace ned::ui {
@@ -220,6 +218,7 @@ namespace {
     // classification underneath (Editor/Vcs/RowStatus.h) is shared.
     std::optional<Color> VcsStatusColor(editor::vcs::RowStatus status, const Theme& theme) {
         switch (status) {
+            case editor::vcs::RowStatus::Conflicted:
             case editor::vcs::RowStatus::Deleted:
                 return theme.diagnosticError;
             case editor::vcs::RowStatus::Modified:
@@ -376,26 +375,7 @@ void VcsPanel::RefreshStatus(bool force) {
 }
 
 void VcsPanel::RefreshConflictedPaths() {
-    conflictedPaths_.clear();
-    const std::filesystem::path root = editor::ProjectRoot();
-    const auto                  scan = [&](const std::vector<editor::vcs::StatusEntry>& entries) {
-        for (const editor::vcs::StatusEntry& entry : entries) {
-            if (!editor::vcs::IsUnmergedStatus(entry.state)) {
-                continue;
-            }
-            const std::filesystem::path absPath = (root / entry.path).lexically_normal();
-            std::ifstream               file(absPath, std::ios::binary);
-            if (!file) {
-                continue;
-            }
-            const std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-            if (text::HasConflictMarkers(content)) {
-                conflictedPaths_.insert(absPath);
-            }
-        }
-    };
-    scan(sections_.staged);
-    scan(sections_.unstaged);
+    conflictedPaths_ = editor::vcs::DetectConflictedFiles(sections_, editor::ProjectRoot());
 }
 
 std::vector<VcsPanel::Row> VcsPanel::BuildRows() const {
@@ -944,21 +924,17 @@ void VcsPanel::OpenFileEntry(const std::filesystem::path& path) {
         activeBufferProvider_().Set(opened);
         statusMessage_.clear();
         if (conflictedPaths_.contains(path.lexically_normal())) {
-            // Conflict-file affordance: jump to the first real conflict
-            // marker rather than leaving point at the top -- a small local
-            // scan (line-start "<<<<<<<" only, not mid-line text that
-            // happens to contain it), no new shared infrastructure.
-            const std::string content = opened.Text();
-            std::size_t       pos     = content.find("<<<<<<<");
-            while (pos != std::string::npos && pos != 0 && content[pos - 1] != '\n') {
-                pos = content.find("<<<<<<<", pos + 1);
-            }
-            if (pos != std::string::npos) {
-                opened.SetPoint(pos);
-                // Merge Conflict Resolution Mode: a nudge toward the new
-                // chords, not a y/n prompt -- there's no mode to "enter"
-                // (resolution is just ordinary commands over ordinary
-                // buffer text), so nothing needs confirming.
+            // Conflict-file affordance: jump to the first real hunk rather
+            // than leaving point at the top. This panel already knows the
+            // path is conflicted (conflictedPaths_, refreshed alongside
+            // sections_) synchronously, before the `git status` round trip
+            // BufferView::RequestConflictVerdictForCurrentBuffer's own
+            // generic version of this same nudge waits on -- kept as its own
+            // copy for that immediacy, sharing the actual hunk lookup
+            // (Editor/ConflictResolution.h's NextConflictHunkStart) rather
+            // than re-deriving it with a hand-rolled marker scan.
+            if (const std::optional<std::size_t> firstHunk = editor::NextConflictHunkStart(opened, 0)) {
+                opened.SetPoint(*firstHunk);
                 statusMessage_ = "merge conflict -- C-c x n/p to navigate, o/t/b/d/k to resolve";
             }
         }

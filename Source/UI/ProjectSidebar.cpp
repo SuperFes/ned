@@ -8,12 +8,14 @@
 #include <exception>
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <system_error>
 
 #include "Border.h"
 #include "Editor/Key.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Tree.h"
+#include "Editor/Vcs/ConflictedFiles.h"
 #include "KeyTranslation.h"
 #include "Text/BinaryDetect.h"
 #include "Text/Utf8.h"
@@ -156,9 +158,18 @@ namespace {
                 it->second = status;
             }
         };
+        // Real conflicts (VCS-unmerged AND still carrying on-disk markers --
+        // see Editor/Vcs/ConflictedFiles.h's own header comment for why both
+        // halves matter) upgrade a path past whatever ClassifyPorcelainStatus
+        // alone would say, so a conflicted file -- and every ancestor
+        // directory down to root, via the same merge() rollup every other
+        // status already gets -- reads as the tree's most urgent state.
+        const std::set<std::filesystem::path> conflicted =
+            editor::vcs::DetectConflictedFiles(editor::vcs::PartitionVcsStatus(entries), root);
         for (const editor::vcs::StatusEntry& entry : entries) {
-            const RowStatus          status   = editor::vcs::ClassifyPorcelainStatus(entry.state);
             const std::filesystem::path filePath = (root / entry.path).lexically_normal();
+            const RowStatus              status  = conflicted.contains(filePath) ? RowStatus::Conflicted
+                                                                                  : editor::vcs::ClassifyPorcelainStatus(entry.state);
             merge(filePath, status);
 
             std::filesystem::path dir = filePath.parent_path();
@@ -188,6 +199,7 @@ namespace {
     // Untracked is the one new addition, since nothing existing covers it.
     [[nodiscard]] std::optional<Color> VcsStatusColor(RowStatus status, const Theme& theme) {
         switch (status) {
+            case RowStatus::Conflicted:
             case RowStatus::Deleted:
                 return theme.diagnosticError;
             case RowStatus::Modified:

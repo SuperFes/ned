@@ -2986,6 +2986,14 @@ class BufferView : public Widget {
     // Unknown: the status key is shared with VcsPanel's own poll, so a
     // collision is an expected, transient "ask again next tick", not news.
     void RequestConflictVerdictForCurrentBuffer();
+    // The actual state-apply behind RequestConflictVerdictForCurrentBuffer's
+    // completion, factored out so DispatchConflictVerdictForTesting can drive
+    // it too (see that method's own doc comment on why the real fetch isn't
+    // itself unit-testable). Pushes `verdict` into the gutter model and, on a
+    // transition into Conflicted, jumps `buffer`'s point to its first hunk
+    // and nudges the status line -- see its own definition for the fuller
+    // reasoning on why the transition is what's gated, not the verdict alone.
+    void ApplyConflictVerdict(text::Buffer* buffer, bufferview::GutterModel::VcsConflictVerdict verdict);
 
     // Parallel to BuildResultsBuffer, just a different per-line text shape:
     // "<path>:<1-indexed line>: <hash> <author> <date> | <source line

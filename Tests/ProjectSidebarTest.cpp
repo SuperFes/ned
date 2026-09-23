@@ -993,6 +993,52 @@ TEST_CASE("changed-files-highlight: rows are tinted by VCS status, directories b
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("changed-files-highlight: a real merge conflict outranks every other status, up through its ancestors",
+          "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_vcs_conflict";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "sub");
+    {
+        // Real markers on disk -- Editor/Vcs/ConflictedFiles.h's own on-disk
+        // check is what tells this apart from a merely-unmerged path already
+        // hand-resolved but not yet staged.
+        std::ofstream(dir / "sub" / "clash.txt") << "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n";
+    }
+    {
+        std::ofstream(dir / "sub" / "other.txt") << "x"; // plain Modified, less severe
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 8);
+
+    sidebar.OnEvent(MousePress(0, 1)); // expand "sub/"
+    sidebar.DispatchVcsStatusForTesting({
+        {"UU", "sub/clash.txt"},
+        {" M", "sub/other.txt"},
+    });
+
+    ned::ui::Screen screen = ned::ui::Screen(28, 8);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 7});
+    sidebar.Paint(canvas);
+
+    // Visible rows in order: sub/ (row1), clash.txt (row2), other.txt (row3).
+    REQUIRE(RowText(screen, 1, 28).find("sub/") != std::string::npos);
+    REQUIRE(RowText(screen, 2, 28).find("clash.txt") != std::string::npos);
+    REQUIRE(RowText(screen, 3, 28).find("other.txt") != std::string::npos);
+
+    REQUIRE(screen.PixelAt(1, 2).foreground_color == theme.diagnosticError);       // clash.txt: real conflict
+    REQUIRE(screen.PixelAt(1, 3).foreground_color == theme.vcsModifiedForeground); // other.txt: plain Modified
+    REQUIRE(screen.PixelAt(1, 1).foreground_color == theme.diagnosticError);       // sub/: conflict outranks Modified
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("A right-press on a file entry reports its path/isDirectory and the click's absolute position, without opening it",
           "[ProjectSidebar]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_context_menu_file";

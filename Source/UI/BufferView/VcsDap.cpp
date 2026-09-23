@@ -192,7 +192,44 @@ void BufferView::RequestDiffForCurrentBuffer() {
 }
 
 void BufferView::DispatchConflictVerdictForTesting(bufferview::GutterModel::VcsConflictVerdict verdict) {
-    gutters_.SetVcsConflictVerdict(&activeBuffer_.Get(), verdict);
+    ApplyConflictVerdict(&activeBuffer_.Get(), verdict);
+}
+
+// auto-conflict-resolution-nudge: the actual state-apply, shared between the
+// real async path below and DispatchConflictVerdictForTesting above -- same
+// "one function applies the result, exercised through a testing seam since
+// the real fetch needs a live EventLoop" split RequestDiffForCurrentBuffer's
+// own DispatchDiffForTesting already established.
+//
+// `buffer` must already be the active buffer -- callers check that before
+// this runs (RequestConflictVerdictForCurrentBuffer's own stale-completion
+// guard; DispatchConflictVerdictForTesting only ever targets it).
+void BufferView::ApplyConflictVerdict(text::Buffer* buffer, bufferview::GutterModel::VcsConflictVerdict verdict) {
+    const bufferview::GutterModel::VcsConflictVerdict previous = gutters_.VcsConflictVerdictFor(buffer);
+    gutters_.SetVcsConflictVerdict(buffer, verdict);
+
+    // This is the one place that ever learns "this buffer just became
+    // unmerged" -- reached both when a file becomes the active buffer
+    // (Paint()'s diffSyncBuffer_ check, covering open/switch-to) and when the
+    // file watcher's external-change sweep re-polls status after a `git
+    // merge`/`pull` rewrites the file underneath an already-open buffer
+    // (WindowManager::SweepExternalChanges -> RefreshVcsDiffGutters). Gated
+    // on the transition, not the verdict alone, so re-polling on the
+    // debounce timer while the user is mid-resolution never yanks point back
+    // to the top of the file.
+    if (verdict != bufferview::GutterModel::VcsConflictVerdict::Conflicted ||
+        previous == bufferview::GutterModel::VcsConflictVerdict::Conflicted) {
+        return;
+    }
+    const std::optional<std::size_t> firstHunk = editor::NextConflictHunkStart(*buffer, 0);
+    if (!firstHunk) {
+        return;
+    }
+    buffer->SetPoint(*firstHunk);
+    if (buffer == &activeBuffer_.Get()) {
+        viewport_.ScrollToShowPoint();
+    }
+    statusMessage_ = "merge conflict -- C-c x n/p to navigate, o/t/b/d/k to resolve";
 }
 
 namespace {
@@ -240,9 +277,8 @@ void BufferView::RequestConflictVerdictForCurrentBuffer() {
             // we did receive is a real "no conflict here" -- an unmodified
             // tracked file whose committed content contains marker text
             // (documentation, a test fixture) is exactly that case.
-            gutters_.SetVcsConflictVerdict(buffer, unmerged
-                                                       ? bufferview::GutterModel::VcsConflictVerdict::Conflicted
-                                                       : bufferview::GutterModel::VcsConflictVerdict::Clean);
+            ApplyConflictVerdict(buffer, unmerged ? bufferview::GutterModel::VcsConflictVerdict::Conflicted
+                                                   : bufferview::GutterModel::VcsConflictVerdict::Clean);
         },
         [](const std::string&) {}); // silent, previous verdict stands -- see this method's own declaration
 }

@@ -235,3 +235,52 @@ TEST_CASE("A verdict arriving after the hunks were derived still takes effect",
     PaintInto(view, third);
     CHECK(PaintedRow(third, 0).find("[ours]") != std::string::npos);
 }
+
+// auto-conflict-resolution-nudge: a buffer becoming active/getting reported
+// unmerged while already open should jump point to the first hunk and nudge
+// the status line, exactly like opening a known-conflicted file from the VCS
+// panel already did -- see ApplyConflictVerdict's own doc comment. Verdicts
+// arrive on the same DispatchConflictVerdictForTesting seam the chip tests
+// above use, since the real `git status` round trip needs a live EventLoop.
+
+TEST_CASE("A newly-Conflicted verdict jumps point to the first hunk and nudges the status line",
+          "[BufferView][ConflictResolution]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("before\n<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\n");
+    fixture.buffer.SetPoint(0);
+    BufferView view = fixture.View();
+
+    view.DispatchConflictVerdictForTesting(ned::ui::bufferview::GutterModel::VcsConflictVerdict::Conflicted);
+
+    CHECK(fixture.buffer.Point() == std::string("before\n").size()); // the "<<<<<<<" byte, not 0
+    CHECK(fixture.statusMessage == "merge conflict -- C-c x n/p to navigate, o/t/b/d/k to resolve");
+}
+
+TEST_CASE("Re-affirming an already-Conflicted verdict does not re-jump point",
+          "[BufferView][ConflictResolution]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("before\n<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\n");
+    fixture.buffer.SetPoint(0);
+    BufferView view = fixture.View();
+
+    view.DispatchConflictVerdictForTesting(ned::ui::bufferview::GutterModel::VcsConflictVerdict::Conflicted);
+    REQUIRE(fixture.buffer.Point() != 0); // the initial jump happened
+
+    fixture.buffer.SetPoint(3); // simulate the user having moved point mid-resolution
+    fixture.statusMessage.clear();
+
+    // A debounce re-poll while nothing changed must never yank point back --
+    // this is the whole point of gating on the Unknown/Clean -> Conflicted
+    // transition rather than on the verdict alone.
+    view.DispatchConflictVerdictForTesting(ned::ui::bufferview::GutterModel::VcsConflictVerdict::Conflicted);
+    CHECK(fixture.buffer.Point() == 3);
+    CHECK(fixture.statusMessage.empty());
+
+    // ...but a real transition (an external merge finishing cleanly, then a
+    // *new* conflict arising later) still jumps again.
+    view.DispatchConflictVerdictForTesting(ned::ui::bufferview::GutterModel::VcsConflictVerdict::Clean);
+    fixture.buffer.SetPoint(3);
+    view.DispatchConflictVerdictForTesting(ned::ui::bufferview::GutterModel::VcsConflictVerdict::Conflicted);
+    CHECK(fixture.buffer.Point() == std::string("before\n").size());
+    CHECK(fixture.statusMessage == "merge conflict -- C-c x n/p to navigate, o/t/b/d/k to resolve");
+}
