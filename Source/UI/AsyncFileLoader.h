@@ -22,6 +22,7 @@
 #define NED_UI_ASYNCFILELOADER_H
 
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
@@ -39,7 +40,17 @@ class AsyncFileLoader {
     // already be IsLoading(). bufferList and eventLoop must outlive this
     // loader -- both are process-lifetime objects owned by main.cpp, same
     // assumption Manager/Client already make about EventLoop.
-    AsyncFileLoader(text::Buffer& placeholder, text::BufferList& bufferList, std::filesystem::path path, EventLoop& eventLoop);
+    //
+    // onBufferClosing runs on the main thread with the placeholder still
+    // alive, immediately before a failed load retires it -- every pane
+    // showing that placeholder has to be pointed somewhere else first, or
+    // closing it leaves their ActiveBuffer dangling (see
+    // WindowManager::NotifyBufferClosing, which is what this is wired to).
+    // A ctor parameter rather than a Set* hook because the background
+    // thread starts here: there is no register-then-connect window.
+    // Unset is a safe no-op for a loader nobody needs to notify (tests).
+    AsyncFileLoader(text::Buffer& placeholder, text::BufferList& bufferList, std::filesystem::path path, EventLoop& eventLoop,
+                    std::function<void(text::Buffer&)> onBufferClosing = {});
     ~AsyncFileLoader();
 
     AsyncFileLoader(const AsyncFileLoader&)            = delete;
@@ -57,7 +68,14 @@ class AsyncFileLoader {
   private:
     void Run(std::stop_token stopToken, std::filesystem::path path, EventLoop& eventLoop);
 
-    text::BufferList& bufferList_;
+    // Main thread only, from a posted callback: retires the placeholder a
+    // failed load never filled in, and marks this loader finished. A
+    // placeholder already closed by hand mid-load is simply gone by now,
+    // which is the same safe no-op every other posted callback here makes.
+    void DiscardPlaceholder();
+
+    text::BufferList&                  bufferList_;
+    std::function<void(text::Buffer&)> onBufferClosing_;
     std::string       bufferName_; // captured once, before the thread starts -- see this file's own header comment
     bool              done_ = false;
 

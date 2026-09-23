@@ -35,6 +35,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -58,8 +59,13 @@ class HugeFileLoader {
     // when set, this loader skips the CR/CRLF-refusal scan entirely (see
     // Run()'s own comment), matching the already-shipped FromHugeFile fix
     // this feature builds on.
+    //
+    // onBufferClosing carries the same contract as AsyncFileLoader's -- see
+    // its own doc comment: it runs with the placeholder still alive, just
+    // before a failed load retires it, so no pane is left pointing at a
+    // freed Buffer.
     HugeFileLoader(text::Buffer& placeholder, text::BufferList& bufferList, std::filesystem::path path, bool allowBinary,
-                   EventLoop& eventLoop);
+                   EventLoop& eventLoop, std::function<void(text::Buffer&)> onBufferClosing = {});
     ~HugeFileLoader();
 
     HugeFileLoader(const HugeFileLoader&)            = delete;
@@ -75,7 +81,12 @@ class HugeFileLoader {
   private:
     void Run(std::stop_token stopToken, std::filesystem::path path, bool allowBinary, EventLoop& eventLoop);
 
-    text::BufferList& bufferList_;
+    // Main thread only, from a posted callback -- AsyncFileLoader::
+    // DiscardPlaceholder's own contract, for the same reason.
+    void DiscardPlaceholder();
+
+    text::BufferList&                  bufferList_;
+    std::function<void(text::Buffer&)> onBufferClosing_;
     std::string       bufferName_; // captured once, before the thread starts -- see this file's own header comment
     bool              done_ = false;
 

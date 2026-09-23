@@ -20,7 +20,7 @@ namespace {
 } // namespace
 
 HugeFileLoader::HugeFileLoader(text::Buffer& placeholder, text::BufferList& bufferList, std::filesystem::path path,
-                               bool allowBinary, EventLoop& eventLoop) : bufferList_(bufferList), bufferName_(placeholder.Name()) {
+                               bool allowBinary, EventLoop& eventLoop, std::function<void(text::Buffer&)> onBufferClosing) : bufferList_(bufferList), onBufferClosing_(std::move(onBufferClosing)), bufferName_(placeholder.Name()) {
     std::error_code sizeEc;
     if (const std::uintmax_t size = std::filesystem::file_size(path, sizeEc); !sizeEc) {
         progress_->totalBytes = size;
@@ -42,6 +42,16 @@ bool HugeFileLoader::Done() const {
     return done_;
 }
 
+void HugeFileLoader::DiscardPlaceholder() {
+    if (text::Buffer* placeholder = bufferList_.Find(bufferName_)) {
+        if (onBufferClosing_) {
+            onBufferClosing_(*placeholder);
+        }
+        bufferList_.Close(bufferName_);
+    }
+    done_ = true;
+}
+
 void HugeFileLoader::Run(std::stop_token stopToken, std::filesystem::path path, bool allowBinary, EventLoop& eventLoop) {
     std::shared_ptr<const text::MappedFile> mappedFile;
     try {
@@ -53,10 +63,7 @@ void HugeFileLoader::Run(std::stop_token stopToken, std::filesystem::path path, 
         // vanishingly small window between buffer creation and this mmap
         // open failing is the same accepted edge case AsyncFileLoader's own
         // ifstream-open failure already has).
-        eventLoop.Post([this] {
-            bufferList_.Close(bufferName_);
-            done_ = true;
-        });
+        eventLoop.Post([this] { DiscardPlaceholder(); });
         return;
     }
 

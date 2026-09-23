@@ -56,6 +56,7 @@ add_executable(ned_tests
             AsyncSaveDispatchTest.cpp
             ProgressBarTest.cpp
             ApplicationExitTest.cpp
+            AsyncFileLoaderTest.cpp
             AsyncFileSaverTest.cpp
             StorageSnapshotTest.cpp
             WhitespaceHygieneTest.cpp

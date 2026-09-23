@@ -1744,7 +1744,8 @@ void WindowManager::RestoreWindowLayout(const editor::ProjectSessionData& data) 
 void WindowManager::EnableAsyncFileLoading(EventLoop& eventLoop) {
     bufferList_.SetAsyncFileOpener([this, &eventLoop](text::Buffer& placeholder, const std::filesystem::path& path) {
         PurgeFinishedAsyncLoaders();
-        asyncFileLoaders_.push_back(std::make_unique<AsyncFileLoader>(placeholder, bufferList_, path, eventLoop));
+        asyncFileLoaders_.push_back(std::make_unique<AsyncFileLoader>(
+            placeholder, bufferList_, path, eventLoop, [this](text::Buffer& closing) { NotifyBufferClosing(closing); }));
     });
 }
 
@@ -1756,7 +1757,9 @@ void WindowManager::EnableAsyncHugeFileLoading(EventLoop& eventLoop) {
     bufferList_.SetAsyncHugeFileOpener(
         [this, &eventLoop](text::Buffer& placeholder, const std::filesystem::path& path, bool allowBinary) {
             PurgeFinishedHugeFileLoaders();
-            hugeFileLoaders_.push_back(std::make_unique<HugeFileLoader>(placeholder, bufferList_, path, allowBinary, eventLoop));
+            hugeFileLoaders_.push_back(
+                std::make_unique<HugeFileLoader>(placeholder, bufferList_, path, allowBinary, eventLoop,
+                                                 [this](text::Buffer& closing) { NotifyBufferClosing(closing); }));
         });
 }
 

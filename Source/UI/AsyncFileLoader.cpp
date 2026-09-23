@@ -17,7 +17,7 @@ namespace {
 } // namespace
 
 AsyncFileLoader::AsyncFileLoader(text::Buffer& placeholder, text::BufferList& bufferList, std::filesystem::path path,
-                                 EventLoop& eventLoop) : bufferList_(bufferList), bufferName_(placeholder.Name()) {
+                                 EventLoop& eventLoop, std::function<void(text::Buffer&)> onBufferClosing) : bufferList_(bufferList), onBufferClosing_(std::move(onBufferClosing)), bufferName_(placeholder.Name()) {
     // totalBytes written before thread_ starts, per LoadProgress's contract
     // -- a failed size query just leaves 0, which ModeLine treats as
     // "unknown, show no percentage" rather than an error.
@@ -41,13 +41,20 @@ bool AsyncFileLoader::Done() const {
     return done_;
 }
 
+void AsyncFileLoader::DiscardPlaceholder() {
+    if (text::Buffer* placeholder = bufferList_.Find(bufferName_)) {
+        if (onBufferClosing_) {
+            onBufferClosing_(*placeholder);
+        }
+        bufferList_.Close(bufferName_);
+    }
+    done_ = true;
+}
+
 void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path, EventLoop& eventLoop) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
-        eventLoop.Post([this] {
-            bufferList_.Close(bufferName_);
-            done_ = true;
-        });
+        eventLoop.Post([this] { DiscardPlaceholder(); });
         return;
     }
 
@@ -73,10 +80,7 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
         }
 
         if (file.bad()) {
-            eventLoop.Post([this] {
-                bufferList_.Close(bufferName_);
-                done_ = true;
-            });
+            eventLoop.Post([this] { DiscardPlaceholder(); });
             return;
         }
 
