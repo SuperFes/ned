@@ -361,6 +361,56 @@
   (def parts (string/split "\t" (string/trim stdout)))
   {:ahead (scan-number (get parts 0 "0")) :behind (scan-number (get parts 1 "0"))})
 
+## --- in-progress rebase/merge/cherry-pick/revert --------------------------
+##
+## git has no porcelain for "what am I in the middle of", so the probe just
+## asks for the git dir (a worktree's own, where these files actually live)
+## and the parse half inspects the state files git itself leaves there.
+## Rebase is checked first: a conflicting pick inside a rebase can leave
+## sequencer files that would otherwise read as a plain cherry-pick.
+
+(defn sequence-state-argv [root]
+  ["git" "-C" root "rev-parse" "--absolute-git-dir"])
+
+(defn- read-count [path]
+  (def text (try (slurp path) ([_] nil)))
+  (or (and text (scan-number (string/trim text))) 0))
+
+(defn- exists? [path]
+  (not (nil? (os/stat path))))
+
+(defn parse-sequence-state [stdout]
+  (def dir (string/trim stdout))
+  (cond
+    (exists? (string dir "/rebase-merge"))
+    {:kind "rebase"
+     :step (read-count (string dir "/rebase-merge/msgnum"))
+     :total (read-count (string dir "/rebase-merge/end"))}
+
+    (exists? (string dir "/rebase-apply"))
+    {:kind (if (exists? (string dir "/rebase-apply/applying")) "am" "rebase")
+     :step (read-count (string dir "/rebase-apply/next"))
+     :total (read-count (string dir "/rebase-apply/last"))}
+
+    (exists? (string dir "/MERGE_HEAD")) {:kind "merge"}
+    (exists? (string dir "/CHERRY_PICK_HEAD")) {:kind "cherry-pick"}
+    (exists? (string dir "/REVERT_HEAD")) {:kind "revert"}
+    nil))
+
+# core.editor=true accepts whatever message git prepared (the original
+# commit's, or merge's own default) instead of blocking on an editor no one
+# can see.
+(defn sequence-continue-argv [root kind]
+  ["git" "-C" root "-c" "core.editor=true" kind "--continue"])
+
+(defn sequence-abort-argv [root kind]
+  ["git" "-C" root kind "--abort"])
+
+(defn sequence-skip-argv [root kind]
+  (when (= kind "merge")
+    (error "a merge has no skip -- resolve and continue, or abort"))
+  ["git" "-C" root kind "--skip"])
+
 (ned/vcs-register-provider "git"
   {:detect detect
    :blame-argv blame-argv
@@ -398,4 +448,9 @@
    :pull-argv pull-argv
    :fetch-argv fetch-argv
    :ahead-behind-argv ahead-behind-argv
-   :parse-ahead-behind parse-ahead-behind})
+   :parse-ahead-behind parse-ahead-behind
+   :sequence-state-argv sequence-state-argv
+   :parse-sequence-state parse-sequence-state
+   :sequence-continue-argv sequence-continue-argv
+   :sequence-abort-argv sequence-abort-argv
+   :sequence-skip-argv sequence-skip-argv})

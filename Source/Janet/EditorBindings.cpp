@@ -91,6 +91,7 @@
 #include "Editor/ToolchainIncludePaths.h"
 #include "Editor/TrimOnSave.h"
 #include "Editor/Vcs/ProviderRegistry.h"
+#include "Editor/Vcs/Sequence.h"
 #include "Editor/WhichKeySettings.h"
 #include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapIndent.h"
@@ -1565,6 +1566,14 @@ namespace {
         return editor::AutoHeaderGuardEnabled();
     }
 
+    void NedSetVcsSequenceAutoStage(bool enabled) {
+        editor::vcs::SetSequenceAutoStage(enabled);
+    }
+
+    bool NedVcsSequenceAutoStageEnabled() {
+        return editor::vcs::SequenceAutoStageEnabled();
+    }
+
     void NedSetFormatBlankMinBefore(std::string captureName, Janet value) {
         editor::SetBlankMinBefore(captureName, JanetToOptionalInt(value));
     }
@@ -1785,6 +1794,12 @@ void InstallEditorBindings(Environment& env) {
         "skeleton. Default off.");
     env.Register<&NedAutoHeaderGuardEnabled>("ned", "auto-header-guard-enabled",
                                              "Whether ned/set-auto-header-guard is currently on.");
+    env.Register<&NedSetVcsSequenceAutoStage>(
+        "ned", "set-vcs-sequence-auto-stage",
+        "Whether vcs-sequence-continue stages unmerged files that no longer contain conflict markers before "
+        "continuing a rebase/merge/cherry-pick. Default off: continue refuses and lists them instead.");
+    env.Register<&NedVcsSequenceAutoStageEnabled>("ned", "vcs-sequence-auto-stage-enabled",
+                                                  "Whether ned/set-vcs-sequence-auto-stage is currently on.");
     env.Register<&NedSetFormatBlankMinBefore>(
         "ned", "set-format-blank-min-before",
         "Override the minimum blank lines required immediately before the given capture name -- an integer, nil "
@@ -2720,8 +2735,11 @@ void InstallEditorBindings(Environment& env) {
         "path; success is exit code 0, no parse half), :staged-diff-argv (the index-vs-comparison-point diff, for "
         "selecting a hunk to unstage), :stage-patch-argv/:unstage-patch-argv (take root and a patch file's path, "
         "applying it to the staging area forward/reverse), :commit-argv (takes root and the commit message), "
-        ":branch-list-argv/:parse-branch-list (:name :current per branch), and :branch-switch-argv/"
-        ":branch-create-argv (take root and the branch name). An operation whose callbacks are absent reports "
+        ":branch-list-argv/:parse-branch-list (:name :current per branch), :branch-switch-argv/"
+        ":branch-create-argv (take root and the branch name), :sequence-state-argv/:parse-sequence-state (one "
+        "table of :kind :step :total for an in-progress rebase/merge/cherry-pick, or nil when none is), and "
+        ":sequence-continue-argv/:sequence-abort-argv/:sequence-skip-argv (take root and that :kind). An operation "
+        "whose callbacks are absent reports "
         "'not supported by this provider' when invoked. The actual subprocess is run by ned itself, never by the "
         "plugin -- these callbacks only build argv and parse already-captured output. Re-registering name replaces "
         "the previous provider.");

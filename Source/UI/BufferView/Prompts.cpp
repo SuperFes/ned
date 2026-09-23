@@ -858,6 +858,10 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             inputMode_     = InputMode::ConfirmRevertHunk;
             statusMessage_ = "Discard this hunk's uncommitted change? This cannot be undone. (y/n)";
             return;
+        case editor::InteractiveRequest::ConfirmVcsSequenceAbort:
+            inputMode_     = InputMode::ConfirmVcsSequenceAbort;
+            statusMessage_ = "Abort the in-progress rebase/merge/cherry-pick, discarding its resolutions? (y/n)";
+            return;
         case editor::InteractiveRequest::ConfirmHugeFormat:
             inputMode_     = InputMode::ConfirmHugeFormat;
             statusMessage_ = activeBuffer_.Get().Name() +
@@ -1484,6 +1488,12 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::VcsRewordCommit:
             BeginVcsCommitMessage(VcsCommitMode::Reword);
+            return;
+        case editor::InteractiveRequest::VcsSequenceContinue:
+            RunVcsSequenceStep(VcsSequenceStep::Continue);
+            return;
+        case editor::InteractiveRequest::VcsSequenceSkip:
+            RunVcsSequenceStep(VcsSequenceStep::Skip);
             return;
         case editor::InteractiveRequest::CommitFinish:
             FinishVcsCommitMessage();

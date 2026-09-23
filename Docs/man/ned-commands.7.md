@@ -1270,6 +1270,18 @@ for the live keymap stack.
 
 :   Reword the previous commit's message, leaving its tree exactly as-is -- opens a *vcs commit message* buffer pre-filled with its message.
 
+`vcs-sequence-abort` (`C-c x A`)
+
+:   Abort the in-progress rebase/merge/cherry-pick, restoring the state before it began.
+
+`vcs-sequence-continue` (`C-c x c`)
+
+:   Continue the in-progress rebase/merge/cherry-pick once every conflict is resolved and saved.
+
+`vcs-sequence-skip` (`C-c x s`)
+
+:   Skip the commit the in-progress rebase/cherry-pick stopped on.
+
 `vcs-show-blame` (`C-c v b`)
 
 :   Show per-line commit attribution for the current file, inline in the gutter.

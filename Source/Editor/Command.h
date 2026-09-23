@@ -274,6 +274,9 @@ enum class InteractiveRequest { None,
                                 // from the working tree -- same shape as ConfirmOverwriteSave,
                                 // "y" runs BufferView's own RevertHunkAtPoint.
                                 ConfirmRevertHunk,
+                                // vcs-sequence-abort: y/n before throwing away the whole
+                                // in-progress rebase/merge/cherry-pick.
+                                ConfirmVcsSequenceAbort,
                                 // Window-splitting follow-up: structural window-management
                                 // actions, not single-buffer interactive sessions -- BufferView
                                 // just forwards these to whatever registered
@@ -757,6 +760,10 @@ enum class InteractiveRequest { None,
                                 // VcsCommitAmend, but commits via `commit --amend --only` on
                                 // CommitFinish, which never re-stages anything.
                                 VcsRewordCommit,
+                                // In-progress rebase/merge/cherry-pick: continue after
+                                // resolving, or skip the commit that stopped it.
+                                VcsSequenceContinue,
+                                VcsSequenceSkip,
                                 CommitFinish,
                                 VcsCommitAbort,
                                 VcsBranches,

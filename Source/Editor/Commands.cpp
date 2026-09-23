@@ -3903,6 +3903,20 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // M-x only, like vcs-blame-buffer -- vcs-switch-branch's own prompt
     // already Tab-completes against the real branch list, so the buffer
     // view is the "look around" companion, not the primary path.
+    registry.Register("vcs-sequence-continue",
+                      "Continue the in-progress rebase/merge/cherry-pick once every conflict is resolved and saved.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsSequenceContinue;
+                      });
+    registry.Register("vcs-sequence-skip", "Skip the commit the in-progress rebase/cherry-pick stopped on.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::VcsSequenceSkip;
+                      });
+    registry.Register("vcs-sequence-abort",
+                      "Abort the in-progress rebase/merge/cherry-pick, restoring the state before it began.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::ConfirmVcsSequenceAbort;
+                      });
     registry.Register("vcs-branches", "List branches in a *vcs branches* buffer.",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::VcsBranches;
@@ -4970,6 +4984,11 @@ Keymap BuildDefaultGlobalKeymap() {
     // already use for a prefix.
     keymap.Bind(ParseKeySequence("C-c x O"), "merge-take-all-ours");
     keymap.Bind(ParseKeySequence("C-c x T"), "merge-take-all-theirs");
+    // Driving the operation that produced the conflicts; abort is shifted
+    // since it throws the whole sequence away.
+    keymap.Bind(ParseKeySequence("C-c x c"), "vcs-sequence-continue");
+    keymap.Bind(ParseKeySequence("C-c x s"), "vcs-sequence-skip");
+    keymap.Bind(ParseKeySequence("C-c x A"), "vcs-sequence-abort");
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");
     keymap.Bind(ParseKeySequence("C-c C-p"), "toggle-project-sidebar");
     // sidebar-keyboard-focus follow-up: the non-control second key beside

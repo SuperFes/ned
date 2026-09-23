@@ -284,6 +284,7 @@ add_executable(ned_tests
             DiffPatchTest.cpp
             VcsRunnerTest.cpp
             VcsRowStatusTest.cpp
+            VcsSequenceTest.cpp
             BackgroundActivityTest.cpp
             AcpTransportTest.cpp
             AcpClientTest.cpp

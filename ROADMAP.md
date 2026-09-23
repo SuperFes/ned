@@ -477,9 +477,9 @@ commands, never a replacement for them.
 - [ ] A real visual side-by-side 3-way merge/diff view. `AutoMerge` auto-resolves the
       common case and drops real `<<<<<<<`/`=======`/`>>>>>>>` conflict markers into the
       buffer for a genuine divergence, but a real conflict is still hand-edited text,
-      not a visual diff — see "Merge Conflict Resolution Mode" below, which scopes a
-      chord/mouse-driven *resolution* workflow over these same markers without needing
-      this visual diff first.
+      not a visual diff — the `C-c x` resolution chords, chips and
+      `vcs-sequence-continue/-skip/-abort` already cover resolving over these same markers
+      without it.
 
 ### Editor Ergonomics
 
@@ -696,24 +696,6 @@ commands, never a replacement for them.
       matches the existing middle-click-paste precedent rather than `yank`'s
       `ForEachCursor`-based per-cursor splitting. Revisit if multi-cursor editing and
       real terminal paste turn out to be used together often enough to matter.
-
-### Merge Conflict Resolution Mode (New Feature)
-
-- [ ] With no VCS answer at all — no provider resolves for the project root, the buffer
-      has no path, the `git status` is still in flight or failed — the chrome falls back
-      to the marker-text reading it always had. Deliberate, and the direction the
-      three-valued verdict exists to get right: a conflict that is briefly invisible is a
-      worse failure than a doc file that briefly shows chips. The cost is that a custom
-      provider whose status output cannot express "unmerged" never suppresses anything.
-- [ ] The explicit commands (`C-c x n/p/o/t/b/d/k`) are deliberately **not** gated on the
-      verdict — they parse the buffer themselves (`Editor/ConflictResolution.h`), so they
-      still resolve a file the VCS has no opinion about. Only the automatic chrome defers.
-      Worth revisiting only if "the chips are gone but C-c x o worked" reads as a bug
-      rather than as the split it is.
-- [ ] Out of scope for v1: rebase/cherry-pick conflict *sequences* (resolve, `git rebase
-      --continue`, repeat) — the hunk-resolution primitive above is what such a sequence
-      would be built on later, but driving the sequence itself needs its own `VcsRunner`
-      plumbing (`RequestRebaseContinue`/abort/skip) not touched here.
 
 ### Jupyter Notebooks
 
@@ -1402,6 +1384,15 @@ these accumulate detail in place.
       migration -- the store keeps `{line, character}` rather than byte offsets
       precisely so that stays possible. Justified when the flag starts showing up often
       enough to be noise rather than information.
+- [ ] **Merge-conflict chrome with no VCS verdict.** Two deliberate splits, each with
+      the symptom that would reopen it. With no VCS answer at all (no provider for the
+      root, a pathless buffer, `git status` in flight or failed) the conflict chrome falls
+      back to reading marker text: a briefly invisible conflict is worse than a doc file
+      briefly showing chips, but a custom provider whose status can't express "unmerged"
+      never suppresses anything -- revisit if such a provider shows up. And the explicit
+      `C-c x` commands are never gated on the verdict (they parse the buffer themselves,
+      `Editor/ConflictResolution.h`), so they resolve files the VCS has no opinion about
+      -- revisit if "the chips are gone but `C-c x o` worked" reads as a bug.
 - [ ] **ned in Carbon, eventually.** Speculative and deliberately unscoped, but worth
       remembering: ned is C++23 throughout, and Carbon's entire pitch is C++ interop as a
       migration path for large existing C++ codebases — which describes this one. Carbon is

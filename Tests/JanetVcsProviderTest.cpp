@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <string>
+#include <vector>
 
 #include "Editor/Vcs/ProviderRegistry.h"
 #include "Janet/EditorBindings.h"
@@ -252,4 +254,46 @@ TEST_CASE("ned/vcs-register-provider rejects a callbacks argument without :detec
       (ned/vcs-register-provider "not-a-table" 42)
     )"));
     REQUIRE(ned::editor::vcs::ActiveProviderFor("/anything") == nullptr);
+}
+
+TEST_CASE("ned/vcs-register-provider marshals the sequence vocabulary", "[JanetVcsProvider]") {
+    RegistryResetGuard guard;
+    Environment&       env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    env.DoString(R"(
+      (ned/vcs-register-provider "sequence"
+        {:detect (fn [root] true)
+         :sequence-state-argv (fn [root] ["fake-vcs" "state" root])
+         :parse-sequence-state (fn [stdout]
+                                 (case stdout
+                                   "none" nil
+                                   "sparse" {:kind "merge"}
+                                   {:kind "rebase" :step 2 :total 5}))
+         :sequence-continue-argv (fn [root kind] ["fake-vcs" kind "--continue"])
+         :sequence-abort-argv (fn [root kind] ["fake-vcs" kind "--abort"])
+         :sequence-skip-argv (fn [root kind] (error "no skip"))})
+    )");
+
+    auto* provider = ned::editor::vcs::ActiveProviderFor("/repo");
+    REQUIRE(provider != nullptr);
+
+    REQUIRE(provider->SequenceStateArgv("/repo").argv == std::vector<std::string>{"fake-vcs", "state", "/repo"});
+
+    const auto rebase = provider->ParseSequenceState("x");
+    REQUIRE(rebase.kind == "rebase");
+    REQUIRE(rebase.step == 2);
+    REQUIRE(rebase.total == 5);
+
+    REQUIRE(provider->ParseSequenceState("none").kind.empty());
+
+    const auto merge = provider->ParseSequenceState("sparse");
+    REQUIRE(merge.kind == "merge");
+    REQUIRE(merge.total == 0);
+
+    REQUIRE(provider->SequenceContinueArgv("/repo", "rebase").argv ==
+            std::vector<std::string>{"fake-vcs", "rebase", "--continue"});
+    REQUIRE(provider->SequenceAbortArgv("/repo", "rebase").argv ==
+            std::vector<std::string>{"fake-vcs", "rebase", "--abort"});
+    REQUIRE_THROWS_WITH(provider->SequenceSkipArgv("/repo", "merge"), Catch::Matchers::ContainsSubstring("no skip"));
 }

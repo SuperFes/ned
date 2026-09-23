@@ -1,10 +1,8 @@
 #include "ConflictedFiles.h"
 
-#include <fstream>
-#include <iterator>
 #include <vector>
 
-#include "Text/ThreeWayMerge.h"
+#include "Sequence.h"
 
 namespace ned::editor::vcs {
 
@@ -16,12 +14,7 @@ std::set<std::filesystem::path> DetectConflictedFiles(const StatusSections& sect
                 continue;
             }
             const std::filesystem::path absPath = (root / entry.path).lexically_normal();
-            std::ifstream                file(absPath, std::ios::binary);
-            if (!file) {
-                continue;
-            }
-            const std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-            if (text::HasConflictMarkers(content)) {
+            if (FileHasConflictMarkers(absPath)) {
                 conflicted.insert(absPath);
             }
         }

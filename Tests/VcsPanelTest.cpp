@@ -1201,3 +1201,24 @@ TEST_CASE("ResolveAllConflicts says so when a file has no conflict markers", "[V
 
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("The header shows an in-progress rebase in place of the branch", "[VcsPanel]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 60, 22);
+
+    ned::ui::Screen screen = ned::ui::Screen(60, 22);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 21});
+
+    panel.DispatchSequenceStateForTesting({.kind = "rebase", .step = 3, .total = 7});
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("VCS · Rebasing 3/7") != std::string::npos);
+
+    panel.DispatchSequenceStateForTesting({});
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).find("Rebasing") == std::string::npos);
+}

@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-328 commands.
+331 commands.
 
 ## `acp-rewind`
 
@@ -1645,6 +1645,24 @@ Discard the change hunk covering the line at point from the working tree.
 Key: `C-c v r`
 
 Reword the previous commit's message, leaving its tree exactly as-is -- opens a *vcs commit message* buffer pre-filled with its message.
+
+## `vcs-sequence-abort`
+
+Key: `C-c x A`
+
+Abort the in-progress rebase/merge/cherry-pick, restoring the state before it began.
+
+## `vcs-sequence-continue`
+
+Key: `C-c x c`
+
+Continue the in-progress rebase/merge/cherry-pick once every conflict is resolved and saved.
+
+## `vcs-sequence-skip`
+
+Key: `C-c x s`
+
+Skip the commit the in-progress rebase/cherry-pick stopped on.
 
 ## `vcs-show-blame`
 

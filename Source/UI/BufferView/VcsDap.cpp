@@ -6,6 +6,7 @@
 // watches/memory/disassembly/pointer-graph/thread+filter selection.
 //
 
+#include "Editor/Vcs/Sequence.h"
 #include "UI/BufferView/Internal.h"
 
 namespace ned::ui {
@@ -588,6 +589,120 @@ void BufferView::ExtendCommit() {
             RequestDiffForCurrentBuffer();
         },
         [this](std::string error) { statusMessage_ = "vcs extend commit: " + error; });
+}
+
+void BufferView::RunVcsSequenceStep(VcsSequenceStep step) {
+    if (!vcsRunner_) {
+        statusMessage_ = "no vcs runner configured";
+        return;
+    }
+    // The kind comes from a fresh probe rather than anything cached: the
+    // repository may have moved on (a terminal `git rebase --continue`)
+    // since this editor last looked.
+    vcsRunner_->RequestSequenceState(
+        [this, step](const editor::vcs::SequenceState& state) {
+            if (state.kind.empty()) {
+                statusMessage_ = "No rebase, merge or cherry-pick in progress.";
+                return;
+            }
+            if (step == VcsSequenceStep::Continue) {
+                ContinueVcsSequence();
+                return;
+            }
+            RunVcsSequenceStep(step, state.kind);
+        },
+        [this](std::string error) { statusMessage_ = error; });
+}
+
+void BufferView::ContinueVcsSequence() {
+    vcsRunner_->RequestStatus(
+        [this](const std::vector<editor::vcs::StatusEntry>& entries) {
+            const std::filesystem::path          root  = editor::ProjectRoot();
+            const editor::vcs::SequenceFileProbe probe = {
+                .hasUnsavedBuffer =
+                    [this](const std::filesystem::path& path) {
+                        const text::Buffer* buffer = bufferList_.FindByPath(path);
+                        return buffer != nullptr && buffer->Modified();
+                    },
+                .hasConflictMarkers = editor::vcs::FileHasConflictMarkers,
+            };
+            editor::vcs::SequenceContinuePlan plan =
+                editor::vcs::PlanSequenceContinue(entries, root, probe, editor::vcs::SequenceAutoStageEnabled());
+            if (!plan.Ready()) {
+                statusMessage_ = editor::vcs::SequenceContinueBlockedMessage(plan, root);
+                return;
+            }
+            // Re-probed rather than threaded through: the status round trip
+            // is the only thing between the two and it can't change the kind.
+            vcsRunner_->RequestSequenceState(
+                [this, toStage = std::move(plan.toStage)](const editor::vcs::SequenceState& state) mutable {
+                    if (state.kind.empty()) {
+                        statusMessage_ = "No rebase, merge or cherry-pick in progress.";
+                        return;
+                    }
+                    StageThenContinueVcsSequence(std::move(toStage), state.kind);
+                },
+                [this](std::string error) { statusMessage_ = error; });
+        },
+        [this](std::string error) { statusMessage_ = error; });
+}
+
+void BufferView::StageThenContinueVcsSequence(std::vector<std::filesystem::path> paths, std::string kind) {
+    if (paths.empty()) {
+        RunVcsSequenceStep(VcsSequenceStep::Continue, kind);
+        return;
+    }
+    // One at a time: concurrent `git add`s contend for the same index lock.
+    const std::filesystem::path next = paths.back();
+    paths.pop_back();
+    vcsRunner_->RequestStage(
+        next,
+        [this, paths = std::move(paths), kind = std::move(kind)]() mutable {
+            StageThenContinueVcsSequence(std::move(paths), std::move(kind));
+        },
+        [this](std::string error) { statusMessage_ = error; });
+}
+
+void BufferView::RunVcsSequenceStep(VcsSequenceStep step, const std::string& kind) {
+    const char* verb = step == VcsSequenceStep::Continue ? "Continuing" : step == VcsSequenceStep::Skip ? "Skipping"
+                                                                                                        : "Aborting";
+    statusMessage_   = std::string(verb) + " " + kind + "...";
+    auto onSuccess   = [this, step] {
+        ReportVcsSequenceOutcome(step == VcsSequenceStep::Abort ? "Aborted." : "");
+    };
+    auto onError = [this](std::string error) { ReportVcsSequenceOutcome(std::move(error)); };
+    switch (step) {
+        case VcsSequenceStep::Continue:
+            vcsRunner_->RequestSequenceContinue(kind, onSuccess, onError);
+            break;
+        case VcsSequenceStep::Skip:
+            vcsRunner_->RequestSequenceSkip(kind, onSuccess, onError);
+            break;
+        case VcsSequenceStep::Abort:
+            vcsRunner_->RequestSequenceAbort(kind, onSuccess, onError);
+            break;
+    }
+}
+
+void BufferView::ReportVcsSequenceOutcome(std::string outcome) {
+    RefreshVcsStatusBuffer();
+    RequestDiffForCurrentBuffer();
+    // Stopping again on the next conflicting commit exits non-zero, so the
+    // re-probe is what says whether the sequence finished or is waiting.
+    vcsRunner_->RequestSequenceState(
+        [this, outcome](const editor::vcs::SequenceState& state) {
+            if (state.kind.empty()) {
+                statusMessage_ = outcome.empty() ? "Done." : outcome;
+                return;
+            }
+            statusMessage_ = editor::vcs::SequenceLabel(state) + " -- " +
+                             (outcome.empty() ? "resolve, then C-c x c to continue" : outcome);
+        },
+        [this, outcome](std::string) { statusMessage_ = outcome.empty() ? "Done." : outcome; });
+}
+
+void BufferView::RunVcsSequenceStepForTesting(VcsSequenceStep step) {
+    RunVcsSequenceStep(step);
 }
 
 void BufferView::CloseVcsCommitMessageBuffer(text::Buffer& commitBuffer) {
@@ -2031,6 +2146,11 @@ void BufferView::HandleDapDataBreakpointAccessKey(const editor::KeyChord& chord)
 
 bufferview::ConfirmPrompt BufferView::ConfirmRevertHunkPrompt() {
     return {.cancelMessage = "Revert cancelled.", .onConfirm = [this] { RevertHunkAtPoint(); }};
+}
+
+void BufferView::HandleConfirmVcsSequenceAbortKey(const editor::KeyChord& chord) {
+    HandleConfirmPromptKey({.cancelMessage = "Abort cancelled.", .onConfirm = [this] { RunVcsSequenceStep(VcsSequenceStep::Abort); }},
+                           chord);
 }
 
 void BufferView::HandleConfirmRevertHunkKey(const editor::KeyChord& chord) {

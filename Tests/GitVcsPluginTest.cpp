@@ -720,3 +720,123 @@ TEST_CASE("bundled git plugin runs push/pull/fetch/ahead-behind against a real b
         REQUIRE(content.find("a remote commit") != std::string::npos);
     }
 }
+
+namespace {
+
+// Like RunToCompletion, but for a command expected to stop on a conflict
+// (non-zero exit) -- returns the exit code instead of throwing.
+int RunAllowingFailure(const std::vector<std::string>& argv) {
+    ChildProcess process(argv, ned::editor::process::StderrMode::MergeWithStdout);
+    for (std::string chunk = process.ReadSome(); !chunk.empty(); chunk = process.ReadSome()) {
+    }
+    const std::optional<int> exitCode = process.WaitForExit();
+    return exitCode.value_or(-1);
+}
+
+ned::editor::vcs::SequenceState ProbeSequence(ned::editor::vcs::Provider& provider, const std::filesystem::path& root) {
+    return provider.ParseSequenceState(RunToCompletion(provider.SequenceStateArgv(root).argv));
+}
+
+} // namespace
+
+TEST_CASE("bundled git plugin probes and drives an in-progress rebase, cherry-pick and merge", "[GitVcsPlugin]") {
+    if (!GitAvailable()) {
+        SKIP("git not found on $PATH");
+    }
+
+    RegistryResetGuard guard;
+    Environment&       env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+    LoadBundledPlugins(env);
+
+    const std::filesystem::path repo =
+        std::filesystem::temp_directory_path() / ("ned-git-vcs-sequence-test-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(repo);
+    std::filesystem::create_directories(repo);
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() {
+            std::filesystem::remove_all(path);
+        }
+    } cleanup{repo};
+
+    const std::string root = repo.string();
+    RunToCompletion({"git", "init", "-q", "-b", "main", root});
+    RunToCompletion({"git", "-C", root, "config", "user.email", "ned-test@example.com"});
+    RunToCompletion({"git", "-C", root, "config", "user.name", "Ned Test"});
+    const auto commitFile = [&](const std::string& content, const std::string& message) {
+        std::ofstream(repo / "file.txt") << content;
+        RunToCompletion({"git", "-C", root, "add", "file.txt"});
+        RunToCompletion({"git", "-C", root, "commit", "-q", "-m", message});
+    };
+    commitFile("base\n", "base");
+    RunToCompletion({"git", "-C", root, "checkout", "-q", "-b", "topic"});
+    commitFile("topic one\n", "topic one");
+    commitFile("topic two\n", "topic two");
+    RunToCompletion({"git", "-C", root, "checkout", "-q", "main"});
+    commitFile("main\n", "main");
+
+    auto* provider = ned::editor::vcs::ActiveProviderFor(repo);
+    REQUIRE(provider != nullptr);
+
+    SECTION("nothing in progress reports an empty kind") {
+        REQUIRE(ProbeSequence(*provider, repo).kind.empty());
+    }
+
+    SECTION("a conflicted rebase reports its progress, continues, skips and finishes") {
+        RunToCompletion({"git", "-C", root, "checkout", "-q", "topic"});
+        REQUIRE(RunAllowingFailure({"git", "-C", root, "rebase", "main"}) != 0);
+
+        auto state = ProbeSequence(*provider, repo);
+        REQUIRE(state.kind == "rebase");
+        REQUIRE(state.step == 1);
+        REQUIRE(state.total == 2);
+
+        // Resolving the first pick and continuing stops again on the second,
+        // which also touches the same line.
+        std::ofstream(repo / "file.txt") << "resolved\n";
+        RunToCompletion({"git", "-C", root, "add", "file.txt"});
+        REQUIRE(RunAllowingFailure(provider->SequenceContinueArgv(repo, state.kind).argv) != 0);
+        state = ProbeSequence(*provider, repo);
+        REQUIRE(state.kind == "rebase");
+        REQUIRE(state.step == 2);
+
+        RunToCompletion(provider->SequenceSkipArgv(repo, state.kind).argv);
+        REQUIRE(ProbeSequence(*provider, repo).kind.empty());
+        REQUIRE(RunToCompletion({"git", "-C", root, "log", "-1", "--pretty=%s"}) == "topic one\n");
+    }
+
+    SECTION("abort restores the pre-rebase state") {
+        RunToCompletion({"git", "-C", root, "checkout", "-q", "topic"});
+        REQUIRE(RunAllowingFailure({"git", "-C", root, "rebase", "main"}) != 0);
+        RunToCompletion(provider->SequenceAbortArgv(repo, "rebase").argv);
+        REQUIRE(ProbeSequence(*provider, repo).kind.empty());
+        REQUIRE(RunToCompletion({"git", "-C", root, "log", "-1", "--pretty=%s"}) == "topic two\n");
+    }
+
+    SECTION("a conflicted cherry-pick continues without an editor") {
+        REQUIRE(RunAllowingFailure({"git", "-C", root, "cherry-pick", "topic~1"}) != 0);
+        const auto state = ProbeSequence(*provider, repo);
+        REQUIRE(state.kind == "cherry-pick");
+        REQUIRE(state.total == 0);
+
+        std::ofstream(repo / "file.txt") << "resolved\n";
+        RunToCompletion({"git", "-C", root, "add", "file.txt"});
+        RunToCompletion(provider->SequenceContinueArgv(repo, state.kind).argv);
+        REQUIRE(ProbeSequence(*provider, repo).kind.empty());
+        REQUIRE(RunToCompletion({"git", "-C", root, "log", "-1", "--pretty=%s"}) == "topic one\n");
+    }
+
+    SECTION("a conflicted merge continues with git's own message and has no skip") {
+        REQUIRE(RunAllowingFailure({"git", "-C", root, "merge", "-q", "topic"}) != 0);
+        const auto state = ProbeSequence(*provider, repo);
+        REQUIRE(state.kind == "merge");
+        REQUIRE_THROWS(provider->SequenceSkipArgv(repo, state.kind));
+
+        std::ofstream(repo / "file.txt") << "resolved\n";
+        RunToCompletion({"git", "-C", root, "add", "file.txt"});
+        RunToCompletion(provider->SequenceContinueArgv(repo, state.kind).argv);
+        REQUIRE(ProbeSequence(*provider, repo).kind.empty());
+        REQUIRE(RunToCompletion({"git", "-C", root, "log", "-1", "--pretty=%s"}).starts_with("Merge branch 'topic'"));
+    }
+}

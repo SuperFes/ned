@@ -443,3 +443,30 @@ TEST_CASE("ExtendCommit with a provider missing extend-commit reports its own 'n
 
     REQUIRE(fixture.statusMessage == "vcs extend commit: extend commit not supported by this provider");
 }
+
+TEST_CASE("vcs-sequence steps without a wired Runner report it", "[BufferView][Vcs]") {
+    Fixture    fixture;
+    BufferView view = fixture.View();
+
+    view.RunVcsSequenceStepForTesting(BufferView::VcsSequenceStep::Continue);
+
+    REQUIRE(fixture.statusMessage == "no vcs runner configured");
+}
+
+TEST_CASE("vcs-sequence steps with a provider missing the vocabulary report its own answer", "[BufferView][Vcs]") {
+    Fixture          fixture;
+    ProjectRootGuard rootGuard("/repo");
+    ned::editor::vcs::ClearRegistry();
+    ned::editor::vcs::RegisterProvider("fake", std::make_unique<DetectOnlyProvider>());
+    ned::ui::EventLoop       eventLoop;
+    ned::editor::vcs::Runner runner(eventLoop);
+    BufferView               view = fixture.View();
+    view.SetVcsRunner(&runner);
+
+    for (const auto step : {BufferView::VcsSequenceStep::Continue, BufferView::VcsSequenceStep::Skip,
+                            BufferView::VcsSequenceStep::Abort}) {
+        fixture.statusMessage.clear();
+        view.RunVcsSequenceStepForTesting(step);
+        REQUIRE(fixture.statusMessage == "sequence state not supported by this provider");
+    }
+}

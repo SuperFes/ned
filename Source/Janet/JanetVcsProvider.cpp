@@ -50,6 +50,11 @@ namespace {
         "fetch-argv",
         "ahead-behind-argv",
         "parse-ahead-behind",
+        "sequence-state-argv",
+        "parse-sequence-state",
+        "sequence-continue-argv",
+        "sequence-abort-argv",
+        "sequence-skip-argv",
     };
 
     // Reads keyword key from entry (a struct {} or table @{}, either is a
@@ -206,6 +211,22 @@ namespace {
         return editor::vcs::AheadBehind{
             NumberField(result, "ahead"),
             NumberField(result, "behind"),
+        };
+    }
+
+    // One table, like parse-ahead-behind; nil means nothing in progress, the
+    // natural Janet spelling for "no state" alongside an empty :kind.
+    editor::vcs::SequenceState ParseSequenceStateResult(Janet result) {
+        if (janet_checktype(result, JANET_NIL)) {
+            return {};
+        }
+        if (!janet_checktype(result, JANET_TABLE) && !janet_checktype(result, JANET_STRUCT)) {
+            throw std::runtime_error("ned: expected a vcs plugin parse-sequence-state function to return a table or nil");
+        }
+        return editor::vcs::SequenceState{
+            StringField(result, "kind"),
+            NumberField(result, "step"),
+            NumberField(result, "total"),
         };
     }
 
@@ -569,6 +590,46 @@ editor::vcs::AheadBehind JanetVcsProvider::ParseAheadBehind(const std::string& s
         return Provider::ParseAheadBehind(stdout_);
     }
     return ParseAheadBehindResult(CallWithString(*fn, stdout_));
+}
+
+editor::vcs::CommandSpec JanetVcsProvider::SequenceStateArgv(const std::filesystem::path& root) const {
+    const std::string* fn = InternalName("sequence-state-argv");
+    if (!fn) {
+        return Provider::SequenceStateArgv(root);
+    }
+    return ParseCommandSpec(CallWithString(*fn, root.string()));
+}
+
+editor::vcs::SequenceState JanetVcsProvider::ParseSequenceState(const std::string& stdout_) const {
+    const std::string* fn = InternalName("parse-sequence-state");
+    if (!fn) {
+        return Provider::ParseSequenceState(stdout_);
+    }
+    return ParseSequenceStateResult(CallWithString(*fn, stdout_));
+}
+
+editor::vcs::CommandSpec JanetVcsProvider::SequenceContinueArgv(const std::filesystem::path& root, const std::string& kind) const {
+    const std::string* fn = InternalName("sequence-continue-argv");
+    if (!fn) {
+        return Provider::SequenceContinueArgv(root, kind);
+    }
+    return ParseCommandSpec(CallWithStrings(*fn, root.string(), kind));
+}
+
+editor::vcs::CommandSpec JanetVcsProvider::SequenceAbortArgv(const std::filesystem::path& root, const std::string& kind) const {
+    const std::string* fn = InternalName("sequence-abort-argv");
+    if (!fn) {
+        return Provider::SequenceAbortArgv(root, kind);
+    }
+    return ParseCommandSpec(CallWithStrings(*fn, root.string(), kind));
+}
+
+editor::vcs::CommandSpec JanetVcsProvider::SequenceSkipArgv(const std::filesystem::path& root, const std::string& kind) const {
+    const std::string* fn = InternalName("sequence-skip-argv");
+    if (!fn) {
+        return Provider::SequenceSkipArgv(root, kind);
+    }
+    return ParseCommandSpec(CallWithStrings(*fn, root.string(), kind));
 }
 
 } // namespace ned::janet

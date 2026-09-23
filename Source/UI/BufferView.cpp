@@ -395,6 +395,9 @@ bool BufferView::HandleChord(const editor::KeyChord& chord) {
             HandleConfirmRevertHunkKey(chord);
             ClampPointToNarrowing();
             return true;
+        case InputMode::ConfirmVcsSequenceAbort:
+            HandleConfirmVcsSequenceAbortKey(chord);
+            return true;
 
         case InputMode::ConfirmHugeFormat:
             HandleConfirmHugeFormatKey(chord);

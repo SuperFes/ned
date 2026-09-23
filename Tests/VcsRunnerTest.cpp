@@ -583,3 +583,57 @@ TEST_CASE("ExtractCommitMessage keeps a '#' that isn't the first character of a 
     // '#' is stripped -- "fix issue #42" is real message content.
     REQUIRE(ExtractCommitMessage("fix issue #42\n") == "fix issue #42");
 }
+
+TEST_CASE("Runner sequence requests surface a provider without the sequence vocabulary", "[Runner]") {
+    RegistryResetGuard guard;
+    RegisterProvider("fake", std::make_unique<FakeProvider>());
+
+    ned::ui::EventLoop eventLoop;
+    Runner             runner(eventLoop);
+
+    std::string error;
+    runner.RequestSequenceState([](ned::editor::vcs::SequenceState) { FAIL("onComplete should not be called"); },
+                                [&error](std::string message) { error = message; });
+    REQUIRE(error == "sequence state not supported by this provider");
+
+    runner.RequestSequenceContinue("rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE(error == "sequence continue not supported by this provider");
+
+    runner.RequestSequenceAbort("rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE(error == "sequence abort not supported by this provider");
+
+    runner.RequestSequenceSkip("rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE(error == "sequence skip not supported by this provider");
+}
+
+namespace {
+
+class FakeSequenceProvider : public FakeProvider {
+  public:
+    [[nodiscard]] CommandSpec SequenceContinueArgv(const std::filesystem::path&, const std::string&) const override {
+        return CommandSpec{{"sleep", "5"}};
+    }
+};
+
+} // namespace
+
+TEST_CASE("Runner continue/abort/skip are mutually exclusive for the same root", "[Runner]") {
+    RegistryResetGuard guard;
+    RegisterProvider("fake", std::make_unique<FakeSequenceProvider>());
+
+    ned::ui::EventLoop eventLoop;
+    Runner             runner(eventLoop);
+
+    bool continueErrored = false;
+    runner.RequestSequenceContinue("rebase", [] {}, [&continueErrored](std::string) { continueErrored = true; });
+    REQUIRE_FALSE(continueErrored);
+
+    // The guard fires before the (unoverridden, default-throwing) abort/skip
+    // argv builders run, so this proves the shared key.
+    std::string error;
+    runner.RequestSequenceAbort("rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE(error == "abort is already running");
+
+    runner.RequestSequenceSkip("rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    REQUIRE(error == "skip is already running");
+}

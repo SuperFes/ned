@@ -234,6 +234,17 @@ class Runner {
     void RequestFetch(std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestAheadBehind(std::function<void(AheadBehind)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
 
+    // In-progress rebase/merge/cherry-pick/revert. kind is whatever
+    // RequestSequenceState last reported, passed back to the provider
+    // verbatim. Continue/abort/skip share one guard key per root -- they are
+    // mutually exclusive steps of the same operation, not independent ones.
+    // A continue that stops again on the next conflicting commit exits
+    // non-zero and lands in onError; callers re-probe the state either way.
+    void RequestSequenceState(std::function<void(SequenceState)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestSequenceContinue(const std::string& kind, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestSequenceAbort(const std::string& kind, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestSequenceSkip(const std::string& kind, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+
     // VCS side panel follow-up: raw diff text for one file (unstaged
     // worktree diff, or -- when staged is true -- the staged/index-vs-HEAD
     // diff), for the panel's inline diff preview. RequestFullDiff's own "no

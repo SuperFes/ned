@@ -503,6 +503,9 @@ class BufferView : public Widget {
     enum class VcsCommitMode { Commit,
                                 Amend,
                                 Reword };
+    enum class VcsSequenceStep { Continue,
+                                 Skip,
+                                 Abort };
     // multi-line-commit-message follow-up: same seam shape, for
     // BeginVcsCommitMessage/FinishVcsCommitMessage/AbortVcsCommitMessage --
     // RequestCommit's own guards (no provider registered) resolve
@@ -515,6 +518,7 @@ class BufferView : public Widget {
     // synchronous for its own guard paths (no runner/no provider), same
     // reasoning as the trio above.
     void ExtendCommitForTesting();
+    void RunVcsSequenceStepForTesting(VcsSequenceStep step);
     // Hunk-navigation follow-up: same seam again, for JumpToNextHunk/
     // JumpToPreviousHunk -- both are fully synchronous (a plain search over
     // diffHunkStartLines_, no Runner round trip), so these wrappers need
@@ -1158,6 +1162,8 @@ class BufferView : public Widget {
                            // revert -- y/n before discarding uncommitted work, same shape
                            // as ConfirmOverwriteSave/ConfirmSaveWithConflicts above.
                            ConfirmRevertHunk,
+                           // vcs-sequence-abort's y/n -- see ConfirmVcsSequenceAbort.
+                           ConfirmVcsSequenceAbort,
                            // class-file-sync follow-up: two more of the same y/n
                            // shape, one per direction. Both are reached from an
                            // explicit command AND from the unprompted offer ned
@@ -1675,6 +1681,7 @@ class BufferView : public Widget {
     // file under point), so one prompt serves both.
     void               HandleMultibufferApplyTargetKey(const editor::KeyChord& chord);
     void               StartMultibufferApply(bool fileOnly);
+    void               HandleConfirmVcsSequenceAbortKey(const editor::KeyChord& chord);
     void               HandleConfirmRevertHunkKey(const editor::KeyChord& chord);        // mouse-ergonomics follow-up: y -> RevertHunkAtPoint
     void               HandleConfirmHugeFormatKey(const editor::KeyChord& chord);        // huge-file-streaming-sweep follow-up: y -> RunHugeFormat
     // class-file-sync follow-up: see UI/BufferView/ClassFileSync.cpp.
@@ -3215,6 +3222,16 @@ class BufferView : public Widget {
     // directly and reports its summary/error on the status line, same
     // fire-and-forget shape FinishVcsCommitMessage's own onSuccess uses.
     void ExtendCommit();
+    // In-progress rebase/merge/cherry-pick/revert. Continue refuses while
+    // an unmerged file is unsaved or still has markers, and stages resolved
+    // ones first only under ned/set-vcs-sequence-auto-stage. All three
+    // re-probe the state afterwards, since a continue that stops on the next
+    // conflicting commit is the normal case, not a failure worth hiding.
+    void ContinueVcsSequence();
+    void RunVcsSequenceStep(VcsSequenceStep step);
+    void RunVcsSequenceStep(VcsSequenceStep step, const std::string& kind);
+    void StageThenContinueVcsSequence(std::vector<std::filesystem::path> paths, std::string kind);
+    void ReportVcsSequenceOutcome(std::string outcome);
     // Shared by both: closes the commit-message buffer via CloseBufferNow
     // (bypassing RequestCloseBuffer's "unsaved changes?" prompt -- finishing
     // or aborting the commit already IS the user's confirmation) and

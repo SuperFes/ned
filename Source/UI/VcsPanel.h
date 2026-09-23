@@ -39,6 +39,7 @@
 #include "Editor/Project/Tree.h"
 #include "Editor/Vcs/RowStatus.h"
 #include "Editor/Vcs/Runner.h"
+#include "Editor/Vcs/Sequence.h"
 #include "Text/BufferList.h"
 #include "Theme.h"
 #include "Widget.h"
@@ -249,6 +250,10 @@ class VcsPanel : public Widget {
         aheadBehind_ = aheadBehind;
     }
 
+    void DispatchSequenceStateForTesting(editor::vcs::SequenceState state) {
+        sequence_ = std::move(state);
+    }
+
     // Test-only introspection: the currently marked (multi-selected) paths,
     // in no particular order -- same "small, honest introspection point"
     // reason ScrollArrowButton::IsRepeating() exists.
@@ -341,6 +346,10 @@ class VcsPanel : public Widget {
     // would misleadingly claim "up to date" when the fact is actually
     // unknown.
     std::optional<editor::vcs::AheadBehind> aheadBehind_;
+
+    // In-progress rebase/merge/cherry-pick, shown in the header in place of
+    // the branch. Empty kind when nothing is in progress.
+    editor::vcs::SequenceState sequence_;
 
     enum class RemoteAction { Fetch,
                               Pull,

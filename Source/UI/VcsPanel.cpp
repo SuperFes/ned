@@ -372,6 +372,10 @@ void VcsPanel::RefreshStatus(bool force) {
     // no remote at all) -- same "highlighting is only meaningful when it
     // works" precedent as the rest of this refresh.
     vcsRunner_->RequestAheadBehind([this](editor::vcs::AheadBehind ab) { aheadBehind_ = ab; }, [](const std::string&) {});
+    // Cleared on error too: a provider with no sequence vocabulary must not
+    // keep showing a rebase that has long since finished.
+    vcsRunner_->RequestSequenceState([this](editor::vcs::SequenceState state) { sequence_ = std::move(state); },
+                                     [this](const std::string&) { sequence_ = {}; });
 }
 
 void VcsPanel::RefreshConflictedPaths() {
@@ -629,7 +633,12 @@ void VcsPanel::Paint(Canvas c) {
         // count ride this header row rather than a dedicated content row --
         // see currentBranch_'s own doc comment.
         title = "VCS";
-        if (currentBranch_) {
+        // Mid-rebase the branch list reports a detached HEAD, which
+        // currentBranch_ skips, so it would otherwise show a stale name.
+        if (!sequence_.kind.empty()) {
+            title += " · " + editor::vcs::SequenceLabel(sequence_);
+        }
+        else if (currentBranch_) {
             title += " · " + *currentBranch_;
         }
         // Ahead/behind: arrows only when known and actually non-zero --

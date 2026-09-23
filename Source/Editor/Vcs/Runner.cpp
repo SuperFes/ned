@@ -665,6 +665,45 @@ void Runner::RequestAheadBehind(std::function<void(AheadBehind)> onComplete,
         std::move(onError));
 }
 
+void Runner::RequestSequenceState(std::function<void(SequenceState)> onComplete,
+                                  std::function<void(std::string)>   onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "sequence state", "sequence-state:" + root.string(),
+        [&root](Provider& provider) { return provider.SequenceStateArgv(root); },
+        [onComplete = std::move(onComplete)](Provider& provider, std::string output) {
+            onComplete(provider.ParseSequenceState(output));
+        },
+        std::move(onError));
+}
+
+void Runner::RequestSequenceContinue(const std::string& kind, std::function<void()> onSuccess,
+                                     std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "continue", "sequence:" + root.string(),
+        [&root, &kind](Provider& provider) { return provider.SequenceContinueArgv(root, kind); },
+        [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
+}
+
+void Runner::RequestSequenceAbort(const std::string& kind, std::function<void()> onSuccess,
+                                  std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "abort", "sequence:" + root.string(),
+        [&root, &kind](Provider& provider) { return provider.SequenceAbortArgv(root, kind); },
+        [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
+}
+
+void Runner::RequestSequenceSkip(const std::string& kind, std::function<void()> onSuccess,
+                                 std::function<void(std::string)> onError) {
+    const std::filesystem::path root = ProjectRoot();
+    RunProviderOperation(
+        "skip", "sequence:" + root.string(),
+        [&root, &kind](Provider& provider) { return provider.SequenceSkipArgv(root, kind); },
+        [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
+}
+
 void Runner::RequestFileDiffText(const std::filesystem::path& path, bool staged,
                                     std::function<void(std::string)> onComplete, std::function<void(std::string)> onError) {
     const std::filesystem::path canonical = std::filesystem::weakly_canonical(path);

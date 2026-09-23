@@ -256,6 +256,7 @@ add_library(ned_lib STATIC
         Editor/Vcs/ProviderRegistry.cpp
         Editor/Vcs/RowStatus.cpp
         Editor/Vcs/ConflictedFiles.cpp
+        Editor/Vcs/Sequence.cpp
         Editor/Vcs/Runner.cpp
         Editor/Process/ChildProcess.cpp
         Editor/Acp/Transport.cpp

@@ -28,7 +28,9 @@ namespace ned::janet {
 // :branch-switch-argv, :branch-create-argv, :revert-argv, :stash-list-argv,
 // :parse-stash-list, :stash-push-argv, :stash-pop-argv, :stash-drop-argv,
 // :push-argv, :pull-argv, :fetch-argv, :ahead-behind-argv,
-// :parse-ahead-behind -- VCS side panel follow-up) -- vocabulary-completion
+// :parse-ahead-behind -- VCS side panel follow-up -- :sequence-state-argv,
+// :parse-sequence-state, :sequence-continue-argv, :sequence-abort-argv,
+// :sequence-skip-argv) -- vocabulary-completion
 // follow-up, replacing the
 // original 7-positional-argument form outright once the vocabulary grew
 // past what positional arguments could carry legibly. Only :detect is
@@ -126,6 +128,15 @@ class JanetVcsProvider : public editor::vcs::Provider {
 
     [[nodiscard]] editor::vcs::CommandSpec AheadBehindArgv(const std::filesystem::path& root) const override;
     [[nodiscard]] editor::vcs::AheadBehind ParseAheadBehind(const std::string& stdout_) const override;
+
+    [[nodiscard]] editor::vcs::CommandSpec   SequenceStateArgv(const std::filesystem::path& root) const override;
+    [[nodiscard]] editor::vcs::SequenceState ParseSequenceState(const std::string& stdout_) const override;
+    [[nodiscard]] editor::vcs::CommandSpec   SequenceContinueArgv(const std::filesystem::path& root,
+                                                                  const std::string&           kind) const override;
+    [[nodiscard]] editor::vcs::CommandSpec   SequenceAbortArgv(const std::filesystem::path& root,
+                                                               const std::string&           kind) const override;
+    [[nodiscard]] editor::vcs::CommandSpec   SequenceSkipArgv(const std::filesystem::path& root,
+                                                              const std::string&           kind) const override;
 
   private:
     // The generated janet_def name for callback key ("detect",

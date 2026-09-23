@@ -110,6 +110,18 @@ struct AheadBehind {
     std::size_t behind;
 };
 
+// A multi-step operation the repository is stopped in the middle of (a
+// rebase, merge, cherry-pick, revert...), as returned by
+// Provider::ParseSequenceState. kind is the provider's own word for it, kept
+// verbatim and handed back unchanged to Sequence{Continue,Abort,Skip}Argv;
+// empty means nothing is in progress. step/total are 0 when the provider has
+// no progress to report (a merge is one step, not a sequence).
+struct SequenceState {
+    std::string kind;
+    std::size_t step  = 0;
+    std::size_t total = 0;
+};
+
 // A VCS-agnostic provider: translates the common vocabulary below into
 // whatever a specific VCS actually needs. Each operation is deliberately
 // split into a "build the command" half and a "parse the output" half
@@ -404,6 +416,35 @@ class Provider {
     [[nodiscard]] virtual AheadBehind ParseAheadBehind(const std::string& stdout_) const {
         (void)stdout_;
         throw std::runtime_error("ahead/behind not supported by this provider");
+    }
+
+    // In-progress rebase/merge/cherry-pick/revert. The state probe may
+    // exit non-zero outside a repository like any other operation; inside
+    // one, "nothing in progress" is a successful parse with an empty kind.
+    // Continue must never open an interactive editor -- ned is the editor,
+    // and the spawned process has no terminal to give one.
+    [[nodiscard]] virtual CommandSpec SequenceStateArgv(const std::filesystem::path& root) const {
+        (void)root;
+        throw std::runtime_error("sequence state not supported by this provider");
+    }
+    [[nodiscard]] virtual SequenceState ParseSequenceState(const std::string& stdout_) const {
+        (void)stdout_;
+        throw std::runtime_error("sequence state not supported by this provider");
+    }
+    [[nodiscard]] virtual CommandSpec SequenceContinueArgv(const std::filesystem::path& root, const std::string& kind) const {
+        (void)root;
+        (void)kind;
+        throw std::runtime_error("sequence continue not supported by this provider");
+    }
+    [[nodiscard]] virtual CommandSpec SequenceAbortArgv(const std::filesystem::path& root, const std::string& kind) const {
+        (void)root;
+        (void)kind;
+        throw std::runtime_error("sequence abort not supported by this provider");
+    }
+    [[nodiscard]] virtual CommandSpec SequenceSkipArgv(const std::filesystem::path& root, const std::string& kind) const {
+        (void)root;
+        (void)kind;
+        throw std::runtime_error("sequence skip not supported by this provider");
     }
 };
 

@@ -862,6 +862,10 @@ The popup is never one source: a language server's items, snippet triggers for t
 
 :   Set the command open-link-at-point launches (as its own argument, never a shell string) to open a URL -- defaults to "xdg-open"; empty string clears it entirely, disabling URL-following.
 
+`ned/set-vcs-sequence-auto-stage`
+
+:   Whether vcs-sequence-continue stages unmerged files that no longer contain conflict markers before continuing a rebase/merge/cherry-pick. Default off: continue refuses and lists them instead.
+
 `ned/set-which-key-enabled`
 
 :   Enable/disable the which-key popup listing possible next chords while a prefix key (C-x, C-c, ...) is pending (default true). The echo area's own "C-x-" pending-sequence text is unaffected either way.
@@ -924,7 +928,11 @@ The popup is never one source: a language server's items, snippet triggers for t
 
 `ned/vcs-register-provider`
 
-:   Register a VCS-agnostic plugin: (name callbacks), where callbacks is a struct/table keyed by keyword. :detect (required) takes a root path and returns true if it's a repository this plugin handles. The *-argv callbacks each return an argv array/tuple of strings for the external command to run; the parse-* callbacks each take that command's captured stdout and return an array of tables. Optional keys, by operation: :blame-argv/:parse-blame and :log-argv/:parse-log (entries have :hash :author :date :summary), :diff-argv/:parse-diff (:old-start :old-count :new-start :new-count per hunk), :status-argv/:parse-status (:state :path per changed file, path relative to the root), :stage-argv/:unstage-argv (take the file's path; success is exit code 0, no parse half), :staged-diff-argv (the index-vs-comparison-point diff, for selecting a hunk to unstage), :stage-patch-argv/:unstage-patch-argv (take root and a patch file's path, applying it to the staging area forward/reverse), :commit-argv (takes root and the commit message), :branch-list-argv/:parse-branch-list (:name :current per branch), and :branch-switch-argv/:branch-create-argv (take root and the branch name). An operation whose callbacks are absent reports 'not supported by this provider' when invoked. The actual subprocess is run by ned itself, never by the plugin -- these callbacks only build argv and parse already-captured output. Re-registering name replaces the previous provider.
+:   Register a VCS-agnostic plugin: (name callbacks), where callbacks is a struct/table keyed by keyword. :detect (required) takes a root path and returns true if it's a repository this plugin handles. The *-argv callbacks each return an argv array/tuple of strings for the external command to run; the parse-* callbacks each take that command's captured stdout and return an array of tables. Optional keys, by operation: :blame-argv/:parse-blame and :log-argv/:parse-log (entries have :hash :author :date :summary), :diff-argv/:parse-diff (:old-start :old-count :new-start :new-count per hunk), :status-argv/:parse-status (:state :path per changed file, path relative to the root), :stage-argv/:unstage-argv (take the file's path; success is exit code 0, no parse half), :staged-diff-argv (the index-vs-comparison-point diff, for selecting a hunk to unstage), :stage-patch-argv/:unstage-patch-argv (take root and a patch file's path, applying it to the staging area forward/reverse), :commit-argv (takes root and the commit message), :branch-list-argv/:parse-branch-list (:name :current per branch), :branch-switch-argv/:branch-create-argv (take root and the branch name), :sequence-state-argv/:parse-sequence-state (one table of :kind :step :total for an in-progress rebase/merge/cherry-pick, or nil when none is), and :sequence-continue-argv/:sequence-abort-argv/:sequence-skip-argv (take root and that :kind). An operation whose callbacks are absent reports 'not supported by this provider' when invoked. The actual subprocess is run by ned itself, never by the plugin -- these callbacks only build argv and parse already-captured output. Re-registering name replaces the previous provider.
+
+`ned/vcs-sequence-auto-stage-enabled`
+
+:   Whether ned/set-vcs-sequence-auto-stage is currently on.
 
 # SEE ALSO
 
