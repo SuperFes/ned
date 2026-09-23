@@ -3064,6 +3064,17 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::ColorAtPoint;
                       });
 
+    // color-picker: the interactive half. Takes C-c # from color-at-point,
+    // which keeps its name on M-x: the picker writes back in the notation the
+    // literal was already spelled in, so converting notations is the rarer of
+    // the two and choosing a colour is the one worth a key.
+    registry.Register("pick-color",
+                      "Adjust the colour literal under point interactively (R/G/B, H/S/L, alpha), or insert a new "
+                      "one where point is.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::PickColor;
+                      });
+
     // codeLens follow-up: unbound by default, same as expand-snippet --
     // M-x only. See BufferView::RequestCodeLensAtPoint's own doc comment
     // for the "only the first lens on the line" v1 scope cut.
@@ -4904,7 +4915,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c ?"), "describe-bindings");
     // "#" for the literal it acts on -- C-c C-o, the mnemonic first choice,
     // is find-scratch.
-    keymap.Bind(ParseKeySequence("C-c #"), "color-at-point");
+    keymap.Bind(ParseKeySequence("C-c #"), "pick-color");
     keymap.Bind(ParseKeySequence("C-x k"), "kill-buffer");
     keymap.Bind(ParseKeySequence("C-c a"), "org-agenda"); // real Org's own actual binding
     // capture-templates follow-up: real Org's own org-capture is "C-c c",

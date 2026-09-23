@@ -218,6 +218,11 @@ void BufferView::SetOnThemeGalleryToggle(std::function<void()> handler) {
     onThemeGalleryToggle_ = std::move(handler);
 }
 
+void BufferView::SetOnColorPickerRequest(
+    std::function<void(editor::ColorValue, editor::ColorSyntax, editor::ColorLiteralOptions)> handler) {
+    onColorPickerRequest_ = std::move(handler);
+}
+
 void BufferView::SetOnActiveBufferChanged(std::function<void(text::Buffer&)> handler) {
     onActiveBufferChanged_ = std::move(handler);
 }

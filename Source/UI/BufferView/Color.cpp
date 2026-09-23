@@ -2,8 +2,10 @@
 // Part of BufferView -- see UI/BufferView.h for the class itself and
 // Docs/BufferViewDecomposition.md for why this file exists.
 //
-// The edit half of the colour swatches: `color-at-point` (C-c #), which
-// rewrites the literal under point in another notation.
+// The edit half of the colour swatches. Two commands over one lookup:
+// `pick-color` (C-c #), which opens UI/ColorPicker.h to choose a colour, and
+// `color-at-point`, which rewrites the literal under point in another
+// notation without changing it.
 //
 // The swatch itself is painted from Paint.cpp, off the same
 // ColorLiteralsInRange that this file's own lookup uses -- one recogniser, so
@@ -17,7 +19,8 @@
 // textDocument/colorPresentation contributes extra rows -- its own name for
 // the colour, which is the one thing a pure conversion cannot know -- and
 // that is the only reason the session opens from a callback rather than
-// inline.
+// inline. The picker asks no server at all -- naming a colour is a
+// conversion, and choosing one is not.
 //
 
 #include "UI/BufferView/Internal.h"
@@ -166,6 +169,61 @@ void BufferView::ApplyColorPresentation(const std::string& text) {
     buffer.EndUndoGroup();
     buffer.SetPoint(pendingColorBegin_);
     statusMessage_ = "Colour rewritten as " + text + ".";
+}
+
+void BufferView::RequestColorPicker() {
+    if (!onColorPickerRequest_) {
+        return;
+    }
+    if (inputMode_ != InputMode::Normal) {
+        statusMessage_ = "Colour picker cancelled (another prompt is open).";
+        return;
+    }
+
+    text::Buffer&             buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         point     = buffer.Point();
+    const std::size_t         line      = content.ByteOffsetToLine(point);
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd =
+        (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+
+    const std::vector<editor::ColorLiteral> literals = ColorLiteralsInRange(buffer, content, lineStart, lineEnd);
+    const editor::ColorLiteral* const       found    = editor::ColorLiteralContaining(literals, point);
+
+    pickerBuffer_ = &buffer;
+    pickerBegin_  = found != nullptr ? found->begin : point;
+    pickerEnd_    = found != nullptr ? found->end : point;
+
+    // Mid-grey for a fresh colour: it is the one starting point that says
+    // nothing, and lifting saturation off it produces a real hue rather
+    // than leaving the ramps flat the way black or white would.
+    static constexpr editor::ColorValue kNeutral{.red = 0.5, .green = 0.5, .blue = 0.5, .alpha = 1.0};
+    // A literal a server reported and ned's own recogniser did not carries
+    // ColorSyntax::Unknown, which FormatColor declines -- so the picker is
+    // opened on hex in that case and writes a spelling ned can read back.
+    const bool known = found != nullptr && found->syntax != editor::ColorSyntax::Unknown;
+    onColorPickerRequest_(found != nullptr ? found->color : kNeutral,
+                          known ? found->syntax : editor::ColorSyntax::Hex, mode_.colorLiterals);
+}
+
+void BufferView::ApplyPickedColor(const std::string& text) {
+    if (text.empty()) {
+        return;
+    }
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (pickerBuffer_ != &buffer || pickerEnd_ > buffer.Size() || pickerBegin_ > pickerEnd_) {
+        statusMessage_ = "Colour literal is no longer there.";
+        return;
+    }
+    buffer.BeginUndoGroup();
+    if (pickerEnd_ > pickerBegin_) {
+        buffer.DeleteRange(pickerBegin_, pickerEnd_ - pickerBegin_);
+    }
+    buffer.InsertAt(pickerBegin_, text);
+    buffer.EndUndoGroup();
+    buffer.SetPoint(pickerBegin_ + text.size());
+    statusMessage_ = "Colour set to " + text + ".";
 }
 
 } // namespace ned::ui

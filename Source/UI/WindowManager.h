@@ -372,6 +372,18 @@ class WindowManager {
     // OverlayHost-owned handler lives above this class entirely.
     void SetOnThemeGalleryToggle(std::function<void()> onToggle);
 
+    // color-picker: same "forwarded to every pane, present and future" shape
+    // as SetOnThemeGalleryToggle immediately above -- see
+    // BufferView::SetOnColorPickerRequest's own doc comment for what the
+    // three arguments are.
+    void SetOnColorPickerRequest(
+        std::function<void(editor::ColorValue, editor::ColorSyntax, editor::ColorLiteralOptions)> onRequest);
+
+    // The other end of it: the picker's accept, routed to whichever pane is
+    // focused. Called only after the overlay has handed focus back, which is
+    // what makes FocusedPane() the pane the command ran in.
+    void ApplyPickedColor(const std::string& text);
+
     // Whether any pane still has a recency glow fading, so the composition
     // root knows whether to re-arm the animation timer for another frame.
     // Asked once per render; false is what stops the animation, which is the
@@ -966,6 +978,8 @@ class WindowManager {
     std::function<void()>                              onDapThreadsRefreshNeeded_; // see SetOnDapThreadsRefreshNeeded
     std::function<void()>                              onBufferListToggle_;        // see SetOnBufferListToggle
     std::function<void()>                              onThemeGalleryToggle_;      // see SetOnThemeGalleryToggle
+    std::function<void(editor::ColorValue, editor::ColorSyntax, editor::ColorLiteralOptions)>
+                                                       onColorPickerRequest_;      // see SetOnColorPickerRequest
     std::function<void(std::optional<WhichKeyHint>)>   onPrefixHintChanged_;       // see SetOnPrefixHintChanged
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_;       // see SetOnCandidatesChanged
     std::function<void(std::optional<ListPopupModel>)> onCompletionChanged_;       // see SetOnCompletionChanged

@@ -13,6 +13,9 @@ using ned::editor::ColorPresentations;
 using ned::editor::ColorSyntax;
 using ned::editor::ColorValue;
 using ned::editor::FormatColor;
+using ned::editor::HslColor;
+using ned::editor::HslToRgb;
+using ned::editor::RgbToHsl;
 using ned::editor::ScanColorLiterals;
 
 namespace {
@@ -247,4 +250,44 @@ TEST_CASE("Every presentation re-scans to the colour it was offered for", "[Colo
             CHECK(HexOf(found[0].color) == HexOf(color));
         }
     }
+}
+
+TEST_CASE("RGB and HSL round-trip through each other", "[ColorLiteral]") {
+    // Public API since the colour picker needs both directions; the scan
+    // only ever needed one, which is why these were private before.
+    const std::vector<ColorValue> colors = {
+        {.red = 1.0, .green = 0.0, .blue = 2.0 / 3.0, .alpha = 1.0},
+        {.red = 0.2, .green = 0.4, .blue = 0.8, .alpha = 0.5},
+        {.red = 0.0, .green = 0.0, .blue = 0.0, .alpha = 1.0},
+        {.red = 1.0, .green = 1.0, .blue = 1.0, .alpha = 1.0},
+        {.red = 0.5, .green = 0.5, .blue = 0.5, .alpha = 1.0},
+    };
+    for (const ColorValue& color : colors) {
+        INFO(HexOf(color));
+        CHECK(HexOf(HslToRgb(RgbToHsl(color))) == HexOf(color));
+        CHECK(RgbToHsl(color).alpha == color.alpha);
+    }
+}
+
+TEST_CASE("RgbToHsl reports no hue for a colour that has none", "[ColorLiteral]") {
+    // The documented lossiness, pinned: every grey answers hue 0 and
+    // saturation 0, which is what forces a picker to remember a hue itself.
+    for (const double level : {0.0, 0.25, 0.5, 1.0}) {
+        const HslColor hsl = RgbToHsl({.red = level, .green = level, .blue = level, .alpha = 1.0});
+        CHECK(hsl.hue == 0.0);
+        CHECK(hsl.saturation == 0.0);
+        CHECK(hsl.lightness == level);
+    }
+}
+
+TEST_CASE("HslToRgb normalises a hue outside 0-360", "[ColorLiteral]") {
+    const HslColor base{.hue = 320.0, .saturation = 1.0, .lightness = 0.5, .alpha = 1.0};
+    CHECK(HexOf(HslToRgb(base)) == HexOf(HslToRgb({.hue        = base.hue + 720.0,
+                                                   .saturation = base.saturation,
+                                                   .lightness  = base.lightness,
+                                                   .alpha      = base.alpha})));
+    CHECK(HexOf(HslToRgb(base)) == HexOf(HslToRgb({.hue        = base.hue - 360.0,
+                                                   .saturation = base.saturation,
+                                                   .lightness  = base.lightness,
+                                                   .alpha      = base.alpha})));
 }

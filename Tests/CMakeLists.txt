@@ -171,6 +171,7 @@ add_executable(ned_tests
             ThemeFileTest.cpp
             ThemeResolveTest.cpp
             ThemeGalleryTest.cpp
+            ColorPickerTest.cpp
             DocSourcePathsTest.cpp
             OracleTest.cpp
             ImprintTest.cpp

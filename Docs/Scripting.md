@@ -323,7 +323,7 @@ How a colour swatch draws: "block" (default) puts a filled cell before the liter
 
 ## `ned/set-color-swatches`
 
-Enable/disable inline colour swatches -- a cell painted in the colour named by every colour literal in view (#ff00aa, rgb(...), hsl(...), and in a stylesheet also #f0a and tomato; default true). Found by ned itself, so it works with no language server running; a server that answers textDocument/documentColor adds whatever else it knows about. Turning this off also stops that request. color-at-point (C-c #) rewrites the literal under point in another notation.
+Enable/disable inline colour swatches -- a cell painted in the colour named by every colour literal in view (#ff00aa, rgb(...), hsl(...), and in a stylesheet also #f0a and tomato; default true). Found by ned itself, so it works with no language server running; a server that answers textDocument/documentColor adds whatever else it knows about. Turning this off also stops that request. pick-color (C-c #) adjusts the literal under point interactively (R/G/B, H/S/L, alpha) or inserts a new one where point is; color-at-point rewrites one in another notation.
 
 ## `ned/set-coverage-file`
 

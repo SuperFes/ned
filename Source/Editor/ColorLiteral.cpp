@@ -261,51 +261,6 @@ namespace {
         return p;
     }
 
-    // hue in degrees, saturation/lightness in 0..1.
-    ColorValue HslToRgb(double hueDegrees, double saturation, double lightness, double alpha) {
-        const double hue = std::fmod(std::fmod(hueDegrees, 360.0) + 360.0, 360.0) / 360.0;
-        if (saturation <= 0.0) {
-            return ColorValue{.red = lightness, .green = lightness, .blue = lightness, .alpha = alpha};
-        }
-        const double q = lightness < 0.5 ? lightness * (1.0 + saturation)
-                                         : lightness + saturation - (lightness * saturation);
-        const double p = (2.0 * lightness) - q;
-        return ColorValue{.red   = HueToChannel(p, q, hue + (1.0 / 3.0)),
-                          .green = HueToChannel(p, q, hue),
-                          .blue  = HueToChannel(p, q, hue - (1.0 / 3.0)),
-                          .alpha = alpha};
-    }
-
-    struct Hsl {
-        double hue        = 0.0; // degrees
-        double saturation = 0.0; // 0..1
-        double lightness  = 0.0; // 0..1
-    };
-
-    Hsl RgbToHsl(const ColorValue& color) {
-        const double max   = std::max({color.red, color.green, color.blue});
-        const double min   = std::min({color.red, color.green, color.blue});
-        const double delta = max - min;
-
-        Hsl hsl;
-        hsl.lightness = (max + min) / 2.0;
-        if (delta <= 0.0) {
-            return hsl;
-        }
-        hsl.saturation = hsl.lightness > 0.5 ? delta / (2.0 - max - min) : delta / (max + min);
-        if (max == color.red) {
-            hsl.hue = ((color.green - color.blue) / delta) + (color.green < color.blue ? 6.0 : 0.0);
-        }
-        else if (max == color.green) {
-            hsl.hue = ((color.blue - color.red) / delta) + 2.0;
-        }
-        else {
-            hsl.hue = ((color.red - color.green) / delta) + 4.0;
-        }
-        hsl.hue *= 60.0;
-        return hsl;
-    }
-
     // CSS Color 4's own definition: whiteness/blackness scale the fully
     // saturated hue, and a pair summing past 1 collapses to grey.
     ColorValue HwbToRgb(double hueDegrees, double whiteness, double blackness, double alpha) {
@@ -313,7 +268,8 @@ namespace {
             const double grey = whiteness / (whiteness + blackness);
             return ColorValue{.red = grey, .green = grey, .blue = grey, .alpha = alpha};
         }
-        ColorValue   rgb   = HslToRgb(hueDegrees, 1.0, 0.5, alpha);
+        ColorValue rgb = HslToRgb(
+            HslColor{.hue = hueDegrees, .saturation = 1.0, .lightness = 0.5, .alpha = alpha});
         const double scale = 1.0 - whiteness - blackness;
         for (double* channel : {&rgb.red, &rgb.green, &rgb.blue}) {
             *channel = (*channel * scale) + whiteness;
@@ -501,7 +457,8 @@ namespace {
         if (name == "hwb") {
             return HwbToRgb(*hue, *second, *third, alpha);
         }
-        return HslToRgb(*hue, *second, *third, alpha);
+        return HslToRgb(
+            HslColor{.hue = *hue, .saturation = *second, .lightness = *third, .alpha = alpha});
     }
 
     std::optional<ColorSyntax> FunctionalSyntaxFor(std::string_view name) {
@@ -582,8 +539,9 @@ namespace {
         const double     hue    = std::round(parts.hue);
         const double     first  = std::round(parts.first * 100.0) / 100.0;
         const double     second = std::round(parts.second * 100.0) / 100.0;
-        const ColorValue back   = isHwb ? HwbToRgb(hue, first, second, color.alpha)
-                                        : HslToRgb(hue, first, second, color.alpha);
+        const ColorValue back =
+            isHwb ? HwbToRgb(hue, first, second, color.alpha)
+                  : HslToRgb(HslColor{.hue = hue, .saturation = first, .lightness = second, .alpha = color.alpha});
         return ColorChannelToByte(back.red) == ColorChannelToByte(color.red) &&
                ColorChannelToByte(back.green) == ColorChannelToByte(color.green) &&
                ColorChannelToByte(back.blue) == ColorChannelToByte(color.blue);
@@ -781,13 +739,13 @@ std::optional<std::string> FormatColor(const ColorValue& color, ColorSyntax synt
             if (!withAlpha && !opaque) {
                 return std::nullopt;
             }
-            const Hsl hsl = RgbToHsl(color);
+            const HslColor hsl = RgbToHsl(color);
             return FormatHueNotation(
                 color, HueComponents{.hue = hsl.hue, .first = hsl.saturation, .second = hsl.lightness}, false,
                 withAlpha);
         }
         case ColorSyntax::Hwb: {
-            const Hsl    hsl       = RgbToHsl(color);
+            const HslColor hsl       = RgbToHsl(color);
             const double whiteness = std::min({color.red, color.green, color.blue});
             const double blackness = 1.0 - std::max({color.red, color.green, color.blue});
             return FormatHueNotation(color,
@@ -848,6 +806,47 @@ std::vector<ColorPresentation> ColorPresentations(const ColorValue&          col
         }
     }
     return presentations;
+}
+
+HslColor RgbToHsl(const ColorValue& color) {
+    const double max   = std::max({color.red, color.green, color.blue});
+    const double min   = std::min({color.red, color.green, color.blue});
+    const double delta = max - min;
+
+    HslColor hsl;
+    hsl.alpha     = color.alpha;
+    hsl.lightness = (max + min) / 2.0;
+    if (delta <= 0.0) {
+        return hsl;
+    }
+    hsl.saturation = hsl.lightness > 0.5 ? delta / (2.0 - max - min) : delta / (max + min);
+    if (max == color.red) {
+        hsl.hue = ((color.green - color.blue) / delta) + (color.green < color.blue ? 6.0 : 0.0);
+    }
+    else if (max == color.green) {
+        hsl.hue = ((color.blue - color.red) / delta) + 2.0;
+    }
+    else {
+        hsl.hue = ((color.red - color.green) / delta) + 4.0;
+    }
+    hsl.hue *= 60.0;
+    return hsl;
+}
+
+ColorValue HslToRgb(const HslColor& hsl) {
+    const double hue = std::fmod(std::fmod(hsl.hue, 360.0) + 360.0, 360.0) / 360.0;
+    if (hsl.saturation <= 0.0) {
+        return ColorValue{
+            .red = hsl.lightness, .green = hsl.lightness, .blue = hsl.lightness, .alpha = hsl.alpha};
+    }
+    const double q = hsl.lightness < 0.5
+                         ? hsl.lightness * (1.0 + hsl.saturation)
+                         : hsl.lightness + hsl.saturation - (hsl.lightness * hsl.saturation);
+    const double p = (2.0 * hsl.lightness) - q;
+    return ColorValue{.red   = HueToChannel(p, q, hue + (1.0 / 3.0)),
+                      .green = HueToChannel(p, q, hue),
+                      .blue  = HueToChannel(p, q, hue - (1.0 / 3.0)),
+                      .alpha = hsl.alpha};
 }
 
 } // namespace ned::editor

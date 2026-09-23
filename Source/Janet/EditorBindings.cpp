@@ -2228,7 +2228,8 @@ void InstallEditorBindings(Environment& env) {
         "view (#ff00aa, rgb(...), hsl(...), and in a stylesheet also #f0a and tomato; default true). Found by "
         "ned itself, so it works with no language server running; a server that answers "
         "textDocument/documentColor adds whatever else it knows about. Turning this off also stops that "
-        "request. color-at-point (C-c #) rewrites the literal under point in another notation.");
+        "request. pick-color (C-c #) adjusts the literal under point interactively (R/G/B, H/S/L, "
+        "alpha) or inserts a new one where point is; color-at-point rewrites one in another notation.");
     env.Register<&NedSetColorSwatchStyle>(
         "ned", "set-color-swatch-style",
         "How a colour swatch draws: \"block\" (default) puts a filled cell before the literal, costing one "

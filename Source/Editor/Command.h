@@ -363,6 +363,11 @@ enum class InteractiveRequest { None,
                                 // itself, and a server that answers colorPresentation only
                                 // adds rows.
                                 ColorAtPoint,
+                                // color-picker: the interactive sibling of the above,
+                                // same one-shot shape -- BufferView::RequestColorPicker
+                                // opens the UI/ColorPicker.h overlay on the literal under
+                                // point, or on a neutral grey to insert when there is none.
+                                PickColor,
                                 // error-visibility follow-up: another one-shot direct action,
                                 // same shape as ProjectAgenda -- BufferView finds-or-creates
                                 // the shared *lsp log* buffer (lsp::kLspLogBufferName) and

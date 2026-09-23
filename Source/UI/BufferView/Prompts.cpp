@@ -2038,6 +2038,11 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::ColorAtPoint:
             RequestColorAtPoint();
             return;
+        // color-picker: same one-shot shape; the overlay it asks for takes
+        // focus itself, so nothing here enters an InputMode either.
+        case editor::InteractiveRequest::PickColor:
+            RequestColorPicker();
+            return;
     }
 
     statusMessage_ = (inputMode_ == InputMode::QueryReplace) ? queryReplace_->StatusText() : SearchStatusText();

@@ -330,7 +330,8 @@ range is ignored (it can only ever be the range ned already found, and honouring
 would let a server move an edit made in place), and a server-reported colour is dropped
 outright once anything is typed inside it rather than clamped like a code lens -- a
 swatch claims *these bytes* spell that colour, and ned's own scan has the right answer
-for the edited text anyway. Four conscious cuts left behind.
+for the edited text anyway. Three conscious cuts left behind; the fourth (no
+interactive picker) closed 2026-09-22 -- see below.
 
 - [ ] `lab()` / `lch()` / `oklab()` / `oklch()` are not recognised. Parsing them is
       trivial; the round trip is not. Those spaces are wider than sRGB, so offering
@@ -351,10 +352,40 @@ for the edited text anyway. Four conscious cuts left behind.
       soft-wrapped line carrying swatches or inlay hints breaks a little later than it
       should. Pre-existing -- inlay hints have always had it -- and now visible in one
       more place.
-- [ ] No interactive picker. `color-at-point` converts between notations; it cannot
-      *change* a colour. A ThemeGallery-style overlay with live R/G/B or H/S/L
-      adjustment and a contrast readout against the surrounding line is the obvious
-      next thing and needs a new focus-taking widget, which is why it is not this.
+
+**Colour picker**
+
+Shipped -- slug for `git log --grep=`: `color-picker`. `pick-color` (`C-c #`, taken from
+`color-at-point`, which keeps its name on `M-x`) opens `UI/ColorPicker.h`, a focus-taking
+overlay on ThemeGallery's shape: seven channel rows (R/G/B, H/S/L, alpha), a before/after
+preview, and a WCAG readout of the colour against the theme's text and background. Each
+slider track is painted as *that channel's own ramp* rather than a filled bar -- "what
+would this row's colour be at each position" is the question a picker exists to answer,
+and the cost is one `HslToRgb` per cell. Point on no literal opens on a neutral grey and
+inserts rather than replaces, which makes it a way to write a colour you do not have yet.
+Four decisions worth not re-litigating:
+
+- The picker holds *both* representations, RGB authoritative for the value and HSL
+  authoritative for the H/S/L rows, and retains hue across any edit that lands on a grey.
+  `RgbToHsl` is lossy at the achromatic extremes (documented on the function, now public
+  alongside `HslToRgb` in `Editor/ColorLiteral.h`), so a colour driven to black through
+  the L slider would otherwise come back with hue 0 and never return. Saturation is *not*
+  retained -- a grey genuinely has none, and a row claiming otherwise would lie.
+- The notation is inside the picker (`Tab`), not a second menu: the value row always
+  shows the exact text an accept writes, and it follows a colour across the
+  opaque/alpha boundary via `AlphaSibling` so nudging the alpha row does not silently
+  reset a chosen `hsl()` to hex.
+- The buffer is never edited while adjusting -- one edit on accept, so the undo tree
+  gets one entry rather than one per arrow key and the swatch scan is not re-run per
+  keystroke. No live preview in the buffer for the same reason.
+- The contrast readout answers `-`, not a number, when the theme's background is the
+  terminal's own with nothing detected behind it. `ContrastRatio` returns its *maximum*
+  (21.0) for an unmeasurable pair, which would have painted a perfect score where there
+  is no score at all -- caught in the first live run, not by a test.
+
+- [ ] No LSP tier: the picker offers ned's own notations only. A colour a server *names*
+      (`rebeccapurple`) is a conversion, which is what `color-at-point` is for, and
+      `colorPresentation` has nothing to say about a colour the user has not chosen yet.
 
 **LSP completion fidelity**
 

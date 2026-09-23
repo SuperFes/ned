@@ -118,7 +118,7 @@ for the live keymap stack.
 
 :   Toggle folding the code block (or, in a multibuffer, the excerpt) starting on the line at point.
 
-`color-at-point` (`C-c #`)
+`color-at-point`
 
 :   Rewrite the colour literal under point in another notation (hex, rgb(), hsl(), hwb(), a CSS colour name), chosen from a list.
 
@@ -861,6 +861,10 @@ for the live keymap stack.
 `other-window` (`C-x o`)
 
 :   Move focus to the next window.
+
+`pick-color` (`C-c #`)
+
+:   Adjust the colour literal under point interactively (R/G/B, H/S/L, alpha), or insert a new one where point is.
 
 `point-to-register` (`C-x r SPC`)
 

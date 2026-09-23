@@ -110,6 +110,7 @@
 #include "UI/AcpPanel.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferListPanel.h"
+#include "UI/ColorPicker.h"
 #include "UI/DapThreadsPanel.h"
 #include "UI/DebugConsolePanel.h"
 #include "UI/DesktopThemeProbe.h"
@@ -2342,6 +2343,37 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, bool vimMode, const s
         else {
             overlays.Hide(*panel);
         }
+    });
+
+    // color-picker: C-c #, the interactive half of the colour swatches.
+    // Small and centered rather than most-of-screen -- it is seven sliders
+    // and a preview, and a wide one would just stretch the tracks past any
+    // precision the arrow keys can give.
+    ned::ui::ColorPicker colorPicker(theme);
+    overlays.Add(colorPicker, [](Size size) {
+        const int width  = std::clamp(size.width - 4, 24, 48);
+        const int height = std::clamp(size.height - 4, 8, 16);
+        const int xMin   = std::max(0, (size.width - width) / 2);
+        const int yMin   = std::max(0, (size.height - height) / 2);
+        return Box{.x_min = xMin, .x_max = xMin + width - 1, .y_min = yMin, .y_max = yMin + height - 1};
+    });
+    overlays.SetFocusReturn(colorPicker, [wm = windowManager.get()] { wm->TakeFocus(); });
+    colorPicker.SetOnCancel([&overlays, panel = &colorPicker] { overlays.Hide(*panel); });
+    // Hide before applying, not after: OverlayHost::Hide runs the focus
+    // return synchronously, and the edit routes through whichever pane is
+    // focused -- which, until it does, is none of them.
+    colorPicker.SetOnAccept(
+        [&overlays, panel = &colorPicker, wm = windowManager.get()](std::string text) {
+            overlays.Hide(*panel);
+            wm->ApplyPickedColor(text);
+        });
+    windowManager->SetOnColorPickerRequest([&overlays, panel = &colorPicker](
+                                               ned::editor::ColorValue          colour,
+                                               ned::editor::ColorSyntax         syntax,
+                                               ned::editor::ColorLiteralOptions options) {
+        panel->Open(colour, syntax, options);
+        overlays.Show(*panel);
+        panel->TakeFocus();
     });
 
     // which-key follow-up (generic-popup follow-up: now a ListPopup in its

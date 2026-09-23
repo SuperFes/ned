@@ -475,6 +475,7 @@ add_library(ned_lib STATIC
         UI/ThemeFile.cpp
         UI/ThemeResolve.cpp
         UI/ThemeGallery.cpp
+        UI/ColorPicker.cpp
         UI/DesktopThemeProbe.cpp)
 
 target_include_directories(ned_lib

@@ -1,9 +1,12 @@
 //
-// color-at-point (C-c #): the edit half of the colour swatches.
+// The edit half of the colour swatches: `color-at-point` (M-x) and
+// `pick-color` (C-c #).
 //
-// The invariant worth pinning is the one that makes the list safe to accept
-// from: every row is a different spelling of the *same* colour, so whichever
-// one is chosen, re-reading the buffer finds the colour it started with.
+// The invariant worth pinning for the list is the one that makes it safe to
+// accept from: every row is a different spelling of the *same* colour, so
+// whichever one is chosen, re-reading the buffer finds the colour it started
+// with. For the picker it is the range -- what it was opened over is what the
+// accept replaces, and an accept over nothing inserts rather than replaces.
 //
 
 #include <catch2/catch_test_macros.hpp>
@@ -55,6 +58,14 @@ struct Fixture {
     ned::ui::ActiveBuffer         activeBuffer{buffer};
     std::optional<ListPopupModel> popup;
 
+    // What pick-color asked the (absent here) overlay to open on.
+    struct PickerRequest {
+        ned::editor::ColorValue          colour;
+        ned::editor::ColorSyntax         syntax;
+        ned::editor::ColorLiteralOptions options;
+    };
+    std::optional<PickerRequest> pickerRequest;
+
     // BufferView is neither copyable nor movable, so the fixture owns it
     // rather than handing one back by value.
     std::unique_ptr<BufferView> view;
@@ -64,13 +75,22 @@ struct Fixture {
                                             dispatcher, statusMessage, mode, theme);
         view->SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 23});
         view->SetOnCandidatesChanged([this](std::optional<ListPopupModel> model) { popup = std::move(model); });
+        view->SetOnColorPickerRequest([this](ned::editor::ColorValue colour, ned::editor::ColorSyntax syntax,
+                                             ned::editor::ColorLiteralOptions options) {
+            pickerRequest = PickerRequest{.colour = colour, .syntax = syntax, .options = options};
+        });
         return *view;
     }
 };
 
+// M-x rather than a chord: C-c # belongs to `pick-color` (the interactive
+// sibling), and color-at-point is deliberately name-only.
 void InvokeColorAtPoint(BufferView& view) {
-    view.OnEvent(ned::ui::test::Ctrl('c'));
-    view.OnEvent(ned::ui::test::Character('#'));
+    view.OnEvent(ned::ui::test::Alt('x'));
+    for (const char ch : std::string("color-at-point")) {
+        view.OnEvent(ned::ui::test::Character(ch));
+    }
+    view.OnEvent(ned::ui::test::Return());
 }
 
 std::vector<std::string> RowLabels(const ListPopupModel& model) {
@@ -198,4 +218,91 @@ TEST_CASE("A stylesheet's own spellings are offered only where the mode admits t
         CHECK(std::find(labels.begin(), labels.end(), "#ff6347") != labels.end());
         CHECK(std::find(labels.begin(), labels.end(), "tomato") == labels.end());
     }
+}
+
+namespace {
+
+void InvokePickColor(BufferView& view) {
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Character('#'));
+}
+
+} // namespace
+
+TEST_CASE("pick-color opens on the literal under point and writes back over it", "[PickColor]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("color: #ff00aa;\n");
+    fixture.buffer.SetPoint(10);
+    BufferView& view = fixture.View();
+
+    InvokePickColor(view);
+
+    REQUIRE(fixture.pickerRequest.has_value());
+    CHECK(fixture.pickerRequest->colour == ned::editor::ColorValue{.red   = 1.0,
+                                                                   .green = 0.0,
+                                                                   .blue  = 170.0 / 255.0,
+                                                                   .alpha = 1.0});
+    // Opened in the notation it is already spelled in, so an accept that
+    // changes nothing about the colour changes nothing about the text.
+    CHECK(fixture.pickerRequest->syntax == ned::editor::ColorSyntax::Hex);
+
+    view.ApplyPickedColor("#00ff00");
+    CHECK(fixture.buffer.Content().Substring(0, fixture.buffer.Size()) == "color: #00ff00;\n");
+    CHECK(fixture.statusMessage == "Colour set to #00ff00.");
+}
+
+TEST_CASE("pick-color on no literal inserts at point instead of replacing", "[PickColor]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("color: ;\n");
+    fixture.buffer.SetPoint(7);
+    BufferView& view = fixture.View();
+
+    InvokePickColor(view);
+
+    REQUIRE(fixture.pickerRequest.has_value());
+    // A neutral grey rather than an arbitrary colour -- see
+    // BufferView::RequestColorPicker.
+    CHECK(fixture.pickerRequest->colour.red == 0.5);
+    CHECK(fixture.pickerRequest->colour.alpha == 1.0);
+
+    view.ApplyPickedColor("#00ff00");
+    CHECK(fixture.buffer.Content().Substring(0, fixture.buffer.Size()) == "color: #00ff00;\n");
+}
+
+TEST_CASE("pick-color carries the mode's own admitted spellings", "[PickColor]") {
+    Fixture fixture;
+    fixture.mode.colorLiterals = {.shortHex = true, .namedColors = true};
+    fixture.buffer.InsertAtPoint("tomato\n");
+    fixture.buffer.SetPoint(2);
+    BufferView& view = fixture.View();
+
+    InvokePickColor(view);
+
+    REQUIRE(fixture.pickerRequest.has_value());
+    CHECK(fixture.pickerRequest->syntax == ned::editor::ColorSyntax::Named);
+    CHECK(fixture.pickerRequest->options.namedColors);
+    CHECK(fixture.pickerRequest->options.shortHex);
+}
+
+TEST_CASE("A picked colour is one undo step, and refuses a range that moved", "[PickColor]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("#ff00aa\n");
+    fixture.buffer.SetPoint(3);
+    BufferView& view = fixture.View();
+
+    InvokePickColor(view);
+    view.ApplyPickedColor("rgb(0, 255, 0)");
+    CHECK(fixture.buffer.Content().Substring(0, fixture.buffer.Size()) == "rgb(0, 255, 0)\n");
+
+    fixture.buffer.Undo();
+    CHECK(fixture.buffer.Content().Substring(0, fixture.buffer.Size()) == "#ff00aa\n");
+
+    // The captured range is checked against the buffer as it stands, not
+    // assumed still valid: a buffer that shrank under an open picker reports
+    // rather than editing whatever now occupies those bytes.
+    InvokePickColor(view);
+    fixture.buffer.DeleteRange(0, fixture.buffer.Size() - 1);
+    view.ApplyPickedColor("#00ff00");
+    CHECK(fixture.statusMessage == "Colour literal is no longer there.");
+    CHECK(fixture.buffer.Content().Substring(0, fixture.buffer.Size()) == "\n");
 }

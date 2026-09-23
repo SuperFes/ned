@@ -129,6 +129,26 @@ struct ColorPresentation {
 [[nodiscard]] std::vector<ColorPresentation> ColorPresentations(const ColorValue&          color,
                                                                 const ColorLiteralOptions& options);
 
+// sRGB <-> HSL, the pair every hue-notation format here is built on and the
+// pair an interactive picker needs in both directions. Public rather than
+// private to the scan because a picker adjusting H/S/L has to round-trip
+// through the same arithmetic the `hsl()` formatter uses, or a value typed in
+// one surface would not match the literal the other writes.
+//
+// RgbToHsl is lossy at the achromatic extremes -- black, white and any grey
+// report hue 0 and saturation 0, because no other answer is derivable from
+// the colour alone. A caller that wants a hue to survive a trip through grey
+// has to remember it itself; this function cannot.
+struct HslColor {
+    double hue        = 0.0; // degrees, 0..360
+    double saturation = 0.0; // 0..1
+    double lightness  = 0.0; // 0..1
+    double alpha      = 1.0;
+};
+
+[[nodiscard]] HslColor   RgbToHsl(const ColorValue& color);
+[[nodiscard]] ColorValue HslToRgb(const HslColor& hsl);
+
 // 8-bit sRGB, for painting. Rounds; does not clamp, because every producer
 // here already produced in-gamut values.
 [[nodiscard]] std::uint8_t ColorChannelToByte(double component);

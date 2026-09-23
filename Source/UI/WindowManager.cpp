@@ -551,6 +551,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnDapThreadsToggle(onDapThreadsToggle_);
     pane->Buffer().SetOnBufferListToggle(onBufferListToggle_);
     pane->Buffer().SetOnThemeGalleryToggle(onThemeGalleryToggle_);
+    pane->Buffer().SetOnColorPickerRequest(onColorPickerRequest_);
     pane->Buffer().SetOnPrefixHintChanged(onPrefixHintChanged_);
     pane->Buffer().SetOnCandidatesChanged(onCandidatesChanged_);
     pane->Buffer().SetOnCompletionChanged(onCompletionChanged_);
@@ -735,6 +736,20 @@ void WindowManager::SetOnThemeGalleryToggle(std::function<void()> onToggle) {
     onThemeGalleryToggle_ = std::move(onToggle);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnThemeGalleryToggle(onThemeGalleryToggle_);
+    }
+}
+
+void WindowManager::SetOnColorPickerRequest(
+    std::function<void(editor::ColorValue, editor::ColorSyntax, editor::ColorLiteralOptions)> onRequest) {
+    onColorPickerRequest_ = std::move(onRequest);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnColorPickerRequest(onColorPickerRequest_);
+    }
+}
+
+void WindowManager::ApplyPickedColor(const std::string& text) {
+    if (Pane* pane = FocusedPane()) {
+        pane->Buffer().ApplyPickedColor(text);
     }
 }
 

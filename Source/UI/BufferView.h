@@ -804,6 +804,22 @@ class BufferView : public Widget {
     // reasoning as SetOnBufferListToggle above. Unset is a safe no-op.
     void SetOnThemeGalleryToggle(std::function<void()> handler);
 
+    // color-picker: replaces the range RequestColorPicker captured with
+    // `text`, or inserts at it when the picker was opened on no literal.
+    // Public because the overlay lives above this class entirely and routes
+    // its accept back through WindowManager::ApplyPickedColor, which is also
+    // why it is called only after focus has already come back -- the pane
+    // this edits is the focused one again by then.
+    void ApplyPickedColor(const std::string& text);
+
+    // color-picker: same OverlayHost-owned-above-this-class shape as
+    // SetOnThemeGalleryToggle, but carrying the colour to open on, the
+    // notation to write back in, and the spellings this buffer's language
+    // admits -- the picker is stateless between visits and is told all three
+    // every time. Unset is a safe no-op.
+    void SetOnColorPickerRequest(
+        std::function<void(editor::ColorValue, editor::ColorSyntax, editor::ColorLiteralOptions)> handler);
+
     // which-key follow-up: same OverlayHost-owned-above-this-class shape as
     // SetOnTerminalToggle/SetOnAcpPanelToggle/SetOnDapConsoleToggle, but
     // fired on every Pending/non-Pending transition rather than by an
@@ -1767,6 +1783,17 @@ class BufferView : public Widget {
     // range ned already found, and routing it through the LSP edit applier
     // would make a server able to move it.
     void ApplyColorPresentation(const std::string& text);
+
+    // color-picker: the interactive sibling of RequestColorAtPoint. Opens
+    // UI/ColorPicker.h over the colour literal under point -- or, when point
+    // is on no literal at all, over a neutral grey that the accept will
+    // *insert* rather than replace, which is what makes the command a way to
+    // write a colour you do not have yet rather than only to edit one you do.
+    //
+    // No server round trip: the picker offers ned's own notations only. A
+    // colour a server named (`rebeccapurple`) is a conversion, which is what
+    // color-at-point is for; choosing a colour is not.
+    void RequestColorPicker();
 
     // right-click-context-menu follow-up: one row of the context menu --
     // see contextMenuEntries_'s own doc comment (near its declaration,
@@ -4070,6 +4097,8 @@ class BufferView : public Widget {
     std::function<void()>                              onDapThreadsToggle_;    // see SetOnDapThreadsToggle
     std::function<void()>                              onBufferListToggle_;    // see SetOnBufferListToggle
     std::function<void()>                              onThemeGalleryToggle_;  // see SetOnThemeGalleryToggle
+    std::function<void(editor::ColorValue, editor::ColorSyntax, editor::ColorLiteralOptions)>
+                                                       onColorPickerRequest_;  // see SetOnColorPickerRequest
     std::function<void(text::Buffer&)>                 onActiveBufferChanged_; // see SetOnActiveBufferChanged
     std::function<void(std::optional<WhichKeyHint>)>   onPrefixHintChanged_;   // see SetOnPrefixHintChanged
     std::function<void(std::optional<ListPopupModel>)> onCandidatesChanged_;   // see SetOnCandidatesChanged
@@ -4863,6 +4892,14 @@ class BufferView : public Widget {
     std::size_t                            pendingColorBegin_          = 0;
     std::size_t                            pendingColorEnd_            = 0;
     editor::ColorValue                     pendingColorValue_;
+
+    // color-picker: the same captured-range contract as the presentation
+    // list above, held separately because the picker is an overlay rather
+    // than an inputMode_ -- nothing about the buffer's own input state says
+    // one is open. Equal begin/end means "insert here", the no-literal case.
+    text::Buffer*                        pickerBuffer_ = nullptr;
+    std::size_t                          pickerBegin_  = 0;
+    std::size_t                          pickerEnd_    = 0;
     bufferview::RequestSlot              codeActionRequest_;
 
     // right-click-context-menu follow-up: contextMenuEntries_/

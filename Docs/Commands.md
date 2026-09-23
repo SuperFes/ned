@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-323 commands.
+324 commands.
 
 ## `acp-rewind`
 
@@ -157,8 +157,6 @@ Clear the loaded coverage report and its gutter marks.
 Toggle folding the code block (or, in a multibuffer, the excerpt) starting on the line at point.
 
 ## `color-at-point`
-
-Key: `C-c #`
 
 Rewrite the colour literal under point in another notation (hex, rgb(), hsl(), hwb(), a CSS colour name), chosen from a list.
 
@@ -1095,6 +1093,12 @@ Toggle the checkbox at point, reflecting the change up into any parent.
 Key: `C-x o`
 
 Move focus to the next window.
+
+## `pick-color`
+
+Key: `C-c #`
+
+Adjust the colour literal under point interactively (R/G/B, H/S/L, alpha), or insert a new one where point is.
 
 ## `point-to-register`
 
