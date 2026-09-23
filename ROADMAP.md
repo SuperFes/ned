@@ -253,19 +253,23 @@ file) actually mattered -- not eagerly per row, which would have defeated the
 ->resolveProvider`, `ResolveCompletionItem`'s exact shape and capability-at-
 the-call-site stance.
 
-- [ ] `inlayHint/resolve` is still absent, and turned out to be a different-shaped
-      problem than its sibling above: ned's own `InlayHint` doesn't carry a
-      tooltip/command at all today (a documented v1 scope cut in
-      `ExtractInlayHints`' own comment), and there is no hover-style surface an
-      inlay hint's resolved tooltip would render into -- the mouse-hover popup
-      (`RequestHoverAtOffset`) hit-tests the buffer's own byte offsets, not a
-      virtual-text span, so wiring a hint into it means teaching that path to
-      hit-test `RenderedVirtualText` first. Worth picking up once "show an inlay
-      hint's tooltip on hover" is a wanted feature in its own right, not before --
-      the resolve request buys nothing without it.
-
 *Deliberately skipped -- reasons recorded so these don't get re-opened:*
 
+- [ ] `inlayHint/resolve` -- **closed 2026-09-23 on a measurement.**
+      `Tools/lsp-capability-probe.py --require inlayHintProvider` against every
+      installed server: clangd and typescript-language-server advertise a bare
+      `true` (no `resolveProvider`), gopls advertises `{}` (same), and
+      lua-language-server is the only one that sets `resolveProvider: true`. A
+      live probe against clangd (a real parameter-hint request on a two-argument
+      call) confirms the bare-`true` case isn't hiding an inline tooltip either
+      -- the response carries `label`/`kind`/padding and nothing else. Building
+      this would mean parsing `InlayHint::tooltip`/`raw`, a capability extractor,
+      a `ResolveInlayHint` request, and -- the actually expensive part -- teaching
+      the mouse-hover popup to hit-test `RenderedVirtualText` spans instead of
+      just buffer byte offsets (`RequestHoverAtOffset` only does the latter
+      today), all to light up for one installed server with an unverified
+      payload even there. Reopen only on evidence a server actually installed
+      here returns a real tooltip through it.
 - [ ] `workspace/diagnostic` -- **closed 2026-09-22 on a measurement, and the gap it
       described was closed by another route.** No installed server advertises it:
       rust-analyzer, the only one here implementing pull diagnostics at all, sets
