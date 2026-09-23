@@ -51,6 +51,16 @@ Node Node::Parent() const {
     return Node(parse::NodeParent(node_));
 }
 
+void Node::AncestorChain(std::vector<Node>& out) const {
+    std::vector<parse::RedNode> rawChain;
+    parse::NodeAncestorChain(node_, rawChain);
+    out.clear();
+    out.reserve(rawChain.size());
+    for (const parse::RedNode& ancestor : rawChain) {
+        out.emplace_back(ancestor);
+    }
+}
+
 Node Node::NextNamedSibling() const {
     return Node(parse::NodeNextNamedSibling(node_));
 }

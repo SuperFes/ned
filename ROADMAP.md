@@ -72,14 +72,17 @@ whole-document highlight 50.7 ms -> 14.8 ms, keystroke+repaint on a 9 KiB C++ fi
       these become incremental -- MatchCache-style reuse keyed on the edit -- rather than
       windowed. Nothing pulled yet; typing no longer feels bad, which is what would drive
       it.
-- [ ] **`NodeParent` is still a root-down re-descent for everyone else.** The query walk
-      now hands its predicates the ancestor path it already holds, but any caller without
-      a walk to read from (`Editor/Indent.cpp`'s ancestor loop, `grammar::Node::Parent`)
-      still pays a full descent from the tree root per step, so an ancestor chain costs
-      O(depth^2 * breadth). A cheap fix exists for the chain shape specifically (collect
-      the whole chain in one descent instead of one descent per link); a cheap *parent*
-      is a memo per tree, which is shared mutable state the parse layer does not have
-      today.
+- [ ] **A cheap single `Parent()` call is still unaddressed.** The chain shape is fixed
+      (`parse::NodeAncestorChain`/`grammar::Node::AncestorChain`, collecting a whole
+      ancestor climb in one root-to-self descent instead of one re-descent per
+      `.Parent()` link -- `Editor/Indent.cpp`'s two walks, Mode.cpp's expand-selection/
+      pairwise-binding/sexp-motion walks, and the CLike/Org/Markdown indent ancestor
+      walks all migrated), but a single isolated `Parent()` call is still a full descent,
+      and `NodePrevSiblingImpl`/`NodeNextSiblingImpl` still call `NodeParent` once
+      internally on every invocation -- so a loop that climbs by sibling rather than by
+      parent (Mode.cpp's `sexpMotion`) still re-descends per level for that half. A cheap
+      *parent* (not just chain) needs a memo per tree, which is shared mutable state the
+      parse layer does not have today.
 - [ ] One measured non-fix worth not re-trying: rewriting `ImprintBracket`'s
       `DelimitersOf` `Child(i)` loops as `ForEachChild` cursor passes made a fold scan
       ~25% *slower* (2952 -> 3714 us). A closer is nearly always a node's last child and

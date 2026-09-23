@@ -48,7 +48,12 @@ namespace {
             // count, not display column (Fill.h's own documented v1 scope cut,
             // same reasoning -- a leading run of plain spaces/tabs essentially
             // never needs real tab-expansion math to reproduce verbatim).
-            for (grammar::Node ancestor = node; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
+            // AncestorChain follow-up: one descent for the whole climb
+            // instead of one re-descent from the root per Parent() step.
+            std::vector<grammar::Node> fenceChain;
+            node.AncestorChain(fenceChain);
+            fenceChain.insert(fenceChain.begin(), node);
+            for (const grammar::Node& ancestor : fenceChain) {
                 if (ancestor.Type() != "code_fence_content") {
                     continue;
                 }
@@ -103,7 +108,12 @@ namespace {
             const int  indentStep    = EffectiveIndentStyle("markdown-mode").width;
             const auto sumHangColumn = [indentStep](const grammar::Node& startNode, std::size_t position) {
                 int result = 0;
-                for (grammar::Node ancestor = startNode; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
+                // AncestorChain follow-up: one descent for the whole climb
+                // instead of one re-descent from the root per Parent() step.
+                std::vector<grammar::Node> chain;
+                startNode.AncestorChain(chain);
+                chain.insert(chain.begin(), startNode);
+                for (const grammar::Node& ancestor : chain) {
                     if (ancestor.Type() == "list_item") {
                         if (ancestor.StartByte() != position) {
                             result += indentStep;

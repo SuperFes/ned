@@ -62,8 +62,19 @@ namespace {
             for (TestMarker& marker : markers) {
                 grammar::Node node = tree.RootNode().NamedDescendantForByteRange(
                     marker.startByte, marker.endByte > marker.startByte ? marker.endByte - 1 : marker.startByte);
-                while (!node.IsNull() && node.StartByte() >= marker.startByte) {
-                    const grammar::Node sibling = node.NextNamedSibling();
+                if (node.IsNull()) {
+                    continue;
+                }
+                // AncestorChain follow-up: one descent for the whole climb
+                // instead of one re-descent from the root per Parent() step.
+                std::vector<grammar::Node> chain;
+                node.AncestorChain(chain);
+                chain.insert(chain.begin(), node);
+                for (const grammar::Node& candidate : chain) {
+                    if (candidate.StartByte() < marker.startByte) {
+                        break;
+                    }
+                    const grammar::Node sibling = candidate.NextNamedSibling();
                     if (!sibling.IsNull()) {
                         if (sibling.Type() == "compound_statement" && sibling.StartByte() >= marker.endByte &&
                             sibling.StartByte() <= marker.endByte + 2) {
@@ -71,7 +82,6 @@ namespace {
                         }
                         break;
                     }
-                    node = node.Parent();
                 }
             }
             return markers;

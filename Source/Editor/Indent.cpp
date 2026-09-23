@@ -395,7 +395,13 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
         // to the enclosing statement's own level rather than the call's
         // alignment column.
         bool crossedBarrier = false;
-        for (grammar::Node node = walkStart; !node.IsNull(); node = node.Parent()) {
+        // AncestorChain follow-up: one root-to-self descent for the whole
+        // climb, instead of walkStart.Parent() re-descending from the root
+        // on every step.
+        std::vector<grammar::Node> chain;
+        walkStart.AncestorChain(chain);
+        chain.insert(chain.begin(), walkStart);
+        for (const grammar::Node& node : chain) {
             const bool opensAtPosition = node.StartByte() == position;
             if (isBodyIndentCaptured(node) && !opensAtPosition) {
                 // Unlike @aligned, a special form's body indent never falls
@@ -448,8 +454,14 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
         // comment) until the node that identity-matches the actual capture
         // is found -- correct regardless of which shape the query captured.
         grammar::Node dedentNode = tree.RootNode().DescendantForByteRange(contentStart, contentStart);
-        while (!dedentNode.IsNull() && !(keyOf(dedentNode) == *dedentKey)) {
-            dedentNode = dedentNode.Parent();
+        if (!dedentNode.IsNull() && !(keyOf(dedentNode) == *dedentKey)) {
+            // AncestorChain follow-up: one descent for the whole climb
+            // instead of one re-descent from the root per Parent() step.
+            std::vector<grammar::Node> chain;
+            dedentNode.AncestorChain(chain);
+            const auto found = std::find_if(chain.begin(), chain.end(),
+                                            [&](const grammar::Node& ancestor) { return keyOf(ancestor) == *dedentKey; });
+            dedentNode       = found != chain.end() ? *found : grammar::Node(parse::NodeNull());
         }
         if (dedentNode.IsNull()) {
             return std::nullopt;

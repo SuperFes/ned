@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <vector>
 
 #include "Editor/Parse/Tree.h"
 
@@ -42,6 +43,16 @@ RedNode       NodeNamedChild(RedNode self, std::uint32_t childIndex);
 RedNode       NodeChildByFieldId(RedNode self, abi::FieldId fieldId);
 RedNode       NodeChildByFieldName(RedNode self, const char* name, std::uint32_t nameLength);
 RedNode       NodeParent(RedNode self);
+
+// NodeAncestorChain follow-up: a caller climbing an entire ancestor chain
+// (`for (node = self; ...; node = NodeParent(node))`) pays NodeParent's
+// root-to-self descent once per link -- O(depth^2) descent steps for a
+// chain of depth links. This performs that same root-to-self descent ONCE,
+// appending every node it passes -- self's immediate parent first, root
+// last -- into `out` (cleared first) instead of discarding all but the
+// last. Empty when self is the root (no parent).
+void NodeAncestorChain(RedNode self, std::vector<RedNode>& out);
+
 RedNode       NodeChildWithDescendant(RedNode self, RedNode descendant);
 RedNode       NodeNextSibling(RedNode self);
 RedNode       NodeNextNamedSibling(RedNode self);

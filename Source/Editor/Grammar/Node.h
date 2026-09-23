@@ -21,6 +21,7 @@
 
 #include <cstddef>
 #include <string_view>
+#include <vector>
 
 #include "Editor/Parse/Cursor.h"
 #include "Editor/Parse/Node.h"
@@ -106,6 +107,14 @@ class Node {
 
     // The immediate parent, or a null Node (see IsNull()) at the root.
     [[nodiscard]] Node Parent() const;
+
+    // NodeAncestorChain follow-up: fills `out` (cleared first) with this
+    // node's ancestors -- immediate parent first, root last -- via ONE
+    // root-to-self descent, instead of the O(depth^2) descent cost of a
+    // `for (node = self; !node.IsNull(); node = node.Parent())` loop, which
+    // re-descends from the root on every step. Prefer this over such a loop
+    // whenever more than one ancestor is actually climbed.
+    void AncestorChain(std::vector<Node>& out) const;
 
     // Emacs-keymap-round-2 follow-up (forward-sexp/backward-sexp): the next/
     // previous named sibling at this node's own level, or a null Node (see

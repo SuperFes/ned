@@ -1,5 +1,7 @@
 #include "Editor/Parse/Node.h"
 
+#include <algorithm>
+
 #include "Editor/Parse/LanguageTables.h"
 
 namespace ned::editor::parse {
@@ -473,6 +475,26 @@ RedNode NodeParent(RedNode self) {
     }
 
     return node;
+}
+
+void NodeAncestorChain(RedNode self, std::vector<RedNode>& out) {
+    out.clear();
+
+    // Same descent as NodeParent, above -- collecting every node passed
+    // rather than discarding all but the last.
+    RedNode node = NodeNew(self.tree, &self.tree->root, SubtreePadding(self.tree->root), 0);
+    if (node.id == self.id)
+        return;
+
+    while (true) {
+        out.push_back(node);
+        RedNode nextNode = NodeChildWithDescendant(node, self);
+        if (nextNode.id == self.id || NodeIsNull(nextNode))
+            break;
+        node = nextNode;
+    }
+
+    std::reverse(out.begin(), out.end());
 }
 
 RedNode NodeChildWithDescendant(RedNode self, RedNode descendant) {

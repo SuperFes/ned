@@ -1185,8 +1185,15 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
         }
 
         grammar::Node node = tree.RootNode().NamedDescendantForByteRange(startByte, endByte);
-        while (!node.IsNull() && node.StartByte() == startByte && node.EndByte() == endByte) {
-            node = node.Parent();
+        if (!node.IsNull() && node.StartByte() == startByte && node.EndByte() == endByte) {
+            // AncestorChain follow-up: one descent for the whole climb
+            // instead of one re-descent from the root per Parent() step.
+            std::vector<grammar::Node> chain;
+            node.AncestorChain(chain);
+            const auto found = std::find_if(chain.begin(), chain.end(), [&](const grammar::Node& ancestor) {
+                return ancestor.StartByte() != startByte || ancestor.EndByte() != endByte;
+            });
+            node             = found != chain.end() ? *found : grammar::Node(parse::NodeNull());
         }
         if (node.IsNull()) {
             return std::nullopt; // already at the root -- nothing bigger to expand to
@@ -1254,7 +1261,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     return child.EndByte();
                 }
             }
-            for (grammar::Node node = at; !node.IsNull(); node = node.Parent()) {
+            // AncestorChain follow-up: one descent for the whole climb
+            // instead of one re-descent from the root per Parent() step.
+            std::vector<grammar::Node> chain;
+            at.AncestorChain(chain);
+            chain.insert(chain.begin(), at);
+            for (const grammar::Node& node : chain) {
                 grammar::Node sibling = node.NextNamedSibling();
                 if (!sibling.IsNull() && sibling.StartByte() >= p) {
                     return sibling.EndByte();
@@ -1283,7 +1295,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 return child.StartByte();
             }
         }
-        for (grammar::Node node = at; !node.IsNull(); node = node.Parent()) {
+        // AncestorChain follow-up: one descent for the whole climb instead
+        // of one re-descent from the root per Parent() step.
+        std::vector<grammar::Node> chain;
+        at.AncestorChain(chain);
+        chain.insert(chain.begin(), at);
+        for (const grammar::Node& node : chain) {
             grammar::Node sibling = node.PrevNamedSibling();
             if (!sibling.IsNull() && sibling.EndByte() <= p) {
                 return sibling.StartByte();
@@ -1539,8 +1556,16 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             for (const PairwiseContainer& container : pairwise) {
                 grammar::Node node =
                     tree.RootNode().NamedDescendantForByteRange(container.startByte, container.endByte);
-                while (!node.IsNull() && (node.StartByte() != container.startByte || node.EndByte() != container.endByte)) {
-                    node = node.Parent();
+                if (!node.IsNull() && (node.StartByte() != container.startByte || node.EndByte() != container.endByte)) {
+                    // AncestorChain follow-up: one descent for the whole
+                    // climb instead of one re-descent from the root per
+                    // Parent() step.
+                    std::vector<grammar::Node> chain;
+                    node.AncestorChain(chain);
+                    const auto found = std::find_if(chain.begin(), chain.end(), [&](const grammar::Node& ancestor) {
+                        return ancestor.StartByte() == container.startByte && ancestor.EndByte() == container.endByte;
+                    });
+                    node             = found != chain.end() ? *found : grammar::Node(parse::NodeNull());
                 }
                 if (!node.IsNull()) {
                     ExpandPairwiseBindings(node, container.qualifier, skipRanges, captures);

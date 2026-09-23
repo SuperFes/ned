@@ -66,7 +66,12 @@ namespace {
             // follow-up: needs calling twice, see the rescue immediately below.
             const auto sumHangColumn = [](const grammar::Node& startNode, std::size_t position) {
                 int result = 0;
-                for (grammar::Node ancestor = startNode; !ancestor.IsNull(); ancestor = ancestor.Parent()) {
+                // AncestorChain follow-up: one descent for the whole climb
+                // instead of one re-descent from the root per Parent() step.
+                std::vector<grammar::Node> chain;
+                startNode.AncestorChain(chain);
+                chain.insert(chain.begin(), startNode);
+                for (const grammar::Node& ancestor : chain) {
                     if (ancestor.Type() != "listitem") {
                         continue;
                     }
