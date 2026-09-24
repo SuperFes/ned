@@ -187,7 +187,11 @@ and code reading. Highest stakes first.
       formatter, so the language server's formatting (or `ned/set-format-command`) is
       still what makes a file canonical. Quotes are only rewritten where a Prettier
       config says which (Prettier's default is double, but plenty of projects set
-      `singleQuote`). C#'s `csharp_new_line_*` `.editorconfig` keys aren't read.
+      `singleQuote`). C#'s own `.editorconfig` keys adjust its style
+      (`csharp_new_line_before_open_brace` for types, methods and control blocks,
+      `_before_else/catch/finally` when they agree, control-flow paren spacing);
+      the finer brace categories (accessors, lambdas, initializers) have no
+      capture of their own yet.
 
 **Quick-fix gutter marker**
 

@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "Editor/EditorConfig.h"
 #include "Editor/Format.h"
 #include "Editor/FormatBuiltinStyle.h"
 #include "Editor/FormatRules.h"
@@ -365,4 +366,49 @@ TEST_CASE("JavaScript and TypeScript's bundled style follows Prettier's braces a
     CHECK(NativeFormatted(source, "javascript") == expected);
     CHECK(NativeFormatted(source, "typescript") == expected);
     CHECK(NativeFormatted(source, "tsx") == expected);
+}
+
+TEST_CASE("A project's .editorconfig C# keys adjust C#'s bundled style", "[FormatBuiltinStyle][EditorConfig]") {
+    const BuiltinStyleGuard     guard;
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "ned_builtin_style_csharp_editorconfig";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root);
+    std::ofstream(root / ".editorconfig") << "root = true\n"
+                                             "[*.{cs,vb}]\n"
+                                             "csharp_new_line_before_open_brace = types, methods:warning\n"
+                                             "csharp_new_line_before_else = false\n"
+                                             "csharp_new_line_before_catch = false\n"
+                                             "csharp_new_line_before_finally = false\n";
+    LoadBuiltinFormatStyles();
+    ned::editor::ApplyEditorConfigFormatRules(root);
+
+    CHECK(NativeFormatted("class Box\n"
+                          "{\n"
+                          "    int Size(int n)\n"
+                          "    {\n"
+                          "        if (n > 0)\n"
+                          "        {\n"
+                          "            return n;\n"
+                          "        }\n"
+                          "        else\n"
+                          "        {\n"
+                          "            return 0;\n"
+                          "        }\n"
+                          "    }\n"
+                          "}\n",
+                          "csharp") ==
+          "class Box\n"
+          "{\n"
+          "    int Size(int n)\n"
+          "    {\n"
+          "        if (n > 0) {\n"
+          "            return n;\n"
+          "        } else {\n"
+          "            return 0;\n"
+          "        }\n"
+          "    }\n"
+          "}\n");
+
+    ClearFormatRuleLayer(FormatRuleLayer::File);
+    std::filesystem::remove_all(root);
 }

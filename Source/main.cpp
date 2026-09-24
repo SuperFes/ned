@@ -390,6 +390,7 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
         ned::editor::LoadBuiltinFormatStyles();
         ned::editor::ApplyRustfmtRules(projectRoot);
         ned::editor::ApplyPrettierRules(projectRoot);
+        ned::editor::ApplyEditorConfigFormatRules(projectRoot);
         ned::editor::LoadFormatConfigFile(ned::editor::PersonalFormatConfigPath());
         ned::editor::LoadFormatConfigFile(ned::editor::ProjectFormatConfigPath(projectRoot));
     }
@@ -764,6 +765,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     }
     ned::editor::ApplyRustfmtRules(projectRoot);
     ned::editor::ApplyPrettierRules(projectRoot);
+    ned::editor::ApplyEditorConfigFormatRules(projectRoot);
     try {
         ned::editor::LoadFormatConfigFile(ned::editor::PersonalFormatConfigPath());
     }

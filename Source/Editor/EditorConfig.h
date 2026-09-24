@@ -52,6 +52,14 @@ struct EditorConfigFile {
 // max_line_length ("off" is no limit).
 [[nodiscard]] text::FileConventions EditorConfigConventions(const std::map<std::string, std::string>& properties);
 
+// C#'s formatting keys (Roslyn's csharp_new_line_before_open_brace,
+// csharp_new_line_before_else/catch/finally,
+// csharp_space_after_keywords_in_control_flow_statements and
+// csharp_space_between_parentheses), as the project root's `*.cs` files see
+// them, written as csharp-scoped rules into the File layer over C#'s bundled
+// style. Nothing while .editorconfig is disabled.
+void ApplyEditorConfigFormatRules(const std::filesystem::path& projectRoot);
+
 // Makes every load decode a file in the charset .editorconfig states for it
 // (text::SetStatedCharsetResolver), while .editorconfig is enabled. A file's
 // own byte order mark still wins.

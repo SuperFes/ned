@@ -7,6 +7,7 @@
 #include <sstream>
 #include <system_error>
 
+#include "EditorConfig.h"
 #include "FinalNewline.h"
 #include "FormatRules.h"
 #include "IndentStyle.h"
@@ -735,6 +736,7 @@ void ReloadFormatConfig(const std::filesystem::path& projectRoot) {
     ForgetFormatConfigSettings();
     ApplyRustfmtRules(projectRoot);
     ApplyPrettierRules(projectRoot);
+    ApplyEditorConfigFormatRules(projectRoot);
     if (personal) {
         ApplyFormatConfig(*personal);
     }
