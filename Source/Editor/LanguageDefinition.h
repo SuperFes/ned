@@ -107,6 +107,8 @@ struct LanguageDefinition {
     // definitions -- YAML's outline lists two levels of keys, its
     // breadcrumbs should follow the nesting all the way down.
     bool stickyScrollFromFolds = false;
+    // Mode::signatureTemplate.
+    std::string signatureTemplate;
     // File-name matching: extensions carry their leading dot (".cpp"), the
     // form std::filesystem::path::extension() hands back; filenames match
     // the whole basename and are checked first (Emacs' auto-mode-alist).

@@ -26,4 +26,5 @@
    "console.log(${1:value});$0"
    "import"
    "import ${1:module} from '${2:package}';$0"}
+ :signature-template "function __ned_sig({}) {}"
 }

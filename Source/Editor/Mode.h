@@ -488,11 +488,23 @@ using TestDiscoveryFunction = std::function<std::vector<TestMarker>(std::string_
 // ChangeSignature can only match a parameter across old/new by name, so a
 // nameless one is never kept, only dropped, and can never be typed as a NEW
 // parameter either (there is no name to give a call-site argument).
-// hasDefaultValue/[defaultStartByte, defaultEndByte) mirror C++'s own
-// optional_parameter_declaration `default_value:` field. isVariadic marks a
-// `...` parameter -- neither a name nor a default make sense for one, and
-// ChangeSignature declines outright rather than guess at rewriting a
-// variadic call site.
+// hasDefaultValue/[defaultStartByte, defaultEndByte) is its default value,
+// if it has one. isVariadic marks a rest parameter (`...`, `*args`) --
+// neither a name nor a default make sense for one, and ChangeSignature
+// declines outright rather than guess at rewriting a variadic call site.
+// A signatures query states all of this with @parameter/@parameter.name/
+// @parameter.default/@parameter.variadic captures; one that doesn't (C,
+// C++) gets it from the parameter's `declarator:` field instead.
+// A parameter a call supplies other than through its argument list:
+// Instance (`self`, left out of `x.m(a)` but passed to `T::m(x, a)`), Any (a
+// classmethod's `cls`, left out of `Cls.m(a)` too), Always (a constructor's
+// `self` behind `Widget(a)`, TypeScript's `this:` annotation -- never
+// passed). Ordered: a parameter two patterns describe keeps the later kind.
+enum class ParameterReceiver : std::uint8_t { None,
+                                              Instance,
+                                              Any,
+                                              Always };
+
 struct SignatureParameter {
     std::size_t startByte;
     std::size_t endByte;
@@ -502,6 +514,8 @@ struct SignatureParameter {
     std::size_t defaultStartByte = 0;
     std::size_t defaultEndByte   = 0;
     bool        isVariadic       = false;
+    // @parameter.receiver / .receiver.any / .receiver.always.
+    ParameterReceiver receiver = ParameterReceiver::None;
 };
 
 // change-signature follow-up: one function-like definition or bodyless
@@ -525,6 +539,11 @@ struct SignatureMarker {
     std::size_t                     parametersStartByte;
     std::size_t                     parametersEndByte;
     std::vector<SignatureParameter> parameters;
+    // The name call sites spell when it isn't the definition's own
+    // (@signature.callee): a constructor `__construct` is called as
+    // `new Widget(...)`. Equal to the name range otherwise.
+    std::size_t callNameStartByte = 0;
+    std::size_t callNameEndByte   = 0;
 };
 
 // Given a buffer's full text, returns every function-like definition or
@@ -544,7 +563,19 @@ using SignatureFunction = std::function<std::vector<SignatureMarker>(std::string
 struct CallArgument {
     std::size_t startByte;
     std::size_t endByte;
+    // False for an argument bound by name or spread from a collection
+    // (calls.janet's @argument.named/@argument.spread): its position says
+    // nothing about which parameter it fills, so the call can't be
+    // rewritten by position.
+    bool positional = true;
 };
+
+// What a call's object supplies: Instance for `x.m(...)`, Type for
+// `Cls.m(...)` (calls.janet's @call.receiver/@call.receiver.type), None for a
+// plain or path call that passes every parameter itself.
+enum class CallReceiver : std::uint8_t { None,
+                                         Instance,
+                                         Type };
 
 // One call expression. [startByte, endByte) is the whole call;
 // [calleeStartByte, calleeEndByte) is just the identifier being called -- a
@@ -564,6 +595,7 @@ struct CallMarker {
     std::size_t               argumentsStartByte;
     std::size_t               argumentsEndByte;
     std::vector<CallArgument> arguments;
+    CallReceiver              receiver = CallReceiver::None;
 };
 
 // Given a buffer's full text, returns every call expression in it, in tree
@@ -952,6 +984,11 @@ struct Mode {
     // a config format whose outline stops a few levels down but whose
     // nesting is its structure (LanguageDefinition::stickyScrollFromFolds).
     bool stickyScrollFromFolds = false;
+    // A declaration of a function named __ned_sig whose parameter list is
+    // `{}` -- change-signature parses the parameters the user retyped by
+    // substituting them in and running `signatures` over the result (C++:
+    // "void __ned_sig({}) {}"). Empty: change-signature isn't offered.
+    std::string signatureTemplate;
     // Which colour-literal spellings this mode's buffers admit -- the
     // swatch scan and `color-at-point` both read it. Defaults to the
     // universally unambiguous set; a stylesheet's definition widens it.

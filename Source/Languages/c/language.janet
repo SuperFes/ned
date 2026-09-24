@@ -28,4 +28,5 @@
    "printf(\"${1:%s\\n}\", ${2:value});$0"
    "guard"
    "#ifndef ${TM_FILENAME_BASE/(.*)/${1:/upcase}/}_H\n#define ${TM_FILENAME_BASE/(.*)/${1:/upcase}/}_H\n\n$0\n\n#endif"}
+ :signature-template "void __ned_sig({}) {}"
 }

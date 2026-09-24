@@ -28,6 +28,7 @@ add_executable(ned_tests
             ChangeSignatureQueryTest.cpp
             ChangeSignatureTest.cpp
             ChangeSignatureDiscoveryTest.cpp
+            ChangeSignatureLanguagesTest.cpp
             BufferViewRenameSymbolTest.cpp
             BufferViewChangeSignatureTest.cpp
             BufferViewCaseFixTest.cpp

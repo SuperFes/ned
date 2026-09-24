@@ -26,4 +26,5 @@
    "print(${1:value})$0"
    "import"
    "import ${1:module}$0"}
+ :signature-template "def __ned_sig({}): pass"
 }

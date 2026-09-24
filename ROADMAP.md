@@ -148,9 +148,13 @@ and code reading. Highest stakes first.
       hand, binds `^pinned` names inside a match and counts every call target as a
       variable use; Dart's function signature and body are siblings with no node
       covering both, so no scope capture can hold the parameters and their uses.
-- [ ] **change-signature is C++-only.** It needs `signatures` + `calls` queries, and only
-      cpp ships them (`sig` column). Rust, Go, Java, Kotlin, C#, TypeScript and Python are
-      the obvious next ones.
+- [ ] **change-signature for the remaining languages.** C, C++, Go, Rust, Java, Kotlin,
+      C#, JavaScript, TypeScript/TSX, Python and PHP have `signatures` + `calls` queries
+      (`sig` column); each language's queries describe its parameters, receivers and
+      named/spread arguments, and `:signature-template` parses the retyped list. Known
+      misses: a call reaching a constructor through its parent (`parent::__construct`,
+      `super().__init__`, `super(...)`) names no class, so it isn't found; a C# extension
+      method called statically with its trailing defaults omitted is read as a member call.
 - [ ] **Bundled formatter styles exist for PHP only.** Candidates with a single canonical
       guide: Go (gofmt), Rust (rustfmt), Kotlin (official conventions), C# (.NET
       conventions), JavaScript/TypeScript (Prettier). A bundled style changes on-save

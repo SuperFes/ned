@@ -1,5 +1,6 @@
 #include "ChangeSignature.h"
 
+#include <algorithm>
 #include <cctype>
 #include <unordered_map>
 
@@ -15,8 +16,8 @@ namespace {
         return Slice(text, parameter.nameStartByte, parameter.nameEndByte);
     }
 
-    std::string_view Name(std::string_view text, const SignatureMarker& marker) {
-        return Slice(text, marker.nameStartByte, marker.nameEndByte);
+    std::string_view CallName(std::string_view text, const SignatureMarker& marker) {
+        return Slice(text, marker.callNameStartByte, marker.callNameEndByte);
     }
 
     std::string_view Callee(std::string_view text, const CallMarker& call) {
@@ -38,6 +39,34 @@ MappingResult BuildPositionMapping(std::string_view oldText, const std::vector<S
                                    std::string_view newText, const std::vector<SignatureParameter>& newParams) {
     if (AnyVariadic(oldParams) || AnyVariadic(newParams)) {
         return {.declined = true, .declineReason = "a variadic parameter can't be reordered, dropped or defaulted"};
+    }
+
+    // Receivers lead the old list, and the new one keeps them first under
+    // the same names. Whether a parameter is a receiver is the old
+    // signature's to say: the new list was parsed out of context (a Python
+    // `self` in a module-level wrapper is just a parameter).
+    std::vector<ParameterReceiver> receivers;
+    while (receivers.size() < oldParams.size() && oldParams[receivers.size()].receiver != ParameterReceiver::None) {
+        receivers.push_back(oldParams[receivers.size()].receiver);
+    }
+    const auto receiverMoved = [&] {
+        for (std::size_t i = receivers.size(); i < oldParams.size(); ++i) {
+            if (oldParams[i].receiver != ParameterReceiver::None) {
+                return true; // a receiver after an ordinary parameter -- nothing to anchor on
+            }
+        }
+        if (newParams.size() < receivers.size()) {
+            return true;
+        }
+        for (std::size_t i = 0; i < receivers.size(); ++i) {
+            if (Name(oldText, oldParams[i]) != Name(newText, newParams[i])) {
+                return true;
+            }
+        }
+        return false;
+    };
+    if (receiverMoved()) {
+        return {.declined = true, .declineReason = "a method's receiver has to stay first and unchanged"};
     }
 
     // Every OLD name that isn't unique is dropped from the lookup table
@@ -91,20 +120,43 @@ MappingResult BuildPositionMapping(std::string_view oldText, const std::vector<S
                                       .newDefaultEndByte   = parameter.defaultEndByte});
     }
 
-    return {.declined = false, .origins = std::move(origins)};
+    return {.declined = false, .origins = std::move(origins), .oldArity = oldParams.size(), .receivers = std::move(receivers)};
 }
 
 ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector<CallArgument>& oldArgs,
-                                    std::string_view newDefaultText, const std::vector<ParamOrigin>& origins) {
+                                    std::string_view newDefaultText, const MappingResult& mapping, CallReceiver receiver) {
+    for (const CallArgument& argument : oldArgs) {
+        if (!argument.positional) {
+            return {.declined = true, .declineReason = "call site passes an argument by name or spreads one"};
+        }
+    }
+    // The leading receivers this call's object supplies.
+    std::size_t implicit = 0;
+    for (const ParameterReceiver parameter : mapping.receivers) {
+        const bool supplied = parameter == ParameterReceiver::Always ||
+                              (parameter == ParameterReceiver::Instance && receiver == CallReceiver::Instance) ||
+                              (parameter == ParameterReceiver::Any && receiver != CallReceiver::None);
+        if (!supplied) {
+            break;
+        }
+        ++implicit;
+    }
+    if (oldArgs.size() > mapping.oldArity - implicit) {
+        return {.declined = true, .declineReason = "call site supplies more arguments than the old signature has parameters"};
+    }
     std::string result;
-    for (const ParamOrigin& origin : origins) {
+    for (std::size_t i = 0; i < mapping.origins.size(); ++i) {
+        const ParamOrigin& origin = mapping.origins[i];
+        if (i < implicit) {
+            continue; // a receiver the object supplies, kept in place
+        }
         std::string_view piece;
         if (origin.kind == ParamOriginKind::Kept) {
-            if (origin.oldIndex >= oldArgs.size()) {
+            if (origin.oldIndex - implicit >= oldArgs.size()) {
                 return {.declined = true,
                        .declineReason = "call site supplies fewer arguments than the old signature has parameters"};
             }
-            const CallArgument& argument = oldArgs[origin.oldIndex];
+            const CallArgument& argument = oldArgs[origin.oldIndex - implicit];
             piece                        = callText.substr(argument.startByte, argument.endByte - argument.startByte);
         }
         else {
@@ -131,7 +183,7 @@ DiscoveryResult DiscoverSignatureAndCallSites(std::string_view name, std::size_t
         const FileScanResult scanned = scanner(candidate, *text);
 
         for (const SignatureMarker& signature : scanned.signatures) {
-            if (signature.nameStartByte == signature.nameEndByte || Name(*text, signature) != name) {
+            if (signature.callNameStartByte == signature.callNameEndByte || CallName(*text, signature) != name) {
                 continue;
             }
             if (signature.parameters.size() != targetArity) {

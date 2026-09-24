@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -899,7 +900,7 @@ std::vector<SignatureParameter> ParametersFromList(const grammar::Node& paramete
         }
 
         SignatureParameter parameter{.startByte = child.StartByte(), .endByte = child.EndByte()};
-        if (child.Type() == "variadic_parameter_declaration") {
+        if (child.Type() == "variadic_parameter_declaration" || child.Type() == "variadic_parameter") {
             parameter.isVariadic = true;
             parameters.push_back(parameter);
             continue;
@@ -1672,17 +1673,79 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 return {};
             }
 
+            const std::vector<grammar::QueryMatch> matches =
+                signatureMatchCache->Reconcile(*signatureQuery, tree, bufferText, sharedParse->LastEdit());
+
+            // A query that describes parameters itself (@parameter and
+            // friends) is read by range; one that doesn't falls back to the
+            // declarator walk. Several patterns may describe one parameter
+            // (its name in one, its default in another): they merge.
+            std::map<std::pair<std::size_t, std::size_t>, SignatureParameter> described;
+            for (const grammar::QueryMatch& match : matches) {
+                std::optional<SignatureParameter> parameter;
+                for (const grammar::QueryMatchCapture& capture : match.captures) {
+                    static constexpr std::pair<std::string_view, ParameterReceiver> kWholeParameter[] = {
+                        {"parameter", ParameterReceiver::None},
+                        {"parameter.variadic", ParameterReceiver::None},
+                        {"parameter.receiver", ParameterReceiver::Instance},
+                        {"parameter.receiver.any", ParameterReceiver::Any},
+                        {"parameter.receiver.always", ParameterReceiver::Always}};
+                    for (const auto& [name, receiver] : kWholeParameter) {
+                        if (capture.name == name) {
+                            parameter = SignatureParameter{.startByte  = capture.startByte,
+                                                           .endByte    = capture.endByte,
+                                                           .isVariadic = name == "parameter.variadic",
+                                                           .receiver   = receiver};
+                        }
+                    }
+                }
+                if (!parameter) {
+                    continue;
+                }
+                for (const grammar::QueryMatchCapture& capture : match.captures) {
+                    if (capture.name == "parameter.name") {
+                        parameter->nameStartByte = capture.startByte;
+                        parameter->nameEndByte   = capture.endByte;
+                    }
+                    else if (capture.name == "parameter.default") {
+                        parameter->hasDefaultValue  = true;
+                        parameter->defaultStartByte = capture.startByte;
+                        parameter->defaultEndByte   = capture.endByte;
+                    }
+                }
+                const auto [entry, inserted] = described.try_emplace({parameter->startByte, parameter->endByte}, *parameter);
+                if (!inserted) {
+                    SignatureParameter& merged = entry->second;
+                    if (merged.nameStartByte == merged.nameEndByte) {
+                        merged.nameStartByte = parameter->nameStartByte;
+                        merged.nameEndByte   = parameter->nameEndByte;
+                    }
+                    if (!merged.hasDefaultValue && parameter->hasDefaultValue) {
+                        merged.hasDefaultValue  = true;
+                        merged.defaultStartByte = parameter->defaultStartByte;
+                        merged.defaultEndByte   = parameter->defaultEndByte;
+                    }
+                    merged.isVariadic = merged.isVariadic || parameter->isVariadic;
+                    merged.receiver   = std::max(merged.receiver, parameter->receiver);
+                }
+            }
+
             std::vector<SignatureMarker> markers;
-            for (const grammar::QueryMatch& match :
-                 signatureMatchCache->Reconcile(*signatureQuery, tree, bufferText, sharedParse->LastEdit())) {
+            for (const grammar::QueryMatch& match : matches) {
                 SignatureMarker marker{};
                 bool            haveDefinition  = false;
                 bool            haveName        = false;
+                bool            haveCallName    = false;
                 std::size_t     parametersStart = 0;
                 std::size_t     parametersEnd   = 0;
                 bool            haveParameters  = false;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
-                    if (capture.name == "signature.definition") {
+                    if (capture.name == "signature.callee") {
+                        marker.callNameStartByte = capture.startByte;
+                        marker.callNameEndByte   = capture.endByte;
+                        haveCallName             = true;
+                    }
+                    else if (capture.name == "signature.definition") {
                         marker.startByte = capture.startByte;
                         marker.endByte   = capture.endByte;
                         haveDefinition   = true;
@@ -1701,6 +1764,10 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 if (!haveDefinition || !haveName || !haveParameters) {
                     continue; // a pattern that matched without its full capture trio
                 }
+                if (!haveCallName) {
+                    marker.callNameStartByte = marker.nameStartByte;
+                    marker.callNameEndByte   = marker.nameEndByte;
+                }
 
                 const grammar::Node parameterList =
                     tree.RootNode().NamedDescendantForByteRange(parametersStart, parametersEnd);
@@ -1708,9 +1775,47 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     parameterList.EndByte() != parametersEnd) {
                     continue; // re-derivation failed -- report no parameters rather than guess
                 }
+                // Rewriting replaces what lies between the parens, so a list
+                // written without them (Ruby's `def f a, b`) can't be.
+                if (bufferText[parametersStart] != '(' || bufferText[parametersEnd - 1] != ')') {
+                    continue;
+                }
                 marker.parametersStartByte = parametersStart;
                 marker.parametersEndByte   = parametersEnd;
-                marker.parameters          = ParametersFromList(parameterList);
+                if (described.empty()) {
+                    marker.parameters = ParametersFromList(parameterList);
+                }
+                else {
+                    // Every named child is a parameter; one the query didn't
+                    // describe (Python's bare `*` separator) is nameless, which
+                    // change-signature can drop but never match. A grammar that
+                    // writes a default as the parameter's sibling (Kotlin's
+                    // `b: Int = 2`) gives it to the parameter before the `=`.
+                    bool defaultFollows = false;
+                    parameterList.ForEachChild([&](const grammar::Node& child) {
+                        if (child.IsExtra()) {
+                            return;
+                        }
+                        if (!child.IsNamed()) {
+                            defaultFollows = child.Type() == "=" && !marker.parameters.empty();
+                            return;
+                        }
+                        if (defaultFollows) {
+                            defaultFollows               = false;
+                            SignatureParameter& previous = marker.parameters.back();
+                            if (!previous.hasDefaultValue) {
+                                previous.hasDefaultValue  = true;
+                                previous.defaultStartByte = child.StartByte();
+                                previous.defaultEndByte   = child.EndByte();
+                                return;
+                            }
+                        }
+                        const auto found = described.find({child.StartByte(), child.EndByte()});
+                        marker.parameters.push_back(found != described.end()
+                                                        ? found->second
+                                                        : SignatureParameter{.startByte = child.StartByte(), .endByte = child.EndByte()});
+                    });
+                }
                 markers.push_back(std::move(marker));
             }
 
@@ -1748,9 +1853,21 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 return {};
             }
 
+            const std::vector<grammar::QueryMatch> matches =
+                callMatchCache->Reconcile(*callQuery, tree, bufferText, sharedParse->LastEdit());
+
+            // Arguments bound by name or spread (@argument.named/.spread).
+            std::set<std::pair<std::size_t, std::size_t>> nonPositional;
+            for (const grammar::QueryMatch& match : matches) {
+                for (const grammar::QueryMatchCapture& capture : match.captures) {
+                    if (capture.name == "argument.named" || capture.name == "argument.spread") {
+                        nonPositional.emplace(capture.startByte, capture.endByte);
+                    }
+                }
+            }
+
             std::vector<CallMarker> markers;
-            for (const grammar::QueryMatch& match :
-                 callMatchCache->Reconcile(*callQuery, tree, bufferText, sharedParse->LastEdit())) {
+            for (const grammar::QueryMatch& match : matches) {
                 CallMarker  marker{};
                 bool        haveDefinition = false;
                 bool        haveCallee     = false;
@@ -1773,6 +1890,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         argumentsEnd   = capture.endByte;
                         haveArguments  = true;
                     }
+                    else if (capture.name == "call.receiver") {
+                        marker.receiver = CallReceiver::Instance;
+                    }
+                    else if (capture.name == "call.receiver.type") {
+                        marker.receiver = CallReceiver::Type;
+                    }
                 }
                 if (!haveDefinition || !haveCallee || !haveArguments) {
                     continue;
@@ -1791,7 +1914,19 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     if (!child.IsNamed() || child.IsExtra()) {
                         continue;
                     }
-                    marker.arguments.push_back(CallArgument{.startByte = child.StartByte(), .endByte = child.EndByte()});
+                    marker.arguments.push_back(CallArgument{.startByte  = child.StartByte(),
+                                                            .endByte    = child.EndByte(),
+                                                            .positional = !nonPositional.contains({child.StartByte(), child.EndByte()})});
+                }
+                // Without parens (Ruby's `f 1, 2`) the list can't be rewritten
+                // in place; a bare `f` has nothing to rewrite at all.
+                if (argumentsEnd == argumentsStart || bufferText[argumentsStart] != '(' || bufferText[argumentsEnd - 1] != ')') {
+                    if (marker.arguments.empty()) {
+                        continue;
+                    }
+                    for (CallArgument& argument : marker.arguments) {
+                        argument.positional = false;
+                    }
                 }
                 markers.push_back(std::move(marker));
             }

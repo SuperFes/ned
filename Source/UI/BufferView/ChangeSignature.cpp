@@ -69,13 +69,19 @@ bool BufferView::BuildChangeSignatureReview(const std::filesystem::path& targetF
     // The synthetic-wrapper trick Editor/ChangeSignature.h's own header
     // comment describes: feeding the retyped text back through the real
     // grammar-based parameter parser rather than hand-rolling a second
-    // nested-bracket-aware splitter. A real BODY (not a bare ";") is
-    // required -- cpp/signatures.janet's own header comment explains why a
-    // bodyless free-function prototype is deliberately never captured
-    // (C++'s "most vexing parse"), which a semicolon-terminated wrapper
-    // would be.
-    const std::string syntheticText    = "void __ned_sig(" + newSignatureText + ") {}";
-    const auto         syntheticMarkers = targetMode.signatures(syntheticText);
+    // nested-bracket-aware splitter. Each language states its own wrapper
+    // (Mode::signatureTemplate) -- C++'s needs a real body, since
+    // cpp/signatures.janet deliberately never captures a bodyless
+    // free-function prototype (the "most vexing parse").
+    const std::string& wrapper     = targetMode.signatureTemplate;
+    const std::size_t  placeholder = wrapper.find("{}");
+    if (placeholder == std::string::npos) {
+        statusMessage_ = "Change signature isn't set up for this file's language.";
+        return false;
+    }
+    const std::string syntheticText =
+        wrapper.substr(0, placeholder) + newSignatureText + wrapper.substr(placeholder + std::string_view("{}").size());
+    const auto syntheticMarkers = targetMode.signatures(syntheticText);
     if (syntheticMarkers.empty()) {
         statusMessage_ = "Change signature: couldn't parse the new signature.";
         return false;
@@ -89,8 +95,9 @@ bool BufferView::BuildChangeSignatureReview(const std::filesystem::path& targetF
         return false;
     }
 
-    const std::string_view name = std::string_view(targetText).substr(
-        targetSignature.nameStartByte, targetSignature.nameEndByte - targetSignature.nameStartByte);
+    // What call sites spell -- a constructor's class name rather than
+    // `__construct`.
+    const std::string_view name    = std::string_view(targetText).substr(targetSignature.callNameStartByte, targetSignature.callNameEndByte - targetSignature.callNameStartByte);
     const std::string pattern = editor::changesig::CandidatePattern(name);
     if (pattern.empty()) {
         statusMessage_ = "Change signature: nothing to search for.";
@@ -162,7 +169,7 @@ bool BufferView::BuildChangeSignatureReview(const std::filesystem::path& targetF
     std::size_t declinedCallSites = 0;
     for (const editor::changesig::CallSite& site : discovery.callSites) {
         const editor::changesig::ArgumentRewrite rewrite =
-            editor::changesig::RewriteArgumentList(site.text, site.call.arguments, syntheticText, mapping.origins);
+            editor::changesig::RewriteArgumentList(site.text, site.call.arguments, syntheticText, mapping, site.call.receiver);
         if (rewrite.declined) {
             ++declinedCallSites;
             declineReason = rewrite.declineReason;

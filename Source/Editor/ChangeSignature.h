@@ -34,7 +34,9 @@
 // unique enough to match unambiguously. RewriteArgumentList additionally
 // declines per CALL SITE -- never the whole operation -- when that one call
 // supplied fewer arguments than the old signature had parameters (an
-// omitted trailing default this module has no text for).
+// omitted trailing default this module has no text for), or passed one by
+// name or spread one (CallArgument::positional), whose place in the list
+// says nothing about which parameter it fills.
 //
 
 #ifndef NED_EDITOR_CHANGESIGNATURE_H
@@ -73,6 +75,10 @@ struct MappingResult {
     bool                      declined = false;
     std::string               declineReason; // set only when declined
     std::vector<ParamOrigin> origins;        // one per NEW parameter, in order; valid only when !declined
+    // The old parameter count, and the receivers leading both lists (the
+    // mapping declines unless the new list keeps them first and unchanged).
+    std::size_t                    oldArity = 0;
+    std::vector<ParameterReceiver> receivers;
 };
 
 // oldText/newText are whatever text oldParams/newParams's own byte ranges
@@ -96,8 +102,13 @@ struct ArgumentRewrite {
 // default range points into it. `origins` is BuildPositionMapping's own
 // result for this function -- every call site sharing one signature change
 // reuses the same origins list.
+// `receiver` is how the call names its object (CallMarker::receiver): a
+// receiver parameter the object supplies is in neither the old nor the new
+// argument list. A call passing more arguments than the old signature takes
+// is declined too -- whatever the extra ones mean, dropping them isn't it.
 [[nodiscard]] ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector<CallArgument>& oldArgs,
-                                                  std::string_view newDefaultText, const std::vector<ParamOrigin>& origins);
+                                                  std::string_view newDefaultText, const MappingResult& mapping,
+                                                  CallReceiver receiver = CallReceiver::None);
 
 // Project-wide discovery follow-up: finding every OTHER place -- a call
 // site, or the function's own signature in a different file (a header

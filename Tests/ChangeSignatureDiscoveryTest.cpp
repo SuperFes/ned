@@ -61,8 +61,10 @@ SignatureMarker Signature(std::string_view text, std::string_view name, std::siz
     SignatureMarker marker{};
     marker.startByte     = 0;
     marker.endByte       = text.size();
-    marker.nameStartByte = start;
-    marker.nameEndByte   = start + name.size();
+    marker.nameStartByte     = start;
+    marker.nameEndByte       = start + name.size();
+    marker.callNameStartByte = marker.nameStartByte;
+    marker.callNameEndByte   = marker.nameEndByte;
     marker.parameters.resize(arity);
     return marker;
 }
@@ -91,6 +93,23 @@ TEST_CASE("DiscoverSignatureAndCallSites finds call sites spread across candidat
     REQUIRE(result.callSites.size() == 2);
     CHECK(result.arityMismatches == 0);
     CHECK(result.filesSkipped == 0);
+}
+
+TEST_CASE("DiscoverSignatureAndCallSites matches a constructor by the name its callers spell", "[ChangeSignature]") {
+    const std::string text = "class Widget { function __construct($a) {} }\nnew Widget(1);\n";
+    SignatureMarker   ctor = Signature(text, "__construct", 1);
+    const std::size_t cls  = text.find("Widget");
+    ctor.callNameStartByte = cls;
+    ctor.callNameEndByte   = cls + std::string_view("Widget").size();
+    const CallMarker call  = Call(text.substr(0), "Widget(1)");
+    CallMarker       fixed = call;
+    fixed.calleeEndByte    = fixed.calleeStartByte + std::string_view("Widget").size();
+
+    const DiscoveryResult result = DiscoverSignatureAndCallSites(
+        "Widget", 1, {"w.php"}, [&](const std::filesystem::path&) { return std::optional<std::string>(text); },
+        [&](const std::filesystem::path&, std::string_view) { return FileScanResult{.signatures = {ctor}, .calls = {fixed}}; });
+    CHECK(result.signatureSites.size() == 1);
+    CHECK(result.callSites.size() == 1);
 }
 
 TEST_CASE("DiscoverSignatureAndCallSites finds a header prototype and its out-of-line definition as two sites",

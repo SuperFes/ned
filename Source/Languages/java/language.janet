@@ -7,4 +7,5 @@
  # nearest-ancestor-first); jdtls and kotlin-language-server both advertise
  # workspaceFolders, so sibling roots join one connection (LspManager).
  :lsp-root-markers ["pom.xml" "build.gradle" "build.gradle.kts" "settings.gradle" "settings.gradle.kts"]
+ :signature-template "class __Ned { void __ned_sig({}) {} }"
 }

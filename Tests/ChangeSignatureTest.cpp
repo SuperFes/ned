@@ -80,7 +80,7 @@ TEST_CASE("BuildPositionMapping keeps a call site's own values across a pure reo
 
     const std::string callText = "f(10, 20)";
     const std::vector<CallArgument> callArgs{Arg(callText, "10"), Arg(callText, "20")};
-    const ArgumentRewrite rewrite = RewriteArgumentList(callText, callArgs, newText, mapping.origins);
+    const ArgumentRewrite           rewrite = RewriteArgumentList(callText, callArgs, newText, mapping);
     REQUIRE_FALSE(rewrite.declined);
     CHECK(rewrite.argumentListText == "20, 10");
 }
@@ -99,7 +99,7 @@ TEST_CASE("BuildPositionMapping appends a new defaulted parameter's default at e
 
     const std::string callText = "f(5)";
     const std::vector<CallArgument> callArgs{Arg(callText, "5")};
-    const ArgumentRewrite rewrite = RewriteArgumentList(callText, callArgs, newText, mapping.origins);
+    const ArgumentRewrite           rewrite = RewriteArgumentList(callText, callArgs, newText, mapping);
     REQUIRE_FALSE(rewrite.declined);
     CHECK(rewrite.argumentListText == "5, true");
 }
@@ -116,7 +116,7 @@ TEST_CASE("BuildPositionMapping drops a removed parameter's call-site argument",
 
     const std::string callText = "f(1, 2)";
     const std::vector<CallArgument> callArgs{Arg(callText, "1"), Arg(callText, "2")};
-    const ArgumentRewrite rewrite = RewriteArgumentList(callText, callArgs, newText, mapping.origins);
+    const ArgumentRewrite           rewrite = RewriteArgumentList(callText, callArgs, newText, mapping);
     REQUIRE_FALSE(rewrite.declined);
     CHECK(rewrite.argumentListText == "1");
 }
@@ -197,7 +197,7 @@ TEST_CASE("RewriteArgumentList declines a call site that supplies fewer argument
     // argument -- this module has no text for the omitted default.
     const std::string callText = "f(1)";
     const std::vector<CallArgument> callArgs{Arg(callText, "1")};
-    const ArgumentRewrite rewrite = RewriteArgumentList(callText, callArgs, newText, mapping.origins);
+    const ArgumentRewrite           rewrite = RewriteArgumentList(callText, callArgs, newText, mapping);
     REQUIRE(rewrite.declined);
     CHECK(rewrite.declineReason.find("fewer arguments") != std::string::npos);
 }

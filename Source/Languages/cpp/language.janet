@@ -40,4 +40,7 @@
    "namespace ${1:name} {\n$0\n} // namespace $1"
    "guard"
    "#ifndef ${TM_FILENAME_BASE/(.*)/${1:/upcase}/}_H\n#define ${TM_FILENAME_BASE/(.*)/${1:/upcase}/}_H\n\n$0\n\n#endif // ${TM_FILENAME_BASE/(.*)/${1:/upcase}/}_H"}
+ # change-signature parses retyped parameters inside this; a real body, since
+ # a bodyless free-function prototype is never captured (signatures.janet).
+ :signature-template "void __ned_sig({}) {}"
 }
