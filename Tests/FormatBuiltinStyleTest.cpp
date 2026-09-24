@@ -9,6 +9,7 @@
 #include "Editor/FormatBuiltinStyle.h"
 #include "Editor/FormatRules.h"
 #include "Editor/Mode.h"
+#include "Editor/ModeOverrides.h"
 #include "Text/Buffer.h"
 
 using ned::editor::ApplyNativeFormat;
@@ -49,11 +50,12 @@ struct StyleTree {
     }
 };
 
-std::string NativeFormatted(const std::string& source) {
-    const Mode mode = PhpMode();
-    Buffer     buffer("t.php");
+std::string NativeFormatted(const std::string& source, const std::string& language = "php") {
+    const std::optional<Mode> mode = ned::editor::ModeByName(language + "-mode");
+    REQUIRE(mode.has_value());
+    Buffer buffer("t");
     buffer.InsertAtPoint(source);
-    ApplyNativeFormat(buffer, &mode);
+    ApplyNativeFormat(buffer, &*mode);
     return buffer.Text();
 }
 
@@ -174,4 +176,92 @@ TEST_CASE("A user rule overrides PHP's bundled style, and the toggle turns it of
     SetBuiltinFormatStyleEnabled(false);
     const std::string allman = "<?php\nif ($x)\n{\n}\n";
     CHECK(NativeFormatted(allman) == allman);
+}
+
+TEST_CASE("Rust's bundled style formats to rustfmt's defaults", "[FormatBuiltinStyle]") {
+    const BuiltinStyleGuard guard;
+    LoadBuiltinFormatStyles();
+
+    // brace_style = SameLineWhere, control_brace_style = AlwaysSameLine,
+    // blank_lines_upper_bound = 1.
+    CHECK(NativeFormatted("fn add(a: i32) -> i32\n"
+                          "{\n"
+                          "    a\n"
+                          "}\n"
+                          "\n"
+                          "\n"
+                          "fn show<T>(x: T) where T: Debug {\n"
+                          "    if x\n"
+                          "    {\n"
+                          "        a();\n"
+                          "    }\n"
+                          "    else\n"
+                          "    {\n"
+                          "        b();\n"
+                          "    }\n"
+                          "}\n"
+                          "struct S\n"
+                          "{\n"
+                          "    a: i32,\n"
+                          "}\n"
+                          "impl S\n"
+                          "{\n"
+                          "}\n"
+                          "trait Tr where Self: Sized {\n"
+                          "}\n",
+                          "rust") ==
+          "fn add(a: i32) -> i32 {\n"
+          "    a\n"
+          "}\n"
+          "\n"
+          "fn show<T>(x: T) where T: Debug\n"
+          "{\n"
+          "    if x {\n"
+          "        a();\n"
+          "    } else {\n"
+          "        b();\n"
+          "    }\n"
+          "}\n"
+          "struct S {\n"
+          "    a: i32,\n"
+          "}\n"
+          "impl S {\n"
+          "}\n"
+          "trait Tr where Self: Sized\n"
+          "{\n"
+          "}\n");
+}
+
+TEST_CASE("Go's bundled style formats as gofmt does", "[FormatBuiltinStyle]") {
+    const BuiltinStyleGuard guard;
+    LoadBuiltinFormatStyles();
+
+    CHECK(NativeFormatted("package main\n"
+                          "\n"
+                          "\n"
+                          "\n"
+                          "func add(a int) int {\n"
+                          "\tif ( a > 0 ) {\n"
+                          "\t\treturn a\n"
+                          "\t}\n"
+                          "\treturn 0\n"
+                          "}\n"
+                          "\n"
+                          "\n"
+                          "type S struct {\n"
+                          "\tA int\n"
+                          "}\n",
+                          "go") ==
+          "package main\n"
+          "\n"
+          "func add(a int) int {\n"
+          "\tif (a > 0) {\n"
+          "\t\treturn a\n"
+          "\t}\n"
+          "\treturn 0\n"
+          "}\n"
+          "\n"
+          "type S struct {\n"
+          "\tA int\n"
+          "}\n");
 }

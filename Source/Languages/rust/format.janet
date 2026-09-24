@@ -2,7 +2,15 @@
 # language over the shared capture template, over tree-sitter-rust's own
 # node types -- every shape verified live against the real grammar before
 # this file was written, same discipline as every prior language.
-(function_item body: (block) @brace.function)
+#
+# A `where` clause moves an item's opening brace to its own line under
+# rustfmt's default brace_style (SameLineWhere), so each item's brace is
+# captured under one of two names by what immediately precedes it: its
+# signature (brace.function, brace.class, ...) or a where clause (the same
+# name plus ".where"). The anchor makes the two disjoint.
+(function_item parameters: (parameters) . body: (block) @brace.function)
+(function_item return_type: (_) . body: (block) @brace.function)
+(function_item (where_clause) . body: (block) @brace.function.where)
 
 # brace.control: every construct whose "body"/"consequence" field is a
 # plain (block) -- if/while/loop/for/match all qualify, match's own body
@@ -36,14 +44,22 @@
 # live against node-types.json -- ordered_field_declaration_list is a
 # SEPARATE, non-brace-carrying alternative for the tuple-struct form), so
 # neither ever matches this pattern -- there is no brace to place.
-(struct_item body: (field_declaration_list) @brace.class)
-(enum_item body: (enum_variant_list) @brace.class)
-(impl_item body: (declaration_list) @brace.class)
+(struct_item name: (_) . body: (field_declaration_list) @brace.class)
+(struct_item type_parameters: (_) . body: (field_declaration_list) @brace.class)
+(struct_item (where_clause) . body: (field_declaration_list) @brace.class.where)
+(enum_item name: (_) . body: (enum_variant_list) @brace.class)
+(enum_item type_parameters: (_) . body: (enum_variant_list) @brace.class)
+(enum_item (where_clause) . body: (enum_variant_list) @brace.class.where)
+(impl_item type: (_) . body: (declaration_list) @brace.class)
+(impl_item (where_clause) . body: (declaration_list) @brace.class.where)
 
 # brace.interface: kept distinct from brace.class (a trait's own body is
 # an interface-like construct, same precedent go/format.janet's own
 # brace.interface set for interface_type).
-(trait_item body: (declaration_list) @brace.interface)
+(trait_item name: (_) . body: (declaration_list) @brace.interface)
+(trait_item type_parameters: (_) . body: (declaration_list) @brace.interface)
+(trait_item bounds: (_) . body: (declaration_list) @brace.interface)
+(trait_item (where_clause) . body: (declaration_list) @brace.interface.where)
 
 # brace.namespace: mod_item's own body -- same name cpp's own
 # namespace_definition uses, and the same grammar shape (a bare
