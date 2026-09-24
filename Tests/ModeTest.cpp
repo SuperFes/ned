@@ -1687,3 +1687,18 @@ TEST_CASE("html_tags injects JavaScript only into ${...} attribute values", "[Mo
     const std::string       source = "<div class=\"if\"></div>\n";
     CHECK(ClassAt(mode, source, "if\"") == ned::editor::SyntaxClass::String);
 }
+
+TEST_CASE("A combined injection parses its ranges as one document", "[Mode]") {
+    // Each `///` line is its own injection range; only parsed together is
+    // the closing tag on the last line a tag rather than a fragment.
+    const ned::editor::Mode mode   = BundledMode("fsharp");
+    const std::string       source = "/// <summary>\n/// Adds.\n/// </summary>\nlet add x y = x + y\n";
+    const std::size_t       close  = source.rfind("summary");
+    bool                    tagged = false;
+    for (const ned::editor::HighlightSpan& span : mode.highlight(source, {})) {
+        tagged = tagged || (span.syntaxClass == ned::editor::SyntaxClass::Tag && span.startByte <= close && close < span.endByte);
+    }
+    CHECK(tagged);
+    CHECK(ClassAt(mode, source, "Adds") == ned::editor::SyntaxClass::DocComment); // text between tags is still the host's
+    CHECK(ClassAt(mode, source, "let") == ned::editor::SyntaxClass::Keyword);     // nothing leaks past the ranges
+}

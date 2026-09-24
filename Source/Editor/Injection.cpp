@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <map>
 #include <string>
 #include <unordered_map>
 
@@ -58,6 +59,9 @@ namespace {
     struct RawInjectionMatch {
         std::string                   languageTag; // as written in the query/#set!, not yet canonicalized
         grammar::QueryMatchCapture content;
+        // #set! injection.combined: parsed together with every other combined
+        // range of the same language rather than on its own.
+        bool combined = false;
     };
 
     // perf/parallel-highlighting-round-1 follow-up: window is threaded
@@ -110,7 +114,9 @@ namespace {
             if (claimed) {
                 continue;
             }
-            matches.push_back(RawInjectionMatch{.languageTag = std::string(*language), .content = *content});
+            matches.push_back(RawInjectionMatch{.languageTag = std::string(*language),
+                                                .content     = *content,
+                                                .combined    = match.setDirectives.contains("injection.combined")});
         }
         return matches;
     }
@@ -136,7 +142,13 @@ const HighlightFunction* ResolveEmbeddedLanguageHighlight(std::string_view tag, 
 void CollectInjectedHighlightSpans(const grammar::Node& root, std::string_view bufferText,
                                    const grammar::QueryMatcher& injectionQuery, EmbeddedLanguageCache& cache,
                                    std::vector<HighlightSpan>& spans, HighlightWindow window) {
-    for (const RawInjectionMatch& match : CollectRawInjectionMatches(root, bufferText, injectionQuery, window)) {
+    const std::vector<RawInjectionMatch>                                    raw = CollectRawInjectionMatches(root, bufferText, injectionQuery, window);
+    std::map<std::string, std::vector<std::pair<std::size_t, std::size_t>>> combined;
+    for (const RawInjectionMatch& match : raw) {
+        if (match.combined) {
+            combined[match.languageTag].emplace_back(match.content.startByte, match.content.endByte);
+            continue;
+        }
         // Every injected region is its own parse, so skipping the ones with
         // no bytes in the window is where most of the saving is -- markdown
         // injects markdown_inline into *every* inline node, which on a
@@ -180,6 +192,45 @@ void CollectInjectedHighlightSpans(const grammar::Node& root, std::string_view b
                                           .endByte     = start + span.endByte,
                                           .syntaxClass = span.syntaxClass,
                                           .captureId   = span.captureId});
+        }
+    }
+
+    // A combined language's ranges (F#'s `///` lines, as one XML document)
+    // are parsed as one text: the stretch from the first range to the last,
+    // every byte outside a range blanked (newlines kept) so offsets hold.
+    // Built from the ranges this window matched, so a group that starts above
+    // the window parses from its first visible range.
+    for (auto& [tag, ranges] : combined) {
+        const HighlightFunction* highlight = ResolveEmbeddedLanguageHighlight(tag, cache);
+        if (!highlight) {
+            continue;
+        }
+        std::sort(ranges.begin(), ranges.end());
+        const std::size_t first = ranges.front().first;
+        const std::size_t last  = std::max_element(ranges.begin(), ranges.end(), [](const auto& a, const auto& b) {
+                                     return a.second < b.second;
+                                  })->second;
+        std::string       document(last - first, ' ');
+        for (std::size_t at = first; at < last; ++at) {
+            if (bufferText[at] == '\n') {
+                document[at - first] = '\n';
+            }
+        }
+        for (const auto& [rangeStart, rangeEnd] : ranges) {
+            document.replace(rangeStart - first, rangeEnd - rangeStart, bufferText.substr(rangeStart, rangeEnd - rangeStart));
+        }
+        const std::size_t subWindowStart = window.startByte > first ? window.startByte - first : 0;
+        const std::size_t subWindowEnd   = window.endByte >= last ? document.size() : (window.endByte > first ? window.endByte - first : 0);
+        for (const HighlightSpan& span : (*highlight)(document, HighlightWindow{.startByte = subWindowStart, .endByte = subWindowEnd})) {
+            // Clipped to the ranges: a span across the blanking is the
+            // injected language's, but the bytes between are the host's.
+            for (const auto& [rangeStart, rangeEnd] : ranges) {
+                const std::size_t spanStart = std::max(first + span.startByte, rangeStart);
+                const std::size_t spanEnd   = std::min(first + span.endByte, rangeEnd);
+                if (spanStart < spanEnd) {
+                    spans.push_back(HighlightSpan{.startByte = spanStart, .endByte = spanEnd, .syntaxClass = span.syntaxClass, .captureId = span.captureId});
+                }
+            }
         }
     }
 }

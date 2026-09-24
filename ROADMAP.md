@@ -117,11 +117,6 @@ and code reading. Highest stakes first.
       `with`, pattern, `->`, expression) against EOF completion's three-token closer
       budget. Measured: raising it to five changes GDScript's "Variables Invalid"
       corpus case and still leaves the line at the `let` level, so it isn't the fix.
-- [ ] **`injection.combined` is ignored**, so each matched range is its own sub-parse.
-      An F# doc comment split over lines (`/// <summary>` ... `/// </summary>`) parses
-      as separate XML fragments and the lone closing tag's name goes unhighlighted.
-      Elixir, Gleam and KDL use it too. Needs one sub-parse over the concatenated
-      ranges per language, with spans mapped back per range.
 - [ ] **The `markup.*` capture family is unmapped**, so AsciiDoc, Typst, RST, LaTeX and
       gitcommit headings, emphasis, lists and quotes paint nothing (Markdown/Org use the
       older `text.*` names, which are mapped). `markup.heading.1`-`.6` want the
