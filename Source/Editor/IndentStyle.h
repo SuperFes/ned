@@ -18,6 +18,7 @@
 #ifndef NED_EDITOR_INDENTSTYLE_H
 #define NED_EDITOR_INDENTSTYLE_H
 
+#include <optional>
 #include <string>
 
 #include "Text/IndentStyle.h"
@@ -37,6 +38,10 @@ void                      SetIndentStyle(IndentStyle style);
 
 // Per-mode-name override (e.g. "python-mode" -- Mode::name verbatim).
 void SetIndentStyleForMode(const std::string& modeName, IndentStyle style);
+// The override itself (nullopt when none is set), and its removal, which
+// hands the mode back to the defaults below.
+[[nodiscard]] std::optional<IndentStyle> IndentStyleOverrideForMode(const std::string& modeName);
+void                                     ClearIndentStyleForMode(const std::string& modeName);
 
 // modeName's own override if one is configured, else the process-wide
 // default -- same "caller falls back gracefully" convention

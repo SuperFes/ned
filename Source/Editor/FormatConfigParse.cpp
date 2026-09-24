@@ -2,6 +2,8 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <map>
+#include <mutex>
 #include <sstream>
 #include <system_error>
 
@@ -554,7 +556,54 @@ void ApplyFormatRules(const FormatConfig& config, FormatRuleLayer layer, std::st
     }
 }
 
+namespace {
+
+    // The settings format.janet shares with init.janet and ned/set-*
+    // (indent, save hygiene) have no layer of their own. For each one a
+    // file set: what it held before the first file touched it, and what the
+    // last file wrote -- so a reload can hand back a key the files no longer
+    // set, and leaves alone one something else has changed since.
+    template <typename T>
+    struct FileSetting {
+        T prior;
+        T applied;
+    };
+    struct FileSettings {
+        std::map<std::string, FileSetting<std::optional<IndentStyle>>> indent;
+        std::optional<FileSetting<bool>>                               trim;
+        std::optional<FileSetting<bool>>                               finalNewline;
+        std::optional<FileSetting<std::optional<int>>>                 maxBlankLines;
+    };
+
+    std::mutex& FileSettingsMutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    FileSettings& AppliedFileSettings() {
+        static FileSettings settings;
+        return settings;
+    }
+
+    template <typename T, typename Set, typename Get>
+    void ApplyRecorded(std::optional<FileSetting<T>>& record, const T& value, Set set, Get get) {
+        const T prior = get();
+        set(value);
+        record = FileSetting<T>{record ? record->prior : prior, get()};
+    }
+
+    template <typename T, typename Set, typename Get>
+    void RestoreRecorded(const std::optional<FileSetting<T>>& record, Set set, Get get) {
+        if (record && get() == record->applied) {
+            set(record->prior);
+        }
+    }
+
+} // namespace
+
 void ApplyFormatConfig(const FormatConfig& config) {
+    const std::lock_guard<std::mutex> lock(FileSettingsMutex());
+    FileSettings&                     recorded = AppliedFileSettings();
     for (const auto& [languageKey, entry] : config.indent) {
         const std::string modeName = languageKey + "-mode"; // the inverse of imprint::LanguageKeyForMode
         IndentStyle       style    = EffectiveIndentStyle(modeName);
@@ -564,18 +613,44 @@ void ApplyFormatConfig(const FormatConfig& config) {
         if (entry.width) {
             style.width = *entry.width;
         }
+        const std::optional<IndentStyle> prior = IndentStyleOverrideForMode(modeName);
         SetIndentStyleForMode(modeName, style);
+        const auto found          = recorded.indent.find(modeName);
+        recorded.indent[modeName] = {found != recorded.indent.end() ? found->second.prior : prior,
+                                     IndentStyleOverrideForMode(modeName)};
     }
     ApplyFormatRules(config, FormatRuleLayer::File, {});
     if (config.trimTrailingWhitespaceOnSave) {
-        SetTrimTrailingWhitespaceOnSave(*config.trimTrailingWhitespaceOnSave);
+        ApplyRecorded(recorded.trim, *config.trimTrailingWhitespaceOnSave, SetTrimTrailingWhitespaceOnSave,
+                      [] { return TrimTrailingWhitespaceOnSave(); });
     }
     if (config.ensureFinalNewline) {
-        SetEnsureFinalNewline(*config.ensureFinalNewline);
+        ApplyRecorded(recorded.finalNewline, *config.ensureFinalNewline, SetEnsureFinalNewline, [] { return EnsureFinalNewline(); });
     }
     if (config.maxConsecutiveBlankLines) {
-        SetMaxConsecutiveBlankLines(*config.maxConsecutiveBlankLines);
+        ApplyRecorded(recorded.maxBlankLines, std::optional<int>(*config.maxConsecutiveBlankLines), SetMaxConsecutiveBlankLines,
+                      [] { return MaxConsecutiveBlankLines(); });
     }
+}
+
+void ForgetFormatConfigSettings() {
+    const std::lock_guard<std::mutex> lock(FileSettingsMutex());
+    FileSettings&                     recorded = AppliedFileSettings();
+    for (const auto& [modeName, setting] : recorded.indent) {
+        if (IndentStyleOverrideForMode(modeName) != setting.applied) {
+            continue; // changed since by init.janet or ned/set-indent-style
+        }
+        if (setting.prior) {
+            SetIndentStyleForMode(modeName, *setting.prior);
+        }
+        else {
+            ClearIndentStyleForMode(modeName);
+        }
+    }
+    RestoreRecorded(recorded.trim, SetTrimTrailingWhitespaceOnSave, [] { return TrimTrailingWhitespaceOnSave(); });
+    RestoreRecorded(recorded.finalNewline, SetEnsureFinalNewline, [] { return EnsureFinalNewline(); });
+    RestoreRecorded(recorded.maxBlankLines, SetMaxConsecutiveBlankLines, [] { return MaxConsecutiveBlankLines(); });
+    recorded = FileSettings{};
 }
 
 std::filesystem::path PersonalFormatConfigPath() {
@@ -655,6 +730,7 @@ void ReloadFormatConfig(const std::filesystem::path& projectRoot) {
     const std::optional<FormatConfig> personal = ReadFormatConfigFile(PersonalFormatConfigPath());
     const std::optional<FormatConfig> project  = ReadFormatConfigFile(ProjectFormatConfigPath(projectRoot));
     ClearFormatRuleLayer(FormatRuleLayer::File);
+    ForgetFormatConfigSettings();
     if (personal) {
         ApplyFormatConfig(*personal);
     }

@@ -159,11 +159,6 @@ and code reading. Highest stakes first.
       conventions), JavaScript/TypeScript (Prettier). A bundled style changes on-save
       output for every user of that language, so each needs the same care PSR-12 got
       (`ned/set-format-builtin-style` is the escape hatch).
-- [ ] **`reload-format-config` still can't remove an `:indent` or save-hygiene setting.**
-      Per-capture rules now reload cleanly (the File rule layer), but `:indent`,
-      `:trim-trailing-whitespace`, `:ensure-final-newline` and
-      `:max-consecutive-blank-lines` still only ever overwrite, so deleting one needs a
-      restart.
 
 **Quick-fix gutter marker**
 

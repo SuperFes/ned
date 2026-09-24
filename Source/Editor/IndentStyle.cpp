@@ -50,6 +50,19 @@ void SetIndentStyleForMode(const std::string& modeName, IndentStyle style) {
     PerModeStorage().insert_or_assign(modeName, Clamped(style));
 }
 
+std::optional<IndentStyle> IndentStyleOverrideForMode(const std::string& modeName) {
+    const std::lock_guard<std::mutex> lock(StyleMutex());
+    if (const auto it = PerModeStorage().find(modeName); it != PerModeStorage().end()) {
+        return it->second;
+    }
+    return std::nullopt;
+}
+
+void ClearIndentStyleForMode(const std::string& modeName) {
+    const std::lock_guard<std::mutex> lock(StyleMutex());
+    PerModeStorage().erase(modeName);
+}
+
 IndentStyle EffectiveIndentStyle(const std::string& modeName) {
     const std::lock_guard<std::mutex> lock(StyleMutex());
     if (const auto it = PerModeStorage().find(modeName); it != PerModeStorage().end()) {

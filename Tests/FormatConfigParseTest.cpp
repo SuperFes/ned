@@ -24,6 +24,7 @@ using ned::editor::CaseRuleFor;
 using ned::editor::ClearFormatRuleLayer;
 using ned::editor::EffectiveIndentStyle;
 using ned::editor::EnsureFinalNewline;
+using ned::editor::ForgetFormatConfigSettings;
 using ned::editor::FormatConfig;
 using ned::editor::FormatRuleLayer;
 using ned::editor::IndentStyle;
@@ -32,8 +33,8 @@ using ned::editor::MaxConsecutiveBlankLines;
 using ned::editor::ParseFormatConfig;
 using ned::editor::PersonalFormatConfigPath;
 using ned::editor::ProjectFormatConfigPath;
-using ned::editor::ReloadFormatConfig;
 using ned::editor::QuoteStyle;
+using ned::editor::ReloadFormatConfig;
 using ned::editor::RewriteRuleFor;
 using ned::editor::SetAlignEnabled;
 using ned::editor::SetArrangeCaseInsensitive;
@@ -96,6 +97,7 @@ class EnvVarGuard {
 // state that must be restored for the next test.
 struct IndentStyleGuard {
     ~IndentStyleGuard() {
+        ned::editor::ForgetFormatConfigSettings();
         SetIndentStyle(IndentStyle{});
     }
 };
@@ -103,11 +105,13 @@ struct IndentStyleGuard {
 // TrimOnSaveTest.cpp/FinalNewlineTest.cpp's own guards -- both default on.
 struct TrimOnSaveGuard {
     ~TrimOnSaveGuard() {
+        ned::editor::ForgetFormatConfigSettings();
         SetTrimTrailingWhitespaceOnSave(true);
     }
 };
 struct FinalNewlineGuard {
     ~FinalNewlineGuard() {
+        ned::editor::ForgetFormatConfigSettings();
         SetEnsureFinalNewline(true);
     }
 };
@@ -135,6 +139,7 @@ struct FormatRulesGuard {
         SetRewriteQuoteStyle("format-config-test.capture", std::nullopt);
         SetRewriteExpandElseif("format-config-test.capture", std::nullopt);
         ClearFormatRuleLayer(FormatRuleLayer::File);
+        ForgetFormatConfigSettings();
     }
 };
 
@@ -561,6 +566,47 @@ TEST_CASE("ReloadFormatConfig forgets a rule deleted from format.janet but keeps
     CHECK(BreakRuleFor("format-config-test.runtime").before == true);
     SetBreakBefore("format-config-test.runtime", std::nullopt);
 
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("ReloadFormatConfig hands back an :indent or hygiene setting deleted from format.janet",
+          "[FormatConfigParse]") {
+    const FormatRulesGuard      rulesGuard;
+    const TrimOnSaveGuard       trimGuard;
+    const std::optional<int>    blankLinesBefore = ned::editor::MaxConsecutiveBlankLines();
+    const std::filesystem::path root             = std::filesystem::temp_directory_path() / "ned_format_config_test_reload_settings";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "xdg" / "ned");
+    const EnvVarGuard xdg("XDG_CONFIG_HOME", (root / "xdg").c_str());
+    const auto        write = [&](const std::string& content) {
+        std::ofstream out(root / "xdg" / "ned" / "format.janet", std::ios::trunc);
+        out << content;
+    };
+    const std::string mode = "format-config-test-mode";
+    SetTrimTrailingWhitespaceOnSave(true);
+
+    write("{:indent {:format-config-test {:width 7}} :trim-trailing-whitespace false :max-consecutive-blank-lines 2}");
+    ReloadFormatConfig(root);
+    REQUIRE(ned::editor::EffectiveIndentStyle(mode).width == 7);
+    REQUIRE_FALSE(TrimTrailingWhitespaceOnSave());
+    REQUIRE(ned::editor::MaxConsecutiveBlankLines() == 2);
+
+    write("{}");
+    ReloadFormatConfig(root);
+    CHECK_FALSE(ned::editor::IndentStyleOverrideForMode(mode).has_value());
+    CHECK(TrimTrailingWhitespaceOnSave());
+    CHECK(ned::editor::MaxConsecutiveBlankLines() == blankLinesBefore);
+
+    // A value set since by something else is not the file's to take back.
+    write("{:indent {:format-config-test {:width 7}}}");
+    ReloadFormatConfig(root);
+    SetIndentStyleForMode(mode, IndentStyle{.useTabs = false, .width = 3});
+    write("{}");
+    ReloadFormatConfig(root);
+    CHECK(ned::editor::EffectiveIndentStyle(mode).width == 3);
+
+    ned::editor::ClearIndentStyleForMode(mode);
+    SetMaxConsecutiveBlankLines(blankLinesBefore);
     std::filesystem::remove_all(root);
 }
 

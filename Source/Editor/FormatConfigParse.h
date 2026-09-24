@@ -126,6 +126,11 @@ struct FormatConfig {
 // SetEnsureFinalNewline). A field left at nullopt is untouched.
 void ApplyFormatConfig(const FormatConfig& config);
 
+// Hands back every indent/hygiene setting ApplyFormatConfig has set since
+// the last call, restoring what it replaced -- except a setting changed
+// since by something else (init.janet, ned/set-*), which is left as is.
+void ForgetFormatConfigSettings();
+
 // The per-capture rule half of ApplyFormatConfig (:space/:break/:blank/:wrap/
 // :align/:arrange/:rewrite/:case), written into `layer` with every key
 // prefixed by `keyPrefix` -- "php/" scopes a bundled style to its language.
@@ -141,9 +146,10 @@ void LoadFormatConfigFile(const std::filesystem::path& path);
 // readable file there. Throws on a parse/schema error.
 [[nodiscard]] std::optional<FormatConfig> ReadFormatConfigFile(const std::filesystem::path& path);
 
-// Re-reads the personal and project files and replaces the File rule layer
-// with exactly what they contain now, so a rule deleted from format.janet
-// stops applying. Rules set at runtime (ned/set-format-*) are untouched.
+// Re-reads the personal and project files and replaces what they set with
+// exactly what they contain now, so a rule or an :indent/hygiene setting
+// deleted from format.janet stops applying. Anything set at runtime
+// (ned/set-*) is untouched.
 // Throws on a parse/schema error without having changed anything.
 void ReloadFormatConfig(const std::filesystem::path& projectRoot);
 
