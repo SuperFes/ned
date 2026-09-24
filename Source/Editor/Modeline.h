@@ -5,14 +5,15 @@
 // `-*- mode: verilog; tab-width: 4; indent-tabs-mode: nil -*-` line (or the
 // bare `-*- verilog -*-` form) on the first line, second after a `#!`.
 //
-// Pure: text in, settings out. Only the first and last kModelineLines lines
-// are read (Vim's own 'modelines' default).
+// ParseModeline is pure: text in, settings out. Only the first and last
+// kModelineLines lines are read (Vim's own 'modelines' default).
 //
 
 #ifndef NED_EDITOR_MODELINE_H
 #define NED_EDITOR_MODELINE_H
 
 #include <cstddef>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -30,6 +31,12 @@ struct Modeline {
 };
 
 [[nodiscard]] Modeline ParseModeline(std::string_view text);
+
+// The first headBytes and last tailBytes of a file, the tail after enough
+// blank lines that ParseModeline's first-lines and last-lines windows never
+// overlap. Empty for a missing or unreadable file.
+[[nodiscard]] std::string ReadFileEnds(const std::filesystem::path& path, std::size_t headBytes = 8192,
+                                       std::size_t tailBytes = 4096);
 
 } // namespace ned::editor
 

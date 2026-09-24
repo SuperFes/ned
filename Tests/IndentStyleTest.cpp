@@ -85,15 +85,19 @@ TEST_CASE("A buffer's own indent style outranks its mode's", "[IndentStyle]") {
     ned::text::Buffer buffer("local.txt");
     REQUIRE(EffectiveIndentStyle(buffer, "indent-style-test-buffer-mode") == IndentStyle{.useTabs = false, .width = 4});
 
-    buffer.SetLocalIndentStyle(IndentStyle{.useTabs = true, .width = 8});
+    buffer.SetLocalIndent({.useTabs = true, .width = 8});
     REQUIRE(EffectiveIndentStyle(buffer, "indent-style-test-buffer-mode") == IndentStyle{.useTabs = true, .width = 8});
 
-    buffer.SetLocalIndentStyle(std::nullopt);
+    // A partial override keeps the mode's other field.
+    buffer.SetLocalIndent({.useTabs = true});
+    REQUIRE(EffectiveIndentStyle(buffer, "indent-style-test-buffer-mode") == IndentStyle{.useTabs = true, .width = 4});
+
+    buffer.SetLocalIndent({});
     REQUIRE(EffectiveIndentStyle(buffer, "indent-style-test-buffer-mode") == IndentStyle{.useTabs = false, .width = 4});
 }
 
 TEST_CASE("A buffer's own indent style clamps a non-positive width to 1", "[IndentStyle]") {
     ned::text::Buffer buffer("local.txt");
-    buffer.SetLocalIndentStyle(IndentStyle{.useTabs = false, .width = 0});
-    REQUIRE(buffer.LocalIndentStyle()->width == 1);
+    buffer.SetLocalIndent({.useTabs = false, .width = 0});
+    REQUIRE(buffer.LocalIndent().width == 1);
 }

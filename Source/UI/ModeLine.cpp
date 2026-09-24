@@ -166,7 +166,7 @@ void ModeLine::Paint(Canvas c) {
     // nothing at all).
     std::string indentStyleSuffix;
     if (!buffer.IsLoading() && !content.IsHuge()) {
-        if (mode_.name == "fundamental-mode" && !buffer.LocalIndentStyle()) {
+        if (mode_.name == "fundamental-mode" && buffer.LocalIndent().Empty()) {
             // No language-specific convention to fall back on at all -- the
             // detected value IS the only thing worth reporting.
             const editor::DetectedIndent detected = editor::DetectIndentStyle(buffer.Text());
@@ -198,7 +198,7 @@ void ModeLine::Paint(Canvas c) {
                     mismatch = !style.useTabs;
                     break;
                 case editor::DetectedIndentKind::Spaces:
-                    mismatch = style.useTabs || detected.spacesWidth != style.width;
+                    mismatch = style.useTabs || (detected.spacesWidthConfident && detected.spacesWidth != style.width);
                     break;
                 case editor::DetectedIndentKind::Mixed:
                     mismatch = true;

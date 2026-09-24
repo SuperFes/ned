@@ -122,20 +122,16 @@ and code reading. Highest stakes first.
       "Order matters" query lists `(regex) @regexp` before `(pattern) @namespace`, so a
       rule-level `/re/ { ... }` paints as a namespace. Needs a per-query (or
       per-language) order flag, or ned-side reordering of the affected files.
-- [ ] **Per-buffer indentation, taken from the file itself.** A buffer can carry its own
-      style (`Buffer::SetLocalIndentStyle`, resolved by `EffectiveIndentStyle(buffer,
-      modeName)`, read by newline/TAB/reindent/format/wrap-hang), but nothing sets it
-      yet, so every buffer of a language still indents alike. In order:
-  - [ ] **Apply what the file says.** Precedence: modeline (`vim: ts=4 sw=4 et`,
-        `-*- indent-tabs-mode: nil -*-`, already parsed by `ParseModeline` in
-        `Editor/Modeline.h`) > `.editorconfig` (`indent_style`/`indent_size`/`tab_width`;
-        ned only highlights these files today) > detected from content > the mode's
-        default.
-  - [ ] **Detect it, politely.** `Editor/IndentDetect.h` already classifies a file as
-        tabs, spaces (with width) or mixed, but only feeds the mode line's "doesn't match
-        its configured style" hint. Adopt a confident answer for the buffer on open, so
-        editing a tab-indented file inserts tabs instead of fighting it; leave an empty
-        or ambiguous file on the mode's default. Behind a `ned/set-*` toggle.
+- [ ] **Per-buffer indentation, taken from the file itself.** A file's own indentation is
+      adopted when it opens (`Editor/FileIndent.h`): its content
+      (`ned/set-indent-detection`), then `.editorconfig` (`ned/set-editorconfig-enabled`),
+      then a modeline, laid over the mode's style field by field. Left:
+  - [ ] **The rest of `.editorconfig`:** `end_of_line`, `insert_final_newline`,
+        `trim_trailing_whitespace`, `charset` and `max_line_length` are read
+        (`EditorConfigPropertiesFor`) but nothing applies them yet; each has a ned
+        setting it would override per file.
+  - [ ] The style is settled once, at open: a save-as to a path under a different
+        `.editorconfig`, or an external reload that reformats the file, keeps the old one.
   - [ ] **A command to switch a buffer between tabs and spaces:** rewrite the leading
         indentation of the region or buffer (tabify/untabify) and set the buffer's style
         to match, in one undo step. Leading whitespace only; alignment inside a line is

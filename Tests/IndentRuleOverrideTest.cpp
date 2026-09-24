@@ -48,7 +48,7 @@ std::pair<std::size_t, std::size_t> LineRange(std::string_view text, std::size_t
 
 std::optional<int> ColumnOf(const Mode& mode, std::string_view text, std::size_t line) {
     const auto [start, end] = LineRange(text, line);
-    return IndentColumnForLine(mode, text, start, end, std::nullopt);
+    return IndentColumnForLine(mode, text, start, end, {});
 }
 
 int Width(const Mode& mode) {

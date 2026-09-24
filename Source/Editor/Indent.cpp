@@ -726,9 +726,9 @@ IndentFunction BuildIndentFunction(std::shared_ptr<grammar::Parser> parser, std:
     const auto capturesCache = std::make_shared<CapturesCache>();
     return [parser, indentQuery, sharedParse, indentMatchCache, capturesCache, modeName,
             languageKey](std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd,
-                         const std::optional<IndentStyle>& bufferStyle) -> std::optional<int> {
+                         const IndentOverride& bufferIndent) -> std::optional<int> {
         const grammar::Tree& tree  = sharedParse->Update(*parser, bufferText);
-        const IndentStyle    style = bufferStyle ? *bufferStyle : EffectiveIndentStyle(modeName);
+        const IndentStyle    style = bufferIndent.AppliedTo(EffectiveIndentStyle(modeName));
         if (!capturesCache->hasResult || capturesCache->lastText != bufferText) {
             // Tree::RootNode()'s own precondition is !IsNull() -- guard here
             // rather than rely on Reconcile/Matches tolerating a null root,
@@ -839,7 +839,7 @@ namespace {
 } // namespace
 
 std::optional<int> IndentColumnForLine(const Mode& mode, std::string_view bufferText, std::size_t lineStart,
-                                       std::size_t lineEnd, const std::optional<IndentStyle>& bufferStyle,
+                                       std::size_t lineEnd, const IndentOverride& bufferIndent,
                                        const std::vector<std::pair<std::size_t, std::size_t>>* ranges) {
     if (!mode.indentColumn) {
         return std::nullopt;
@@ -870,7 +870,7 @@ std::optional<int> IndentColumnForLine(const Mode& mode, std::string_view buffer
             return BlockCommentContinuationColumn(bufferText, *range, lineStart, lineEnd);
         }
     }
-    return mode.indentColumn(bufferText, lineStart, lineEnd, bufferStyle);
+    return mode.indentColumn(bufferText, lineStart, lineEnd, bufferIndent);
 }
 
 int IndentColumnForLevel(int level, const IndentStyle& style) {
@@ -1070,10 +1070,10 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
                                                     : content.ByteLength();
             const std::string windowText      = content.Substring(windowStartByte, windowEndByte - windowStartByte);
             column                            = IndentColumnForLine(mode, windowText, lineStart - windowStartByte, lineEnd - windowStartByte,
-                                                                    buffer.LocalIndentStyle(), &verbatim);
+                                                                    buffer.LocalIndent(), &verbatim);
         }
         else {
-            column = IndentColumnForLine(mode, nonHugeText, lineStart, lineEnd, buffer.LocalIndentStyle(), &verbatim);
+            column = IndentColumnForLine(mode, nonHugeText, lineStart, lineEnd, buffer.LocalIndent(), &verbatim);
         }
         if (!column) {
             continue;

@@ -21,7 +21,7 @@ namespace {
     void Indent(Mode& mode, const LanguageDefinition&, const ModeBuildContext& context) {
         mode.indentColumn = [parser = context.parser, sharedParse = context.sharedParse](
                                 std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd,
-                                const std::optional<IndentStyle>&) -> std::optional<int> {
+                                const IndentOverride&) -> std::optional<int> {
             const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return std::nullopt;

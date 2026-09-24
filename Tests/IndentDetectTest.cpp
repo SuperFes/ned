@@ -66,3 +66,38 @@ TEST_CASE("DetectIndentStyle counts a line by which character its leading run ST
     const auto result = DetectIndentStyle("func f() {\n\t    return 1\n}\n");
     REQUIRE(result.kind == DetectedIndentKind::Tabs);
 }
+
+TEST_CASE("DetectIndentStyle skips block-comment continuation lines", "[IndentDetect]") {
+    const auto result = DetectIndentStyle("/**\n * Docs.\n */\nint f() {\n\treturn 1;\n}\n");
+    REQUIRE(result.kind == DetectedIndentKind::Tabs);
+
+    const auto spaces = DetectIndentStyle("/*\n * a\n * b\n */\nvoid f() {\n    g();\n    h();\n}\n");
+    REQUIRE(spaces.kind == DetectedIndentKind::Spaces);
+    REQUIRE(spaces.spacesWidth == 4);
+    REQUIRE(spaces.spacesWidthConfident);
+}
+
+TEST_CASE("DetectIndentStyle's width survives an aligned continuation line", "[IndentDetect]") {
+    const auto result =
+        DetectIndentStyle("void f() {\n    call(a,\n         b);\n    x();\n    if (y) {\n        z();\n    }\n}\n");
+    REQUIRE(result.spacesWidth == 4);
+    REQUIRE(result.spacesWidthConfident);
+
+    const auto scattered = DetectIndentStyle("a\n   b\n     c\n       d\n");
+    REQUIRE(scattered.kind == DetectedIndentKind::Spaces);
+    REQUIRE_FALSE(scattered.spacesWidthConfident);
+}
+
+TEST_CASE("A whitespace-only line with mixed leading characters counts for nothing", "[IndentDetect]") {
+    REQUIRE(DetectIndentStyle("x\n\t   \n").kind == DetectedIndentKind::Unknown);
+}
+
+TEST_CASE("DetectedIndentOverride adopts only a clear answer", "[IndentDetect]") {
+    using ned::editor::DetectedIndentOverride;
+    using ned::editor::IndentOverride;
+    CHECK(DetectedIndentOverride("f {\n\tx\n}\n") == IndentOverride{.useTabs = true});
+    CHECK(DetectedIndentOverride("f:\n  x\n  y\n") == IndentOverride{.useTabs = false, .width = 2});
+    CHECK(DetectedIndentOverride("a\n   b\n     c\n       d\n") == IndentOverride{.useTabs = false});
+    CHECK(DetectedIndentOverride("a\n  b\n\tc\n").Empty()); // Mixed
+    CHECK(DetectedIndentOverride("a\nb\n").Empty());
+}

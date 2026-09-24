@@ -124,6 +124,7 @@ add_executable(ned_tests
             IndentStyleTest.cpp
             IndentDefaultsTest.cpp
             IndentDetectTest.cpp
+            EditorConfigTest.cpp
             ScopedFormatTest.cpp
             IndentRuleOverrideTest.cpp
             HugeFileReindentTest.cpp

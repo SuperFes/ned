@@ -757,10 +757,11 @@ using EmbeddedRegionFunction = std::function<std::vector<InjectionRegion>(std::s
 // .highlight already bypasses the generic query path for logic a flat
 // capture list can't express (list-item hanging indent needs the bullet's
 // own content column, not a multiple of one fixed indent width).
-// bufferStyle is the buffer's own indent style (Buffer::LocalIndentStyle);
-// nullopt means the closure's own mode's configured style.
+// bufferIndent is the buffer's own override (Buffer::LocalIndent), laid
+// over the closure's own mode's configured style -- so an injected region
+// takes the file's tabs with its own language's width.
 using IndentFunction = std::function<std::optional<int>(std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd,
-                                                        const std::optional<IndentStyle>& bufferStyle)>;
+                                                        const IndentOverride& bufferIndent)>;
 
 // The byte ranges whose structure the parse could not establish, in source
 // order. A batch reindent (Indent.h's IndentRegion) leaves the lines inside

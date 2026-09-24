@@ -68,10 +68,7 @@ IndentStyle EffectiveIndentStyle(const std::string& modeName) {
 }
 
 IndentStyle EffectiveIndentStyle(const text::Buffer& buffer, const std::string& modeName) {
-    if (const std::optional<IndentStyle>& local = buffer.LocalIndentStyle()) {
-        return *local;
-    }
-    return EffectiveIndentStyle(modeName);
+    return buffer.LocalIndent().AppliedTo(EffectiveIndentStyle(modeName));
 }
 
 } // namespace ned::editor

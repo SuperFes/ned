@@ -185,7 +185,7 @@ std::vector<Fact> CollectFacts(const ned::editor::Mode& mode, const std::string&
             const std::size_t nl      = text.find('\n', lineStart);
             const std::size_t lineEnd = (nl == std::string::npos) ? text.size() : nl;
             if (const std::optional<int> column =
-                    ned::editor::IndentColumnForLine(mode, text, lineStart, lineEnd, std::nullopt, &verbatim);
+                    ned::editor::IndentColumnForLine(mode, text, lineStart, lineEnd, {}, &verbatim);
                 column) {
                 add("indent", lineStart, lineEnd, std::to_string(*column));
             }

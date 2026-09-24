@@ -1225,7 +1225,7 @@ inline std::vector<WrapSegment> ComputeWrapSegments(const text::ITextStorage& co
 // exactly the way this document's own authored convention already does by
 // hand.
 inline int LeadingIndentColumns(const text::ITextStorage& content, std::size_t lineStart, std::size_t lineEnd, int wrapWidth,
-                                const std::string& modeName, const std::optional<editor::IndentStyle>& bufferStyle) {
+                                const std::string& modeName, const editor::IndentOverride& bufferIndent) {
     int         columns = 0;
     std::size_t offset  = lineStart;
     while (offset < lineEnd) {
@@ -1239,7 +1239,7 @@ inline int LeadingIndentColumns(const text::ITextStorage& content, std::size_t l
     if (offset < lineEnd) {
         const std::string body = content.Substring(offset, lineEnd - offset);
         if (editor::DetectListMarker(body)) {
-            columns += (bufferStyle ? *bufferStyle : editor::EffectiveIndentStyle(modeName)).width;
+            columns += bufferIndent.AppliedTo(editor::EffectiveIndentStyle(modeName)).width;
         }
     }
     return std::min(columns, std::max(wrapWidth, 1) / 2);
@@ -1247,11 +1247,11 @@ inline int LeadingIndentColumns(const text::ITextStorage& content, std::size_t l
 
 inline std::vector<WrapSegment> ComputeWrappedLineSegments(const text::ITextStorage& content, std::size_t lineStart,
                                                            std::size_t lineEnd, int fullWidth,
-                                                           const std::vector<RenderedLink>&          lineLinks,
-                                                           const std::string&                        modeName,
-                                                           const std::optional<editor::IndentStyle>& bufferStyle) {
+                                                           const std::vector<RenderedLink>& lineLinks,
+                                                           const std::string&               modeName,
+                                                           const editor::IndentOverride&    bufferIndent) {
     const int continuationIndent =
-        editor::WrapIndent() ? LeadingIndentColumns(content, lineStart, lineEnd, fullWidth, modeName, bufferStyle) : 0;
+        editor::WrapIndent() ? LeadingIndentColumns(content, lineStart, lineEnd, fullWidth, modeName, bufferIndent) : 0;
     return ComputeWrapSegments(content, lineStart, lineEnd, fullWidth, lineLinks, continuationIndent);
 }
 

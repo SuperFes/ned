@@ -45,6 +45,7 @@
 #include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/Manager.h"
+#include "Editor/FileIndent.h"
 #include "Editor/Format.h"
 #include "Editor/FormatBlankLines.h"
 #include "Editor/FormatBracePlacement.h"
@@ -918,10 +919,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // PersistentUndoEnabled() check internally, so no outer guard here.
     for (const auto& openBuffer : bufferList.Buffers()) {
         ned::editor::TryRestoreUndoHistory(*openBuffer);
+        ned::editor::ApplyFileIndent(*openBuffer);
     }
     bufferList.SetOnFileOpened([](ned::text::Buffer& opened) -> void {
         ned::editor::RestoreFilePlace(opened, static_cast<std::size_t>(ned::editor::TabWidth()));
         ned::editor::TryRestoreUndoHistory(opened);
+        ned::editor::ApplyFileIndent(opened);
     });
 
     // session-persistence slice 2, Kate-style per the user's explicit call:
@@ -1412,6 +1415,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     bufferList.SetOnFileOpened([&modePrewarmer](ned::text::Buffer& opened) -> void {
         ned::editor::RestoreFilePlace(opened, static_cast<std::size_t>(ned::editor::TabWidth()));
         ned::editor::TryRestoreUndoHistory(opened);
+        ned::editor::ApplyFileIndent(opened);
         modePrewarmer.Prewarm(opened);
     });
 

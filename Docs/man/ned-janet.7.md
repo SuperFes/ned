@@ -360,6 +360,10 @@ configuration is Janet code, and these are the bindings it calls.
 
 :   Set how long, in milliseconds, the VCS diff gutter waits after the last edit before refreshing (default 1200; non-positive values are clamped to 1).
 
+`ned/set-editorconfig-enabled`
+
+:   Read .editorconfig files (default true): indent_style, indent_size and tab_width set the indentation of the files they match, above what the content shows and below a modeline.
+
 `ned/set-ensure-final-newline`
 
 :   Enable/disable appending a trailing newline to a file's written content on save if it's missing one (default true).
@@ -495,6 +499,10 @@ configuration is Janet code, and these are the bindings it calls.
 `ned/set-include-path-cache-ttl-seconds`
 
 :   Set how long (in seconds) a compiler-derived default include-path result stays cached before open-link-at-point/LSP resolution re-probes the real toolchain (default 86400, i.e. 24h). 0 or negative disables caching outright -- every lookup re-probes. See also refresh-toolchain-include-paths for a manual, immediate cache clear.
+
+`ned/set-indent-detection`
+
+:   Adopt a file's own indentation when it is opened (default true): a tab-indented file gets tabs, a space-indented one spaces and, when its lines agree on one, their width. An empty or mixed file keeps its mode's style, and a file's .editorconfig or modeline outranks what its content shows.
 
 `ned/set-indent-guide-depth-colors-enabled`
 

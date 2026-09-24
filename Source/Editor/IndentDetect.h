@@ -26,6 +26,8 @@
 
 #include <string_view>
 
+#include "Editor/IndentStyle.h"
+
 namespace ned::editor {
 
 enum class DetectedIndentKind {
@@ -37,12 +39,13 @@ enum class DetectedIndentKind {
 
 struct DetectedIndent {
     DetectedIndentKind kind = DetectedIndentKind::Unknown;
-    // Meaningful only for Kind::Spaces -- the smallest nonzero leading-
-    // space run seen across every space-indented line, the same "first
-    // indent level IS the width" heuristic real editors (VS Code's own
-    // detectIndentation, among others) use. Defaults to 4 (this codebase's
+    // Meaningful only for Kind::Spaces: the largest of 8, 4, 3 and 2 that
+    // divides at least four in five space runs (so an aligned continuation
+    // line or two doesn't decide it), with spacesWidthConfident set; else
+    // the smallest run seen, unconfidently. Defaults to 4 (this codebase's
     // own IndentStyle default) when there is nothing to measure.
-    int spacesWidth = 4;
+    int  spacesWidth          = 4;
+    bool spacesWidthConfident = false;
 };
 
 // Scans every line of text for its own leading-whitespace run (a blank line,
@@ -60,7 +63,19 @@ struct DetectedIndent {
 // file genuinely split between the two conventions (e.g. hand-edited by
 // two different tools) is reported as Mixed rather than silently picking
 // whichever happened to have one more line.
+//
+// A line whose first non-blank character is '*' is skipped: it continues a
+// block comment, aligned one column past the opener, and says nothing about
+// the file's indent unit.
 [[nodiscard]] DetectedIndent DetectIndentStyle(std::string_view text);
+
+// What a buffer can adopt from its own content: tabs, or spaces with the
+// width when it is confident; nothing for a Mixed or unindented file.
+[[nodiscard]] IndentOverride DetectedIndentOverride(std::string_view text);
+
+// Process-wide toggle, ned/set-indent-detection (default true).
+void               SetIndentDetection(bool enabled);
+[[nodiscard]] bool IndentDetection();
 
 } // namespace ned::editor
 

@@ -251,30 +251,6 @@ namespace {
     // What content-based resolution reads: the first 8 KiB, and the last
     // 4 KiB after an elision line when the file is longer -- enough for a
     // sniff and for a modeline at either end. Empty for a file not on disk.
-    std::string ReadEnds(const std::filesystem::path& path) {
-        std::error_code error;
-        if (!std::filesystem::is_regular_file(path, error)) {
-            return {};
-        }
-        std::ifstream in(path, std::ios::binary | std::ios::ate);
-        if (!in) {
-            return {};
-        }
-        const std::streamoff size     = in.tellg();
-        const std::streamoff headSize = std::min<std::streamoff>(size, 8192);
-        std::string          text(static_cast<std::size_t>(headSize), '\0');
-        in.seekg(0);
-        in.read(text.data(), headSize);
-        if (size > headSize) {
-            const std::streamoff tailSize = std::min<std::streamoff>(size - headSize, 4096);
-            std::string          tail(static_cast<std::size_t>(tailSize), '\0');
-            in.seekg(size - tailSize);
-            in.read(tail.data(), tailSize);
-            text += "\n\n\n\n\n\n\n\n\n\n\n"; // keeps the head's last lines out of the tail's modeline window
-            text += tail;
-        }
-        return text;
-    }
 
 } // namespace
 
@@ -282,7 +258,7 @@ Mode ModeForPath(const std::filesystem::path& path) {
     if (auto overrideMode = ModeForFileOverride(path); overrideMode) {
         return std::move(*overrideMode);
     }
-    const std::string ends = ReadEnds(path);
+    const std::string ends = ReadFileEnds(path);
     // A modeline in the file outranks everything but the user's own override.
     if (const std::optional<std::string> language = ParseModeline(ends).language) {
         if (auto mode = ModeByName(*language + "-mode"); mode) {

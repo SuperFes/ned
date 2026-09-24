@@ -100,7 +100,7 @@ TEST_CASE("CMode indentColumn indents inside a nested if-block", "[Indent]") {
     buffer.InsertAtPoint("int f(void) {\n    if (1) {\n        return 0;\n    }\n}\n");
 
     const auto [lineStart, lineEnd] = LineRange(buffer, 2); // "        return 0;"
-    const auto column               = mode.indentColumn(buffer.Text(), lineStart, lineEnd, std::nullopt);
+    const auto column               = mode.indentColumn(buffer.Text(), lineStart, lineEnd, {});
     REQUIRE(column.has_value());
     REQUIRE(*column == 8); // two levels deep, width 4
 }
@@ -111,7 +111,7 @@ TEST_CASE("CMode indentColumn aligns a closing brace with its opener's own level
     buffer.InsertAtPoint("int f(void) {\n    if (1) {\n        return 0;\n    }\n}\n");
 
     const auto [lineStart, lineEnd] = LineRange(buffer, 3); // "    }" -- closes the if-block
-    const auto column               = mode.indentColumn(buffer.Text(), lineStart, lineEnd, std::nullopt);
+    const auto column               = mode.indentColumn(buffer.Text(), lineStart, lineEnd, {});
     REQUIRE(column.has_value());
     REQUIRE(*column == 4); // matches "if (1) {"'s own level, not one deeper
 }
@@ -123,7 +123,7 @@ TEST_CASE("CMode indentColumn aligns a wrapped call's continuation argument to t
     buffer.InsertAtPoint("int r = foo(a,\n            b);\n");
 
     const auto [contStart, contEnd] = LineRange(buffer, 1); // "            b);"
-    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, std::nullopt);
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, {});
     REQUIRE(contColumn.has_value());
     REQUIRE(*contColumn == 12); // aligns under "a", the byte right after "("
 }
@@ -135,7 +135,7 @@ TEST_CASE("CMode indentColumn falls back to a plain indent level when a wrapped 
     buffer.InsertAtPoint("int r = foo(\n    a\n);\n");
 
     const auto [contStart, contEnd] = LineRange(buffer, 1); // "    a"
-    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, std::nullopt);
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, {});
     REQUIRE(contColumn.has_value());
     REQUIRE(*contColumn == 4); // nothing to align to -- one ordinary indent level
 }
@@ -147,12 +147,12 @@ TEST_CASE("GoMode indentColumn indents inside a nested if-block and aligns its c
     buffer.InsertAtPoint("func f() {\n    if true {\n        return\n    }\n}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "        return"
-    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {});
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 8); // two levels deep, width 4
 
     const auto [closeStart, closeEnd] = LineRange(buffer, 3); // "    }" -- closes the if-block
-    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt);
+    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd, {});
     REQUIRE(closeColumn.has_value());
     REQUIRE(*closeColumn == 4); // matches "if true {"'s own level, not one deeper
 }
@@ -164,7 +164,7 @@ TEST_CASE("GoMode indentColumn aligns a wrapped call's continuation argument to 
     buffer.InsertAtPoint("var r = foo(a,\n            b)\n");
 
     const auto [contStart, contEnd] = LineRange(buffer, 1); // "            b)"
-    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, std::nullopt);
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, {});
     REQUIRE(contColumn.has_value());
     REQUIRE(*contColumn == 12); // aligns under "a", the byte right after "("
 }
@@ -176,12 +176,12 @@ TEST_CASE("CSharpMode indentColumn indents a nested if-block and aligns its clos
     buffer.InsertAtPoint("class C {\n    void F() {\n        if (true) {\n            return;\n        }\n    }\n}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 3); // "            return;"
-    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {});
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 12); // three levels deep, width 4
 
     const auto [closeStart, closeEnd] = LineRange(buffer, 4); // "        }" -- closes the if-block
-    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt);
+    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd, {});
     REQUIRE(closeColumn.has_value());
     REQUIRE(*closeColumn == 8); // matches "if (true) {"'s own level, not one deeper
 }
@@ -193,7 +193,7 @@ TEST_CASE("CSharpMode indentColumn aligns a wrapped call's continuation argument
     buffer.InsertAtPoint("var r = Foo(a,\n            b);\n");
 
     const auto [contStart, contEnd] = LineRange(buffer, 1); // "            b);"
-    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, std::nullopt);
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, {});
     REQUIRE(contColumn.has_value());
     REQUIRE(*contColumn == 12); // aligns under "a", the byte right after "("
 }
@@ -205,12 +205,12 @@ TEST_CASE("JavaMode indentColumn indents a nested if-block and aligns its closin
     buffer.InsertAtPoint("class C {\n    void f() {\n        if (true) {\n            return;\n        }\n    }\n}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 3); // "            return;"
-    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {});
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 12); // three levels deep, width 4
 
     const auto [closeStart, closeEnd] = LineRange(buffer, 4); // "        }" -- closes the if-block
-    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt);
+    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd, {});
     REQUIRE(closeColumn.has_value());
     REQUIRE(*closeColumn == 8); // matches "if (true) {"'s own level, not one deeper
 }
@@ -222,7 +222,7 @@ TEST_CASE("JavaMode indentColumn aligns a wrapped call's continuation argument t
     buffer.InsertAtPoint("class C {\n    void f() {\n        var r = foo(a,\n                    b);\n    }\n}\n");
 
     const auto [contStart, contEnd] = LineRange(buffer, 3); // "                    b);"
-    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, std::nullopt);
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, {});
     REQUIRE(contColumn.has_value());
     REQUIRE(*contColumn == 20); // aligns under "a", the byte right after "("
 }
@@ -234,12 +234,12 @@ TEST_CASE("KotlinMode indentColumn indents a nested braced body and aligns its c
     buffer.InsertAtPoint("class C {\n    fun f() {\n        if (true) {\n            return\n        }\n    }\n}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 3); // "            return"
-    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {});
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 12); // three levels deep, width 4
 
     const auto [closeStart, closeEnd] = LineRange(buffer, 4); // "        }" -- closes the if-branch
-    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt);
+    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd, {});
     REQUIRE(closeColumn.has_value());
     REQUIRE(*closeColumn == 8);
 }
@@ -251,7 +251,7 @@ TEST_CASE("KotlinMode indentColumn aligns a wrapped call's continuation argument
     buffer.InsertAtPoint("val r = foo(a,\n            b)\n");
 
     const auto [contStart, contEnd] = LineRange(buffer, 1); // "            b)"
-    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, std::nullopt);
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, {});
     REQUIRE(contColumn.has_value());
     REQUIRE(*contColumn == 12); // aligns under "a", the byte right after "("
 }
@@ -262,12 +262,12 @@ TEST_CASE("CppMode indentColumn indents a struct member and a nested method body
     buffer.InsertAtPoint("struct S {\n    void f() {\n        return;\n    }\n};\n");
 
     const auto [memberStart, memberEnd] = LineRange(buffer, 1); // "    void f() {"
-    const auto memberColumn             = mode.indentColumn(buffer.Text(), memberStart, memberEnd, std::nullopt);
+    const auto memberColumn             = mode.indentColumn(buffer.Text(), memberStart, memberEnd, {});
     REQUIRE(memberColumn.has_value());
     REQUIRE(*memberColumn == 4);
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "        return;"
-    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {});
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 8);
 }
@@ -302,8 +302,8 @@ TEST_CASE("CppMode's indentColumn stays correct across a sequence of incremental
         const std::size_t  lineStart = text.size();
         const std::size_t  lineEnd   = text.size();
         INFO("step " << i << ": " << text);
-        const auto incremental = mode.indentColumn(text, lineStart, lineEnd, std::nullopt);
-        const auto fresh       = CppMode().indentColumn(text, lineStart, lineEnd, std::nullopt);
+        const auto incremental = mode.indentColumn(text, lineStart, lineEnd, {});
+        const auto fresh       = CppMode().indentColumn(text, lineStart, lineEnd, {});
         REQUIRE(incremental == fresh);
         sawRealValue = sawRealValue || incremental.has_value();
     }
@@ -367,8 +367,8 @@ TEST_CASE("JavaScriptMode's indentColumn stays correct when called sporadically,
     };
     {
         const std::size_t q = queryPoint(steps[0]);
-        const auto        c = mode.indentColumn(steps[0], q, q, std::nullopt);
-        const auto        f = JavaScriptMode().indentColumn(steps[0], q, q, std::nullopt);
+        const auto        c = mode.indentColumn(steps[0], q, q, {});
+        const auto        f = JavaScriptMode().indentColumn(steps[0], q, q, {});
         REQUIRE(c == f);
     }
 
@@ -383,8 +383,8 @@ TEST_CASE("JavaScriptMode's indentColumn stays correct when called sporadically,
         // generation indentMatchCache never saw.
         const std::size_t q = queryPoint(steps[i]);
         INFO("step " << i);
-        const auto incremental = mode.indentColumn(steps[i], q, q, std::nullopt);
-        const auto fresh       = JavaScriptMode().indentColumn(steps[i], q, q, std::nullopt);
+        const auto incremental = mode.indentColumn(steps[i], q, q, {});
+        const auto fresh       = JavaScriptMode().indentColumn(steps[i], q, q, {});
         INFO("incremental = " << (incremental ? std::to_string(*incremental) : "nullopt"));
         INFO("fresh       = " << (fresh ? std::to_string(*fresh) : "nullopt"));
         REQUIRE(incremental == fresh);
@@ -397,12 +397,12 @@ TEST_CASE("JsonMode indentColumn indents a nested array element and aligns its c
     buffer.InsertAtPoint("{\n\"a\": [\n1\n]\n}\n");
 
     const auto [elementStart, elementEnd] = LineRange(buffer, 2); // "1"
-    const auto elementColumn              = mode.indentColumn(buffer.Text(), elementStart, elementEnd, std::nullopt);
+    const auto elementColumn              = mode.indentColumn(buffer.Text(), elementStart, elementEnd, {});
     REQUIRE(elementColumn.has_value());
     REQUIRE(*elementColumn == 4); // two levels deep (object + array), width 2 (json's own built-in default -- IndentDefaults.h)
 
     const auto [closeStart, closeEnd] = LineRange(buffer, 3); // "]"
-    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt);
+    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd, {});
     REQUIRE(closeColumn.has_value());
     REQUIRE(*closeColumn == 2); // matches "\"a\": ["'s own level
 }
@@ -414,12 +414,12 @@ TEST_CASE("PythonMode indentColumn indents a function body and a nested if-block
     buffer.InsertAtPoint("def f():\n    if x:\n        return 1\n");
 
     const auto [ifStart, ifEnd] = LineRange(buffer, 1); // "    if x:"
-    const auto ifColumn         = mode.indentColumn(buffer.Text(), ifStart, ifEnd, std::nullopt);
+    const auto ifColumn         = mode.indentColumn(buffer.Text(), ifStart, ifEnd, {});
     REQUIRE(ifColumn.has_value());
     REQUIRE(*ifColumn == 4);
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "        return 1"
-    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {});
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 8);
 }
@@ -430,12 +430,12 @@ TEST_CASE("PythonMode indentColumn aligns an else clause with its owning if, not
     buffer.InsertAtPoint("def f():\n    if x:\n        return 1\n    else:\n        return 2\n");
 
     const auto [elseStart, elseEnd] = LineRange(buffer, 3); // "    else:"
-    const auto elseColumn           = mode.indentColumn(buffer.Text(), elseStart, elseEnd, std::nullopt);
+    const auto elseColumn           = mode.indentColumn(buffer.Text(), elseStart, elseEnd, {});
     REQUIRE(elseColumn.has_value());
     REQUIRE(*elseColumn == 4); // matches "if x:"'s own level, not "return 1"'s
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 4); // "        return 2"
-    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {});
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 8);
 }
@@ -447,7 +447,7 @@ TEST_CASE("PythonMode indentColumn end-of-block dedent needs no explicit dedent 
     buffer.InsertAtPoint("def f():\n    return 1\nx = 2\n");
 
     const auto [afterStart, afterEnd] = LineRange(buffer, 2); // "x = 2"
-    const auto afterColumn            = mode.indentColumn(buffer.Text(), afterStart, afterEnd, std::nullopt);
+    const auto afterColumn            = mode.indentColumn(buffer.Text(), afterStart, afterEnd, {});
     REQUIRE(afterColumn.has_value());
     REQUIRE(*afterColumn == 0);
 }
@@ -461,7 +461,7 @@ std::optional<int> BlankLineColumn(const Mode& mode, std::string_view text, std:
     for (std::size_t line = 0; line < blankLine; ++line) {
         lineStart = text.find('\n', lineStart) + 1;
     }
-    return mode.indentColumn(text, lineStart, lineStart, std::nullopt);
+    return mode.indentColumn(text, lineStart, lineStart, {});
 }
 
 } // namespace
@@ -541,7 +541,7 @@ TEST_CASE("A header's empty body doesn't pull in a line that already has content
     buffer.InsertAtPoint("def f():\nx = 1\n");
 
     const auto [lineStart, lineEnd] = LineRange(buffer, 1); // "x = 1"
-    CHECK(mode.indentColumn(buffer.Text(), lineStart, lineEnd, std::nullopt) == 0);
+    CHECK(mode.indentColumn(buffer.Text(), lineStart, lineEnd, {}) == 0);
 }
 
 TEST_CASE("PythonMode indentColumn takes a following container's level for a comment as the "
@@ -561,12 +561,12 @@ TEST_CASE("PythonMode indentColumn takes a following container's level for a com
     buffer.InsertAtPoint("def commented():\n    # a leading comment\n    return 1\n");
 
     const auto [commentStart, commentEnd] = LineRange(buffer, 1); // "    # a leading comment"
-    const auto commentColumn              = mode.indentColumn(buffer.Text(), commentStart, commentEnd, std::nullopt);
+    const auto commentColumn              = mode.indentColumn(buffer.Text(), commentStart, commentEnd, {});
     REQUIRE(commentColumn.has_value());
     REQUIRE(*commentColumn == 4); // matches "return 1"'s own level, not "def"'s
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "    return 1"
-    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {});
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 4);
 }
@@ -585,12 +585,12 @@ TEST_CASE("PythonMode indentColumn takes a following container's level for a com
     buffer.InsertAtPoint("def f():\n    if True:\n        # a leading comment\n        x = 1\n");
 
     const auto [commentStart, commentEnd] = LineRange(buffer, 2); // "        # a leading comment"
-    const auto commentColumn              = mode.indentColumn(buffer.Text(), commentStart, commentEnd, std::nullopt);
+    const auto commentColumn              = mode.indentColumn(buffer.Text(), commentStart, commentEnd, {});
     REQUIRE(commentColumn.has_value());
     REQUIRE(*commentColumn == 8); // matches "x = 1"'s own level
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 3); // "        x = 1"
-    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {});
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 8);
 }
@@ -601,7 +601,7 @@ TEST_CASE("PythonMode indentColumn indents a multi-line call's continuation line
     buffer.InsertAtPoint("f(a,\nb)\n");
 
     const auto [contStart, contEnd] = LineRange(buffer, 1); // "b)"
-    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, std::nullopt);
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, {});
     REQUIRE(contColumn.has_value());
     REQUIRE(*contColumn == 4);
 }
@@ -612,7 +612,7 @@ TEST_CASE("PythonMode indentColumn aligns a lone closing paren with its call's o
     buffer.InsertAtPoint("f(a,\nb\n)\n");
 
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // ")"
-    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt);
+    const auto closeColumn            = mode.indentColumn(buffer.Text(), closeStart, closeEnd, {});
     REQUIRE(closeColumn.has_value());
     REQUIRE(*closeColumn == 0); // aligns with "f(a,"'s own level, not "b"'s
 }
@@ -631,12 +631,12 @@ TEST_CASE("MarkdownMode indentColumn hangs a nested list item's continuation one
     buffer.InsertAtPoint("- item one\n    more text\n");
 
     const auto [markerStart, markerEnd] = LineRange(buffer, 0); // "- item one" -- its own marker line
-    const auto markerColumn             = mode.indentColumn(buffer.Text(), markerStart, markerEnd, std::nullopt);
+    const auto markerColumn             = mode.indentColumn(buffer.Text(), markerStart, markerEnd, {});
     REQUIRE(markerColumn.has_value());
     REQUIRE(*markerColumn == 0);
 
     const auto [contStart, contEnd] = LineRange(buffer, 1); // "    more text" -- hanging continuation
-    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, std::nullopt);
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, {});
     REQUIRE(contColumn.has_value());
     REQUIRE(*contColumn == 4);
 }
@@ -653,12 +653,12 @@ TEST_CASE("MarkdownMode indentColumn stacks one indent step per nesting level, a
     buffer.InsertAtPoint("1. outer\n   - inner\n     more\n");
 
     const auto [innerMarkerStart, innerMarkerEnd] = LineRange(buffer, 1); // "   - inner" -- inner item's own marker line
-    const auto innerMarkerColumn                  = mode.indentColumn(buffer.Text(), innerMarkerStart, innerMarkerEnd, std::nullopt);
+    const auto innerMarkerColumn                  = mode.indentColumn(buffer.Text(), innerMarkerStart, innerMarkerEnd, {});
     REQUIRE(innerMarkerColumn.has_value());
     REQUIRE(*innerMarkerColumn == 4); // one step -- the outer item's own contribution only
 
     const auto [contStart, contEnd] = LineRange(buffer, 2); // "     more" -- inside the inner item's body
-    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, std::nullopt);
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, {});
     REQUIRE(contColumn.has_value());
     REQUIRE(*contColumn == 8); // two steps, one per nesting level
 }
@@ -669,12 +669,12 @@ TEST_CASE("MarkdownMode indentColumn adds one indent step per blockquote level",
     buffer.InsertAtPoint("> quoted\n> more quoted\n");
 
     const auto [firstStart, firstEnd] = LineRange(buffer, 0); // "> quoted" -- the blockquote's own opening line
-    const auto firstColumn            = mode.indentColumn(buffer.Text(), firstStart, firstEnd, std::nullopt);
+    const auto firstColumn            = mode.indentColumn(buffer.Text(), firstStart, firstEnd, {});
     REQUIRE(firstColumn.has_value());
     REQUIRE(*firstColumn == 0);
 
     const auto [secondStart, secondEnd] = LineRange(buffer, 1); // "> more quoted" -- still inside the same blockquote
-    const auto secondColumn             = mode.indentColumn(buffer.Text(), secondStart, secondEnd, std::nullopt);
+    const auto secondColumn             = mode.indentColumn(buffer.Text(), secondStart, secondEnd, {});
     REQUIRE(secondColumn.has_value());
     REQUIRE(*secondColumn == 4);
 }
@@ -687,7 +687,7 @@ TEST_CASE("MarkdownMode indentColumn copies a fenced code block's own content in
     // The line right after one with deliberately "wrong"/non-structural
     // indentation -- passthrough copies it as-is, not recomputed.
     const auto [nextStart, nextEnd] = LineRange(buffer, 2); // "next line"
-    const auto nextColumn           = mode.indentColumn(buffer.Text(), nextStart, nextEnd, std::nullopt);
+    const auto nextColumn           = mode.indentColumn(buffer.Text(), nextStart, nextEnd, {});
     REQUIRE(nextColumn.has_value());
     REQUIRE(*nextColumn == 4); // copies "    weird indent"'s own 4-space leading run
 }
@@ -703,7 +703,7 @@ TEST_CASE("MarkdownMode indentColumn breaks out of a list on a second consecutiv
     buffer.InsertAtPoint("- item one\n  \n");
 
     const std::size_t newLinePos = buffer.Content().ByteLength();
-    const auto        column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos, std::nullopt);
+    const auto        column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos, {});
     REQUIRE(column.has_value());
     REQUIRE(*column == 0);
 }
@@ -718,7 +718,7 @@ TEST_CASE("MarkdownMode indentColumn still hangs a blank continuation on the FIR
     buffer.InsertAtPoint("- item one\n");
 
     const std::size_t newLinePos = buffer.Content().ByteLength();
-    const auto        column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos, std::nullopt);
+    const auto        column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos, {});
     REQUIRE(column.has_value());
     REQUIRE(*column == 4);
 }
@@ -730,10 +730,10 @@ TEST_CASE("JavaScriptMode indentColumn indents a nested if-block and aligns its 
     buffer.InsertAtPoint("function f() {\nif (x) {\nreturn 1;\n}\n}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "return 1;"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 4); // two levels deep, javascript's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 4); // two levels deep, javascript's own built-in default is width 2 (IndentDefaults.h)
 
     const auto [closeStart, closeEnd] = LineRange(buffer, 3); // "}" closing the if
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 2);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 2);
 }
 
 TEST_CASE("JavaScriptMode indentColumn aligns a wrapped call's continuation argument to the first argument's column",
@@ -743,7 +743,7 @@ TEST_CASE("JavaScriptMode indentColumn aligns a wrapped call's continuation argu
     buffer.InsertAtPoint("foo(a,\n    b);\n");
 
     const auto [contStart, contEnd] = LineRange(buffer, 1); // "    b);"
-    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, std::nullopt);
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, {});
     REQUIRE(contColumn.has_value());
     REQUIRE(*contColumn == 4); // aligns under "a", the byte right after "("
 }
@@ -754,9 +754,9 @@ TEST_CASE("TypeScriptMode indentColumn indents an interface body", "[Indent]") {
     buffer.InsertAtPoint("interface I {\nx: number;\n}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "x: number;"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2); // typescript's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2); // typescript's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "}"
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
 }
 
 TEST_CASE("TsxMode indentColumn shares TypeScript's own statement_block indentation", "[Indent]") {
@@ -766,7 +766,7 @@ TEST_CASE("TsxMode indentColumn shares TypeScript's own statement_block indentat
     buffer.InsertAtPoint("function f() {\nreturn 1;\n}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1);
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2); // tsx's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2); // tsx's own built-in default is width 2 (IndentDefaults.h)
 }
 
 TEST_CASE("PhpMode indentColumn indents an if-block and aligns its closing brace", "[Indent]") {
@@ -775,9 +775,9 @@ TEST_CASE("PhpMode indentColumn indents an if-block and aligns its closing brace
     buffer.InsertAtPoint("<?php\nif ($x) {\necho 1;\n}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "echo 1;"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 4);
     const auto [closeStart, closeEnd] = LineRange(buffer, 3); // "}"
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
 }
 
 TEST_CASE("CssMode indentColumn indents a rule body and aligns its closing brace", "[Indent]") {
@@ -786,9 +786,9 @@ TEST_CASE("CssMode indentColumn indents a rule body and aligns its closing brace
     buffer.InsertAtPoint(".a {\ncolor: red;\n}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "color: red;"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2); // css's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2); // css's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "}"
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
 }
 
 TEST_CASE("HtmlMode indentColumn indents a nested element and aligns its closing tag", "[Indent]") {
@@ -797,9 +797,9 @@ TEST_CASE("HtmlMode indentColumn indents a nested element and aligns its closing
     buffer.InsertAtPoint("<div>\n<p>hi</p>\n</div>\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "<p>hi</p>"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2); // html's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2); // html's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "</div>"
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
 }
 
 // The state a file is in for most of its life: being typed, with the
@@ -816,9 +816,9 @@ TEST_CASE("indentColumn keeps indenting while a document is still unfinished", "
         buffer.InsertAtPoint("<div>\n<ul>\n<li>one</li>\n");
 
         const auto [ulStart, ulEnd] = LineRange(buffer, 1); // "<ul>"
-        REQUIRE(mode.indentColumn(buffer.Text(), ulStart, ulEnd, std::nullopt) == 2);
+        REQUIRE(mode.indentColumn(buffer.Text(), ulStart, ulEnd, {}) == 2);
         const auto [liStart, liEnd] = LineRange(buffer, 2); // "<li>one</li>"
-        REQUIRE(mode.indentColumn(buffer.Text(), liStart, liEnd, std::nullopt) == 4);
+        REQUIRE(mode.indentColumn(buffer.Text(), liStart, liEnd, {}) == 4);
     }
 
     SECTION("c++, two blocks still open") {
@@ -827,9 +827,9 @@ TEST_CASE("indentColumn keeps indenting while a document is still unfinished", "
         buffer.InsertAtPoint("struct Widget {\nvoid resize(int w) {\nwidth_ = w;\n");
 
         const auto [signatureStart, signatureEnd] = LineRange(buffer, 1); // "void resize(int w) {"
-        REQUIRE(mode.indentColumn(buffer.Text(), signatureStart, signatureEnd, std::nullopt) == 4);
+        REQUIRE(mode.indentColumn(buffer.Text(), signatureStart, signatureEnd, {}) == 4);
         const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "width_ = w;"
-        REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 8);
+        REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 8);
     }
 
     SECTION("rust, one block still open") {
@@ -838,7 +838,7 @@ TEST_CASE("indentColumn keeps indenting while a document is still unfinished", "
         buffer.InsertAtPoint("fn first() -> i32 {\nlet x = 1;\n");
 
         const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "let x = 1;"
-        REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 4);
+        REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 4);
     }
 }
 
@@ -868,7 +868,7 @@ TEST_CASE("indentColumn keeps a self-closing tag level with its siblings", "[Ind
         for (const std::size_t line : {std::size_t{1}, std::size_t{2}, std::size_t{3}}) {
             const auto [lineStart, lineEnd] = LineRange(buffer, line);
             INFO("line " << line);
-            REQUIRE(mode.indentColumn(buffer.Text(), lineStart, lineEnd, std::nullopt) == 2);
+            REQUIRE(mode.indentColumn(buffer.Text(), lineStart, lineEnd, {}) == 2);
         }
     }
 
@@ -878,7 +878,7 @@ TEST_CASE("indentColumn keeps a self-closing tag level with its siblings", "[Ind
         buffer.InsertAtPoint("<a>\n<b>x</b>\n<c/>\n</a>\n");
 
         const auto [emptyStart, emptyEnd] = LineRange(buffer, 2); // "<c/>"
-        REQUIRE(mode.indentColumn(buffer.Text(), emptyStart, emptyEnd, std::nullopt) == 2);
+        REQUIRE(mode.indentColumn(buffer.Text(), emptyStart, emptyEnd, {}) == 2);
     }
 }
 
@@ -895,12 +895,12 @@ TEST_CASE("indentColumn indents an injected region by its own language", "[Inden
         buffer.InsertAtPoint("<div>\n<ul>\n<li><?= $row ?></li>\n</ul>\n</div>\n");
 
         const auto [listStart, listEnd] = LineRange(buffer, 1); // "<ul>"
-        REQUIRE(mode.indentColumn(buffer.Text(), listStart, listEnd, std::nullopt) == 2);
+        REQUIRE(mode.indentColumn(buffer.Text(), listStart, listEnd, {}) == 2);
         // The PHP island sits mid-line; the line is still HTML, and indents as it.
         const auto [itemStart, itemEnd] = LineRange(buffer, 2); // "<li><?= $row ?></li>"
-        REQUIRE(mode.indentColumn(buffer.Text(), itemStart, itemEnd, std::nullopt) == 4);
+        REQUIRE(mode.indentColumn(buffer.Text(), itemStart, itemEnd, {}) == 4);
         const auto [closeStart, closeEnd] = LineRange(buffer, 3); // "</ul>"
-        REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 2);
+        REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 2);
     }
 
     SECTION("html <script>: the host places the block, JavaScript nests inside it") {
@@ -909,11 +909,11 @@ TEST_CASE("indentColumn indents an injected region by its own language", "[Inden
         buffer.InsertAtPoint("<body>\n<script>\nfunction f() {\nreturn 1;\n}\n</script>\n</body>\n");
 
         const auto [openStart, openEnd] = LineRange(buffer, 2); // "function f() {"
-        REQUIRE(mode.indentColumn(buffer.Text(), openStart, openEnd, std::nullopt) == 4);
+        REQUIRE(mode.indentColumn(buffer.Text(), openStart, openEnd, {}) == 4);
         const auto [bodyStart, bodyEnd] = LineRange(buffer, 3); // "return 1;"
-        REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 6);
+        REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 6);
         const auto [braceStart, braceEnd] = LineRange(buffer, 4); // "}"
-        REQUIRE(mode.indentColumn(buffer.Text(), braceStart, braceEnd, std::nullopt) == 4);
+        REQUIRE(mode.indentColumn(buffer.Text(), braceStart, braceEnd, {}) == 4);
     }
 
     SECTION("a file with no injected region at all is the host's business alone") {
@@ -922,9 +922,9 @@ TEST_CASE("indentColumn indents an injected region by its own language", "[Inden
         buffer.InsertAtPoint("<?php\nfunction f(int $w) {\n$this->w = $w;\n}\n");
 
         const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "$this->w = $w;"
-        REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 4);
+        REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 4);
         const auto [closeStart, closeEnd] = LineRange(buffer, 3); // "}"
-        REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 0);
+        REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
     }
 
     SECTION("ned/set-indent-injected-regions false restores host-only indentation") {
@@ -934,7 +934,7 @@ TEST_CASE("indentColumn indents an injected region by its own language", "[Inden
         buffer.InsertAtPoint("<div>\n<ul>\n<li>x</li>\n</ul>\n</div>\n");
 
         const auto [listStart, listEnd] = LineRange(buffer, 1); // "<ul>"
-        const std::optional<int> column = mode.indentColumn(buffer.Text(), listStart, listEnd, std::nullopt);
+        const std::optional<int> column = mode.indentColumn(buffer.Text(), listStart, listEnd, {});
         SetIndentInjectedRegions(true);
         REQUIRE(column == 0);
     }
@@ -946,9 +946,9 @@ TEST_CASE("XmlMode indentColumn indents a nested element and aligns its closing 
     buffer.InsertAtPoint("<a>\n<b>x</b>\n</a>\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "<b>x</b>"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2); // xml's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2); // xml's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "</a>"
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
 }
 
 TEST_CASE("BashMode indentColumn indents an if-body and aligns fi with its own if", "[Indent]") {
@@ -957,9 +957,9 @@ TEST_CASE("BashMode indentColumn indents an if-body and aligns fi with its own i
     buffer.InsertAtPoint("if x; then\necho y\nfi\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "echo y"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2); // bash's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2); // bash's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "fi"
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
 }
 
 TEST_CASE("BashMode indentColumn indents a for-loop body via do_group and aligns done", "[Indent]") {
@@ -968,9 +968,9 @@ TEST_CASE("BashMode indentColumn indents a for-loop body via do_group and aligns
     buffer.InsertAtPoint("for i in a b; do\necho $i\ndone\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "echo $i"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2); // bash's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2); // bash's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "done"
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
 }
 
 TEST_CASE("FishMode indentColumn indents an if-body and aligns end with its own if", "[Indent]") {
@@ -979,9 +979,9 @@ TEST_CASE("FishMode indentColumn indents an if-body and aligns end with its own 
     buffer.InsertAtPoint("if test 1\necho a\nend\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "echo a"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2); // fish's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2); // fish's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "end"
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
 }
 
 // indent-engine follow-up (ROADMAP.md's own watch-list entry): method/
@@ -1004,24 +1004,24 @@ TEST_CASE("RubyMode indentColumn indents a method's own body regardless of param
     Buffer buffer("test.rb");
     buffer.InsertAtPoint("def foo(a, b)\n1\nend\n");
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1);             // "1"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2); // ruby's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2); // ruby's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2);           // "end"
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
 
     Buffer bareBuffer("test2.rb");
     bareBuffer.InsertAtPoint("def foo a, b\n1\nend\n");
     const auto [bareStart, bareEnd] = LineRange(bareBuffer, 1); // "1"
-    REQUIRE(mode.indentColumn(bareBuffer.Text(), bareStart, bareEnd, std::nullopt) == 2);
+    REQUIRE(mode.indentColumn(bareBuffer.Text(), bareStart, bareEnd, {}) == 2);
 
     Buffer noParenBuffer("test3.rb");
     noParenBuffer.InsertAtPoint("def foo\n1\nend\n");
     const auto [noParenStart, noParenEnd] = LineRange(noParenBuffer, 1); // "1"
-    REQUIRE(mode.indentColumn(noParenBuffer.Text(), noParenStart, noParenEnd, std::nullopt) == 2);
+    REQUIRE(mode.indentColumn(noParenBuffer.Text(), noParenStart, noParenEnd, {}) == 2);
 
     Buffer singletonBuffer("test4.rb");
     singletonBuffer.InsertAtPoint("def self.foo\n1\nend\n");
     const auto [singletonStart, singletonEnd] = LineRange(singletonBuffer, 1); // "1"
-    REQUIRE(mode.indentColumn(singletonBuffer.Text(), singletonStart, singletonEnd, std::nullopt) == 2);
+    REQUIRE(mode.indentColumn(singletonBuffer.Text(), singletonStart, singletonEnd, {}) == 2);
 }
 
 // The far more common style -- no literal "do" written at all -- is the
@@ -1038,19 +1038,19 @@ TEST_CASE("RubyMode indentColumn indents a while/until body in BOTH the idiomati
     Buffer buffer("test.rb");
     buffer.InsertAtPoint("while x\n1\nend\n");
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "1"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2);
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "end"
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
 
     Buffer untilBuffer("test2.rb");
     untilBuffer.InsertAtPoint("until x\n1\nend\n");
     const auto [untilStart, untilEnd] = LineRange(untilBuffer, 1); // "1"
-    REQUIRE(mode.indentColumn(untilBuffer.Text(), untilStart, untilEnd, std::nullopt) == 2);
+    REQUIRE(mode.indentColumn(untilBuffer.Text(), untilStart, untilEnd, {}) == 2);
 
     Buffer doBuffer("test3.rb");
     doBuffer.InsertAtPoint("while x do\n1\nend\n");
     const auto [doStart, doEnd] = LineRange(doBuffer, 1); // "1"
-    REQUIRE(mode.indentColumn(doBuffer.Text(), doStart, doEnd, std::nullopt) == 2);
+    REQUIRE(mode.indentColumn(doBuffer.Text(), doStart, doEnd, {}) == 2);
 }
 
 // The real corruption hazard this fix had to avoid: Ruby's own "endless
@@ -1067,9 +1067,9 @@ TEST_CASE("RubyMode indentColumn does not over-indent past an endless method (no
     buffer.InsertAtPoint("def endless = 1\ndef after\n1\nend\n");
 
     const auto [afterBodyStart, afterBodyEnd] = LineRange(buffer, 2); // "1"
-    REQUIRE(mode.indentColumn(buffer.Text(), afterBodyStart, afterBodyEnd, std::nullopt) == 2);
+    REQUIRE(mode.indentColumn(buffer.Text(), afterBodyStart, afterBodyEnd, {}) == 2);
     const auto [afterEndStart, afterEndEnd] = LineRange(buffer, 3); // "end"
-    REQUIRE(mode.indentColumn(buffer.Text(), afterEndStart, afterEndEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), afterEndStart, afterEndEnd, {}) == 0);
 }
 
 // End to end: a real IndentBuffer pass over nested class/method/if/while
@@ -1118,9 +1118,9 @@ TEST_CASE("JanetMode indentColumn aligns an ordinary call's continuation right a
     buffer.InsertAtPoint("(a\nb\n)\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "b"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 1);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 1);
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // ")"
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
 }
 
 TEST_CASE("ClojureMode indentColumn aligns an ordinary call's continuation right after the opener, and its own "
@@ -1131,9 +1131,9 @@ TEST_CASE("ClojureMode indentColumn aligns an ordinary call's continuation right
     buffer.InsertAtPoint("(a\nb\n)\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "b"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 1);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 1);
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // ")"
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
 }
 
 TEST_CASE("JankMode indentColumn shares Clojure's own indentation", "[Indent]") {
@@ -1143,7 +1143,7 @@ TEST_CASE("JankMode indentColumn shares Clojure's own indentation", "[Indent]") 
     buffer.InsertAtPoint("(a\nb)\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "b)"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 1);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 1);
 }
 
 TEST_CASE("JanetMode indentColumn indents a let form's body a fixed 2 columns past its own column", "[Indent]") {
@@ -1152,7 +1152,7 @@ TEST_CASE("JanetMode indentColumn indents a let form's body a fixed 2 columns pa
     buffer.InsertAtPoint("(let [x 1]\n  body)\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "  body)"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2);
 }
 
 TEST_CASE("JanetMode indentColumn indents a defn form's body the same fixed 2 columns", "[Indent]") {
@@ -1161,7 +1161,7 @@ TEST_CASE("JanetMode indentColumn indents a defn form's body the same fixed 2 co
     buffer.InsertAtPoint("(defn foo [x]\n  body)\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "  body)"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2);
 }
 
 TEST_CASE("JanetMode indentColumn falls back to plain bracket-depth when an ordinary call's opener has nothing "
@@ -1172,7 +1172,7 @@ TEST_CASE("JanetMode indentColumn falls back to plain bracket-depth when an ordi
     buffer.InsertAtPoint("(\n  foo a\n  b)\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "  b)"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2); // janet's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2); // janet's own built-in default is width 2 (IndentDefaults.h)
 }
 
 TEST_CASE("ClojureMode indentColumn indents a let form's body a fixed 2 columns past its own column", "[Indent]") {
@@ -1181,7 +1181,7 @@ TEST_CASE("ClojureMode indentColumn indents a let form's body a fixed 2 columns 
     buffer.InsertAtPoint("(let [x 1]\n  body)\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "  body)"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2);
 }
 
 TEST_CASE("ClojureMode indentColumn indents a defn form's body the same fixed 2 columns", "[Indent]") {
@@ -1190,7 +1190,7 @@ TEST_CASE("ClojureMode indentColumn indents a defn form's body the same fixed 2 
     buffer.InsertAtPoint("(defn foo [x]\n  body)\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "  body)"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2);
 }
 
 TEST_CASE("ClojureMode indentColumn falls back to plain bracket-depth when an ordinary call's opener has nothing "
@@ -1201,7 +1201,7 @@ TEST_CASE("ClojureMode indentColumn falls back to plain bracket-depth when an or
     buffer.InsertAtPoint("(\n  foo a\n  b)\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "  b)"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2); // clojure's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2); // clojure's own built-in default is width 2 (IndentDefaults.h)
 }
 
 TEST_CASE("YamlMode indentColumn indents one level per genuinely nested mapping, not the document root",
@@ -1211,9 +1211,9 @@ TEST_CASE("YamlMode indentColumn indents one level per genuinely nested mapping,
     buffer.InsertAtPoint("a:\n  b:\n    c: 1\n");
 
     const auto [level1Start, level1End] = LineRange(buffer, 1); // "  b:"
-    REQUIRE(mode.indentColumn(buffer.Text(), level1Start, level1End, std::nullopt) == 2); // yaml's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), level1Start, level1End, {}) == 2); // yaml's own built-in default is width 2 (IndentDefaults.h)
     const auto [level2Start, level2End] = LineRange(buffer, 2); // "    c: 1"
-    REQUIRE(mode.indentColumn(buffer.Text(), level2Start, level2End, std::nullopt) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), level2Start, level2End, {}) == 4);
 }
 
 TEST_CASE("YamlMode indentColumn indents a nested sequence item", "[Indent]") {
@@ -1222,7 +1222,7 @@ TEST_CASE("YamlMode indentColumn indents a nested sequence item", "[Indent]") {
     buffer.InsertAtPoint("a:\n  - x\n  - y\n");
 
     const auto [itemStart, itemEnd] = LineRange(buffer, 1); // "  - x"
-    REQUIRE(mode.indentColumn(buffer.Text(), itemStart, itemEnd, std::nullopt) == 2); // yaml's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), itemStart, itemEnd, {}) == 2); // yaml's own built-in default is width 2 (IndentDefaults.h)
 }
 
 // End to end, over a real buffer rather than a column list: the shape a
@@ -1295,7 +1295,7 @@ TEST_CASE("YamlMode indentColumn puts a sequence item's later keys under its fir
     buffer.InsertAtPoint("plan:\n  - key: v\n    other: w\n");
 
     const auto [start, end] = LineRange(buffer, 2); // "    other: w"
-    REQUIRE(mode.indentColumn(buffer.Text(), start, end, std::nullopt) == 4);
+    REQUIRE(mode.indentColumn(buffer.Text(), start, end, {}) == 4);
 }
 
 TEST_CASE("YamlMode indentColumn takes a following mapping's level for a comment as the "
@@ -1313,10 +1313,10 @@ TEST_CASE("YamlMode indentColumn takes a following mapping's level for a comment
     buffer.InsertAtPoint("a:\n  # a leading comment\n  b: 1\n");
 
     const auto [commentStart, commentEnd] = LineRange(buffer, 1);             // "  # a leading comment"
-    REQUIRE(mode.indentColumn(buffer.Text(), commentStart, commentEnd, std::nullopt) == 2); // matches "b: 1"'s own level
+    REQUIRE(mode.indentColumn(buffer.Text(), commentStart, commentEnd, {}) == 2); // matches "b: 1"'s own level
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "  b: 1"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2);
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2);
 }
 
 TEST_CASE("TomlMode indentColumn indents inside a multi-line array and aligns its closing bracket", "[Indent]") {
@@ -1325,9 +1325,9 @@ TEST_CASE("TomlMode indentColumn indents inside a multi-line array and aligns it
     buffer.InsertAtPoint("a = [\n1,\n2\n]\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "1,"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt) == 2); // toml's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2); // toml's own built-in default is width 2 (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 3); // "]"
-    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
 }
 
 TEST_CASE("OrgMode indentColumn hangs a list item's continuation to its own bullet width", "[Indent]") {
@@ -1337,10 +1337,10 @@ TEST_CASE("OrgMode indentColumn hangs a list item's continuation to its own bull
     buffer.InsertAtPoint("- item one\n  more text\n");
 
     const auto [bulletStart, bulletEnd] = LineRange(buffer, 0); // "- item one" -- its own bullet line
-    REQUIRE(mode.indentColumn(buffer.Text(), bulletStart, bulletEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), bulletStart, bulletEnd, {}) == 0);
 
     const auto [contStart, contEnd] = LineRange(buffer, 1);             // "  more text" -- hanging continuation
-    REQUIRE(mode.indentColumn(buffer.Text(), contStart, contEnd, std::nullopt) == 2); // "- " is 2 columns wide
+    REQUIRE(mode.indentColumn(buffer.Text(), contStart, contEnd, {}) == 2); // "- " is 2 columns wide
 }
 
 TEST_CASE("OrgMode indentColumn breaks out of a list on a second consecutive blank Enter", "[Indent]") {
@@ -1349,7 +1349,7 @@ TEST_CASE("OrgMode indentColumn breaks out of a list on a second consecutive bla
     buffer.InsertAtPoint("- item one\n  \n");
 
     const std::size_t newLinePos = buffer.Content().ByteLength();
-    const auto        column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos, std::nullopt);
+    const auto        column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos, {});
     REQUIRE(column.has_value());
     REQUIRE(*column == 0);
 }
@@ -1361,7 +1361,7 @@ TEST_CASE("OrgMode indentColumn still hangs a blank continuation on the FIRST En
     buffer.InsertAtPoint("- item one\n");
 
     const std::size_t newLinePos = buffer.Content().ByteLength();
-    const auto        column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos, std::nullopt);
+    const auto        column     = mode.indentColumn(buffer.Text(), newLinePos, newLinePos, {});
     REQUIRE(column.has_value());
     REQUIRE(*column == 2);
 }
@@ -1379,7 +1379,7 @@ TEST_CASE("OrgMode indentColumn never hangs a headline directly following a list
     buffer.InsertAtPoint("- [ ] unchecked box\n* Second tree\n");
 
     const auto [headlineStart, headlineEnd] = LineRange(buffer, 1); // "* Second tree"
-    REQUIRE(mode.indentColumn(buffer.Text(), headlineStart, headlineEnd, std::nullopt) == 0);
+    REQUIRE(mode.indentColumn(buffer.Text(), headlineStart, headlineEnd, {}) == 0);
 }
 
 TEST_CASE("CppMode indentColumn aligns a wrapped call's continuation argument to the first argument's column",
@@ -1389,7 +1389,7 @@ TEST_CASE("CppMode indentColumn aligns a wrapped call's continuation argument to
     buffer.InsertAtPoint("int r = foo(a,\n            b);\n");
 
     const auto [contStart, contEnd] = LineRange(buffer, 1); // "            b);"
-    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, std::nullopt);
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, {});
     REQUIRE(contColumn.has_value());
     REQUIRE(*contColumn == 12); // aligns under "a", the byte right after "(" -- same as CMode
 }
@@ -1418,7 +1418,7 @@ TEST_CASE("CppMode indentColumn indents a lambda argument's body from the statem
 
     const auto columnOfLine = [&](std::size_t line) {
         const auto [start, end] = LineRange(buffer, line);
-        const auto column       = mode.indentColumn(buffer.Text(), start, end, std::nullopt);
+        const auto column       = mode.indentColumn(buffer.Text(), start, end, {});
         REQUIRE(column.has_value());
         return *column;
     };
@@ -1445,7 +1445,7 @@ TEST_CASE("JavaScriptMode indentColumn indents a callback body from the statemen
                          "}, 100);\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1);
-    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {});
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 2); // one level from the statement, javascript's own built-in default is width 2 (IndentDefaults.h)
 }
@@ -1461,7 +1461,7 @@ TEST_CASE("GoMode indentColumn indents a func literal's body from the statement,
                          "}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 2);
-    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {});
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 2 * EffectiveIndentStyle("go-mode").width);
 }
@@ -1477,7 +1477,7 @@ TEST_CASE("RustMode indentColumn indents a closure body from the statement, not 
                          "}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 2);
-    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {});
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 8);
 }
@@ -1497,7 +1497,7 @@ TEST_CASE("JavaMode indentColumn indents an anonymous class body from the statem
                          "}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 3);
-    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {});
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 12);
 }
@@ -1513,7 +1513,7 @@ TEST_CASE("JanetMode indentColumn still lets a nested bracket inherit the enclos
     buffer.InsertAtPoint("(foo bar [a\n          b])\n");
 
     const auto [contStart, contEnd] = LineRange(buffer, 1);
-    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, std::nullopt);
+    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, {});
     REQUIRE(contColumn.has_value());
     // The enclosing call's own alignment column (right after "(", since "foo"
     // is the only thing following the opener on its own line) plus one level
@@ -1537,12 +1537,12 @@ TEST_CASE("CppMode indentColumn does not indent a top-level namespace's own body
     buffer.InsertAtPoint("namespace {\nvoid f() {\n    g();\n}\n}\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "void f() {"
-    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, std::nullopt);
+    const auto bodyColumn           = mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {});
     REQUIRE(bodyColumn.has_value());
     REQUIRE(*bodyColumn == 0); // top-level namespace body: no extra level
 
     const auto [stmtStart, stmtEnd] = LineRange(buffer, 2); // "    g();"
-    const auto stmtColumn           = mode.indentColumn(buffer.Text(), stmtStart, stmtEnd, std::nullopt);
+    const auto stmtColumn           = mode.indentColumn(buffer.Text(), stmtStart, stmtEnd, {});
     REQUIRE(stmtColumn.has_value());
     REQUIRE(*stmtColumn == 4); // one level for f()'s own compound_statement, not two
 }
@@ -1553,7 +1553,7 @@ TEST_CASE("CppMode indentColumn indents a namespace genuinely nested inside anot
     buffer.InsertAtPoint("namespace outer {\nnamespace inner {\nvoid f() {\n}\n}\n}\n");
 
     const auto [nestedStart, nestedEnd] = LineRange(buffer, 2); // "void f() {"
-    const auto nestedColumn             = mode.indentColumn(buffer.Text(), nestedStart, nestedEnd, std::nullopt);
+    const auto nestedColumn             = mode.indentColumn(buffer.Text(), nestedStart, nestedEnd, {});
     REQUIRE(nestedColumn.has_value());
     REQUIRE(*nestedColumn == 4); // one level, for being inside the genuinely-nested "inner"
 }
@@ -1584,7 +1584,7 @@ TEST_CASE("IndentBuffer refuses a reindent that would change how the code parses
     // where it was, the result parses cleanly, and the program is different.
     Mode mode         = PythonMode();
     mode.indentColumn = [](std::string_view text, std::size_t lineStart, std::size_t lineEnd,
-                           const std::optional<ned::editor::IndentStyle>&) -> std::optional<int> {
+                           const ned::editor::IndentOverride&) -> std::optional<int> {
         if (text.substr(lineStart, lineEnd - lineStart).find("b()") != std::string_view::npos) {
             return 8;
         }
@@ -1735,7 +1735,7 @@ TEST_CASE("MarkdownMode indentColumn re-affirms a blank continuation's own hang 
     const std::size_t lineEnd       = buffer.Content().ByteLength();
     REQUIRE(lineEnd - lineStartByte == 4); // sanity: the 4 real space bytes are there
 
-    const auto column = ned::editor::IndentColumnForLine(mode, buffer.Text(), lineStartByte, lineEnd, std::nullopt);
+    const auto column = ned::editor::IndentColumnForLine(mode, buffer.Text(), lineStartByte, lineEnd, {});
     REQUIRE(column.has_value());
     REQUIRE(*column == 4); // not 0
 }
@@ -1757,7 +1757,7 @@ TEST_CASE("MarkdownMode indentColumn re-affirms a checkbox item's own hang after
     const std::size_t lineStartByte = buffer.Content().LineToByteOffset(lineStart);
     const std::size_t lineEnd       = buffer.Content().ByteLength();
 
-    const auto column = ned::editor::IndentColumnForLine(mode, buffer.Text(), lineStartByte, lineEnd, std::nullopt);
+    const auto column = ned::editor::IndentColumnForLine(mode, buffer.Text(), lineStartByte, lineEnd, {});
     REQUIRE(column.has_value());
     REQUIRE(*column == 4);
 }
@@ -1766,7 +1766,7 @@ TEST_CASE("IndentRegion writes the buffer's own indent style over the mode's", "
     const auto mode = CMode();
     Buffer     buffer("test.c");
     buffer.InsertAtPoint("int f(void) {\nif (1) {\nreturn 0;\n}\n}\n");
-    buffer.SetLocalIndentStyle(IndentStyle{.useTabs = true, .width = 8});
+    buffer.SetLocalIndent({.useTabs = true, .width = 8});
 
     REQUIRE(IndentBuffer(buffer, mode) > 0);
     REQUIRE(buffer.Text() == "int f(void) {\n\tif (1) {\n\t\treturn 0;\n\t}\n}\n");
@@ -1779,7 +1779,7 @@ TEST_CASE("The indent closure reads the style it is given on every call", "[Inde
     const std::size_t line = text.find("return");
     const std::size_t end  = text.find('\n', line);
 
-    CHECK(ned::editor::IndentColumnForLine(mode, text, line, end, std::nullopt) == 4);
-    CHECK(ned::editor::IndentColumnForLine(mode, text, line, end, IndentStyle{.useTabs = false, .width = 2}) == 2);
-    CHECK(ned::editor::IndentColumnForLine(mode, text, line, end, std::nullopt) == 4);
+    CHECK(ned::editor::IndentColumnForLine(mode, text, line, end, {}) == 4);
+    CHECK(ned::editor::IndentColumnForLine(mode, text, line, end, ned::editor::IndentOverride{.useTabs = false, .width = 2}) == 2);
+    CHECK(ned::editor::IndentColumnForLine(mode, text, line, end, {}) == 4);
 }

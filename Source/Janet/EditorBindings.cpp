@@ -28,6 +28,7 @@
 #include "Editor/Dap/Config.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/DiffRefreshSettings.h"
+#include "Editor/EditorConfig.h"
 #include "Editor/FileNaming.h"
 #include "Editor/FileWatch.h"
 #include "Editor/FillColumn.h"
@@ -37,6 +38,7 @@
 #include "Editor/HighlightSettings.h"
 #include "Editor/HugeStructuralWindow.h"
 #include "Editor/ImportFixupSettings.h"
+#include "Editor/IndentDetect.h"
 #include "Editor/IndentRuleOverride.h"
 #include "Editor/IndentStyle.h"
 #include "Editor/InjectedIndent.h"
@@ -241,6 +243,14 @@ namespace {
     // shape as NedSetVimMode -- default true, see Editor/InjectedIndent.h.
     void NedSetIndentInjectedRegions(bool enabled) {
         editor::SetIndentInjectedRegions(enabled);
+    }
+
+    void NedSetIndentDetection(bool enabled) {
+        editor::SetIndentDetection(enabled);
+    }
+
+    void NedSetEditorConfigEnabled(bool enabled) {
+        editor::SetEditorConfigEnabled(enabled);
     }
 
     void NedSetIndentRule(std::string key, std::string policy, std::int64_t value) {
@@ -1702,6 +1712,15 @@ void InstallEditorBindings(Environment& env) {
         "a PHP template, the JavaScript in an HTML <script>. The host grammar decides where the region sits, the "
         "injected one how far into its own structure each line is. False indents by the host grammar alone, which "
         "leaves a region's every line at the column the host put the region at.");
+    env.Register<&NedSetIndentDetection>(
+        "ned", "set-indent-detection",
+        "Adopt a file's own indentation when it is opened (default true): a tab-indented file gets tabs, a "
+        "space-indented one spaces and, when its lines agree on one, their width. An empty or mixed file keeps its "
+        "mode's style, and a file's .editorconfig or modeline outranks what its content shows.");
+    env.Register<&NedSetEditorConfigEnabled>(
+        "ned", "set-editorconfig-enabled",
+        "Read .editorconfig files (default true): indent_style, indent_size and tab_width set the indentation of the "
+        "files they match, above what the content shows and below a modeline.");
     env.Register<&NedSetIndentRule>(
         "ned", "set-indent-rule",
         "Override the indent of every line whose own leading construct is a given grammar node type (e.g. "

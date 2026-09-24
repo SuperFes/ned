@@ -402,7 +402,7 @@ TEST_CASE(". KEYBENCH: C++ per-keystroke attribution", "[.][keybench]") {
         timeIt("  then indent(one line) ", 20, [&](int i) {
             edited.insert(mid, 1, static_cast<char>('a' + (i % 26)));
             const std::size_t h = mode.highlight(edited, window).size();
-            return h + (mode.indentColumn && mode.indentColumn(edited, mid, mid + 40, std::nullopt) ? 1U : 0U);
+            return h + (mode.indentColumn && mode.indentColumn(edited, mid, mid + 40, {}) ? 1U : 0U);
         });
         timeIt("  then localScopes      ", 20, [&](int i) {
             edited.insert(mid, 1, static_cast<char>('a' + (i % 26)));

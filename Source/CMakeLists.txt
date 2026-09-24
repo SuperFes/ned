@@ -115,6 +115,8 @@ add_library(ned_lib STATIC
         Editor/ModeOverrides.cpp
         Editor/FileMagic.cpp
         Editor/Modeline.cpp
+        Editor/EditorConfig.cpp
+        Editor/FileIndent.cpp
         Editor/ModePrewarm.cpp
         Editor/Multibuffer.cpp
         Editor/MultibufferFoldSettings.cpp

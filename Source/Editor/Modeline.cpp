@@ -4,6 +4,8 @@
 #include <array>
 #include <cctype>
 #include <charconv>
+#include <fstream>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -204,6 +206,31 @@ Modeline ParseModeline(std::string_view text) {
         }
     }
     return out;
+}
+
+std::string ReadFileEnds(const std::filesystem::path& path, std::size_t headBytes, std::size_t tailBytes) {
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(path, error)) {
+        return {};
+    }
+    std::ifstream in(path, std::ios::binary | std::ios::ate);
+    if (!in) {
+        return {};
+    }
+    const std::streamoff size     = in.tellg();
+    const std::streamoff headSize = std::min<std::streamoff>(size, static_cast<std::streamoff>(headBytes));
+    std::string          text(static_cast<std::size_t>(headSize), '\0');
+    in.seekg(0);
+    in.read(text.data(), headSize);
+    if (size > headSize) {
+        const std::streamoff tailSize = std::min<std::streamoff>(size - headSize, static_cast<std::streamoff>(tailBytes));
+        std::string          tail(static_cast<std::size_t>(tailSize), '\0');
+        in.seekg(size - tailSize);
+        in.read(tail.data(), tailSize);
+        text += std::string(kModelineLines * 2 + 1, '\n');
+        text += tail;
+    }
+    return text;
 }
 
 } // namespace ned::editor

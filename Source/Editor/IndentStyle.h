@@ -28,7 +28,8 @@ class Buffer;
 
 namespace ned::editor {
 
-using IndentStyle = text::IndentStyle;
+using IndentStyle    = text::IndentStyle;
+using IndentOverride = text::IndentOverride;
 
 // Process-wide default.
 void                      SetIndentStyle(IndentStyle style);
@@ -42,8 +43,8 @@ void SetIndentStyleForMode(const std::string& modeName, IndentStyle style);
 // WrapLinesForFileOverride/EffectiveWrapLines already established.
 [[nodiscard]] IndentStyle EffectiveIndentStyle(const std::string& modeName);
 
-// The buffer's own style (Buffer::LocalIndentStyle -- what the file itself
-// says) when it has one, else EffectiveIndentStyle(modeName).
+// EffectiveIndentStyle(modeName) with the buffer's own override
+// (Buffer::LocalIndent -- what the file itself says) laid over it.
 [[nodiscard]] IndentStyle EffectiveIndentStyle(const text::Buffer& buffer, const std::string& modeName);
 
 } // namespace ned::editor
