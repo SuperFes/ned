@@ -2207,8 +2207,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("reload-format-config", "Re-read format.janet (personal, then project) without restarting ned.",
                       [](CommandContext& context) {
                           try {
-                              LoadFormatConfigFile(PersonalFormatConfigPath());
-                              LoadFormatConfigFile(ProjectFormatConfigPath(ProjectRoot()));
+                              ReloadFormatConfig(ProjectRoot());
                           }
                           catch (const std::exception& e) {
                               if (context.message) {

@@ -48,6 +48,7 @@
 #include "Editor/Format.h"
 #include "Editor/FormatBlankLines.h"
 #include "Editor/FormatBracePlacement.h"
+#include "Editor/FormatBuiltinStyle.h"
 #include "Editor/FormatConfigParse.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/FormatSpacing.h"
@@ -381,6 +382,7 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
     ned::editor::SetProjectRoot(projectRoot);
 
     try {
+        ned::editor::LoadBuiltinFormatStyles();
         ned::editor::LoadFormatConfigFile(ned::editor::PersonalFormatConfigPath());
         ned::editor::LoadFormatConfigFile(ned::editor::ProjectFormatConfigPath(projectRoot));
     }
@@ -745,6 +747,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // Personal first, then project, so the project's own explicit settings
     // win where both set the same field -- everything either is silent
     // about falls through to IndentDefaults.h's built-in per-language table.
+    try {
+        ned::editor::LoadBuiltinFormatStyles();
+    }
+    catch (const std::exception& e) {
+        statusMessage = std::string("style.janet error: ") + e.what();
+    }
     try {
         ned::editor::LoadFormatConfigFile(ned::editor::PersonalFormatConfigPath());
     }

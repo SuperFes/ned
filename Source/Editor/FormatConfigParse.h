@@ -126,11 +126,26 @@ struct FormatConfig {
 // SetEnsureFinalNewline). A field left at nullopt is untouched.
 void ApplyFormatConfig(const FormatConfig& config);
 
+// The per-capture rule half of ApplyFormatConfig (:space/:break/:blank/:wrap/
+// :align/:arrange/:rewrite/:case), written into `layer` with every key
+// prefixed by `keyPrefix` -- "php/" scopes a bundled style to its language.
+void ApplyFormatRules(const FormatConfig& config, FormatRuleLayer layer, std::string_view keyPrefix);
+
 // Reads `path`, parses it, and applies it. A missing file is a silent no-op
 // -- there's simply no config there. A real parse/schema error propagates as
 // std::runtime_error for the caller to report, the same convention as
 // ned::janet::LoadInitFile.
 void LoadFormatConfigFile(const std::filesystem::path& path);
+
+// Reads and parses `path` without applying it; nullopt when there is no
+// readable file there. Throws on a parse/schema error.
+[[nodiscard]] std::optional<FormatConfig> ReadFormatConfigFile(const std::filesystem::path& path);
+
+// Re-reads the personal and project files and replaces the File rule layer
+// with exactly what they contain now, so a rule deleted from format.janet
+// stops applying. Rules set at runtime (ned/set-format-*) are untouched.
+// Throws on a parse/schema error without having changed anything.
+void ReloadFormatConfig(const std::filesystem::path& projectRoot);
 
 // $XDG_CONFIG_HOME/ned/format.janet, falling back to $HOME/.config/ned/
 // format.janet -- the personal-tier file's own path, resolved independently

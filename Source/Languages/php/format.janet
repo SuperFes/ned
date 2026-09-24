@@ -151,10 +151,14 @@
 # the way if/while have (unlike a declared function, a closure has no
 # colon-syntax form at all) -- a clean, unambiguous addition. Anonymous
 # classes (`new class { }`) share the same declaration_list body every
-# named class already does, folded into brace.class the same way.
-(anonymous_function body: (compound_statement) @brace.function)
-(anonymous_function body: (compound_statement . (_) .) @brace.function.simple)
-(anonymous_class body: (declaration_list) @brace.class)
+# named class already does.
+#
+# Both get names of their own rather than brace.function/brace.class:
+# PSR-12 places a closure's and an anonymous class's opening brace on the
+# same line (SS7, SS8) but a named function's or class's on the next one.
+(anonymous_function body: (compound_statement) @brace.closure)
+(anonymous_function body: (compound_statement . (_) .) @brace.closure.simple)
+(anonymous_class body: (declaration_list) @brace.class.anonymous)
 
 # rewrite-kind widening (kind 9): a second rewrite family, structurally
 # unlike rewrite.quote's own pure delimiter swap -- a keyword-token
@@ -205,3 +209,7 @@
 (catch_clause "catch" @control.keyword)
 (finally_clause "finally" @control.keyword)
 (do_statement "while" @control.keyword)
+
+# Comment spans, so a pass never pulls a token onto a line that ends in a
+# comment (a same-line brace after `if ($x) // note` would be commented out).
+(comment) @comment

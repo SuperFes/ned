@@ -21,15 +21,18 @@ using ned::editor::BracePlacement;
 using ned::editor::BreakRuleFor;
 using ned::editor::CaseConvention;
 using ned::editor::CaseRuleFor;
+using ned::editor::ClearFormatRuleLayer;
 using ned::editor::EffectiveIndentStyle;
 using ned::editor::EnsureFinalNewline;
 using ned::editor::FormatConfig;
+using ned::editor::FormatRuleLayer;
 using ned::editor::IndentStyle;
 using ned::editor::LoadFormatConfigFile;
 using ned::editor::MaxConsecutiveBlankLines;
 using ned::editor::ParseFormatConfig;
 using ned::editor::PersonalFormatConfigPath;
 using ned::editor::ProjectFormatConfigPath;
+using ned::editor::ReloadFormatConfig;
 using ned::editor::QuoteStyle;
 using ned::editor::RewriteRuleFor;
 using ned::editor::SetAlignEnabled;
@@ -37,6 +40,7 @@ using ned::editor::SetArrangeCaseInsensitive;
 using ned::editor::SetArrangeEnabled;
 using ned::editor::SetBlankMaxBefore;
 using ned::editor::SetBlankMinBefore;
+using ned::editor::SetBreakBefore;
 using ned::editor::SetCaseConvention;
 using ned::editor::SetEnsureFinalNewline;
 using ned::editor::SetIndentStyle;
@@ -130,6 +134,7 @@ struct FormatRulesGuard {
         SetArrangeCaseInsensitive("format-config-test.capture", std::nullopt);
         SetRewriteQuoteStyle("format-config-test.capture", std::nullopt);
         SetRewriteExpandElseif("format-config-test.capture", std::nullopt);
+        ClearFormatRuleLayer(FormatRuleLayer::File);
     }
 };
 
@@ -531,4 +536,51 @@ TEST_CASE("LoadFormatConfigFile reads, applies, and reports a schema error with 
     }
 
     std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("ReloadFormatConfig forgets a rule deleted from format.janet but keeps runtime rules",
+          "[FormatConfigParse]") {
+    const FormatRulesGuard      rulesGuard;
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "ned_format_config_test_reload";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "xdg" / "ned");
+    const EnvVarGuard xdg("XDG_CONFIG_HOME", (root / "xdg").c_str());
+    const auto        write = [&](const std::string& content) {
+        std::ofstream out(root / "xdg" / "ned" / "format.janet", std::ios::trunc);
+        out << content;
+    };
+
+    write("{:break {\"format-config-test.capture\" {:before true}}}");
+    ReloadFormatConfig(root);
+    REQUIRE(BreakRuleFor("format-config-test.capture").before == true);
+
+    SetBreakBefore("format-config-test.runtime", true);
+    write("{:trim-trailing-whitespace true}");
+    ReloadFormatConfig(root);
+    CHECK_FALSE(BreakRuleFor("format-config-test.capture").before.has_value());
+    CHECK(BreakRuleFor("format-config-test.runtime").before == true);
+    SetBreakBefore("format-config-test.runtime", std::nullopt);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("ReloadFormatConfig leaves the loaded rules alone when the file no longer parses", "[FormatConfigParse]") {
+    const FormatRulesGuard      rulesGuard;
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "ned_format_config_test_reload_bad";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "xdg" / "ned");
+    const EnvVarGuard xdg("XDG_CONFIG_HOME", (root / "xdg").c_str());
+    const auto        write = [&](const std::string& content) {
+        std::ofstream out(root / "xdg" / "ned" / "format.janet", std::ios::trunc);
+        out << content;
+    };
+
+    write("{:break {\"format-config-test.capture\" {:before true}}}");
+    ReloadFormatConfig(root);
+
+    write("{:break {\"format-config-test.capture\" {:before");
+    REQUIRE_THROWS_AS(ReloadFormatConfig(root), std::runtime_error);
+    CHECK(BreakRuleFor("format-config-test.capture").before == true);
+
+    std::filesystem::remove_all(root);
 }

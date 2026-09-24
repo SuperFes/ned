@@ -193,11 +193,23 @@ read by both the interactive editor and the headless `--format` CLI:
 
 Run `reload-format-config` (`M-x`) to re-read both files without restarting ned -- the
 point is a fast loop: edit `format.janet`, reload, `format-buffer`, repeat until it's right.
+A reload replaces every per-capture rule the files contributed, so deleting a rule from
+`format.janet` and reloading really does remove it; rules set with `ned/set-format-*` are
+kept. (`:indent` and the save-hygiene keys still only ever overwrite, so a deleted one
+needs a restart.)
 
 ### Precedence
 
 **`init.janet` (interactive only) > project `format.janet` > personal `format.janet` >
 built-in per-language default.**
+
+For per-capture rules the built-in default is the language's bundled style,
+`<data dir>/languages/<lang>/style.janet` -- the same `:space`/`:break`/... schema as
+`format.janet`, its keys scoped to that language automatically. PHP ships PSR-12's
+(`Source/Languages/php/style.janet`); a language with no `style.janet` has no rule
+defaults at all. Your rules beat it field by field even when they're unscoped (a plain
+`"control.keyword"` in your file overrides the bundled `php/control.keyword`), and
+`(ned/set-format-builtin-style false)` switches every bundled style off.
 
 Resolution is a **per-field cascade**, not a per-file wholesale replace (git config's model,
 not `clang-format`'s original nearest-file-wins-wholesale one): a project file that sets
@@ -300,12 +312,15 @@ and TSX have no `format.janet` files of their own at all, see below), all wired 
 Break, then Space, then Align, then Hygiene -- Wrap, Rewrite, Arrange, and Align each slotted
 in after this section was first written, see their own sections below for why each runs
 where it does) and
-all shipping no built-in default -- neither does anything until you configure a rule:
+none doing anything until a rule is configured -- by you, or by a language's bundled
+`style.janet` (see Precedence above; PHP's is PSR-12):
 
 - **Break-kind captures** (`Editor/FormatBracePlacement.h`'s `ComputeBracePlacementEdits`,
   reading every `:break` field): `brace.function` (a function/method/constructor's own
   body, AND -- since the 2026-09-15 coverage audit's policy reversal, see below -- any
-  anonymous function/lambda/closure body too), `brace.control` (an `if`/`while`/`for`/
+  anonymous function/lambda/closure body too -- except PHP, whose closures are
+  `brace.closure` and anonymous classes `brace.class.anonymous`, since PSR-12 braces them
+  differently from named ones), `brace.control` (an `if`/`while`/`for`/
   `switch`/`do`-`while`/`try`/`catch`/`finally` statement's own body, plus each language's
   own extra shapes -- static/instance initializer blocks, `using`/`lock`/`unsafe` blocks,
   `switch`/`match` expressions -- one shared name, matching JetBrains' own "Other
@@ -478,13 +493,19 @@ preceding non-whitespace byte sits on -- the closer's own column, which is what 
 means for a continuation keyword, and which is why this reads the text rather than the
 tree (the closer is a different capture's last byte, or no capture's at all).
 
-**`false` does not mean "put it back".** It normalises horizontal whitespace only
-(`}    else` -> `} else`) and deliberately declines any gap that already spans lines --
-the same call `:collapse-simple` already makes ("declined rather than joining lines that
-might be meaningfully broken"). Un-breaking is where the real hazard lives: joining
-`} // done` and `else` would comment the keyword out. `true` needs no such check, because
-it only ever rewrites the whitespace run touching the token, so `} /* done */ else`
-leaves the comment exactly where it is and breaks after it.
+**`false` joins only onto a captured closer.** A gap that spans lines is joined
+(`}` newline `else` -> `} else`) only when another capture -- the preceding body's
+`brace.control` -- ends exactly where the gap starts; otherwise only horizontal whitespace
+is normalised (`}    else` -> `} else`). Un-breaking is where the real hazard lives:
+joining `} // done` and `else` would comment the keyword out, and there the byte before the
+gap is the comment's, not a captured closer's (a `}` inside the comment isn't one either).
+`true` needs no such check, because it only ever rewrites the whitespace run touching the
+token, so `} /* done */ else` leaves the comment exactly where it is and breaks after it.
+
+The same hazard exists for `:placement :same-line` pulling a brace up onto a header that
+ends in a line comment (`if ($x) // note` newline `{`). A language's `format.janet` can
+name its comments with a plain `@comment` capture, and placement then declines that join;
+PHP's does.
 
 All three entry points -- `format-buffer`, `ned --format`, and the scoped
 `ned/set-auto-format-on-save` path -- walk `Editor/FormatPasses.h`'s single table, so a new

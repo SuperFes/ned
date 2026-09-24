@@ -484,3 +484,72 @@ TEST_CASE("An invalid capture name throws for both rule kinds", "[FormatRules]")
     REQUIRE_THROWS_AS(SetSpaceBefore("has space", true), std::runtime_error);
     REQUIRE_THROWS_AS(SetBreakBefore("", true), std::runtime_error);
 }
+
+namespace {
+
+struct FormatRuleLayersGuard {
+    ~FormatRuleLayersGuard() {
+        ned::editor::ClearFormatRuleLayer(ned::editor::FormatRuleLayer::Builtin);
+        ned::editor::ClearFormatRuleLayer(ned::editor::FormatRuleLayer::File);
+        ned::editor::SetBuiltinFormatStyleEnabled(true);
+        SetBreakBefore("format-rules-test.layered", std::nullopt);
+        SetBracePlacement("format-rules-test.layered", std::nullopt);
+    }
+};
+
+} // namespace
+
+TEST_CASE("Rule layers merge field by field, runtime over file over builtin", "[FormatRules]") {
+    using ned::editor::FormatRuleLayer;
+    const FormatRuleLayersGuard guard;
+
+    SetBreakBefore("format-rules-test.layered", false, FormatRuleLayer::Builtin);
+    SetBracePlacement("format-rules-test.layered", BracePlacement::SameLine, FormatRuleLayer::Builtin);
+    SetBreakBefore("format-rules-test.layered", true, FormatRuleLayer::File);
+
+    const BreakRuleValue fileOverBuiltin = BreakRuleFor("format-rules-test.layered");
+    CHECK(fileOverBuiltin.before == true);
+    CHECK(fileOverBuiltin.placement == BracePlacement::SameLine); // the file is silent on it
+
+    SetBracePlacement("format-rules-test.layered", BracePlacement::NextLine);
+    CHECK(BreakRuleFor("format-rules-test.layered").placement == BracePlacement::NextLine);
+}
+
+TEST_CASE("An unscoped user rule beats a language-scoped builtin one", "[FormatRules]") {
+    using ned::editor::FormatRuleLayer;
+    const FormatRuleLayersGuard guard;
+
+    SetBreakBefore("php/format-rules-test.layered", false, FormatRuleLayer::Builtin);
+    CHECK(BreakRuleFor("format-rules-test.layered", "php").before == false);
+    CHECK_FALSE(BreakRuleFor("format-rules-test.layered", "cpp").before.has_value());
+
+    SetBreakBefore("format-rules-test.layered", true, FormatRuleLayer::File);
+    CHECK(BreakRuleFor("format-rules-test.layered", "php").before == true);
+}
+
+TEST_CASE("ClearFormatRuleLayer drops one layer only and bumps the generation", "[FormatRules]") {
+    using ned::editor::FormatRuleLayer;
+    const FormatRuleLayersGuard guard;
+
+    SetBreakBefore("format-rules-test.layered", true, FormatRuleLayer::File);
+    SetBracePlacement("format-rules-test.layered", BracePlacement::NextLine);
+
+    const std::size_t before = FormatRuleGeneration();
+    ned::editor::ClearFormatRuleLayer(FormatRuleLayer::File);
+    CHECK(FormatRuleGeneration() > before);
+    CHECK_FALSE(BreakRuleFor("format-rules-test.layered").before.has_value());
+    CHECK(BreakRuleFor("format-rules-test.layered").placement == BracePlacement::NextLine);
+}
+
+TEST_CASE("Disabling the builtin style hides the builtin layer from lookups", "[FormatRules]") {
+    using ned::editor::FormatRuleLayer;
+    const FormatRuleLayersGuard guard;
+
+    SetBreakBefore("php/format-rules-test.layered", false, FormatRuleLayer::Builtin);
+    ned::editor::SetBuiltinFormatStyleEnabled(false);
+    CHECK_FALSE(ned::editor::BuiltinFormatStyleEnabled());
+    CHECK_FALSE(BreakRuleFor("format-rules-test.layered", "php").before.has_value());
+
+    ned::editor::SetBuiltinFormatStyleEnabled(true);
+    CHECK(BreakRuleFor("format-rules-test.layered", "php").before == false);
+}

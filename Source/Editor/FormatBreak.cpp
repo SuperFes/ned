@@ -60,9 +60,19 @@ namespace {
         }
     }
 
+    // Whether a captured construct (a body's closing brace, typically) ends
+    // exactly at `at` -- proof the byte before a gap is a real token, not the
+    // tail of a comment, so joining across the gap cannot swallow anything.
+    bool CapturedTokenEndsAt(const std::vector<FormatCapture>& captures, std::size_t at) {
+        return std::ranges::any_of(captures, [at](const FormatCapture& capture) {
+            return capture.endByte == at && capture.name != "comment";
+        });
+    }
+
     // The whitespace run ending at the capture's own first byte, and what
     // should replace it.
-    void BreakBefore(std::vector<FormatTextEdit>& edits, std::string_view text, std::size_t at, bool wantBreak) {
+    void BreakBefore(std::vector<FormatTextEdit>& edits, std::string_view text, std::size_t at, bool wantBreak,
+                     const std::vector<FormatCapture>& captures) {
         std::size_t start = at;
         while (start > 0 && IsBreakWhitespace(text[start - 1])) {
             --start;
@@ -74,8 +84,8 @@ namespace {
             return;
         }
         if (!wantBreak) {
-            if (GapCrossesLine(text, start, at)) {
-                return; // see the header comment: never join what is already broken
+            if (GapCrossesLine(text, start, at) && !CapturedTokenEndsAt(captures, start)) {
+                return; // see the header comment: only a captured closer is safe to join onto
             }
             EmitIfChanged(edits, text, start, at, start == 0 ? "" : " ");
             return;
@@ -123,7 +133,7 @@ std::vector<FormatTextEdit> ComputeBreakEdits(std::string_view text, std::string
             continue; // unconfigured -- no built-in default, nothing forced
         }
         if (rule.before && !BreakUnsafeForLanguage(languageKey, *rule.before)) {
-            BreakBefore(edits, text, capture.startByte, *rule.before);
+            BreakBefore(edits, text, capture.startByte, *rule.before, captures);
         }
         if (rule.after && !BreakUnsafeForLanguage(languageKey, *rule.after)) {
             BreakAfter(edits, text, capture.endByte, *rule.after);

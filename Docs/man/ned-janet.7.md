@@ -112,6 +112,10 @@ configuration is Janet code, and these are the bindings it calls.
 
 :   The capture name's own overridden break-before rule, or nil if unset.
 
+`ned/format-builtin-style`
+
+:   Whether languages' bundled formatting styles are applied.
+
 `ned/format-case-convention`
 
 :   The entity kind's own overridden case-convention name, or nil if unset.
@@ -419,6 +423,10 @@ configuration is Janet code, and these are the bindings it calls.
 `ned/set-format-break-before`
 
 :   Override whether a newline is forced before the given capture name -- true/false, nil clears. The capture names a keyword token ("control.keyword": else/elseif/catch/finally, do-while's while); true puts it on its own line at the preceding closer's column (Allman), false normalises horizontal space only and never un-breaks a keyword already on its own line.
+
+`ned/set-format-builtin-style`
+
+:   Enable/disable each language's bundled formatting style (e.g. PHP's PSR-12, from the language's style.janet). On by default; format.janet and ned/set-format-* rules override it either way.
 
 `ned/set-format-case-convention`
 

@@ -129,6 +129,7 @@ add_executable(ned_tests
             HugeFileReindentTest.cpp
             MaxConsecutiveBlankLinesTest.cpp
             FormatConfigParseTest.cpp
+            FormatBuiltinStyleTest.cpp
             FormatRulesTest.cpp
             FormatBracePlacementTest.cpp
             FormatSpacingTest.cpp

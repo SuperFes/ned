@@ -85,7 +85,8 @@ TEST_CASE("Every bundled query file loads, and compiles under its grammar", "[Qu
     std::size_t checked = 0;
     for (const ned::editor::BundledLanguageFile& file : ned::editor::BundledLanguageFiles()) {
         const std::string path(file.path);
-        if (!path.ends_with(".janet") || path.ends_with("language.janet") || path.ends_with("grammar.janet")) {
+        if (!path.ends_with(".janet") || path.ends_with("language.janet") || path.ends_with("grammar.janet") ||
+            path.ends_with("style.janet")) {
             continue;
         }
         INFO(path);

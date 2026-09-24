@@ -222,15 +222,29 @@ struct RewriteRuleValue {
     std::optional<bool> expandElseif;
 };
 
+// Where a rule came from, lowest precedence first. Lookups merge the layers
+// field by field (a higher layer shadows only the fields it sets), and a
+// language-scoped key beats the unscoped one only within the same layer --
+// so a user's plain "control.keyword" still overrides a bundled
+// "php/control.keyword" default.
+//   Builtin -- a language's bundled style (Source/Languages/<lang>/style.janet)
+//   File    -- format.janet, personal then project; replaced wholesale on reload
+//   Runtime -- ned/set-format-* (init.janet, M-: ...); survives a reload
+enum class FormatRuleLayer {
+    Builtin,
+    File,
+    Runtime,
+};
+
 // Malformed vs. merely unknown follows SyntaxTheme.h's own trust-boundary
 // split: an empty name, a leading '@', a leading/trailing/doubled '.', or
 // embedded whitespace is a real bad call and throws std::runtime_error; an
 // unknown-but-well-formed name is fine -- rules may be configured before the
 // language/query that produces the name is ever loaded.
 
-void SetSpaceBefore(const std::string& name, std::optional<bool> value);
-void SetSpaceAfter(const std::string& name, std::optional<bool> value);
-void SetSpaceWithin(const std::string& name, std::optional<bool> value);
+void SetSpaceBefore(const std::string& name, std::optional<bool> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
+void SetSpaceAfter(const std::string& name, std::optional<bool> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
+void SetSpaceWithin(const std::string& name, std::optional<bool> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
 
 // Exact-name lookup, no language scoping or inheritance walk.
 [[nodiscard]] SpaceRuleValue SpaceRuleFor(std::string_view name);
@@ -239,48 +253,56 @@ void SetSpaceWithin(const std::string& name, std::optional<bool> value);
 // lookup -- SyntaxClassOverrideForCapture(name, language)'s exact shape.
 [[nodiscard]] SpaceRuleValue SpaceRuleFor(std::string_view name, std::string_view language);
 
-void SetBreakBefore(const std::string& name, std::optional<bool> value);
-void SetBreakAfter(const std::string& name, std::optional<bool> value);
-void SetBracePlacement(const std::string& name, std::optional<BracePlacement> value);
-void SetBraceCollapseEmpty(const std::string& name, std::optional<bool> value);
-void SetBraceCollapseSimple(const std::string& name, std::optional<bool> value);
+void SetBreakBefore(const std::string& name, std::optional<bool> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
+void SetBreakAfter(const std::string& name, std::optional<bool> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
+void SetBracePlacement(const std::string& name, std::optional<BracePlacement> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
+void SetBraceCollapseEmpty(const std::string& name, std::optional<bool> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
+void SetBraceCollapseSimple(const std::string& name, std::optional<bool> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
 
 [[nodiscard]] BreakRuleValue BreakRuleFor(std::string_view name);
 [[nodiscard]] BreakRuleValue BreakRuleFor(std::string_view name, std::string_view language);
 
-void SetCaseConvention(const std::string& name, std::optional<CaseConvention> value);
+void SetCaseConvention(const std::string& name, std::optional<CaseConvention> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
 
 [[nodiscard]] CaseRuleValue CaseRuleFor(std::string_view name);
 [[nodiscard]] CaseRuleValue CaseRuleFor(std::string_view name, std::string_view language);
 
-void SetWrapPolicy(const std::string& name, std::optional<WrapPolicy> value);
-void SetWrapForceTrailingComma(const std::string& name, std::optional<bool> value);
+void SetWrapPolicy(const std::string& name, std::optional<WrapPolicy> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
+void SetWrapForceTrailingComma(const std::string& name, std::optional<bool> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
 
 [[nodiscard]] WrapRuleValue WrapRuleFor(std::string_view name);
 [[nodiscard]] WrapRuleValue WrapRuleFor(std::string_view name, std::string_view language);
 
-void SetBlankMinBefore(const std::string& name, std::optional<int> value);
-void SetBlankMaxBefore(const std::string& name, std::optional<int> value);
+void SetBlankMinBefore(const std::string& name, std::optional<int> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
+void SetBlankMaxBefore(const std::string& name, std::optional<int> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
 
 [[nodiscard]] BlankRuleValue BlankRuleFor(std::string_view name);
 [[nodiscard]] BlankRuleValue BlankRuleFor(std::string_view name, std::string_view language);
 
-void SetAlignEnabled(const std::string& name, std::optional<bool> value);
+void SetAlignEnabled(const std::string& name, std::optional<bool> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
 
 [[nodiscard]] AlignRuleValue AlignRuleFor(std::string_view name);
 [[nodiscard]] AlignRuleValue AlignRuleFor(std::string_view name, std::string_view language);
 
-void SetArrangeEnabled(const std::string& name, std::optional<bool> value);
-void SetArrangeCaseInsensitive(const std::string& name, std::optional<bool> value);
+void SetArrangeEnabled(const std::string& name, std::optional<bool> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
+void SetArrangeCaseInsensitive(const std::string& name, std::optional<bool> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
 
 [[nodiscard]] ArrangeRuleValue ArrangeRuleFor(std::string_view name);
 [[nodiscard]] ArrangeRuleValue ArrangeRuleFor(std::string_view name, std::string_view language);
 
-void SetRewriteQuoteStyle(const std::string& name, std::optional<QuoteStyle> value);
-void SetRewriteExpandElseif(const std::string& name, std::optional<bool> value);
+void SetRewriteQuoteStyle(const std::string& name, std::optional<QuoteStyle> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
+void SetRewriteExpandElseif(const std::string& name, std::optional<bool> value, FormatRuleLayer layer = FormatRuleLayer::Runtime);
 
 [[nodiscard]] RewriteRuleValue RewriteRuleFor(std::string_view name);
 [[nodiscard]] RewriteRuleValue RewriteRuleFor(std::string_view name, std::string_view language);
+
+// Drops every rule in one layer -- how a reload forgets a rule the file no
+// longer contains.
+void ClearFormatRuleLayer(FormatRuleLayer layer);
+
+// Whether the Builtin layer takes part in lookups at all (default true).
+void               SetBuiltinFormatStyleEnabled(bool enabled);
+[[nodiscard]] bool BuiltinFormatStyleEnabled();
 
 // Bumped by every setter above -- one counter for both kinds, mirroring
 // SyntaxThemeGeneration()'s own "cheap, did-it-change" signal shape (the

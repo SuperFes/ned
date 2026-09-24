@@ -52,12 +52,12 @@ namespace ned::editor {
 // Three declines, all deliberate and all matching this engine's existing
 // habit of leaving alone what it cannot reason about:
 //
-//   - `false` never joins a gap that already spans lines. It normalises
-//     horizontal whitespace only (`}    else` -> `} else`) and leaves a
-//     deliberate break alone, the same call ComputeBracePlacementEdits makes
-//     for collapse-simple ("declined rather than joining lines that might be
-//     meaningfully broken"). Un-breaking is also where the real hazard lives:
-//     joining `} // done` and `else` would comment the keyword out.
+//   - `false` joins a gap that spans lines only when another capture (the
+//     preceding body, e.g. brace.control) ends exactly where the gap starts,
+//     so `}\nelse` becomes `} else` but `} // done\nelse` is left alone --
+//     joining that would comment the keyword out, and the byte before its
+//     gap is the comment's, not a captured closer's. Anything else only has
+//     its horizontal whitespace normalised (`}    else` -> `} else`).
 //   - `true` rewrites only the whitespace run immediately touching the token,
 //     so a comment between the two (`} /* done */ else`) stays exactly where
 //     it is and the keyword breaks after it. Inserting a newline can never

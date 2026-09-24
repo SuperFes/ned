@@ -2224,9 +2224,11 @@ TEST_CASE("php-mode's format.janet now covers closures (a real prior gap, extrem
           "idiomatic in PHP)/anonymous-classes/match-expressions/enum-bodies",
           "[FormatBracePlacement]") {
     const Mode mode = PhpMode();
-    REQUIRE(CapturesNamed(mode.formatCaptures("<?php $f = function() { g(); };"), "brace.function").size() == 1);
-    REQUIRE(CapturesNamed(mode.formatCaptures("<?php $c = new class { function f() {} };"), "brace.class").size() ==
-            1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("<?php $f = function() { g(); };"), "brace.closure").size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("<?php $f = function() { g(); };"), "brace.function").empty());
+    REQUIRE(CapturesNamed(mode.formatCaptures("<?php $c = new class { function f() {} };"), "brace.class.anonymous")
+                .size() == 1);
+    REQUIRE(CapturesNamed(mode.formatCaptures("<?php $c = new class { function f() {} };"), "brace.class").empty());
     REQUIRE(CapturesNamed(mode.formatCaptures("<?php $y = match($x) { 1 => 2, default => 3 };"), "brace.control")
                 .size() == 1);
     REQUIRE(CapturesNamed(mode.formatCaptures("<?php enum Suit { case Hearts; case Spades; }"), "brace.class")

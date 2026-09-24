@@ -1,6 +1,7 @@
 #include "FormatRules.h"
 
 #include <algorithm>
+#include <array>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
@@ -43,49 +44,94 @@ namespace {
         return a.quoteStyle == b.quoteStyle && a.expandElseif == b.expandElseif;
     }
 
+    template <typename T>
+    void FillUnset(std::optional<T>& into, const std::optional<T>& from) {
+        if (!into) {
+            into = from;
+        }
+    }
+
+    // Fills every field `into` leaves unset from `from` -- how a higher
+    // layer's partial entry falls through to a lower layer field by field.
+    void FillUnset(SpaceRuleValue& into, const SpaceRuleValue& from) {
+        FillUnset(into.before, from.before);
+        FillUnset(into.after, from.after);
+        FillUnset(into.within, from.within);
+    }
+
+    void FillUnset(BreakRuleValue& into, const BreakRuleValue& from) {
+        FillUnset(into.before, from.before);
+        FillUnset(into.after, from.after);
+        FillUnset(into.placement, from.placement);
+        FillUnset(into.collapseEmpty, from.collapseEmpty);
+        FillUnset(into.collapseSimple, from.collapseSimple);
+    }
+
+    void FillUnset(BlankRuleValue& into, const BlankRuleValue& from) {
+        FillUnset(into.minBefore, from.minBefore);
+        FillUnset(into.maxBefore, from.maxBefore);
+    }
+
+    void FillUnset(WrapRuleValue& into, const WrapRuleValue& from) {
+        FillUnset(into.policy, from.policy);
+        FillUnset(into.forceTrailingComma, from.forceTrailingComma);
+    }
+
+    void FillUnset(CaseRuleValue& into, const CaseRuleValue& from) {
+        FillUnset(into.convention, from.convention);
+    }
+
+    void FillUnset(AlignRuleValue& into, const AlignRuleValue& from) {
+        FillUnset(into.enabled, from.enabled);
+    }
+
+    void FillUnset(ArrangeRuleValue& into, const ArrangeRuleValue& from) {
+        FillUnset(into.enabled, from.enabled);
+        FillUnset(into.caseInsensitive, from.caseInsensitive);
+    }
+
+    void FillUnset(RewriteRuleValue& into, const RewriteRuleValue& from) {
+        FillUnset(into.quoteStyle, from.quoteStyle);
+        FillUnset(into.expandElseif, from.expandElseif);
+    }
+
+    template <typename Value>
+    using RuleMap = std::unordered_map<std::string, Value>;
+
+    struct RuleTables {
+        RuleMap<SpaceRuleValue>   space;
+        RuleMap<BreakRuleValue>   breaks;
+        RuleMap<BlankRuleValue>   blank;
+        RuleMap<WrapRuleValue>    wrap;
+        RuleMap<CaseRuleValue>    caseRules;
+        RuleMap<AlignRuleValue>   align;
+        RuleMap<ArrangeRuleValue> arrange;
+        RuleMap<RewriteRuleValue> rewrite;
+    };
+
+    constexpr std::size_t kLayerCount = 3;
+
+    // Highest precedence first -- the order lookups walk the layers in.
+    constexpr std::array<FormatRuleLayer, kLayerCount> kPrecedence = {FormatRuleLayer::Runtime, FormatRuleLayer::File,
+                                                                      FormatRuleLayer::Builtin};
+
     std::mutex& RulesMutex() {
         static std::mutex mutex;
         return mutex;
     }
 
-    std::unordered_map<std::string, SpaceRuleValue>& SpaceRules() {
-        static std::unordered_map<std::string, SpaceRuleValue> rules;
-        return rules;
+    std::array<RuleTables, kLayerCount>& Layers() {
+        static std::array<RuleTables, kLayerCount> layers;
+        return layers;
     }
 
-    std::unordered_map<std::string, BreakRuleValue>& BreakRules() {
-        static std::unordered_map<std::string, BreakRuleValue> rules;
-        return rules;
+    RuleTables& Layer(FormatRuleLayer layer) {
+        return Layers()[static_cast<std::size_t>(layer)];
     }
 
-    std::unordered_map<std::string, BlankRuleValue>& BlankRules() {
-        static std::unordered_map<std::string, BlankRuleValue> rules;
-        return rules;
-    }
-
-    std::unordered_map<std::string, WrapRuleValue>& WrapRules() {
-        static std::unordered_map<std::string, WrapRuleValue> rules;
-        return rules;
-    }
-
-    std::unordered_map<std::string, CaseRuleValue>& CaseRules() {
-        static std::unordered_map<std::string, CaseRuleValue> rules;
-        return rules;
-    }
-
-    std::unordered_map<std::string, AlignRuleValue>& AlignRules() {
-        static std::unordered_map<std::string, AlignRuleValue> rules;
-        return rules;
-    }
-
-    std::unordered_map<std::string, ArrangeRuleValue>& ArrangeRules() {
-        static std::unordered_map<std::string, ArrangeRuleValue> rules;
-        return rules;
-    }
-
-    std::unordered_map<std::string, RewriteRuleValue>& RewriteRules() {
-        static std::unordered_map<std::string, RewriteRuleValue> rules;
-        return rules;
+    bool& BuiltinStyleEnabled() {
+        static bool enabled = true;
+        return enabled;
     }
 
     std::size_t& Generation() {
@@ -108,246 +154,207 @@ namespace {
         }
     }
 
-    template <typename T, typename Field>
-    void SetSpaceField(const std::string& name, std::optional<T> value, Field SpaceRuleValue::* field) {
+    template <typename Value, typename T>
+    void SetField(RuleMap<Value> RuleTables::* table, FormatRuleLayer layer, const std::string& name,
+                  std::optional<T> value, std::optional<T> Value::* field) {
         ValidateCaptureName(name);
         const std::lock_guard<std::mutex> lock(RulesMutex());
-        auto&                             entry = SpaceRules()[name];
-        entry.*field                            = std::move(value);
-        ++Generation();
-    }
-
-    template <typename T, typename Field>
-    void SetBreakField(const std::string& name, std::optional<T> value, Field BreakRuleValue::* field) {
-        ValidateCaptureName(name);
-        const std::lock_guard<std::mutex> lock(RulesMutex());
-        auto&                             entry = BreakRules()[name];
-        entry.*field                            = std::move(value);
-        ++Generation();
-    }
-
-    template <typename T, typename Field>
-    void SetWrapField(const std::string& name, std::optional<T> value, Field WrapRuleValue::* field) {
-        ValidateCaptureName(name);
-        const std::lock_guard<std::mutex> lock(RulesMutex());
-        auto&                             entry = WrapRules()[name];
-        entry.*field                            = std::move(value);
-        ++Generation();
-    }
-
-    template <typename T, typename Field>
-    void SetCaseField(const std::string& name, std::optional<T> value, Field CaseRuleValue::* field) {
-        ValidateCaptureName(name);
-        const std::lock_guard<std::mutex> lock(RulesMutex());
-        auto&                             entry = CaseRules()[name];
-        entry.*field                            = std::move(value);
-        ++Generation();
-    }
-
-    template <typename T, typename Field>
-    void SetBlankField(const std::string& name, std::optional<T> value, Field BlankRuleValue::* field) {
-        ValidateCaptureName(name);
-        const std::lock_guard<std::mutex> lock(RulesMutex());
-        auto&                             entry = BlankRules()[name];
-        entry.*field                            = std::move(value);
-        ++Generation();
-    }
-
-    template <typename T, typename Field>
-    void SetAlignField(const std::string& name, std::optional<T> value, Field AlignRuleValue::* field) {
-        ValidateCaptureName(name);
-        const std::lock_guard<std::mutex> lock(RulesMutex());
-        auto&                             entry = AlignRules()[name];
-        entry.*field                            = std::move(value);
-        ++Generation();
-    }
-
-    template <typename T, typename Field>
-    void SetArrangeField(const std::string& name, std::optional<T> value, Field ArrangeRuleValue::* field) {
-        ValidateCaptureName(name);
-        const std::lock_guard<std::mutex> lock(RulesMutex());
-        auto&                             entry = ArrangeRules()[name];
-        entry.*field                            = std::move(value);
-        ++Generation();
-    }
-
-    template <typename T, typename Field>
-    void SetRewriteField(const std::string& name, std::optional<T> value, Field RewriteRuleValue::* field) {
-        ValidateCaptureName(name);
-        const std::lock_guard<std::mutex> lock(RulesMutex());
-        auto&                             entry = RewriteRules()[name];
-        entry.*field                            = std::move(value);
+        (Layer(layer).*table)[name].*field = std::move(value);
         ++Generation();
     }
 
     template <typename Value>
-    Value RuleFor(const std::unordered_map<std::string, Value>& rules, std::string_view name) {
+    Value EntryFor(const RuleMap<Value>& rules, std::string_view name) {
         const auto it = rules.find(std::string(name));
         return it != rules.end() ? it->second : Value{};
     }
 
-    // Shared by SpaceRuleFor/BreakRuleFor's two-argument overloads --
-    // SyntaxClassOverrideForCapture(name, language)'s exact shape: try
-    // "<language>/<name>" first, fall back to the unscoped entry.
-    template <typename Value, typename Lookup>
-    Value ScopedRuleFor(std::string_view name, std::string_view language, Lookup unscoped) {
-        if (!language.empty()) {
-            std::string scoped;
-            scoped.reserve(language.size() + 1 + name.size());
-            scoped.append(language);
-            scoped.push_back('/');
-            scoped.append(name);
-            if (const Value scopedValue = unscoped(std::string_view(scoped)); scopedValue != Value{}) {
-                return scopedValue;
+    // Within one layer, "<language>/<name>" wins as a whole entry over the
+    // unscoped one -- SyntaxClassOverrideForCapture(name, language)'s shape.
+    // Across layers, fields merge: a higher layer only shadows the fields it
+    // actually sets, so a user's unscoped rule still beats a bundled
+    // language-scoped default for that one field.
+    template <typename Value>
+    Value Resolve(RuleMap<Value> RuleTables::* table, std::string_view name, std::string_view language) {
+        const std::lock_guard<std::mutex> lock(RulesMutex());
+        Value merged{};
+        for (const FormatRuleLayer layer : kPrecedence) {
+            if (layer == FormatRuleLayer::Builtin && !BuiltinStyleEnabled()) {
+                continue;
             }
+            const RuleMap<Value>& rules = Layer(layer).*table;
+            Value                 entry{};
+            if (!language.empty()) {
+                std::string scoped;
+                scoped.reserve(language.size() + 1 + name.size());
+                scoped.append(language);
+                scoped.push_back('/');
+                scoped.append(name);
+                entry = EntryFor(rules, scoped);
+            }
+            if (entry == Value{}) {
+                entry = EntryFor(rules, name);
+            }
+            FillUnset(merged, entry);
         }
-        return unscoped(name);
+        return merged;
     }
 
 } // namespace
 
-void SetSpaceBefore(const std::string& name, std::optional<bool> value) {
-    SetSpaceField(name, value, &SpaceRuleValue::before);
+void SetSpaceBefore(const std::string& name, std::optional<bool> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::space, layer, name, value, &SpaceRuleValue::before);
 }
 
-void SetSpaceAfter(const std::string& name, std::optional<bool> value) {
-    SetSpaceField(name, value, &SpaceRuleValue::after);
+void SetSpaceAfter(const std::string& name, std::optional<bool> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::space, layer, name, value, &SpaceRuleValue::after);
 }
 
-void SetSpaceWithin(const std::string& name, std::optional<bool> value) {
-    SetSpaceField(name, value, &SpaceRuleValue::within);
+void SetSpaceWithin(const std::string& name, std::optional<bool> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::space, layer, name, value, &SpaceRuleValue::within);
 }
 
 SpaceRuleValue SpaceRuleFor(std::string_view name) {
-    const std::lock_guard<std::mutex> lock(RulesMutex());
-    return RuleFor(SpaceRules(), name);
+    return Resolve(&RuleTables::space, name, {});
 }
 
 SpaceRuleValue SpaceRuleFor(std::string_view name, std::string_view language) {
-    return ScopedRuleFor<SpaceRuleValue>(name, language, [](std::string_view n) { return SpaceRuleFor(n); });
+    return Resolve(&RuleTables::space, name, language);
 }
 
-void SetBreakBefore(const std::string& name, std::optional<bool> value) {
-    SetBreakField(name, value, &BreakRuleValue::before);
+void SetBreakBefore(const std::string& name, std::optional<bool> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::breaks, layer, name, value, &BreakRuleValue::before);
 }
 
-void SetBreakAfter(const std::string& name, std::optional<bool> value) {
-    SetBreakField(name, value, &BreakRuleValue::after);
+void SetBreakAfter(const std::string& name, std::optional<bool> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::breaks, layer, name, value, &BreakRuleValue::after);
 }
 
-void SetBracePlacement(const std::string& name, std::optional<BracePlacement> value) {
-    SetBreakField(name, value, &BreakRuleValue::placement);
+void SetBracePlacement(const std::string& name, std::optional<BracePlacement> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::breaks, layer, name, value, &BreakRuleValue::placement);
 }
 
-void SetBraceCollapseEmpty(const std::string& name, std::optional<bool> value) {
-    SetBreakField(name, value, &BreakRuleValue::collapseEmpty);
+void SetBraceCollapseEmpty(const std::string& name, std::optional<bool> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::breaks, layer, name, value, &BreakRuleValue::collapseEmpty);
 }
 
-void SetBraceCollapseSimple(const std::string& name, std::optional<bool> value) {
-    SetBreakField(name, value, &BreakRuleValue::collapseSimple);
+void SetBraceCollapseSimple(const std::string& name, std::optional<bool> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::breaks, layer, name, value, &BreakRuleValue::collapseSimple);
 }
 
 BreakRuleValue BreakRuleFor(std::string_view name) {
-    const std::lock_guard<std::mutex> lock(RulesMutex());
-    return RuleFor(BreakRules(), name);
+    return Resolve(&RuleTables::breaks, name, {});
 }
 
 BreakRuleValue BreakRuleFor(std::string_view name, std::string_view language) {
-    return ScopedRuleFor<BreakRuleValue>(name, language, [](std::string_view n) { return BreakRuleFor(n); });
+    return Resolve(&RuleTables::breaks, name, language);
 }
 
-void SetWrapPolicy(const std::string& name, std::optional<WrapPolicy> value) {
-    SetWrapField(name, value, &WrapRuleValue::policy);
+void SetWrapPolicy(const std::string& name, std::optional<WrapPolicy> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::wrap, layer, name, value, &WrapRuleValue::policy);
 }
 
-void SetWrapForceTrailingComma(const std::string& name, std::optional<bool> value) {
-    SetWrapField(name, value, &WrapRuleValue::forceTrailingComma);
+void SetWrapForceTrailingComma(const std::string& name, std::optional<bool> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::wrap, layer, name, value, &WrapRuleValue::forceTrailingComma);
 }
 
 WrapRuleValue WrapRuleFor(std::string_view name) {
-    const std::lock_guard<std::mutex> lock(RulesMutex());
-    return RuleFor(WrapRules(), name);
+    return Resolve(&RuleTables::wrap, name, {});
 }
 
 WrapRuleValue WrapRuleFor(std::string_view name, std::string_view language) {
-    return ScopedRuleFor<WrapRuleValue>(name, language, [](std::string_view n) { return WrapRuleFor(n); });
+    return Resolve(&RuleTables::wrap, name, language);
 }
 
-void SetCaseConvention(const std::string& name, std::optional<CaseConvention> value) {
-    SetCaseField(name, value, &CaseRuleValue::convention);
+void SetCaseConvention(const std::string& name, std::optional<CaseConvention> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::caseRules, layer, name, value, &CaseRuleValue::convention);
 }
 
 CaseRuleValue CaseRuleFor(std::string_view name) {
-    const std::lock_guard<std::mutex> lock(RulesMutex());
-    return RuleFor(CaseRules(), name);
+    return Resolve(&RuleTables::caseRules, name, {});
 }
 
 CaseRuleValue CaseRuleFor(std::string_view name, std::string_view language) {
-    return ScopedRuleFor<CaseRuleValue>(name, language, [](std::string_view n) { return CaseRuleFor(n); });
+    return Resolve(&RuleTables::caseRules, name, language);
 }
 
-void SetBlankMinBefore(const std::string& name, std::optional<int> value) {
-    SetBlankField(name, value, &BlankRuleValue::minBefore);
+void SetBlankMinBefore(const std::string& name, std::optional<int> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::blank, layer, name, value, &BlankRuleValue::minBefore);
 }
 
-void SetBlankMaxBefore(const std::string& name, std::optional<int> value) {
-    SetBlankField(name, value, &BlankRuleValue::maxBefore);
+void SetBlankMaxBefore(const std::string& name, std::optional<int> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::blank, layer, name, value, &BlankRuleValue::maxBefore);
 }
 
 BlankRuleValue BlankRuleFor(std::string_view name) {
-    const std::lock_guard<std::mutex> lock(RulesMutex());
-    return RuleFor(BlankRules(), name);
+    return Resolve(&RuleTables::blank, name, {});
 }
 
 BlankRuleValue BlankRuleFor(std::string_view name, std::string_view language) {
-    return ScopedRuleFor<BlankRuleValue>(name, language, [](std::string_view n) { return BlankRuleFor(n); });
+    return Resolve(&RuleTables::blank, name, language);
 }
 
-void SetAlignEnabled(const std::string& name, std::optional<bool> value) {
-    SetAlignField(name, value, &AlignRuleValue::enabled);
+void SetAlignEnabled(const std::string& name, std::optional<bool> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::align, layer, name, value, &AlignRuleValue::enabled);
 }
 
 AlignRuleValue AlignRuleFor(std::string_view name) {
-    const std::lock_guard<std::mutex> lock(RulesMutex());
-    return RuleFor(AlignRules(), name);
+    return Resolve(&RuleTables::align, name, {});
 }
 
 AlignRuleValue AlignRuleFor(std::string_view name, std::string_view language) {
-    return ScopedRuleFor<AlignRuleValue>(name, language, [](std::string_view n) { return AlignRuleFor(n); });
+    return Resolve(&RuleTables::align, name, language);
 }
 
-void SetArrangeEnabled(const std::string& name, std::optional<bool> value) {
-    SetArrangeField(name, value, &ArrangeRuleValue::enabled);
+void SetArrangeEnabled(const std::string& name, std::optional<bool> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::arrange, layer, name, value, &ArrangeRuleValue::enabled);
 }
 
-void SetArrangeCaseInsensitive(const std::string& name, std::optional<bool> value) {
-    SetArrangeField(name, value, &ArrangeRuleValue::caseInsensitive);
+void SetArrangeCaseInsensitive(const std::string& name, std::optional<bool> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::arrange, layer, name, value, &ArrangeRuleValue::caseInsensitive);
 }
 
 ArrangeRuleValue ArrangeRuleFor(std::string_view name) {
-    const std::lock_guard<std::mutex> lock(RulesMutex());
-    return RuleFor(ArrangeRules(), name);
+    return Resolve(&RuleTables::arrange, name, {});
 }
 
 ArrangeRuleValue ArrangeRuleFor(std::string_view name, std::string_view language) {
-    return ScopedRuleFor<ArrangeRuleValue>(name, language, [](std::string_view n) { return ArrangeRuleFor(n); });
+    return Resolve(&RuleTables::arrange, name, language);
 }
 
-void SetRewriteQuoteStyle(const std::string& name, std::optional<QuoteStyle> value) {
-    SetRewriteField(name, value, &RewriteRuleValue::quoteStyle);
+void SetRewriteQuoteStyle(const std::string& name, std::optional<QuoteStyle> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::rewrite, layer, name, value, &RewriteRuleValue::quoteStyle);
 }
 
-void SetRewriteExpandElseif(const std::string& name, std::optional<bool> value) {
-    SetRewriteField(name, value, &RewriteRuleValue::expandElseif);
+void SetRewriteExpandElseif(const std::string& name, std::optional<bool> value, FormatRuleLayer layer) {
+    SetField(&RuleTables::rewrite, layer, name, value, &RewriteRuleValue::expandElseif);
 }
 
 RewriteRuleValue RewriteRuleFor(std::string_view name) {
-    const std::lock_guard<std::mutex> lock(RulesMutex());
-    return RuleFor(RewriteRules(), name);
+    return Resolve(&RuleTables::rewrite, name, {});
 }
 
 RewriteRuleValue RewriteRuleFor(std::string_view name, std::string_view language) {
-    return ScopedRuleFor<RewriteRuleValue>(name, language, [](std::string_view n) { return RewriteRuleFor(n); });
+    return Resolve(&RuleTables::rewrite, name, language);
+}
+
+void ClearFormatRuleLayer(FormatRuleLayer layer) {
+    const std::lock_guard<std::mutex> lock(RulesMutex());
+    Layer(layer) = RuleTables{};
+    ++Generation();
+}
+
+void SetBuiltinFormatStyleEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(RulesMutex());
+    if (BuiltinStyleEnabled() != enabled) {
+        BuiltinStyleEnabled() = enabled;
+        ++Generation();
+    }
+}
+
+bool BuiltinFormatStyleEnabled() {
+    const std::lock_guard<std::mutex> lock(RulesMutex());
+    return BuiltinStyleEnabled();
 }
 
 std::size_t FormatRuleGeneration() {

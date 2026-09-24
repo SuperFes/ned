@@ -73,17 +73,16 @@ TEST_CASE("break-before puts a continuation keyword on its own line at the close
           "<?php\nfunction f() {\n    if ($x) {\n    }\n    else {\n    }\n}\n");
 }
 
-TEST_CASE("break-before false normalises horizontal whitespace only", "[FormatBreak]") {
-    // It collapses a run on one line, and deliberately does NOT un-break a
-    // keyword already on its own -- see the no-join rule in FormatBreak.h.
+TEST_CASE("break-before false joins the keyword onto the preceding body's closer", "[FormatBreak]") {
     const BreakRulesGuard guard;
     SetBreakBefore("control.keyword", false);
 
     const Mode mode = PhpMode();
     CHECK(Formatted(mode, "<?php\nif ($x) {\n}    else {\n}\n") == "<?php\nif ($x) {\n} else {\n}\n");
-
-    const std::string alreadyBroken = "<?php\nif ($x) {\n}\nelse {\n}\n";
-    CHECK(Formatted(mode, alreadyBroken) == alreadyBroken);
+    CHECK(Formatted(mode, "<?php\nif ($x) {\n}\n\nelse {\n}\n") == "<?php\nif ($x) {\n} else {\n}\n");
+    CHECK(Formatted(mode, "<?php\ntry {\n}\ncatch (E $e) {\n}\nfinally {\n}\n") ==
+          "<?php\ntry {\n} catch (E $e) {\n} finally {\n}\n");
+    CHECK(Formatted(mode, "<?php\ndo {\n}\nwhile ($x);\n") == "<?php\ndo {\n} while ($x);\n");
 }
 
 TEST_CASE("break-before is idempotent", "[FormatBreak]") {
@@ -107,15 +106,17 @@ TEST_CASE("break-before leaves a comment in the gap where it is and breaks after
           "<?php\nif ($x) {\n} /* done */\nelse {\n}\n");
 }
 
-TEST_CASE("break-before false never joins a gap that already spans lines", "[FormatBreak]") {
-    // The hazard this protects against: joining "} // done" and "else" would
-    // comment the keyword out. Same call collapse-simple already makes.
+TEST_CASE("break-before false never joins onto a line ending in a comment", "[FormatBreak]") {
+    // Joining "} // done" and "else" would comment the keyword out; a "}"
+    // inside the comment is not a captured closer either.
     const BreakRulesGuard guard;
     SetBreakBefore("control.keyword", false);
 
-    const Mode        mode   = PhpMode();
-    const std::string source = "<?php\nif ($x) {\n} // done\nelse {\n}\n";
-    CHECK(Formatted(mode, source) == source);
+    const Mode        mode    = PhpMode();
+    const std::string trailed = "<?php\nif ($x) {\n} // done\nelse {\n}\n";
+    CHECK(Formatted(mode, trailed) == trailed);
+    const std::string braceInComment = "<?php\nif ($x) {\n} // done }\nelse {\n}\n";
+    CHECK(Formatted(mode, braceInComment) == braceInComment);
 }
 
 TEST_CASE("An unconfigured control.keyword capture contributes nothing", "[FormatBreak]") {

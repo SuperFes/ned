@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-230 bindings.
+232 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -104,6 +104,10 @@ The capture name's own overridden break-after rule, or nil if unset.
 ## `ned/format-break-before`
 
 The capture name's own overridden break-before rule, or nil if unset.
+
+## `ned/format-builtin-style`
+
+Whether languages' bundled formatting styles are applied.
 
 ## `ned/format-case-convention`
 
@@ -412,6 +416,10 @@ Override whether a newline is forced after the given capture name -- true/false,
 ## `ned/set-format-break-before`
 
 Override whether a newline is forced before the given capture name -- true/false, nil clears. The capture names a keyword token ("control.keyword": else/elseif/catch/finally, do-while's while); true puts it on its own line at the preceding closer's column (Allman), false normalises horizontal space only and never un-breaks a keyword already on its own line.
+
+## `ned/set-format-builtin-style`
+
+Enable/disable each language's bundled formatting style (e.g. PHP's PSR-12, from the language's style.janet). On by default; format.janet and ned/set-format-* rules override it either way.
 
 ## `ned/set-format-case-convention`
 

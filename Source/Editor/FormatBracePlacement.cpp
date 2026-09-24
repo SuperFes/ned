@@ -185,6 +185,14 @@ namespace {
         return indent;
     }
 
+    // Whether `at` falls inside a "comment" capture -- a brace pulled up onto
+    // a header line ending in a line comment would be commented out.
+    bool InsideComment(const std::vector<FormatCapture>& captures, std::size_t at) {
+        return std::ranges::any_of(captures, [at](const FormatCapture& capture) {
+            return capture.name == "comment" && capture.startByte <= at && at < capture.endByte;
+        });
+    }
+
 } // namespace
 
 std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, std::string_view languageKey,
@@ -239,7 +247,10 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
 
         const std::string_view headerIndent = LineIndentOf(text, headerEnd - 1);
 
-        if (rule.placement) {
+        const bool joinOntoComment =
+            rule.placement == BracePlacement::SameLine && InsideComment(captures, headerEnd - 1);
+
+        if (rule.placement && !joinOntoComment) {
             std::string desiredGap;
             switch (*rule.placement) {
                 case BracePlacement::SameLine:

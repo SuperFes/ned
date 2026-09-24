@@ -1637,6 +1637,14 @@ namespace {
         return editor::RewriteRuleFor(captureName).expandElseif;
     }
 
+    void NedSetFormatBuiltinStyle(bool enabled) {
+        editor::SetBuiltinFormatStyleEnabled(enabled);
+    }
+
+    bool NedFormatBuiltinStyle() {
+        return editor::BuiltinFormatStyleEnabled();
+    }
+
     // Registers a VCS-agnostic plugin from one struct/table of callbacks
     // keyed by keyword -- see JanetVcsProvider's header comment for the
     // full key list and which are optional (vocabulary-completion
@@ -1846,6 +1854,12 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedFormatRewriteExpandElseif>(
         "ned", "format-rewrite-expand-elseif",
         "The capture name's own overridden rewrite-expand-elseif rule, or nil if unset.");
+    env.Register<&NedSetFormatBuiltinStyle>(
+        "ned", "set-format-builtin-style",
+        "Enable/disable each language's bundled formatting style (e.g. PHP's PSR-12, from the language's "
+        "style.janet). On by default; format.janet and ned/set-format-* rules override it either way.");
+    env.Register<&NedFormatBuiltinStyle>(
+        "ned", "format-builtin-style", "Whether languages' bundled formatting styles are applied.");
     env.Register<&NedSetFillColumn>(
         "ned", "set-fill-column",
         "Set the target line width (in codepoints) fill-paragraph (M-q) wraps prose/comments to (default 70).");

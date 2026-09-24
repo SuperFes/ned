@@ -480,6 +480,80 @@ FormatConfig ParseFormatConfig(std::string_view source, const std::string& path)
     return config;
 }
 
+void ApplyFormatRules(const FormatConfig& config, FormatRuleLayer layer, std::string_view keyPrefix) {
+    const std::string prefix(keyPrefix);
+    for (const auto& [captureKey, entry] : config.space) {
+        if (entry.before) {
+            SetSpaceBefore(prefix + captureKey, entry.before, layer);
+        }
+        if (entry.after) {
+            SetSpaceAfter(prefix + captureKey, entry.after, layer);
+        }
+        if (entry.within) {
+            SetSpaceWithin(prefix + captureKey, entry.within, layer);
+        }
+    }
+    for (const auto& [captureKey, entry] : config.breakRules) {
+        if (entry.before) {
+            SetBreakBefore(prefix + captureKey, entry.before, layer);
+        }
+        if (entry.after) {
+            SetBreakAfter(prefix + captureKey, entry.after, layer);
+        }
+        if (entry.placement) {
+            SetBracePlacement(prefix + captureKey, entry.placement, layer);
+        }
+        if (entry.collapseEmpty) {
+            SetBraceCollapseEmpty(prefix + captureKey, entry.collapseEmpty, layer);
+        }
+        if (entry.collapseSimple) {
+            SetBraceCollapseSimple(prefix + captureKey, entry.collapseSimple, layer);
+        }
+    }
+    for (const auto& [captureKey, entry] : config.blank) {
+        if (entry.minBefore) {
+            SetBlankMinBefore(prefix + captureKey, entry.minBefore, layer);
+        }
+        if (entry.maxBefore) {
+            SetBlankMaxBefore(prefix + captureKey, entry.maxBefore, layer);
+        }
+    }
+    for (const auto& [captureKey, entry] : config.wrap) {
+        if (entry.policy) {
+            SetWrapPolicy(prefix + captureKey, entry.policy, layer);
+        }
+        if (entry.forceTrailingComma) {
+            SetWrapForceTrailingComma(prefix + captureKey, entry.forceTrailingComma, layer);
+        }
+    }
+    for (const auto& [captureKey, entry] : config.align) {
+        if (entry.enabled) {
+            SetAlignEnabled(prefix + captureKey, entry.enabled, layer);
+        }
+    }
+    for (const auto& [captureKey, entry] : config.arrange) {
+        if (entry.enabled) {
+            SetArrangeEnabled(prefix + captureKey, entry.enabled, layer);
+        }
+        if (entry.caseInsensitive) {
+            SetArrangeCaseInsensitive(prefix + captureKey, entry.caseInsensitive, layer);
+        }
+    }
+    for (const auto& [captureKey, entry] : config.rewrite) {
+        if (entry.quoteStyle) {
+            SetRewriteQuoteStyle(prefix + captureKey, entry.quoteStyle, layer);
+        }
+        if (entry.expandElseif) {
+            SetRewriteExpandElseif(prefix + captureKey, entry.expandElseif, layer);
+        }
+    }
+    for (const auto& [entityKey, entry] : config.caseRules) {
+        if (entry.convention) {
+            SetCaseConvention(prefix + entityKey, entry.convention, layer);
+        }
+    }
+}
+
 void ApplyFormatConfig(const FormatConfig& config) {
     for (const auto& [languageKey, entry] : config.indent) {
         const std::string modeName = languageKey + "-mode"; // the inverse of imprint::LanguageKeyForMode
@@ -492,76 +566,7 @@ void ApplyFormatConfig(const FormatConfig& config) {
         }
         SetIndentStyleForMode(modeName, style);
     }
-    for (const auto& [captureKey, entry] : config.space) {
-        if (entry.before) {
-            SetSpaceBefore(captureKey, entry.before);
-        }
-        if (entry.after) {
-            SetSpaceAfter(captureKey, entry.after);
-        }
-        if (entry.within) {
-            SetSpaceWithin(captureKey, entry.within);
-        }
-    }
-    for (const auto& [captureKey, entry] : config.breakRules) {
-        if (entry.before) {
-            SetBreakBefore(captureKey, entry.before);
-        }
-        if (entry.after) {
-            SetBreakAfter(captureKey, entry.after);
-        }
-        if (entry.placement) {
-            SetBracePlacement(captureKey, entry.placement);
-        }
-        if (entry.collapseEmpty) {
-            SetBraceCollapseEmpty(captureKey, entry.collapseEmpty);
-        }
-        if (entry.collapseSimple) {
-            SetBraceCollapseSimple(captureKey, entry.collapseSimple);
-        }
-    }
-    for (const auto& [captureKey, entry] : config.blank) {
-        if (entry.minBefore) {
-            SetBlankMinBefore(captureKey, entry.minBefore);
-        }
-        if (entry.maxBefore) {
-            SetBlankMaxBefore(captureKey, entry.maxBefore);
-        }
-    }
-    for (const auto& [captureKey, entry] : config.wrap) {
-        if (entry.policy) {
-            SetWrapPolicy(captureKey, entry.policy);
-        }
-        if (entry.forceTrailingComma) {
-            SetWrapForceTrailingComma(captureKey, entry.forceTrailingComma);
-        }
-    }
-    for (const auto& [captureKey, entry] : config.align) {
-        if (entry.enabled) {
-            SetAlignEnabled(captureKey, entry.enabled);
-        }
-    }
-    for (const auto& [captureKey, entry] : config.arrange) {
-        if (entry.enabled) {
-            SetArrangeEnabled(captureKey, entry.enabled);
-        }
-        if (entry.caseInsensitive) {
-            SetArrangeCaseInsensitive(captureKey, entry.caseInsensitive);
-        }
-    }
-    for (const auto& [captureKey, entry] : config.rewrite) {
-        if (entry.quoteStyle) {
-            SetRewriteQuoteStyle(captureKey, entry.quoteStyle);
-        }
-        if (entry.expandElseif) {
-            SetRewriteExpandElseif(captureKey, entry.expandElseif);
-        }
-    }
-    for (const auto& [entityKey, entry] : config.caseRules) {
-        if (entry.convention) {
-            SetCaseConvention(entityKey, entry.convention);
-        }
-    }
+    ApplyFormatRules(config, FormatRuleLayer::File, {});
     if (config.trimTrailingWhitespaceOnSave) {
         SetTrimTrailingWhitespaceOnSave(*config.trimTrailingWhitespaceOnSave);
     }
@@ -624,18 +629,38 @@ std::vector<std::string> FormatConfigRewriteEntryKeys() {
     return {"expand-elseif", "quote-style"};
 }
 
-void LoadFormatConfigFile(const std::filesystem::path& path) {
+std::optional<FormatConfig> ReadFormatConfigFile(const std::filesystem::path& path) {
     std::error_code ec;
     if (!std::filesystem::is_regular_file(path, ec)) {
-        return; // no config there -- not an error
+        return std::nullopt; // no config there -- not an error
     }
     std::ifstream in(path, std::ios::binary);
     if (!in) {
-        return; // exists but unreadable (permissions, race) -- treated the same as absent
+        return std::nullopt; // exists but unreadable (permissions, race) -- treated the same as absent
     }
     std::ostringstream content;
     content << in.rdbuf();
-    ApplyFormatConfig(ParseFormatConfig(content.str(), path.string()));
+    return ParseFormatConfig(content.str(), path.string());
+}
+
+void LoadFormatConfigFile(const std::filesystem::path& path) {
+    if (const std::optional<FormatConfig> config = ReadFormatConfigFile(path)) {
+        ApplyFormatConfig(*config);
+    }
+}
+
+void ReloadFormatConfig(const std::filesystem::path& projectRoot) {
+    // Both files parse before anything is cleared, so a syntax error leaves
+    // the previously loaded rules in force instead of half of them.
+    const std::optional<FormatConfig> personal = ReadFormatConfigFile(PersonalFormatConfigPath());
+    const std::optional<FormatConfig> project  = ReadFormatConfigFile(ProjectFormatConfigPath(projectRoot));
+    ClearFormatRuleLayer(FormatRuleLayer::File);
+    if (personal) {
+        ApplyFormatConfig(*personal);
+    }
+    if (project) {
+        ApplyFormatConfig(*project);
+    }
 }
 
 } // namespace ned::editor
