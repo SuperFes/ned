@@ -126,6 +126,9 @@ void SetCaptureStrikethrough(const std::string& name, std::optional<bool> value)
 // SyntaxClass setters -- both invalidate the same resolved-brush caching).
 [[nodiscard]] SyntaxStyleOverride ResolvedCaptureOverride(std::string_view name);
 
+// Whether any dotted level of `name` carries a per-capture style.
+[[nodiscard]] bool HasCaptureStyle(std::string_view name);
+
 // Capture -> SyntaxClass remapping: repoints what a capture name *is* (its
 // base class, hence every built-in color/trait that class carries) rather
 // than styling it field-by-field -- JetBrains' "inherit values from"

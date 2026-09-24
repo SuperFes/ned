@@ -1,5 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <utility>
+
 #include "Editor/AutoPair.h"
 #include "Editor/BundledLanguages.h"
 #include "Editor/CodeFold.h"
@@ -1552,4 +1555,118 @@ TEST_CASE("Every language's line-comment prefix starts a comment", "[Mode]") {
         }
         CHECK(inComment);
     }
+}
+
+namespace {
+
+std::optional<ned::editor::SyntaxClass> ClassAt(const ned::editor::Mode& mode, std::string_view source, std::string_view needle) {
+    const std::size_t                       at = source.find(needle);
+    std::optional<ned::editor::SyntaxClass> found;
+    for (const ned::editor::HighlightSpan& span : mode.highlight(source, {})) {
+        if (span.startByte <= at && at < span.endByte) {
+            found = span.syntaxClass;
+        }
+    }
+    return found;
+}
+
+ned::editor::Mode BundledMode(std::string_view name) {
+    for (const ned::editor::LanguageDefinition& definition : ned::editor::BundledLanguages()) {
+        if (definition.name == name) {
+            return ned::editor::ModeFromDefinition(definition);
+        }
+    }
+    FAIL("no bundled language " << name);
+    return FundamentalMode();
+}
+
+} // namespace
+
+TEST_CASE("F# paints only a /// comment as documentation", "[Mode]") {
+    const ned::editor::Mode mode   = BundledMode("fsharp");
+    const std::string       source = "// plain\n/// doc\nlet x = 1\n";
+    CHECK(ClassAt(mode, source, "plain") == ned::editor::SyntaxClass::Comment);
+    // The /// comment's XML injection has nothing to say about plain text,
+    // so the host's DocComment shows through.
+    CHECK(ClassAt(mode, source, "doc") == ned::editor::SyntaxClass::DocComment);
+}
+
+TEST_CASE("F# doc comment XML tags highlight inside the comment", "[Mode]") {
+    const ned::editor::Mode mode   = BundledMode("fsharp");
+    const std::string       source = "/// <summary>Adds.</summary>\nlet add x y = x + y\n";
+    CHECK(ClassAt(mode, source, "summary") != ned::editor::SyntaxClass::DocComment);
+    CHECK(ClassAt(mode, source, "Adds") == ned::editor::SyntaxClass::DocComment);
+    CHECK(ClassAt(mode, source, "/// ") == ned::editor::SyntaxClass::DocComment);
+}
+
+TEST_CASE("HLSL highlights through cpp's queries", "[Mode]") {
+    const ned::editor::Mode mode   = BundledMode("hlsl");
+    const std::string       source = "float4 main() : SV_Target {\n    return 0; // done\n}\n";
+    CHECK(ClassAt(mode, source, "return") == ned::editor::SyntaxClass::ControlKeyword);
+    CHECK(ClassAt(mode, source, "done") == ned::editor::SyntaxClass::Comment);
+}
+
+TEST_CASE("A capture name nothing maps or styles paints nothing", "[Mode]") {
+    struct Reset {
+        ~Reset() {
+            ned::editor::SetCaptureForeground("markup", std::nullopt);
+        }
+    } reset;
+    const ned::editor::Mode mode   = BundledMode("xml");
+    const std::string       source = "<a>text</a>\n";
+    const auto              covers = [&] {
+        const std::size_t at    = source.find("text");
+        const auto        spans = mode.highlight(source, {});
+        return std::any_of(spans.begin(), spans.end(),
+                           [&](const ned::editor::HighlightSpan& span) { return span.startByte <= at && at < span.endByte; });
+    };
+    CHECK_FALSE(covers()); // CharData is @markup, which has no class
+
+    const std::size_t generation = ned::editor::CaptureClassGeneration();
+    ned::editor::SetCaptureForeground("markup", std::string("#123456"));
+    CHECK(ned::editor::CaptureClassGeneration() != generation); // cached spans must be rebuilt
+    CHECK(covers());
+}
+
+TEST_CASE("An explicit Default capture still resets what it covers", "[Mode]") {
+    const ned::editor::Mode mode   = BundledMode("javascript");
+    const std::string       source = "const s = `a${b}c`;\n";
+    const std::size_t       at     = source.find("${");
+    const auto              spans  = mode.highlight(source, {});
+    CHECK(std::any_of(spans.begin(), spans.end(), [&](const ned::editor::HighlightSpan& span) {
+        return span.syntaxClass == ned::editor::SyntaxClass::Default && span.startByte <= at && at < span.endByte;
+    }));
+}
+
+TEST_CASE("Svelte and Vue highlight HTML tags through html_tags", "[Mode]") {
+    const std::string svelte = "<!-- note -->\n<div class=\"box\">{name}</div>\n<script>\n  let name = 'x';\n</script>\n"
+                               "<style>\n  .box { color: red; }\n</style>\n";
+    const std::string vue    = "<template>\n  <div class=\"box\">{{ msg }}</div>\n</template>\n"
+                               "<script setup lang=\"ts\">\nconst msg: string = 'hi'\n</script>\n"
+                               "<style>\n.box { color: red; }\n</style>\n";
+    for (const auto& [language, source] : {std::pair<std::string, std::string>{"svelte", svelte}, {"vue", vue}}) {
+        INFO("language: " << language);
+        const ned::editor::Mode mode = BundledMode(language);
+        CHECK(ClassAt(mode, source, "div") == ned::editor::SyntaxClass::Tag);
+        CHECK(ClassAt(mode, source, "class") == ned::editor::SyntaxClass::Attribute);
+        CHECK(ClassAt(mode, source, "box\"") == ned::editor::SyntaxClass::String);
+        CHECK(ClassAt(mode, source, "color") == ned::editor::SyntaxClass::Property); // <style> is css
+    }
+    CHECK(ClassAt(BundledMode("svelte"), svelte, "note") == ned::editor::SyntaxClass::Comment);
+    CHECK(ClassAt(BundledMode("vue"), vue, "string =") == ned::editor::SyntaxClass::TypeBuiltin); // lang="ts"
+}
+
+TEST_CASE("Astro keeps its TypeScript <script> and gains plain <style> as CSS", "[Mode]") {
+    const ned::editor::Mode mode   = BundledMode("astro");
+    const std::string       source = "<script>\nconst n: number = 1;\n</script>\n<style>\n.box { color: red; }\n</style>\n";
+    CHECK(ClassAt(mode, source, "number") == ned::editor::SyntaxClass::TypeBuiltin);
+    CHECK(ClassAt(mode, source, "color") == ned::editor::SyntaxClass::Property);
+}
+
+TEST_CASE("html_tags injects JavaScript only into ${...} attribute values", "[Mode]") {
+    // Its lit-html pattern is a Lua "%${" match; an untranslatable pattern
+    // would be inert and inject every attribute value.
+    const ned::editor::Mode mode   = BundledMode("svelte");
+    const std::string       source = "<div class=\"if\"></div>\n";
+    CHECK(ClassAt(mode, source, "if\"") == ned::editor::SyntaxClass::String);
 }

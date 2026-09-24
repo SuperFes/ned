@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -12,6 +13,7 @@
 #include "Editor/IndentStyle.h"
 #include "Editor/InjectedIndent.h"
 #include "Editor/Mode.h"
+#include "Editor/ModeOverrides.h"
 #include "Editor/TabWidth.h"
 #include "Text/Buffer.h"
 
@@ -448,6 +450,98 @@ TEST_CASE("PythonMode indentColumn end-of-block dedent needs no explicit dedent 
     const auto afterColumn            = mode.indentColumn(buffer.Text(), afterStart, afterEnd);
     REQUIRE(afterColumn.has_value());
     REQUIRE(*afterColumn == 0);
+}
+
+namespace {
+
+// Column for the blank line at `blankLine` in `text`, the way "newline" asks
+// for the line it just created (lineStart == lineEnd).
+std::optional<int> BlankLineColumn(const Mode& mode, std::string_view text, std::size_t blankLine) {
+    std::size_t lineStart = 0;
+    for (std::size_t line = 0; line < blankLine; ++line) {
+        lineStart = text.find('\n', lineStart) + 1;
+    }
+    return mode.indentColumn(text, lineStart, lineStart);
+}
+
+} // namespace
+
+TEST_CASE("Enter after a block header with no body yet opens that body", "[Indent]") {
+    const auto python = PythonMode();
+    CHECK(BlankLineColumn(python, "def f():\n", 1) == 4);
+    CHECK(BlankLineColumn(python, "def f():\n\nx = 1\n", 1) == 4);
+    CHECK(BlankLineColumn(python, "def f():  # todo\n", 1) == 4);
+    CHECK(BlankLineColumn(python, "class A:\n    def f(self):\n\n    def g(self):\n        pass\n", 2) == 8);
+    CHECK(BlankLineColumn(python, "def f():\n    if x:\n", 2) == 8);
+
+    const std::optional<Mode> gdscript = ned::editor::ModeByName("gdscript-mode");
+    REQUIRE(gdscript.has_value());
+    CHECK(BlankLineColumn(*gdscript, "func f():\n", 1) == EffectiveIndentStyle("gdscript-mode").width);
+
+    const std::optional<Mode> nim = ned::editor::ModeByName("nim-mode");
+    REQUIRE(nim.has_value());
+    CHECK(BlankLineColumn(*nim, "proc f() =\n\nlet x = 1\n", 1) == 2);
+}
+
+TEST_CASE("OCaml indents keyword-introduced bodies from a flat file", "[Indent]") {
+    const std::optional<Mode> ocaml = ned::editor::ModeByName("ocaml-mode");
+    REQUIRE(ocaml.has_value());
+    const std::string expected = "let classify n =\n"
+                                 "  match n with\n"
+                                 "  | 0 -> \"zero\"\n"
+                                 "  | _ ->\n"
+                                 "    if n > 0 then\n"
+                                 "      \"pos\"\n"
+                                 "    else\n"
+                                 "      \"neg\"\n"
+                                 "\n"
+                                 "let safe a b =\n"
+                                 "  try\n"
+                                 "    Some (a / b)\n"
+                                 "  with\n"
+                                 "  | Division_by_zero -> None\n"
+                                 "\n"
+                                 "let each xs =\n"
+                                 "  List.iter\n"
+                                 "    (fun x ->\n"
+                                 "      print_int x)\n"
+                                 "    xs\n";
+    std::string       flat;
+    for (std::size_t at = 0; at < expected.size();) {
+        const std::size_t end  = std::min(expected.find('\n', at), expected.size());
+        const std::string line = expected.substr(at, end - at);
+        flat += line.substr(std::min(line.find_first_not_of(' '), line.size())) + "\n";
+        at = end + 1;
+    }
+    Buffer buffer("test.ml");
+    buffer.InsertAtPoint(flat);
+    IndentBuffer(buffer, *ocaml);
+    CHECK(buffer.Text() == expected);
+}
+
+TEST_CASE("OCaml Enter opens a body after a binding or arm", "[Indent]") {
+    const std::optional<Mode> ocaml = ned::editor::ModeByName("ocaml-mode");
+    REQUIRE(ocaml.has_value());
+    CHECK(BlankLineColumn(*ocaml, "let f x =\n", 1) == 2);
+    CHECK(BlankLineColumn(*ocaml, "let f x =\n  match x with\n  | 0 ->\n", 3) == 4);
+}
+
+TEST_CASE("An .mli reindents with OCaml's indents query", "[Indent]") {
+    const std::optional<Mode> mli = ned::editor::ModeByName("ocaml-interface-mode");
+    REQUIRE(mli.has_value());
+    Buffer buffer("test.mli");
+    buffer.InsertAtPoint("module type S = sig\ntype t\nval create :\nint -> t\nend\n");
+    IndentBuffer(buffer, *mli);
+    CHECK(buffer.Text() == "module type S = sig\n  type t\n  val create :\n    int -> t\nend\n");
+}
+
+TEST_CASE("A header's empty body doesn't pull in a line that already has content", "[Indent]") {
+    const auto mode = PythonMode();
+    Buffer     buffer("test.py");
+    buffer.InsertAtPoint("def f():\nx = 1\n");
+
+    const auto [lineStart, lineEnd] = LineRange(buffer, 1); // "x = 1"
+    CHECK(mode.indentColumn(buffer.Text(), lineStart, lineEnd) == 0);
 }
 
 TEST_CASE("PythonMode indentColumn takes a following container's level for a comment as the "

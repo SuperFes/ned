@@ -111,38 +111,30 @@ What each package ships is tracked in the generated `Docs/LanguageMatrix.md`; th
 below are the behavioural gaps behind its empty cells, verified with `ned --format` probes
 and code reading. Highest stakes first.
 
-- [ ] **Enter after an unfinished block header doesn't open a level** in indentation
-      languages: `def f():`, `func f():`, `proc f() =` followed by Enter lands at the
-      header's own column, because until the body exists there is no body node to indent
-      from. Python, GDScript and Nim alike.
-- [ ] **OCaml is `:preserve-indent` only because nothing indents it well** (the generic
-      walk flattened match arms and `let ... in` bodies). An indents query would let it
-      reindent again; the Haskell family (Haskell, Elm, F#, PureScript) is preserved by
-      nature and should stay that way.
+- [ ] **An unfinished OCaml `try` doesn't recover at end of file.** `let f x =` then
+      `try` and Enter parses as one ERROR (EOF completion would need a body, `with`
+      and an arm), so the new line gets no indent. `let ... =` and `| p ->` do open
+      a body.
 - [ ] **OCaml's `toggle-line-comment` writes an unterminated comment.** Its
       `:line-comment` is `"(*"` (ocaml and ocaml-interface), and the command only ever
       prefixes, so toggling a line yields `(* let x = 1` with no `*)`. Needs real
       block-comment support (e.g. `:block-comment ["(*" "*)"]`, wrapped per line), which
       would also give HTML, XML, CSS, Vue, Svelte and Astro a toggle -- they have none today.
-- [ ] **Svelte and Vue miss HTML's highlighting.** Their vendored queries open with
-      nvim-treesitter's `# inherits: html` / `# inherits: html_tags`, which query discovery
-      does not read, so only the delta loads. cpp (inlined at vendor time), TypeScript,
-      TSX, CUDA and Objective-C name their base explicitly in `language.janet`; Svelte and
-      Vue can't simply do the same because `html_tags` is an nvim query module with no
-      directory here. Either honour the directive in discovery (with a way to say what
-      `html_tags` resolves to) or vendor the base.
-- [ ] **Every F# `//` comment highlights as a doc comment.** The vendored query tags
-      `line_comment` as `@comment.documentation` under `(:not-match? ... "^///")`, which
-      reads inverted (a doc comment is the `///` one). Not yet checked against the
-      upstream original, nor whether the import tool's predicate conversion did it.
+- [ ] **`injection.combined` is ignored**, so each matched range is its own sub-parse.
+      An F# doc comment split over lines (`/// <summary>` ... `/// </summary>`) parses
+      as separate XML fragments and the lone closing tag's name goes unhighlighted.
+      Elixir, Gleam and KDL use it too. Needs one sub-parse over the concatenated
+      ranges per language, with spans mapped back per range.
+- [ ] **The `markup.*` capture family is unmapped**, so AsciiDoc, Typst, RST, LaTeX and
+      gitcommit headings, emphasis, lists and quotes paint nothing (Markdown/Org use the
+      older `text.*` names, which are mapped). `markup.heading.1`-`.6` want the
+      HeadlineLevel classes; XML also uses `markup.heading`, for CDATA delimiters, so it
+      needs a language-scoped exception. A few other upstream names (`@error`,
+      `@warning`, `@symbol`, `@text.*` in make/perl/d) are unmapped the same way.
 - [ ] **`toggle-line-comment` ignores the embedded language at point.** It reads the host
       mode's prefix only, so a line inside a Vue/Svelte/HTML `<script>` or a Markdown
       fenced block gets the host's syntax (or "No comment syntax configured"). The
       injection engine already knows the language at point.
-- [ ] **HLSL has no syntax highlighting.** `Docs/LanguageCoverage.md` says it reads cpp's
-      queries via `:queries-from "cpp"`, but `hlsl/language.janet` never set it.
-      `:queries-from` redirects query discovery wholesale, so check that its own
-      `tags.janet` still loads and that cpp's queries compile under the HLSL grammar.
 - [ ] **Reindent does little or nothing for several languages with no indents query.**
       Scala leaves class/object bodies flush, Erlang indents `case` arms but not function
       bodies, Elixir `do`/`end` is untouched; small valid samples in CMake, Pascal, Perl,

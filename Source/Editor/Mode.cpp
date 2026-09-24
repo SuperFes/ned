@@ -81,6 +81,8 @@ namespace {
             {"keyword.return", SyntaxClass::ControlKeyword},
             {"conditional", SyntaxClass::ControlKeyword},
             {"repeat", SyntaxClass::ControlKeyword},
+            {"exception", SyntaxClass::ControlKeyword},     // keyword.exception's older spelling
+            {"storageclass", SyntaxClass::KeywordModifier}, // keyword.modifier's older spelling
             {"include", SyntaxClass::Keyword},
             {"preproc", SyntaxClass::Keyword},
             {"label", SyntaxClass::Label},
@@ -165,6 +167,7 @@ namespace {
             {"tag.delimiter", SyntaxClass::Punctuation},
 
             {"attribute", SyntaxClass::Attribute},
+            {"tag.attribute", SyntaxClass::Attribute}, // nvim-treesitter's newer spelling
 
             {"module", SyntaxClass::Namespace},
             {"namespace", SyntaxClass::Namespace},
@@ -217,15 +220,10 @@ namespace {
             // pattern of its own using this capture name.
             {"text.strikethrough", SyntaxClass::Strikethrough},
 
-            // tree-sitter-xml's own queries/xml/highlights.scm uses the
-            // newer nvim-treesitter "markup.*" naming (this grammar's only
-            // bundled query to do so -- every other one above still uses the
-            // older "text.*" spelling markdown's own query predates). Bare
-            // "markup" (plain character data) and "markup.heading" (CDATA's
-            // "<![CDATA["/"]]>" delimiters) both fall through the
-            // ancestor-stripping walk to Default correctly on their own, no
-            // entry needed; only these two want a distinct class instead of
-            // that fallthrough, mirroring "text.uri"/"text.literal" above.
+            // The newer nvim-treesitter "markup.*" naming. Bare "markup" (XML
+            // character data) and the rest of the family are unmapped, so
+            // they paint nothing; only these two want a class, mirroring
+            // "text.uri"/"text.literal" above.
             {"markup.link", SyntaxClass::Link},
             {"markup.raw", SyntaxClass::String},
         };
@@ -276,6 +274,10 @@ namespace {
 // (BuiltinLanguageClassForCapture above) -- so a language-scoped remap re-bases
 // only that one grammar's use of a shared capture name.
 SyntaxClass SyntaxClassForCapture(std::string_view captureName, std::string_view language) {
+    return MappedSyntaxClassForCapture(captureName, language).value_or(SyntaxClass::Default);
+}
+
+std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureName, std::string_view language) {
     const auto& table = CaptureTable();
 
     while (true) {
@@ -296,7 +298,7 @@ SyntaxClass SyntaxClassForCapture(std::string_view captureName, std::string_view
         }
         const std::size_t dot = captureName.rfind('.');
         if (dot == std::string_view::npos) {
-            return SyntaxClass::Default;
+            return std::nullopt;
         }
         captureName = captureName.substr(0, dot);
     }

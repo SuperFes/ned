@@ -283,8 +283,8 @@ TEST_CASE("Indenting never changes the parse structure of an offside language", 
 
 TEST_CASE("An offside sample in its house style reindents to itself", "[FormatterProperties]") {
     // For a `:preserve-indent` language this holds because no line is touched;
-    // for the others (GDScript, Nim) because the indents query agrees with the
-    // style guide the sample is written in.
+    // for the others (GDScript, Nim, OCaml) because the indents query agrees
+    // with the style guide the sample is written in.
     for (const Case& testCase : OffsideCorpus()) {
         INFO("sample: " << testCase.file);
         const std::string original = ReadOffside(testCase.file);

@@ -123,7 +123,10 @@ std::optional<DelimiterPair> DelimitersOf(const grammar::Node& node, const Delim
         }
         return std::nullopt;
     }
-    return std::nullopt;
+    // The table records one branch of a rule; this instance may have taken a
+    // bracketed one instead (OCaml's parenthesized_expression is `begin ...
+    // end` or `( ... )`).
+    return DelimitersOf(node);
 }
 
 std::optional<DelimiterPair> MatchingDelimitersAt(const grammar::Node& root, std::string_view language,

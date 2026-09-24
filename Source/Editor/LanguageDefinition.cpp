@@ -8,11 +8,12 @@
 
 #include "AutoPair.h"
 #include "CaptureClassifiers.h"
-#include "Key.h"
-#include "LanguageFiles.h"
-#include "SyntaxTheme.h"
 #include "Grammar/Languages.h"
 #include "Grammar/QueryMatcher.h"
+#include "Key.h"
+#include "LanguageFiles.h"
+#include "ModeInternal.h"
+#include "SyntaxTheme.h"
 
 namespace ned::editor {
 
@@ -59,6 +60,20 @@ namespace {
                        std::find(suppressedIds.begin(), suppressedIds.end(), span.captureId) != suppressedIds.end();
             });
         }
+        // A capture name nothing maps, styles or classifies would only paint
+        // Default over whatever is beneath it -- the host's comment under an
+        // injected XML layer's @markup text, say -- so it contributes nothing.
+        std::vector<bool>         suppressed(spans.size(), false);
+        std::vector<bool>         classified(spans.size(), false);
+        std::map<CaptureId, bool> unstyledById;
+        const auto                unstyled = [&](CaptureId id) {
+            const auto [it, inserted] = unstyledById.try_emplace(id, false);
+            if (inserted) {
+                const std::string name = CaptureNameForId(id);
+                it->second             = !MappedSyntaxClassForCapture(name, languageKey) && !HasCaptureStyle(name);
+            }
+            return it->second;
+        };
         if (HasCaptureClassifiers(languageKey)) {
             // Group span indices by capture id, then one batch call per
             // classified name -- see CaptureClassifiers.h for why batch.
@@ -68,7 +83,6 @@ namespace {
                     byId[spans[i].captureId].push_back(i);
                 }
             }
-            std::vector<bool> suppressed(spans.size(), false);
             for (const auto& [id, indices] : byId) {
                 const CaptureClassifier classifier = FindCaptureClassifier(languageKey, CaptureNameForId(id));
                 if (!classifier) {
@@ -87,6 +101,7 @@ namespace {
                     switch (results[j].kind) {
                         case CaptureClassification::Kind::Classified:
                             spans[indices[j]].syntaxClass = results[j].cls;
+                            classified[indices[j]]        = true;
                             break;
                         case CaptureClassification::Kind::Suppress:
                             suppressed[indices[j]] = true;
@@ -96,14 +111,17 @@ namespace {
                     }
                 }
             }
-            std::size_t kept = 0;
-            for (std::size_t i = 0; i < spans.size(); ++i) {
-                if (!suppressed[i]) {
-                    spans[kept++] = spans[i];
-                }
-            }
-            spans.resize(kept);
         }
+        std::size_t kept = 0;
+        for (std::size_t i = 0; i < spans.size(); ++i) {
+            const HighlightSpan& span = spans[i];
+            if (suppressed[i] || (span.syntaxClass == SyntaxClass::Default && span.captureId != kNoCapture &&
+                                  !classified[i] && unstyled(span.captureId))) {
+                continue;
+            }
+            spans[kept++] = span;
+        }
+        spans.resize(kept);
         for (HighlightSpan& span : spans) {
             for (const auto& [id, rule] : spanRules) {
                 if (span.captureId == id && rule == CaptureSpanRule::LineEnd) {

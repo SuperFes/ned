@@ -557,7 +557,8 @@ Admission facts:
   grammar is not bundled). ABI 15, 634- and 633-LOC scanners sharing
   `common/`; 94- and 2-case corpora (the repository's one corpus tree, split
   by its `:language(...)` markers and its `ocaml_interface/` subdirectory);
-  upstream highlights, tags and locals vendored unmodified.
+  upstream highlights, tags and locals vendored unmodified; indents
+  ned-authored (ocamlformat's layout), shared by the interface package.
 - **elixir** `elixir-lang/tree-sitter-elixir` v0.3.5 (the language's own; ABI
   14, 660-LOC scanner, 292-case corpus; upstream highlights, tags and
   injections vendored unmodified).
@@ -639,23 +640,26 @@ property table (perl). Admission facts:
   `ce8011a414fdf8091f4e4071752efc376f4afb08` (2026-01-24). ABI 15, 865-LOC
   scanner, 10-case corpus; upstream highlights and injections vendored from
   `queries/vue/` unmodified (its nvim `bo.commentstring` directive is inert).
+  They are deltas over nvim's `html_tags`, vendored once for the family at
+  `html/upstream/html_tags/` and named first in `language.janet`.
   `ikatyang/tree-sitter-vue` (2024-02) is superseded.
 - **svelte** `tree-sitter-grammars/tree-sitter-svelte` v1.0.2 (ABI 14,
   1,105-LOC scanner, 45-case corpus; upstream highlights, injections and
-  locals vendored unmodified).
+  locals vendored unmodified, over the shared `html_tags` base like vue).
 - **astro** `virchau13/tree-sitter-astro` pinned at commit
   `213f6e6973d9b456c6e50e86f19f66877e7ef0ee` (2025-04-23, 17 months -- inside
   the line). ABI 14, 1,124-LOC scanner, 22-case corpus at the repository root
   (`corpus/`, the nix layout, which the import now finds); upstream highlights
-  and injections vendored unmodified.
+  and injections vendored unmodified. `html_tags`' injections are listed
+  after astro's own (plain `<style>` as CSS; its `<script>` stays TypeScript).
 - **glsl** `tree-sitter-grammars/tree-sitter-glsl` v0.2.0 (ABI 14, no
   scanner, 13-case corpus; upstream highlights vendored unmodified; tags
   ned-authored, C's declarator chain). Claims the shader-stage extensions;
   `.vs`/`.fs`/`.vsh` stay with F# and V.
 - **hlsl** `tree-sitter-grammars/tree-sitter-hlsl` v0.2.0 (ABI 14, 167-LOC
   scanner, 14-case corpus; **no queries upstream** -- the grammar is
-  tree-sitter-cpp plus HLSL, so `:queries-from "cpp"` reads cpp's whole set;
-  tags ned-authored).
+  tree-sitter-cpp plus HLSL, so `language.janet` names cpp's highlights,
+  locals and indents; tags ned-authored).
 - **cuda** `tree-sitter-grammars/tree-sitter-cuda` v0.21.2 (ABI 15, 167-LOC
   scanner, 184-case corpus; upstream highlights vendored unmodified, tags
   ned-authored). 13,077 parse states, 7MB, 35s to generate.

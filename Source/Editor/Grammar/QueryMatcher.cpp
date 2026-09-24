@@ -5,9 +5,12 @@
 #include "Editor/Parse/Node.h"
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -651,7 +654,8 @@ struct QueryMatcher::Impl {
                     predicate.operands[1].isCapture) {
                     continue; // a capture as the pattern is only known per match
                 }
-                predicate.regex        = CompilePredicateRegex(predicate.operands[1].text);
+                predicate.regex        = CompilePredicateRegex(predicate.operands[1].text,
+                                                               predicate.name.find("lua-match?") != std::string::npos);
                 predicate.regexInvalid = !predicate.regex.has_value();
             }
         }
@@ -1267,6 +1271,38 @@ struct QueryMatcher::Impl {
         return directives;
     }
 
+    // #offset! @capture startRow startColumn endRow endColumn: narrows or
+    // widens that capture's range in this match (an injection skipping a
+    // comment's "///"). Column deltas are bytes. A row delta would need line
+    // positions no capture carries, so a directive with one is left inert.
+    void ApplyOffsetDirectives(std::size_t patternIndex, QueryMatch& match) const {
+        for (const CompiledPredicate& predicate : patterns[patternIndex].predicates) {
+            if (predicate.name != "offset!" || predicate.operands.size() != 5 || !predicate.operands[0].isCapture) {
+                continue;
+            }
+            std::array<long long, 4> deltas{};
+            bool                     parsed = true;
+            for (std::size_t i = 0; i < deltas.size(); ++i) {
+                const std::string& text = predicate.operands[i + 1].text;
+                const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), deltas[i]);
+                parsed                  = parsed && error == std::errc{} && end == text.data() + text.size();
+            }
+            if (!parsed || deltas[0] != 0 || deltas[2] != 0) {
+                continue;
+            }
+            const std::string& name = captureNames[predicate.operands[0].captureId];
+            for (QueryMatchCapture& capture : match.captures) {
+                if (capture.name != name) {
+                    continue;
+                }
+                const long long start = std::max(0LL, static_cast<long long>(capture.startByte) + deltas[1]);
+                const long long end   = std::max(start, static_cast<long long>(capture.endByte) + deltas[3]);
+                capture.startByte     = static_cast<std::size_t>(start);
+                capture.endByte       = static_cast<std::size_t>(end);
+            }
+        }
+    }
+
     // ------------------------------------------------------------------
     // Public-shape runs.
     // ------------------------------------------------------------------
@@ -1440,6 +1476,7 @@ struct QueryMatcher::Impl {
                 });
             }
             match.setDirectives       = SetDirectives(patternIndex, bindings);
+            ApplyOffsetDirectives(patternIndex, match);
             match.ancestorCrossing    = patterns[patternIndex].readsOutsideSubtree;
             match.rootStartByte       = parse::NodeStartByte(patternRoot);
             match.rootEndByte         = parse::NodeEndByte(patternRoot);

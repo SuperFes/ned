@@ -383,13 +383,18 @@ TEST_CASE("query construct census: every bundled query file uses only the enumer
         "predicate :set! (string token)",             // x1 -- starlark's quoted "priority", currently unread
         "predicate :set! (token)",                    // x8 -- injection.include-children, currently unread
         "predicate :not-lua-match? (capture string)", // x1, asciidoc/upstream/highlights.janet -- the not- prefix negates lua-match?
-        // nvim-treesitter directives on injection captures, inert in ned: a
-        // :gsub! would rewrite the language name out of an attribute list
-        // (asciidoc "source,python"), an :offset! would trim the script
-        // delimiters (http); without them the injection simply does not
-        // resolve, or spans two more characters.
-        "predicate :gsub! (capture string string)",             // x3, asciidoc/upstream/injections.janet
-        "predicate :offset! (capture token token token token)", // x2, http/upstream/injections.janet
+        // nvim-treesitter directives on injection captures. :gsub! is inert
+        // in ned: it would rewrite the language name out of an attribute list
+        // (asciidoc "source,python"), so that injection does not resolve.
+        // :offset! is applied to the capture's range by Matches() (http's
+        // script delimiters, fsharp's "///").
+        "predicate :gsub! (capture string string)", // x3, asciidoc/upstream/injections.janet
+        // html_tags (html/upstream/html_tags/), inert: nvim's per-capture url
+        // metadata, and a <script type=...> whose language comes from a
+        // mimetype table ned doesn't have, so that injection never resolves.
+        "predicate :set! (capture token capture)",              // x1, html_tags/highlights.janet
+        "predicate :set-lang-from-mimetype! (capture)",         // x1, html_tags/injections.janet
+        "predicate :offset! (capture token token token token)", // x3, http + fsharp injections
         "predicate :is-not? (token)",                           // x2, nvim convention, inert
         // nvim-treesitter capture-text directives in upstream files; inert
         // in ned (they rewrite capture TEXT for nvim's own consumers).
@@ -653,6 +658,8 @@ TEST_CASE("query census: ancestor-crossing patterns are pinned per language/kind
         {"cpp/indents", 1},
         {"csharp/locals", 1},
         {"cuda/highlights", 7}, // cpp's, layered under cuda's own delta
+        {"hlsl/highlights", 7}, // cpp's, named in hlsl's language.janet
+        {"hlsl/indents", 1},
         {"java/locals", 1},
         {"julia/highlights", 1}, // upstream :has-ancestor? on a module-scoped name
         {"kotlin/locals", 1},
@@ -663,7 +670,7 @@ TEST_CASE("query census: ancestor-crossing patterns are pinned per language/kind
         {"yaml/indents", 2},
     };
     CHECK(counts == expected);
-    CHECK(total == 34);
+    CHECK(total == 42);
 }
 
 // Ned's own emission order, pinned. The matcher's capture stream reproduces
@@ -715,6 +722,28 @@ TEST_CASE("QueryMatcher supports '+' for foreign queries: one maximal run, no em
     REQUIRE(matches[0].captures.size() == 2);
     CHECK(matches[0].captures[0].startByte == 0);
     CHECK(matches[0].captures[1].startByte == 7);
+}
+
+TEST_CASE("QueryMatcher applies :offset! column deltas to the capture's range", "[QueryMatcher]") {
+    const auto language = LanguageByName("c");
+    REQUIRE(language);
+    const std::string source = "int a;\n";
+    const auto        tree   = ned::editor::grammar::Parser(*language).Parse(source);
+
+    const QueryMatcher            narrowed(*language, "((declaration) @d (#offset! @d 0 4 0 -1))\n");
+    const std::vector<QueryMatch> matches = narrowed.Matches(tree.RootNode(), source);
+    REQUIRE(matches.size() == 1);
+    CHECK(matches[0].captures[0].startByte == 4); // "a"
+    CHECK(matches[0].captures[0].endByte == 5);
+
+    // Past-crossing deltas collapse to empty rather than inverting.
+    const QueryMatcher crossed(*language, "((declaration) @d (#offset! @d 0 5 0 -5))\n");
+    const QueryMatch   collapsed = crossed.Matches(tree.RootNode(), source).at(0);
+    CHECK(collapsed.captures[0].startByte == collapsed.captures[0].endByte);
+
+    // A row delta is left inert.
+    const QueryMatcher rows(*language, "((declaration) @d (#offset! @d 1 0 0 0))\n");
+    CHECK(rows.Matches(tree.RootNode(), source).at(0).captures[0].startByte == 0);
 }
 
 // ---------------------------------------------------------------------------

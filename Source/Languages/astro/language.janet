@@ -4,4 +4,8 @@
  # comment, and `tomato` a colour rather than an identifier
  # (Editor/ColorLiteral.h).
  :color-literals [:short-hex :named]
+ # Upstream's injections inherit nvim's html_tags (plain <style> as css);
+ # listed after astro's own so its typescript <script> keeps priority.
+ :queries {:injections ["astro/upstream/injections.janet"
+                        "html/upstream/html_tags/injections.janet"]}
 }

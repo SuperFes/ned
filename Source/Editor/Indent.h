@@ -138,7 +138,10 @@ struct IndentCaptures {
     // the opener, which is what lets a body with content before its bracket
     // (`a[i]`, `Foo(x) => ...`) count for its continuation lines and not for
     // the line it opens on. The hand-written queries never captured those
-    // node types, and this is why.
+    // node types, and this is why. "indent.headed" is `@indent` whose
+    // interior begins on the line after the node's own first row -- a
+    // keyword-introduced body with no opener to sit after (OCaml's
+    // let_binding, match_case, application_expression).
     std::unordered_map<NodeKey, std::size_t, NodeKeyHash> indent;
     std::unordered_set<NodeKey, NodeKeyHash>              aligned;    // "aligned"
     std::unordered_set<NodeKey, NodeKeyHash>              body;       // "indent.body"
@@ -151,6 +154,10 @@ struct IndentCaptures {
     std::unordered_set<NodeKey, NodeKeyHash>              columnAnchored;
     std::unordered_set<NodeKey, NodeKeyHash>              suppressed; // "indent.suppress" -- only ever consulted by AddImprintCaptures
     std::vector<Dedent>                                   dedents;    // "dedent"
+    // Also set from a query: an "indent.end" token captured in the same match
+    // as an "indent"/"indent.headed" container caps it there (OCaml's
+    // `(try_expression "with" @indent.end) @indent.headed`).
+    //
     // for-loop-header-imprint follow-up: an OPTIONAL cap on a container's own
     // contribution, set only for a node whose grammar production trails its
     // own closer with a real, unrelated field (a for-loop's own `body`

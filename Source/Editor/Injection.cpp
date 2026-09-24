@@ -99,6 +99,17 @@ namespace {
             if (!language || !content) {
                 continue;
             }
+            // One range is injected once, by the first pattern that claims it,
+            // so the order of a language's :queries files is its priority:
+            // svelte lists html_tags first (its `<style>` is css, not the
+            // delta's catch-all javascript), astro last (its bare `<script>`
+            // is typescript, not html_tags' javascript).
+            const bool claimed = std::any_of(matches.begin(), matches.end(), [&](const RawInjectionMatch& earlier) {
+                return earlier.content.startByte == content->startByte && earlier.content.endByte == content->endByte;
+            });
+            if (claimed) {
+                continue;
+            }
             matches.push_back(RawInjectionMatch{.languageTag = std::string(*language), .content = *content});
         }
         return matches;

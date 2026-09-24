@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -26,6 +27,11 @@ namespace ned::editor {
 // dotted level from most to least specific. `language` is the language key
 // ("cpp"); empty for a caller that has none.
 [[nodiscard]] SyntaxClass SyntaxClassForCapture(std::string_view captureName, std::string_view language = {});
+
+// SyntaxClassForCapture without the Default fallback: nullopt when no level
+// of the name is mapped anywhere.
+[[nodiscard]] std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureName,
+                                                                     std::string_view language = {});
 
 // False for the capture names a query uses for its own bookkeeping rather
 // than to colour anything: "_"-prefixed predicate helpers, "spell"/

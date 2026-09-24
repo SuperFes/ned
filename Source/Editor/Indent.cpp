@@ -160,13 +160,20 @@ namespace {
     // just whichever one starts the target line -- the end-of-buffer rescue
     // in the walk needs to recognize "the last real byte before this new
     // blank line is itself a closing delimiter" in general.
-    IndentCaptures IndentCapturesFromMatches(const std::vector<grammar::QueryMatch>& matches) {
+    IndentCaptures IndentCapturesFromMatches(const std::vector<grammar::QueryMatch>& matches, std::string_view bufferText) {
         IndentCaptures captures;
         for (const grammar::QueryMatch& match : matches) {
             for (const grammar::QueryMatchCapture& capture : match.captures) {
                 const IndentCaptures::NodeKey key{capture.startByte, capture.endByte, capture.type};
                 if (capture.name == "indent") {
                     captures.indent.emplace(key, capture.startByte);
+                }
+                else if (capture.name == "indent.headed") {
+                    // The node's own first line is its header (OCaml's
+                    // "f a" before continuation arguments): the interior
+                    // starts on the next line.
+                    const std::size_t newline = bufferText.find('\n', capture.startByte);
+                    captures.indent.emplace(key, newline == std::string_view::npos ? bufferText.size() : newline + 1);
                 }
                 else if (capture.name == "aligned") {
                     captures.aligned.insert(key);
@@ -184,6 +191,19 @@ namespace {
                     captures.dedents.push_back(IndentCaptures::Dedent{capture.startByte, capture.endByte, capture.type});
                 }
             }
+            // `(try_expression "with" @indent.end) @indent.headed`: the
+            // container's interior stops where that token starts, so the
+            // token's line and everything after sit at the container's level.
+            const auto end = std::find_if(match.captures.begin(), match.captures.end(),
+                                          [](const grammar::QueryMatchCapture& capture) { return capture.name == "indent.end"; });
+            if (end != match.captures.end()) {
+                for (const grammar::QueryMatchCapture& capture : match.captures) {
+                    if (capture.name == "indent" || capture.name == "indent.headed") {
+                        captures.interiorEnd.emplace(IndentCaptures::NodeKey{capture.startByte, capture.endByte, capture.type},
+                                                     end->startByte);
+                    }
+                }
+            }
         }
         return captures;
     }
@@ -195,7 +215,7 @@ IndentCaptures IndentCapturesFromQuery(const grammar::Tree& tree, std::string_vi
     if (tree.IsNull()) {
         return {};
     }
-    return IndentCapturesFromMatches(indentQuery.Matches(tree.RootNode(), bufferText));
+    return IndentCapturesFromMatches(indentQuery.Matches(tree.RootNode(), bufferText), bufferText);
 }
 
 void AddImprintCaptures(IndentCaptures& captures, const grammar::Tree& tree, std::string_view languageKey,
@@ -488,6 +508,62 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
         result                           = walkStart.IsNull() ? std::optional<IndentComputation>(IndentComputation{IndentComputation::Kind::Level, 0})
                                                               : computeForWalkStart(walkStart, contentStart);
 
+        // A header whose body is still empty ("def f():", "proc f() =" and
+        // Enter): the parser recovers it with a zero-width body right after
+        // the header, so no blank line below can ever fall inside it. The
+        // line opens that body: one level past the header. Blank lines only
+        // -- real content the parse left outside the body stays outside it.
+        const auto openedEmptyBody = [&]() -> std::optional<IndentComputation> {
+            std::size_t   searchEnd = lineStart;
+            std::size_t   anchor    = 0;
+            grammar::Node header(parse::NodeNull());
+            do {
+                if (searchEnd == 0) {
+                    return std::nullopt;
+                }
+                anchor = bufferText.find_last_not_of(" \t\n\r", searchEnd - 1);
+                if (anchor == std::string_view::npos) {
+                    return std::nullopt;
+                }
+                header = resolveWalkStart(anchor);
+                if (header.IsNull()) {
+                    return std::nullopt;
+                }
+                searchEnd = header.StartByte(); // a trailing comment: look past it
+            }
+            while (header.IsExtra());
+
+            bool opens = false;
+            header.ForEachChild([&](const grammar::Node& child) {
+                opens = opens || (child.StartByte() == child.EndByte() && child.StartByte() > anchor &&
+                                  child.StartByte() <= lineStart && isIndentCaptured(child));
+            });
+            // Or the header is the whole container so far (OCaml's `let f x
+            // =`, an @indent.headed let_binding): it ends at the anchor, and
+            // its interior would begin at this line.
+            if (!opens) {
+                std::vector<grammar::Node> chain;
+                header.AncestorChain(chain);
+                chain.insert(chain.begin(), header);
+                opens = std::any_of(chain.begin(), chain.end(), [&](const grammar::Node& node) {
+                    return node.EndByte() == anchor + 1 && isIndentCaptured(node) && !interiorContains(node, anchor) &&
+                           interiorContains(node, lineStart);
+                });
+            }
+            if (!opens) {
+                return std::nullopt;
+            }
+            const IndentComputation own = computeForWalkStart(header, anchor);
+            return own.kind == IndentComputation::Kind::Level
+                       ? IndentComputation{IndentComputation::Kind::Level, own.value + 1}
+                       : IndentComputation{IndentComputation::Kind::Column, own.value + IndentColumnForLevel(1, style)};
+        };
+        const std::optional<IndentComputation> openedBody =
+            contentStart == lineEnd ? openedEmptyBody() : std::nullopt;
+        if (openedBody) {
+            result = openedBody;
+        }
+
         // smart-blank-line-on-newline follow-up: a freshly inserted,
         // not-yet-typed blank line (Mode.h's own "lineStart == lineEnd"
         // convention -- what "newline", Commands.cpp, passes for the line
@@ -510,7 +586,7 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
         // ahead never needs the rescue at all -- its primary resolution
         // already lands inside the block, since the block's own range
         // naturally spans the gap up to that later content.
-        if (lineStart == lineEnd && contentStart == bufferText.size() && contentStart > 0 &&
+        if (!openedBody && lineStart == lineEnd && contentStart == bufferText.size() && contentStart > 0 &&
             result->kind == IndentComputation::Kind::Level && result->value == 0) {
             // Skip back over ALL trailing whitespace (not just one byte) --
             // an earlier blank line or two between the new one and the last
@@ -642,7 +718,8 @@ IndentFunction BuildIndentFunction(std::shared_ptr<grammar::Parser> parser, std:
             IndentCaptures captures =
                 (indentQuery && !tree.IsNull())
                     ? IndentCapturesFromMatches(indentMatchCache->Reconcile(*indentQuery, tree, bufferText,
-                                                                            sharedParse->LastEdit()))
+                                                                            sharedParse->LastEdit()),
+                                                bufferText)
                     : IndentCaptures{};
             AddImprintCaptures(captures, tree, languageKey, bufferText);
             capturesCache->result    = std::move(captures);

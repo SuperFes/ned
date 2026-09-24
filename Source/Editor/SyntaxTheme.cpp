@@ -155,13 +155,24 @@ namespace {
         ++Generation();
     }
 
+    bool AnyField(const SyntaxStyleOverride& style) {
+        return style.foreground || style.background || style.bold || style.italic || style.underlined || style.strikethrough;
+    }
+
     template <typename T, typename Field>
     void SetCaptureField(const std::string& name, std::optional<T> value, Field SyntaxStyleOverride::* field) {
         ValidateCaptureName(name);
         const std::lock_guard<std::mutex> lock(OverridesMutex());
-        auto&                             entry = CaptureOverrides()[name];
-        entry.*field                            = std::move(value);
+        auto&                             entry    = CaptureOverrides()[name];
+        const bool                        hadStyle = AnyField(entry);
+        entry.*field                               = std::move(value);
         ++Generation();
+        // Whether a name is styled at all decides whether an otherwise
+        // unmapped capture gets a span (HasCaptureStyle), which is baked
+        // into cached highlights.
+        if (AnyField(entry) != hadStyle) {
+            ++ClassGeneration();
+        }
     }
 
 } // namespace
@@ -317,6 +328,10 @@ SyntaxStyleOverride ResolvedCaptureOverride(std::string_view name) {
         name = name.substr(0, dot);
     }
     return resolved;
+}
+
+bool HasCaptureStyle(std::string_view name) {
+    return AnyField(ResolvedCaptureOverride(name));
 }
 
 void SetSyntaxClassForCapture(const std::string& name, std::optional<SyntaxClass> cls) {

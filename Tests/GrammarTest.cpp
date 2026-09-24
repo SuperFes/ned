@@ -5,12 +5,13 @@
 #include <utility>
 #include <vector>
 
-#include "Editor/Parse/Node.h"
 #include "Editor/Grammar/IncrementalParse.h"
 #include "Editor/Grammar/Languages.h"
 #include "Editor/Grammar/Parser.h"
 #include "Editor/Grammar/QueryMatcher.h"
+#include "Editor/Grammar/QueryPredicates.h"
 #include "Editor/Grammar/Tree.h"
+#include "Editor/Parse/Node.h"
 
 using namespace ned::editor::grammar;
 
@@ -186,6 +187,23 @@ TEST_CASE("QueryMatcher::Captures translates Lua's %u pattern class for #lua-mat
 
     REQUIRE(captures.size() == 1);
     REQUIRE(text.substr(captures[0].startByte, captures[0].endByte - captures[0].startByte) == "Foo");
+}
+
+TEST_CASE("Lua pattern escapes translate to their ECMAScript meaning", "[Grammar]") {
+    using ned::editor::grammar::TranslateLuaPatternClasses;
+    CHECK(TranslateLuaPatternClasses("^%u") == "^[A-Z]");
+    CHECK(TranslateLuaPatternClasses("^%%%d*$") == "^\\%[0-9]*$"); // %% is one literal percent
+    CHECK(TranslateLuaPatternClasses("^%.%-%S*") == "^\\.\\-[^ \\t\\n\\r\\f\\v]*");
+    CHECK(TranslateLuaPatternClasses("%${", true) == "\\$\\{");     // lit-html's "${" interpolation
+    CHECK(TranslateLuaPatternClasses("[%w_]+") == "[A-Za-z0-9_]+"); // a class inside a set expands in place
+    CHECK(TranslateLuaPatternClasses("%x") == "%x");                // no ECMAScript spelling: left as written
+
+    // Each must also compile -- an uncompilable predicate is inert and matches everything.
+    CHECK(TranslateLuaPatternClasses("^[A-Z]{2}") == "^[A-Z]{2}"); // a #match? keeps its quantifiers
+    for (const char* lua : {"^%%%d*$", "^%.%-%S*", "%${", "%slang%s*="}) {
+        INFO(lua);
+        CHECK(ned::editor::grammar::CompilePredicateRegex(lua, true).has_value());
+    }
 }
 
 TEST_CASE("QueryMatcher::Captures evaluates #any-of? against a literal set", "[Grammar]") {

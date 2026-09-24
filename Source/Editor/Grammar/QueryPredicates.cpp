@@ -1,5 +1,8 @@
 #include "QueryPredicates.h"
 
+#include <cctype>
+#include <optional>
+#include <string>
 #include <utility>
 
 namespace ned::editor::grammar {
@@ -49,37 +52,77 @@ namespace {
 
 } // namespace
 
-std::string TranslateLuaPatternClasses(std::string pattern) {
-    static constexpr std::pair<std::string_view, std::string_view> kClasses[] = {
-        {"%u", "A-Z"},
-        {"%l", "a-z"},
-        {"%d", "0-9"},
-        {"%a", "A-Za-z"},
-        {"%s", " \\t\\n\\r\\f\\v"},
-        {"%w", "A-Za-z0-9"},
-        {"%p", "!-/:-@\\[-`{-~"},
+std::string TranslateLuaPatternClasses(std::string pattern, bool literalBraces) {
+    static constexpr std::pair<char, std::string_view> kClasses[] = {
+        {'u', "A-Z"},
+        {'l', "a-z"},
+        {'d', "0-9"},
+        {'a', "A-Za-z"},
+        {'s', " \\t\\n\\r\\f\\v"},
+        {'w', "A-Za-z0-9"},
+        {'p', "!-/:-@\\[-`{-~"},
     };
-    for (const auto& [luaClass, body] : kClasses) {
-        const std::string bracketed        = "[" + std::string(luaClass) + "]";
-        const std::string bracketedReplace = "[" + std::string(body) + "]";
-        for (std::size_t pos = 0; (pos = pattern.find(bracketed, pos)) != std::string::npos;) {
-            pattern.replace(pos, bracketed.size(), bracketedReplace);
-            pos += bracketedReplace.size();
+    const auto classBody = [](char letter) -> std::optional<std::string_view> {
+        for (const auto& [name, body] : kClasses) {
+            if (name == letter) {
+                return body;
+            }
         }
-        const std::string bareReplace = "[" + std::string(body) + "]";
-        for (std::size_t pos = 0; (pos = pattern.find(luaClass, pos)) != std::string::npos;) {
-            pattern.replace(pos, luaClass.size(), bareReplace);
-            pos += bareReplace.size();
+        return std::nullopt;
+    };
+
+    std::string out;
+    out.reserve(pattern.size());
+    bool inSet = false;
+    for (std::size_t i = 0; i < pattern.size(); ++i) {
+        const char c = pattern[i];
+        if (c == '[' && !inSet) {
+            inSet = true;
+        }
+        else if (c == ']' && inSet && !out.empty() && out.back() != '[') {
+            inSet = false;
+        }
+        if (literalBraces && !inSet && (c == '{' || c == '}')) {
+            out += '\\'; // Lua has no {n,m}; ECMAScript rejects a bare brace
+            out += c;
+            continue;
+        }
+        if (c != '%' || i + 1 == pattern.size()) {
+            out += c;
+            continue;
+        }
+        const char next  = pattern[++i];
+        const auto lower = static_cast<char>(std::tolower(static_cast<unsigned char>(next)));
+        if (const std::optional<std::string_view> body = classBody(lower)) {
+            // %S is the complement of %s; inside a set only the plain class
+            // has an ECMAScript spelling.
+            const bool negated = next != lower;
+            if (inSet && !negated) {
+                out += *body;
+            }
+            else {
+                out += negated ? "[^" : "[";
+                out += *body;
+                out += ']';
+            }
+        }
+        else if (std::isalnum(static_cast<unsigned char>(next)) != 0) {
+            out += '%'; // a Lua class ECMAScript has no spelling for (%c, %x, %g): left as written
+            out += next;
+        }
+        else {
+            out += '\\'; // %. %- %% %$: Lua's escape for a literal punctuation character
+            out += next;
         }
     }
-    return pattern;
+    return out;
 }
 
-std::optional<std::regex> CompilePredicateRegex(std::string_view pattern) {
+std::optional<std::regex> CompilePredicateRegex(std::string_view pattern, bool luaPattern) {
     // "(?i)" is Rust/Lua/PCRE inline-flag syntax, which ECMAScript has no
     // spelling for -- it is the flag, not a group, so it is lifted out of
     // the pattern rather than failing to compile.
-    std::string translated = TranslateLuaPatternClasses(std::string(pattern));
+    std::string translated = TranslateLuaPatternClasses(std::string(pattern), luaPattern);
     auto        flags      = std::regex::ECMAScript;
     for (std::size_t at = translated.find("(?i)"); at != std::string::npos; at = translated.find("(?i)", at)) {
         translated.erase(at, 4);
@@ -122,10 +165,11 @@ bool EvaluatePredicateCall(std::string_view name, std::span<const PredicateOpera
             // No precompiled pattern (a capture as the pattern operand, or a
             // caller that does not precompile): translate and compile here,
             // keyed by the pattern as written.
-            std::string key     = std::string(*operands[1].text);
+            const bool  lua     = baseName == "lua-match?";
+            std::string key     = (lua ? "lua:" : "re:") + std::string(*operands[1].text);
             auto        cacheIt = regexCache.find(key);
             if (cacheIt == regexCache.end()) {
-                std::optional<std::regex> built = CompilePredicateRegex(*operands[1].text);
+                std::optional<std::regex> built = CompilePredicateRegex(*operands[1].text, lua);
                 if (!built) {
                     return true;
                 }

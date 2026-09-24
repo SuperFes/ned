@@ -7,7 +7,7 @@
 ] @comment @spell
 
 ((line_comment) @comment.documentation @spell
- (:not-match? @comment.documentation "^///"))
+ (:match? @comment.documentation "^///"))
 
 (const
   [

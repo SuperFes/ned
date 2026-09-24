@@ -171,13 +171,20 @@ TEST_CASE("A malformed capture name throws; an unknown well-formed one doesn't",
     REQUIRE_NOTHROW(SetCaptureForeground("function.builtin.static", std::string("#333333")));
 }
 
-TEST_CASE("Capture setters bump SyntaxThemeGeneration, remaps bump CaptureClassGeneration", "[SyntaxTheme]") {
+TEST_CASE("Capture setters bump SyntaxThemeGeneration, remaps and styled-ness flips bump CaptureClassGeneration",
+          "[SyntaxTheme]") {
     CaptureThemeGuard guard;
 
-    const std::size_t styleBefore = SyntaxThemeGeneration();
-    const std::size_t classBefore = CaptureClassGeneration();
-
+    // Unstyled -> styled changes which spans exist (an unmapped name only
+    // gets one when styled), so cached highlights must rebuild.
+    std::size_t classBefore = CaptureClassGeneration();
     SetCaptureBold("function", true);
+    REQUIRE(CaptureClassGeneration() > classBefore);
+
+    // Restyling an already-styled name is only a brush change.
+    const std::size_t styleBefore = SyntaxThemeGeneration();
+    classBefore                   = CaptureClassGeneration();
+    SetCaptureItalic("function", true);
     REQUIRE(SyntaxThemeGeneration() > styleBefore);
     REQUIRE(CaptureClassGeneration() == classBefore);
 

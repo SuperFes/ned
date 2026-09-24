@@ -68,10 +68,12 @@ struct PredicateOperand {
     bool              regexInvalid = false;
 };
 
-// Lua's %-prefixed character classes translated to the nearest ECMAScript
-// bracket expression -- see Query.cpp's original comment for scope and the
-// deliberate non-translation of everything else.
-[[nodiscard]] std::string TranslateLuaPatternClasses(std::string pattern);
+// A Lua pattern's %-escapes translated to ECMAScript: the %-classes (and
+// their upper-case complements) to bracket expressions, %<punctuation> to
+// the escaped literal. Everything else is left as written. `literalBraces`
+// escapes `{`/`}`, which Lua reads literally -- only for a #lua-match?, since
+// bundled #match? patterns mix Lua classes with real {n} quantifiers.
+[[nodiscard]] std::string TranslateLuaPatternClasses(std::string pattern, bool literalBraces = false);
 
 // One #match?/#lua-match? pattern compiled the way EvaluatePredicateCall
 // compiles it -- Lua classes translated, inline "(?i)" lifted to the
@@ -79,7 +81,7 @@ struct PredicateOperand {
 // predicate treats as inert rather than as a failed match. Exposed so a
 // caller holding the pattern ahead of time (a compiled query) can do this
 // once per pattern instead of once per evaluation.
-[[nodiscard]] std::optional<std::regex> CompilePredicateRegex(std::string_view pattern);
+[[nodiscard]] std::optional<std::regex> CompilePredicateRegex(std::string_view pattern, bool luaPattern);
 
 // Evaluates one "#name? operand..." call. True when the predicate passes
 // AND when it isn't recognized (including #set! and nvim's capture-text
