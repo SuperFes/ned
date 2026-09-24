@@ -23,6 +23,8 @@ namespace {
             {"csharp",     {.useTabs = false, .width = 4}}, // Microsoft's own default .editorconfig/conventions
             {"ruby",       {.useTabs = false, .width = 2}}, // community Ruby Style Guide / RuboCop default
             {"r",          {.useTabs = false, .width = 2}}, // tidyverse style guide
+            {"gdscript",   {.useTabs = true,  .width = 4}}, // Godot's GDScript style guide: tabs, and the editor's own default
+            {"nim",        {.useTabs = false, .width = 2}}, // NEP-1; the compiler rejects tab indentation outright
             {"make",       {.useTabs = true,  .width = 4}}, // GNU Make REQUIRES a literal tab to introduce a recipe line -- a hard syntax rule, not a style preference (same shape as YAML's ban, inverted); width here is display-only
 
             // -- common ecosystem/style-guide convention, no single canonical formatter --

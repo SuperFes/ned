@@ -825,7 +825,33 @@ std::ptrdiff_t SetLineIndent(text::Buffer& buffer, std::size_t lineStart, int co
     return static_cast<std::ptrdiff_t>(desired.size()) - static_cast<std::ptrdiff_t>(oldLength);
 }
 
-std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t startLine, std::size_t endLineExclusive) {
+std::size_t CopyPreviousLineIndent(text::Buffer& buffer, std::size_t lineStart) {
+    const text::ITextStorage& content = buffer.Content();
+    std::string               indent;
+    for (std::size_t line = content.ByteOffsetToLine(lineStart); line-- > 0;) {
+        const std::size_t start     = content.LineToByteOffset(line);
+        const std::size_t end       = content.LineToByteOffset(line + 1) - 1; // excludes the '\n'
+        const std::size_t indentEnd = LineIndentEnd(content, start);
+        if (indentEnd < end) {
+            indent = content.Substring(start, indentEnd - start);
+            break;
+        }
+    }
+    const std::size_t oldLength = LineIndentEnd(content, lineStart) - lineStart;
+    if (indent.size() != oldLength || content.Substring(lineStart, oldLength) != indent) {
+        buffer.BeginUndoGroup();
+        buffer.DeleteRange(lineStart, oldLength);
+        buffer.InsertAt(lineStart, indent);
+        buffer.EndUndoGroup();
+    }
+    return lineStart + indent.size();
+}
+
+std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t startLine, std::size_t endLineExclusive,
+                         bool* refused) {
+    if (refused != nullptr) {
+        *refused = false;
+    }
     if (!mode.indentColumn) {
         return 0;
     }
@@ -903,6 +929,13 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
                                                initialContent.LineToByteOffset(windowStartLine)))
                                      : mode.unreliableIndentRanges(nonHugeText);
 
+    // An ordinary buffer's lines are all measured against nonHugeText, so the
+    // whole reindent is planned first and checked against Mode::sameStructure
+    // before any of it touches the buffer. A huge buffer is reindented in
+    // place, window by window, and goes unchecked: a whole-document parse is
+    // what its windowing exists to avoid.
+    std::vector<std::pair<std::size_t, int>> plan; // (lineStart, column), bottom-to-top
+
     buffer.BeginUndoGroup();
     std::size_t changed = 0;
     // Bottom-to-top: reindenting a line's own leading whitespace never
@@ -968,16 +1001,45 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
         if (LineIndentEnd(buffer.Content(), lineStart) >= lineEnd) {
             continue;
         }
-        if (SetLineIndent(buffer, lineStart, *column, style) != 0) {
+        if (!huge) {
+            plan.emplace_back(lineStart, *column);
+        }
+        else if (SetLineIndent(buffer, lineStart, *column, style) != 0) {
             ++changed;
+        }
+    }
+
+    if (!plan.empty()) {
+        std::string planned;
+        planned.reserve(nonHugeText.size());
+        std::size_t copied = 0;
+        for (auto it = plan.rbegin(); it != plan.rend(); ++it) {
+            const auto [lineStart, column] = *it;
+            const std::size_t indentEnd    = LineIndentEnd(buffer.Content(), lineStart);
+            planned.append(nonHugeText, copied, lineStart - copied);
+            planned += IndentString(column, style);
+            copied = indentEnd;
+        }
+        planned.append(nonHugeText, copied);
+
+        const bool refuse = planned != nonHugeText && mode.sameStructure && !mode.sameStructure(nonHugeText, planned);
+        if (refused != nullptr) {
+            *refused = refuse;
+        }
+        if (!refuse) {
+            for (const auto& [lineStart, column] : plan) {
+                if (SetLineIndent(buffer, lineStart, column, style) != 0) {
+                    ++changed;
+                }
+            }
         }
     }
     buffer.EndUndoGroup();
     return changed;
 }
 
-std::size_t IndentBuffer(text::Buffer& buffer, const Mode& mode) {
-    return IndentRegion(buffer, mode, 0, buffer.Content().LineCount());
+std::size_t IndentBuffer(text::Buffer& buffer, const Mode& mode, bool* refused) {
+    return IndentRegion(buffer, mode, 0, buffer.Content().LineCount(), refused);
 }
 
 std::size_t RigidShiftRegion(text::Buffer& buffer, const IndentStyle& style, std::size_t startLine,

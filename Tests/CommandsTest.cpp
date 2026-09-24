@@ -12,10 +12,12 @@
 #include "Editor/AutoPair.h"
 #include "Editor/Backup.h"
 #include "Editor/BlankLineCleanup.h"
+#include "Editor/BundledLanguages.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FormatOnSave.h"
 #include "Editor/IndentStyle.h"
+#include "Editor/LanguageDefinition.h"
 #include "Editor/LineEndingPolicy.h"
 #include "Editor/Mode.h"
 #include "Editor/Multibuffer.h"
@@ -3938,6 +3940,29 @@ TEST_CASE("newline stays a bare newline when indentColumn is unset", "[Commands]
     registry.Invoke("newline", context);
 
     REQUIRE(fixture.buffer.Text() == "int f(void) {\n");
+}
+
+TEST_CASE("newline carries the previous line's indentation forward when the mode has no opinion", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    const ned::editor::LanguageDefinition* haskell = ned::editor::BundledLanguage("haskell");
+    REQUIRE(haskell != nullptr);
+    REQUIRE(haskell->preserveIndent);
+    const Mode mode = ned::editor::ModeFromDefinition(*haskell);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode           = &mode;
+
+    // A tab stays a tab: its width is Haskell's to decide, not the style's.
+    fixture.buffer.InsertAtPoint("main = do\n\t  print 1\n\n");
+    registry.Invoke("newline", context);
+    REQUIRE(fixture.buffer.Text() == "main = do\n\t  print 1\n\n\n\t  ");
+    REQUIRE(fixture.buffer.Point() == fixture.buffer.Content().ByteLength());
+
+    fixture.buffer.Undo();
+    REQUIRE(fixture.buffer.Text() == "main = do\n\t  print 1\n\n");
 }
 
 TEST_CASE("newline clears a dangling blank line's whitespace but keeps the new line's own depth", "[Commands]") {

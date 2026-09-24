@@ -41,6 +41,9 @@ namespace {
         if (!definition.embeddedDocuments) {
             mode.embeddedRegions = EmbeddedRegionFunction();
         }
+        if (definition.preserveIndent && mode.indentColumn) {
+            mode.indentColumn = [](std::string_view, std::size_t, std::size_t) -> std::optional<int> { return std::nullopt; };
+        }
     }
 
     // The post-pass behind capture classifiers and :capture-spans, run over

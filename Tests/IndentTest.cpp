@@ -2,7 +2,9 @@
 
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Editor/HugeStructuralWindow.h"
@@ -1481,6 +1483,46 @@ TEST_CASE("IndentRegion/IndentBuffer reindent a deliberately misindented C file 
     REQUIRE(buffer.CanUndo());
     buffer.Undo();
     REQUIRE(buffer.Text() == "int f(void) {\nif (1) {\n           return 0;\n}\n}\n");
+}
+
+TEST_CASE("IndentBuffer refuses a reindent that would change how the code parses", "[Indent]") {
+    // A wrong indent rule that moves `b()` into the if-block: every token stays
+    // where it was, the result parses cleanly, and the program is different.
+    Mode mode         = PythonMode();
+    mode.indentColumn = [](std::string_view text, std::size_t lineStart, std::size_t lineEnd) -> std::optional<int> {
+        if (text.substr(lineStart, lineEnd - lineStart).find("b()") != std::string_view::npos) {
+            return 8;
+        }
+        return std::nullopt;
+    };
+    const std::string source = "def f():\n    if x:\n        a()\n    b()\n";
+
+    Buffer buffer("test.py");
+    buffer.InsertAtPoint(source);
+    bool refused = false;
+    REQUIRE(IndentBuffer(buffer, mode, &refused) == 0);
+    REQUIRE(refused);
+    REQUIRE(buffer.Text() == source);
+    buffer.Undo(); // the insertion, not an empty reindent step
+    REQUIRE(buffer.Text().empty());
+
+    // The same rule with the check removed does rewrite the program -- the
+    // refusal above is the check's doing, not the rule's.
+    mode.sameStructure = nullptr;
+    Buffer unchecked("test.py");
+    unchecked.InsertAtPoint(source);
+    REQUIRE(IndentBuffer(unchecked, mode, &refused) == 1);
+    REQUIRE_FALSE(refused);
+    REQUIRE(unchecked.Text() == "def f():\n    if x:\n        a()\n        b()\n");
+}
+
+TEST_CASE("IndentBuffer keeps a reindent that only moves whitespace", "[Indent]") {
+    const auto mode = CMode();
+    Buffer     buffer("test.c");
+    buffer.InsertAtPoint("int f(void) {\nreturn 0;\n}\n");
+    bool refused = true;
+    REQUIRE(IndentBuffer(buffer, mode, &refused) == 1);
+    REQUIRE_FALSE(refused);
 }
 
 TEST_CASE("IndentBuffer is a no-op for a mode with no indentColumn configured", "[Indent]") {

@@ -1,0 +1,25 @@
+module Sample
+
+type Shape =
+    | Circle of float
+    | Rect of float * float
+
+let classify n =
+    match compare n 0 with
+    | -1 -> "negative"
+    | 0 -> "zero"
+    | _ ->
+        if n > 100 then
+            "large"
+        else
+            "small"
+
+let total xs =
+    let step acc x =
+        acc + x
+    List.fold step 0 xs
+
+let area shape =
+    match shape with
+    | Circle r -> 3.14 * r * r
+    | Rect (w, h) -> w * h

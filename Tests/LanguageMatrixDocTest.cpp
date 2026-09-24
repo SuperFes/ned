@@ -78,7 +78,8 @@ struct Column {
 // clang-format off
 const std::vector<Column> kColumns = {
     {"hl",      "highlights query"},
-    {"ind",     "indents query (without one, indent comes from the grammar's delimited bodies alone)"},
+    {"ind",     "indents query (without one, indent comes from the grammar's delimited bodies alone); "
+                "`=` -- `:preserve-indent`, a reindent leaves every line as written"},
     {"loc",     "locals query -- scope-aware rename, local-variable highlighting"},
     {"tags",    "tags query -- symbol gutter, outline, breadcrumbs, class/file sync"},
     {"inj",     "injections query -- embedded languages"},
@@ -93,6 +94,7 @@ const std::vector<Column> kColumns = {
     {"res",     "import resolution config"},
 };
 // clang-format on
+constexpr std::size_t kIndentColumn = 1;
 
 std::string Render() {
     std::ostringstream out;
@@ -143,7 +145,8 @@ std::string Render() {
         };
         out << "| " << definition.name << " |";
         for (std::size_t i = 0; i < row.size(); ++i) {
-            out << " " << Mark(row[i]) << " |";
+            const bool preserved = i == kIndentColumn && definition.preserveIndent;
+            out << " " << (preserved ? "=" : Mark(row[i])) << " |";
             totals[i] += row[i] ? 1 : 0;
         }
         out << "\n";

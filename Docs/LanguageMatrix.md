@@ -13,7 +13,7 @@ bracket matching and sticky scroll are not listed: they come from the grammar it
 for every language. See `LanguageCoverage.md` for tiers and admission policy.
 
 - **hl** -- highlights query
-- **ind** -- indents query (without one, indent comes from the grammar's delimited bodies alone)
+- **ind** -- indents query (without one, indent comes from the grammar's delimited bodies alone); `=` -- `:preserve-indent`, a reindent leaves every line as written
 - **loc** -- locals query -- scope-aware rename, local-variable highlighting
 - **tags** -- tags query -- symbol gutter, outline, breadcrumbs, class/file sync
 - **inj** -- injections query -- embedded languages
@@ -58,14 +58,14 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | earthfile | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | editorconfig | ✓ | · | · | ✓ | · | · | · | · | · | · | · | ✓ | · | · |
 | elixir | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
-| elm | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
+| elm | ✓ | = | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
 | erlang | ✓ | · | · | ✓ | · | · | · | · | · | · | · | ✓ | ✓ | · |
 | fennel | ✓ | · | · | ✓ | · | · | · | · | · | · | · | ✓ | · | · |
 | fish | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | · | · | ✓ | · | · |
 | fortran | ✓ | · | ✓ | ✓ | · | · | · | · | · | · | · | ✓ | ✓ | · |
-| fsharp | ✓ | · | ✓ | · | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
+| fsharp | ✓ | = | ✓ | · | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
 | fundamental | · | · | · | · | · | · | · | · | · | · | · | · | · | · |
-| gdscript | ✓ | · | · | ✓ | · | · | · | · | · | · | · | ✓ | ✓ | · |
+| gdscript | ✓ | ✓ | · | ✓ | · | · | · | · | · | · | · | ✓ | ✓ | · |
 | gitattributes | ✓ | · | · | · | · | · | · | · | · | · | · | ✓ | · | · |
 | gitcommit | ✓ | · | · | · | · | · | · | · | · | · | · | ✓ | · | · |
 | gitconfig | ✓ | · | · | ✓ | · | · | · | · | · | · | · | ✓ | · | · |
@@ -75,7 +75,7 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | glsl | ✓ | · | · | ✓ | · | · | · | · | · | · | · | ✓ | · | · |
 | go | ✓ | ✓ | ✓ | ✓ | · | · | ✓ | · | ✓ | · | · | ✓ | ✓ | · |
 | groovy | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
-| haskell | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
+| haskell | ✓ | = | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
 | hcl | ✓ | · | · | · | · | · | · | · | · | · | · | ✓ | · | · |
 | hlsl | · | · | · | ✓ | · | · | · | · | · | · | · | ✓ | · | · |
 | html | ✓ | ✓ | · | · | ✓ | · | · | · | · | · | · | · | · | · |
@@ -100,12 +100,12 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | matlab | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | meson | ✓ | · | · | · | · | · | · | · | · | · | · | ✓ | · | · |
 | nginx | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | · | ✓ | · | · |
-| nim | ✓ | · | · | ✓ | · | · | · | · | · | · | · | ✓ | ✓ | · |
+| nim | ✓ | ✓ | · | ✓ | · | · | · | · | · | · | · | ✓ | ✓ | · |
 | nix | ✓ | · | · | ✓ | · | · | · | · | · | · | · | ✓ | · | · |
 | nu | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | objc | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | · | · |
-| ocaml | ✓ | · | ✓ | ✓ | · | · | · | · | · | · | · | ✓ | ✓ | · |
-| ocaml-interface | ✓ | · | ✓ | ✓ | · | · | · | · | · | · | · | ✓ | ✓ | · |
+| ocaml | ✓ | = | ✓ | ✓ | · | · | · | · | · | · | · | ✓ | ✓ | · |
+| ocaml-interface | ✓ | = | ✓ | ✓ | · | · | · | · | · | · | · | ✓ | ✓ | · |
 | odin | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
 | org | ✓ | · | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | pascal | ✓ | · | ✓ | ✓ | · | · | · | · | · | · | · | ✓ | · | · |
@@ -117,7 +117,7 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | properties | ✓ | · | · | ✓ | · | · | · | · | · | · | · | ✓ | · | · |
 | proto | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | psv | ✓ | · | · | · | · | · | · | · | · | · | · | · | · | · |
-| purescript | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
+| purescript | ✓ | = | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
 | python | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | · | ✓ | · | · | ✓ | ✓ | ✓ |
 | r | ✓ | · | · | ✓ | · | · | · | · | · | · | · | ✓ | · | · |
 | racket | ✓ | · | ✓ | ✓ | · | · | · | · | · | · | · | ✓ | · | · |
@@ -153,4 +153,4 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | wgsl | ✓ | · | · | · | · | · | · | · | · | · | · | ✓ | · | · |
 | xml | ✓ | ✓ | · | · | · | · | · | · | · | · | · | · | · | · |
 | yaml | ✓ | ✓ | · | · | · | · | · | · | · | · | · | ✓ | · | · |
-| **124 languages** | 122 | 22 | 48 | 79 | 44 | 13 | 11 | 1 | 19 | 1 | 1 | 108 | 40 | 11 |
+| **124 languages** | 122 | 24 | 48 | 79 | 44 | 13 | 11 | 1 | 19 | 1 | 1 | 108 | 40 | 11 |

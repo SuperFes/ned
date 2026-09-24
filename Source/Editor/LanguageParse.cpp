@@ -161,6 +161,9 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
         else if (key == "imprint") {
             definition.imprint = ExpectBool(directoryName, value, ":imprint");
         }
+        else if (key == "preserve-indent") {
+            definition.preserveIndent = ExpectBool(directoryName, value, ":preserve-indent");
+        }
         else if (key == "embedded-documents") {
             definition.embeddedDocuments = ExpectBool(directoryName, value, ":embedded-documents");
         }

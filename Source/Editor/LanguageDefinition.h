@@ -93,6 +93,11 @@ struct LanguageDefinition {
     // for a language whose bracket-looking syntax isn't -- Org and Markdown
     // links are `[[...]]`, and their structure is headline/section depth.
     bool imprint = true;
+    // Indentation is syntax and no indent source can recompute it (Haskell's
+    // layout columns, F#'s offside rule): the mode's indent function has no
+    // opinion on any line, so a reindent leaves every line as written and
+    // newline carries the previous line's indentation forward.
+    bool preserveIndent = false;
     // File-name matching: extensions carry their leading dot (".cpp"), the
     // form std::filesystem::path::extension() hands back; filenames match
     // the whole basename and are checked first (Emacs' auto-mode-alist).

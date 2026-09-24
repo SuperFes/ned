@@ -1095,6 +1095,27 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
         return {{ranges.front().first, bufferText.size()}};
     };
 
+    // `before` is the text the rest of the mode already parsed, so it rides
+    // sharedParse; `after` is a candidate nobody else will ask about and gets
+    // a plain parse, leaving the shared cache on the buffer's real text.
+    SameStructureFunction sameStructure = [parser, sharedParse](std::string_view before, std::string_view after) {
+        const auto shape = [](const grammar::Tree& tree) {
+            std::vector<std::pair<std::size_t, std::string_view>> nodes;
+            if (!tree.IsNull()) {
+                tree.RootNode().WalkSubtree(
+                    [&](const grammar::Node& node, std::size_t depth) {
+                        if (node.IsNamed()) {
+                            nodes.emplace_back(depth, node.Type());
+                        }
+                    },
+                    [](const grammar::Node&, std::size_t) {});
+            }
+            return nodes;
+        };
+        const auto beforeShape = shape(sharedParse->Update(*parser, before));
+        return beforeShape == shape(parser->Parse(after));
+    };
+
     // gutter-symbol-kind follow-up: a query against the same parser -- shares
     // sharedParse's cached Tree with highlight/fold above. Only built when a
     // tags query source was actually given; otherwise mode.symbolKind stays
@@ -2052,6 +2073,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 .embeddedRegions        = std::move(embeddedRegions),
                 .indentColumn           = std::move(indentColumn),
                 .unreliableIndentRanges = std::move(unreliableIndentRanges),
+                .sameStructure          = std::move(sameStructure),
                 .lineInspect            = std::move(lineInspect),
                 .localScopes            = std::move(localScopes),
                 .matchingDelimiters     = std::move(matchingDelimiters),

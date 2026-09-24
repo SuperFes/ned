@@ -364,6 +364,13 @@ RangeContainingLine(const std::vector<std::pair<std::size_t, std::size_t>>& rang
 // a caller adjusting subsequent cached byte offsets after this edit needs.
 std::ptrdiff_t SetLineIndent(text::Buffer& buffer, std::size_t lineStart, int column, const IndentStyle& style);
 
+// Gives the line at `lineStart` the leading whitespace of the nearest
+// non-blank line above it, byte for byte -- tabs stay tabs, since in an
+// offside language a tab's width is the language's to decide, not ours. What
+// newline does when the mode has no opinion about the new line. Returns the
+// byte offset just past the line's new indentation.
+std::size_t CopyPreviousLineIndent(text::Buffer& buffer, std::size_t lineStart);
+
 // -- Batch reindent (the linter/format-on-save-reuse requirement -- see this
 // file's own header comment). Walks [startLine, endLineExclusive)
 // BOTTOM-TO-TOP, deliberately: editing a later line's own leading whitespace
@@ -394,10 +401,18 @@ std::ptrdiff_t SetLineIndent(text::Buffer& buffer, std::size_t lineStart, int co
 // the same buffer.Text()-is-unsafe-on-huge-files problem elsewhere. Bounded
 // by window size, not document size, either way -- an ordinary buffer is
 // completely unaffected, the window always spans the whole document there.
-std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t startLine, std::size_t endLineExclusive);
+//
+// Safety: for an ordinary buffer the reindent is computed in full first and
+// kept only if Mode::sameStructure says the result parses to the same
+// structure as the original. Otherwise nothing changes, 0 is returned and
+// `*refused` (when given) is set -- a reindent that would change what the
+// program means is a bug in an indent rule, never something to apply. Huge
+// buffers are reindented window by window and are not checked.
+std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t startLine, std::size_t endLineExclusive,
+                         bool* refused = nullptr);
 
-// IndentRegion(buffer, mode, 0, buffer.Content().LineCount()).
-std::size_t IndentBuffer(text::Buffer& buffer, const Mode& mode);
+// IndentRegion(buffer, mode, 0, buffer.Content().LineCount(), refused).
+std::size_t IndentBuffer(text::Buffer& buffer, const Mode& mode, bool* refused = nullptr);
 
 // mode-agnostic-rigid-indent follow-up: a deliberately SIMPLER sibling to
 // IndentRegion above -- shifts every line in [startLine, endLineExclusive)

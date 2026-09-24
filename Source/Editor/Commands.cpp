@@ -62,6 +62,13 @@ namespace ned::editor {
 
 namespace {
 
+    std::string ReindentReport(std::size_t changed, bool refused) {
+        if (refused) {
+            return "Reindent would change how this code parses; left as it was.";
+        }
+        return std::to_string(changed) + " line(s) reindented.";
+    }
+
     std::size_t LineContentEnd(const text::ITextStorage& content, std::size_t point) {
         const std::size_t line = content.ByteOffsetToLine(point);
         return (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
@@ -1642,6 +1649,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                     const IndentStyle style = EffectiveIndentStyle(context.mode->name);
                     SetLineIndent(buffer, lineStart, *column, style);
                     buffer.SetPoint(lineStart + IndentString(*column, style).size());
+                }
+                else {
+                    buffer.SetPoint(CopyPreviousLineIndent(buffer, lineStart));
                 }
             }
             buffer.EndUndoGroup();
@@ -4282,9 +4292,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           const std::size_t startLine = content.ByteOffsetToLine(start);
                           const std::size_t endLine   = content.ByteOffsetToLine(end) + 1; // exclusive
                           context.buffer.ClearMark();
-                          const std::size_t changed = IndentRegion(context.buffer, *context.mode, startLine, endLine);
+                          bool              refused = false;
+                          const std::size_t changed = IndentRegion(context.buffer, *context.mode, startLine, endLine, &refused);
                           if (context.message) {
-                              *context.message = std::to_string(changed) + " line(s) reindented.";
+                              *context.message = ReindentReport(changed, refused);
                           }
                       });
 
@@ -4295,9 +4306,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             }
             return;
         }
-        const std::size_t changed = IndentBuffer(context.buffer, *context.mode);
+        bool              refused = false;
+        const std::size_t changed = IndentBuffer(context.buffer, *context.mode, &refused);
         if (context.message) {
-            *context.message = std::to_string(changed) + " line(s) reindented.";
+            *context.message = ReindentReport(changed, refused);
         }
     });
 

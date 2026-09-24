@@ -2,6 +2,7 @@
 # separate fsharp_signature grammar is not bundled.
 {:name "fsharp"
  :extensions [".fs" ".fsx" ".fsi"]
+ :preserve-indent true
  :line-comment "//"
  :lsp-root-markers [".fsproj" "paket.dependencies"]
 }

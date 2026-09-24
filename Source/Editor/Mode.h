@@ -778,6 +778,14 @@ using IndentFunction = std::function<std::optional<int>(std::string_view bufferT
 // has to answer.
 using UnreliableIndentFunction = std::function<std::vector<std::pair<std::size_t, std::size_t>>(std::string_view bufferText)>;
 
+// Whether `after` parses to the same structure as `before`: the same named
+// nodes, at the same depths, in the same order. Depth is part of it because
+// moving a statement out of a block keeps every kind in order and changes
+// what the program does. A batch reindent refuses any result that fails this
+// -- in a language whose indentation is syntax, whitespace alone can change
+// the program, and no indent rule is trusted to know that it hasn't.
+using SameStructureFunction = std::function<bool(std::string_view before, std::string_view after)>;
+
 // Debugging wishlist (line-inspect follow-up): same 3-arg per-line shape as
 // IndentFunction above, returning byte ranges of candidate sub-expressions
 // on [lineStart, lineEnd) worth evaluating in a stopped debug session
@@ -899,6 +907,8 @@ struct Mode {
     // Empty function = this mode has no parse to be wrong about, so a batch
     // reindent skips nothing.
     UnreliableIndentFunction unreliableIndentRanges;
+    // Empty function = no parse to compare, so a batch reindent is kept as is.
+    SameStructureFunction sameStructure;
     // Debugging wishlist (line-inspect follow-up): empty function (the
     // default) means dap-line-inspect reports there's no expression
     // extraction configured for this mode, same "empty means not

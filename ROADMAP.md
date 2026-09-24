@@ -111,15 +111,21 @@ What each package ships is tracked in the generated `Docs/LanguageMatrix.md`; th
 below are the behavioural gaps behind its empty cells, verified with `ned --format` probes
 and code reading. Highest stakes first.
 
-- [ ] **Reindent flattens offside-rule languages.** Elm, F#, GDScript, Haskell, Nim and
-      PureScript lose their significant indentation (`f x =\n  case x of` becomes flush
-      left), which changes or breaks the program; OCaml is flattened too (cosmetic).
-      Python, Starlark and YAML are fine. Reached by `format-buffer`, `ned --format`, and
-      -- the dangerous one -- the scoped Indent step of `ned/set-auto-format-on-save`
-      (`ScopedFormat.h`), which reindents every touched line on save. Fix direction: a
-      language-definition flag for offside languages that makes the Indent pass keep
-      existing indentation unless an indents query claims the line; check TAB/Enter
-      electric indent for the same languages while there.
+- [ ] **The parse-structure check covers the Indent pass only.** A batch reindent is now
+      refused when its result parses differently (`Mode::sameStructure`, `IndentRegion`),
+      but the capture-driven passes that run after it in `format-buffer`, `ned --format`
+      and scoped on-save (brace placement, break, wrap, spacing) are applied unchecked --
+      the comment-join item below is exactly that failure. Checking the whole native
+      format once, before it is kept, would cover every pass; huge files stay unchecked
+      either way (their reindent is windowed precisely to avoid a whole-document parse).
+- [ ] **Enter after an unfinished block header doesn't open a level** in indentation
+      languages: `def f():`, `func f():`, `proc f() =` followed by Enter lands at the
+      header's own column, because until the body exists there is no body node to indent
+      from. Python, GDScript and Nim alike.
+- [ ] **OCaml is `:preserve-indent` only because nothing indents it well** (the generic
+      walk flattened match arms and `let ... in` bodies). An indents query would let it
+      reindent again; the Haskell family (Haskell, Elm, F#, PureScript) is preserved by
+      nature and should stay that way.
 - [ ] **A same-line brace join can comment out the brace in every brace language except
       PHP.** `:placement :same-line` turns `if (x) // note` + `{` into `if (x) // note {`
       (verified in C++). The guard exists (`FormatBracePlacement.cpp`'s `InsideComment`)

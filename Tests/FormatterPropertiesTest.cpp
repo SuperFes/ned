@@ -7,14 +7,17 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
-#include "Editor/Indent.h"
-#include "Editor/Mode.h"
+#include "Editor/BundledLanguages.h"
 #include "Editor/Grammar/Languages.h"
 #include "Editor/Grammar/Node.h"
 #include "Editor/Grammar/Parser.h"
 #include "Editor/Grammar/Tree.h"
+#include "Editor/Indent.h"
+#include "Editor/LanguageDefinition.h"
+#include "Editor/Mode.h"
 #include "Text/Buffer.h"
 
 // The two properties every formatting rule has to hold, applied to the one
@@ -120,6 +123,47 @@ std::vector<Case> Corpus() {
     return cases;
 }
 
+ned::editor::Mode BundledMode(std::string_view language) {
+    const ned::editor::LanguageDefinition* definition = ned::editor::BundledLanguage(language);
+    REQUIRE(definition != nullptr);
+    return ned::editor::ModeFromDefinition(*definition);
+}
+
+// Languages whose indentation is part of the syntax. Kept out of the oracle
+// corpus (whose every file carries a golden snapshot) and in their own
+// directory, since what matters here is only what a reindent does to them.
+std::vector<Case> OffsideCorpus() {
+    std::vector<Case> cases;
+    for (const auto& [file, language] : std::vector<std::pair<std::string, std::string>>{
+             {"sample.hs", "haskell"},
+             {"sample.elm", "elm"},
+             {"sample.fs", "fsharp"},
+             {"sample.purs", "purescript"},
+             {"sample.gd", "gdscript"},
+             {"sample.nim", "nim"},
+             {"sample.ml", "ocaml"},
+         })
+        cases.push_back({file, language, BundledMode(language)});
+    return cases;
+}
+
+std::string ReadOffside(const std::string& file) {
+    return ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "offside" / file);
+}
+
+void RequireSameStructure(const std::string& language, const std::string& original, const std::string& formatted) {
+    const auto grammar = ned::editor::grammar::LanguageByName(language);
+    REQUIRE(grammar.has_value());
+    const auto before = NodeKinds(*grammar, original);
+    const auto after  = NodeKinds(*grammar, formatted);
+    INFO(before.size() << " named nodes before, " << after.size() << " after");
+    REQUIRE(before.size() == after.size());
+    for (std::size_t i = 0; i < before.size(); ++i) {
+        INFO("node " << i << ": was \"" << before[i] << "\", now \"" << after[i] << "\"");
+        REQUIRE(before[i] == after[i]);
+    }
+}
+
 } // namespace
 
 TEST_CASE("Indenting is idempotent across the corpus", "[FormatterProperties]") {
@@ -214,4 +258,68 @@ TEST_CASE("The safety property can actually fail", "[FormatterProperties]") {
     const auto tight = NodeKinds(*c, "int f(void) {\nreturn 1;\n}\n");
     const auto loose = NodeKinds(*c, "int f(void) {\n        return 1;\n}\n");
     CHECK(tight == loose);
+}
+
+TEST_CASE("Offside samples parse cleanly", "[FormatterProperties]") {
+    // A sample with a parse error would be skipped by the batch reindent
+    // (Mode::unreliableIndentRanges), and every property below would then
+    // hold without testing anything.
+    for (const Case& testCase : OffsideCorpus()) {
+        INFO("sample: " << testCase.file);
+        REQUIRE(testCase.mode.unreliableIndentRanges);
+        CHECK(testCase.mode.unreliableIndentRanges(ReadOffside(testCase.file)).empty());
+    }
+}
+
+TEST_CASE("Indenting never changes the parse structure of an offside language", "[FormatterProperties]") {
+    for (const Case& testCase : OffsideCorpus()) {
+        INFO("sample: " << testCase.file);
+        const std::string original  = ReadOffside(testCase.file);
+        const std::string formatted = IndentAll(original, testCase.mode);
+        RequireSameStructure(testCase.language, original, formatted);
+        CHECK(IndentAll(formatted, testCase.mode) == formatted);
+    }
+}
+
+TEST_CASE("An offside sample in its house style reindents to itself", "[FormatterProperties]") {
+    // For a `:preserve-indent` language this holds because no line is touched;
+    // for the others (GDScript, Nim) because the indents query agrees with the
+    // style guide the sample is written in.
+    for (const Case& testCase : OffsideCorpus()) {
+        INFO("sample: " << testCase.file);
+        const std::string original = ReadOffside(testCase.file);
+        CHECK(IndentAll(original, testCase.mode) == original);
+    }
+}
+
+TEST_CASE("Reindent brings a re-widened GDScript or Nim file back to house style", "[FormatterProperties]") {
+    // Widening every indent keeps the program the same (and parseable), so
+    // this is what reindent recomputing -- not merely preserving -- looks like.
+    // Flattening would not do: it changes the program.
+    const auto widen = [](const std::string& text, const std::string& unit, int factor) {
+        std::string out;
+        bool        atLineStart = true;
+        for (const char c : text) {
+            if (atLineStart && std::string(1, c) == unit) {
+                for (int i = 0; i < factor; ++i)
+                    out += unit;
+                continue;
+            }
+            atLineStart = c == '\n';
+            out += c;
+        }
+        return out;
+    };
+    for (const auto& [file, language, unit] : std::vector<std::tuple<std::string, std::string, std::string>>{
+             {"sample.gd", "gdscript", "\t"},
+             {"sample.nim", "nim", " "},
+         }) {
+        INFO("sample: " << file);
+        const ned::editor::Mode mode     = BundledMode(language);
+        const std::string       original = ReadOffside(file);
+        const std::string       wide     = widen(original, unit, 3);
+        REQUIRE(wide != original);
+        RequireSameStructure(language, original, wide);
+        CHECK(IndentAll(wide, mode) == original);
+    }
 }
