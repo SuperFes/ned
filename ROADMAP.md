@@ -120,10 +120,6 @@ and code reading. Highest stakes first.
 - [ ] **A few upstream capture names still paint nothing**: `@symbol` (CUE), the
       `@text.note`/`@text.warning`/`@text.danger` comment-keyword family (make) and
       `@text` (D, Perl). `@error`/`@warning` stay unmapped on purpose, as in Neovim.
-- [ ] **Reindent still does little for Erlang, Elixir and LaTeX.** Erlang indents `case`
-      arms but not function bodies, Elixir `do`/`end` is untouched, LaTeX environments
-      stay flush. (Scala, Pascal, HCL, CMake, Perl and R now round-trip their samples in
-      `Tests/Format/reindent/`.)
 - [ ] **A `.v` file opens in verilog-mode.** V and Verilog both claim `.v`; V's own
       package only applies when chosen by hand. Needs a content sniff (`module`/
       `endmodule` vs `fn`/`struct`/`import`), like Objective-C's `.h`.

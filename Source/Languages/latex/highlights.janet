@@ -71,3 +71,8 @@
 
 (operator) @operator
 (delimiter) @punctuation.delimiter
+
+# The literal body of verbatim-like environments; String-classed, which is
+# also what keeps a reindent from touching their lines.
+(verbatim_environment verbatim: (comment) @markup.raw)
+(source_code) @markup.raw

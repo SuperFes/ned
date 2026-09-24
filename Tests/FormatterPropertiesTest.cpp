@@ -5,6 +5,7 @@
 #include <fstream>
 #include <functional>
 #include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <tuple>
@@ -335,6 +336,8 @@ TEST_CASE("A flattened sample reindents back to its house style", "[FormatterPro
              {"sample.R", "r"},
              {"sample.ml", "ocaml"},
              {"sample.mli", "ocaml-interface"},
+             {"sample.ex", "elixir"},
+             {"sample.erl", "erlang"},
          }) {
         INFO("sample: " << file);
         const std::string original = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "reindent" / file);
@@ -370,4 +373,24 @@ TEST_CASE("A re-widened Scala sample reindents back to its house style", "[Forma
         RequireSameStructure("scala", original, wide);
         CHECK(IndentAll(wide, BundledMode("scala")) == original);
     }
+}
+
+TEST_CASE("A flattened LaTeX sample reindents back, verbatim and math bodies untouched", "[FormatterProperties]") {
+    // Verbatim content is literal text and a math body is its author's own
+    // alignment: both are String-highlighted, which reindent leaves as written.
+    const std::string           original = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "reindent" / "sample.tex");
+    const std::set<std::string> literal  = {"  keep   this", "exactly", "    E = mc^2"};
+    std::string                 flat;
+    std::size_t                 at = 0;
+    while (at < original.size()) {
+        const std::size_t end  = std::min(original.find('\n', at), original.size());
+        const std::string line = original.substr(at, end - at);
+        flat += literal.contains(line) ? line : line.substr(std::min(line.find_first_not_of(" \t"), line.size()));
+        if (end < original.size()) {
+            flat += '\n';
+        }
+        at = end + 1;
+    }
+    REQUIRE(flat != original);
+    CHECK(IndentAll(flat, BundledMode("latex")) == original);
 }

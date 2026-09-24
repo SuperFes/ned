@@ -195,6 +195,20 @@ namespace {
         }
 
         for (const Rule& raw : inner.children) {
+            // A bare SEQ that opens or closes a SEQ carries that delimiter
+            // (Elixir's do_block is SEQ[SEQ["do", ...], REPEAT(...), "end"]).
+            // Only at the ends: one in the middle is the body, whose shape
+            // decides listLikeInterior.
+            if (raw.kind == Kind::Seq && (&raw == &inner.children.front() || &raw == &inner.children.back())) {
+                std::vector<const Rule*> nested;
+                bool                     nestedIndirect = false;
+                if (FlattenSeq(raw, rules, nested, depth, seen, &nestedIndirect)) {
+                    out.insert(out.end(), nested.begin(), nested.end());
+                    if (indirect != nullptr)
+                        *indirect = nestedIndirect;
+                    continue;
+                }
+            }
             const Rule& member = Unwrap(raw);
             if (depth < 4 && member.kind == Kind::Symbol) {
                 const std::string& symbol = member.text;
