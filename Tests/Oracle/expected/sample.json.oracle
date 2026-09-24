@@ -1,5 +1,5 @@
 # sample.json  (json-mode)
-# 23 facts
+# 29 facts
 fold 0..109  "{\n  \"name\": \"ned\",\n  \"versio …  [1, 2, 3]\n}"
 highlight 4..10  [string]  "\"name\""
 highlight 12..17  [string]  "\"ned\""
@@ -23,3 +23,9 @@ indent 43..87  [2]  "  \"nested\": { \"flag\": true, \"empty\": null },"
 indent 88..107  [2]  "  \"list\": [1, 2, 3]"
 indent 108..109  [0]  "}"
 indent 110..110  [0]
+symbol 4..17  [Data name]  "\"name\": \"ned\""
+symbol 21..41  [Data version]  "\"version\": [0, 5, 0]"
+symbol 45..86  [Namespace nested]  "\"nested\": { \"flag\": true, \"empty\": null }"
+symbol 57..69  [Data flag]  "\"flag\": true"
+symbol 71..84  [Data empty]  "\"empty\": null"
+symbol 90..107  [Data list]  "\"list\": [1, 2, 3]"

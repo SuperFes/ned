@@ -1631,7 +1631,8 @@ TEST_CASE("BufferView renders JsonMode's tree-sitter highlighting for strings, n
 
     view.Paint(canvas);
 
-    const int gutter = GutterWidth(1, /*foldColumn=*/4);                                                                // JsonMode has a fold query -- generic-code-folding follow-up
+    // JsonMode has a fold query, and its keys are symbols.
+    const int gutter = GutterWidth(1, /*foldColumn=*/4, /*symbolColumn=*/1);
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 2, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::String))); // 'a'
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 6, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::Number))); // '1'
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 15, 0),
@@ -1687,7 +1688,7 @@ TEST_CASE("A textDocument/semanticTokens/full response overrides tree-sitter's o
 
     view.Paint(canvas); // re-paint to pick up the bumped SemanticTokensGeneration
 
-    const int gutter = LspGutterWidth(1, /*foldColumn=*/4);
+    const int gutter = LspGutterWidth(1, /*foldColumn=*/4, /*symbolColumn=*/1);
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 6, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::Keyword))); // '1', now Keyword
     REQUIRE(CellMatchesBrush(screen.PixelAt(gutter + 2, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::String)));  // 'a', untouched
 

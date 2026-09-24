@@ -103,6 +103,10 @@ struct LanguageDefinition {
     // rather than Neovim's later-pattern-wins: of two equally specific
     // captures of one range, the earlier pattern's is kept.
     bool firstPatternWins = false;
+    // Sticky scroll follows every fold block instead of the tags query's
+    // definitions -- YAML's outline lists two levels of keys, its
+    // breadcrumbs should follow the nesting all the way down.
+    bool stickyScrollFromFolds = false;
     // File-name matching: extensions carry their leading dot (".cpp"), the
     // form std::filesystem::path::extension() hands back; filenames match
     // the whole basename and are checked first (Emacs' auto-mode-alist).

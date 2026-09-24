@@ -976,8 +976,8 @@ TEST_CASE("SyntaxClassFor borrows each SymbolKind's color from the matching synt
     REQUIRE(SyntaxClassFor(SymbolKind::Data) == SyntaxClass::Constant);
 }
 
-TEST_CASE("A language with no bundled tags.scm (e.g. YamlMode) has no symbolKind support configured", "[Mode]") {
-    REQUIRE_FALSE(static_cast<bool>(YamlMode().symbolKind));
+TEST_CASE("A language with no bundled tags.scm (e.g. DiffMode) has no symbolKind support configured", "[Mode]") {
+    REQUIRE_FALSE(static_cast<bool>(ned::editor::DiffMode().symbolKind));
 }
 
 TEST_CASE("CMode's symbolKind classifies a function definition and a struct definition", "[Mode]") {
@@ -1887,6 +1887,19 @@ TEST_CASE("Lisp, shell, CMake and SQL tags queries name their definitions", "[Mo
                               "CREATE VIEW active AS SELECT * FROM users;\n"
                               "CREATE TRIGGER audit BEFORE DELETE ON users FOR EACH ROW EXECUTE FUNCTION log();\n") ==
           V{"app:namespace", "users:struct", "id:field", "name:field", "active:type", "audit:function"});
+}
+
+TEST_CASE("Config formats outline their keys two levels deep", "[Mode]") {
+    using V = std::vector<std::string>;
+    CHECK(NamedSymbols("toml", "title = \"x\"\n[package]\nname = \"ned\"\n[dependencies.serde]\nversion = \"1\"\n"
+                               "[[bin]]\nname = \"a\"\n") ==
+          V{"title:field", "package:namespace", "dependencies.serde:namespace", "bin:namespace"});
+    CHECK(NamedSymbols("yaml", "name: CI\njobs:\n  build:\n    runs-on: ubuntu\n    steps:\n      - run: make\n"
+                               "  timeout: 5\nenv:\n  - A\n") ==
+          V{"name:field", "jobs:namespace", "build:namespace", "timeout:field", "env:field"});
+    CHECK(NamedSymbols("json", "{\n  \"name\": \"x\",\n  \"scripts\": {\n    \"build\": \"tsc\",\n"
+                               "    \"deep\": {\"no\": 1}\n  },\n  \"list\": [{\"no\": 2}]\n}\n") ==
+          V{"name:field", "scripts:namespace", "build:field", "deep:namespace", "list:field"});
 }
 
 TEST_CASE("Haskell paints variables by role, not as types", "[Mode]") {

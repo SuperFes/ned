@@ -1,5 +1,5 @@
 # sample.toml  (toml-mode)
-# 49 facts
+# 52 facts
 fold 0..40  "[package]\nname = \"ned\"\nversion = \"0.5.0\""
 fold 42..86  "[dependencies]\nitems = [\n  \"one\",\n  \"two\",\n]"
 fold 65..86  "[\n  \"one\",\n  \"two\",\n]"
@@ -49,3 +49,6 @@ indent 87..87  [0]
 indent 88..105  [0]  "[profile.release]"
 indent 106..119  [0]  "debug = false"
 indent 120..120  [0]
+symbol 0..42  [Namespace package]  "[package]\nname = \"ned\"\nversion = \"0.5.0\"\n\n"
+symbol 42..88  [Namespace dependencies]  "[dependencies]\nitems = [\n  \" …   \"two\",\n]\n\n"
+symbol 88..120  [Namespace profile.release]  "[profile.release]\ndebug = false\n"

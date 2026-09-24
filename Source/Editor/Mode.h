@@ -948,6 +948,10 @@ struct Mode {
     // per-file override (Editor/WrapOverrides.h)
     // takes precedence over this default when one is configured.
     bool wrapLines = false;
+    // Sticky scroll pins fold blocks rather than symbolKind's definitions:
+    // a config format whose outline stops a few levels down but whose
+    // nesting is its structure (LanguageDefinition::stickyScrollFromFolds).
+    bool stickyScrollFromFolds = false;
     // Which colour-literal spellings this mode's buffers admit -- the
     // swatch scan and `color-at-point` both read it. Defaults to the
     // universally unambiguous set; a stylesheet's definition widens it.

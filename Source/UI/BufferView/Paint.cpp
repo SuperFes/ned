@@ -161,8 +161,9 @@ std::vector<editor::SymbolMarker> BufferView::StickyScrollChainForCurrentViewpor
     // Keyed on `mode_.symbolKind` being unset rather than on the marker list
     // being empty, deliberately: a C file that happens to declare nothing
     // should show no sticky rows, not fold-derived ones. "This language has no
-    // tags query" and "this file has no symbols" are different facts.
-    const bool                              fromFolds = !mode_.symbolKind;
+    // tags query" and "this file has no symbols" are different facts. A config
+    // format asks for folds even with a tags query (Mode::stickyScrollFromFolds).
+    const bool                              fromFolds = !mode_.symbolKind || mode_.stickyScrollFromFolds;
     const std::vector<editor::SymbolMarker> derived =
         fromFolds ? editor::stickyscroll::MarkersFromFoldBlocks(gutters_.FoldableBlocks())
                   : std::vector<editor::SymbolMarker>{};

@@ -35,7 +35,8 @@ namespace {
         mode.lineCommentPrefix = definition.lineCommentPrefix;
         mode.blockCommentOpen  = definition.blockCommentOpen;
         mode.blockCommentClose = definition.blockCommentClose;
-        mode.wrapLines         = definition.wrapLines;
+        mode.wrapLines             = definition.wrapLines;
+        mode.stickyScrollFromFolds = definition.stickyScrollFromFolds;
         mode.colorLiterals     = definition.colorLiterals;
         mode.autoPairs         = definition.autoPairs == AutoPairSet::Lisp ? LispAutoPairs() : DefaultAutoPairs();
         for (const auto& [sequence, command] : definition.keymap) {

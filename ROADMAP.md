@@ -140,11 +140,8 @@ and code reading. Highest stakes first.
         level-3 line is one tab and two spaces). The worst of both worlds, and supported
         only so such a file can be edited without being rewritten: it needs a tab width
         separate from `IndentStyle::width`, which today doubles as both.
-- [ ] **No symbol outline for config formats** (YAML, TOML, JSON: no tags query, so no
-      symbol gutter, outline or breadcrumbs). Keys/tables as symbols would be the
-      natural shape, but every key is a definition, so it needs a depth or kind limit
-      to stay an outline rather than a copy of the file. Fish names only functions:
-      `set`'s variable name follows any number of flags.
+- [ ] **Fish's outline names only functions**: `set`'s variable name follows any number
+      of flags, which a query can't skip reliably.
 - [ ] **No locals query for Perl, Elixir or Dart**, so scope-aware rename and local
       highlighting get no scope information there. None has a usable upstream query:
       Perl's grammar ships none; nvim-treesitter's Elixir query unrolls pattern depth by

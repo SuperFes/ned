@@ -1,5 +1,5 @@
 # sample.yaml  (yaml-mode)
-# 77 facts
+# 85 facts
 fold 0..94  "root:\n  name: ned\n  versions …  empty: null"
 fold 18..53  "  versions:\n    - 0.5.0\n    - 0.6.0"
 fold 54..94  "  nested:\n    flag: true\n    empty: null"
@@ -77,3 +77,11 @@ indent 186..192  [2]  "  one,"
 indent 193..198  [2]  "  two"
 indent 199..200  [0]  "]"
 indent 201..201  [0]
+symbol 0..94  [Namespace root]  "root:\n  name: ned\n  versions …  empty: null"
+symbol 8..17  [Data name]  "name: ned"
+symbol 20..53  [Data versions]  "versions:\n    - 0.5.0\n    - 0.6.0"
+symbol 56..94  [Namespace nested]  "nested:\n    flag: true\n    empty: null"
+symbol 95..121  [Data list]  "list:\n  - first\n  - second"
+symbol 122..162  [Data compact]  "compact:\n  - key: value\n    other: value"
+symbol 163..177  [Data flush]  "flush:\n- a\n- b"
+symbol 178..200  [Data flow]  "flow: [\n  one,\n  two\n]"

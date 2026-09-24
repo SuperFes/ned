@@ -416,38 +416,42 @@ TEST_CASE("The pinned band paints on the backing layer, not into the header cell
 // ---------------------------------------------------------------------------
 // A language with no tags query pins its FOLD structure instead.
 //
-// Ten bundled languages have an imprint table and no tags.scm, so
-// Mode::symbolKind is unset and they had no sticky scroll at all. The fold
+// Languages with an imprint table and no tags query (and config formats,
+// whose outline stops short of their nesting) pin fold blocks. The fold
 // blocks they already produce carry the right rows, because of the invariant
 // the fold work had to establish anyway: a fold block's start byte sits on the
 // row that stays visible when it collapses.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("A YAML buffer pins its enclosing keys with no tags query at all", "[BufferView][StickyScroll]") {
+TEST_CASE("A YAML buffer pins every enclosing key, deeper than its outline goes", "[BufferView][StickyScroll]") {
     const StickyScrollSettingsGuard guard;
     Fixture                         fixture;
     fixture.mode = ned::editor::YamlMode();
-    REQUIRE_FALSE(fixture.mode.symbolKind);      // the premise: nothing to build a chain from
-    fixture.buffer.InsertAtPoint("root:\n"       // line 0
-                                 "  versions:\n" // line 1
-                                 "    - 0.5.0\n" // line 2
-                                 "    - 0.6.0\n" // line 3
-                                 "    - 0.7.0\n" // line 4
-                                 "other: 2\n");  // line 5
+    // The outline (tags) lists two levels of keys; breadcrumbs follow folds.
+    REQUIRE(fixture.mode.stickyScrollFromFolds);
+    fixture.buffer.InsertAtPoint("root:\n"         // line 0
+                                 "  versions:\n"   // line 1
+                                 "    stable:\n"   // line 2
+                                 "      - 0.5.0\n" // line 3
+                                 "      - 0.6.0\n" // line 4
+                                 "      - 0.7.0\n" // line 5
+                                 "      - 0.8.0\n" // line 6
+                                 "other: 2\n");    // line 7
 
     BufferView view = fixture.View();
-    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
-    view.SetTopLine(3); // inside the sequence under `versions:`
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
+    view.SetTopLine(5); // inside the sequence under `stable:`
 
-    ned::ui::Screen screen = ned::ui::Screen(40, 5);
-    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen = ned::ui::Screen(40, 6);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 5});
     view.Paint(canvas);
 
     CHECK(RowText(screen, 0, 40).find("root:") != std::string::npos);
     CHECK(RowText(screen, 1, 40).find("versions:") != std::string::npos);
-    // Exactly two rows are pinned, and real content resumes under them --
-    // which line lands where is the viewport's business, tested elsewhere.
-    CHECK(RowText(screen, 2, 40).find("- 0.") != std::string::npos);
+    CHECK(RowText(screen, 2, 40).find("stable:") != std::string::npos);
+    // Real content resumes under the pinned rows -- which line lands where is
+    // the viewport's business, tested elsewhere.
+    CHECK(RowText(screen, 3, 40).find("- 0.") != std::string::npos);
 }
 
 TEST_CASE("A mode WITH a tags query shows no fold-derived rows when the file declares nothing",

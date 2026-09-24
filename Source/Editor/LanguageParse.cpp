@@ -181,6 +181,9 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
         else if (key == "preserve-indent") {
             definition.preserveIndent = ExpectBool(directoryName, value, ":preserve-indent");
         }
+        else if (key == "sticky-scroll-from-folds") {
+            definition.stickyScrollFromFolds = ExpectBool(directoryName, value, ":sticky-scroll-from-folds");
+        }
         else if (key == "first-pattern-wins") {
             definition.firstPatternWins = ExpectBool(directoryName, value, ":first-pattern-wins");
         }
