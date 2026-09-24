@@ -27,6 +27,8 @@ namespace {
             {"nim",        {.useTabs = false, .width = 2}}, // NEP-1; the compiler rejects tab indentation outright
             {"ocaml",      {.useTabs = false, .width = 2}}, // ocamlformat default
             {"ocaml-interface", {.useTabs = false, .width = 2}}, // ocamlformat default
+            {"pascal",     {.useTabs = false, .width = 2}}, // Delphi (Embarcadero) Object Pascal style guide
+            {"scala",      {.useTabs = false, .width = 2}}, // scalafmt default, Scala style guide
             {"make",       {.useTabs = true,  .width = 4}}, // GNU Make REQUIRES a literal tab to introduce a recipe line -- a hard syntax rule, not a style preference (same shape as YAML's ban, inverted); width here is display-only
 
             // -- common ecosystem/style-guide convention, no single canonical formatter --

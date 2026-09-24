@@ -1,5 +1,10 @@
 # sample.r  (r-mode)
-# 126 facts
+# 155 facts
+fold 132..199  "{\n  total <- sum(counts)\n  d … l = total)\n}"
+fold 354..401  "{\n  cat(sprintf(\"%s: %d\\n\",  …  x$total))\n}"
+fold 422..483  "{\n  if (w$total > 0) {\n    p …   next\n  }\n}"
+fold 443..461  "{\n    print(w)\n  }"
+fold 467..481  "{\n    next\n  }"
 highlight 0..65  [comment]  "# A representative script: f … es, vectors."
 highlight 66..73  [function]  "library"
 highlight 73..74  [punctuation]  "("
@@ -124,5 +129,29 @@ highlight 467..468  [punctuation]  "{"
 highlight 473..477  [keyword]  "next"
 highlight 480..481  [punctuation]  "}"
 highlight 482..483  [punctuation]  "}"
+indent 0..65  [0]  "# A representative script: f … es, vectors."
+indent 66..80  [0]  "library(dplyr)"
+indent 81..81  [0]
+indent 82..133  [0]  "summarise_widget <- function … ts = c(0)) {"
+indent 134..156  [2]  "  total <- sum(counts)"
+indent 157..197  [2]  "  data.frame(name = name, total = total)"
+indent 198..199  [0]  "}"
+indent 200..200  [0]
+indent 201..231  [0]  "widgets <- list(\"a\", \"b\", \"c\")"
+indent 232..253  [0]  "results <- widgets |>"
+indent 254..311  [0]  "  purrr::map(function(w) sum … c(1, 2, 3)))"
+indent 312..312  [0]
+indent 313..355  [0]  "print.widget_summary <- function(x, ...) {"
+indent 356..399  [2]  "  cat(sprintf(\"%s: %d\\n\", x$name, x$total))"
+indent 400..401  [0]  "}"
+indent 402..402  [0]
+indent 403..423  [0]  "for (w in results) {"
+indent 424..444  [2]  "  if (w$total > 0) {"
+indent 445..457  [4]  "    print(w)"
+indent 458..468  [2]  "  } else {"
+indent 469..477  [4]  "    next"
+indent 478..481  [2]  "  }"
+indent 482..483  [0]  "}"
+indent 484..484  [0]
 symbol 82..199  [Callable summarise_widget]  "summarise_widget <- function … l = total)\n}"
 symbol 313..401  [Callable print.widget_summary]  "print.widget_summary <- func …  x$total))\n}"

@@ -212,6 +212,17 @@ namespace {
                                 *indirect = true;
                             continue;
                         }
+                        // A hidden rule that is one literal is that token in the
+                        // tree (Perl's `_PERLY_BRACE_OPEN "{"`, R's unnamed alias
+                        // of an external brace), so it reads as the literal. A
+                        // member aliased where it is used keeps that spelling.
+                        if (!UnnamedAliasValue(raw) && Literals(*target->second).size() == 1 &&
+                            UnwrapIncludingTokens(*target->second).kind != Kind::Choice) {
+                            out.push_back(target->second);
+                            if (indirect != nullptr)
+                                *indirect = true; // inlined all the same: not a dedent closer
+                            continue;
+                        }
                     }
                 }
             }
@@ -427,20 +438,8 @@ imprint::ImprintTable InferDelimitedBodies(const compile::GrammarFile& grammar) 
         if (rules.count(name) == 0)
             candidates.emplace_back(name, content);
 
-    for (const auto& [name, rulePtr] : candidates) {
-        const Rule& rule = *rulePtr;
-        if (!name.empty() && name.front() == '_')
-            continue; // hidden: never a node
-
-        if (IsSingleToken(rule))
-            continue; // a leaf, whatever it looks like inside
-
-        std::vector<const Rule*> members;
-        std::set<std::string>    seen;
-        bool                     indirect = false;
-        if (!FlattenSeq(rule, rules, members, 0, seen, &indirect) || members.size() < 2)
-            continue;
-
+    // Whether one flattened production is a delimited body.
+    const auto inferBody = [&](const std::vector<const Rule*>& members, bool indirect) -> std::optional<imprint::DelimitedBody> {
         // Trim trailing optionals to find the real closer, but never trim
         // away the whole production.
         std::vector<const Rule*> core = members;
@@ -450,12 +449,10 @@ imprint::ImprintTable InferDelimitedBodies(const compile::GrammarFile& grammar) 
             core = members;
 
         if (const auto bracket = MatchBracketed(core); bracket.has_value()) {
-            found.emplace(name, *bracket);
-            continue;
+            return bracket;
         }
         if (const auto keyword = MatchKeywordPair(core); keyword.has_value()) {
-            found.emplace(name, *keyword);
-            continue;
+            return keyword;
         }
 
         // An OPTIONAL trailing body. Kotlin's secondary_constructor is
@@ -478,8 +475,7 @@ imprint::ImprintTable InferDelimitedBodies(const compile::GrammarFile& grammar) 
                     // The opener cannot be this node's own first member -- the
                     // header that made the body optional precedes it.
                     bracket->openerIsFirst = false;
-                    found.emplace(name, *bracket);
-                    continue;
+                    return bracket;
                 }
             }
         }
@@ -500,8 +496,40 @@ imprint::ImprintTable InferDelimitedBodies(const compile::GrammarFile& grammar) 
             // opening quote however the scanner spells it.
             body.openerIsFirst    = !Literals(*core.front()).empty() || IsSymbolNamed(*core.front(), externals);
             body.listLikeInterior = true;
-            found.emplace(name, body);
+            return body;
         }
+        return std::nullopt;
+    };
+
+    for (const auto& [name, rulePtr] : candidates) {
+        const Rule& rule = *rulePtr;
+        if (!name.empty() && name.front() == '_')
+            continue; // hidden: never a node
+
+        if (IsSingleToken(rule))
+            continue; // a leaf, whatever it looks like inside
+
+        std::vector<const Rule*>              members;
+        std::set<std::string>                 seen;
+        bool                                  indirect = false;
+        std::optional<imprint::DelimitedBody> body;
+        if (FlattenSeq(rule, rules, members, 0, seen, &indirect) && members.size() >= 2)
+            body = inferBody(members, indirect);
+
+        // FlattenSeq takes a CHOICE's first branch that flattens, which need
+        // not be its delimited one: Scala's template_body is `: <indented>`
+        // (not a body by these rules) before `{ ... }`.
+        if (!body && Unwrap(rule).kind == Kind::Choice) {
+            for (const Rule& branch : Unwrap(rule).children) {
+                std::vector<const Rule*> branchMembers;
+                std::set<std::string>    branchSeen;
+                if (FlattenSeq(branch, rules, branchMembers, 1, branchSeen) && branchMembers.size() >= 2 &&
+                    (body = inferBody(branchMembers, true)))
+                    break;
+            }
+        }
+        if (body)
+            found.emplace(name, *body);
     }
 
     return found;

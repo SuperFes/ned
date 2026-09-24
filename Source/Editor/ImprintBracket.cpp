@@ -100,7 +100,10 @@ std::optional<DelimiterPair> DelimitersOf(const grammar::Node& node, const Delim
         case DelimiterKind::Bracket:
             return DelimitersOf(node);
         case DelimiterKind::Indent:
-            return std::nullopt; // a dedent is not a token
+            // A dedent is not a token, but the rule may have a bracketed
+            // branch the table did not record (Scala's template_body is
+            // `: <indented>` or `{ ... }`) and this instance may have taken it.
+            return DelimitersOf(node);
         case DelimiterKind::Keyword:
             break;
     }

@@ -336,6 +336,18 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
     // otherwise-generic walk algorithm itself about any particular language.
     const auto resolveWalkStart = [&](std::size_t position) {
         grammar::Node node = tree.RootNode().NamedDescendantForByteRange(position, position);
+        // The lookup can stop at a node whose first child is a zero-width
+        // token at `position` (Scala 3's `_indent` opening an indented_block),
+        // answering the body rather than the code in it; keep descending.
+        for (bool descended = !node.IsNull() && node.StartByte() == position; descended;) {
+            descended = false;
+            node.ForEachChild([&](const grammar::Node& child) {
+                if (!descended && child.IsNamed() && child.StartByte() <= position && position < child.EndByte()) {
+                    node      = child;
+                    descended = true;
+                }
+            });
+        }
         if (!node.IsNull() && (node.Type() == "start_tag" || node.Type() == "STag")) {
             const grammar::Node parent = node.Parent();
             if (!parent.IsNull() && parent.StartByte() == position) {
@@ -397,9 +409,15 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
     // line already counted" -- it never was; only walkStart's OWN row ever
     // gets to seed that exclusion.
     const auto computeForWalkStart = [&](const grammar::Node& walkStart, std::size_t position) -> IndentComputation {
+        // An @indent.headed container's interior starts on a later line, so
+        // it never counts for its own first row and needs no seed; seeding
+        // it would hide a same-row container that does count (Scala's
+        // indented_cases, starting on a headed case_clause's row).
+        const auto  found         = captures.indent.find(keyOf(walkStart));
+        const bool  headed        = found != captures.indent.end() && bufferText.find('\n', walkStart.StartByte()) < found->second;
         const bool  selfOpensHere = (isIndentCaptured(walkStart) || isAlignedCaptured(walkStart) ||
                                      isBodyIndentCaptured(walkStart)) &&
-                                    walkStart.StartByte() == position;
+                                    walkStart.StartByte() == position && !headed;
         std::size_t lastRow       = selfOpensHere ? walkStart.StartRow() : kNoRow;
         int         level         = 0;
         // lambda-body-alignment follow-up: set once the walk has passed an

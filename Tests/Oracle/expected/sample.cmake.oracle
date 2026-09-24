@@ -62,20 +62,20 @@ indent 191..191  [0]
 indent 192..233  [0]  "option(SAMPLE_TESTS \"Build the tests\" ON)"
 indent 234..234  [0]
 indent 235..271  [0]  "function(sample_add_warnings target)"
-indent 272..331  [0]  "    target_compile_options($ … all -Wextra)"
+indent 272..331  [2]  "    target_compile_options($ … all -Wextra)"
 indent 332..345  [0]  "endfunction()"
 indent 346..346  [0]
 indent 347..387  [0]  "add_executable(sample ${SAMPLE_SOURCES})"
 indent 388..415  [0]  "sample_add_warnings(sample)"
 indent 416..416  [0]
 indent 417..433  [0]  "if(SAMPLE_TESTS)"
-indent 434..454  [0]  "    enable_testing()"
-indent 455..482  [0]  "    add_subdirectory(tests)"
+indent 434..454  [2]  "    enable_testing()"
+indent 455..482  [2]  "    add_subdirectory(tests)"
 indent 483..518  [0]  "elseif(DEFINED ENV{SAMPLE_MINIMAL})"
-indent 519..554  [0]  "    message(STATUS \"minimal build\")"
+indent 519..554  [2]  "    message(STATUS \"minimal build\")"
 indent 555..562  [0]  "endif()"
 indent 563..563  [0]
 indent 564..603  [0]  "foreach(source IN LISTS SAMPLE_SOURCES)"
-indent 604..644  [0]  "    message(VERBOSE \"source: ${source}\")"
+indent 604..644  [2]  "    message(VERBOSE \"source: ${source}\")"
 indent 645..657  [0]  "endforeach()"
 indent 658..658  [0]

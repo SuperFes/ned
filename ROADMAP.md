@@ -120,12 +120,13 @@ and code reading. Highest stakes first.
 - [ ] **A few upstream capture names still paint nothing**: `@symbol` (CUE), the
       `@text.note`/`@text.warning`/`@text.danger` comment-keyword family (make) and
       `@text` (D, Perl). `@error`/`@warning` stay unmapped on purpose, as in Neovim.
-- [ ] **Reindent does little or nothing for several languages with no indents query.**
-      Scala leaves class/object bodies flush, Erlang indents `case` arms but not function
-      bodies, Elixir `do`/`end` is untouched; small valid samples in CMake, Pascal, Perl,
-      R, LaTeX, HCL and V came back unchanged. First separate "the sample didn't parse"
-      (batch reindent skips unparseable text) from "no indent source", then add indents
-      queries where the grammar's delimited bodies aren't enough.
+- [ ] **Reindent still does little for Erlang, Elixir and LaTeX.** Erlang indents `case`
+      arms but not function bodies, Elixir `do`/`end` is untouched, LaTeX environments
+      stay flush. (Scala, Pascal, HCL, CMake, Perl and R now round-trip their samples in
+      `Tests/Format/reindent/`.)
+- [ ] **A `.v` file opens in verilog-mode.** V and Verilog both claim `.v`; V's own
+      package only applies when chosen by hand. Needs a content sniff (`module`/
+      `endmodule` vs `fn`/`struct`/`import`), like Objective-C's `.h`.
 - [ ] **No symbol outline for Janet, Bash, Fish, Clojure, CMake or SQL** (no tags query:
       no symbol gutter, outline, breadcrumbs or class/file sync). Janet is ned's own
       extension language, so `init.janet` and every plugin go without. Config formats

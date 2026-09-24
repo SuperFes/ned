@@ -323,3 +323,51 @@ TEST_CASE("Reindent brings a re-widened GDScript or Nim file back to house style
         CHECK(IndentAll(wide, mode) == original);
     }
 }
+
+TEST_CASE("A flattened sample reindents back to its house style", "[FormatterProperties]") {
+    // Indentation is not syntax in these, so stripping it keeps the program
+    // the same; reindent has to rebuild every level from structure alone.
+    for (const auto& [file, language] : std::vector<std::pair<std::string, std::string>>{
+             {"sample.pas", "pascal"},
+             {"sample.tf", "hcl"},
+             {"sample.cmake", "cmake"},
+             {"sample.pl", "perl"},
+             {"sample.R", "r"},
+             {"sample.ml", "ocaml"},
+             {"sample.mli", "ocaml-interface"},
+         }) {
+        INFO("sample: " << file);
+        const std::string original = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "reindent" / file);
+        std::string       flat;
+        std::size_t       at = 0;
+        while (at < original.size()) {
+            const std::size_t end  = std::min(original.find('\n', at), original.size());
+            const std::string line = original.substr(at, end - at);
+            flat += line.substr(std::min(line.find_first_not_of(" \t"), line.size()));
+            if (end < original.size()) {
+                flat += '\n';
+            }
+            at = end + 1;
+        }
+        REQUIRE(flat != original);
+        CHECK(IndentAll(flat, BundledMode(language)) == original);
+    }
+}
+
+TEST_CASE("A re-widened Scala sample reindents back to its house style", "[FormatterProperties]") {
+    // Scala 3 reads indentation, so the sample is widened (which keeps its
+    // parse) rather than flattened. Braces and Scala 3's indented syntax both.
+    for (const std::string file : {"sample.scala", "sample3.scala"}) {
+        INFO("sample: " << file);
+        const std::string original = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "reindent" / file);
+        std::string       wide;
+        bool              atLineStart = true;
+        for (const char c : original) {
+            wide += (atLineStart && c == ' ') ? std::string(3, ' ') : std::string(1, c);
+            atLineStart = (atLineStart && c == ' ') || c == '\n';
+        }
+        REQUIRE(wide != original);
+        RequireSameStructure("scala", original, wide);
+        CHECK(IndentAll(wide, BundledMode("scala")) == original);
+    }
+}
