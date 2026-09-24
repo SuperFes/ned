@@ -120,12 +120,32 @@ and code reading. Highest stakes first.
 - [ ] **A few upstream capture names still paint nothing**: `@symbol` (CUE), the
       `@text.note`/`@text.warning`/`@text.danger` comment-keyword family (make) and
       `@text` (D, Perl). `@error`/`@warning` stay unmapped on purpose, as in Neovim.
-- [ ] **A modeline's tabs/width is parsed but not applied.** `vim: ts=4 sw=4 et` and
-      `-*- tab-width: 4; indent-tabs-mode: nil -*-` come back from `ParseModeline`
-      (`Editor/Modeline.h`), but indent style is keyed by mode name
-      (`EffectiveIndentStyle`) and the indent closure captures that name, so there is
-      no per-buffer style to put them in. Needs a file-local style carried on the
-      buffer's `Mode` and read by the ~15 `EffectiveIndentStyle` call sites.
+- [ ] **Per-buffer indentation, taken from the file itself.** Indent style today is keyed
+      by mode name (`EffectiveIndentStyle`), and the indent closure captures that name,
+      so every buffer of a language indents alike whatever the file already does. In
+      order, since each step needs the one before:
+  - [ ] **A file-local style on the buffer's `Mode`**, read by the ~15
+        `EffectiveIndentStyle` call sites and the indent closure. The foundation for
+        everything below.
+  - [ ] **Apply what the file says.** Precedence: modeline (`vim: ts=4 sw=4 et`,
+        `-*- indent-tabs-mode: nil -*-`, already parsed by `ParseModeline` in
+        `Editor/Modeline.h`) > `.editorconfig` (`indent_style`/`indent_size`/`tab_width`;
+        ned only highlights these files today) > detected from content > the mode's
+        default.
+  - [ ] **Detect it, politely.** `Editor/IndentDetect.h` already classifies a file as
+        tabs, spaces (with width) or mixed, but only feeds the mode line's "doesn't match
+        its configured style" hint. Adopt a confident answer for the buffer on open, so
+        editing a tab-indented file inserts tabs instead of fighting it; leave an empty
+        or ambiguous file on the mode's default. Behind a `ned/set-*` toggle.
+  - [ ] **A command to switch a buffer between tabs and spaces:** rewrite the leading
+        indentation of the region or buffer (tabify/untabify) and set the buffer's style
+        to match, in one undo step. Leading whitespace only; alignment inside a line is
+        left alone.
+  - [ ] **Mixed tabs and spaces, if it has to exist:** Emacs's `indent-tabs-mode` with
+        an indent width below the tab width (GNU C: 2-column levels, 8-column tabs, so a
+        level-3 line is one tab and two spaces). The worst of both worlds, and supported
+        only so such a file can be edited without being rewritten: it needs a tab width
+        separate from `IndentStyle::width`, which today doubles as both.
 - [ ] **No symbol outline for Janet, Bash, Fish, Clojure, CMake or SQL** (no tags query:
       no symbol gutter, outline, breadcrumbs or class/file sync). Janet is ned's own
       extension language, so `init.janet` and every plugin go without. Config formats
