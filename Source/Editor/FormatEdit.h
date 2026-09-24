@@ -32,6 +32,9 @@ struct FormatTextEdit {
 // convention (Editor/Format.h).
 void ApplyFormatTextEdits(text::Buffer& buffer, std::vector<FormatTextEdit> edits);
 
+// What ApplyFormatTextEdits would leave in a buffer holding `text`.
+[[nodiscard]] std::string ApplyFormatTextEditsToText(std::string_view text, std::vector<FormatTextEdit> edits);
+
 // keyword-delimiter-captures follow-up: whether gluing two bytes directly
 // together would fuse them into one word -- true for any ASCII letter/
 // digit/underscore. A brace/paren is never a word byte, so this is always

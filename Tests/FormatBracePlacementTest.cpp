@@ -4,8 +4,10 @@
 #include <string>
 #include <vector>
 
+#include "Editor/BundledLanguages.h"
 #include "Editor/FormatBracePlacement.h"
 #include "Editor/FormatRules.h"
+#include "Editor/LanguageDefinition.h"
 #include "Editor/Mode.h"
 #include "Text/Buffer.h"
 
@@ -2557,5 +2559,54 @@ TEST_CASE("End to end: ruby-mode's SameLine placement is a safe no-op on \"begin
         REQUIRE(ifBuffer.Text() == "if x then\n  1\nend\n"); // safe: "then" is nested in if's own header
 
         SetBracePlacement("brace.control", std::nullopt);
+    }
+}
+
+TEST_CASE("Every language with a format query sees its comments", "[FormatBracePlacement]") {
+    // The joins that could pull code onto a comment (placement, break) decline
+    // on a "comment" capture; a language whose captures never name one would
+    // have its brace commented out.
+    for (const ned::editor::LanguageDefinition& definition : ned::editor::BundledLanguages()) {
+        if (definition.queries.format.empty() || definition.lineCommentPrefix.empty()) {
+            continue;
+        }
+        INFO("language: " << definition.name);
+        const Mode mode = ned::editor::ModeFromDefinition(definition);
+        // Outside `<?php` a PHP file is template text, with no comments at all.
+        const std::string opener   = definition.name == "php" ? "<?php\n" : "";
+        const std::string source   = opener + definition.lineCommentPrefix + " note\n";
+        const auto        comments = CapturesNamed(mode.formatCaptures(source), "comment");
+        REQUIRE(comments.size() == 1);
+        CHECK(comments[0].startByte == opener.size());
+    }
+}
+
+TEST_CASE("A same-line brace is never joined onto a header's line comment", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.control", BracePlacement::SameLine);
+
+    struct Case {
+        std::string language;
+        Mode        mode;
+        std::string source;
+    };
+    const std::vector<Case> cases = {
+        {"c", CMode(), "void f(void) {\n    if (x) // note\n    {\n        g();\n    }\n}\n"},
+        {"cpp", CppMode(), "void f() {\n    if (x) // note\n    {\n        g();\n    }\n}\n"},
+        {"java", JavaMode(), "class C {\n  void m() {\n    if (x) // note\n    {\n      g();\n    }\n  }\n}\n"},
+        {"javascript", JavaScriptMode(), "if (x) // note\n{\n  g();\n}\n"},
+        {"typescript", TypeScriptMode(), "if (x) // note\n{\n  g();\n}\n"},
+        {"csharp", CSharpMode(), "class C {\n  void M() {\n    if (x) // note\n    {\n      G();\n    }\n  }\n}\n"},
+        {"kotlin", KotlinMode(), "fun f() {\n    if (x) // note\n    {\n        g()\n    }\n}\n"},
+        {"rust", RustMode(), "fn f() {\n    if x // note\n    {\n        g();\n    }\n}\n"},
+    };
+    for (const Case& testCase : cases) {
+        INFO("language: " << testCase.language);
+        const auto captures = testCase.mode.formatCaptures(testCase.source);
+        REQUIRE_FALSE(CapturesNamed(captures, "brace.control").empty()); // the join is really on offer
+        Buffer buffer("test");
+        buffer.InsertAtPoint(testCase.source);
+        ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(testCase.source, testCase.language, captures));
+        CHECK(buffer.Text().find("// note {") == std::string::npos);
     }
 }

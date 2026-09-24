@@ -1886,7 +1886,8 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
     FormatCaptureFunction formatCaptures;
     if (!queries.format.empty()) {
         const auto formatQuery = std::make_shared<grammar::QueryMatcher>(language, queries.format);
-        formatCaptures = [parser, formatQuery, sharedParse](std::string_view bufferText) -> std::vector<FormatCapture> {
+        formatCaptures         = [parser, formatQuery, sharedParse, highlightQuery,
+                                  languageKey](std::string_view bufferText) -> std::vector<FormatCapture> {
             const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
@@ -2030,6 +2031,19 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     }
                 }
                 captures = std::move(deduped);
+            }
+            // Every comment, as "comment" -- what the joins that could pull
+            // code onto one (brace placement, break) decline on. Read off the
+            // highlights query, which already says what a comment is in every
+            // language, rather than asked of each format query again.
+            if (highlightQuery) {
+                for (const grammar::QueryCapture& capture :
+                     highlightQuery->CapturesInRange(tree.RootNode(), bufferText, 0, bufferText.size())) {
+                    const SyntaxClass syntaxClass = SyntaxClassForCapture(capture.name, languageKey);
+                    if (syntaxClass == SyntaxClass::Comment || syntaxClass == SyntaxClass::DocComment) {
+                        captures.push_back(FormatCapture{.name = "comment", .startByte = capture.startByte, .endByte = capture.endByte});
+                    }
+                }
             }
             return captures;
         };

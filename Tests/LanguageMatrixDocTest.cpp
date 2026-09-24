@@ -3,7 +3,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <regex>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -56,16 +55,6 @@ std::vector<std::string> Pick(const std::vector<std::string>& own, const std::ve
     return own.empty() ? donor : own;
 }
 
-bool DeclaresCommentCapture(const std::vector<std::string>& formatFiles) {
-    static const std::regex kComment(R"(@comment(?![\w.-]))");
-    for (const std::string& file : formatFiles) {
-        if (std::regex_search(ReadFile(LanguagesRoot() / file), kComment)) {
-            return true;
-        }
-    }
-    return false;
-}
-
 const char* Mark(bool present) {
     return present ? "✓" : "·";
 }
@@ -87,7 +76,6 @@ const std::vector<Column> kColumns = {
     {"test",    "tests query -- test discovery for the test runner"},
     {"sig",     "signatures + calls queries -- change-signature"},
     {"fmt",     "format query -- capture-driven formatter rules can apply"},
-    {"fmt-cmt", "format query names `@comment` -- joins never pull code onto a comment"},
     {"style",   "bundled `style.janet` -- formatter rules apply with no user config"},
     {"cmt",     "line-comment prefix -- toggle-line-comment, comment-aware fill"},
     {"root",    "LSP root markers"},
@@ -137,7 +125,6 @@ std::string Render() {
             !Pick(own.tests, donor.tests).empty(),
             !Pick(own.signatures, donor.signatures).empty() && !Pick(own.calls, donor.calls).empty(),
             !Pick(own.format, donor.format).empty(),
-            DeclaresCommentCapture(Pick(own.format, donor.format)),
             fs::exists(LanguagesRoot() / definition.name / "style.janet"),
             !definition.lineCommentPrefix.empty(),
             !definition.lspRootMarkers.empty(),

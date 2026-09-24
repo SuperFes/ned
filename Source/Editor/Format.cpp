@@ -36,6 +36,13 @@ bool ApplyHygienePass(text::Buffer& buffer) {
     return true;
 }
 
+bool FormatEditsKeepStructure(const Mode& mode, std::string_view text, const std::vector<FormatTextEdit>& edits) {
+    if (edits.empty() || !mode.sameStructure) {
+        return true;
+    }
+    return mode.sameStructure(text, ApplyFormatTextEditsToText(text, edits));
+}
+
 namespace {
 
     // Every pass reads a fresh capture list: an earlier pass may have shifted
@@ -44,7 +51,7 @@ namespace {
     bool RunCapturePass(text::Buffer& buffer, const Mode& mode, const std::string& languageKey, ComputeFn compute) {
         const std::string                 text  = buffer.Text();
         const std::vector<FormatTextEdit> edits = compute(text, languageKey, mode.formatCaptures(text));
-        if (edits.empty()) {
+        if (edits.empty() || !FormatEditsKeepStructure(mode, text, edits)) {
             return false;
         }
         ApplyFormatTextEdits(buffer, edits);

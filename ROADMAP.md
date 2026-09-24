@@ -111,13 +111,6 @@ What each package ships is tracked in the generated `Docs/LanguageMatrix.md`; th
 below are the behavioural gaps behind its empty cells, verified with `ned --format` probes
 and code reading. Highest stakes first.
 
-- [ ] **The parse-structure check covers the Indent pass only.** A batch reindent is now
-      refused when its result parses differently (`Mode::sameStructure`, `IndentRegion`),
-      but the capture-driven passes that run after it in `format-buffer`, `ned --format`
-      and scoped on-save (brace placement, break, wrap, spacing) are applied unchecked --
-      the comment-join item below is exactly that failure. Checking the whole native
-      format once, before it is kept, would cover every pass; huge files stay unchecked
-      either way (their reindent is windowed precisely to avoid a whole-document parse).
 - [ ] **Enter after an unfinished block header doesn't open a level** in indentation
       languages: `def f():`, `func f():`, `proc f() =` followed by Enter lands at the
       header's own column, because until the body exists there is no body node to indent
@@ -126,18 +119,22 @@ and code reading. Highest stakes first.
       walk flattened match arms and `let ... in` bodies). An indents query would let it
       reindent again; the Haskell family (Haskell, Elm, F#, PureScript) is preserved by
       nature and should stay that way.
-- [ ] **A same-line brace join can comment out the brace in every brace language except
-      PHP.** `:placement :same-line` turns `if (x) // note` + `{` into `if (x) // note {`
-      (verified in C++). The guard exists (`FormatBracePlacement.cpp`'s `InsideComment`)
-      but only fires when the language's `format.janet` declares `(comment) @comment`,
-      which only PHP does so far (`fmt-cmt` column). Add the capture to c, cpp, csharp,
-      go, java, javascript (typescript/tsx inherit it), kotlin, lua, rust, bash, fish,
-      janet, clojure, python, ruby -- checking each grammar's comment node names.
 - [ ] **OCaml's `toggle-line-comment` writes an unterminated comment.** Its
       `:line-comment` is `"(*"` (ocaml and ocaml-interface), and the command only ever
       prefixes, so toggling a line yields `(* let x = 1` with no `*)`. Needs real
       block-comment support (e.g. `:block-comment ["(*" "*)"]`, wrapped per line), which
       would also give HTML, XML, CSS, Vue, Svelte and Astro a toggle -- they have none today.
+- [ ] **Svelte and Vue miss HTML's highlighting.** Their vendored queries open with
+      nvim-treesitter's `# inherits: html` / `# inherits: html_tags`, which query discovery
+      does not read, so only the delta loads. cpp (inlined at vendor time), TypeScript,
+      TSX, CUDA and Objective-C name their base explicitly in `language.janet`; Svelte and
+      Vue can't simply do the same because `html_tags` is an nvim query module with no
+      directory here. Either honour the directive in discovery (with a way to say what
+      `html_tags` resolves to) or vendor the base.
+- [ ] **Every F# `//` comment highlights as a doc comment.** The vendored query tags
+      `line_comment` as `@comment.documentation` under `(:not-match? ... "^///")`, which
+      reads inverted (a doc comment is the `///` one). Not yet checked against the
+      upstream original, nor whether the import tool's predicate conversion did it.
 - [ ] **`toggle-line-comment` ignores the embedded language at point.** It reads the host
       mode's prefix only, so a line inside a Vue/Svelte/HTML `<script>` or a Markdown
       fenced block gets the host's syntax (or "No comment syntax configured"). The

@@ -503,9 +503,15 @@ gap is the comment's, not a captured closer's (a `}` inside the comment isn't on
 token, so `} /* done */ else` leaves the comment exactly where it is and breaks after it.
 
 The same hazard exists for `:placement :same-line` pulling a brace up onto a header that
-ends in a line comment (`if ($x) // note` newline `{`). A language's `format.janet` can
-name its comments with a plain `@comment` capture, and placement then declines that join;
-PHP's does.
+ends in a line comment (`if ($x) // note` newline `{`). Every language's format captures
+carry its comments as `comment` -- read off its highlights query, not declared again in
+`format.janet` -- and placement declines that join.
+
+Behind both, every pass is checked before it applies: its edits are applied to a copy and
+kept only if the copy parses to the same structure (the same named nodes at the same
+depths) as the original (`FormatEditsKeepStructure`, Editor/Format.h). A pass that fails
+is dropped whole, in `format-buffer`, `ned --format` and on save alike. The reindent step
+has the same check (`IndentRegion`).
 
 All three entry points -- `format-buffer`, `ned --format`, and the scoped
 `ned/set-auto-format-on-save` path -- walk `Editor/FormatPasses.h`'s single table, so a new

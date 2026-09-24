@@ -209,7 +209,3 @@
 (catch_clause "catch" @control.keyword)
 (finally_clause "finally" @control.keyword)
 (do_statement "while" @control.keyword)
-
-# Comment spans, so a pass never pulls a token onto a line that ends in a
-# comment (a same-line brace after `if ($x) // note` would be commented out).
-(comment) @comment

@@ -4,6 +4,7 @@
 #include <fstream>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 #include "Editor/FinalNewline.h"
 #include "Editor/FormatRules.h"
@@ -34,6 +35,7 @@ struct FormatRulesGuard {
         SetSpaceBefore("control.parens", std::nullopt);
         SetSpaceBefore("cpp/control.parens", std::nullopt);
         SetBreakBefore("control.keyword", std::nullopt);
+        ned::editor::SetBracePlacement("brace.control", std::nullopt);
     }
 };
 
@@ -267,4 +269,35 @@ TEST_CASE("ApplyScopedFormatOnSave is a no-op for a huge buffer", "[ScopedFormat
 
     ned::text::SetHugeFileThreshold(1024ull * 1024 * 1024);
     std::filesystem::remove(path);
+}
+
+TEST_CASE("ApplyScopedFormatOnSave drops a pass that would change how the code parses", "[ScopedFormat]") {
+    // As format-buffer's own case (FormatTierTest.cpp): with the comment
+    // captures stripped, only the structure check stands between the save and
+    // `if (x) // note {`.
+    const FormatRulesGuard guard;
+    ned::editor::SetBracePlacement("brace.control", ned::editor::BracePlacement::SameLine);
+    Mode mode           = CppMode();
+    mode.formatCaptures = [inner = mode.formatCaptures](std::string_view text) {
+        std::vector<ned::editor::FormatCapture> captures = inner(text);
+        std::erase_if(captures, [](const ned::editor::FormatCapture& capture) { return capture.name == "comment"; });
+        return captures;
+    };
+
+    const auto saveAfterEdit = [](const Mode& saveMode) {
+        ned::text::Buffer buffer("scratch", ned::text::Rope("void f() {\n    if (x) // note\n    {\n        g();\n    }\n}\n"));
+        // Touch both lines the join spans -- an edit reaching outside the
+        // touched region is never applied on save.
+        buffer.SetPoint(buffer.Text().find("if"));
+        buffer.InsertAtPoint("/**/");
+        buffer.SetPoint(buffer.Text().find("{\n        g"));
+        buffer.InsertAtPoint(" ");
+        ApplyScopedFormatOnSave(buffer, saveMode);
+        return buffer.Text();
+    };
+
+    CHECK(saveAfterEdit(mode).find("// note {") == std::string::npos);
+
+    mode.sameStructure = nullptr; // the unchecked save really would have joined it
+    CHECK(saveAfterEdit(mode).find("// note {") != std::string::npos);
 }

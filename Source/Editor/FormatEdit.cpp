@@ -18,6 +18,20 @@ void ApplyFormatTextEdits(text::Buffer& buffer, std::vector<FormatTextEdit> edit
     buffer.EndUndoGroup();
 }
 
+std::string ApplyFormatTextEditsToText(std::string_view text, std::vector<FormatTextEdit> edits) {
+    std::sort(edits.begin(), edits.end(), [](const FormatTextEdit& a, const FormatTextEdit& b) { return a.start < b.start; });
+    std::string result;
+    result.reserve(text.size());
+    std::size_t copied = 0;
+    for (const FormatTextEdit& edit : edits) {
+        result.append(text, copied, edit.start - copied);
+        result += edit.text;
+        copied = edit.end;
+    }
+    result.append(text, copied);
+    return result;
+}
+
 bool IsWordByte(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
 }

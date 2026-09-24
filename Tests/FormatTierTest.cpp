@@ -2,6 +2,8 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include "Editor/Format.h"
 #include "Editor/FormatRules.h"
@@ -71,6 +73,40 @@ TEST_CASE("ApplyNativeFormat applies a configured brace rule to a PHP buffer", "
 
     REQUIRE(ApplyNativeFormat(buffer, &mode));
     CHECK(buffer.Text() == "<?php\nfunction f($x) {\n    if ($x)\n    {\n        echo \"a\";\n    }\n}\n");
+}
+
+// A pass whose edits would change how the code parses is dropped whole. Here
+// the comment captures that normally stop a brace being pulled onto `// note`
+// are stripped, so only the structure check is left to catch it.
+TEST_CASE("ApplyNativeFormat drops a pass that would change how the code parses", "[Format]") {
+    const TierGuard guard;
+    SetBracePlacement("brace.control", BracePlacement::SameLine);
+
+    Mode mode           = ned::editor::CppMode();
+    mode.formatCaptures = [inner = mode.formatCaptures](std::string_view text) {
+        std::vector<ned::editor::FormatCapture> captures = inner(text);
+        std::erase_if(captures, [](const ned::editor::FormatCapture& capture) { return capture.name == "comment"; });
+        return captures;
+    };
+    const std::string source = "void f() {\n    if (x) // note\n    {\n        g();\n    }\n}\n";
+    Buffer            buffer("t.cpp");
+    buffer.InsertAtPoint(source);
+
+    ApplyNativeFormat(buffer, &mode);
+    CHECK(buffer.Text() == source);
+
+    mode.sameStructure = nullptr; // the unchecked pipeline really would have joined it
+    ApplyNativeFormat(buffer, &mode);
+    CHECK(buffer.Text().find("// note {") != std::string::npos);
+}
+
+TEST_CASE("FormatEditsKeepStructure tells whitespace from meaning", "[Format]") {
+    const Mode        mode = ned::editor::CppMode();
+    const std::string text = "int a; // x\nint b;\n";
+    const std::size_t gap  = text.find('\n');
+    CHECK(ned::editor::FormatEditsKeepStructure(mode, text, {{gap + 1, gap + 1, "    "}}));
+    CHECK_FALSE(ned::editor::FormatEditsKeepStructure(mode, text, {{gap, gap + 1, " "}})); // comments out `int b;`
+    CHECK(ned::editor::ApplyFormatTextEditsToText(text, {{gap, gap + 1, " "}, {0, 3, "long"}}) == "long a; // x int b;\n");
 }
 
 // A buffer with no major mode still gets the Hygiene pass rather than

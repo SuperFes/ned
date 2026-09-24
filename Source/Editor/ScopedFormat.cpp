@@ -2,10 +2,13 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <optional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "FinalNewline.h"
+#include "Format.h"
 #include "FormatEdit.h"
 #include "FormatPasses.h"
 #include "Indent.h"
@@ -76,8 +79,12 @@ namespace {
     // scope's own new end offset (its start never moves -- see this file's
     // header comment on why straddling edits are declined rather than
     // partially applied).
+    // `checkAgainst`, when given, is the buffer's current text and the mode
+    // whose parse the in-scope edits must leave unchanged (Editor/Format.h's
+    // FormatEditsKeepStructure); failing that, none of them apply.
     std::size_t ApplyContainedEdits(text::Buffer& buffer, std::vector<FormatTextEdit> edits, std::size_t scopeStart,
-                                    std::size_t scopeEnd, bool& changed) {
+                                    std::size_t scopeEnd, bool& changed,
+                                    std::optional<std::pair<const Mode*, std::string_view>> checkAgainst = std::nullopt) {
         std::vector<FormatTextEdit> inScope;
         std::ptrdiff_t              delta = 0;
         for (FormatTextEdit& edit : edits) {
@@ -85,6 +92,10 @@ namespace {
                 delta += static_cast<std::ptrdiff_t>(edit.text.size()) - static_cast<std::ptrdiff_t>(edit.end - edit.start);
                 inScope.push_back(std::move(edit));
             }
+        }
+        if (!inScope.empty() && checkAgainst &&
+            !FormatEditsKeepStructure(*checkAgainst->first, checkAgainst->second, inScope)) {
+            return scopeEnd;
         }
         if (!inScope.empty()) {
             ApplyFormatTextEdits(buffer, std::move(inScope));
@@ -150,7 +161,7 @@ bool ApplyScopedFormatOnSave(text::Buffer& buffer, const Mode& mode) {
             for (const FormatPass& pass : NativeFormatPasses()) {
                 const std::string text = buffer.Text();
                 scopeEnd               = ApplyContainedEdits(buffer, pass.compute(text, languageKey, mode.formatCaptures(text)),
-                                                             scopeStart, scopeEnd, changed);
+                                                             scopeStart, scopeEnd, changed, std::pair{&mode, std::string_view(text)});
             }
         }
 

@@ -27,6 +27,10 @@
 #ifndef NED_EDITOR_FORMAT_H
 #define NED_EDITOR_FORMAT_H
 
+#include <string_view>
+#include <vector>
+
+#include "FormatEdit.h"
 #include "Text/Buffer.h"
 
 namespace ned::editor {
@@ -40,6 +44,14 @@ struct Mode;
 // touches the buffer/undo tree not at all. Returns whether anything
 // changed.
 bool ApplyHygienePass(text::Buffer& buffer);
+
+// Whether applying `edits` to `text` leaves it parsing to the same structure
+// (Mode::sameStructure). Every capture-driven pass checks its edits with this
+// before applying them, and drops the whole pass when they fail: a format
+// rule that changes what the code means -- a brace joined onto a line
+// comment, a token glued into another -- is a bug in the rule, never
+// something to apply. True when there is nothing to compare.
+[[nodiscard]] bool FormatEditsKeepStructure(const Mode& mode, std::string_view text, const std::vector<FormatTextEdit>& edits);
 
 // format-buffer's own Native tier, whole-buffer: the per-language reindent,
 // then each configured rule kind in the one order they compose in, then
