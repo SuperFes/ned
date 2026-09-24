@@ -1488,7 +1488,7 @@ Show or hide the built-in Janet REPL panel.
 
 Key: `M-;`
 
-Comment or uncomment the current line, or every line the region spans.
+Comment or uncomment the current line, or every line the region spans, in the language at point.
 
 ## `toggle-minimap`
 

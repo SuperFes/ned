@@ -17,6 +17,7 @@
 #include "BufferSave.h"
 #include "Clipboard.h"
 #include "CodeFold.h"
+#include "CommentSyntax.h"
 #include "ConflictResolution.h"
 #include "Coverage/Config.h"
 #include "Editor/Project/Root.h"
@@ -4166,28 +4167,14 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // later line's already-computed ones -- point/mark relocate correctly
     // regardless, via Buffer::InsertAt/DeleteRange's own existing
     // relocation, not tracked separately here.
-    registry.Register("toggle-line-comment", "Comment or uncomment the current line, or every line the region spans.",
+    registry.Register("toggle-line-comment", "Comment or uncomment the current line, or every line the region spans, in the language at point.",
                       [](CommandContext& context) {
-                          // A line comment is a prefix; a language with only block
-                          // comments (OCaml, HTML, CSS) wraps each line instead.
-                          const bool lineComment = context.mode != nullptr && !context.mode->lineCommentPrefix.empty();
-                          if (!lineComment && (context.mode == nullptr || context.mode->blockCommentOpen.empty())) {
+                          if (context.mode == nullptr) {
                               if (context.message) {
                                   *context.message = "No comment syntax configured for this mode.";
                               }
                               return;
                           }
-                          const std::string& prefix = lineComment ? context.mode->lineCommentPrefix : context.mode->blockCommentOpen;
-                          const std::string  suffix = lineComment ? std::string() : context.mode->blockCommentClose;
-                          // Where the line's content ends (before trailing
-                          // whitespace), and whether it is wrapped already.
-                          const auto contentEnd = [](const std::string& text) { return text.find_last_not_of(" \t") + 1; };
-                          const auto commented  = [&](const std::string& text, std::size_t indent) {
-                              const std::size_t end = contentEnd(text);
-                              return text.compare(indent, prefix.size(), prefix) == 0 &&
-                                     (suffix.empty() || (end >= indent + prefix.size() + suffix.size() &&
-                                                         text.compare(end - suffix.size(), suffix.size(), suffix) == 0));
-                          };
 
                           text::Buffer& buffer = context.buffer;
                           // Safe to capture once here -- only read-only
@@ -4214,6 +4201,40 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               firstLine = lastLine = content.ByteOffsetToLine(buffer.Point());
                           }
                           buffer.ClearMark();
+
+                          // Commented in the language the range starts in --
+                          // an HTML <script> line in JavaScript's syntax. A
+                          // line comment is a prefix; a block-only language
+                          // (OCaml, HTML, CSS) wraps each line instead.
+                          std::size_t anchor = content.LineToByteOffset(firstLine);
+                          for (std::size_t line = firstLine; line <= lastLine; ++line) {
+                              const std::size_t start  = content.LineToByteOffset(line);
+                              const std::string text   = content.Substring(start, LineContentEnd(content, start) - start);
+                              const std::size_t indent = text.find_first_not_of(" \t");
+                              if (indent != std::string::npos) {
+                                  anchor = start + indent;
+                                  break;
+                              }
+                          }
+                          const CommentSyntax syntax = CommentSyntaxAt(*context.mode, buffer.Text(), anchor);
+                          if (syntax.prefix.empty()) {
+                              if (context.message) {
+                                  *context.message = syntax.language.empty() ? "No comment syntax configured for this mode."
+                                                                             : "No comment syntax for " + syntax.language + ".";
+                              }
+                              return;
+                          }
+                          const std::string& prefix = syntax.prefix;
+                          const std::string& suffix = syntax.suffix;
+                          // Where the line's content ends (before trailing
+                          // whitespace), and whether it is wrapped already.
+                          const auto contentEnd = [](const std::string& text) { return text.find_last_not_of(" \t") + 1; };
+                          const auto commented  = [&](const std::string& text, std::size_t indent) {
+                              const std::size_t end = contentEnd(text);
+                              return text.compare(indent, prefix.size(), prefix) == 0 &&
+                                     (suffix.empty() || (end >= indent + prefix.size() + suffix.size() &&
+                                                         text.compare(end - suffix.size(), suffix.size(), suffix) == 0));
+                          };
 
                           // First pass (read-only): is every non-blank line
                           // in range already commented?

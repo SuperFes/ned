@@ -109,6 +109,7 @@ add_library(ned_lib STATIC
         Editor/Languages/Markdown.cpp
         Editor/Languages/Org.cpp
         Editor/Injection.cpp
+        Editor/CommentSyntax.cpp
         Editor/EmbeddedDocuments.cpp
         Editor/SyntaxTheme.cpp
         Editor/ModeOverrides.cpp

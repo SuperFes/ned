@@ -1152,7 +1152,7 @@ for the live keymap stack.
 
 `toggle-line-comment` (`M-;`)
 
-:   Comment or uncomment the current line, or every line the region spans.
+:   Comment or uncomment the current line, or every line the region spans, in the language at point.
 
 `toggle-minimap` (`C-c m`)
 

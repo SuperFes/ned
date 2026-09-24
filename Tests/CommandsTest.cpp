@@ -20,6 +20,7 @@
 #include "Editor/LanguageDefinition.h"
 #include "Editor/LineEndingPolicy.h"
 #include "Editor/Mode.h"
+#include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Session.h"
@@ -2769,6 +2770,43 @@ TEST_CASE("toggle-line-comment unwraps an empty block comment without overrunnin
         registry.Invoke("toggle-line-comment", context);
         CHECK(fixture.buffer.Text().empty());
     }
+}
+
+TEST_CASE("toggle-line-comment comments an embedded region in its own language", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    // Toggles the line containing `needle` and returns that line afterwards.
+    const auto toggleLine = [&](const std::string& modeName, const std::string& source, const std::string& needle,
+                                std::string* message = nullptr) {
+        const std::optional<Mode> mode = ned::editor::ModeByName(modeName);
+        REQUIRE(mode.has_value());
+        Fixture        fixture;
+        CommandContext context = fixture.Context();
+        context.mode           = &*mode;
+        context.message        = message;
+        fixture.buffer.InsertAtPoint(source);
+        fixture.buffer.SetPoint(source.find(needle));
+        registry.Invoke("toggle-line-comment", context);
+        const std::string text  = fixture.buffer.Text();
+        const std::size_t start = text.rfind('\n', text.find(needle)) + 1;
+        return text.substr(start, text.find('\n', start) - start);
+    };
+
+    const std::string html = "<div>\n<script>\n  let a = 1;\n</script>\n<style>\n  .b { color: red; }\n</style>\n</div>\n";
+    CHECK(toggleLine("html-mode", html, "let a") == "  // let a = 1;");
+    CHECK(toggleLine("html-mode", html, ".b") == "  /* .b { color: red; } */");
+    CHECK(toggleLine("html-mode", html, "<div>") == "<!-- <div> -->");
+
+    const std::string markdown = "Some prose.\n\n```python\nx = 1\n```\n\n```json\n{\"a\": 1}\n```\n";
+    CHECK(toggleLine("markdown-mode", markdown, "x = 1") == "# x = 1");
+    CHECK(toggleLine("markdown-mode", markdown, "Some prose") == "<!-- Some prose. -->"); // markdown-inline is not a language
+    std::string message;
+    CHECK(toggleLine("markdown-mode", markdown, "{\"a\"", &message) == "{\"a\": 1}");
+    CHECK(message == "No comment syntax for json.");
+
+    const std::string vue = "<template>\n  <p>hi</p>\n</template>\n<script lang=\"ts\">\nconst n: number = 1\n</script>\n";
+    CHECK(toggleLine("vue-mode", vue, "const n") == "// const n: number = 1");
 }
 
 TEST_CASE("M-;/ESC ; are bound to toggle-line-comment", "[Commands]") {

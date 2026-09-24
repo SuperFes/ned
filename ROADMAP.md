@@ -128,10 +128,6 @@ and code reading. Highest stakes first.
       HeadlineLevel classes; XML also uses `markup.heading`, for CDATA delimiters, so it
       needs a language-scoped exception. A few other upstream names (`@error`,
       `@warning`, `@symbol`, `@text.*` in make/perl/d) are unmapped the same way.
-- [ ] **`toggle-line-comment` ignores the embedded language at point.** It reads the host
-      mode's prefix only, so a line inside a Vue/Svelte/HTML `<script>` or a Markdown
-      fenced block gets the host's syntax (or "No comment syntax configured"). The
-      injection engine already knows the language at point.
 - [ ] **Reindent does little or nothing for several languages with no indents query.**
       Scala leaves class/object bodies flush, Erlang indents `case` arms but not function
       bodies, Elixir `do`/`end` is untouched; small valid samples in CMake, Pascal, Perl,
