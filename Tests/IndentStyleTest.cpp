@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Editor/IndentStyle.h"
+#include "Text/Buffer.h"
 
 using ned::editor::DefaultIndentStyle;
 using ned::editor::EffectiveIndentStyle;
@@ -76,4 +77,23 @@ TEST_CASE("SetIndentStyleForMode clamps a non-positive width to 1", "[IndentStyl
     const IndentStyleGuard guard;
     SetIndentStyleForMode("indent-style-test-clamp-mode", IndentStyle{.useTabs = false, .width = 0});
     REQUIRE(EffectiveIndentStyle("indent-style-test-clamp-mode").width == 1);
+}
+
+TEST_CASE("A buffer's own indent style outranks its mode's", "[IndentStyle]") {
+    const IndentStyleGuard guard;
+    SetIndentStyleForMode("indent-style-test-buffer-mode", IndentStyle{.useTabs = false, .width = 4});
+    ned::text::Buffer buffer("local.txt");
+    REQUIRE(EffectiveIndentStyle(buffer, "indent-style-test-buffer-mode") == IndentStyle{.useTabs = false, .width = 4});
+
+    buffer.SetLocalIndentStyle(IndentStyle{.useTabs = true, .width = 8});
+    REQUIRE(EffectiveIndentStyle(buffer, "indent-style-test-buffer-mode") == IndentStyle{.useTabs = true, .width = 8});
+
+    buffer.SetLocalIndentStyle(std::nullopt);
+    REQUIRE(EffectiveIndentStyle(buffer, "indent-style-test-buffer-mode") == IndentStyle{.useTabs = false, .width = 4});
+}
+
+TEST_CASE("A buffer's own indent style clamps a non-positive width to 1", "[IndentStyle]") {
+    ned::text::Buffer buffer("local.txt");
+    buffer.SetLocalIndentStyle(IndentStyle{.useTabs = false, .width = 0});
+    REQUIRE(buffer.LocalIndentStyle()->width == 1);
 }

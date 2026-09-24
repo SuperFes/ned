@@ -428,7 +428,7 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
             try {
                 ned::text::Buffer         buffer = ned::text::Buffer::FromHugeFile(path);
                 const ned::editor::Mode   mode   = ned::editor::ModeForPath(path);
-                const ned::editor::IndentStyle style = ned::editor::EffectiveIndentStyle(mode.name);
+                const ned::editor::IndentStyle style  = ned::editor::EffectiveIndentStyle(buffer, mode.name);
 
                 const std::filesystem::path       tmpPath = path.string() + ".ned-tmp";
                 ned::editor::HugeReindentOutcome outcome;

@@ -29,6 +29,7 @@
 #include "AnchorSet.h"
 #include "EditJournal.h"
 #include "ITextStorage.h"
+#include "IndentStyle.h"
 #include "LineEnding.h"
 #include "PieceTable.h"
 #include "Rope.h"
@@ -209,6 +210,13 @@ class Buffer {
     // reasoning as ensureFinalNewline/trimTrailingWhitespace: nothing on
     // disk changes until the next explicit save actually writes it out.
     void SetLineEndingOverride(ned::text::LineEnding ending);
+
+    // The indentation this buffer's own file asks for (a modeline,
+    // .editorconfig, or what its content already does), overriding the
+    // mode's configured style for this buffer alone; nullopt defers to the
+    // mode. Editor::EffectiveIndentStyle(buffer, modeName) resolves the two.
+    [[nodiscard]] const std::optional<IndentStyle>& LocalIndentStyle() const;
+    void                                            SetLocalIndentStyle(std::optional<IndentStyle> style);
 
     // Storage-agnostic: an ordinary buffer is Rope-backed underneath, a huge
     // (multi-GB) buffer is piece-table-backed (see Text/PieceTable.h,
@@ -1441,6 +1449,7 @@ class Buffer {
     // See LineEndingKind()/SetLineEndingOverride's own doc comments above.
     // Defaults to LF, matching a NewFile() buffer's own implicit ending.
     ned::text::LineEnding LineEnding_ = ned::text::LineEnding::LF;
+    std::optional<IndentStyle> LocalIndentStyle_;
     // See Content()'s own doc comment above -- Rope-backed for every
     // ordinary buffer, piece-table-backed only for a huge one. Every
     // internal mutator/query below goes through this, never a bare Rope

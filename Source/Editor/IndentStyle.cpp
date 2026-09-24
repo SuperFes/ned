@@ -7,6 +7,7 @@
 
 #include "ImprintBracket.h"
 #include "IndentDefaults.h"
+#include "Text/Buffer.h"
 
 namespace ned::editor {
 
@@ -64,6 +65,13 @@ IndentStyle EffectiveIndentStyle(const std::string& modeName) {
         return *builtin;
     }
     return DefaultStorage();
+}
+
+IndentStyle EffectiveIndentStyle(const text::Buffer& buffer, const std::string& modeName) {
+    if (const std::optional<IndentStyle>& local = buffer.LocalIndentStyle()) {
+        return *local;
+    }
+    return EffectiveIndentStyle(modeName);
 }
 
 } // namespace ned::editor

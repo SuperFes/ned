@@ -23,6 +23,7 @@
 
 #include "Editor/ColorLiteral.h"
 #include "Editor/Imprint.h"
+#include "Editor/IndentStyle.h"
 #include "Keymap.h"
 
 namespace ned::editor::grammar {
@@ -756,7 +757,10 @@ using EmbeddedRegionFunction = std::function<std::vector<InjectionRegion>(std::s
 // .highlight already bypasses the generic query path for logic a flat
 // capture list can't express (list-item hanging indent needs the bullet's
 // own content column, not a multiple of one fixed indent width).
-using IndentFunction = std::function<std::optional<int>(std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd)>;
+// bufferStyle is the buffer's own indent style (Buffer::LocalIndentStyle);
+// nullopt means the closure's own mode's configured style.
+using IndentFunction = std::function<std::optional<int>(std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd,
+                                                        const std::optional<IndentStyle>& bufferStyle)>;
 
 // The byte ranges whose structure the parse could not establish, in source
 // order. A batch reindent (Indent.h's IndentRegion) leaves the lines inside

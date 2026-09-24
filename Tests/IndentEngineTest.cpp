@@ -364,9 +364,11 @@ TEST_CASE("LineIsVerbatim is strictly inside, at both ends", "[Indent]") {
 
 TEST_CASE("A mode with no highlighter has no verbatim regions and still indents", "[Indent]") {
     ned::editor::Mode mode;
-    mode.indentColumn = [](std::string_view, std::size_t, std::size_t) { return std::optional<int>(7); };
+    mode.indentColumn = [](std::string_view, std::size_t, std::size_t, const std::optional<ned::editor::IndentStyle>&) {
+        return std::optional<int>(7);
+    };
     CHECK(ned::editor::VerbatimRanges(mode, "anything").empty());
-    CHECK(ned::editor::IndentColumnForLine(mode, "anything", 0, 8) == 7);
+    CHECK(ned::editor::IndentColumnForLine(mode, "anything", 0, 8, std::nullopt) == 7);
 }
 
 // ---------------------------------------------------------------------------
@@ -388,7 +390,7 @@ void CheckAgreesWithWrittenIndent(const ned::editor::Mode& mode, const std::stri
         const std::size_t lineEnd = (nl == std::string::npos) ? text.size() : nl;
         const std::size_t written = text.find_first_not_of(' ', lineStart) - lineStart;
         INFO("line " << lineNo << ": " << text.substr(lineStart, lineEnd - lineStart));
-        CHECK(mode.indentColumn(text, lineStart, lineEnd).value_or(-1) == static_cast<int>(written));
+        CHECK(mode.indentColumn(text, lineStart, lineEnd, std::nullopt).value_or(-1) == static_cast<int>(written));
         if (nl == std::string::npos)
             break;
         lineStart = nl + 1;

@@ -497,7 +497,7 @@ TEST_CASE("CppMode full-buffer highlighting and electric indent stay fast on a l
 
     const auto start   = steady_clock::now();
     const auto spans   = mode.highlight(content, ned::editor::HighlightWindow{});
-    const auto column  = ned::editor::IndentColumnForLine(mode, content, lineStart, lineStart);
+    const auto column  = ned::editor::IndentColumnForLine(mode, content, lineStart, lineStart, std::nullopt);
     const auto elapsed = steady_clock::now() - start;
 
     REQUIRE_FALSE(spans.empty());
@@ -512,7 +512,7 @@ TEST_CASE("CppMode full-buffer highlighting and electric indent stay fast on a l
     // costs tens of ms on a file this size -- comfortably caught by a
     // budget an order of magnitude under kBudgetMs, sanitizer noise included.
     const auto indentOnlyStart   = steady_clock::now();
-    const auto indentOnlyColumn  = ned::editor::IndentColumnForLine(mode, content, lineStart, lineStart);
+    const auto indentOnlyColumn  = ned::editor::IndentColumnForLine(mode, content, lineStart, lineStart, std::nullopt);
     const auto indentOnlyElapsed = steady_clock::now() - indentOnlyStart;
 
     REQUIRE(indentOnlyColumn.has_value());

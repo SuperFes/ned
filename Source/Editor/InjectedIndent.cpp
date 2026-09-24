@@ -80,11 +80,12 @@ namespace {
     };
 
     // Everything the wrapper remembers between calls. Rebuilt whenever the
-    // text it was derived from changes; a whole-buffer reindent freezes its
+    // text or the buffer's indent style it was derived from changes; a whole-buffer reindent freezes its
     // text for the entire run (Indent.cpp's IndentRegion), so that is one
     // synthesis for the document rather than one per line.
     struct InjectedIndentCache {
         std::string                                                    text;
+        std::optional<IndentStyle>                                     bufferStyle;
         std::vector<EmbeddedDocument>                                  documents;
         std::unordered_map<std::string, std::optional<IndentFunction>> indentByLanguage;
         std::vector<DocumentOrigin>                                    origins;
@@ -104,7 +105,7 @@ namespace {
 
     const DocumentOrigin& OriginFor(const EmbeddedDocument& document, const IndentFunction& injectedIndent,
                                     const IndentFunction& hostIndent, std::string_view bufferText, std::size_t index,
-                                    InjectedIndentCache& cache) {
+                                    const std::optional<IndentStyle>& bufferStyle, InjectedIndentCache& cache) {
         if (index >= cache.origins.size()) {
             cache.origins.resize(index + 1);
         }
@@ -132,8 +133,8 @@ namespace {
         }
 
         const std::size_t lineEnd = LineEndFor(document.documentText, lineStart);
-        origin.injected           = injectedIndent(document.documentText, lineStart, lineEnd);
-        origin.host               = hostIndent ? hostIndent(bufferText, lineStart, lineEnd) : std::optional<int>(0);
+        origin.injected           = injectedIndent(document.documentText, lineStart, lineEnd, bufferStyle);
+        origin.host               = hostIndent ? hostIndent(bufferText, lineStart, lineEnd, bufferStyle) : std::optional<int>(0);
         return origin;
     }
 
@@ -156,14 +157,16 @@ IndentFunction WithInjectedRegionIndent(IndentFunction host, EmbeddedRegionFunct
 
     const auto cache = std::make_shared<InjectedIndentCache>();
     return [host = std::move(host), regions = std::move(regions),
-            cache](std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd) -> std::optional<int> {
-        const std::optional<int> hostColumn = host ? host(bufferText, lineStart, lineEnd) : std::nullopt;
+            cache](std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd,
+                   const std::optional<IndentStyle>& bufferStyle) -> std::optional<int> {
+        const std::optional<int> hostColumn = host ? host(bufferText, lineStart, lineEnd, bufferStyle) : std::nullopt;
         if (!IndentInjectedRegions() || Depth() >= kMaxInjectionDepth) {
             return hostColumn;
         }
 
-        if (cache->text != bufferText) {
-            cache->text = std::string(bufferText);
+        if (cache->text != bufferText || cache->bufferStyle != bufferStyle) {
+            cache->text        = std::string(bufferText);
+            cache->bufferStyle = bufferStyle;
             cache->origins.clear();
             Depth()++;
             cache->documents = BuildInjectedDocuments(regions(bufferText), bufferText);
@@ -190,8 +193,8 @@ IndentFunction WithInjectedRegionIndent(IndentFunction host, EmbeddedRegionFunct
             }
 
             Depth()++;
-            const std::optional<int> injected = (*indent)(document.documentText, lineStart, lineEnd);
-            const DocumentOrigin&    origin   = OriginFor(document, *indent, host, bufferText, index, *cache);
+            const std::optional<int> injected = (*indent)(document.documentText, lineStart, lineEnd, bufferStyle);
+            const DocumentOrigin&    origin   = OriginFor(document, *indent, host, bufferText, index, bufferStyle, *cache);
             Depth()--;
 
             if (!injected || !origin.injected || !origin.host) {

@@ -250,3 +250,16 @@ TEST_CASE("WrapRuleFor(name, language) resolves the language-scoped key first, m
     REQUIRE(ned::editor::WrapRuleFor("wrap.args", "cpp").policy == WrapPolicy::Never);
     REQUIRE(ned::editor::WrapRuleFor("wrap.args", "python").policy == WrapPolicy::Always); // falls through
 }
+
+TEST_CASE("ComputeWrapEdits indents chopped items with the style it is given", "[FormatWrap]") {
+    const FormatRulesGuard guard;
+    SetWrapPolicy("wrap.args", WrapPolicy::Always);
+
+    const Mode mode = CppMode();
+    Buffer     buffer("t.cpp");
+    buffer.InsertAtPoint("int c = f(1, 2);\n");
+    ApplyFormatTextEdits(buffer, ComputeWrapEdits(buffer.Text(), "cpp", mode.formatCaptures(buffer.Text()),
+                                                  ned::editor::IndentStyle{.useTabs = true, .width = 8}));
+
+    REQUIRE(buffer.Text() == "int c = f(\n\t1,\n\t2\n);\n");
+}

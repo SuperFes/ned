@@ -30,9 +30,11 @@
 
 namespace ned::editor {
 
-// Every capture-driven pass has this shape: pure text in, edits out.
+// Every capture-driven pass has this shape: pure text in, edits out. The
+// style is the buffer's effective indent style, for passes that lay out
+// whole lines.
 using FormatPassFn = std::vector<FormatTextEdit> (*)(std::string_view, std::string_view,
-                                                     const std::vector<FormatCapture>&);
+                                                     const std::vector<FormatCapture>&, const IndentStyle&);
 
 struct FormatPass {
     std::string_view name; // for diagnostics and for the order test

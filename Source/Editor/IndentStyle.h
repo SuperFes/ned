@@ -20,13 +20,15 @@
 
 #include <string>
 
+#include "Text/IndentStyle.h"
+
+namespace ned::text {
+class Buffer;
+}
+
 namespace ned::editor {
 
-struct IndentStyle {
-    bool useTabs = false; // default: spaces
-    int  width   = 4;     // columns per indent level; also the spaces-per-tab-stop
-                          // used when useTabs collapses a full-width run to a literal tab
-};
+using IndentStyle = text::IndentStyle;
 
 // Process-wide default.
 void                      SetIndentStyle(IndentStyle style);
@@ -39,6 +41,10 @@ void SetIndentStyleForMode(const std::string& modeName, IndentStyle style);
 // default -- same "caller falls back gracefully" convention
 // WrapLinesForFileOverride/EffectiveWrapLines already established.
 [[nodiscard]] IndentStyle EffectiveIndentStyle(const std::string& modeName);
+
+// The buffer's own style (Buffer::LocalIndentStyle -- what the file itself
+// says) when it has one, else EffectiveIndentStyle(modeName).
+[[nodiscard]] IndentStyle EffectiveIndentStyle(const text::Buffer& buffer, const std::string& modeName);
 
 } // namespace ned::editor
 

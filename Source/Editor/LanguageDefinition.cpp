@@ -45,7 +45,9 @@ namespace {
             mode.embeddedRegions = EmbeddedRegionFunction();
         }
         if (definition.preserveIndent && mode.indentColumn) {
-            mode.indentColumn = [](std::string_view, std::size_t, std::size_t) -> std::optional<int> { return std::nullopt; };
+            mode.indentColumn = [](std::string_view, std::size_t, std::size_t, const std::optional<IndentStyle>&) -> std::optional<int> {
+                return std::nullopt;
+            };
         }
     }
 

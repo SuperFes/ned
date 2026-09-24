@@ -412,7 +412,7 @@ namespace {
             const auto&       content   = context.buffer.Content();
             const std::size_t startLine = content.ByteOffsetToLine(start);
             const std::size_t endLine   = content.ByteOffsetToLine(end) + 1; // exclusive
-            const IndentStyle style     = EffectiveIndentStyle(context.mode != nullptr ? context.mode->name : std::string());
+            const IndentStyle style     = EffectiveIndentStyle(context.buffer, context.mode != nullptr ? context.mode->name : std::string());
             context.buffer.ClearMark();
             RigidShiftRegion(context.buffer, style, startLine, endLine, 1);
             return;
@@ -429,8 +429,8 @@ namespace {
                 if (line + 1 < content.LineCount() && lineEnd > lineStart) {
                     --lineEnd; // exclude the line's own trailing '\n'
                 }
-                if (const std::optional<int> column = IndentColumnForLine(*context.mode, buffer.Text(), lineStart, lineEnd)) {
-                    const IndentStyle style = EffectiveIndentStyle(context.mode->name);
+                if (const std::optional<int> column = IndentColumnForLine(*context.mode, buffer.Text(), lineStart, lineEnd, buffer.LocalIndentStyle())) {
+                    const IndentStyle style = EffectiveIndentStyle(buffer, context.mode->name);
                     buffer.ClearMark();
                     SetLineIndent(buffer, lineStart, *column, style);
                     buffer.SetPoint(lineStart + IndentString(*column, style).size());
@@ -453,7 +453,7 @@ namespace {
         // real space characters instead of tab-expansion, the same
         // "spaces that render like a tab" translation IndentString already
         // makes for a full-line reindent's own trailing partial stop.
-        const IndentStyle style = EffectiveIndentStyle(context.mode != nullptr ? context.mode->name : std::string());
+        const IndentStyle style = EffectiveIndentStyle(context.buffer, context.mode != nullptr ? context.mode->name : std::string());
         if (style.useTabs) {
             context.buffer.InsertAtPoint("\t");
             return;
@@ -1646,8 +1646,8 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 const auto&       content   = buffer.Content();
                 const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
                 const std::size_t lineStart = content.LineToByteOffset(line);
-                if (const std::optional<int> column = IndentColumnForLine(*context.mode, buffer.Text(), lineStart, lineStart)) {
-                    const IndentStyle style = EffectiveIndentStyle(context.mode->name);
+                if (const std::optional<int> column = IndentColumnForLine(*context.mode, buffer.Text(), lineStart, lineStart, buffer.LocalIndentStyle())) {
+                    const IndentStyle style = EffectiveIndentStyle(buffer, context.mode->name);
                     SetLineIndent(buffer, lineStart, *column, style);
                     buffer.SetPoint(lineStart + IndentString(*column, style).size());
                 }
@@ -1778,7 +1778,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         "Rigidly remove one indent width from every line the active region spans, or from the current line if no "
         "region is active.",
         [](CommandContext& context) {
-            const IndentStyle style = EffectiveIndentStyle(context.mode != nullptr ? context.mode->name : std::string());
+            const IndentStyle style = EffectiveIndentStyle(context.buffer, context.mode != nullptr ? context.mode->name : std::string());
             if (context.buffer.HasMark()) {
                 const auto [start, end]     = context.buffer.Region();
                 const auto&       content   = context.buffer.Content();

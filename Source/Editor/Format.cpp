@@ -50,7 +50,8 @@ namespace {
     template <typename ComputeFn>
     bool RunCapturePass(text::Buffer& buffer, const Mode& mode, const std::string& languageKey, ComputeFn compute) {
         const std::string                 text  = buffer.Text();
-        const std::vector<FormatTextEdit> edits = compute(text, languageKey, mode.formatCaptures(text));
+        const std::vector<FormatTextEdit> edits =
+            compute(text, languageKey, mode.formatCaptures(text), EffectiveIndentStyle(buffer, mode.name));
         if (edits.empty() || !FormatEditsKeepStructure(mode, text, edits)) {
             return false;
         }

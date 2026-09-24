@@ -160,7 +160,7 @@ bool ApplyScopedFormatOnSave(text::Buffer& buffer, const Mode& mode) {
         if (mode.formatCaptures) {
             for (const FormatPass& pass : NativeFormatPasses()) {
                 const std::string text = buffer.Text();
-                scopeEnd               = ApplyContainedEdits(buffer, pass.compute(text, languageKey, mode.formatCaptures(text)),
+                scopeEnd               = ApplyContainedEdits(buffer, pass.compute(text, languageKey, mode.formatCaptures(text), EffectiveIndentStyle(buffer, mode.name)),
                                                              scopeStart, scopeEnd, changed, std::pair{&mode, std::string_view(text)});
             }
         }

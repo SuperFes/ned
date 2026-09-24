@@ -3542,7 +3542,7 @@ bool BufferView::RunHugeFormat() {
             statusMessage_ = "format-buffer: cannot create " + tmpPath.string();
             return false;
         }
-        const editor::IndentStyle style = editor::EffectiveIndentStyle(context_.mode.name);
+        const editor::IndentStyle style = editor::EffectiveIndentStyle(buffer, context_.mode.name);
         outcome = editor::StreamHugeReindent(buffer.Content(), out, context_.mode.lineCommentPrefix, style);
     }
     if (!outcome.success) {

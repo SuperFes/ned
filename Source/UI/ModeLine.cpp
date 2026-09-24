@@ -166,7 +166,7 @@ void ModeLine::Paint(Canvas c) {
     // nothing at all).
     std::string indentStyleSuffix;
     if (!buffer.IsLoading() && !content.IsHuge()) {
-        if (mode_.name == "fundamental-mode") {
+        if (mode_.name == "fundamental-mode" && !buffer.LocalIndentStyle()) {
             // No language-specific convention to fall back on at all -- the
             // detected value IS the only thing worth reporting.
             const editor::DetectedIndent detected = editor::DetectIndentStyle(buffer.Text());
@@ -185,12 +185,10 @@ void ModeLine::Paint(Canvas c) {
             }
         }
         else {
-            // A mode-matched buffer always shows its EFFECTIVE configured
-            // style (never overridden by content) -- with a passive "≠"
-            // flag when the buffer's own content disagrees, display-only
-            // and never fed back into what format-buffer/the Indent pass
-            // actually does.
-            const editor::IndentStyle style = editor::EffectiveIndentStyle(mode_.name);
+            // A mode-matched buffer shows the style edits will use -- its
+            // own when it has one, else the mode's -- with a passive "≠"
+            // flag when the buffer's content disagrees.
+            const editor::IndentStyle style = editor::EffectiveIndentStyle(buffer, mode_.name);
             indentStyleSuffix               = style.useTabs ? "  Tabs" : "  Spaces:" + std::to_string(style.width);
 
             const editor::DetectedIndent detected = editor::DetectIndentStyle(buffer.Text());

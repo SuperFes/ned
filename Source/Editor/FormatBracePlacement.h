@@ -48,6 +48,12 @@ namespace ned::editor {
 // a previous run recomputes the same desired gap and finds it already
 // present, emitting nothing (Tests/FormatterPropertiesTest.cpp's own
 // idempotence property this codebase holds every formatting change to).
+[[nodiscard]] std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view                  text,
+                                                                     std::string_view                  languageKey,
+                                                                     const std::vector<FormatCapture>& captures,
+                                                                     const IndentStyle&                style);
+
+// The same with the language's configured style (EffectiveIndentStyle).
 [[nodiscard]] std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view                 text,
                                                                      std::string_view                 languageKey,
                                                                      const std::vector<FormatCapture>& captures);

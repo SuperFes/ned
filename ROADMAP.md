@@ -122,13 +122,10 @@ and code reading. Highest stakes first.
       "Order matters" query lists `(regex) @regexp` before `(pattern) @namespace`, so a
       rule-level `/re/ { ... }` paints as a namespace. Needs a per-query (or
       per-language) order flag, or ned-side reordering of the affected files.
-- [ ] **Per-buffer indentation, taken from the file itself.** Indent style today is keyed
-      by mode name (`EffectiveIndentStyle`), and the indent closure captures that name,
-      so every buffer of a language indents alike whatever the file already does. In
-      order, since each step needs the one before:
-  - [ ] **A file-local style on the buffer's `Mode`**, read by the ~15
-        `EffectiveIndentStyle` call sites and the indent closure. The foundation for
-        everything below.
+- [ ] **Per-buffer indentation, taken from the file itself.** A buffer can carry its own
+      style (`Buffer::SetLocalIndentStyle`, resolved by `EffectiveIndentStyle(buffer,
+      modeName)`, read by newline/TAB/reindent/format/wrap-hang), but nothing sets it
+      yet, so every buffer of a language still indents alike. In order:
   - [ ] **Apply what the file says.** Precedence: modeline (`vim: ts=4 sw=4 et`,
         `-*- indent-tabs-mode: nil -*-`, already parsed by `ParseModeline` in
         `Editor/Modeline.h`) > `.editorconfig` (`indent_style`/`indent_size`/`tab_width`;

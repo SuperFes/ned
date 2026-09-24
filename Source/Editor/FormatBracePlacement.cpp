@@ -196,9 +196,8 @@ namespace {
 } // namespace
 
 std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, std::string_view languageKey,
-                                                        const std::vector<FormatCapture>& captures) {
+                                                       const std::vector<FormatCapture>& captures, const IndentStyle& style) {
     std::vector<FormatTextEdit> edits;
-    const IndentStyle           style = EffectiveIndentStyle(std::string(languageKey) + "-mode");
 
     for (const FormatCapture& capture : captures) {
         if (capture.startByte == 0 || capture.startByte >= capture.endByte || capture.endByte > text.size()) {
@@ -408,6 +407,11 @@ std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, st
 
     std::sort(edits.begin(), edits.end(), [](const FormatTextEdit& a, const FormatTextEdit& b) { return a.start < b.start; });
     return edits;
+}
+
+std::vector<FormatTextEdit> ComputeBracePlacementEdits(std::string_view text, std::string_view languageKey,
+                                                       const std::vector<FormatCapture>& captures) {
+    return ComputeBracePlacementEdits(text, languageKey, captures, EffectiveIndentStyle(std::string(languageKey) + "-mode"));
 }
 
 } // namespace ned::editor

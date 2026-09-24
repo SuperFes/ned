@@ -436,6 +436,17 @@ void Buffer::SetLineEndingOverride(LineEnding ending) {
     LineEnding_ = ending;
 }
 
+const std::optional<IndentStyle>& Buffer::LocalIndentStyle() const {
+    return LocalIndentStyle_;
+}
+
+void Buffer::SetLocalIndentStyle(std::optional<IndentStyle> style) {
+    if (style) {
+        style->width = std::max(1, style->width); // IndentString's expansion loop needs a positive width
+    }
+    LocalIndentStyle_ = style;
+}
+
 const std::string& Buffer::Name() const {
     return Name_;
 }

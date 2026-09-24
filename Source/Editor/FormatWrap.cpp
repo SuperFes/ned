@@ -78,9 +78,8 @@ namespace {
 } // namespace
 
 std::vector<FormatTextEdit> ComputeWrapEdits(std::string_view text, std::string_view languageKey,
-                                             const std::vector<FormatCapture>& captures) {
+                                             const std::vector<FormatCapture>& captures, const IndentStyle& style) {
     std::vector<FormatTextEdit> edits;
-    const IndentStyle           style = EffectiveIndentStyle(std::string(languageKey) + "-mode");
 
     for (const FormatCapture& capture : captures) {
         if (capture.items.empty()) {
@@ -124,6 +123,11 @@ std::vector<FormatTextEdit> ComputeWrapEdits(std::string_view text, std::string_
     }
 
     return edits;
+}
+
+std::vector<FormatTextEdit> ComputeWrapEdits(std::string_view text, std::string_view languageKey,
+                                             const std::vector<FormatCapture>& captures) {
+    return ComputeWrapEdits(text, languageKey, captures, EffectiveIndentStyle(std::string(languageKey) + "-mode"));
 }
 
 } // namespace ned::editor

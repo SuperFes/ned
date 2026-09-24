@@ -4292,3 +4292,22 @@ TEST_CASE("bookmark-set still opens its prompt for an ordinary file", "[Commands
     REQUIRE(message.empty());
     REQUIRE(context.interactiveRequest == InteractiveRequest::BookmarkSet);
 }
+
+TEST_CASE("newline and TAB indent with the buffer's own style", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    Mode           cMode   = CMode();
+    CommandContext context = fixture.Context();
+    context.mode           = &cMode;
+    fixture.buffer.SetLocalIndentStyle(IndentStyle{.useTabs = true, .width = 8});
+
+    fixture.buffer.InsertAtPoint("int f(void) {");
+    registry.Invoke("newline", context);
+    REQUIRE(fixture.buffer.Text() == "int f(void) {\n\t");
+
+    fixture.buffer.SetLocalIndentStyle(IndentStyle{.useTabs = false, .width = 2});
+    registry.Invoke("indent-for-tab-command", context);
+    REQUIRE(fixture.buffer.Text() == "int f(void) {\n  ");
+}

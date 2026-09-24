@@ -20,7 +20,8 @@ namespace {
 
     void Indent(Mode& mode, const LanguageDefinition&, const ModeBuildContext& context) {
         mode.indentColumn = [blockParser = context.parser, sharedParse = context.sharedParse](
-                                std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd) -> std::optional<int> {
+                                std::string_view bufferText, std::size_t lineStart, std::size_t lineEnd,
+                                const std::optional<IndentStyle>& bufferStyle) -> std::optional<int> {
             const grammar::Tree& tree = sharedParse->Update(*blockParser, bufferText);
             if (tree.IsNull()) {
                 return std::nullopt;
@@ -105,7 +106,7 @@ namespace {
             // marker's Child(0), so a checkbox item's own literal width was
             // silently undercounted (2, the bullet alone) even on its own
             // terms.
-            const int  indentStep    = EffectiveIndentStyle("markdown-mode").width;
+            const int  indentStep    = (bufferStyle ? *bufferStyle : EffectiveIndentStyle("markdown-mode")).width;
             const auto sumHangColumn = [indentStep](const grammar::Node& startNode, std::size_t position) {
                 int result = 0;
                 // AncestorChain follow-up: one descent for the whole climb

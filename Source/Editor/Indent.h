@@ -338,6 +338,7 @@ RangeContainingLine(const std::vector<std::pair<std::size_t, std::size_t>>& rang
 // line as it is", which is what every caller already does with it.
 [[nodiscard]] std::optional<int> IndentColumnForLine(const Mode& mode, std::string_view bufferText,
                                                      std::size_t lineStart, std::size_t lineEnd,
+                                                     const std::optional<IndentStyle>&                       bufferStyle,
                                                      const std::vector<std::pair<std::size_t, std::size_t>>* ranges = nullptr);
 
 // level * style.width -- the only place an abstract indent LEVEL ever
