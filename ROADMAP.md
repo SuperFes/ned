@@ -105,6 +105,71 @@ whole-document highlight 50.7 ms -> 14.8 ms, keystroke+repaint on a 9 KiB C++ fi
       is an open question — spawning a live language server per code fence in an
       ordinary notes file could be noisy for illustrative/incomplete snippets.
 
+**Language handling gaps (audit 2026-09-23)**
+
+What each package ships is tracked in the generated `Docs/LanguageMatrix.md`; the items
+below are the behavioural gaps behind its empty cells, verified with `ned --format` probes
+and code reading. Highest stakes first.
+
+- [ ] **Reindent flattens offside-rule languages.** Elm, F#, GDScript, Haskell, Nim and
+      PureScript lose their significant indentation (`f x =\n  case x of` becomes flush
+      left), which changes or breaks the program; OCaml is flattened too (cosmetic).
+      Python, Starlark and YAML are fine. Reached by `format-buffer`, `ned --format`, and
+      -- the dangerous one -- the scoped Indent step of `ned/set-auto-format-on-save`
+      (`ScopedFormat.h`), which reindents every touched line on save. Fix direction: a
+      language-definition flag for offside languages that makes the Indent pass keep
+      existing indentation unless an indents query claims the line; check TAB/Enter
+      electric indent for the same languages while there.
+- [ ] **A same-line brace join can comment out the brace in every brace language except
+      PHP.** `:placement :same-line` turns `if (x) // note` + `{` into `if (x) // note {`
+      (verified in C++). The guard exists (`FormatBracePlacement.cpp`'s `InsideComment`)
+      but only fires when the language's `format.janet` declares `(comment) @comment`,
+      which only PHP does so far (`fmt-cmt` column). Add the capture to c, cpp, csharp,
+      go, java, javascript (typescript/tsx inherit it), kotlin, lua, rust, bash, fish,
+      janet, clojure, python, ruby -- checking each grammar's comment node names.
+- [ ] **OCaml's `toggle-line-comment` writes an unterminated comment.** Its
+      `:line-comment` is `"(*"` (ocaml and ocaml-interface), and the command only ever
+      prefixes, so toggling a line yields `(* let x = 1` with no `*)`. Needs real
+      block-comment support (e.g. `:block-comment ["(*" "*)"]`, wrapped per line), which
+      would also give HTML, XML, CSS, Vue, Svelte and Astro a toggle -- they have none today.
+- [ ] **`toggle-line-comment` ignores the embedded language at point.** It reads the host
+      mode's prefix only, so a line inside a Vue/Svelte/HTML `<script>` or a Markdown
+      fenced block gets the host's syntax (or "No comment syntax configured"). The
+      injection engine already knows the language at point.
+- [ ] **HLSL has no syntax highlighting.** `Docs/LanguageCoverage.md` says it reads cpp's
+      queries via `:queries-from "cpp"`, but `hlsl/language.janet` never set it.
+      `:queries-from` redirects query discovery wholesale, so check that its own
+      `tags.janet` still loads and that cpp's queries compile under the HLSL grammar.
+- [ ] **Reindent does little or nothing for several languages with no indents query.**
+      Scala leaves class/object bodies flush, Erlang indents `case` arms but not function
+      bodies, Elixir `do`/`end` is untouched; small valid samples in CMake, Pascal, Perl,
+      R, LaTeX, HCL and V came back unchanged. First separate "the sample didn't parse"
+      (batch reindent skips unparseable text) from "no indent source", then add indents
+      queries where the grammar's delimited bodies aren't enough.
+- [ ] **No symbol outline for Janet, Bash, Fish, Clojure, CMake or SQL** (no tags query:
+      no symbol gutter, outline, breadcrumbs or class/file sync). Janet is ned's own
+      extension language, so `init.janet` and every plugin go without. Config formats
+      (YAML, TOML, JSON) have none either; keys/tables as symbols would be the natural
+      shape there.
+- [ ] **No locals query for Lua, Ruby, Perl, Elixir, Dart or R**, so scope-aware rename
+      and local highlighting get no scope information there. Lua is Tier A.
+- [ ] **change-signature is C++-only.** It needs `signatures` + `calls` queries, and only
+      cpp ships them (`sig` column). Rust, Go, Java, Kotlin, C#, TypeScript and Python are
+      the obvious next ones.
+- [ ] **Bundled formatter styles exist for PHP only.** Candidates with a single canonical
+      guide: Go (gofmt), Rust (rustfmt), Kotlin (official conventions), C# (.NET
+      conventions), JavaScript/TypeScript (Prettier). A bundled style changes on-save
+      output for every user of that language, so each needs the same care PSR-12 got
+      (`ned/set-format-builtin-style` is the escape hatch).
+- [ ] **`reload-format-config` still can't remove an `:indent` or save-hygiene setting.**
+      Per-capture rules now reload cleanly (the File rule layer), but `:indent`,
+      `:trim-trailing-whitespace`, `:ensure-final-newline` and
+      `:max-consecutive-blank-lines` still only ever overwrite, so deleting one needs a
+      restart.
+- [ ] **Test discovery is missing for C** (Tier A) and for Ruby, Swift, Scala, Dart,
+      Elixir and Haskell (`test` column) -- the runner can still run them as tasks, but
+      there are no gutter markers or run-test-at-point.
+
 **Quick-fix gutter marker**
 
 - [ ] The marker only ever names a **diagnostic-attached** quick fix, because an

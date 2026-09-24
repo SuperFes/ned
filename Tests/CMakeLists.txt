@@ -130,6 +130,7 @@ add_executable(ned_tests
             MaxConsecutiveBlankLinesTest.cpp
             FormatConfigParseTest.cpp
             FormatBuiltinStyleTest.cpp
+            LanguageMatrixDocTest.cpp
             FormatRulesTest.cpp
             FormatBracePlacementTest.cpp
             FormatSpacingTest.cpp

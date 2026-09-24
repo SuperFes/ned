@@ -13,6 +13,7 @@
 - [Highlight Capabilities](HighlightCapabilities.md)
 - [Formatting Capabilities](FormattingCapabilities.md)
 - [Language Coverage](LanguageCoverage.md)
+- [Language Matrix](LanguageMatrix.md)
 
 # Design Records
 

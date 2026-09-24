@@ -11,6 +11,9 @@ Status: **catalogue, not a commitment schedule.** Tier A reflects where ned
 already is or clearly should be; everything below it is a ranking, not a queue
 with dates.
 
+What each package actually ships today (queries, format support, comment syntax, LSP
+root markers) is the generated `LanguageMatrix.md`; this document is the policy behind it.
+
 Grammar-health data was sampled 2026-09-11 via the GitHub API. Individual
 entries go stale -- the **admission policy** is the durable part, not the
 snapshot.
