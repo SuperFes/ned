@@ -117,12 +117,9 @@ and code reading. Highest stakes first.
       `with`, pattern, `->`, expression) against EOF completion's three-token closer
       budget. Measured: raising it to five changes GDScript's "Variables Invalid"
       corpus case and still leaves the line at the `let` level, so it isn't the fix.
-- [ ] **The `markup.*` capture family is unmapped**, so AsciiDoc, Typst, RST, LaTeX and
-      gitcommit headings, emphasis, lists and quotes paint nothing (Markdown/Org use the
-      older `text.*` names, which are mapped). `markup.heading.1`-`.6` want the
-      HeadlineLevel classes; XML also uses `markup.heading`, for CDATA delimiters, so it
-      needs a language-scoped exception. A few other upstream names (`@error`,
-      `@warning`, `@symbol`, `@text.*` in make/perl/d) are unmapped the same way.
+- [ ] **A few upstream capture names still paint nothing**: `@symbol` (CUE), the
+      `@text.note`/`@text.warning`/`@text.danger` comment-keyword family (make) and
+      `@text` (D, Perl). `@error`/`@warning` stay unmapped on purpose, as in Neovim.
 - [ ] **Reindent does little or nothing for several languages with no indents query.**
       Scala leaves class/object bodies flush, Erlang indents `case` arms but not function
       bodies, Elixir `do`/`end` is untouched; small valid samples in CMake, Pascal, Perl,

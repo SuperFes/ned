@@ -1702,3 +1702,28 @@ TEST_CASE("A combined injection parses its ranges as one document", "[Mode]") {
     CHECK(ClassAt(mode, source, "Adds") == ned::editor::SyntaxClass::DocComment); // text between tags is still the host's
     CHECK(ClassAt(mode, source, "let") == ned::editor::SyntaxClass::Keyword);     // nothing leaks past the ranges
 }
+
+TEST_CASE("markup.* captures paint headings, emphasis and list markers", "[Mode]") {
+    using ned::editor::SyntaxClass;
+    const std::string typst = "= Title\n== Section\n\nSome *bold* and _slanted_ text.\n\n- item\n";
+    CHECK(ClassAt(BundledMode("typst"), typst, "Title") == SyntaxClass::HeadlineLevel1);
+    CHECK(ClassAt(BundledMode("typst"), typst, "Section") == SyntaxClass::HeadlineLevel2);
+    CHECK(ClassAt(BundledMode("typst"), typst, "bold") == SyntaxClass::Strong);
+    CHECK(ClassAt(BundledMode("typst"), typst, "slanted") == SyntaxClass::Emphasis);
+
+    const std::string asciidoc = "= Document\n\n== Section\n\nText.\n";
+    CHECK(ClassAt(BundledMode("asciidoc"), asciidoc, "Section") == SyntaxClass::HeadlineLevel2);
+
+    const std::string rst = "Title\n=====\n\nSome **strong** text.\n";
+    CHECK(ClassAt(BundledMode("rst"), rst, "Title") == SyntaxClass::HeadlineLevel1);
+    CHECK(ClassAt(BundledMode("rst"), rst, "strong") == SyntaxClass::Strong);
+
+    // html_tags' element-text rules, through Svelte.
+    const std::string svelte = "<h1>Big</h1>\n<b>loud</b>\n";
+    CHECK(ClassAt(BundledMode("svelte"), svelte, "Big") == SyntaxClass::HeadlineLevel1);
+    CHECK(ClassAt(BundledMode("svelte"), svelte, "loud") == SyntaxClass::Strong);
+
+    // XML re-bases markup.heading: CDATA's delimiters are punctuation, not a heading.
+    const std::string xml = "<a><![CDATA[x]]></a>\n";
+    CHECK(ClassAt(BundledMode("xml"), xml, "<![CDATA[") == SyntaxClass::Punctuation);
+}

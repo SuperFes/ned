@@ -220,12 +220,32 @@ namespace {
             // pattern of its own using this capture name.
             {"text.strikethrough", SyntaxClass::Strikethrough},
 
-            // The newer nvim-treesitter "markup.*" naming. Bare "markup" (XML
-            // character data) and the rest of the family are unmapped, so
-            // they paint nothing; only these two want a class, mirroring
-            // "text.uri"/"text.literal" above.
+            // The newer nvim-treesitter "markup.*" naming (AsciiDoc, Typst,
+            // RST, LaTeX, html_tags), the same classes as the "text.*"
+            // spellings above. Bare "markup" (XML character data) stays
+            // unmapped and paints nothing; XML re-bases "markup.heading",
+            // which it uses for CDATA delimiters, in its language.janet.
             {"markup.link", SyntaxClass::Link},
             {"markup.raw", SyntaxClass::String},
+            // Headings cycle through three levels, as Org's and Markdown's do.
+            {"markup.heading", SyntaxClass::HeadlineLevel1},
+            {"markup.heading.1", SyntaxClass::HeadlineLevel1},
+            {"markup.heading.2", SyntaxClass::HeadlineLevel2},
+            {"markup.heading.3", SyntaxClass::HeadlineLevel3},
+            {"markup.heading.4", SyntaxClass::HeadlineLevel1},
+            {"markup.heading.5", SyntaxClass::HeadlineLevel2},
+            {"markup.heading.6", SyntaxClass::HeadlineLevel3},
+            {"markup.heading.marker", SyntaxClass::MarkupMarker},
+            {"markup.strong", SyntaxClass::Strong},
+            {"markup.bold", SyntaxClass::Strong},
+            {"markup.italic", SyntaxClass::Emphasis},
+            {"markup.underline", SyntaxClass::Underline},
+            {"markup.strikethrough", SyntaxClass::Strikethrough},
+            {"markup.quote", SyntaxClass::Emphasis},
+            {"markup.math", SyntaxClass::String},
+            {"markup.list", SyntaxClass::MarkupMarker},
+            {"markup.list.checked", SyntaxClass::Checkbox},
+            {"markup.list.unchecked", SyntaxClass::Checkbox},
         };
         return table;
     }

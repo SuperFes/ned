@@ -3,4 +3,6 @@
 {:name "xml"
  :extensions [".xml" ".xsd" ".xsl" ".xslt" ".svg"]
  :block-comment ["<!--" "-->"]
+ # Upstream captures CDATA's "<![CDATA[" and "]]>" as markup.heading.
+ :capture-classes {"markup.heading" :punctuation}
 }
