@@ -145,11 +145,12 @@ and code reading. Highest stakes first.
       natural shape, but every key is a definition, so it needs a depth or kind limit
       to stay an outline rather than a copy of the file. Fish names only functions:
       `set`'s variable name follows any number of flags.
-- [ ] **No locals query for Perl, Elixir, Dart or R**, so scope-aware rename and local
-      highlighting get no scope information there. Elixir needs its own design, not
-      nvim-treesitter's: that query unrolls pattern depth by hand, binds `^pinned`
-      names inside a match, and counts every call target as a variable use -- all of
-      which a rename would act on.
+- [ ] **No locals query for Perl, Elixir or Dart**, so scope-aware rename and local
+      highlighting get no scope information there. None has a usable upstream query:
+      Perl's grammar ships none; nvim-treesitter's Elixir query unrolls pattern depth by
+      hand, binds `^pinned` names inside a match and counts every call target as a
+      variable use; Dart's function signature and body are siblings with no node
+      covering both, so no scope capture can hold the parameters and their uses.
 - [ ] **change-signature is C++-only.** It needs `signatures` + `calls` queries, and only
       cpp ships them (`sig` column). Rust, Go, Java, Kotlin, C#, TypeScript and Python are
       the obvious next ones.

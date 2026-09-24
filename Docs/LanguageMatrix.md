@@ -118,7 +118,7 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | psv | ✓ | · | · | · | · | · | · | · | · | · | · | · | · |
 | purescript | ✓ | = | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | ✓ | · |
 | python | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | · | ✓ | · | ✓ | ✓ | ✓ |
-| r | ✓ | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
+| r | ✓ | · | ✓ | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | racket | ✓ | · | ✓ | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | requirements | ✓ | · | · | · | · | · | · | · | · | · | ✓ | · | · |
 | rescript | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | ✓ | · |
@@ -152,4 +152,4 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | wgsl | ✓ | · | · | · | · | · | · | · | · | · | ✓ | · | · |
 | xml | ✓ | ✓ | · | · | · | · | · | · | · | · | b | · | · |
 | yaml | ✓ | ✓ | · | · | · | · | · | · | · | · | ✓ | · | · |
-| **124 languages** | 123 | 34 | 52 | 86 | 44 | 13 | 12 | 1 | 19 | 1 | 115 | 40 | 11 |
+| **124 languages** | 123 | 34 | 53 | 86 | 44 | 13 | 12 | 1 | 19 | 1 | 115 | 40 | 11 |

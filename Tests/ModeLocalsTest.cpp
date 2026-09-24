@@ -703,3 +703,30 @@ TEST_CASE("nix-mode resolves parameters, let bindings and inherits", "[Mode][Loc
     CHECK(mkIf->definition.first == source.find("mkIf"));
     CHECK(mkIf->occurrences.size() == 2);
 }
+
+// R binds per function; a call's named argument and a `$` member are no use
+// of a variable, however they are spelled.
+TEST_CASE("r-mode resolves function-level bindings and skips named arguments", "[Mode][LocalScopes]") {
+    const std::string source = "total <- function(values, na.rm = FALSE) {\n"
+                               "  sum <- 0\n"
+                               "  for (v in values) {\n"
+                               "    sum <- sum + v\n"
+                               "  }\n"
+                               "  result <- list(sum = sum, n = length(values))\n"
+                               "  result$sum\n"
+                               "}\n";
+    const auto sum = Resolve("r-mode", source, "sum", 2); // `sum + v`
+    REQUIRE(sum.has_value());
+    CHECK(sum->qualifier == "var");
+    CHECK_FALSE(sum->scopeIsFile);
+    CHECK(sum->occurrences.size() == 4); // not `list(sum =` or `result$sum`
+
+    const auto values = Resolve("r-mode", source, "values", 0);
+    REQUIRE(values.has_value());
+    CHECK(values->qualifier == "parameter");
+    CHECK(values->occurrences.size() == 3);
+
+    const auto v = Resolve("r-mode", source, "v ", 0);
+    REQUIRE(v.has_value());
+    CHECK(v->occurrences.size() == 2);
+}
