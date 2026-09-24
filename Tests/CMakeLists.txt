@@ -29,6 +29,7 @@ add_executable(ned_tests
             ChangeSignatureTest.cpp
             ChangeSignatureDiscoveryTest.cpp
             ChangeSignatureLanguagesTest.cpp
+            PrettierConfigTest.cpp
             RustfmtConfigTest.cpp
             BufferViewRenameSymbolTest.cpp
             BufferViewChangeSignatureTest.cpp

@@ -12,6 +12,7 @@
 #include "IndentStyle.h"
 #include "JanetData.h"
 #include "MaxConsecutiveBlankLines.h"
+#include "PrettierConfig.h"
 #include "RustfmtConfig.h"
 #include "TrimOnSave.h"
 
@@ -733,6 +734,7 @@ void ReloadFormatConfig(const std::filesystem::path& projectRoot) {
     ClearFormatRuleLayer(FormatRuleLayer::File);
     ForgetFormatConfigSettings();
     ApplyRustfmtRules(projectRoot);
+    ApplyPrettierRules(projectRoot);
     if (personal) {
         ApplyFormatConfig(*personal);
     }

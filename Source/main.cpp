@@ -75,6 +75,7 @@
 #include "Editor/ModePrewarm.h"
 #include "Editor/PendingReExec.h"
 #include "Editor/PersistentUndo.h"
+#include "Editor/PrettierConfig.h"
 #include "Editor/Project/Plugins.h"
 #include "Editor/Project/Registry.h"
 #include "Editor/Project/Root.h"
@@ -388,6 +389,7 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
     try {
         ned::editor::LoadBuiltinFormatStyles();
         ned::editor::ApplyRustfmtRules(projectRoot);
+        ned::editor::ApplyPrettierRules(projectRoot);
         ned::editor::LoadFormatConfigFile(ned::editor::PersonalFormatConfigPath());
         ned::editor::LoadFormatConfigFile(ned::editor::ProjectFormatConfigPath(projectRoot));
     }
@@ -761,6 +763,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         statusMessage = std::string("style.janet error: ") + e.what();
     }
     ned::editor::ApplyRustfmtRules(projectRoot);
+    ned::editor::ApplyPrettierRules(projectRoot);
     try {
         ned::editor::LoadFormatConfigFile(ned::editor::PersonalFormatConfigPath());
     }

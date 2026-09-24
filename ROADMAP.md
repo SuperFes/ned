@@ -177,14 +177,17 @@ and code reading. Highest stakes first.
       (official conventions), C# (.NET conventions) and JavaScript/TypeScript/TSX
       (Prettier).** A Rust project's `rustfmt.toml` adjusts what rustfmt lets it
       (indentation, `max_width`, brace and blank-line options --
-      `Editor/RustfmtConfig.h`); gofmt has no options. None is complete: gofmt's
+      `Editor/RustfmtConfig.h`), and a Prettier config its `useTabs`/`tabWidth`/
+      `printWidth` for every file Prettier formats and its quote style for
+      JS/TS (`Editor/PrettierConfig.h`; a config written as JavaScript, a shared
+      config package and `overrides` blocks aren't read); gofmt has no options.
+      None is complete: gofmt's
       field/comment alignment and redundant-paren removal, rustfmt's and Prettier's
       width-driven wrapping, and rustfmt's `where`-clause layout are beyond the native
       formatter, so the language server's formatting (or `ned/set-format-command`) is
-      still what makes a file canonical. Prettier's quote style is left alone: many
-      projects set `singleQuote` in `.prettierrc`, which ned doesn't read yet (the
-      `rewrite.quote` capture is ready for it, as is `printWidth` for the ruler), and
-      C#'s `csharp_new_line_*` `.editorconfig` keys aren't read either.
+      still what makes a file canonical. Quotes are only rewritten where a Prettier
+      config says which (Prettier's default is double, but plenty of projects set
+      `singleQuote`). C#'s `csharp_new_line_*` `.editorconfig` keys aren't read.
 
 **Quick-fix gutter marker**
 

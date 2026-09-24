@@ -9,6 +9,7 @@
 #include "EditorConfig.h"
 #include "IndentDetect.h"
 #include "Modeline.h"
+#include "PrettierConfig.h"
 #include "RustfmtConfig.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -37,20 +38,36 @@ namespace {
         return generations;
     }
 
-    // rustfmt reads its own config, not .editorconfig, so for a Rust file
-    // that config says the last word before a modeline.
-    std::optional<RustfmtOptions> RustfmtFor(const std::filesystem::path& path) {
-        return path.extension() == ".rs" ? RustfmtOptionsFor(path) : std::nullopt;
+    // A formatter's own config for the file: rustfmt.toml for Rust, Prettier's
+    // for what Prettier formats. The formatter reads it over .editorconfig,
+    // so it says the last word before a modeline.
+    struct FormatterSettings {
+        IndentOverride     indent;
+        std::optional<int> maxWidth;
+    };
+
+    std::optional<FormatterSettings> FormatterSettingsFor(const std::filesystem::path& path) {
+        if (path.extension() == ".rs") {
+            if (const std::optional<RustfmtOptions> rustfmt = RustfmtOptionsFor(path)) {
+                return FormatterSettings{{.useTabs = rustfmt->hardTabs, .width = rustfmt->tabSpaces}, rustfmt->maxWidth};
+            }
+            return std::nullopt;
+        }
+        if (const std::optional<PrettierOptions> prettier = PrettierOptionsFor(path)) {
+            return FormatterSettings{{.useTabs = prettier->useTabs, .width = prettier->tabWidth}, prettier->printWidth};
+        }
+        return std::nullopt;
     }
 
-    IndentOverride IndentFrom(std::string_view text, const Properties& editorConfig, const std::optional<RustfmtOptions>& rustfmt) {
+    IndentOverride IndentFrom(std::string_view text, const Properties& editorConfig,
+                              const std::optional<FormatterSettings>& formatter) {
         IndentOverride indent;
         if (IndentDetection()) {
             indent = DetectedIndentOverride(text);
         }
         indent = indent.OverlaidWith(EditorConfigIndent(editorConfig));
-        if (rustfmt) {
-            indent = indent.OverlaidWith(IndentOverride{.useTabs = rustfmt->hardTabs, .width = rustfmt->tabSpaces});
+        if (formatter) {
+            indent = indent.OverlaidWith(formatter->indent);
         }
         const Modeline modeline = ParseModeline(text);
         return indent.OverlaidWith(IndentOverride{.useTabs = modeline.useTabs, .width = modeline.width});
@@ -59,7 +76,7 @@ namespace {
 } // namespace
 
 IndentOverride FileIndentOverride(const std::filesystem::path& path, std::string_view text) {
-    return IndentFrom(text, EditorConfigFor(path), RustfmtFor(path));
+    return IndentFrom(text, EditorConfigFor(path), FormatterSettingsFor(path));
 }
 
 void ApplyFileSettings(text::Buffer& buffer) {
@@ -68,11 +85,11 @@ void ApplyFileSettings(text::Buffer& buffer) {
     }
     const std::filesystem::path& path         = *buffer.Path();
     const Properties             editorConfig = EditorConfigFor(path);
-    const std::optional<RustfmtOptions> rustfmt      = RustfmtFor(path);
-    buffer.SetLocalIndent(IndentFrom(ReadFileEnds(path, kDetectionHeadBytes), editorConfig, rustfmt));
+    const std::optional<FormatterSettings> formatter    = FormatterSettingsFor(path);
+    buffer.SetLocalIndent(IndentFrom(ReadFileEnds(path, kDetectionHeadBytes), editorConfig, formatter));
     text::FileConventions conventions = EditorConfigConventions(editorConfig);
-    if (rustfmt && rustfmt->maxWidth) {
-        conventions.maxLineLength = rustfmt->maxWidth;
+    if (formatter && formatter->maxWidth) {
+        conventions.maxLineLength = formatter->maxWidth;
     }
     buffer.SetConventions(conventions);
     const std::lock_guard<std::mutex> lock(AppliedMutex());
