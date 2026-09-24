@@ -14,6 +14,8 @@
  # the DIRECTORY convention-based discovery searches, for kinds an
  # explicit entry doesn't already cover).
  :queries {:indents ["tsx/indents.janet"]
+  :highlights ["javascript/upstream/highlights.janet"
+               "typescript/upstream/highlights.janet"]
   :tags ["javascript/upstream/tags.janet"
          "typescript/upstream/tags.janet"
          "typescript/tags.janet"]

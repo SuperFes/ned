@@ -1,6 +1,5 @@
 #; Highlights, ned-authored: tree-sitter/tree-sitter-verilog ships no
-#; queries. Its comments are extras with no node, so they cannot be
-#; coloured from here; the rest is keyword tokens and a few literals.
+#; queries. Keyword tokens, a few literals, and comments.
 (double_quoted_string) @string
 (primary_literal) @number
 (simple_identifier) @variable
@@ -20,3 +19,4 @@
   "generate" "endgenerate" "typedef" "struct" "enum" "import" "return" "extends"
   "virtual" "extern" "automatic" "const" "signed" "unsigned" "genvar" "fork" "join"
 ] @keyword
+(comment) @comment

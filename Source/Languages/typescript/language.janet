@@ -14,7 +14,9 @@
  # parse unmodified -- embedding it directly instead of duplicating it.
  # typescript/format.janet is a pure DELTA adding only what JS's grammar
  # has no equivalent for at all: interface/enum/abstract-class/type-alias.
- :queries {:tags ["javascript/upstream/tags.janet"
+ :queries {:highlights ["javascript/upstream/highlights.janet"
+                         "typescript/upstream/highlights.janet"]
+           :tags ["javascript/upstream/tags.janet"
            "typescript/upstream/tags.janet"
            "typescript/tags.janet"]
            :format ["javascript/format.janet"

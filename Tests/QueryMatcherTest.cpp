@@ -652,17 +652,18 @@ TEST_CASE("query census: ancestor-crossing patterns are pinned per language/kind
         {"cpp/highlights", 7},
         {"cpp/indents", 1},
         {"csharp/locals", 1},
+        {"cuda/highlights", 7}, // cpp's, layered under cuda's own delta
         {"java/locals", 1},
         {"julia/highlights", 1}, // upstream :has-ancestor? on a module-scoped name
         {"kotlin/locals", 1},
-        {"objc/highlights", 1}, // upstream's C-derived :not-has-parent? clause
+        {"objc/highlights", 4}, // c's 3, plus upstream's C-derived :not-has-parent? clause
         {"odin/highlights", 2}, // upstream :not-has-parent? on constants and types
         {"python/locals", 1},
         {"rust/locals", 1},
         {"yaml/indents", 2},
     };
     CHECK(counts == expected);
-    CHECK(total == 24);
+    CHECK(total == 34);
 }
 
 // Ned's own emission order, pinned. The matcher's capture stream reproduces

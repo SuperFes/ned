@@ -1,8 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Editor/AutoPair.h"
+#include "Editor/BundledLanguages.h"
 #include "Editor/CodeFold.h"
 #include "Editor/Key.h"
+#include "Editor/LanguageDefinition.h"
 #include "Editor/Mode.h"
 #include "Editor/Org.h"
 #include "Editor/SyntaxTheme.h"
@@ -777,7 +779,7 @@ TEST_CASE("Each *Mode() sets lineCommentPrefix to its language's real line-comme
     REQUIRE(BashMode().lineCommentPrefix == "#");
     REQUIRE(ned::editor::YamlMode().lineCommentPrefix == "#");
     REQUIRE(ned::editor::TomlMode().lineCommentPrefix == "#");
-    REQUIRE(JanetMode().lineCommentPrefix == ";");
+    REQUIRE(JanetMode().lineCommentPrefix == "#");
     REQUIRE(ned::editor::ClojureMode().lineCommentPrefix == ";");
     REQUIRE(ned::editor::JankMode().lineCommentPrefix == ";");
     REQUIRE(OrgMode().lineCommentPrefix == "#");
@@ -1527,4 +1529,27 @@ TEST_CASE("symbolKindInWindow returns whole-document markers intersecting the wi
     // And the whole-document form is byte-identical to a whole window.
     const auto viaWindow = mode.symbolKindInWindow(source, ned::editor::HighlightWindow{});
     REQUIRE(viaWindow.size() == whole.size());
+}
+
+TEST_CASE("Every language's line-comment prefix starts a comment", "[Mode]") {
+    // toggle-line-comment and comment-aware fill write this prefix; if the
+    // grammar doesn't read it as a comment they write code instead (Janet's
+    // was once `;`, its splice operator).
+    for (const ned::editor::LanguageDefinition& definition : ned::editor::BundledLanguages()) {
+        if (definition.lineCommentPrefix.empty() || definition.queries.highlights.empty()) {
+            continue;
+        }
+        INFO("language: " << definition.name);
+        const ned::editor::Mode mode      = ned::editor::ModeFromDefinition(definition);
+        const std::string       opener    = definition.name == "php" ? "<?php\n" : "";
+        const std::string       source    = opener + definition.lineCommentPrefix + " note\n";
+        const std::size_t       at        = source.find("note");
+        bool                    inComment = false;
+        for (const ned::editor::HighlightSpan& span : mode.highlight(source, {})) {
+            const bool comment = span.syntaxClass == ned::editor::SyntaxClass::Comment ||
+                                 span.syntaxClass == ned::editor::SyntaxClass::DocComment;
+            inComment          = inComment || (comment && span.startByte <= at && at < span.endByte);
+        }
+        CHECK(inComment);
+    }
 }

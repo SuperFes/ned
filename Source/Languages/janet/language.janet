@@ -1,8 +1,8 @@
 {:name "janet"
  :extensions [".janet"]
 
- # Lisp-family convention.
- :line-comment ";"
+ # `#`, not the Lisp `;` -- in Janet `;` is the splice operator.
+ :line-comment "#"
 
  # '(...) is the reader's quote macro, not a paired delimiter.
  :auto-pairs :lisp
