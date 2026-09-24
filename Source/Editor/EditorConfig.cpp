@@ -410,12 +410,7 @@ text::FileConventions EditorConfigConventions(const std::map<std::string, std::s
     else if (value("end_of_line") == "cr") {
         conventions.lineEnding = text::LineEnding::CR;
     }
-    if (value("charset") == "utf-8") {
-        conventions.utf8Bom = false;
-    }
-    else if (value("charset") == "utf-8-bom") {
-        conventions.utf8Bom = true;
-    }
+    conventions.charset = text::CharsetFromName(value("charset"));
     if (value("max_line_length") == "off") {
         conventions.maxLineLength = 0;
     }

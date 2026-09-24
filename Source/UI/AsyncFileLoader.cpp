@@ -5,6 +5,7 @@
 #include <system_error>
 
 #include "EventLoop.h"
+#include "Text/Charset.h"
 #include "Text/LineEnding.h"
 #include "Text/Rope.h"
 
@@ -13,7 +14,6 @@ namespace ned::ui {
 namespace {
     constexpr std::size_t               kChunkBytes = 4 * 1024 * 1024;
     constexpr std::chrono::milliseconds kPreviewInterval{200};
-    constexpr std::string_view          kUtf8Bom = "\xEF\xBB\xBF";
 } // namespace
 
 AsyncFileLoader::AsyncFileLoader(text::Buffer& placeholder, text::BufferList& bufferList, std::filesystem::path path,
@@ -60,8 +60,8 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
 
     std::string content;
     std::string chunk(kChunkBytes, '\0');
-    bool        strippedBom = false;
-    bool        utf8Bom     = false;
+    bool          sniffed     = false;
+    text::Charset charset     = text::Charset::Utf8;
     auto        lastPreview = std::chrono::steady_clock::now();
 
     while (!stopToken.stop_requested()) {
@@ -73,11 +73,14 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
         content.append(chunk.data(), bytesRead);
         progress_->bytesRead.fetch_add(bytesRead, std::memory_order_relaxed);
 
-        if (!strippedBom) {
-            strippedBom = true;
-            if (content.starts_with(kUtf8Bom)) {
-                content.erase(0, kUtf8Bom.size());
-                utf8Bom = true;
+        if (!sniffed) {
+            sniffed = true;
+            charset = text::SniffCharset(content);
+            if (text::CharsetConverts(charset)) {
+                content.erase(0, text::CharsetPreamble(charset).size());
+            }
+            else {
+                charset = text::Charset::Utf8; // kept byte for byte (Text/Charset.h)
             }
         }
 
@@ -113,9 +116,9 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
 
     const text::LineEnding detectedEnding = text::DetectLineEnding(content);
     text::Rope             finalContent(text::HasCarriageReturn(content) ? text::NormalizeToLf(content) : content);
-    eventLoop.Post([this, finalContent, detectedEnding, utf8Bom] {
+    eventLoop.Post([this, finalContent, detectedEnding, charset] {
         if (text::Buffer* buffer = bufferList_.Find(bufferName_)) {
-            buffer->FinishLoad(finalContent, detectedEnding, utf8Bom);
+            buffer->FinishLoad(finalContent, detectedEnding, charset);
         }
         done_ = true;
     });

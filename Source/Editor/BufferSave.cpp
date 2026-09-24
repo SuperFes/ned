@@ -69,12 +69,16 @@ void WriteBufferToDisk(text::Buffer& buffer, SaveDispatch dispatch) {
     const std::optional<text::LineEnding> ending =
         binarySafeguards ? std::optional<text::LineEnding>{} : std::optional<text::LineEnding>(ResolveLineEndingForSave(buffer));
 
-    // The file's own BOM round-trips (BeginSave); .editorconfig's charset
-    // can add or drop it, except on a binary buffer, whose bytes stay as read.
-    const std::optional<bool> statedBom = binarySafeguards ? std::nullopt : buffer.Conventions().utf8Bom;
-    const auto                beginPlan = [&] {
+    // The file's own charset round-trips (BeginSave); .editorconfig's can
+    // replace it when it converts -- adding or dropping a UTF-8 BOM --
+    // except on a binary buffer, whose bytes stay as read.
+    std::optional<text::Charset> statedCharset = binarySafeguards ? std::nullopt : buffer.Conventions().charset;
+    if (statedCharset && !text::CharsetConverts(*statedCharset)) {
+        statedCharset.reset();
+    }
+    const auto beginPlan = [&] {
         text::SavePlan plan = buffer.BeginSave(bufferPath, finalNewline, trim, ending);
-        plan.utf8Bom        = statedBom.value_or(plan.utf8Bom);
+        plan.charset        = statedCharset.value_or(plan.charset);
         return plan;
     };
     text::SavePlan plan = beginPlan();

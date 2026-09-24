@@ -226,9 +226,8 @@ namespace {
     // cost of the sibling-temp-then-rename path's crash atomicity. See
     // ExecuteSavePlan below for the two situations that select this.
     void WritePlanContent(std::ofstream& file, const SavePlan& plan) {
-        if (plan.utf8Bom) {
-            file.write("\xEF\xBB\xBF", 3);
-        }
+        const std::string_view preamble = CharsetPreamble(plan.charset);
+        file.write(preamble.data(), static_cast<std::streamsize>(preamble.size()));
         WriteBufferContent(file, *plan.snapshot, plan.lineEnding, plan.trimTrailingWhitespace, plan.ensureFinalNewline,
                            plan.onProgress);
     }

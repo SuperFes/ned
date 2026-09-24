@@ -7,6 +7,7 @@
 #include <string>
 
 #include "Text/Buffer.h"
+#include "Text/Charset.h"
 
 using ned::text::Buffer;
 
@@ -204,7 +205,7 @@ TEST_CASE("A UTF-8 byte-order mark survives open and save", "[Buffer]") {
     WriteFileBytes(path, "\xEF\xBB\xBFhello\n");
 
     Buffer buffer = Buffer::FromFile(path);
-    REQUIRE(buffer.Utf8Bom());
+    REQUIRE(buffer.FileCharset() == ned::text::Charset::Utf8Bom);
     buffer.InsertAt(buffer.Size(), "more\n");
     buffer.SaveToFile(path);
     CHECK(ReadFileBytes(path) == "\xEF\xBB\xBFhello\nmore\n");
@@ -212,7 +213,7 @@ TEST_CASE("A UTF-8 byte-order mark survives open and save", "[Buffer]") {
     // A file without one never gains one.
     WriteFileBytes(path, "plain\n");
     Buffer plain = Buffer::FromFile(path);
-    CHECK_FALSE(plain.Utf8Bom());
+    CHECK(plain.FileCharset() == ned::text::Charset::Utf8);
     plain.SaveToFile(path);
     CHECK(ReadFileBytes(path) == "plain\n");
 
@@ -220,7 +221,7 @@ TEST_CASE("A UTF-8 byte-order mark survives open and save", "[Buffer]") {
     WriteFileBytes(path, "\xEF\xBB\xBF"
                          "back\n");
     plain.Revert();
-    CHECK(plain.Utf8Bom());
+    CHECK(plain.FileCharset() == ned::text::Charset::Utf8Bom);
     CHECK(plain.Text() == "back\n");
 
     std::filesystem::remove(path);
@@ -230,10 +231,25 @@ TEST_CASE("An async load's byte-order mark is kept for the save", "[Buffer]") {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_bom_async.txt";
     Buffer                      buffer("async.txt");
     buffer.SetPath(path);
-    buffer.FinishLoad(ned::text::Rope("x\n"), ned::text::LineEnding::LF, /*utf8Bom=*/true);
+    buffer.FinishLoad(ned::text::Rope("x\n"), ned::text::LineEnding::LF, ned::text::Charset::Utf8Bom);
     buffer.SaveToFile(path);
     CHECK(ReadFileBytes(path) == "\xEF\xBB\xBFx\n");
     std::filesystem::remove(path);
+}
+
+TEST_CASE("SniffCharset reads byte order marks, and only the UTF-8 family converts", "[Buffer][Charset]") {
+    using ned::text::Charset;
+    CHECK(ned::text::SniffCharset("\xEF\xBB\xBFx") == Charset::Utf8Bom);
+    CHECK(ned::text::SniffCharset("\xFF\xFEx\0") == Charset::Utf16Le);
+    CHECK(ned::text::SniffCharset("\xFE\xFF\0x") == Charset::Utf16Be);
+    CHECK(ned::text::SniffCharset("plain") == Charset::Utf8);
+    CHECK(ned::text::SniffCharset("") == Charset::Utf8);
+    CHECK(ned::text::CharsetFromName("utf-16le") == Charset::Utf16Le);
+    CHECK_FALSE(ned::text::CharsetFromName("ebcdic").has_value());
+    CHECK(ned::text::CharsetConverts(Charset::Utf8Bom));
+    CHECK_FALSE(ned::text::CharsetConverts(Charset::Latin1));
+    CHECK(ned::text::CharsetPreamble(Charset::Utf8Bom) == "\xEF\xBB\xBF");
+    CHECK(ned::text::CharsetPreamble(Charset::Latin1).empty());
 }
 
 TEST_CASE("FromFile normalizes CRLF to LF and records the detected ending", "[Buffer][LineEnding]") {

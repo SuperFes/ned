@@ -68,6 +68,7 @@ add_library(ned_lib STATIC
         Text/ConflictHunk.cpp
         Text/Utf8.cpp
         Text/LineEnding.cpp
+        Text/Charset.cpp
         Text/WhitespaceHygiene.cpp
         Editor/Key.cpp
         Editor/Command.cpp

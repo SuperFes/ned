@@ -133,8 +133,15 @@ and code reading. Highest stakes first.
       settings for that buffer (`Buffer::Conventions`), and are read again when the
       file is reverted, merged or renamed under the buffer (`Buffer::FileGeneration`).
       Left:
-  - [ ] `charset` values other than `utf-8`/`utf-8-bom` (latin1, utf-16) are ignored:
-        ned reads and writes UTF-8 only.
+  - [ ] **Charsets other than UTF-8 are named but not converted.** `Text/Charset.h` is
+        the seam: every load sniffs a file's charset there and strips its preamble, every
+        save writes it back, and `.editorconfig` can state latin1 or utf-16le/-be. A
+        charset that doesn't convert yet (`CharsetConverts`) is read and written byte for
+        byte, and a UTF-16 file still trips the binary guard. Converting one is a decode
+        where the three load paths strip the preamble (`Buffer::FromFile`,
+        `Buffer::FromHugeFile`, `UI/AsyncFileLoader`) plus an encode in `SavePlan`'s
+        `WritePlanContent`; the huge-file path maps the file's bytes directly, so it would
+        stay UTF-8-only or materialize.
   - [ ] **Mixed tabs and spaces, if it has to exist:** Emacs's `indent-tabs-mode` with
         an indent width below the tab width (GNU C: 2-column levels, 8-column tabs, so a
         level-3 line is one tab and two spaces). The worst of both worlds, and supported

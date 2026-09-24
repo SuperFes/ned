@@ -19,6 +19,7 @@
 #include <functional>
 #include <memory>
 
+#include "Charset.h"
 #include "FilePreservation.h"
 #include "ITextStorage.h"
 #include "LineEnding.h"
@@ -43,7 +44,7 @@ struct SavePlan {
     LineEnding lineEnding             = LineEnding::LF;
     bool       trimTrailingWhitespace = false;
     bool       ensureFinalNewline     = false;
-    bool       utf8Bom                = false; // written ahead of the content
+    Charset    charset                = Charset::Utf8; // its preamble is written ahead of the content
 
     // Called at flush boundaries with the running total of bytes handed to
     // the stream, from whichever thread runs the write -- an asynchronous

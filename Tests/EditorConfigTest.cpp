@@ -237,13 +237,14 @@ TEST_CASE("EditorConfigConventions reads the save and layout properties", "[Edit
           FileConventions{.ensureFinalNewline     = false,
                           .trimTrailingWhitespace = true,
                           .lineEnding             = LineEnding::CRLF,
-                          .utf8Bom                = true,
+                          .charset                = ned::text::Charset::Utf8Bom,
                           .maxLineLength          = 100});
     CHECK(EditorConfigConventions({{"charset", "utf-8"}, {"max_line_length", "off"}}) ==
-          FileConventions{.utf8Bom = false, .maxLineLength = 0});
-    // Encodings ned can't write, and values it doesn't know, state nothing.
+          FileConventions{.charset = ned::text::Charset::Utf8, .maxLineLength = 0});
+    // A charset ned can't convert yet is still named; values it doesn't know
+    // state nothing.
     CHECK(EditorConfigConventions({{"charset", "latin1"}, {"end_of_line", "nel"}, {"insert_final_newline", "maybe"}}) ==
-          FileConventions{});
+          FileConventions{.charset = ned::text::Charset::Latin1});
 }
 
 TEST_CASE("A save follows the buffer's conventions over the global settings", "[EditorConfig][FileSettings]") {
@@ -257,7 +258,7 @@ TEST_CASE("A save follows the buffer's conventions over the global settings", "[
     buffer.SetConventions({.ensureFinalNewline     = false,
                            .trimTrailingWhitespace = false,
                            .lineEnding             = LineEnding::CRLF,
-                           .utf8Bom                = true});
+                           .charset                = ned::text::Charset::Utf8Bom});
     ned::editor::WriteBufferToDisk(buffer);
     CHECK(ReadBytes(tree.root / "a.txt") == "\xEF\xBB\xBF"
                                             "a  \r\nb");
@@ -301,17 +302,29 @@ TEST_CASE("ApplyFileSettings takes a file's conventions from its .editorconfig",
     CHECK(buffer.Conventions() == FileConventions{});
 }
 
+TEST_CASE("A charset ned can't convert yet leaves the file's bytes as they were", "[EditorConfig][FileSettings]") {
+    const TempTree              tree("latin1");
+    const std::filesystem::path path = tree.Write("caf.txt", "caf\xE9\n"); // Latin-1: not valid UTF-8
+
+    ned::text::Buffer buffer = ned::text::Buffer::FromFile(path);
+    buffer.SetConventions({.charset = ned::text::Charset::Latin1});
+    buffer.InsertAt(0, "le ");
+    ned::editor::WriteBufferToDisk(buffer);
+    CHECK(ReadBytes(path) == "le caf\xE9\n");
+    CHECK(buffer.FileCharset() == ned::text::Charset::Utf8);
+}
+
 TEST_CASE("charset = utf-8 drops a file's own byte-order mark on save", "[EditorConfig][FileSettings]") {
     const TempTree              tree("charset");
     const std::filesystem::path path = tree.Write("bom.txt", "\xEF\xBB\xBFx\n");
 
     ned::text::Buffer buffer = ned::text::Buffer::FromFile(path);
-    REQUIRE(buffer.Utf8Bom());
-    buffer.SetConventions({.utf8Bom = false});
+    REQUIRE(buffer.FileCharset() == ned::text::Charset::Utf8Bom);
+    buffer.SetConventions({.charset = ned::text::Charset::Utf8});
     buffer.InsertAt(0, "y");
     ned::editor::WriteBufferToDisk(buffer);
     CHECK(ReadBytes(path) == "yx\n");
-    CHECK_FALSE(buffer.Utf8Bom()); // what was written
+    CHECK(buffer.FileCharset() == ned::text::Charset::Utf8); // what was written
 
     buffer.SetConventions({});
     buffer.InsertAt(0, "z");
