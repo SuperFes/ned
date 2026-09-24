@@ -1,5 +1,5 @@
 # sample.fish  (fish-mode)
-# 60 facts
+# 61 facts
 fold 0..254  "function greet --argument-na … \n    end\nend"
 fold 41..116  "if test -n \"$name\"\n        e … o hi\n    end"
 fold 121..250  "for f in *.txt\n        set - … ords\n    end"
@@ -60,3 +60,4 @@ local 151..156  [Definition.var]  "words"
 local 151..156  [Reference]  "words"
 local 181..182  [Reference]  "f"
 local 237..242  [Reference]  "words"
+symbol 0..254  [Callable greet]  "function greet --argument-na … \n    end\nend"

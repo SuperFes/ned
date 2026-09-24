@@ -976,8 +976,7 @@ TEST_CASE("SyntaxClassFor borrows each SymbolKind's color from the matching synt
     REQUIRE(SyntaxClassFor(SymbolKind::Data) == SyntaxClass::Constant);
 }
 
-TEST_CASE("A language with no bundled tags.scm (e.g. BashMode) has no symbolKind support configured", "[Mode]") {
-    REQUIRE_FALSE(static_cast<bool>(BashMode().symbolKind));
+TEST_CASE("A language with no bundled tags.scm (e.g. YamlMode) has no symbolKind support configured", "[Mode]") {
     REQUIRE_FALSE(static_cast<bool>(YamlMode().symbolKind));
 }
 
@@ -1856,6 +1855,38 @@ TEST_CASE("A first-pattern-wins query keeps its specific captures", "[Mode]") {
     const std::string cue = "#A: {x: int}\ny: #A\n";
     CHECK(ClassAt(BundledMode("cue"), cue, "x") == SyntaxClass::Property);
     CHECK(ClassAt(BundledMode("cue"), cue, "#A\n") == SyntaxClass::Type);
+}
+
+// "name:kind" per marker, in document order.
+std::vector<std::string> NamedSymbols(std::string_view language, std::string_view source) {
+    const ned::editor::Mode mode = BundledMode(language);
+    REQUIRE(static_cast<bool>(mode.symbolKind));
+    std::vector<std::string> out;
+    for (const ned::editor::SymbolMarker& marker : mode.symbolKind(source)) {
+        out.push_back(marker.name + ":" + marker.definitionKind);
+    }
+    return out;
+}
+
+TEST_CASE("Lisp, shell, CMake and SQL tags queries name their definitions", "[Mode]") {
+    using V = std::vector<std::string>;
+    CHECK(NamedSymbols("janet", "(def limit 10)\n(var count 0)\n(defn- helper [x] (def local 1) local)\n"
+                                "(defmacro when-ok [& body] ~(do ,;body))\n") ==
+          V{"limit:constant", "count:variable", "helper:function", "when-ok:function"});
+    CHECK(NamedSymbols("clojure", "(ns app.core)\n(def limit 10)\n(defn ^:private helper [x] x)\n"
+                                  "(defprotocol Shape (area [s]))\n(defrecord Circle [r])\n") ==
+          V{"app.core:module", "limit:variable", "helper:function", "Shape:interface", "Circle:class"});
+    CHECK(NamedSymbols("bash", "LIMIT=10\nexport PATH_EXTRA=/opt\nhelper() {\n  local x=1\n  y=2\n}\n"
+                               "function other { :; }\n") ==
+          V{"LIMIT:variable", "PATH_EXTRA:variable", "helper:function", "other:function"});
+    CHECK(NamedSymbols("fish", "set -g limit 10\nfunction greet --description hi\n  echo hi\nend\n") ==
+          V{"greet:function"});
+    CHECK(NamedSymbols("cmake", "function(add_thing name)\nendfunction()\nmacro(helper)\nendmacro()\n") ==
+          V{"add_thing:function", "helper:function"});
+    CHECK(NamedSymbols("sql", "CREATE SCHEMA app;\nCREATE TABLE app.users (id INT, name TEXT);\n"
+                              "CREATE VIEW active AS SELECT * FROM users;\n"
+                              "CREATE TRIGGER audit BEFORE DELETE ON users FOR EACH ROW EXECUTE FUNCTION log();\n") ==
+          V{"app:namespace", "users:struct", "id:field", "name:field", "active:type", "audit:function"});
 }
 
 TEST_CASE("Haskell paints variables by role, not as types", "[Mode]") {

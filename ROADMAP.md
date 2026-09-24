@@ -133,11 +133,11 @@ and code reading. Highest stakes first.
         level-3 line is one tab and two spaces). The worst of both worlds, and supported
         only so such a file can be edited without being rewritten: it needs a tab width
         separate from `IndentStyle::width`, which today doubles as both.
-- [ ] **No symbol outline for Janet, Bash, Fish, Clojure, CMake or SQL** (no tags query:
-      no symbol gutter, outline, breadcrumbs or class/file sync). Janet is ned's own
-      extension language, so `init.janet` and every plugin go without. Config formats
-      (YAML, TOML, JSON) have none either; keys/tables as symbols would be the natural
-      shape there.
+- [ ] **No symbol outline for config formats** (YAML, TOML, JSON: no tags query, so no
+      symbol gutter, outline or breadcrumbs). Keys/tables as symbols would be the
+      natural shape, but every key is a definition, so it needs a depth or kind limit
+      to stay an outline rather than a copy of the file. Fish names only functions:
+      `set`'s variable name follows any number of flags.
 - [ ] **No locals query for Lua, Ruby, Perl, Elixir, Dart or R**, so scope-aware rename
       and local highlighting get no scope information there. Lua is Tier A.
 - [ ] **`#is?`/`#is-not? local` are never evaluated**, so a pattern carrying one always

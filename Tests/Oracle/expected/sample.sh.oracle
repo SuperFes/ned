@@ -1,5 +1,5 @@
 # sample.sh  (bash-mode)
-# 54 facts
+# 55 facts
 fold 47..148  "{\n    local sum=0\n    for va … cho \"$sum\"\n}"
 fold 88..130  "do\n        sum=$(( sum + value ))\n    done"
 fold 150..191  "if [ \"$#\" -gt 0 ]; then\n    total \"$@\"\nfi"
@@ -54,3 +54,4 @@ local 99..102  [Reference]  "sum"
 local 107..110  [Reference]  "sum"
 local 113..118  [Reference]  "value"
 local 142..145  [Reference]  "sum"
+symbol 39..148  [Callable total]  "total() {\n    local sum=0\n   … cho \"$sum\"\n}"

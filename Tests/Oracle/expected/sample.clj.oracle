@@ -1,5 +1,5 @@
 # sample.clj  (clojure-mode)
-# 100 facts
+# 104 facts
 fold 77..179  "(defn total [values]\n  (let  … m doubled)))"
 fold 100..178  "(let [sum 0\n        doubled  … um doubled))"
 fold 105..150  "[sum 0\n        doubled (map #(* 2 %) values)]"
@@ -100,3 +100,7 @@ local 203..208  [Reference]  "shout"
 local 210..214  [Definition.parameter]  "name"
 local 210..214  [Reference]  "name"
 local 245..249  [Reference]  "name"
+symbol 0..14  [Namespace demo.core]  "(ns demo.core)"
+symbol 77..179  [Callable total]  "(defn total [values]\n  (let  … m doubled)))"
+symbol 181..195  [Data limit]  "(def limit 10)"
+symbol 197..251  [Callable shout]  "(defn shout [name]\n  (clojur … -case name))"

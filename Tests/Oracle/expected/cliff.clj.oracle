@@ -1,5 +1,5 @@
 # cliff.clj  (clojure-mode)
-# 115 facts
+# 117 facts
 fold 600..759  "(defn nine-bindings []\n  (le … e f g h i)))"
 fold 625..758  "(let [a 1\n        b 2\n       …  e f g h i))"
 fold 630..731  "[a 1\n        b 2\n        c 3 …         i 9]"
@@ -115,3 +115,5 @@ local 749..750  [Reference]  "f"
 local 751..752  [Reference]  "g"
 local 753..754  [Reference]  "h"
 local 755..756  [Reference]  "i"
+symbol 0..15  [Namespace demo.cliff]  "(ns demo.cliff)"
+symbol 600..759  [Callable nine-bindings]  "(defn nine-bindings []\n  (le … e f g h i)))"

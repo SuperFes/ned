@@ -1,5 +1,5 @@
 # sample.cmake  (cmake-mode)
-# 79 facts
+# 80 facts
 fold 145..190  "set(SAMPLE_SOURCES\n    main.cpp\n    util.cpp)"
 highlight 0..76  [comment]  "# A representative build fil … , functions."
 highlight 77..99  [function-builtin]  "cmake_minimum_required"
@@ -79,3 +79,4 @@ indent 564..603  [0]  "foreach(source IN LISTS SAMPLE_SOURCES)"
 indent 604..644  [2]  "    message(VERBOSE \"source: ${source}\")"
 indent 645..657  [0]  "endforeach()"
 indent 658..658  [0]
+symbol 235..345  [Callable sample_add_warnings]  "function(sample_add_warnings … ndfunction()"
