@@ -96,8 +96,10 @@ std::string Render() {
            "    NED_BLESS_LANGUAGE_MATRIX=1 ./build/Tests/ned_tests \"[LanguageMatrixDoc]\"\n\n"
            "A `✓` means the package ships the piece, not that the feature is verified to work\n"
            "well for that language; known behavioural gaps are tracked in `ROADMAP.md`. Folds,\n"
-           "bracket matching and sticky scroll are not listed: they come from the grammar itself\n"
-           "for every language. See `LanguageCoverage.md` for tiers and admission policy.\n\n";
+           "bracket matching and sticky scroll are not listed: they come from the grammar's own\n"
+           "delimited bodies, except in Markdown and Org, whose structure is not delimiters and\n"
+           "which fold from their own query and code. See `LanguageCoverage.md` for tiers and\n"
+           "admission policy.\n\n";
 
     for (const Column& column : kColumns) {
         out << "- **" << column.heading << "** -- " << column.meaning << "\n";

@@ -1,11 +1,14 @@
 #include "BufferSave.h"
 
 #include <mutex>
+#include <vector>
 
 #include "Application.h"
 #include "Backup.h"
 #include "FinalNewline.h"
 #include "LineEndingPolicy.h"
+#include "Mode.h"
+#include "ModeOverrides.h"
 #include "Text/BufferList.h"
 #include "TrimOnSave.h"
 
@@ -75,14 +78,29 @@ void WriteBufferToDisk(text::Buffer& buffer, SaveDispatch dispatch) {
     const bool binarySafeguards = buffer.BinarySafeguardsActive();
 
     const bool                            finalNewline = EnsureFinalNewline(buffer) && !binarySafeguards;
-    const bool                            trim         = TrimTrailingWhitespaceOnSave(buffer) && !binarySafeguards;
+    bool                                  trim         = TrimTrailingWhitespaceOnSave(buffer) && !binarySafeguards;
+    // Trailing whitespace the mode says is content stays. The huge-file
+    // writer streams without a parse to ask, so such a mode's huge buffer
+    // is not trimmed at all.
+    std::vector<std::size_t> keepTrailingWhitespace;
+    if (trim) {
+        if (const Mode mode = CachedModeForBuffer(buffer); mode.keptTrailingWhitespace) {
+            if (buffer.Content().IsHuge()) {
+                trim = false;
+            }
+            else {
+                keepTrailingWhitespace = mode.keptTrailingWhitespace(buffer.Text());
+            }
+        }
+    }
     const std::optional<text::LineEnding> ending =
         binarySafeguards ? std::optional<text::LineEnding>{} : std::optional<text::LineEnding>(ResolveLineEndingForSave(buffer));
 
     const text::Charset charset   = CharsetForSave(buffer);
     const auto          beginPlan = [&] {
-        text::SavePlan plan = buffer.BeginSave(bufferPath, finalNewline, trim, ending);
-        plan.charset        = charset;
+        text::SavePlan plan         = buffer.BeginSave(bufferPath, finalNewline, trim, ending);
+        plan.charset                = charset;
+        plan.keepTrailingWhitespace = keepTrailingWhitespace;
         return plan;
     };
     text::SavePlan plan = beginPlan();

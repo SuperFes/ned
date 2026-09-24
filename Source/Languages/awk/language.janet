@@ -5,6 +5,7 @@
 
 {:name "awk"
  :extensions [".awk" ".gawk" ".mawk"]
+ :injection-aliases ["gawk"]
  :line-comment "#"
  :capture-classes {"regexp" :string}
  :first-pattern-wins true

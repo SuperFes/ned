@@ -19,6 +19,7 @@
 
 {:name "sql"
  :extensions [".sql"]
+ :injection-aliases ["psql" "mysql" "sqlite" "postgresql" "postgres"]
  :line-comment "--"
  :snippets
  {

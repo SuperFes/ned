@@ -2,6 +2,7 @@
 # every paragraph the way markdown-inline is.
 {:name "asciidoc"
  :extensions [".adoc" ".asciidoc" ".asc"]
+ :injection-aliases ["adoc"]
  :line-comment "//"
  :wrap-lines true
  # Structure is section depth; delimited blocks are fence lines, not brackets.

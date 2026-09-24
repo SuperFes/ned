@@ -5,6 +5,7 @@
 
 {:name "jsonnet"
  :extensions [".jsonnet" ".libsonnet"]
+ :injection-aliases ["libsonnet"]
  :line-comment "//"
  :capture-classes {"define" :variable}
 }

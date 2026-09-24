@@ -160,6 +160,10 @@ add_executable(ned_tests
             OrgClockTest.cpp
             TableTest.cpp
             MarkdownTest.cpp
+            MarkdownWhitespaceTest.cpp
+            MarkdownEditingTest.cpp
+            MarkdownEnterTest.cpp
+            MarkdownReindentSpecTest.cpp
             VirtualTextColumnTest.cpp
             MarkdownHighlightTest.cpp
             InjectionTest.cpp

@@ -13,5 +13,13 @@
 # otherwise mint a duplicate marker of the whole enclosing section per
 # heading (observed on the oracle corpus, not hypothetical).
 
-((section . (atx_heading (inline) @name)) @definition.module)
-((section . (setext_heading (paragraph) @name)) @definition.module)
+# An ATX heading's closing `##` is not part of its name.
+((section . (atx_heading (inline) @name)) @definition.module
+  (:set! name.closing-sequence "#"))
+((section . (setext_heading (paragraph (inline) @name))) @definition.module)
+
+# The grammar starts a section only at an ATX heading, so a setext heading
+# past a section's start is loose inside it: it names just itself. One that
+# does start a section is folded into that section's marker by the same-name
+# containment dedup.
+((setext_heading (paragraph (inline) @name)) @definition.module)

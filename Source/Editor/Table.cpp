@@ -53,9 +53,29 @@ namespace {
         return lines;
     }
 
+    // The next cell boundary at or after `from`: a `|`, unless (GFM) an odd
+    // run of backslashes escapes it.
+    std::size_t FindCellPipe(std::string_view text, std::size_t from, bool backslashEscapes) {
+        for (std::size_t pipe = text.find('|', from); pipe != std::string_view::npos; pipe = text.find('|', pipe + 1)) {
+            std::size_t backslashes = 0;
+            while (backslashEscapes && backslashes < pipe && text[pipe - backslashes - 1] == '\\') {
+                ++backslashes;
+            }
+            if (backslashes % 2 == 0) {
+                return pipe;
+            }
+        }
+        return std::string_view::npos;
+    }
+
+    // Whether the line's final `|` is a real edge pipe rather than an escaped one.
+    bool EndsWithPipe(std::string_view trimmed, bool backslashEscapes) {
+        return !trimmed.empty() && trimmed.back() == '|' && FindCellPipe(trimmed, trimmed.size() - 1, backslashEscapes) == trimmed.size() - 1;
+    }
+
 } // namespace
 
-std::vector<std::string> SplitRow(std::string_view line) {
+std::vector<std::string> SplitRow(std::string_view line, bool backslashEscapes) {
     std::string_view trimmed = line;
     while (!trimmed.empty() && std::isspace(static_cast<unsigned char>(trimmed.front())))
         trimmed.remove_prefix(1);
@@ -65,16 +85,13 @@ std::vector<std::string> SplitRow(std::string_view line) {
     // present so "| a | b |" and "a | b" split identically.
     if (!trimmed.empty() && trimmed.front() == '|')
         trimmed.remove_prefix(1);
-    if (!trimmed.empty() && trimmed.back() == '|')
+    if (EndsWithPipe(trimmed, backslashEscapes))
         trimmed.remove_suffix(1);
 
-    // Plain split on every '|' -- escaped pipes ("\|") inside a cell aren't
-    // recognized, a stated v1 simplification (real Org/GFM both support
-    // them; rare enough in practice not to hold up the common case).
     std::vector<std::string> cells;
     std::size_t              cellStart = 0;
     while (true) {
-        const std::size_t      pipePos = trimmed.find('|', cellStart);
+        const std::size_t      pipePos = FindCellPipe(trimmed, cellStart, backslashEscapes);
         const std::string_view cell =
             trimmed.substr(cellStart, pipePos == std::string_view::npos ? std::string_view::npos : pipePos - cellStart);
         cells.push_back(TrimWhitespace(cell));
@@ -120,7 +137,8 @@ std::string PadCell(const std::string& text, std::size_t width, Alignment alignm
     }
 }
 
-std::vector<std::pair<std::size_t, std::size_t>> CellByteSpans(std::string_view line, std::size_t lineStartByte) {
+std::vector<std::pair<std::size_t, std::size_t>> CellByteSpans(std::string_view line, std::size_t lineStartByte,
+                                                               bool backslashEscapes) {
     std::string_view trimmed     = line;
     std::size_t      leadingTrim = 0;
     while (!trimmed.empty() && std::isspace(static_cast<unsigned char>(trimmed.front()))) {
@@ -134,7 +152,7 @@ std::vector<std::pair<std::size_t, std::size_t>> CellByteSpans(std::string_view 
         trimmed.remove_prefix(1);
         pipeSkip = 1;
     }
-    if (!trimmed.empty() && trimmed.back() == '|')
+    if (EndsWithPipe(trimmed, backslashEscapes))
         trimmed.remove_suffix(1);
 
     const std::size_t contentStart = lineStartByte + leadingTrim + pipeSkip;
@@ -142,7 +160,7 @@ std::vector<std::pair<std::size_t, std::size_t>> CellByteSpans(std::string_view 
     std::vector<std::pair<std::size_t, std::size_t>> spans;
     std::size_t                                      cellStart = 0;
     while (true) {
-        const std::size_t pipePos = trimmed.find('|', cellStart);
+        const std::size_t pipePos = FindCellPipe(trimmed, cellStart, backslashEscapes);
         const std::size_t cellEnd = (pipePos == std::string_view::npos) ? trimmed.size() : pipePos;
         spans.emplace_back(contentStart + cellStart, contentStart + cellEnd);
         if (pipePos == std::string_view::npos)

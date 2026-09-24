@@ -42,8 +42,8 @@ struct Mode;
 // -> final newline) so the two never disagree about what "clean" looks
 // like. A genuine no-op (content already clean, or every rule disabled)
 // touches the buffer/undo tree not at all. Returns whether anything
-// changed.
-bool ApplyHygienePass(text::Buffer& buffer);
+// changed. With a mode, its keptTrailingWhitespace lines are left alone.
+bool ApplyHygienePass(text::Buffer& buffer, const Mode* mode = nullptr);
 
 // Whether applying `edits` to `text` leaves it parsing to the same structure
 // (Mode::sameStructure). Every capture-driven pass checks its edits with this

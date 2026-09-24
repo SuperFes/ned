@@ -1,5 +1,6 @@
 {:name "d"
  :extensions [".d" ".di" ".dd"]
+ :injection-aliases ["dlang"]
  :line-comment "//"
  :lsp-root-markers ["dub.json" "dub.sdl"]
  # The __EOF__ marker, the class Perl's __END__ gets as @preproc.

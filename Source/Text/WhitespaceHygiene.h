@@ -18,6 +18,8 @@
 #ifndef NED_TEXT_WHITESPACEHYGIENE_H
 #define NED_TEXT_WHITESPACEHYGIENE_H
 
+#include <cstddef>
+#include <span>
 #include <string>
 
 namespace ned::text {
@@ -28,7 +30,12 @@ namespace ned::text {
 // A no-op on an empty string. (TrimOnSave.h's own doc comment: "remove
 // trailing spaces and extra newlines at the end of a file" was raised as a
 // single ask, hence one combined function rather than two.)
-[[nodiscard]] std::string TrimTrailingWhitespaceAndBlankLines(std::string content);
+//
+// `keep` lists the (0-based, ascending) lines whose trailing whitespace is
+// content rather than noise -- a Markdown hard line break, a code block's own
+// text (Mode::keptTrailingWhitespace). Those lines are left as written, and a
+// kept blank line at the end of the document is not removed.
+[[nodiscard]] std::string TrimTrailingWhitespaceAndBlankLines(std::string content, std::span<const std::size_t> keep = {});
 
 // Appends '\n' if content is non-empty and doesn't already end with one.
 [[nodiscard]] std::string EnsureTrailingNewline(std::string content);
@@ -42,7 +49,9 @@ namespace ned::text {
 // not TrimTrailingWhitespaceAndBlankLines ran first (a user can have one
 // enabled without the other). maxConsecutive < 0 is a no-op (the sentinel
 // Editor::MaxConsecutiveBlankLines() uses for "disabled").
-[[nodiscard]] std::string CollapseBlankLineRuns(std::string content, int maxConsecutive);
+// A kept line (see above) is never dropped: a run of blank lines inside a
+// code block is the code's own text.
+[[nodiscard]] std::string CollapseBlankLineRuns(std::string content, int maxConsecutive, std::span<const std::size_t> keep = {});
 
 } // namespace ned::text
 

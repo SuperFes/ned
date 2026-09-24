@@ -4,6 +4,7 @@
 
 {:name "markdown"
  :extensions [".md" ".markdown"]
+ :injection-aliases ["md"]
  :block-comment ["<!--" "-->"]
  :wrap-lines true
  # Structure is section depth; a link's [text](url) is not a delimited body.
@@ -48,7 +49,10 @@
 
  # Hanging list indent is a real tree walk (a bullet's content COLUMN, not
  # a level) -- the one Markdown fact still in C++ (Languages/Markdown.cpp).
- :escapes ["markdown.indent"]
+ # Hard line breaks and code-block text are trailing whitespace trimming keeps;
+ # fill-paragraph reflows one paragraph node, prefixes and hard breaks kept;
+ # Enter carries a list item's or quote's marker onto the new line.
+ :escapes ["markdown.indent" "markdown.trailing-whitespace" "markdown.fill" "markdown.continue"]
  :snippets
  {
    "link"

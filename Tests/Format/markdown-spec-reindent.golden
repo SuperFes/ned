@@ -1,0 +1,1626 @@
+### Example 1
+	foo	baz		bim
+
+### Example 2
+  	foo	baz		bim
+
+### Example 3
+    a	a
+    ὐ	a
+
+### Example 4
+  - foo
+
+	bar
+
+### Example 5
+- foo
+
+		bar
+
+### Example 6
+>		foo
+
+### Example 7
+-		foo
+
+### Example 8
+    foo
+	bar
+
+### Example 9
+ - foo
+   - bar
+	 - baz
+
+### Example 10
+#	Foo
+
+### Example 11
+*	*	*
+
+### Example 12
+- `one
+- two`
+
+### Example 13
+***
+---
+___
+
+### Example 14
++++
+
+### Example 15
+=
+
+### Example 16
+--
+**
+__
+
+### Example 17
+***
+***
+***
+
+### Example 18
+    ***
+
+### Example 19
+Foo
+    ***
+
+### Example 20
+_____________________________________
+
+### Example 21
+- - -
+
+### Example 22
+**  * ** * ** * **
+
+### Example 23
+-     -      -      -
+
+### Example 24
+- - - -
+
+### Example 25
+_ _ _ _ a
+
+a------
+
+---a---
+
+### Example 26
+*-*
+
+### Example 27
+- foo
+***
+- bar
+
+### Example 28
+Foo
+***
+bar
+
+### Example 29
+Foo
+---
+bar
+
+### Example 30
+* Foo
+* * *
+* Bar
+
+### Example 31
+- Foo
+- * * *
+
+### Example 32
+# foo
+## foo
+### foo
+#### foo
+##### foo
+###### foo
+
+### Example 33
+####### foo
+
+### Example 34
+#5 bolt
+
+#hashtag
+
+### Example 35
+\## foo
+
+### Example 36
+# foo *bar* \*baz\*
+
+### Example 37
+#                  foo
+
+### Example 38
+### foo
+## foo
+# foo
+
+### Example 39
+    # foo
+
+### Example 40
+foo
+    # bar
+
+### Example 41
+## foo ##
+###   bar    ###
+
+### Example 42
+# foo ##################################
+##### foo ##
+
+### Example 43
+### foo ###
+
+### Example 44
+### foo ### b
+
+### Example 45
+# foo#
+
+### Example 46
+### foo \###
+## foo #\##
+# foo \#
+
+### Example 47
+****
+## foo
+****
+
+### Example 48
+Foo bar
+# baz
+Bar foo
+
+### Example 49
+##
+#
+### ###
+
+### Example 50
+Foo *bar*
+=
+
+Foo *bar*
+---------
+
+### Example 51
+Foo *bar
+baz*
+=
+
+### Example 52
+Foo *bar
+baz*
+=
+
+### Example 53
+Foo
+### Example 54
+Foo
+---
+
+Foo
+-----
+
+Foo
+===
+
+### Example 55
+    Foo
+    ---
+
+    Foo
+---
+
+### Example 56
+Foo
+----
+
+### Example 57
+Foo
+    ---
+
+### Example 58
+Foo
+= =
+
+Foo
+--- -
+
+### Example 59
+Foo
+-----
+
+### Example 60
+Foo\
+----
+
+### Example 61
+`Foo
+----
+`
+
+<a title="a lot
+---
+of dashes"/>
+
+### Example 62
+> Foo
+---
+
+### Example 63
+> foo
+bar
+=
+
+### Example 64
+- Foo
+---
+
+### Example 65
+Foo
+Bar
+---
+
+### Example 66
+Extra text so this is not parsed as metadata.
+
+---
+Foo
+---
+Bar
+---
+Baz
+
+### Example 67
+
+=
+
+### Example 68
+Extra text so this is not parsed as metadata.
+
+---
+---
+
+### Example 69
+- foo
+-----
+
+### Example 70
+    foo
+---
+
+### Example 71
+> foo
+-----
+
+### Example 72
+\> foo
+------
+
+### Example 73
+Foo
+
+bar
+---
+baz
+
+### Example 74
+Foo
+bar
+
+---
+
+baz
+
+### Example 75
+Foo
+bar
+* * *
+baz
+
+### Example 76
+Foo
+bar
+\---
+baz
+
+### Example 77
+    a simple
+      indented code block
+
+### Example 78
+  - foo
+
+    bar
+
+### Example 79
+1.  foo
+
+    - bar
+
+### Example 80
+    <a/>
+    *hi*
+
+    - one
+
+### Example 81
+    chunk1
+
+    chunk2
+
+
+
+    chunk3
+
+### Example 82
+    chunk1
+
+      chunk2
+
+### Example 83
+Foo
+bar
+
+
+### Example 84
+    foo
+bar
+
+### Example 85
+# Heading
+    foo
+Heading
+------
+    foo
+----
+
+### Example 86
+        foo
+    bar
+
+### Example 87
+
+
+    foo
+
+
+
+### Example 88
+    foo
+
+### Example 89
+```
+<
+ >
+```
+
+### Example 90
+~~~
+<
+ >
+~~~
+
+### Example 91
+``
+foo
+``
+
+### Example 92
+```
+aaa
+~~~
+```
+
+### Example 93
+~~~
+aaa
+```
+~~~
+
+### Example 94
+````
+aaa
+```
+``````
+
+### Example 95
+~~~~
+aaa
+~~~
+~~~~
+
+### Example 96
+```
+
+### Example 97
+`````
+
+```
+aaa
+
+### Example 98
+> ```
+> aaa
+
+bbb
+
+### Example 99
+```
+
+
+```
+
+### Example 100
+```
+```
+
+### Example 101
+ ```
+ aaa
+aaa
+```
+
+### Example 102
+  ```
+aaa
+  aaa
+aaa
+  ```
+
+### Example 103
+   ```
+   aaa
+    aaa
+  aaa
+   ```
+
+### Example 104
+    ```
+    aaa
+    ```
+
+### Example 105
+```
+aaa
+  ```
+
+### Example 106
+   ```
+aaa
+  ```
+
+### Example 108
+``` ```
+aaa
+
+### Example 109
+~~~~~~
+aaa
+~~~ ~~
+
+### Example 110
+foo
+```
+bar
+```
+baz
+
+### Example 111
+foo
+---
+~~~
+bar
+~~~
+# baz
+
+### Example 112
+```ruby
+def foo(x)
+  return 3
+end
+```
+
+### Example 113
+~~~~    ruby startline=3 $%@#$
+def foo(x)
+  return 3
+end
+~~~~~~~
+
+### Example 114
+````;
+````
+
+### Example 115
+``` aa ```
+foo
+
+### Example 116
+~~~ aa ``` ~~~
+foo
+~~~
+
+### Example 117
+```
+``` aaa
+```
+
+### Example 118
+<table><tr><td>
+<pre>
+**Hello**,
+
+_world_.
+</pre>
+</td></tr></table>
+
+### Example 119
+<table>
+  <tr>
+    <td>
+           hi
+    </td>
+  </tr>
+</table>
+
+okay.
+
+### Example 120
+ <div>
+  *hello*
+         <foo><a>
+
+### Example 121
+</div>
+*foo*
+
+### Example 122
+<DIV CLASS="foo">
+
+*Markdown*
+
+</DIV>
+
+### Example 123
+<div id="foo"
+  class="bar">
+</div>
+
+### Example 124
+<div id="foo" class="bar
+  baz">
+</div>
+
+### Example 125
+<div>
+*foo*
+
+*bar*
+
+### Example 126
+<div id="foo"
+*hi*
+
+### Example 127
+<div class
+foo
+
+### Example 128
+<div *???-&&&-<---
+*foo*
+
+### Example 129
+<div><a href="bar">*foo*</a></div>
+
+### Example 130
+<table><tr><td>
+foo
+</td></tr></table>
+
+### Example 131
+<div></div>
+``` c
+int x = 33;
+```
+
+### Example 132
+<a href="foo">
+*bar*
+</a>
+
+### Example 133
+<Warning>
+*bar*
+</Warning>
+
+### Example 134
+<i class="foo">
+*bar*
+</i>
+
+### Example 135
+</ins>
+*bar*
+
+### Example 136
+<del>
+*foo*
+</del>
+
+### Example 137
+<del>
+
+*foo*
+
+</del>
+
+### Example 138
+<del>*foo*</del>
+
+### Example 139
+<pre language="haskell"><code>
+import Text.HTML.TagSoup
+
+main :: IO ()
+main = print $ parseTags tags
+</code></pre>
+okay
+
+### Example 140
+<script type="text/javascript">
+// JavaScript example
+
+document.getElementById("demo").innerHTML = "Hello JavaScript!";
+</script>
+okay
+
+### Example 141
+<style
+  type="text/css">
+h1 {color:red;}
+
+p {color:blue;}
+</style>
+okay
+
+### Example 142
+<style
+  type="text/css">
+
+foo
+
+### Example 143
+> <div>
+> foo
+
+bar
+
+### Example 144
+- <div>
+- foo
+
+### Example 145
+<style>p{color:red;}</style>
+*foo*
+
+### Example 146
+<!-- foo -->*bar*
+*baz*
+
+### Example 147
+<script>
+foo
+</script>1. *bar*
+
+### Example 148
+<!-- Foo
+
+bar
+   baz -->
+okay
+
+### Example 149
+<?php
+
+  echo '>';
+
+?>
+okay
+
+### Example 150
+<!DOCTYPE html>
+
+### Example 151
+<![CDATA[
+function matchwo(a,b)
+{
+  if (a < b && a < 0) then {
+    return 1;
+
+  } else {
+
+    return 0;
+  }
+}
+]]>
+okay
+
+### Example 152
+  <!-- foo -->
+
+    <!-- foo -->
+
+### Example 153
+  <div>
+
+    <div>
+
+### Example 154
+Foo
+<div>
+bar
+</div>
+
+### Example 155
+<div>
+bar
+</div>
+*foo*
+
+### Example 156
+Foo
+<a href="bar">
+baz
+
+### Example 157
+<div>
+
+*Emphasized* text.
+
+</div>
+
+### Example 158
+<div>
+*Emphasized* text.
+</div>
+
+### Example 159
+<table>
+
+<tr>
+
+<td>
+Hi
+</td>
+
+</tr>
+
+</table>
+
+### Example 160
+<table>
+
+  <tr>
+
+    <td>
+      Hi
+    </td>
+
+  </tr>
+
+</table>
+
+### Example 161
+[foo]: /url "title"
+
+[foo]
+
+### Example 162
+[foo]:
+/url
+'the title'
+
+[foo]
+
+### Example 163
+[Foo*bar\]]:my_(url) 'title (with parens)'
+
+[Foo*bar\]]
+
+### Example 164
+[Foo bar]:
+<my url>
+'title'
+
+[Foo bar]
+
+### Example 165
+[foo]: /url '
+title
+line1
+line2
+'
+
+[foo]
+
+### Example 166
+[foo]: /url 'title
+
+with blank line'
+
+[foo]
+
+### Example 167
+[foo]:
+/url
+
+[foo]
+
+### Example 168
+[foo]:
+
+[foo]
+
+### Example 169
+[foo]: <>
+
+[foo]
+
+### Example 170
+[foo]: <bar>(baz)
+
+[foo]
+
+### Example 171
+[foo]: /url\bar\*baz "foo\"bar\baz"
+
+[foo]
+
+### Example 172
+[foo]
+
+[foo]: url
+
+### Example 173
+[foo]
+
+[foo]: first
+[foo]: second
+
+### Example 174
+[FOO]: /url
+
+[Foo]
+
+### Example 175
+[ΑΓΩ]: /φου
+
+[αγω]
+
+### Example 176
+[foo]: /url
+
+### Example 177
+[
+foo
+]: /url
+bar
+
+### Example 178
+[foo]: /url "title" ok
+
+### Example 179
+[foo]: /url
+"title" ok
+
+### Example 180
+    [foo]: /url "title"
+
+[foo]
+
+### Example 181
+```
+[foo]: /url
+```
+
+[foo]
+
+### Example 182
+Foo
+[bar]: /baz
+
+[bar]
+
+### Example 183
+# [Foo]
+[foo]: /url
+> bar
+
+### Example 184
+[foo]: /url
+bar
+=
+[foo]
+
+### Example 185
+[foo]: /url
+=
+[foo]
+
+### Example 186
+[foo]: /foo-url "foo"
+[bar]: /bar-url
+"bar"
+[baz]: /baz-url
+
+[foo],
+[bar],
+[baz]
+
+### Example 187
+[foo]
+
+> [foo]: /url
+
+### Example 188
+[foo]: /url
+
+### Example 189
+aaa
+
+bbb
+
+### Example 190
+aaa
+bbb
+
+ccc
+ddd
+
+### Example 191
+aaa
+
+
+bbb
+
+### Example 192
+aaa
+bbb
+
+### Example 193
+aaa
+bbb
+ccc
+
+### Example 194
+aaa
+bbb
+
+### Example 195
+    aaa
+bbb
+
+### Example 196
+aaa  
+bbb
+
+### Example 197
+
+
+aaa
+
+
+# aaa
+
+
+
+### Example 206
+> # Foo
+> bar
+> baz
+
+### Example 207
+># Foo
+>bar
+> baz
+
+### Example 208
+> # Foo
+> bar
+> baz
+
+### Example 209
+    > # Foo
+    > bar
+    > baz
+
+### Example 210
+> # Foo
+> bar
+baz
+
+### Example 211
+> bar
+baz
+> foo
+
+### Example 212
+> foo
+---
+
+### Example 213
+> - foo
+- bar
+
+### Example 214
+>     foo
+    bar
+
+### Example 215
+> ```
+foo
+```
+
+### Example 216
+> foo
+    - bar
+
+### Example 217
+>
+
+### Example 218
+>
+>
+>
+
+### Example 219
+>
+> foo
+>
+
+### Example 220
+> foo
+
+> bar
+
+### Example 221
+> foo
+> bar
+
+### Example 222
+> foo
+>
+> bar
+
+### Example 223
+foo
+> bar
+
+### Example 224
+> aaa
+***
+> bbb
+
+### Example 225
+> bar
+baz
+
+### Example 226
+> bar
+
+baz
+
+### Example 227
+> bar
+>
+baz
+
+### Example 228
+> > > foo
+bar
+
+### Example 229
+>>> foo
+> bar
+>>baz
+
+### Example 230
+>     code
+
+>    not code
+
+### Example 231
+A paragraph
+with two lines.
+
+    indented code
+
+> A block quote.
+
+### Example 232
+1.  A paragraph
+    with two lines.
+
+        indented code
+
+    > A block quote.
+
+### Example 233
+- one
+
+two
+
+### Example 234
+- one
+
+    two
+
+### Example 235
+ -    one
+
+     two
+
+### Example 236
+ -    one
+
+      two
+
+### Example 237
+> > 1.  one
+>>
+>>     two
+
+### Example 238
+>>- one
+>>
+>  > two
+
+### Example 239
+-one
+
+2.two
+
+### Example 240
+- foo
+
+
+    bar
+
+### Example 241
+1.  foo
+
+    ```
+    bar
+    ```
+
+    baz
+
+    > bam
+
+### Example 242
+- Foo
+
+      bar
+
+
+      baz
+
+### Example 243
+123456789. ok
+
+### Example 244
+1234567890. not ok
+
+### Example 245
+0. ok
+
+### Example 246
+003. ok
+
+### Example 247
+-1. not ok
+
+### Example 248
+- foo
+
+      bar
+
+### Example 249
+  10.  foo
+
+           bar
+
+### Example 250
+    indented code
+
+paragraph
+
+    more code
+
+### Example 251
+1.     indented code
+
+   paragraph
+
+       more code
+
+### Example 252
+1.      indented code
+
+   paragraph
+
+       more code
+
+### Example 253
+foo
+
+bar
+
+### Example 254
+-    foo
+
+bar
+
+### Example 255
+-  foo
+
+    bar
+
+### Example 256
+-
+    foo
+-
+  ```
+  bar
+  ```
+-
+      baz
+
+### Example 257
+-
+    foo
+
+### Example 258
+-
+
+foo
+
+### Example 259
+- foo
+-
+- bar
+
+### Example 260
+- foo
+-
+- bar
+
+### Example 261
+1. foo
+2.
+3. bar
+
+### Example 262
+*
+
+### Example 263
+foo
+*
+
+foo
+1.
+
+### Example 264
+ 1.  A paragraph
+     with two lines.
+
+         indented code
+
+     > A block quote.
+
+### Example 265
+  1.  A paragraph
+      with two lines.
+
+          indented code
+
+      > A block quote.
+
+### Example 266
+   1.  A paragraph
+       with two lines.
+
+           indented code
+
+       > A block quote.
+
+### Example 267
+    1.  A paragraph
+        with two lines.
+
+            indented code
+
+        > A block quote.
+
+### Example 268
+  1.  A paragraph
+with two lines.
+
+          indented code
+
+      > A block quote.
+
+### Example 269
+  1.  A paragraph
+    with two lines.
+
+### Example 270
+> 1. > Blockquote
+continued here.
+
+### Example 271
+> 1. > Blockquote
+> continued here.
+
+### Example 272
+- foo
+  - bar
+    - baz
+      - boo
+
+### Example 273
+- foo
+- bar
+- baz
+- boo
+
+### Example 274
+10) foo
+    - bar
+
+### Example 275
+10) foo
+- bar
+
+### Example 276
+- - foo
+
+### Example 277
+1. - 2. foo
+
+### Example 278
+- # Foo
+- Bar
+    ---
+    baz
+
+### Example 281
+- foo
+- bar
++ baz
+
+### Example 282
+1. foo
+2. bar
+3) baz
+
+### Example 283
+Foo
+- bar
+- baz
+
+### Example 284
+The number of windows in my house is
+14.  The number of doors is 6.
+
+### Example 285
+The number of windows in my house is
+1.  The number of doors is 6.
+
+### Example 286
+- foo
+
+- bar
+
+
+- baz
+
+### Example 287
+- foo
+  - bar
+    - baz
+
+
+      bim
+
+### Example 288
+- foo
+- bar
+
+<!-- -->
+
+- baz
+- bim
+
+### Example 289
+-   foo
+
+    notcode
+
+-   foo
+
+<!-- -->
+
+    code
+
+### Example 290
+- a
+- b
+- c
+- d
+- e
+- f
+- g
+
+### Example 291
+1. a
+
+2. b
+
+3. c
+
+### Example 292
+- a
+ - b
+  - c
+   - d
+    - e
+
+### Example 293
+1. a
+
+  2. b
+
+    3. c
+
+### Example 294
+- a
+- b
+
+- c
+
+### Example 295
+* a
+*
+
+* c
+
+### Example 296
+- a
+- b
+
+    c
+- d
+
+### Example 297
+- a
+- b
+
+    [ref]: /url
+- d
+
+### Example 298
+- a
+- ```
+  b
+
+
+  ```
+- c
+
+### Example 299
+- a
+  - b
+
+    c
+- d
+
+### Example 300
+* a
+    > b
+    >
+* c
+
+### Example 301
+- a
+    > b
+  ```
+  c
+  ```
+- d
+
+### Example 302
+- a
+
+### Example 303
+- a
+  - b
+
+### Example 304
+1. ```
+   foo
+   ```
+
+    bar
+
+### Example 305
+* foo
+  * bar
+
+  baz
+
+### Example 306
+- a
+  - b
+  - c
+
+- d
+  - e
+  - f
+
+### Example 314
+    \[\]
+
+### Example 315
+~~~
+\[\]
+~~~
+
+### Example 319
+[foo]
+
+[foo]: /bar\* "ti\*tle"
+
+### Example 320
+``` foo\+bar
+foo
+```
+
+### Example 329
+[foo]
+
+[foo]: /f&ouml;&ouml; "f&ouml;&ouml;"
+
+### Example 330
+``` f&ouml;&ouml;
+foo
+```
+
+### Example 332
+    f&ouml;f&ouml;
+
+### Example 334
+&#42; foo
+
+* foo
+

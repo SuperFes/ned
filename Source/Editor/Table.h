@@ -41,8 +41,9 @@ enum class Alignment { Default,
 // both are valid in real Org and real GFM -- but table *detection*
 // (FindTableBlockLines below) still requires a leading `|`; a table line
 // with no edge pipes at all is a rarer form this codebase doesn't try to
-// auto-detect, a stated v1 simplification.
-[[nodiscard]] std::vector<std::string> SplitRow(std::string_view line);
+// auto-detect, a stated v1 simplification. With `backslashEscapes` (GFM,
+// not Org) a `\|` is a pipe inside a cell rather than a cell boundary.
+[[nodiscard]] std::vector<std::string> SplitRow(std::string_view line, bool backslashEscapes = false);
 
 // Max display width per column across every row in dataRows (all rows must
 // have already been split via SplitRow; ragged rows -- fewer cells than the
@@ -71,7 +72,8 @@ enum class Alignment { Default,
 // SplitRow rather than folded into it, since only that point-tracking path
 // needs byte positions at all.
 [[nodiscard]] std::vector<std::pair<std::size_t, std::size_t>> CellByteSpans(std::string_view line,
-                                                                             std::size_t      lineStartByte);
+                                                                             std::size_t      lineStartByte,
+                                                                             bool             backslashEscapes = false);
 
 // Scans outward from pointLine (0-indexed, matching every other line-index
 // convention in this codebase) while each line, after stripping leading

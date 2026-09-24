@@ -8,6 +8,7 @@
 
 {:name "caddy"
  :extensions [".caddyfile" ".Caddyfile"]
+ :injection-aliases ["caddyfile"]
  :filenames ["Caddyfile" "caddyfile"]
  :line-comment "#"
 }

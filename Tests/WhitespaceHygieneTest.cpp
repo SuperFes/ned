@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <vector>
+
 #include "Text/WhitespaceHygiene.h"
 
 using ned::text::CollapseBlankLineRuns;
@@ -63,4 +65,16 @@ TEST_CASE("CollapseBlankLineRuns with a negative maxConsecutive is a no-op (the 
 
 TEST_CASE("CollapseBlankLineRuns is a no-op on empty content", "[WhitespaceHygiene]") {
     REQUIRE(CollapseBlankLineRuns("", 2).empty());
+}
+
+TEST_CASE("Kept lines keep their trailing whitespace and survive the collapses", "[WhitespaceHygiene]") {
+    const std::vector<std::size_t> keep{0, 3, 4, 5};
+    // Line 0 is a kept hard break; line 1's trailing space is noise.
+    REQUIRE(TrimTrailingWhitespaceAndBlankLines("a  \nb \n", keep) == "a  \nb");
+    // A kept blank run (a code block's own lines) is neither trimmed nor collapsed.
+    REQUIRE(CollapseBlankLineRuns("x\n\n\n  \n\n\ny", 1, keep) == "x\n\n  \n\n\ny");
+    // A kept blank line at the end stays, the unkept one after it goes.
+    REQUIRE(TrimTrailingWhitespaceAndBlankLines("```\ncode\n```\n  \n  \n", std::vector<std::size_t>{3}) == "```\ncode\n```\n  \n");
+    // An unclosed fence's trailing blank line is its content.
+    REQUIRE(TrimTrailingWhitespaceAndBlankLines("```\n\n", std::vector<std::size_t>{1}) == "```\n\n");
 }

@@ -841,6 +841,34 @@ using IndentFunction = std::function<std::optional<int>(std::string_view bufferT
 // has to answer.
 using UnreliableIndentFunction = std::function<std::vector<std::pair<std::size_t, std::size_t>>(std::string_view bufferText)>;
 
+// The lines (0-based, ascending) whose trailing whitespace is content, which
+// trim-on-save and the Hygiene pass leave as written: a Markdown hard line
+// break, a code block's own text. Unset for a mode where trailing whitespace
+// never means anything.
+using KeptTrailingWhitespaceFunction = std::function<std::vector<std::size_t>(std::string_view bufferText)>;
+
+// fill-paragraph the mode's own way: the replacement for [start, end) that
+// reflows the paragraph at `point` to `fillColumn`, or nullopt when there is
+// nothing to fill there. A mode without one gets Fill.h's line-based filler.
+struct FillEdit {
+    std::size_t start = 0;
+    std::size_t end   = 0;
+    std::string text;
+};
+using FillParagraphFunction =
+    std::function<std::optional<FillEdit>(std::string_view bufferText, std::size_t point, std::size_t fillColumn)>;
+
+// What Enter at `point` carries onto the new line, for a mode whose lines
+// open with structure of their own (a Markdown list item, a quote): the
+// prefix to insert after the newline, or -- Enter on an item with nothing
+// in it -- the text the current line becomes instead, with no new line (the
+// list ends there). nullopt: an ordinary newline.
+struct LineContinuation {
+    std::string                newLinePrefix;
+    std::optional<std::string> currentLine;
+};
+using ContinueLineFunction = std::function<std::optional<LineContinuation>(std::string_view bufferText, std::size_t point)>;
+
 // Whether `after` parses to the same structure as `before`: the same named
 // nodes, at the same depths, in the same order. Depth is part of it because
 // moving a statement out of a block keeps every kind in order and changes
@@ -974,6 +1002,9 @@ struct Mode {
     // Empty function = this mode has no parse to be wrong about, so a batch
     // reindent skips nothing.
     UnreliableIndentFunction unreliableIndentRanges;
+    KeptTrailingWhitespaceFunction keptTrailingWhitespace;
+    FillParagraphFunction          fillParagraph;
+    ContinueLineFunction           continueLine;
     // Empty function = no parse to compare, so a batch reindent is kept as is.
     SameStructureFunction sameStructure;
     // Debugging wishlist (line-inspect follow-up): empty function (the

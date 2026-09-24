@@ -1182,8 +1182,18 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             for (const grammar::QueryMatch& match :
                  foldMatchCache->Reconcile(*foldQuery, tree, bufferText, sharedParse->LastEdit())) {
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
-                    if (capture.name == "fold") {
-                        ranges.emplace_back(capture.startByte, capture.endByte);
+                    if (capture.name != "fold") {
+                        continue;
+                    }
+                    // A fold ends at its last content: a node reaching over the
+                    // blank lines after it (a Markdown list item) has nothing
+                    // more to hide, and one that fits on its first line is none.
+                    std::size_t end = capture.endByte;
+                    while (end > capture.startByte && std::isspace(static_cast<unsigned char>(bufferText[end - 1]))) {
+                        --end;
+                    }
+                    if (bufferText.substr(capture.startByte, end - capture.startByte).find('\n') != std::string_view::npos) {
+                        ranges.emplace_back(capture.startByte, end);
                     }
                 }
             }
@@ -1350,6 +1360,18 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 std::string name;
                 if (nameCapture) {
                     name = std::string(bufferText.substr(nameCapture->startByte, nameCapture->endByte - nameCapture->startByte));
+                }
+                // `(:set! name.closing-sequence "#")`: a trailing run of that
+                // character set off by whitespace is decoration, not name
+                // (Markdown's `## Title ##`; `## C#` keeps its `#`).
+                if (const auto closing = match.setDirectives.find("name.closing-sequence");
+                    closing != match.setDirectives.end() && closing->second.size() == 1) {
+                    const std::size_t content = name.find_last_not_of(" \t");
+                    const std::size_t run     = content == std::string::npos ? std::string::npos : name.find_last_not_of(closing->second[0], content);
+                    if (content != std::string::npos && run != content && (run == std::string::npos || name[run] == ' ' || name[run] == '\t')) {
+                        const std::size_t kept = run == std::string::npos ? std::string::npos : name.find_last_not_of(" \t", run);
+                        name.resize(kept == std::string::npos ? 0 : kept + 1);
+                    }
                 }
                 markers.push_back({.startByte      = definitionCapture->startByte,
                                    .endByte        = definitionCapture->endByte,

@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <vector>
 
 #include "Charset.h"
 #include "FilePreservation.h"
@@ -43,6 +44,9 @@ struct SavePlan {
 
     LineEnding lineEnding             = LineEnding::LF;
     bool       trimTrailingWhitespace = false;
+    // Lines trimming leaves alone (Text/WhitespaceHygiene.h). Ignored by the
+    // huge-file streaming writer, whose caller turns trimming off instead.
+    std::vector<std::size_t> keepTrailingWhitespace;
     bool       ensureFinalNewline     = false;
     Charset    charset                = Charset::Utf8; // encoded into, its preamble written ahead of the content
 

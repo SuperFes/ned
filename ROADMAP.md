@@ -152,15 +152,29 @@ and code reading. Highest stakes first.
 - [ ] **Reindent: what is still unmodelled.** Every language with an `ind` cell
       reindents a flattened sample back to its house style
       (`Tests/Format/reindent/`). Left:
-  - [ ] **Markdown blockquotes.** Reindent moves `> ` lines under a heading
-        four columns in, making them a code block, and does so again on a second
-        run; Markdown has no `sameStructure` check to refuse it.
   - [ ] **MATLAB is unreachable by extension.** `.m` is Objective-C's and MATLAB
         claims only `.mlx`, so a MATLAB file needs `set-mode`; `.m` wants the same
         content sniff `.v` has (Verilog vs V).
   - [ ] **Continuation lines** stay at their statement's level: Fortran's `&`,
         VHDL's selected signal assignments, a multi-line Nix `if`/`then`/`else`
         (nixfmt indents the branches), Scala's operator-continued enumerators.
+- [ ] **Markdown, what the 2026-09-24 audit left.** Reindent, fill-paragraph, save
+      trimming, tables, Enter/Backspace, the outline and folds were fixed against
+      `cmark`'s rendering (`Tools/markdown-oracle.py`; the block parser itself
+      matches cmark on every GFM spec example). Left:
+  - [ ] **Wide glyphs.** ned counts every codepoint as one column -- the renderer
+        (`CodepointColumns`), table alignment and fill alike -- so CJK and emoji
+        misalign everywhere, not only in Markdown. Needs East Asian Width data
+        (`Tools/gen-unicode-tables.py` already vendors the Unicode sources).
+  - [ ] **Setext headings start no section** in tree-sitter-markdown, so text
+        under one neither folds with it nor gets it as a breadcrumb; the outline
+        does list it.
+  - [ ] **Tables:** aligning a row with more cells than the header adds columns
+        to the header (GFM ignores the extras).
+  - [ ] **Lists:** Enter numbers the new item but never renumbers the ones after
+        it; Enter on an item's continuation line hangs rather than starting an item.
+  - [ ] **Inline highlighting:** the inline grammar still fails 36 upstream spec
+        examples (`markdown-inline/corpus/failing.txt`, emphasis edge cases).
 - [ ] **Locals query limits in Perl, Elixir and Dart** (all ned-authored). Perl: `my $x
       = $x` resolves the right-hand `$x` to the new variable rather than the outer one
       (the resolver binds from the declaration's start), `our`/`local` bind nothing, and

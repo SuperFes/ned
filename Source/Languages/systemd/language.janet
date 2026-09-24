@@ -12,6 +12,7 @@
 {:name "systemd"
  :extensions [".service" ".socket" ".timer" ".target" ".mount" ".automount" ".swap" ".path" ".device" ".scope" ".slice"
               ".network" ".netdev" ".link" ".nspawn" ".dnssd"]
+ :injection-aliases ["service"]
  :filenames ["journald.conf" "logind.conf" "resolved.conf" "timesyncd.conf" "networkd.conf" "coredump.conf"
              "homed.conf" "oomd.conf" "sleep.conf" "pstore.conf" "journal-remote.conf" "journal-upload.conf"]
  :line-comment "#"

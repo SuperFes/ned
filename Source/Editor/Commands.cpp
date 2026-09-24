@@ -192,6 +192,42 @@ namespace {
         };
     }
 
+    // Backspace straight after an Enter that carried a list or quote marker
+    // onto its new line (Mode::continueLine): replaces that marker with what a
+    // plain Enter would have indented to, so one key takes the continuation
+    // back. Anything typed in between and it is an ordinary backspace.
+    bool UndoLineContinuation(CommandContext& context) {
+        if (context.lastCommand != "newline" || context.mode == nullptr || !context.mode->continueLine) {
+            return false;
+        }
+        text::Buffer&     buffer    = context.buffer;
+        const auto&       content   = buffer.Content();
+        const std::size_t point     = buffer.Point();
+        const std::size_t line      = content.ByteOffsetToLine(point);
+        const std::size_t lineStart = content.LineToByteOffset(line);
+        if (line == 0) {
+            return false;
+        }
+        const std::string                     text         = buffer.Text();
+        const std::optional<LineContinuation> continuation = context.mode->continueLine(text, lineStart - 1);
+        if (!continuation || continuation->currentLine || continuation->newLinePrefix.empty() ||
+            point != lineStart + continuation->newLinePrefix.size() ||
+            text.compare(lineStart, continuation->newLinePrefix.size(), continuation->newLinePrefix) != 0) {
+            return false;
+        }
+        std::string       plain  = text;
+        plain.erase(lineStart, continuation->newLinePrefix.size());
+        const std::size_t restEnd = std::min(plain.find('\n', lineStart), plain.size());
+        const int         column  = IndentColumnForLine(*context.mode, plain, lineStart, restEnd, buffer.LocalIndent()).value_or(0);
+        const std::string indent  = IndentString(column, EffectiveIndentStyle(buffer, context.mode->name));
+        buffer.BeginUndoGroup();
+        buffer.DeleteRange(lineStart, continuation->newLinePrefix.size());
+        buffer.InsertAt(lineStart, indent);
+        buffer.SetPoint(lineStart + indent.size());
+        buffer.EndUndoGroup();
+        return true;
+    }
+
     // auto-pair-brackets-and-quotes follow-up: the single grapheme
     // immediately before/after point, or empty at a buffer boundary --
     // exactly what AutoPairQuery::charBefore/charAfter want. Shared by
@@ -680,6 +716,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     registry.Register("backward-delete-char", "Delete the grapheme cluster before point.", PerCursor([](CommandContext& context) {
                           context.buffer.ClearMark();
+                          if (UndoLineContinuation(context)) {
+                              return;
+                          }
                           // auto-pair-brackets-and-quotes follow-up: backspacing
                           // between an empty pair ("(|)", "\"|\"") removes both
                           // sides as one edit instead of leaving the lone closer
@@ -1604,6 +1643,28 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         PerCursor([](CommandContext& context) {
             text::Buffer& buffer = context.buffer;
             buffer.ClearMark();
+
+            // A list item or quote carries its marker onto the new line; an
+            // empty item ends its list instead.
+            if (context.mode != nullptr && context.mode->continueLine) {
+                if (const std::optional<LineContinuation> continuation = context.mode->continueLine(buffer.Text(), buffer.Point())) {
+                    buffer.BeginUndoGroup();
+                    if (continuation->currentLine) {
+                        const auto&       content   = buffer.Content();
+                        const std::size_t line      = content.ByteOffsetToLine(buffer.Point());
+                        const std::size_t lineStart = content.LineToByteOffset(line);
+                        const std::size_t lineEnd   = line + 1 < content.LineCount() ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+                        buffer.DeleteRange(lineStart, lineEnd - lineStart);
+                        buffer.InsertAt(lineStart, *continuation->currentLine);
+                        buffer.SetPoint(lineStart + continuation->currentLine->size());
+                    }
+                    else {
+                        buffer.InsertAtPoint("\n" + continuation->newLinePrefix);
+                    }
+                    buffer.EndUndoGroup();
+                    return;
+                }
+            }
             buffer.BeginUndoGroup();
 
             // smart-blank-line-on-newline follow-up: if point currently
@@ -4358,8 +4419,22 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         "fill-paragraph",
         "Reflow the paragraph at point to fill-column, preserving indentation and (if uniform) a per-line comment prefix.",
         [](CommandContext& context) {
+            const auto fillColumn = static_cast<std::size_t>(FillColumn(context.buffer));
+            if (context.mode != nullptr && context.mode->fillParagraph) {
+                text::Buffer& buffer = context.buffer;
+                if (const std::optional<FillEdit> edit = context.mode->fillParagraph(buffer.Text(), buffer.Point(), fillColumn)) {
+                    if (buffer.Text().compare(edit->start, edit->end - edit->start, edit->text) != 0) {
+                        buffer.BeginUndoGroup();
+                        buffer.DeleteRange(edit->start, edit->end - edit->start);
+                        buffer.InsertAt(edit->start, edit->text);
+                        buffer.EndUndoGroup();
+                    }
+                    buffer.SetPoint(edit->start + edit->text.size());
+                }
+                return;
+            }
             const std::string prefix = (context.mode != nullptr) ? context.mode->lineCommentPrefix : std::string();
-            FillParagraph(context.buffer, static_cast<std::size_t>(FillColumn(context.buffer)), prefix);
+            FillParagraph(context.buffer, fillColumn, prefix);
         });
 
     // smart-indentation follow-up: the batch/linter-reuse half of

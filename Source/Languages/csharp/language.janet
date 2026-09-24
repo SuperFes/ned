@@ -1,5 +1,6 @@
 {:name "csharp"
  :extensions [".cs"]
+ :injection-aliases ["cs" "c#"]
  :line-comment "//"
 
  # .NET has no fixed-name project marker: a "*.<ext>" entry means "any

@@ -639,11 +639,12 @@ TEST_CASE("A mode has a fold hook exactly when some source can speak for it", "[
     REQUIRE(static_cast<bool>(ned::editor::HtmlMode().fold));
 
     // Still genuinely sourceless: Fundamental parses nothing at all, and Org
-    // and Markdown fold by their own structure (headline depth, sections)
-    // rather than by delimiters, so neither has a compiled-in table.
+    // folds by its own structure (headline depth) rather than by delimiters,
+    // so it has no compiled-in table. Markdown has no table either, but its
+    // own fold query (sections, fences, items, quotes) speaks for it.
     REQUIRE_FALSE(static_cast<bool>(FundamentalMode().fold));
     REQUIRE_FALSE(static_cast<bool>(OrgMode().fold));
-    REQUIRE_FALSE(static_cast<bool>(ned::editor::MarkdownMode().fold));
+    REQUIRE(static_cast<bool>(ned::editor::MarkdownMode().fold));
     // YAML briefly sat in the group above, on the mistaken belief that its
     // block structure was not expressed as rules. Its rules are simply all
     // hidden, with the node names supplied by alias(); it folds now.

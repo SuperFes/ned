@@ -9,8 +9,10 @@ file is stale. Regenerate with
 
 A `✓` means the package ships the piece, not that the feature is verified to work
 well for that language; known behavioural gaps are tracked in `ROADMAP.md`. Folds,
-bracket matching and sticky scroll are not listed: they come from the grammar itself
-for every language. See `LanguageCoverage.md` for tiers and admission policy.
+bracket matching and sticky scroll are not listed: they come from the grammar's own
+delimited bodies, except in Markdown and Org, whose structure is not delimiters and
+which fold from their own query and code. See `LanguageCoverage.md` for tiers and
+admission policy.
 
 - **hl** -- highlights query
 - **ind** -- indents query (without one, indent comes from the grammar's delimited bodies alone); `=` -- `:preserve-indent`, a reindent leaves every line as written

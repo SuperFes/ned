@@ -31,6 +31,11 @@ struct Table {
     std::vector<table::Alignment>         columnAlignments;
     std::size_t                           startLine;
     std::size_t                           endLine; // exclusive
+    // Kept through a realign: the indent that places the table (inside a
+    // list item, it is what keeps the table there) and whether its rows are
+    // written with edge pipes (GFM allows `a | b` as well as `| a | b |`).
+    std::string indent;
+    bool        edgePipes = true;
 };
 
 // A contiguous |-prefixed block (Source/Editor/Table.h's FindTableBlockLines)

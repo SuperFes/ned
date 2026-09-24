@@ -11,15 +11,19 @@
 
 namespace ned::editor {
 
-bool ApplyHygienePass(text::Buffer& buffer) {
+bool ApplyHygienePass(text::Buffer& buffer, const Mode* mode) {
     const std::string original = buffer.Text();
     std::string       result   = original;
 
+    // Trimming never adds or removes a line before a kept one, so the line
+    // numbers still hold for the collapse after it.
+    const std::vector<std::size_t> keep =
+        mode != nullptr && mode->keptTrailingWhitespace ? mode->keptTrailingWhitespace(original) : std::vector<std::size_t>{};
     if (TrimTrailingWhitespaceOnSave(buffer)) {
-        result = text::TrimTrailingWhitespaceAndBlankLines(std::move(result));
+        result = text::TrimTrailingWhitespaceAndBlankLines(std::move(result), keep);
     }
     if (const std::optional<int> maxBlank = MaxConsecutiveBlankLines()) {
-        result = text::CollapseBlankLineRuns(std::move(result), *maxBlank);
+        result = text::CollapseBlankLineRuns(std::move(result), *maxBlank, keep);
     }
     if (EnsureFinalNewline(buffer)) {
         result = text::EnsureTrailingNewline(std::move(result));
@@ -73,7 +77,7 @@ bool ApplyNativeFormat(text::Buffer& buffer, const Mode* mode) {
             changed = RunCapturePass(buffer, *mode, languageKey, pass.compute) || changed;
         }
     }
-    changed = ApplyHygienePass(buffer) || changed;
+    changed = ApplyHygienePass(buffer, mode) || changed;
     buffer.EndUndoGroup();
     return changed;
 }

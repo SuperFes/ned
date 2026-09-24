@@ -678,33 +678,52 @@ TEST_CASE("MarkdownMode indentColumn stacks one indent step per nesting level, a
     REQUIRE(*contColumn == 8); // two steps, one per nesting level
 }
 
-TEST_CASE("MarkdownMode indentColumn adds one indent step per blockquote level", "[Indent]") {
+TEST_CASE("MarkdownMode indentColumn gives a quote's `>` lines only what encloses the quote", "[Indent]") {
+    // What follows a `>` is not leading whitespace. Counting the quote for its
+    // own continuation lines pushed `> more` four columns in, which is code.
     const auto mode = MarkdownMode();
     Buffer     buffer("test.md");
-    buffer.InsertAtPoint("> quoted\n> more quoted\n");
+    buffer.InsertAtPoint("> quoted\n> more quoted\nlazy\n- item\n  > in item\n  > more\n");
 
-    const auto [firstStart, firstEnd] = LineRange(buffer, 0); // "> quoted" -- the blockquote's own opening line
-    const auto firstColumn            = mode.indentColumn(buffer.Text(), firstStart, firstEnd, {});
-    REQUIRE(firstColumn.has_value());
-    REQUIRE(*firstColumn == 0);
-
-    const auto [secondStart, secondEnd] = LineRange(buffer, 1); // "> more quoted" -- still inside the same blockquote
-    const auto secondColumn             = mode.indentColumn(buffer.Text(), secondStart, secondEnd, {});
-    REQUIRE(secondColumn.has_value());
-    REQUIRE(*secondColumn == 4);
+    const auto column = [&](std::size_t line) {
+        const auto [start, end] = LineRange(buffer, line);
+        return mode.indentColumn(buffer.Text(), start, end, {});
+    };
+    CHECK(column(0) == 0);
+    CHECK(column(1) == 0);
+    CHECK(column(2) == std::nullopt); // a lazy continuation is left as written
+    CHECK(column(4) == 4);            // the item's hang
+    CHECK(column(5) == 4);
 }
 
-TEST_CASE("MarkdownMode indentColumn copies a fenced code block's own content indentation verbatim", "[Indent]") {
+TEST_CASE("MarkdownMode indentColumn has no opinion inside code and HTML blocks", "[Indent]") {
+    // Their leading whitespace is their text; a fence's own indent is stripped
+    // from every line inside it. Enter falls back to copying the line above.
     const auto mode = MarkdownMode();
     Buffer     buffer("test.md");
-    buffer.InsertAtPoint("```\n    weird indent\nnext line\n```\n");
+    buffer.InsertAtPoint("  ```\n    weird indent\nnext line\n  ```\n\n    indented code\n\n<div>\n  html\n</div>\n");
 
-    // The line right after one with deliberately "wrong"/non-structural
-    // indentation -- passthrough copies it as-is, not recomputed.
-    const auto [nextStart, nextEnd] = LineRange(buffer, 2); // "next line"
-    const auto nextColumn           = mode.indentColumn(buffer.Text(), nextStart, nextEnd, {});
-    REQUIRE(nextColumn.has_value());
-    REQUIRE(*nextColumn == 4); // copies "    weird indent"'s own 4-space leading run
+    for (const std::size_t line : {0, 1, 2, 3, 5, 7, 8, 9}) {
+        INFO("line " << line);
+        const auto [start, end] = LineRange(buffer, line);
+        CHECK(mode.indentColumn(buffer.Text(), start, end, {}) == std::nullopt);
+    }
+}
+
+TEST_CASE("MarkdownMode indentColumn holds a hang to the marker's content", "[Indent]") {
+    // One indent step past the marker, but never short of the marker's own
+    // width (the line would leave the item) nor four past it (code).
+    const auto mode = MarkdownMode();
+    Buffer     buffer("test.md");
+    buffer.InsertAtPoint("100. wide\n     more\n");
+    const auto [start, end] = LineRange(buffer, 1);
+    CHECK(mode.indentColumn(buffer.Text(), start, end, {}) == 5);
+    CHECK(mode.indentColumn(buffer.Text(), start, end, {.width = 2}) == 5);
+
+    Buffer narrow("test.md");
+    narrow.InsertAtPoint("1. item\n   more\n");
+    const auto [narrowStart, narrowEnd] = LineRange(narrow, 1);
+    CHECK(mode.indentColumn(narrow.Text(), narrowStart, narrowEnd, {.width = 2}) == 3);
 }
 
 TEST_CASE("MarkdownMode indentColumn breaks out of a list on a second consecutive blank Enter", "[Indent]") {

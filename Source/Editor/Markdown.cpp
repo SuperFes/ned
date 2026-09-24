@@ -86,9 +86,9 @@ namespace {
         const auto        lines      = ScanBlockLines(bufferText, tableInfo.startLine, tableInfo.endLine);
 
         std::vector<std::vector<std::pair<std::size_t, std::size_t>>> cellSpans(tableInfo.rows.size());
-        cellSpans[0] = table::CellByteSpans(lines[0].first, lines[0].second);
+        cellSpans[0] = table::CellByteSpans(lines[0].first, lines[0].second, true);
         for (std::size_t i = 2; i < lines.size(); ++i) {
-            cellSpans[i - 1] = table::CellByteSpans(lines[i].first, lines[i].second);
+            cellSpans[i - 1] = table::CellByteSpans(lines[i].first, lines[i].second, true);
         }
 
         const std::size_t point = buffer.Point();
@@ -147,36 +147,59 @@ namespace {
 
         std::string                           newText;
         std::vector<std::vector<std::size_t>> newCellOffsets(rows.size());
-        auto                                  renderRow = [&](std::size_t rowIndex) {
-            newText += '|';
+        const auto                            endRow    = [&] {
+            if (!original.edgePipes) {
+                // A pipe-less row's last cell is not padded out to trailing whitespace.
+                while (!newText.empty() && newText.back() == ' ') {
+                    newText.pop_back();
+                }
+            }
+            newText += '\n';
+        };
+        auto renderRow = [&](std::size_t rowIndex) {
+            newText += original.indent;
+            if (original.edgePipes) {
+                newText += "| ";
+            }
             for (std::size_t col = 0; col < widths.size(); ++col) {
-                newText += ' ';
+                if (col > 0) {
+                    newText += " | ";
+                }
                 newCellOffsets[rowIndex].push_back(newText.size());
                 const table::Alignment alignment =
                     col < columnAlignments.size() ? columnAlignments[col] : table::Alignment::Default;
                 const std::string cellText = col < rows[rowIndex].size() ? rows[rowIndex][col] : std::string();
                 newText += table::PadCell(cellText, widths[col], alignment);
+            }
+            if (original.edgePipes) {
                 newText += " |";
             }
-            newText += '\n';
+            endRow();
         };
 
         renderRow(0); // header
-        newText += '|';
+        newText += original.indent;
+        if (original.edgePipes) {
+            newText += '|';
+        }
         for (std::size_t col = 0; col < widths.size(); ++col) {
             const table::Alignment alignment =
                 col < columnAlignments.size() ? columnAlignments[col] : table::Alignment::Default;
             const bool        leftColon   = alignment == table::Alignment::Left || alignment == table::Alignment::Center;
             const bool        rightColon  = alignment == table::Alignment::Right || alignment == table::Alignment::Center;
-            const std::size_t totalLength = widths[col] + 2;
+            // Edge-piped: a cell's padding is dashes too. Pipe-less: `--- | ---`.
+            const std::size_t totalLength = widths[col] + (original.edgePipes ? 2 : 0);
             const std::size_t colonCount  = (leftColon ? 1 : 0) + (rightColon ? 1 : 0);
             const std::size_t dashCount   = totalLength > colonCount ? std::max<std::size_t>(1, totalLength - colonCount) : 1;
+            if (!original.edgePipes && col > 0)
+                newText += " | ";
             if (leftColon)
                 newText += ':';
             newText += std::string(dashCount, '-');
             if (rightColon)
                 newText += ':';
-            newText += '|';
+            if (original.edgePipes)
+                newText += '|';
         }
         newText += '\n';
         for (std::size_t row = 1; row < rows.size(); ++row)
@@ -253,16 +276,32 @@ std::optional<Table> FindTableAtPoint(const text::Buffer& buffer) {
     const std::string bufferText = buffer.Text();
     const std::size_t pointLine  = buffer.Content().ByteOffsetToLine(buffer.Point());
 
-    const auto block = table::FindTableBlockLines(bufferText, pointLine);
-    if (!block)
-        return std::nullopt;
+    // GFM tables need no edge pipes: failing a `|`-led block, the run of
+    // lines around point that each hold a real (unescaped) pipe.
+    auto block = table::FindTableBlockLines(bufferText, pointLine);
+    if (!block) {
+        const auto holdsPipe = [&](std::size_t line) {
+            const auto scanned = ScanBlockLines(bufferText, line, line + 1);
+            return !scanned.empty() && table::SplitRow(scanned.front().first, true).size() > 1;
+        };
+        const std::size_t lineCount = buffer.Content().LineCount();
+        if (pointLine >= lineCount || !holdsPipe(pointLine))
+            return std::nullopt;
+        std::size_t first = pointLine;
+        while (first > 0 && holdsPipe(first - 1))
+            --first;
+        std::size_t last = pointLine + 1;
+        while (last < lineCount && holdsPipe(last))
+            ++last;
+        block = std::pair{first, last};
+    }
     const auto [startLine, endLine] = *block;
     if (endLine - startLine < 2)
         return std::nullopt; // needs at least a header and a delimiter row
 
     const auto lines = ScanBlockLines(bufferText, startLine, endLine);
 
-    const auto delimiterCells = table::SplitRow(lines[1].first);
+    const auto delimiterCells = table::SplitRow(lines[1].first, true);
     for (const std::string& cell : delimiterCells) {
         if (!IsMarkdownDelimiterCell(cell))
             return std::nullopt; // not a real GFM table
@@ -271,12 +310,16 @@ std::optional<Table> FindTableAtPoint(const text::Buffer& buffer) {
     Table result;
     result.startLine = startLine;
     result.endLine   = endLine;
+    const std::string_view header = lines[0].first;
+    const std::size_t      indent = std::min(header.find_first_not_of(" \t"), header.size());
+    result.indent                 = std::string(header.substr(0, indent));
+    result.edgePipes              = indent < header.size() && header[indent] == '|';
     for (const std::string& cell : delimiterCells) {
         result.columnAlignments.push_back(AlignmentForDelimiterCell(cell));
     }
-    result.rows.push_back(table::SplitRow(lines[0].first)); // header
+    result.rows.push_back(table::SplitRow(lines[0].first, true)); // header
     for (std::size_t i = 2; i < lines.size(); ++i) {
-        result.rows.push_back(table::SplitRow(lines[i].first));
+        result.rows.push_back(table::SplitRow(lines[i].first, true));
     }
     return result;
 }

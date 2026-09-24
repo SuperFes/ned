@@ -2,6 +2,7 @@
 # the Objective-C-only directives.
 {:name "objc"
  :extensions [".m"]
+ :injection-aliases ["objective-c" "objectivec"]
  :shared-extensions [".h"]
  :mime-types ["text/x-objective-c"]
  :content-pattern "^\\s*(@interface|@protocol|@implementation|#import)\\b"

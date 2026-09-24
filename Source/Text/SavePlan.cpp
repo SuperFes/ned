@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -189,7 +190,8 @@ namespace {
     // failed write very differently (remove the temp file vs. report a
     // possibly-truncated real file).
     void WriteBufferContent(EncodingSink& file, const ITextStorage& storage, LineEnding effectiveEnding, bool trimTrailingWhitespace,
-                            bool ensureFinalNewline, const std::function<void(std::uintmax_t)>& onProgress) {
+                            std::span<const std::size_t> keepTrailingWhitespace, bool ensureFinalNewline,
+                            const std::function<void(std::uintmax_t)>& onProgress) {
         if (storage.IsHuge()) {
             // huge-file-editing follow-up: same trim/ensureFinalNewline/
             // line-ending pipeline as the non-huge path below, but streamed
@@ -221,7 +223,7 @@ namespace {
         // Disk-only, same reasoning as ensureFinalNewline itself: only this
         // local copy is touched, never Storage_ (see Editor/TrimOnSave.h).
         if (trimTrailingWhitespace) {
-            content = TrimTrailingWhitespaceAndBlankLines(std::move(content));
+            content = TrimTrailingWhitespaceAndBlankLines(std::move(content), keepTrailingWhitespace);
         }
         // An empty buffer stays empty (not turned into a bare "\n") -- and
         // Storage_ itself is never touched, only this local copy that's about
@@ -265,7 +267,7 @@ namespace {
         const std::string_view preamble = CharsetPreamble(plan.charset);
         file.write(preamble.data(), static_cast<std::streamsize>(preamble.size()));
         EncodingSink sink(file, plan.charset);
-        WriteBufferContent(sink, *plan.snapshot, plan.lineEnding, plan.trimTrailingWhitespace, plan.ensureFinalNewline,
+        WriteBufferContent(sink, *plan.snapshot, plan.lineEnding, plan.trimTrailingWhitespace, plan.keepTrailingWhitespace, plan.ensureFinalNewline,
                            plan.onProgress);
         sink.Finish();
     }

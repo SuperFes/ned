@@ -1,5 +1,6 @@
 {:name "rust"
  :extensions [".rs"]
+ :injection-aliases ["rs"]
  :line-comment "//"
  :lsp-root-markers ["Cargo.toml"]
 

@@ -3,6 +3,7 @@
 
 {:name "kotlin"
  :extensions [".kt" ".kts"]
+ :injection-aliases ["kt" "kts"]
  :line-comment "//"
 
  # Java/Kotlin share one marker set -- both build with Maven or Gradle. In

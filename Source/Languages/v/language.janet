@@ -3,6 +3,7 @@
 # line. libmagic cannot tell the two apart.
 {:name "v"
  :extensions [".vsh" ".vv"]
+ :injection-aliases ["vlang"]
  :shared-extensions [".v"]
  :content-pattern "^\\s*(pub\\s+)?(fn|struct)\\s|^module\\s+\\w+\\s*$"
  :filenames ["v.mod"]

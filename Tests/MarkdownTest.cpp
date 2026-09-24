@@ -277,3 +277,31 @@ TEST_CASE("MoveTableColumnRightAtPoint refuses on the last column", "[Markdown]"
     buffer.SetPoint(buffer.Text().find("Age"));
     REQUIRE_FALSE(MoveTableColumnRightAtPoint(buffer));
 }
+
+TEST_CASE("Aligning a table keeps an escaped pipe inside its cell", "[Markdown]") {
+    Buffer buffer("test.md");
+    buffer.InsertAtPoint("| a | b |\n|---|---|\n| x \\| y | 2 |\n");
+    buffer.SetPoint(1);
+    REQUIRE(AlignTableAtPoint(buffer));
+    CHECK(buffer.Text() == "| a      | b |\n|--------|---|\n| x \\| y | 2 |\n");
+    // Org has no such escape: its `\|` still ends a cell.
+    CHECK(ned::editor::table::SplitRow("| x \\| y |").size() == 2);
+    CHECK(ned::editor::table::SplitRow("| x \\| y |", true).size() == 1);
+}
+
+TEST_CASE("A table without edge pipes is found and stays without them", "[Markdown]") {
+    Buffer buffer("test.md");
+    buffer.InsertAtPoint("name | n\n--|:-:\nab | 1\n");
+    buffer.SetPoint(1);
+    REQUIRE(AlignTableAtPoint(buffer));
+    CHECK(buffer.Text() == "name | n\n---- | :-:\nab   | 1\n");
+}
+
+TEST_CASE("Aligning a table inside a list item keeps it in the item", "[Markdown]") {
+    // Written at column 0 it would end the list item.
+    Buffer buffer("test.md");
+    buffer.InsertAtPoint("- item\n\n  | a | bb |\n  |---|---|\n  | 1 | 2 |\n");
+    buffer.SetPoint(buffer.Text().find("| a"));
+    REQUIRE(AlignTableAtPoint(buffer));
+    CHECK(buffer.Text() == "- item\n\n  | a | bb |\n  |---|----|\n  | 1 | 2  |\n");
+}

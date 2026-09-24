@@ -1,31 +1,39 @@
 #include "WhitespaceHygiene.h"
 
+#include <algorithm>
 #include <string_view>
 #include <vector>
 
 namespace ned::text {
 
-std::string TrimTrailingWhitespaceAndBlankLines(std::string content) {
+std::string TrimTrailingWhitespaceAndBlankLines(std::string content, std::span<const std::size_t> keep) {
     if (content.empty()) {
         return content;
     }
     std::string trimmed;
     trimmed.reserve(content.size());
     std::size_t lineStart = 0;
+    std::size_t line      = 0;
+    std::size_t keptEnd   = 0; // trimmed's size just past the last kept line's content
     for (std::size_t i = 0; i <= content.size(); ++i) {
         if (i == content.size() || content[i] == '\n') {
             std::size_t lineEnd = i;
-            while (lineEnd > lineStart && (content[lineEnd - 1] == ' ' || content[lineEnd - 1] == '\t')) {
+            const bool  kept    = std::binary_search(keep.begin(), keep.end(), line);
+            while (!kept && lineEnd > lineStart && (content[lineEnd - 1] == ' ' || content[lineEnd - 1] == '\t')) {
                 --lineEnd;
             }
             trimmed.append(content, lineStart, lineEnd - lineStart);
             if (i < content.size()) {
                 trimmed.push_back('\n');
             }
+            if (kept) {
+                keptEnd = trimmed.size(); // its newline too: an open fence's last blank line is code
+            }
             lineStart = i + 1;
+            ++line;
         }
     }
-    while (!trimmed.empty() && trimmed.back() == '\n') {
+    while (trimmed.size() > keptEnd && trimmed.back() == '\n') {
         trimmed.pop_back();
     }
     return trimmed;
@@ -38,7 +46,7 @@ std::string EnsureTrailingNewline(std::string content) {
     return content;
 }
 
-std::string CollapseBlankLineRuns(std::string content, int maxConsecutive) {
+std::string CollapseBlankLineRuns(std::string content, int maxConsecutive, std::span<const std::size_t> keep) {
     if (maxConsecutive < 0) {
         return content;
     }
@@ -60,8 +68,12 @@ std::string CollapseBlankLineRuns(std::string content, int maxConsecutive) {
     result.reserve(content.size());
     std::size_t consecutiveBlank = 0;
     bool        firstLine        = true;
-    for (const std::string_view& line : lines) {
-        if (isBlank(line)) {
+    for (std::size_t index = 0; index < lines.size(); ++index) {
+        const std::string_view line = lines[index];
+        if (std::binary_search(keep.begin(), keep.end(), index)) {
+            consecutiveBlank = 0;
+        }
+        else if (isBlank(line)) {
             ++consecutiveBlank;
             if (consecutiveBlank > static_cast<std::size_t>(maxConsecutive)) {
                 continue; // drop this line entirely -- the run is already at its cap

@@ -49,14 +49,18 @@ namespace {
     // equivalent of just its trim half (the blank-line-collapse half is
     // deliberately not attempted scoped at all -- see this file's own
     // header comment).
-    std::vector<FormatTextEdit> ScopedTrimEdits(std::string_view text, const text::Buffer& buffer, std::size_t startLine,
-                                                std::size_t endLineExclusive) {
+    std::vector<FormatTextEdit> ScopedTrimEdits(std::string_view text, const text::Buffer& buffer, const Mode& mode,
+                                                std::size_t startLine, std::size_t endLineExclusive) {
         std::vector<FormatTextEdit> edits;
         if (!TrimTrailingWhitespaceOnSave(buffer)) {
             return edits;
         }
+        const std::vector<std::size_t> keep = mode.keptTrailingWhitespace ? mode.keptTrailingWhitespace(text) : std::vector<std::size_t>{};
         const auto& content = buffer.Content();
         for (std::size_t line = startLine; line < endLineExclusive; ++line) {
+            if (std::binary_search(keep.begin(), keep.end(), line)) {
+                continue;
+            }
             const std::size_t lineStart = content.LineToByteOffset(line);
             const std::size_t lineEndWithNewline =
                 (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : text.size();
@@ -176,7 +180,7 @@ bool ApplyScopedFormatOnSave(text::Buffer& buffer, const Mode& mode) {
             const std::string         textBeforeTrim = buffer.Text();
             const text::ITextStorage& content        = buffer.Content();
             const std::size_t         currentEndLine = content.ByteOffsetToLine(scopeEnd > scopeStart ? scopeEnd - 1 : scopeEnd) + 1;
-            scopeEnd                                 = ApplyContainedEdits(buffer, ScopedTrimEdits(textBeforeTrim, buffer, startLine, currentEndLine),
+            scopeEnd                                 = ApplyContainedEdits(buffer, ScopedTrimEdits(textBeforeTrim, buffer, mode, startLine, currentEndLine),
                                                                            scopeStart, scopeEnd, changed);
 
             // Final newline: only when this region's own end is genuinely

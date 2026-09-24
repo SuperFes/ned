@@ -2,5 +2,6 @@
 # too: the grammar treats # lines as comments.
 {:name "asm"
  :extensions [".s" ".S" ".asm" ".nasm"]
+ :injection-aliases ["nasm" "assembly" "x86asm"]
  :line-comment ";"
 }

@@ -1,5 +1,6 @@
 {:name "racket"
  :extensions [".rkt" ".rktl" ".rktd"]
+ :injection-aliases ["rkt"]
  :line-comment ";"
  :auto-pairs :lisp
 }

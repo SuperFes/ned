@@ -3,6 +3,7 @@
 # switch until path-pattern claims exist.
 {:name "ssh_config"
  :extensions [".ssh_config"]
+ :injection-aliases ["ssh-config"]
  :filenames ["ssh_config"]
  :line-comment "#"
 }

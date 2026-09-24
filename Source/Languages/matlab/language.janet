@@ -2,5 +2,6 @@
 # content sniff exists.
 {:name "matlab"
  :extensions [".mlx"]
+ :injection-aliases ["octave"]
  :line-comment "%"
 }

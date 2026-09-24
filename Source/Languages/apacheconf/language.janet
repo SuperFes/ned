@@ -9,5 +9,6 @@
 
 {:name "apacheconf"
  :filenames [".htaccess" "httpd.conf" "apache2.conf" "httpd-vhosts.conf" "httpd-ssl.conf"]
+ :injection-aliases ["apache"]
  :line-comment "#"
 }

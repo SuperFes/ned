@@ -3,7 +3,7 @@
  :line-comment "//"
  :lsp-root-markers ["package.json" "jsconfig.json"]
  :import-resolution {:extensions ["js" "jsx" "mjs" "cjs"] :index-basenames ["index"] :search-package-dirs true}
- :injection-aliases ["js"]
+ :injection-aliases ["js" "node"]
  :snippets
  {
    "func"
