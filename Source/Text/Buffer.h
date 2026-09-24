@@ -212,6 +212,11 @@ class Buffer {
     // disk changes until the next explicit save actually writes it out.
     void SetLineEndingOverride(ned::text::LineEnding ending);
 
+    // Whether the file began with a UTF-8 byte order mark. Loading strips it
+    // from the content; a save writes it back (BeginSave), so opening and
+    // saving a file keeps it byte for byte.
+    [[nodiscard]] bool Utf8Bom() const;
+
     // The indentation this buffer's own file asks for (a modeline,
     // .editorconfig, or what its content already does), laid over the
     // mode's configured style for this buffer alone; an empty override
@@ -433,7 +438,7 @@ class Buffer {
     // already be LF-only) and passes its own DetectLineEnding result through
     // only at FinishLoad, once the whole file has actually been seen.
     void ReplaceContentForLoad(Rope content);
-    void FinishLoad(Rope content, std::optional<LineEnding> detectedEnding = std::nullopt);
+    void FinishLoad(Rope content, std::optional<LineEnding> detectedEnding = std::nullopt, bool utf8Bom = false);
 
     // progressive-huge-file-load follow-up: the PieceTable-backed
     // counterparts to the two Rope methods above, used by
@@ -1456,6 +1461,7 @@ class Buffer {
     // See LineEndingKind()/SetLineEndingOverride's own doc comments above.
     // Defaults to LF, matching a NewFile() buffer's own implicit ending.
     ned::text::LineEnding LineEnding_ = ned::text::LineEnding::LF;
+    bool                  Utf8Bom_    = false;
     IndentOverride        LocalIndent_;
     FileConventions       Conventions_;
     // See Content()'s own doc comment above -- Rope-backed for every

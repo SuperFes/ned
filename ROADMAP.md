@@ -131,10 +131,6 @@ and code reading. Highest stakes first.
       settings for that buffer (`Buffer::Conventions`). Left:
   - [ ] Settled once, at open: a save-as to a path under a different `.editorconfig`, or
         an external reload that reformats the file, keeps the old settings.
-  - [ ] **A UTF-8 byte order mark doesn't survive a round trip.** Loading strips it and
-        saving never writes one back unless `.editorconfig` says `charset = utf-8-bom`,
-        so opening and saving a BOM file silently drops it. Remembering it at load
-        (sync, async and huge paths each strip it separately) would preserve it.
   - [ ] `charset` values other than `utf-8`/`utf-8-bom` (latin1, utf-16) are ignored:
         ned reads and writes UTF-8 only.
   - [ ] **Mixed tabs and spaces, if it has to exist:** Emacs's `indent-tabs-mode` with

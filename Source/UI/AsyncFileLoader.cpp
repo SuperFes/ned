@@ -61,6 +61,7 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
     std::string content;
     std::string chunk(kChunkBytes, '\0');
     bool        strippedBom = false;
+    bool        utf8Bom     = false;
     auto        lastPreview = std::chrono::steady_clock::now();
 
     while (!stopToken.stop_requested()) {
@@ -76,6 +77,7 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
             strippedBom = true;
             if (content.starts_with(kUtf8Bom)) {
                 content.erase(0, kUtf8Bom.size());
+                utf8Bom = true;
             }
         }
 
@@ -111,9 +113,9 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
 
     const text::LineEnding detectedEnding = text::DetectLineEnding(content);
     text::Rope             finalContent(text::HasCarriageReturn(content) ? text::NormalizeToLf(content) : content);
-    eventLoop.Post([this, finalContent, detectedEnding] {
+    eventLoop.Post([this, finalContent, detectedEnding, utf8Bom] {
         if (text::Buffer* buffer = bufferList_.Find(bufferName_)) {
-            buffer->FinishLoad(finalContent, detectedEnding);
+            buffer->FinishLoad(finalContent, detectedEnding, utf8Bom);
         }
         done_ = true;
     });

@@ -184,7 +184,8 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
     // Ned assumes UTF-8/ASCII content -- no charset auto-detection, matching
     // most modern editors' default -- so a leading BOM is the one
     // encoding-related artifact worth stripping explicitly.
-    if (content.starts_with(kUtf8Bom)) {
+    const bool utf8Bom = content.starts_with(kUtf8Bom);
+    if (utf8Bom) {
         content.erase(0, kUtf8Bom.size());
     }
 
@@ -201,6 +202,7 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
     Buffer buffer(path.filename().string(), Rope(content));
     buffer.Path_         = path;
     buffer.LineEnding_   = detectedEnding;
+    buffer.Utf8Bom_      = utf8Bom;
     buffer.LikelyBinary_ = likelyBinary; // only ever true here if allowBinary let a real binary-detected open through
     if (!timestampError) {
         buffer.DiskTimestamp_ = diskTime;
@@ -255,7 +257,8 @@ Buffer Buffer::FromHugeFile(const std::filesystem::path& path, bool allowBinary)
     // A leading UTF-8 BOM is stripped the same way FromFile does above --
     // cheap even here, a fixed 3-byte prefix check plus (if present) one
     // small Erased() at offset 0, not a full-document scan.
-    if (table.ByteLength() >= kUtf8Bom.size() && table.Substring(0, kUtf8Bom.size()) == kUtf8Bom) {
+    const bool utf8Bom = table.ByteLength() >= kUtf8Bom.size() && table.Substring(0, kUtf8Bom.size()) == kUtf8Bom;
+    if (utf8Bom) {
         table = table.Erased(0, kUtf8Bom.size());
     }
 
@@ -264,6 +267,7 @@ Buffer Buffer::FromHugeFile(const std::filesystem::path& path, bool allowBinary)
     buffer.UndoTree_      = UndoTree(buffer.Storage_->Clone());
     buffer.SavedSnapshot_ = buffer.Storage_->Clone();
     buffer.Path_          = path;
+    buffer.Utf8Bom_       = utf8Bom;
     buffer.LikelyBinary_  = likelyBinary; // only ever true here if allowBinary let a real binary-detected open through
     // Storage_ is always LF-only for this path regardless of allowBinary --
     // for a text open this is guaranteed by the refusal above; for a binary
@@ -353,6 +357,7 @@ SavePlan Buffer::BeginSave(const std::filesystem::path& path, bool ensureFinalNe
     plan.lineEnding             = effectiveEnding;
     plan.trimTrailingWhitespace = trimTrailingWhitespace;
     plan.ensureFinalNewline     = ensureFinalNewline;
+    plan.utf8Bom                = Utf8Bom_;
 
     Saving_              = true;
     SavingSnapshotBytes_ = plan.snapshot->ByteLength();
@@ -363,6 +368,7 @@ SavePlan Buffer::BeginSave(const std::filesystem::path& path, bool ensureFinalNe
 void Buffer::FinishSave(const std::filesystem::path& path, SavePlan plan) {
     Path_       = path;
     LineEnding_ = plan.lineEnding;
+    Utf8Bom_    = plan.utf8Bom;
     // What was written, not what Storage_ holds now: an edit that landed
     // while the write was running must not be counted as saved.
     SavedSnapshot_ = std::move(plan.snapshot);
@@ -434,6 +440,10 @@ LineEnding Buffer::LineEndingKind() const {
 
 void Buffer::SetLineEndingOverride(LineEnding ending) {
     LineEnding_ = ending;
+}
+
+bool Buffer::Utf8Bom() const {
+    return Utf8Bom_;
 }
 
 const IndentOverride& Buffer::LocalIndent() const {
@@ -547,7 +557,7 @@ void Buffer::ReplaceContentForLoad(Rope content) {
     CommitBarrier();
 }
 
-void Buffer::FinishLoad(Rope content, std::optional<LineEnding> detectedEnding) {
+void Buffer::FinishLoad(Rope content, std::optional<LineEnding> detectedEnding, bool utf8Bom) {
     ReadOnly_      = false; // undoes MarkLoading(true)'s forced read-only -- see that method's own doc comment
     Storage_       = std::make_unique<RopeStorage>(std::move(content));
     UndoTree_      = UndoTree(Storage_->Clone());
@@ -555,6 +565,7 @@ void Buffer::FinishLoad(Rope content, std::optional<LineEnding> detectedEnding) 
     if (detectedEnding) {
         LineEnding_ = *detectedEnding;
     }
+    Utf8Bom_ = utf8Bom;
     Loading_ = false;
     LoadProgress_.reset();
     CommitBarrier();
@@ -664,6 +675,7 @@ void Buffer::Revert() {
     Buffer fresh = reloadAsHuge ? FromHugeFile(*Path_) : FromFile(*Path_); // throws on any read failure, leaving this buffer untouched
 
     Storage_ = std::move(fresh.Storage_);
+    Utf8Bom_ = fresh.Utf8Bom_;
     Point_   = SnapToGraphemeBoundary(*Storage_, std::min(Point_, Storage_->ByteLength()));
     Mark_.reset();
     SecondaryCursors_.clear();

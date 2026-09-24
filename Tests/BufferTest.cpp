@@ -186,6 +186,56 @@ TEST_CASE("FromFile reads a file with no BOM unchanged", "[Buffer]") {
     std::filesystem::remove(path);
 }
 
+namespace {
+
+std::string ReadFileBytes(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+void WriteFileBytes(const std::filesystem::path& path, const std::string& bytes) {
+    std::ofstream(path, std::ios::binary) << bytes;
+}
+
+} // namespace
+
+TEST_CASE("A UTF-8 byte-order mark survives open and save", "[Buffer]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_bom_roundtrip.txt";
+    WriteFileBytes(path, "\xEF\xBB\xBFhello\n");
+
+    Buffer buffer = Buffer::FromFile(path);
+    REQUIRE(buffer.Utf8Bom());
+    buffer.InsertAt(buffer.Size(), "more\n");
+    buffer.SaveToFile(path);
+    CHECK(ReadFileBytes(path) == "\xEF\xBB\xBFhello\nmore\n");
+
+    // A file without one never gains one.
+    WriteFileBytes(path, "plain\n");
+    Buffer plain = Buffer::FromFile(path);
+    CHECK_FALSE(plain.Utf8Bom());
+    plain.SaveToFile(path);
+    CHECK(ReadFileBytes(path) == "plain\n");
+
+    // Revert re-reads it along with the content.
+    WriteFileBytes(path, "\xEF\xBB\xBF"
+                         "back\n");
+    plain.Revert();
+    CHECK(plain.Utf8Bom());
+    CHECK(plain.Text() == "back\n");
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("An async load's byte-order mark is kept for the save", "[Buffer]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_bom_async.txt";
+    Buffer                      buffer("async.txt");
+    buffer.SetPath(path);
+    buffer.FinishLoad(ned::text::Rope("x\n"), ned::text::LineEnding::LF, /*utf8Bom=*/true);
+    buffer.SaveToFile(path);
+    CHECK(ReadFileBytes(path) == "\xEF\xBB\xBFx\n");
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("FromFile normalizes CRLF to LF and records the detected ending", "[Buffer][LineEnding]") {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_crlf.txt";
     {

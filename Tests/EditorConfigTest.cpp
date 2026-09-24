@@ -234,7 +234,9 @@ TEST_CASE("A save follows the buffer's conventions over the global settings", "[
     buffer.SetConventions({.ensureFinalNewline = true, .trimTrailingWhitespace = true});
     buffer.InsertAtPoint(" ");
     ned::editor::WriteBufferToDisk(buffer);
-    CHECK(ReadBytes(tree.root / "a.txt") == "a\nb\n"); // the forced LF policy again, with no stated ending
+    // The forced LF policy again, with no stated ending; the BOM the file now has is kept.
+    CHECK(ReadBytes(tree.root / "a.txt") == "\xEF\xBB\xBF"
+                                            "a\nb\n");
 }
 
 TEST_CASE("A buffer's max line length moves its ruler and fill column", "[EditorConfig][FileSettings]") {
@@ -264,4 +266,22 @@ TEST_CASE("ApplyFileSettings takes a file's conventions from its .editorconfig",
     ned::editor::SetEditorConfigEnabled(false);
     ned::editor::ApplyFileSettings(buffer);
     CHECK(buffer.Conventions() == FileConventions{});
+}
+
+TEST_CASE("charset = utf-8 drops a file's own byte-order mark on save", "[EditorConfig][FileSettings]") {
+    const TempTree              tree("charset");
+    const std::filesystem::path path = tree.Write("bom.txt", "\xEF\xBB\xBFx\n");
+
+    ned::text::Buffer buffer = ned::text::Buffer::FromFile(path);
+    REQUIRE(buffer.Utf8Bom());
+    buffer.SetConventions({.utf8Bom = false});
+    buffer.InsertAt(0, "y");
+    ned::editor::WriteBufferToDisk(buffer);
+    CHECK(ReadBytes(path) == "yx\n");
+    CHECK_FALSE(buffer.Utf8Bom()); // what was written
+
+    buffer.SetConventions({});
+    buffer.InsertAt(0, "z");
+    ned::editor::WriteBufferToDisk(buffer);
+    CHECK(ReadBytes(path) == "zyx\n");
 }
