@@ -125,17 +125,14 @@ and code reading. Highest stakes first.
 - [ ] **Per-buffer indentation, taken from the file itself.** A file's own indentation is
       adopted when it opens (`Editor/FileIndent.h`): its content
       (`ned/set-indent-detection`), then `.editorconfig` (`ned/set-editorconfig-enabled`),
-      then a modeline, laid over the mode's style field by field. Left:
+      then a modeline, laid over the mode's style field by field;
+      `convert-indentation-to-tabs`/`-spaces` switch a buffer outright. Left:
   - [ ] **The rest of `.editorconfig`:** `end_of_line`, `insert_final_newline`,
         `trim_trailing_whitespace`, `charset` and `max_line_length` are read
         (`EditorConfigPropertiesFor`) but nothing applies them yet; each has a ned
         setting it would override per file.
   - [ ] The style is settled once, at open: a save-as to a path under a different
         `.editorconfig`, or an external reload that reformats the file, keeps the old one.
-  - [ ] **A command to switch a buffer between tabs and spaces:** rewrite the leading
-        indentation of the region or buffer (tabify/untabify) and set the buffer's style
-        to match, in one undo step. Leading whitespace only; alignment inside a line is
-        left alone.
   - [ ] **Mixed tabs and spaces, if it has to exist:** Emacs's `indent-tabs-mode` with
         an indent width below the tab width (GNU C: 2-column levels, 8-column tabs, so a
         level-3 line is one tab and two spaces). The worst of both worlds, and supported

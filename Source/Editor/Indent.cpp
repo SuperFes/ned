@@ -1163,4 +1163,32 @@ std::size_t RigidShiftRegion(text::Buffer& buffer, const IndentStyle& style, std
     return changed;
 }
 
+std::size_t ConvertIndentation(text::Buffer& buffer, const IndentStyle& style, std::size_t startLine,
+                               std::size_t endLineExclusive) {
+    const int width = std::max(1, style.width);
+
+    buffer.BeginUndoGroup();
+    std::size_t changed = 0;
+    for (std::size_t line = endLineExclusive; line-- > startLine;) {
+        const text::ITextStorage& content = buffer.Content();
+        if (line >= content.LineCount()) {
+            continue;
+        }
+        const std::size_t lineStart = content.LineToByteOffset(line);
+        const std::size_t indentEnd = LineIndentEnd(content, lineStart);
+        if (indentEnd == lineStart || indentEnd >= content.ByteLength() || content.CodepointAt(indentEnd).codepoint == U'\n') {
+            continue; // unindented or whitespace-only
+        }
+        int column = 0;
+        for (std::size_t offset = lineStart; offset < indentEnd; ++offset) { // spaces and tabs are one byte each
+            column = content.CodepointAt(offset).codepoint == U'\t' ? (column / width + 1) * width : column + 1;
+        }
+        if (SetLineIndent(buffer, lineStart, column, style) != 0) {
+            ++changed;
+        }
+    }
+    buffer.EndUndoGroup();
+    return changed;
+}
+
 } // namespace ned::editor

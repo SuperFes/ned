@@ -1795,6 +1795,39 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
             RigidShiftRegion(context.buffer, style, line, line + 1, -1);
         });
 
+    const auto convertIndentation = [](bool useTabs) {
+        return [useTabs](CommandContext& context) {
+            text::Buffer& buffer  = context.buffer;
+            IndentStyle   style   = EffectiveIndentStyle(buffer, context.mode != nullptr ? context.mode->name : std::string());
+            style.useTabs         = useTabs;
+            const auto& content   = buffer.Content();
+            std::size_t startLine = 0;
+            std::size_t endLine   = content.LineCount();
+            if (buffer.HasMark()) {
+                const auto [start, end] = buffer.Region();
+                startLine               = content.ByteOffsetToLine(start);
+                endLine                 = content.ByteOffsetToLine(end) + 1;
+                buffer.ClearMark();
+            }
+            const std::size_t changed = ConvertIndentation(buffer, style, startLine, endLine);
+            // New lines follow suit, whatever the file or mode said before.
+            buffer.SetLocalIndent(buffer.LocalIndent().OverlaidWith(IndentOverride{.useTabs = useTabs}));
+            if (context.message) {
+                const std::string kind = useTabs ? "tabs" : "spaces";
+                *context.message       = changed == 0 ? "Indentation is already " + kind + "."
+                                                      : "Indented " + std::to_string(changed) + " line" +
+                                                            (changed == 1 ? "" : "s") + " with " + kind + ".";
+            }
+        };
+    };
+    registry.Register("convert-indentation-to-tabs",
+                      "Re-indent the region, or the whole buffer, with tabs, and indent new lines with tabs from now on.",
+                      convertIndentation(true));
+    registry.Register("convert-indentation-to-spaces",
+                      "Re-indent the region, or the whole buffer, with spaces, and indent new lines with spaces from now "
+                      "on.",
+                      convertIndentation(false));
+
     registry.Register("expand-snippet",
                       "Expand the registered snippet whose trigger word ends at point.",
                       [](CommandContext& context) {

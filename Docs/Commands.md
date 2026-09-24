@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-332 commands.
+334 commands.
 
 ## `acp-rewind`
 
@@ -163,6 +163,14 @@ Toggle folding the code block (or, in a multibuffer, the excerpt) starting on th
 ## `color-at-point`
 
 Rewrite the colour literal under point in another notation (hex, rgb(), hsl(), hwb(), a CSS colour name), chosen from a list.
+
+## `convert-indentation-to-spaces`
+
+Re-indent the region, or the whole buffer, with spaces, and indent new lines with spaces from now on.
+
+## `convert-indentation-to-tabs`
+
+Re-indent the region, or the whole buffer, with tabs, and indent new lines with tabs from now on.
 
 ## `convert-line-endings-to-cr`
 

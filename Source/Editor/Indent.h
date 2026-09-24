@@ -440,6 +440,15 @@ std::size_t IndentBuffer(text::Buffer& buffer, const Mode& mode, bool* refused =
 std::size_t RigidShiftRegion(text::Buffer& buffer, const IndentStyle& style, std::size_t startLine,
                              std::size_t endLineExclusive, int deltaLevels);
 
+// Rewrites the leading whitespace of every line in [startLine,
+// endLineExclusive) in `style`, keeping each line's depth: an existing tab
+// counts as one style.width step (not the display tab width), so a level of
+// tabs becomes a level of spaces and back. Whitespace-only lines and
+// everything after a line's indentation are left alone. One undo step;
+// returns the number of lines changed.
+std::size_t ConvertIndentation(text::Buffer& buffer, const IndentStyle& style, std::size_t startLine,
+                               std::size_t endLineExclusive);
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_INDENT_H

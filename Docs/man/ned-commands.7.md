@@ -126,6 +126,14 @@ for the live keymap stack.
 
 :   Rewrite the colour literal under point in another notation (hex, rgb(), hsl(), hwb(), a CSS colour name), chosen from a list.
 
+`convert-indentation-to-spaces`
+
+:   Re-indent the region, or the whole buffer, with spaces, and indent new lines with spaces from now on.
+
+`convert-indentation-to-tabs`
+
+:   Re-indent the region, or the whole buffer, with tabs, and indent new lines with tabs from now on.
+
 `convert-line-endings-to-cr`
 
 :   Save this buffer with CR (classic Mac) line endings.

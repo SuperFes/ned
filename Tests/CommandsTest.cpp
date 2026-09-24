@@ -4311,3 +4311,45 @@ TEST_CASE("newline and TAB indent with the buffer's own style", "[Commands]") {
     registry.Invoke("indent-for-tab-command", context);
     REQUIRE(fixture.buffer.Text() == "int f(void) {\n  ");
 }
+
+TEST_CASE("convert-indentation-to-spaces rewrites leading tabs level for level, in one undo step", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    Mode           cMode   = CMode();
+    CommandContext context = fixture.Context();
+    context.mode           = &cMode;
+    std::string message;
+    context.message = &message;
+
+    const std::string before = "int f(void) {\n\tif (x) {\n\t\ty(\"\\t\");\n\t}\n\t\n}\n";
+    fixture.buffer.InsertAtPoint(before);
+    registry.Invoke("convert-indentation-to-spaces", context);
+    // Tabs inside the line and on the whitespace-only line are not indentation to convert.
+    CHECK(fixture.buffer.Text() == "int f(void) {\n    if (x) {\n        y(\"\\t\");\n    }\n\t\n}\n");
+    CHECK(message == "Indented 3 lines with spaces.");
+    CHECK(fixture.buffer.LocalIndent().useTabs == false);
+
+    fixture.buffer.Undo();
+    CHECK(fixture.buffer.Text() == before);
+}
+
+TEST_CASE("convert-indentation-to-tabs converts only the region and keeps a partial level as spaces", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    Mode           cMode   = CMode();
+    CommandContext context = fixture.Context();
+    context.mode           = &cMode;
+
+    fixture.buffer.InsertAtPoint("a\n    b\n      c\n    d\n");
+    const auto& content = fixture.buffer.Content();
+    fixture.buffer.SetMark(content.LineToByteOffset(1));
+    fixture.buffer.SetPoint(content.LineToByteOffset(2) + 2);
+    registry.Invoke("convert-indentation-to-tabs", context);
+    CHECK(fixture.buffer.Text() == "a\n\tb\n\t  c\n    d\n");
+
+    CHECK(EffectiveIndentStyle(fixture.buffer, cMode.name).useTabs); // new lines follow
+}
