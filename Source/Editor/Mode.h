@@ -837,6 +837,10 @@ struct Mode {
     // convention) means toggle-line-comment reports there's nothing
     // configured rather than guessing.
     std::string lineCommentPrefix;
+    // A block comment's opener/closer ("(*" "*)", "<!--" "-->"), which
+    // toggle-line-comment wraps each line in when lineCommentPrefix is empty.
+    std::string blockCommentOpen;
+    std::string blockCommentClose;
     // structural-selection-expansion follow-up: empty function (the
     // default) means expand-selection/shrink-selection report there's no
     // structural selection support configured for this mode, same

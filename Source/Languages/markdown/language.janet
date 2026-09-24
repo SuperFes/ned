@@ -4,6 +4,7 @@
 
 {:name "markdown"
  :extensions [".md" ".markdown"]
+ :block-comment ["<!--" "-->"]
  :wrap-lines true
  # Structure is section depth; a link's [text](url) is not a delimited body.
  :imprint false

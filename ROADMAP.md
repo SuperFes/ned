@@ -112,14 +112,11 @@ below are the behavioural gaps behind its empty cells, verified with `ned --form
 and code reading. Highest stakes first.
 
 - [ ] **An unfinished OCaml `try` doesn't recover at end of file.** `let f x =` then
-      `try` and Enter parses as one ERROR (EOF completion would need a body, `with`
-      and an arm), so the new line gets no indent. `let ... =` and `| p ->` do open
-      a body.
-- [ ] **OCaml's `toggle-line-comment` writes an unterminated comment.** Its
-      `:line-comment` is `"(*"` (ocaml and ocaml-interface), and the command only ever
-      prefixes, so toggling a line yields `(* let x = 1` with no `*)`. Needs real
-      block-comment support (e.g. `:block-comment ["(*" "*)"]`, wrapped per line), which
-      would also give HTML, XML, CSS, Vue, Svelte and Astro a toggle -- they have none today.
+      `try` and Enter parses as one ERROR, so the new line gets no indent (`let ... =`
+      and `| p ->` do open a body). Closing a `try` takes five MISSING tokens (body,
+      `with`, pattern, `->`, expression) against EOF completion's three-token closer
+      budget. Measured: raising it to five changes GDScript's "Variables Invalid"
+      corpus case and still leaves the line at the `let` level, so it isn't the fix.
 - [ ] **`injection.combined` is ignored**, so each matched range is its own sub-parse.
       An F# doc comment split over lines (`/// <summary>` ... `/// </summary>`) parses
       as separate XML fragments and the lone closing tag's name goes unhighlighted.

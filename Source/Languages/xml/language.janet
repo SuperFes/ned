@@ -2,4 +2,5 @@
 
 {:name "xml"
  :extensions [".xml" ".xsd" ".xsl" ".xslt" ".svg"]
+ :block-comment ["<!--" "-->"]
 }

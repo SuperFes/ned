@@ -105,6 +105,10 @@ struct LanguageDefinition {
     std::vector<std::string> filenames;
     // Empty = no line-comment syntax (JSON, HTML, CSS, XML, Markdown).
     std::string lineCommentPrefix;
+    // `:block-comment ["(*" "*)"]`: opener and closer, both empty when unset.
+    // What toggle-line-comment wraps a line in when there is no line comment.
+    std::string blockCommentOpen;
+    std::string blockCommentClose;
     AutoPairSet autoPairs = AutoPairSet::Default;
     bool        wrapLines = false;
     // Which colour-literal spellings this language admits beyond the two that

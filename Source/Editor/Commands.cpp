@@ -4168,13 +4168,26 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // relocation, not tracked separately here.
     registry.Register("toggle-line-comment", "Comment or uncomment the current line, or every line the region spans.",
                       [](CommandContext& context) {
-                          if (context.mode == nullptr || context.mode->lineCommentPrefix.empty()) {
+                          // A line comment is a prefix; a language with only block
+                          // comments (OCaml, HTML, CSS) wraps each line instead.
+                          const bool lineComment = context.mode != nullptr && !context.mode->lineCommentPrefix.empty();
+                          if (!lineComment && (context.mode == nullptr || context.mode->blockCommentOpen.empty())) {
                               if (context.message) {
                                   *context.message = "No comment syntax configured for this mode.";
                               }
                               return;
                           }
-                          const std::string& prefix = context.mode->lineCommentPrefix;
+                          const std::string& prefix = lineComment ? context.mode->lineCommentPrefix : context.mode->blockCommentOpen;
+                          const std::string  suffix = lineComment ? std::string() : context.mode->blockCommentClose;
+                          // Where the line's content ends (before trailing
+                          // whitespace), and whether it is wrapped already.
+                          const auto contentEnd = [](const std::string& text) { return text.find_last_not_of(" \t") + 1; };
+                          const auto commented  = [&](const std::string& text, std::size_t indent) {
+                              const std::size_t end = contentEnd(text);
+                              return text.compare(indent, prefix.size(), prefix) == 0 &&
+                                     (suffix.empty() || (end >= indent + prefix.size() + suffix.size() &&
+                                                         text.compare(end - suffix.size(), suffix.size(), suffix) == 0));
+                          };
 
                           text::Buffer& buffer = context.buffer;
                           // Safe to capture once here -- only read-only
@@ -4213,7 +4226,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               if (indent == std::string::npos) {
                                   continue; // blank line -- doesn't count either way
                               }
-                              if (text.compare(indent, prefix.size(), prefix) != 0) {
+                              if (!commented(text, indent)) {
                                   anyUncommented = true;
                                   break;
                               }
@@ -4240,13 +4253,28 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               if (indent == std::string::npos) {
                                   continue;
                               }
-                              const bool isCommented = text.compare(indent, prefix.size(), prefix) == 0;
+                              const bool isCommented = commented(text, indent);
+                              // The closer first: it sits after the opener, so
+                              // editing it leaves the opener's offset valid.
                               if (shouldComment && !isCommented) {
+                                  if (!suffix.empty()) {
+                                      buffer.InsertAt(start + contentEnd(text), " " + suffix);
+                                  }
                                   buffer.InsertAt(start + indent, prefix + " ");
                               }
                               else if (!shouldComment && isCommented) {
+                                  // Everything past the opener still left once
+                                  // the closer (with its one space) is gone.
+                                  std::size_t bodyEnd = text.size();
+                                  if (!suffix.empty()) {
+                                      bodyEnd = contentEnd(text) - suffix.size();
+                                      if (bodyEnd > indent + prefix.size() && text[bodyEnd - 1] == ' ') {
+                                          --bodyEnd; // symmetric with the inserted " <suffix>"
+                                      }
+                                      buffer.DeleteRange(start + bodyEnd, contentEnd(text) - bodyEnd);
+                                  }
                                   std::size_t removeLength = prefix.size();
-                                  if (indent + prefix.size() < text.size() && text[indent + prefix.size()] == ' ') {
+                                  if (indent + prefix.size() < bodyEnd && text[indent + prefix.size()] == ' ') {
                                       ++removeLength; // symmetric with the inserted "<prefix> "
                                   }
                                   buffer.DeleteRange(start + indent, removeLength);

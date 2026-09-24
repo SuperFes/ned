@@ -2702,6 +2702,75 @@ TEST_CASE("toggle-line-comment's region excludes a line the selection end merely
     REQUIRE(fixture.buffer.Text() == "// a\n// b\nc"); // "c" untouched
 }
 
+TEST_CASE("toggle-line-comment wraps each line in a block comment when there is no line comment", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Mode ocaml              = FundamentalMode();
+    ocaml.blockCommentOpen  = "(*";
+    ocaml.blockCommentClose = "*)";
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode           = &ocaml;
+
+    fixture.buffer.InsertAtPoint("let x = 1\n\n  let y = 2  \n");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(fixture.buffer.Text().size());
+
+    registry.Invoke("toggle-line-comment", context);
+    // Indentation and trailing whitespace stay outside; the blank line is left alone.
+    REQUIRE(fixture.buffer.Text() == "(* let x = 1 *)\n\n  (* let y = 2 *)  \n");
+
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(fixture.buffer.Text().size());
+    registry.Invoke("toggle-line-comment", context);
+    REQUIRE(fixture.buffer.Text() == "let x = 1\n\n  let y = 2  \n");
+}
+
+TEST_CASE("toggle-line-comment with block comments: a partly wrapped region wraps the rest", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Mode html              = FundamentalMode();
+    html.blockCommentOpen  = "<!--";
+    html.blockCommentClose = "-->";
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode           = &html;
+
+    // "<!-- a" alone is not wrapped: its closer is missing.
+    fixture.buffer.InsertAtPoint("<!-- p -->\n<!-- a\n<b>");
+    fixture.buffer.SetPoint(0);
+    fixture.buffer.SetMark(fixture.buffer.Text().size());
+    registry.Invoke("toggle-line-comment", context);
+    REQUIRE(fixture.buffer.Text() == "<!-- p -->\n<!-- <!-- a -->\n<!-- <b> -->");
+}
+
+TEST_CASE("toggle-line-comment unwraps an empty block comment without overrunning it", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Mode ocaml              = FundamentalMode();
+    ocaml.blockCommentOpen  = "(*";
+    ocaml.blockCommentClose = "*)";
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    context.mode           = &ocaml;
+
+    for (const std::string line : {"(* *)", "(**)"}) {
+        INFO(line);
+        fixture.buffer.SetPoint(0);
+        fixture.buffer.DeleteRange(0, fixture.buffer.Text().size());
+        fixture.buffer.InsertAtPoint(line);
+        fixture.buffer.SetPoint(0);
+        registry.Invoke("toggle-line-comment", context);
+        CHECK(fixture.buffer.Text().empty());
+    }
+}
+
 TEST_CASE("M-;/ESC ; are bound to toggle-line-comment", "[Commands]") {
     CommandRegistry registry;
     RegisterBuiltinCommands(registry);

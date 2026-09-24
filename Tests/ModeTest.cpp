@@ -1582,6 +1582,23 @@ ned::editor::Mode BundledMode(std::string_view name) {
 
 } // namespace
 
+TEST_CASE("Every language's block-comment pair wraps a comment", "[Mode]") {
+    // toggle-line-comment wraps a line in this pair when there is no line comment.
+    std::size_t checked = 0;
+    for (const ned::editor::LanguageDefinition& definition : ned::editor::BundledLanguages()) {
+        if (definition.blockCommentOpen.empty() || definition.queries.highlights.empty()) {
+            continue;
+        }
+        INFO("language: " << definition.name);
+        const ned::editor::Mode mode   = ned::editor::ModeFromDefinition(definition);
+        const std::string       source = definition.blockCommentOpen + " note " + definition.blockCommentClose + "\n";
+        const auto              cls    = ClassAt(mode, source, "note");
+        CHECK((cls == ned::editor::SyntaxClass::Comment || cls == ned::editor::SyntaxClass::DocComment));
+        ++checked;
+    }
+    CHECK(checked >= 8); // ocaml, ocaml-interface, css and the html family
+}
+
 TEST_CASE("F# paints only a /// comment as documentation", "[Mode]") {
     const ned::editor::Mode mode   = BundledMode("fsharp");
     const std::string       source = "// plain\n/// doc\nlet x = 1\n";

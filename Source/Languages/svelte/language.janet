@@ -1,5 +1,6 @@
 {:name "svelte"
  :extensions [".svelte"]
+ :block-comment ["<!--" "-->"]
  # Stylesheet spellings: `#f0a` is a colour here rather than the start of a
  # comment, and `tomato` a colour rather than an identifier
  # (Editor/ColorLiteral.h).

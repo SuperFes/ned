@@ -1,5 +1,5 @@
 {:name "ocaml"
  :extensions [".ml"]
- :line-comment "(*"
+ :block-comment ["(*" "*)"]
  :lsp-root-markers ["dune-project" "opam" ".ocamlformat"]
 }

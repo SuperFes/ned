@@ -22,7 +22,7 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 - **sig** -- signatures + calls queries -- change-signature
 - **fmt** -- format query -- capture-driven formatter rules can apply
 - **style** -- bundled `style.janet` -- formatter rules apply with no user config
-- **cmt** -- line-comment prefix -- toggle-line-comment, comment-aware fill
+- **cmt** -- line-comment prefix -- toggle-line-comment, comment-aware fill; `b` -- block comment only, which toggle-line-comment wraps each line in
 - **root** -- LSP root markers
 - **res** -- import resolution config
 
@@ -33,7 +33,7 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | asciidoc | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | ✓ | · | · |
 | asciidoc-inline | ✓ | · | · | · | ✓ | · | · | · | · | · | · | · | · |
 | asm | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | ✓ | · | · |
-| astro | ✓ | · | · | · | ✓ | · | · | · | · | · | · | · | · |
+| astro | ✓ | · | · | · | ✓ | · | · | · | · | · | b | · | · |
 | awk | ✓ | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | bash | ✓ | ✓ | ✓ | · | · | ✓ | · | · | ✓ | · | ✓ | · | ✓ |
 | c | ✓ | ✓ | ✓ | ✓ | · | ✓ | · | · | ✓ | · | ✓ | ✓ | · |
@@ -44,7 +44,7 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | cpp | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | · |
 | crystal | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | ✓ | ✓ | · |
 | csharp | ✓ | ✓ | ✓ | ✓ | · | · | ✓ | · | ✓ | · | ✓ | ✓ | · |
-| css | ✓ | · | · | · | · | ✓ | · | · | · | · | · | · | ✓ |
+| css | ✓ | · | · | · | · | ✓ | · | · | · | · | b | · | ✓ |
 | csv | ✓ | · | · | · | · | · | · | · | · | · | · | · | · |
 | cuda | ✓ | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | cue | ✓ | · | ✓ | · | ✓ | · | · | · | · | · | ✓ | · | · |
@@ -77,7 +77,7 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | haskell | ✓ | = | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | ✓ | · |
 | hcl | ✓ | · | · | · | · | · | · | · | · | · | ✓ | · | · |
 | hlsl | ✓ | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | · | · |
-| html | ✓ | ✓ | · | · | ✓ | · | · | · | · | · | · | · | · |
+| html | ✓ | ✓ | · | · | ✓ | · | · | · | · | · | b | · | · |
 | http | ✓ | · | · | · | ✓ | · | · | · | · | · | ✓ | · | · |
 | ini | ✓ | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | janet | ✓ | ✓ | ✓ | · | · | ✓ | · | · | ✓ | · | ✓ | · | ✓ |
@@ -94,7 +94,7 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | latex | ✓ | · | · | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
 | lua | ✓ | ✓ | · | ✓ | · | · | · | · | ✓ | · | ✓ | ✓ | · |
 | make | ✓ | · | · | · | · | · | · | · | · | · | ✓ | · | · |
-| markdown | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | · | · | · |
+| markdown | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | b | · | · |
 | markdown-inline | ✓ | · | · | · | · | · | · | · | · | · | · | · | · |
 | matlab | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | · | · |
 | meson | ✓ | · | · | · | · | · | · | · | · | · | ✓ | · | · |
@@ -103,8 +103,8 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | nix | ✓ | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | nu | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | ✓ | · | · |
 | objc | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | · | · |
-| ocaml | ✓ | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
-| ocaml-interface | ✓ | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
+| ocaml | ✓ | ✓ | ✓ | ✓ | · | · | · | · | · | · | b | ✓ | · |
+| ocaml-interface | ✓ | ✓ | ✓ | ✓ | · | · | · | · | · | · | b | ✓ | · |
 | odin | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | ✓ | · |
 | org | ✓ | · | · | · | ✓ | · | · | · | · | · | ✓ | · | · |
 | pascal | ✓ | · | ✓ | ✓ | · | · | · | · | · | · | ✓ | · | · |
@@ -133,7 +133,7 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | sql | ✓ | · | · | · | · | · | · | · | · | · | ✓ | · | · |
 | ssh_config | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | ✓ | · | · |
 | starlark | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | ✓ | · |
-| svelte | ✓ | · | ✓ | · | ✓ | · | · | · | · | · | · | · | · |
+| svelte | ✓ | · | ✓ | · | ✓ | · | · | · | · | · | b | · | · |
 | swift | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | ✓ | · |
 | systemd | ✓ | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | tcl | ✓ | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
@@ -148,8 +148,8 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | vala | ✓ | · | ✓ | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | verilog | ✓ | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | vhdl | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | ✓ | · | · |
-| vue | ✓ | · | · | · | ✓ | · | · | · | · | · | · | · | · |
+| vue | ✓ | · | · | · | ✓ | · | · | · | · | · | b | · | · |
 | wgsl | ✓ | · | · | · | · | · | · | · | · | · | ✓ | · | · |
-| xml | ✓ | ✓ | · | · | · | · | · | · | · | · | · | · | · |
+| xml | ✓ | ✓ | · | · | · | · | · | · | · | · | b | · | · |
 | yaml | ✓ | ✓ | · | · | · | · | · | · | · | · | ✓ | · | · |
-| **124 languages** | 123 | 27 | 49 | 79 | 44 | 13 | 11 | 1 | 19 | 1 | 108 | 40 | 11 |
+| **124 languages** | 123 | 27 | 49 | 79 | 44 | 13 | 11 | 1 | 19 | 1 | 115 | 40 | 11 |

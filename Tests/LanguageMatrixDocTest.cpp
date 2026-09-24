@@ -77,12 +77,14 @@ const std::vector<Column> kColumns = {
     {"sig",     "signatures + calls queries -- change-signature"},
     {"fmt",     "format query -- capture-driven formatter rules can apply"},
     {"style",   "bundled `style.janet` -- formatter rules apply with no user config"},
-    {"cmt",     "line-comment prefix -- toggle-line-comment, comment-aware fill"},
+    {"cmt",     "line-comment prefix -- toggle-line-comment, comment-aware fill; "
+                "`b` -- block comment only, which toggle-line-comment wraps each line in"},
     {"root",    "LSP root markers"},
     {"res",     "import resolution config"},
 };
 // clang-format on
-constexpr std::size_t kIndentColumn = 1;
+constexpr std::size_t kIndentColumn  = 1;
+constexpr std::size_t kCommentColumn = 10;
 
 std::string Render() {
     std::ostringstream out;
@@ -126,14 +128,17 @@ std::string Render() {
             !Pick(own.signatures, donor.signatures).empty() && !Pick(own.calls, donor.calls).empty(),
             !Pick(own.format, donor.format).empty(),
             fs::exists(LanguagesRoot() / definition.name / "style.janet"),
-            !definition.lineCommentPrefix.empty(),
+            !definition.lineCommentPrefix.empty() || !definition.blockCommentOpen.empty(),
             !definition.lspRootMarkers.empty(),
             definition.importResolution.has_value(),
         };
         out << "| " << definition.name << " |";
         for (std::size_t i = 0; i < row.size(); ++i) {
             const bool preserved = i == kIndentColumn && definition.preserveIndent;
-            out << " " << (preserved ? "=" : Mark(row[i])) << " |";
+            const bool blockOnly = i == kCommentColumn && definition.lineCommentPrefix.empty() && row[i];
+            out << " " << (preserved ? "=" : blockOnly ? "b"
+                                                       : Mark(row[i]))
+                << " |";
             totals[i] += row[i] ? 1 : 0;
         }
         out << "\n";

@@ -137,6 +137,14 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
         else if (key == "line-comment") {
             definition.lineCommentPrefix = ExpectString(directoryName, value, ":line-comment");
         }
+        else if (key == "block-comment") {
+            const std::vector<std::string> pair = ExpectStrings(directoryName, value, ":block-comment");
+            if (pair.size() != 2 || pair[0].empty() || pair[1].empty()) {
+                Fail(directoryName, value.line, ":block-comment is [opener closer]");
+            }
+            definition.blockCommentOpen  = pair[0];
+            definition.blockCommentClose = pair[1];
+        }
         else if (key == "auto-pairs") {
             if (!value.IsKeyword() || (value.text != "default" && value.text != "lisp")) {
                 Fail(directoryName, value.line, ":auto-pairs is :default or :lisp");

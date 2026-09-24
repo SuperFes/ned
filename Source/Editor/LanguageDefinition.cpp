@@ -33,6 +33,8 @@ namespace {
 
     void ApplyDefinition(Mode& mode, const LanguageDefinition& definition) {
         mode.lineCommentPrefix = definition.lineCommentPrefix;
+        mode.blockCommentOpen  = definition.blockCommentOpen;
+        mode.blockCommentClose = definition.blockCommentClose;
         mode.wrapLines         = definition.wrapLines;
         mode.colorLiterals     = definition.colorLiterals;
         mode.autoPairs         = definition.autoPairs == AutoPairSet::Lisp ? LispAutoPairs() : DefaultAutoPairs();
