@@ -69,6 +69,10 @@ struct ParamOrigin {
     std::size_t     oldIndex            = 0;
     std::size_t     newDefaultStartByte = 0;
     std::size_t     newDefaultEndByte   = 0;
+    // The new parameter's call-site label, empty for none -- written as
+    // `label: default` (SignatureParameter::labelStartByte).
+    std::size_t newLabelStartByte = 0;
+    std::size_t newLabelEndByte   = 0;
 };
 
 struct MappingResult {

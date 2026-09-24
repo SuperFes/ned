@@ -151,8 +151,6 @@ and code reading. Highest stakes first.
         level-3 line is one tab and two spaces). The worst of both worlds, and supported
         only so such a file can be edited without being rewritten: it needs a tab width
         separate from `IndentStyle::width`, which today doubles as both.
-- [ ] **Fish's outline names only functions**: `set`'s variable name follows any number
-      of flags, which a query can't skip reliably.
 - [ ] **Locals query limits in Perl, Elixir and Dart** (all ned-authored). Perl: `my $x
       = $x` resolves the right-hand `$x` to the new variable rather than the outer one
       (the resolver binds from the declaration's start), `our`/`local` bind nothing, and
@@ -161,16 +159,15 @@ and code reading. Highest stakes first.
       reads as a variable when a same-named one is bound. Dart: a bare field name
       inside a method binds nothing (members aren't locals), and a function-typed
       parameter (`int cb(int x)`) isn't captured.
-- [ ] **change-signature for the remaining languages.** 28 have `signatures` + `calls`
+- [ ] **change-signature for the remaining languages.** 32 have `signatures` + `calls`
       queries (`sig` column): each describes its own parameters, receivers (`self`,
       `cls`, Lua's colon calls, Nim's dot calls, C#'s extension `this`), keyword-only
       parameters and named/spread arguments, and `:signature-template` parses the
-      retyped list. Not yet:
-      - Swift, Solidity, Vala and Odin: their parameters (or, for Odin, a call's
-        arguments) are direct children of the definition with no list node, so
-        `@signature.parameters` has nothing to capture. Needs a list spanning the
-        `(`...`)` tokens. Swift additionally needs its labels carried with each
-        argument, and a new parameter's default written as `label: value`.
+      retyped list. A list written flat, as the definition's or call's own children, is
+      named by its opening paren (`.open`: Swift, Solidity, Vala, Odin), and a Swift
+      parameter's label (`@parameter.label`) goes with a new default. Not yet:
+      - Constructors in Swift (`init`) and Solidity (`constructor`, called through
+        `new`), and Odin's `x->f()` calls, which pass `x` as well and are skipped.
       - The Lisps, Elixir's pipes and Haskell/OCaml/F#'s curried application: a call
         has no parenthesized argument list after the callee.
       Known misses: a call reaching a constructor through its parent

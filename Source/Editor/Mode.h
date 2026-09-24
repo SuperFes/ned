@@ -520,6 +520,10 @@ struct SignatureParameter {
     // Python's after a bare `*` (@parameter.keyword, or every parameter after
     // a @parameter.keyword.marker).
     bool isKeyword = false;
+    // @parameter.label: what a call writes ahead of this parameter's
+    // argument (Swift's `name: value`), so a new one's default carries it.
+    std::size_t labelStartByte = 0;
+    std::size_t labelEndByte   = 0;
 };
 
 // change-signature follow-up: one function-like definition or bodyless

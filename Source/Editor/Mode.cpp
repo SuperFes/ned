@@ -926,6 +926,37 @@ bool DelimitedByParens(std::string_view text, std::size_t start, std::size_t end
     return start > 0 && end < text.size() && text[start - 1] == '(' && text[end] == ')';
 }
 
+// A parameter or argument list the grammar writes flat, as its
+// definition's or call's own children after a `(` token the query captured
+// (`.open`), up to the first `)` sibling after it -- nested parens always sit
+// inside a child. nullopt when there is no such `)`.
+struct FlatList {
+    std::vector<grammar::Node> children;
+    std::size_t                closeEnd = 0;
+};
+
+std::optional<FlatList> FlatListAfter(const grammar::Tree& tree, std::size_t openStart, std::size_t openEnd) {
+    grammar::Node parent = tree.RootNode().NamedDescendantForByteRange(openStart, openEnd);
+    if (parent.IsNull()) {
+        return std::nullopt;
+    }
+    FlatList list;
+    bool     sawOpen = false;
+    for (std::size_t i = 0; i < parent.ChildCount(); ++i) {
+        const grammar::Node child = parent.Child(i);
+        if (!sawOpen) {
+            sawOpen = child.StartByte() == openStart && child.EndByte() == openEnd && !child.IsNamed();
+            continue;
+        }
+        if (!child.IsNamed() && child.Type() == ")") {
+            list.closeEnd = child.EndByte();
+            return list;
+        }
+        list.children.push_back(child);
+    }
+    return std::nullopt;
+}
+
 std::vector<SignatureParameter> ParametersFromList(const grammar::Node& parameterList) {
     std::vector<SignatureParameter> parameters;
     for (std::size_t i = 0; i < parameterList.ChildCount(); ++i) {
@@ -1777,6 +1808,10 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         parameter->defaultStartByte = capture.startByte;
                         parameter->defaultEndByte   = capture.endByte;
                     }
+                    else if (capture.name == "parameter.label") {
+                        parameter->labelStartByte = capture.startByte;
+                        parameter->labelEndByte   = capture.endByte;
+                    }
                 }
                 const auto [entry, inserted] = described.try_emplace({parameter->startByte, parameter->endByte}, *parameter);
                 if (!inserted) {
@@ -1789,6 +1824,10 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         merged.hasDefaultValue  = true;
                         merged.defaultStartByte = parameter->defaultStartByte;
                         merged.defaultEndByte   = parameter->defaultEndByte;
+                    }
+                    if (merged.labelStartByte == merged.labelEndByte) {
+                        merged.labelStartByte = parameter->labelStartByte;
+                        merged.labelEndByte   = parameter->labelEndByte;
                     }
                     merged.isVariadic = merged.isVariadic || parameter->isVariadic;
                     merged.isKeyword  = merged.isKeyword || parameter->isKeyword;
@@ -1805,8 +1844,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 std::size_t     parametersStart = 0;
                 std::size_t     parametersEnd   = 0;
                 bool            haveParameters  = false;
+                std::optional<std::pair<std::size_t, std::size_t>> openParen;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
-                    if (capture.name == "signature.callee") {
+                    if (capture.name == "signature.parameters.open") {
+                        openParen.emplace(capture.startByte, capture.endByte);
+                    }
+                    else if (capture.name == "signature.callee") {
                         marker.callNameStartByte = capture.startByte;
                         marker.callNameEndByte   = capture.endByte;
                         haveCallName             = true;
@@ -1827,6 +1870,17 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         haveParameters  = true;
                     }
                 }
+                // A flat list: the definition's own children between its parens.
+                std::optional<FlatList> flatParameters;
+                if (openParen) {
+                    flatParameters = FlatListAfter(tree, openParen->first, openParen->second);
+                    if (!flatParameters) {
+                        continue;
+                    }
+                    parametersStart = openParen->first;
+                    parametersEnd   = flatParameters->closeEnd;
+                    haveParameters  = true;
+                }
                 if (!haveDefinition || !haveName || !haveParameters) {
                     continue; // a pattern that matched without its full capture trio
                 }
@@ -1835,10 +1889,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     marker.callNameEndByte   = marker.nameEndByte;
                 }
 
+                const bool          flat = flatParameters.has_value();
                 const grammar::Node parameterList =
-                    tree.RootNode().NamedDescendantForByteRange(parametersStart, parametersEnd);
-                if (parameterList.IsNull() || parameterList.StartByte() != parametersStart ||
-                    parameterList.EndByte() != parametersEnd) {
+                    flat ? grammar::Node(parse::NodeNull())
+                         : tree.RootNode().NamedDescendantForByteRange(parametersStart, parametersEnd);
+                if (!flat && (parameterList.IsNull() || parameterList.StartByte() != parametersStart ||
+                              parameterList.EndByte() != parametersEnd)) {
                     continue; // re-derivation failed -- report no parameters rather than guess
                 }
                 // Rewriting replaces what lies between the parens, so a list
@@ -1850,7 +1906,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 }
                 marker.parametersStartByte = bufferText[parametersStart] == '(' ? parametersStart : parametersStart - 1;
                 marker.parametersEndByte   = bufferText[parametersStart] == '(' ? parametersEnd : parametersEnd + 1;
-                if (described.empty()) {
+                if (described.empty() && !flat) {
                     marker.parameters = ParametersFromList(parameterList);
                 }
                 else {
@@ -1899,7 +1955,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                                                         : SignatureParameter{.startByte = child.StartByte(), .endByte = child.EndByte()});
                         marker.parameters.back().isKeyword = marker.parameters.back().isKeyword || keywordOnly;
                     };
-                    parameterList.ForEachChild(visit);
+                    if (flat) {
+                        std::for_each(flatParameters->children.begin(), flatParameters->children.end(), visit);
+                    }
+                    else {
+                        parameterList.ForEachChild(visit);
+                    }
                 }
                 markers.push_back(std::move(marker));
             }
@@ -1968,8 +2029,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 std::size_t argumentsStart = 0;
                 std::size_t argumentsEnd   = 0;
                 bool        haveArguments  = false;
+                std::optional<std::pair<std::size_t, std::size_t>> openParen;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
-                    if (capture.name == "call.definition") {
+                    if (capture.name == "call.arguments.open") {
+                        openParen.emplace(capture.startByte, capture.endByte);
+                    }
+                    else if (capture.name == "call.definition") {
                         marker.startByte = capture.startByte;
                         marker.endByte   = capture.endByte;
                         haveDefinition   = true;
@@ -1991,22 +2056,39 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         marker.receiver = CallReceiver::Type;
                     }
                 }
+                // A flat list: the call's own children between its parens.
+                std::vector<grammar::Node> argumentNodes;
+                const bool                 flat = openParen.has_value();
+                if (flat) {
+                    std::optional<FlatList> list = FlatListAfter(tree, openParen->first, openParen->second);
+                    if (!list) {
+                        continue;
+                    }
+                    argumentNodes  = std::move(list->children);
+                    argumentsStart = openParen->first;
+                    argumentsEnd   = list->closeEnd;
+                    haveArguments  = true;
+                }
                 if (!haveDefinition || !haveCallee || !haveArguments) {
                     continue;
                 }
 
-                const grammar::Node argumentList =
-                    tree.RootNode().NamedDescendantForByteRange(argumentsStart, argumentsEnd);
-                if (argumentList.IsNull() || argumentList.StartByte() != argumentsStart ||
-                    argumentList.EndByte() != argumentsEnd) {
-                    continue;
+                if (!flat) {
+                    const grammar::Node argumentList =
+                        tree.RootNode().NamedDescendantForByteRange(argumentsStart, argumentsEnd);
+                    if (argumentList.IsNull() || argumentList.StartByte() != argumentsStart ||
+                        argumentList.EndByte() != argumentsEnd) {
+                        continue;
+                    }
+                    for (std::size_t i = 0; i < argumentList.ChildCount(); ++i) {
+                        argumentNodes.push_back(argumentList.Child(i));
+                    }
                 }
                 const bool outside        = !(argumentsEnd > argumentsStart && bufferText[argumentsStart] == '(') &&
                                             DelimitedByParens(bufferText, argumentsStart, argumentsEnd);
                 marker.argumentsStartByte = outside ? argumentsStart - 1 : argumentsStart;
                 marker.argumentsEndByte   = outside ? argumentsEnd + 1 : argumentsEnd;
-                for (std::size_t i = 0; i < argumentList.ChildCount(); ++i) {
-                    const grammar::Node child = argumentList.Child(i);
+                for (const grammar::Node& child : argumentNodes) {
                     if (!child.IsNamed() || child.IsExtra() || bufferText.substr(child.StartByte(), child.EndByte() - child.StartByte()) == ",") {
                         continue;
                     }

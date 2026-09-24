@@ -643,3 +643,51 @@ TEST_CASE("Nim change-signature keeps the dot-supplied first parameter first", "
           "scale /*declined*/sh, 6, 7\n");
     CHECK(ChangeSignature("nim", source, "scale", "v: int, s: Shape, factor = 2").starts_with("declined: "));
 }
+
+// Solidity, Vala and Odin write a definition's parameters or a call's
+// arguments flat, as its own children after the paren.
+TEST_CASE("Solidity change-signature reorders a flat parameter list and its calls", "[ChangeSignature]") {
+    const std::string source = "contract Vault {\n"
+                               "  function deposit(address who, uint amount) public returns (bool) { return true; }\n"
+                               "  function run() public { deposit(msg.sender, 5); this.deposit(owner, 1); deposit({who: a, amount: 2}); }\n"
+                               "}\n";
+    CHECK(ChangeSignature("solidity", source, "deposit", "uint amount, address who") ==
+          "contract Vault {\n"
+          "  function deposit(uint amount, address who) public returns (bool) { return true; }\n"
+          "  function run() public { deposit(5, msg.sender); this.deposit(1, owner); deposit/*declined*/({who: a, amount: 2}); }\n"
+          "}\n");
+}
+
+TEST_CASE("Vala change-signature handles methods, defaults and creation methods", "[ChangeSignature]") {
+    const std::string source = "int scale (int value, int factor = 2) requires (value > 0) { return value * factor; }\n"
+                               "void main () { scale (3, 4); obj.scale (5, 6); }\n";
+    CHECK(ChangeSignature("vala", source, "scale", "int factor, int value, bool clamp = false") ==
+          "int scale (int factor, int value, bool clamp = false) requires (value > 0) { return value * factor; }\n"
+          "void main () { scale (4, 3, false); obj.scale (6, 5, false); }\n");
+
+    const std::string creation = "class Widget { public Widget (string name, int size) {} }\n"
+                                 "void main () { var w = new Widget (\"a\", 3); }\n";
+    CHECK(ChangeSignature("vala", creation, "Widget", "int size, string name") ==
+          "class Widget { public Widget (int size, string name) {} }\n"
+          "void main () { var w = new Widget (3, \"a\"); }\n");
+}
+
+TEST_CASE("Odin change-signature rewrites flat call arguments and declines named ones", "[ChangeSignature]") {
+    const std::string source = "clamp :: proc(v: int, lo := 0) -> int { return v }\n"
+                               "main :: proc() { clamp(5, 1); m.clamp(7); clamp(v = 2) }\n"; // m.clamp(7) is short: declined
+    CHECK(ChangeSignature("odin", source, "clamp", "lo := 0, v: int") ==
+          "clamp :: proc(lo := 0, v: int) -> int { return v }\n"
+          "main :: proc() { clamp(1, 5); m.clamp/*declined*/(7); clamp/*declined*/(v = 2) }\n");
+}
+
+TEST_CASE("Swift change-signature moves labels with their arguments and labels new defaults", "[ChangeSignature]") {
+    const std::string source = "func greet(name n: String, _ times: Int = 1, loud: Bool) {}\n"
+                               "greet(name: \"a\", 2, loud: true)\n"
+                               "host.greet(name: who, 3, loud: false)\n"
+                               "greet(name: \"b\", 1, loud: false) { print(\"done\") }\n";
+    CHECK(ChangeSignature("swift", source, "greet", "loud: Bool, name n: String, _ times: Int = 1, style s: Int = 0, _ tag: String = \"\"") ==
+          "func greet(loud: Bool, name n: String, _ times: Int = 1, style s: Int = 0, _ tag: String = \"\") {}\n"
+          "greet(loud: true, name: \"a\", 2, style: 0, \"\")\n"
+          "host.greet(loud: false, name: who, 3, style: 0, \"\")\n"
+          "greet(loud: false, name: \"b\", 1, style: 0, \"\") { print(\"done\") }\n");
+}

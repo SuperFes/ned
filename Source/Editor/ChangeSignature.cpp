@@ -148,7 +148,9 @@ MappingResult BuildPositionMapping(std::string_view oldText, const std::vector<S
         }
         result.origins.push_back(ParamOrigin{.kind                = ParamOriginKind::New,
                                              .newDefaultStartByte = parameter.defaultStartByte,
-                                             .newDefaultEndByte   = parameter.defaultEndByte});
+                                             .newDefaultEndByte   = parameter.defaultEndByte,
+                                             .newLabelStartByte   = parameter.labelStartByte,
+                                             .newLabelEndByte     = parameter.labelEndByte});
     }
     for (const std::string_view name : oldKeywords) {
         if (!newNameSeen.contains(name)) {
@@ -222,7 +224,15 @@ ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector
             append(callText.substr(argument.startByte, argument.endByte - argument.startByte));
         }
         else {
-            append(newDefaultText.substr(origin.newDefaultStartByte, origin.newDefaultEndByte - origin.newDefaultStartByte));
+            const std::string_view value =
+                newDefaultText.substr(origin.newDefaultStartByte, origin.newDefaultEndByte - origin.newDefaultStartByte);
+            if (origin.newLabelEndByte > origin.newLabelStartByte) {
+                append(std::string(newDefaultText.substr(origin.newLabelStartByte, origin.newLabelEndByte - origin.newLabelStartByte)) +
+                       ": " + std::string(value));
+            }
+            else {
+                append(value);
+            }
         }
     }
     for (const std::string_view piece : named) {

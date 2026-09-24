@@ -1879,8 +1879,10 @@ TEST_CASE("Lisp, shell, CMake and SQL tags queries name their definitions", "[Mo
     CHECK(NamedSymbols("bash", "LIMIT=10\nexport PATH_EXTRA=/opt\nhelper() {\n  local x=1\n  y=2\n}\n"
                                "function other { :; }\n") ==
           V{"LIMIT:variable", "PATH_EXTRA:variable", "helper:function", "other:function"});
-    CHECK(NamedSymbols("fish", "set -g limit 10\nfunction greet --description hi\n  echo hi\nend\n") ==
-          V{"greet:function"});
+    CHECK(NamedSymbols("fish", "set -g limit 10\nset --local -x PATH_EXTRA /opt\nset plain 1\nset -e OLD\n"
+                               "set -q limit\nset --erase OTHER\nabbr -a gs git status\nalias ll 'ls -l'\n"
+                               "function greet --description hi\n  set inner 1\nend\n") ==
+          V{"limit:variable", "PATH_EXTRA:variable", "plain:variable", "gs:function", "ll:function", "greet:function"});
     CHECK(NamedSymbols("cmake", "function(add_thing name)\nendfunction()\nmacro(helper)\nendmacro()\n") ==
           V{"add_thing:function", "helper:function"});
     CHECK(NamedSymbols("sql", "CREATE SCHEMA app;\nCREATE TABLE app.users (id INT, name TEXT);\n"
