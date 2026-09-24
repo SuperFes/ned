@@ -168,7 +168,9 @@ HugeReindentOutcome HugeReindentStream::Finish() {
 }
 
 HugeReindentOutcome StreamHugeReindent(const text::ITextStorage& source, std::ofstream& out,
-                                       const std::string& lineCommentPrefix, const IndentStyle& style) {
+                                       const std::string& lineCommentPrefix, const IndentStyle& style,
+                                       std::string_view preamble) {
+    out.write(preamble.data(), static_cast<std::streamsize>(preamble.size()));
     HugeReindentStream stream(out, lineCommentPrefix, style);
     source.ForEachChunk([&stream](std::string_view chunk) { stream(chunk); });
     return stream.Finish();

@@ -3571,7 +3571,8 @@ bool BufferView::RunHugeFormat() {
             return false;
         }
         const editor::IndentStyle style = editor::EffectiveIndentStyle(buffer, context_.mode.name);
-        outcome = editor::StreamHugeReindent(buffer.Content(), out, context_.mode.lineCommentPrefix, style);
+        outcome                         = editor::StreamHugeReindent(buffer.Content(), out, context_.mode.lineCommentPrefix, style,
+                                                                     text::CharsetPreamble(buffer.FileCharset()));
     }
     if (!outcome.success) {
         std::filesystem::remove(tmpPath);

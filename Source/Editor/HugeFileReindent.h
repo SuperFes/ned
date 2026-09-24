@@ -126,9 +126,11 @@ class HugeReindentStream {
 // -- callers already have both without this needing a Mode dependency of
 // its own (kept storage-level, mirroring Text/WhitespaceHygiene.h's own cut
 // between pure text transforms and the Editor-level callers that configure
-// them).
+// them). `preamble` is written first: the file's byte order mark, which the
+// buffer's content doesn't hold (Text/Charset.h).
 [[nodiscard]] HugeReindentOutcome StreamHugeReindent(const text::ITextStorage& source, std::ofstream& out,
-                                                     const std::string& lineCommentPrefix, const IndentStyle& style);
+                                                     const std::string& lineCommentPrefix, const IndentStyle& style,
+                                                     std::string_view preamble = {});
 
 } // namespace ned::editor
 

@@ -444,7 +444,8 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
                         exitCode = 1;
                         continue;
                     }
-                    outcome = ned::editor::StreamHugeReindent(buffer.Content(), out, mode.lineCommentPrefix, style);
+                    outcome = ned::editor::StreamHugeReindent(buffer.Content(), out, mode.lineCommentPrefix, style,
+                                                              ned::text::CharsetPreamble(buffer.FileCharset()));
                 }
                 if (!outcome.success) {
                     std::filesystem::remove(tmpPath);

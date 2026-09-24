@@ -136,9 +136,7 @@ and code reading. Highest stakes first.
         file (only reachable by stating or choosing the charset) gains one on save;
         modelling "BOM or not" apart from the encoding would fix it. The huge-file path
         maps bytes and never decodes: a UTF-16 huge file is refused, a latin1 one opens
-        byte for byte and ignores a stated latin1; its streaming reindent
-        (`--format --force-huge`, huge `format-buffer`) writes the content without the
-        preamble, so it drops a UTF-8 BOM. Project search and the case checker
+        byte for byte and ignores a stated latin1. Project search and the case checker
         decode only what a BOM announces, not a per-file `.editorconfig` statement. A
         charset stated in `.editorconfig` for files opened before `init.janet` disables
         `.editorconfig` has already decoded them.
@@ -175,15 +173,18 @@ and code reading. Highest stakes first.
       isn't found; a C# extension method called statically with its trailing defaults
       omitted is read as a member call; Julia's keyword parameters (after `;`) read as
       positional, so a call passing one by name is declined.
-- [ ] **Bundled formatter styles: PHP (PSR-12), Go (gofmt) and Rust (rustfmt).** A Rust
-      project's `rustfmt.toml` adjusts what rustfmt lets it (indentation, `max_width`,
-      brace and blank-line options -- `Editor/RustfmtConfig.h`); gofmt has no options.
-      Neither is complete: gofmt's field/comment alignment, its removal of a condition's
-      redundant parens, and rustfmt's width-driven wrapping and `where`-clause layout
-      are beyond the native formatter, so gopls/rust-analyzer formatting (or
-      `ned/set-format-command`) is still what makes a file canonical. Candidates next,
-      each needing the same care: Kotlin (official conventions), C# (.NET conventions),
-      JavaScript/TypeScript (Prettier).
+- [ ] **Bundled formatter styles: PHP (PSR-12), Go (gofmt), Rust (rustfmt), Kotlin
+      (official conventions), C# (.NET conventions) and JavaScript/TypeScript/TSX
+      (Prettier).** A Rust project's `rustfmt.toml` adjusts what rustfmt lets it
+      (indentation, `max_width`, brace and blank-line options --
+      `Editor/RustfmtConfig.h`); gofmt has no options. None is complete: gofmt's
+      field/comment alignment and redundant-paren removal, rustfmt's and Prettier's
+      width-driven wrapping, and rustfmt's `where`-clause layout are beyond the native
+      formatter, so the language server's formatting (or `ned/set-format-command`) is
+      still what makes a file canonical. Prettier's quote style is left alone: many
+      projects set `singleQuote` in `.prettierrc`, which ned doesn't read yet (the
+      `rewrite.quote` capture is ready for it, as is `printWidth` for the ruler), and
+      C#'s `csharp_new_line_*` `.editorconfig` keys aren't read either.
 
 **Quick-fix gutter marker**
 

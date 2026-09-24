@@ -265,3 +265,104 @@ TEST_CASE("Go's bundled style formats as gofmt does", "[FormatBuiltinStyle]") {
           "\tA int\n"
           "}\n");
 }
+
+TEST_CASE("Kotlin's bundled style follows the official conventions", "[FormatBuiltinStyle]") {
+    const BuiltinStyleGuard guard;
+    LoadBuiltinFormatStyles();
+
+    CHECK(NativeFormatted("class Box\n"
+                          "{\n"
+                          "    fun size(n: Int): Int\n"
+                          "    {\n"
+                          "        if( n > 0 )\n"
+                          "        {\n"
+                          "            return n\n"
+                          "        }\n"
+                          "        else\n"
+                          "        {\n"
+                          "            return 0\n"
+                          "        }\n"
+                          "    }\n"
+                          "}\n",
+                          "kotlin") ==
+          "class Box {\n"
+          "    fun size(n: Int): Int {\n"
+          "        if (n > 0) {\n"
+          "            return n\n"
+          "        } else {\n"
+          "            return 0\n"
+          "        }\n"
+          "    }\n"
+          "}\n");
+}
+
+TEST_CASE("C#'s bundled style puts every brace and else on its own line", "[FormatBuiltinStyle]") {
+    const BuiltinStyleGuard guard;
+    LoadBuiltinFormatStyles();
+
+    CHECK(NativeFormatted("namespace App {\n"
+                          "    class Box {\n"
+                          "        int Size(int n) {\n"
+                          "            if(n > 0) {\n"
+                          "                return n;\n"
+                          "            } else {\n"
+                          "                return 0;\n"
+                          "            }\n"
+                          "        }\n"
+                          "    }\n"
+                          "}\n",
+                          "csharp") ==
+          "namespace App\n"
+          "{\n"
+          "    class Box\n"
+          "    {\n"
+          "        int Size(int n)\n"
+          "        {\n"
+          "            if (n > 0)\n"
+          "            {\n"
+          "                return n;\n"
+          "            }\n"
+          "            else\n"
+          "            {\n"
+          "                return 0;\n"
+          "            }\n"
+          "        }\n"
+          "    }\n"
+          "}\n");
+}
+
+TEST_CASE("JavaScript and TypeScript's bundled style follows Prettier's braces and blank lines", "[FormatBuiltinStyle]") {
+    const BuiltinStyleGuard guard;
+    LoadBuiltinFormatStyles();
+
+    const std::string source   = "function size(n)\n"
+                                 "{\n"
+                                 "  if ( n > 0 )\n"
+                                 "  {\n"
+                                 "    return 'n';\n"
+                                 "  }\n"
+                                 "  else\n"
+                                 "  {\n"
+                                 "    return 0;\n"
+                                 "  }\n"
+                                 "}\n"
+                                 "\n"
+                                 "\n"
+                                 "\n"
+                                 "class Box\n"
+                                 "{\n"
+                                 "}\n";
+    const std::string expected = "function size(n) {\n"
+                                 "  if (n > 0) {\n"
+                                 "    return 'n';\n"
+                                 "  } else {\n"
+                                 "    return 0;\n"
+                                 "  }\n"
+                                 "}\n"
+                                 "\n"
+                                 "class Box {\n"
+                                 "}\n";
+    CHECK(NativeFormatted(source, "javascript") == expected);
+    CHECK(NativeFormatted(source, "typescript") == expected);
+    CHECK(NativeFormatted(source, "tsx") == expected);
+}

@@ -229,3 +229,29 @@ TEST_CASE("StreamHugeReindent reindents a real PieceTableStorage-backed huge buf
     std::filesystem::remove(inPath);
     std::filesystem::remove(outPath);
 }
+
+TEST_CASE("StreamHugeReindent writes the file's byte order mark back", "[HugeFileReindent][Charset]") {
+    const std::filesystem::path inPath = ScratchPath("bom-input.cpp");
+    {
+        std::ofstream(inPath, std::ios::binary) << "\xEF\xBB\xBFvoid f() {\nint x = 1;\n}\n";
+    }
+
+    ned::text::SetHugeFileThreshold(4);
+    ned::text::Buffer buffer = ned::text::Buffer::FromHugeFile(inPath);
+    REQUIRE(buffer.FileCharset() == ned::text::Charset::Utf8Bom);
+
+    const std::filesystem::path outPath = ScratchPath("bom-output.cpp");
+    std::ofstream               out(outPath, std::ios::binary | std::ios::trunc);
+    const HugeReindentOutcome   outcome = StreamHugeReindent(buffer.Content(), out, "//", kFourSpaces,
+                                                             ned::text::CharsetPreamble(buffer.FileCharset()));
+    out.close();
+    REQUIRE(outcome.success);
+
+    std::ifstream     in(outPath, std::ios::binary);
+    const std::string result((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(result == "\xEF\xBB\xBFvoid f() {\n    int x = 1;\n}\n");
+
+    ned::text::SetHugeFileThreshold(1024ull * 1024 * 1024);
+    std::filesystem::remove(inPath);
+    std::filesystem::remove(outPath);
+}
