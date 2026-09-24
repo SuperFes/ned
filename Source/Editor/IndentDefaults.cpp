@@ -51,6 +51,10 @@ namespace {
             {"clojure",    {.useTabs = false, .width = 2}}, // Lisp community convention (Emacs lisp-indent-function default)
             {"janet",      {.useTabs = false, .width = 2}}, // Lisp community convention
             {"jank",       {.useTabs = false, .width = 2}}, // same Lisp family as clojure (jank's own grammar IS clojure's)
+            {"scheme",     {.useTabs = false, .width = 2}}, // Lisp community convention
+            {"racket",     {.useTabs = false, .width = 2}}, // Lisp community convention
+            {"commonlisp", {.useTabs = false, .width = 2}}, // Lisp community convention
+            {"fennel",     {.useTabs = false, .width = 2}}, // fnlfmt
 
             // -- genuinely ambiguous: no single canonical convention exists, picked as the most common cross-ecosystem default and flagged as such --
             {"java",       {.useTabs = false, .width = 4}}, // most common convention in practice (Google Java Style uses 2; Oracle/IntelliJ-default/Android use 4) -- judgment call

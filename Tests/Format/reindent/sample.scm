@@ -1,0 +1,12 @@
+(define (area shape)
+  (let ((w (car shape))
+        (h (cdr shape)))
+    (if (> w 0)
+        (* w h)
+        0)))
+(define (sum xs)
+  (cond ((null? xs) 0)
+        (else (+ (car xs)
+                 (sum (cdr xs))))))
+(define v #(1
+            2))

@@ -28,4 +28,7 @@
     "defn" "defn-" "def" "def-" "var" "defmacro" "defmacro-"
     "with" "with-dyns" "with-syms" "match" "case" "try" "default" "comment")) @indent.body
 
-(par_tup_lit) @aligned
+(par_tup_lit) @aligned.args
+
+# Data literals line up under their first element.
+[(sqr_tup_lit) (sqr_arr_lit) (par_arr_lit) (struct_lit) (tbl_lit)] @aligned

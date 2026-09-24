@@ -40,7 +40,7 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | caddy | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | · | · |
 | clojure | ✓ | ✓ | ✓ | ✓ | · | ✓ | · | · | ✓ | · | ✓ | · | ✓ |
 | cmake | ✓ | ✓ | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
-| commonlisp | ✓ | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
+| commonlisp | ✓ | ✓ | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | cpp | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | · |
 | crystal | ✓ | ✓ | · | ✓ | ✓ | · | · | ✓ | · | · | ✓ | ✓ | · |
 | csharp | ✓ | ✓ | ✓ | ✓ | · | · | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · |
@@ -59,7 +59,7 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | elixir | ✓ | ✓ | ✓ | ✓ | ✓ | · | ✓ | · | · | · | ✓ | ✓ | · |
 | elm | ✓ | = | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | ✓ | · |
 | erlang | ✓ | ✓ | · | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
-| fennel | ✓ | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
+| fennel | ✓ | ✓ | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | fish | ✓ | ✓ | ✓ | ✓ | · | · | · | · | ✓ | · | ✓ | · | · |
 | fortran | ✓ | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
 | fsharp | ✓ | = | ✓ | · | ✓ | · | · | · | · | · | ✓ | ✓ | · |
@@ -119,7 +119,7 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | purescript | ✓ | = | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | ✓ | · |
 | python | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ |
 | r | ✓ | · | ✓ | ✓ | · | · | · | ✓ | · | · | ✓ | · | · |
-| racket | ✓ | · | ✓ | ✓ | · | · | · | · | · | · | ✓ | · | · |
+| racket | ✓ | ✓ | ✓ | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | requirements | ✓ | · | · | · | · | · | · | · | · | · | ✓ | · | · |
 | rescript | ✓ | · | ✓ | ✓ | ✓ | · | · | · | · | · | ✓ | ✓ | · |
 | ron | ✓ | · | ✓ | · | ✓ | · | · | · | · | · | ✓ | · | · |
@@ -127,7 +127,7 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | ruby | ✓ | ✓ | ✓ | ✓ | · | · | ✓ | ✓ | ✓ | · | ✓ | · | · |
 | rust | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | scala | ✓ | ✓ | ✓ | ✓ | · | · | ✓ | ✓ | · | · | ✓ | ✓ | · |
-| scheme | ✓ | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
+| scheme | ✓ | ✓ | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | scss | ✓ | · | · | · | · | · | · | · | · | · | ✓ | · | · |
 | solidity | ✓ | · | ✓ | ✓ | · | · | · | ✓ | · | · | ✓ | ✓ | · |
 | sql | ✓ | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
@@ -152,4 +152,4 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | wgsl | ✓ | · | · | · | · | · | · | · | · | · | ✓ | · | · |
 | xml | ✓ | ✓ | · | · | · | · | · | · | · | · | b | · | · |
 | yaml | ✓ | ✓ | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
-| **124 languages** | 123 | 45 | 56 | 89 | 44 | 13 | 18 | 32 | 19 | 8 | 115 | 40 | 11 |
+| **124 languages** | 123 | 49 | 56 | 89 | 44 | 13 | 18 | 32 | 19 | 8 | 115 | 40 | 11 |

@@ -143,8 +143,14 @@ struct IndentCaptures {
     // keyword-introduced body with no opener to sit after (OCaml's
     // let_binding, match_case, application_expression).
     std::unordered_map<NodeKey, std::size_t, NodeKeyHash> indent;
-    std::unordered_set<NodeKey, NodeKeyHash>              aligned;    // "aligned"
+    std::unordered_set<NodeKey, NodeKeyHash>              aligned;    // "aligned", and "aligned.args"
+    // "aligned.args": aligned under a Lisp call's first argument rather than
+    // whatever follows the opener (the head).
+    std::unordered_set<NodeKey, NodeKeyHash>              alignedArgs;
     std::unordered_set<NodeKey, NodeKeyHash>              body;       // "indent.body"
+    // An "indent.body" form's distinguished arguments before its body, from
+    // `(#set! indent.specials "N")`.
+    std::unordered_map<NodeKey, int, NodeKeyHash>         bodySpecials;
     std::unordered_set<NodeKey, NodeKeyHash>              barrier;    // "align.barrier"
     // An indentation body that begins mid-line (Editor/ImprintIndent.h's
     // anchorsAtOwnColumn): its interior aligns to the container's own visual

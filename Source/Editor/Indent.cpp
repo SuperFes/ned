@@ -1,6 +1,8 @@
 #include "Indent.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -84,7 +86,12 @@ namespace {
     // the last real thing on its line (nothing to align to; the caller falls
     // back to treating the container as a plain @indent instead).
     std::optional<int> ResolveAlignedColumn(const grammar::Node& container, std::string_view bufferText, int width) {
-        const std::size_t delimiterEnd = container.StartByte() + 1;
+        // Past the opener token itself when it is the first child: `#{`, `@[`.
+        std::size_t delimiterEnd = container.StartByte() + 1;
+        if (const grammar::Node opener = container.Child(0); !opener.IsNull() && !opener.IsNamed() &&
+                                                              opener.StartByte() == container.StartByte()) {
+            delimiterEnd = opener.EndByte();
+        }
         if (delimiterEnd > bufferText.size()) {
             return std::nullopt;
         }
@@ -102,6 +109,33 @@ namespace {
         return VisualColumnInLine(bufferText, LineStartFor(bufferText, container.StartByte()), contentStart, width);
     }
 
+    // "aligned.args": a Lisp call, `(head arg ...`. Continuation lines line
+    // up under the first argument when it shares the head's line, else under
+    // the head itself -- Emacs's lisp-indent-function default and the
+    // Clojure style guide's. nullopt when the head is not on the opener's line.
+    std::optional<int> ResolveArgumentColumn(const grammar::Node& container, std::string_view bufferText, int width) {
+        const std::size_t openerLineEnd = std::min(bufferText.find('\n', container.StartByte()), bufferText.size());
+        // The children between the opener and the closer; the head may be a
+        // keyword token of the form's own (Fennel's `(fn ...)`).
+        std::vector<grammar::Node> members;
+        container.ForEachChild([&](const grammar::Node& child) {
+            if (!child.IsExtra()) {
+                members.push_back(child);
+            }
+        });
+        const bool hasOpener = !members.empty() && !members.front().IsNamed() && members.front().StartByte() == container.StartByte();
+        const bool hasCloser = members.size() > 1 && !members.back().IsNamed() && members.back().EndByte() == container.EndByte();
+        const std::size_t first = hasOpener ? 1 : 0;
+        const std::size_t last  = members.size() - (hasCloser ? 1 : 0);
+        const std::optional<std::size_t> head     = first < last ? std::optional(members[first].StartByte()) : std::nullopt;
+        const std::optional<std::size_t> argument = first + 1 < last ? std::optional(members[first + 1].StartByte()) : std::nullopt;
+        const std::optional<std::size_t> target = argument && *argument < openerLineEnd ? argument : head;
+        if (!target || *target >= openerLineEnd) {
+            return std::nullopt;
+        }
+        return VisualColumnInLine(bufferText, LineStartFor(bufferText, container.StartByte()), *target, width);
+    }
+
     // real-per-form-lisp-indent follow-up: an @indent.body-captured
     // container's own visual column (where its opening "(" itself sits, NOT
     // its line's own leading indentation -- these differ whenever the form
@@ -111,6 +145,36 @@ namespace {
     int ContainerOwnColumn(const grammar::Node& container, std::string_view bufferText, int width) {
         return VisualColumnInLine(bufferText, LineStartFor(bufferText, container.StartByte()), container.StartByte(),
                                   width);
+    }
+
+    // A special form with `specials` distinguished arguments before its body
+    // (Racket's `for/fold` accumulators and clauses, Common Lisp's
+    // `multiple-value-bind` variables and values), Emacs's lisp-indent-specform:
+    // a line starting one of those lines up under the first argument when it
+    // shares the head's line, else sits four columns past the paren; the body
+    // two past it.
+    int SpecialFormColumn(const grammar::Node& form, std::string_view bufferText, std::size_t position, int specials, int width) {
+        std::vector<grammar::Node> members;
+        form.ForEachChild([&](const grammar::Node& child) {
+            const bool delimiter = !child.IsNamed() && (child.StartByte() == form.StartByte() || child.EndByte() == form.EndByte());
+            if (!child.IsExtra() && !delimiter) {
+                members.push_back(child);
+            }
+        });
+        const int own = ContainerOwnColumn(form, bufferText, width);
+        // members[0] is the head; the line starts argument `index`.
+        std::size_t index = 0;
+        while (index < members.size() && members[index].EndByte() <= position) {
+            ++index;
+        }
+        if (index == 0 || static_cast<int>(index) > specials) {
+            return own + 2;
+        }
+        const std::size_t openerLineEnd = std::min(bufferText.find('\n', form.StartByte()), bufferText.size());
+        if (members.size() > 1 && members[1].StartByte() < openerLineEnd && members[1].StartByte() < position) {
+            return VisualColumnInLine(bufferText, LineStartFor(bufferText, form.StartByte()), members[1].StartByte(), width);
+        }
+        return own + 4;
     }
 
 } // namespace
@@ -184,8 +248,15 @@ namespace {
                 else if (capture.name == "aligned") {
                     captures.aligned.insert(key);
                 }
+                else if (capture.name == "aligned.args") {
+                    captures.aligned.insert(key);
+                    captures.alignedArgs.insert(key);
+                }
                 else if (capture.name == "indent.body") {
                     captures.body.insert(key);
+                    if (const auto specials = match.setDirectives.find("indent.specials"); specials != match.setDirectives.end()) {
+                        captures.bodySpecials.insert_or_assign(key, std::max(0, std::atoi(specials->second.c_str())));
+                    }
                 }
                 else if (capture.name == "align.barrier") {
                     captures.barrier.insert(key);
@@ -501,7 +572,10 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
                 // back -- it's always 2 columns past the form's own column,
                 // regardless of what (if anything) follows the opener on
                 // its own line.
-                const int column = ContainerOwnColumn(node, bufferText, style.width) + 2;
+                const auto specials = captures.bodySpecials.find(keyOf(node));
+                const int  column   = specials != captures.bodySpecials.end()
+                                          ? SpecialFormColumn(node, bufferText, position, specials->second, style.width)
+                                          : ContainerOwnColumn(node, bufferText, style.width) + 2;
                 return IndentComputation{IndentComputation::Kind::Column, column + IndentColumnForLevel(level, style)};
             }
             // A mid-line indentation body (YAML's `- key: v`): its interior
@@ -515,7 +589,9 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
                 return IndentComputation{IndentComputation::Kind::Column, column + IndentColumnForLevel(level, style)};
             }
             if (isAlignedCaptured(node) && !opensAtPosition && !crossedBarrier) {
-                if (const std::optional<int> column = ResolveAlignedColumn(node, bufferText, style.width)) {
+                if (const std::optional<int> column = captures.alignedArgs.contains(keyOf(node))
+                                                          ? ResolveArgumentColumn(node, bufferText, style.width)
+                                                          : ResolveAlignedColumn(node, bufferText, style.width)) {
                     return IndentComputation{IndentComputation::Kind::Column, *column + IndentColumnForLevel(level, style)};
                 }
                 // Unresolved (opener alone on its own line) -- falls through
@@ -1003,6 +1079,89 @@ std::size_t CopyPreviousLineIndent(text::Buffer& buffer, std::size_t lineStart) 
     return lineStart + indent.size();
 }
 
+namespace {
+
+    // Enough for any real nesting of column anchors; a plan still moving
+    // after this many passes is applied as it stands.
+    constexpr int kMaxReindentPasses = 64;
+
+    // (line, column) for every line in [startLine, endLineExclusive) of
+    // `text` that has an opinion, measured against `text` as it stands.
+    std::vector<std::pair<std::size_t, int>> PlanReindent(const Mode& mode, std::string_view text, std::size_t startLine,
+                                                          std::size_t endLineExclusive, const IndentOverride& bufferIndent) {
+        const std::vector<std::pair<std::size_t, std::size_t>> verbatim = VerbatimRanges(mode, text);
+        // Where the parse failed, the author's own indentation is the only
+        // structure there is -- see Mode.h's UnreliableIndentFunction.
+        const std::vector<std::pair<std::size_t, std::size_t>> unreliable =
+            mode.unreliableIndentRanges ? mode.unreliableIndentRanges(text) : std::vector<std::pair<std::size_t, std::size_t>>{};
+
+        std::vector<std::size_t> lineStarts{0};
+        for (std::size_t i = 0; i < text.size(); ++i) {
+            if (text[i] == '\n') {
+                lineStarts.push_back(i + 1);
+            }
+        }
+
+        std::vector<std::pair<std::size_t, int>> plan;
+        for (std::size_t line = startLine; line < std::min(endLineExclusive, lineStarts.size()); ++line) {
+            const std::size_t lineStart = lineStarts[line];
+            const std::size_t lineEnd   = line + 1 < lineStarts.size() ? lineStarts[line + 1] - 1 : text.size();
+            if (RangeContainingLine(unreliable, lineStart) != nullptr) {
+                continue;
+            }
+            // A line with no content of its own is left alone: indenting it
+            // writes pure trailing whitespace, and a batch reformat has no
+            // cursor waiting there (the idempotence property test found
+            // Python's final empty line gaining four spaces). The live path
+            // indents an empty line on purpose -- it is the cursor's.
+            std::size_t indentEnd = lineStart;
+            while (indentEnd < lineEnd && (text[indentEnd] == ' ' || text[indentEnd] == '\t')) {
+                ++indentEnd;
+            }
+            if (indentEnd >= lineEnd) {
+                continue;
+            }
+            if (const std::optional<int> column = IndentColumnForLine(mode, text, lineStart, lineEnd, bufferIndent, &verbatim)) {
+                plan.emplace_back(line, *column);
+            }
+        }
+        return plan;
+    }
+
+    // `text` with each planned line's leading whitespace replaced.
+    std::string ApplyReindentPlan(std::string_view text, const std::vector<std::pair<std::size_t, int>>& plan, const IndentStyle& style) {
+        std::string out;
+        out.reserve(text.size());
+        std::size_t line   = 0;
+        std::size_t cursor = 0;
+        auto        next   = plan.begin();
+        while (cursor <= text.size()) {
+            const std::size_t newline = text.find('\n', cursor);
+            const std::size_t lineEnd = newline == std::string_view::npos ? text.size() : newline;
+            if (next != plan.end() && next->first == line) {
+                std::size_t indentEnd = cursor;
+                while (indentEnd < lineEnd && (text[indentEnd] == ' ' || text[indentEnd] == '\t')) {
+                    ++indentEnd;
+                }
+                out += IndentString(next->second, style);
+                out.append(text, indentEnd, lineEnd - indentEnd);
+                ++next;
+            }
+            else {
+                out.append(text, cursor, lineEnd - cursor);
+            }
+            if (newline == std::string_view::npos) {
+                break;
+            }
+            out += '\n';
+            cursor = newline + 1;
+            ++line;
+        }
+        return out;
+    }
+
+} // namespace
+
 std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t startLine, std::size_t endLineExclusive,
                          bool* refused) {
     if (refused != nullptr) {
@@ -1047,147 +1206,93 @@ std::size_t IndentRegion(text::Buffer& buffer, const Mode& mode, std::size_t sta
         windowEndLineExclusive             = std::min(initialContent.ByteOffsetToLine(rawWindowEndByte) + 1, initialContent.LineCount());
     }
 
-    // indent-region-batch-perf follow-up: materialized ONCE, not once per
-    // line as this loop used to -- an O(document size) string copy on every
-    // one of the loop's iterations was the other half of the same O(n *
-    // linesInRange) blowup BuildIndentFunction's own new captures cache
-    // fixes (see that function's doc comment). Safe to freeze, same
-    // bottom-to-top reasoning as everywhere else in this function: every
-    // byte at or before the line currently being processed is exactly where
-    // it was when this was captured. Reusing the SAME string object on
-    // every call is also what lets IncrementalParseCache::Update recognize
-    // a cache hit and BuildIndentFunction's captures cache actually fire.
-    const std::string nonHugeText = huge ? std::string() : buffer.Text();
+    // An ordinary buffer is planned against its text first and checked
+    // against Mode::sameStructure before any of it touches the buffer. The
+    // plan is re-derived from its own result until it stops moving: a column
+    // result (`@aligned`, `@indent.body`, a mid-line YAML body) is measured
+    // from its container's line, and when that line moves too -- any flattened
+    // Lisp -- the first plan measured it where it used to be. Each pass settles
+    // one more level of such anchors; an already-indented file takes one.
+    if (!huge) {
+        const std::string original = buffer.Text();
+        std::string       working  = original;
+        std::map<std::size_t, int> columns; // line -> planned column
+        for (int pass = 0; pass < kMaxReindentPasses; ++pass) {
+            const std::vector<std::pair<std::size_t, int>> plan = PlanReindent(mode, working, startLine, endLineExclusive, buffer.LocalIndent());
+            std::string planned = ApplyReindentPlan(working, plan, style);
+            for (const auto& [line, column] : plan) {
+                columns.insert_or_assign(line, column);
+            }
+            if (planned == working) {
+                break;
+            }
+            working = std::move(planned);
+        }
 
-    // One highlight pass for the whole run, not one per line. Valid for
-    // every line the loop still has to visit: it walks BOTTOM-TO-TOP and a
-    // reindent only ever changes its own line's leading whitespace, so every
-    // byte offset at or above the current line is exactly where it was when
-    // these were measured.
-    const std::vector<std::pair<std::size_t, std::size_t>> verbatim =
-        huge ? VerbatimRanges(mode, initialContent.Substring(initialContent.LineToByteOffset(windowStartLine),
-                                                             (windowEndLineExclusive < initialContent.LineCount()
-                                                                  ? initialContent.LineToByteOffset(windowEndLineExclusive)
-                                                                  : initialContent.ByteLength()) -
-                                                                 initialContent.LineToByteOffset(windowStartLine)))
-             : VerbatimRanges(mode, nonHugeText);
+        const bool refuse = working != original && mode.sameStructure && !mode.sameStructure(original, working);
+        if (refused != nullptr) {
+            *refused = refuse;
+        }
+        buffer.BeginUndoGroup();
+        std::size_t changed = 0;
+        if (!refuse) {
+            // Bottom-to-top, so an edit never shifts a line still to come.
+            for (auto it = columns.rbegin(); it != columns.rend(); ++it) {
+                if (SetLineIndent(buffer, buffer.Content().LineToByteOffset(it->first), it->second, style) != 0) {
+                    ++changed;
+                }
+            }
+        }
+        buffer.EndUndoGroup();
+        return changed;
+    }
 
-    // Where the parse failed, the author's own indentation is the only
-    // structure there is -- see Mode.h's UnreliableIndentFunction. Measured
-    // over the same frozen text as `verbatim` above, for the same reason.
+    // A huge buffer is reindented in place, window by window, and goes
+    // unchecked: a whole-document parse is what its windowing exists to avoid.
+    const std::vector<std::pair<std::size_t, std::size_t>> verbatim = VerbatimRanges(
+        mode, initialContent.Substring(initialContent.LineToByteOffset(windowStartLine),
+                                       (windowEndLineExclusive < initialContent.LineCount() ? initialContent.LineToByteOffset(windowEndLineExclusive)
+                                                                                           : initialContent.ByteLength()) -
+                                           initialContent.LineToByteOffset(windowStartLine)));
     const std::vector<std::pair<std::size_t, std::size_t>> unreliable =
-        !mode.unreliableIndentRanges ? std::vector<std::pair<std::size_t, std::size_t>>{}
-        : huge                       ? mode.unreliableIndentRanges(initialContent.Substring(
-                                           initialContent.LineToByteOffset(windowStartLine),
-                                           (windowEndLineExclusive < initialContent.LineCount()
-                                                ? initialContent.LineToByteOffset(windowEndLineExclusive)
-                                                : initialContent.ByteLength()) -
-                                               initialContent.LineToByteOffset(windowStartLine)))
-                                     : mode.unreliableIndentRanges(nonHugeText);
-
-    // An ordinary buffer's lines are all measured against nonHugeText, so the
-    // whole reindent is planned first and checked against Mode::sameStructure
-    // before any of it touches the buffer. A huge buffer is reindented in
-    // place, window by window, and goes unchecked: a whole-document parse is
-    // what its windowing exists to avoid.
-    std::vector<std::pair<std::size_t, int>> plan; // (lineStart, column), bottom-to-top
+        !mode.unreliableIndentRanges
+            ? std::vector<std::pair<std::size_t, std::size_t>>{}
+            : mode.unreliableIndentRanges(initialContent.Substring(
+                  initialContent.LineToByteOffset(windowStartLine),
+                  (windowEndLineExclusive < initialContent.LineCount() ? initialContent.LineToByteOffset(windowEndLineExclusive)
+                                                                      : initialContent.ByteLength()) -
+                      initialContent.LineToByteOffset(windowStartLine)));
 
     buffer.BeginUndoGroup();
     std::size_t changed = 0;
     // Bottom-to-top: reindenting a line's own leading whitespace never
-    // shifts the byte offsets of any earlier, still-to-process line, so no
-    // re-derivation pass is needed between lines (see this function's own
-    // doc comment in Indent.h).
+    // shifts the byte offsets of any earlier, still-to-process line.
     for (std::size_t line = endLineExclusive; line-- > startLine;) {
         const text::ITextStorage& content = buffer.Content();
         if (line >= content.LineCount()) {
-            continue; // out of range -- nothing to do (defensive, shouldn't happen bottom-to-top)
+            continue;
         }
         const std::size_t lineStart = content.LineToByteOffset(line);
         std::size_t       lineEnd   = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) : content.ByteLength();
         if (line + 1 < content.LineCount() && lineEnd > lineStart) {
             --lineEnd; // exclude the line's own trailing '\n'
         }
-
-        // A line the parse could not place keeps the indentation it has:
-        // guessing rewrites a file the author is halfway through typing.
-        const std::size_t errorProbe =
-            huge ? lineStart - buffer.Content().LineToByteOffset(windowStartLine) : lineStart;
-        if (RangeContainingLine(unreliable, errorProbe) != nullptr) {
+        const std::size_t windowStartByte = content.LineToByteOffset(windowStartLine);
+        if (RangeContainingLine(unreliable, lineStart - windowStartByte) != nullptr) {
             continue;
         }
-
-        std::optional<int> column;
-        if (huge) {
-            // Re-fetched every line, like buffer.Text() was before -- an
-            // earlier iteration's own edit (still below windowStart in file
-            // order, since we walk bottom-to-top) can shift windowEnd's own
-            // byte offset, but never windowStart's; bounded to the window's
-            // size either way, not the whole document's.
-            const std::size_t windowStartByte = content.LineToByteOffset(windowStartLine);
-            const std::size_t windowEndByte   = (windowEndLineExclusive < content.LineCount())
-                                                    ? content.LineToByteOffset(windowEndLineExclusive)
-                                                    : content.ByteLength();
-            const std::string windowText      = content.Substring(windowStartByte, windowEndByte - windowStartByte);
-            column                            = IndentColumnForLine(mode, windowText, lineStart - windowStartByte, lineEnd - windowStartByte,
-                                                                    buffer.LocalIndent(), &verbatim);
-        }
-        else {
-            column = IndentColumnForLine(mode, nonHugeText, lineStart, lineEnd, buffer.LocalIndent(), &verbatim);
-        }
-        if (!column) {
+        // Re-fetched every line: an earlier iteration's edit can shift
+        // windowEnd's byte offset, never windowStart's.
+        const std::size_t windowEndByte = (windowEndLineExclusive < content.LineCount()) ? content.LineToByteOffset(windowEndLineExclusive)
+                                                                                          : content.ByteLength();
+        const std::string windowText    = content.Substring(windowStartByte, windowEndByte - windowStartByte);
+        const std::optional<int> column = IndentColumnForLine(mode, windowText, lineStart - windowStartByte, lineEnd - windowStartByte,
+                                                              buffer.LocalIndent(), &verbatim);
+        if (!column || LineIndentEnd(buffer.Content(), lineStart) >= lineEnd) {
             continue;
         }
-        // A line with no content of its own is left alone. Indenting one
-        // writes pure trailing whitespace, and this is a BATCH reformat --
-        // nobody's cursor is sitting there waiting to type.
-        //
-        // Found by the idempotence property test (Tests/FormatterPropertiesTest.cpp)
-        // on its first run, against real Python: indent-buffer gave the final
-        // empty line four spaces, so running it twice differed from running it
-        // once. A formatter that does not converge makes every save churn the
-        // file.
-        //
-        // Only the batch path, deliberately. The live path (newline,
-        // indent-for-tab-command in Commands.cpp) calls SetLineIndent on an
-        // empty line on purpose -- that is the cursor's own line, and putting
-        // the caret at the right column is the entire point. Stripping the
-        // whitespace already there is a different concern again, and belongs
-        // to Editor/TrimOnSave.h rather than here.
-        if (LineIndentEnd(buffer.Content(), lineStart) >= lineEnd) {
-            continue;
-        }
-        if (!huge) {
-            plan.emplace_back(lineStart, *column);
-        }
-        else if (SetLineIndent(buffer, lineStart, *column, style) != 0) {
+        if (SetLineIndent(buffer, lineStart, *column, style) != 0) {
             ++changed;
-        }
-    }
-
-    if (!plan.empty()) {
-        std::string planned;
-        planned.reserve(nonHugeText.size());
-        std::size_t copied = 0;
-        for (auto it = plan.rbegin(); it != plan.rend(); ++it) {
-            const auto [lineStart, column] = *it;
-            const std::size_t indentEnd    = LineIndentEnd(buffer.Content(), lineStart);
-            planned.append(nonHugeText, copied, lineStart - copied);
-            planned += IndentString(column, style);
-            copied = indentEnd;
-        }
-        planned.append(nonHugeText, copied);
-
-        const bool refuse = planned != nonHugeText && mode.sameStructure && !mode.sameStructure(nonHugeText, planned);
-        if (refused != nullptr) {
-            *refused = refuse;
-        }
-        if (!refuse) {
-            for (const auto& [lineStart, column] : plan) {
-                if (SetLineIndent(buffer, lineStart, column, style) != 0) {
-                    ++changed;
-                }
-            }
         }
     }
     buffer.EndUndoGroup();

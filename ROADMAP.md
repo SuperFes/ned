@@ -152,9 +152,9 @@ and code reading. Highest stakes first.
 - [ ] **Reindent: what is still unmodelled.** Every language with an `ind` cell
       reindents a flattened sample back to its house style
       (`Tests/Format/reindent/`). Left:
-  - [ ] **The other Lisps.** Scheme, Racket, Common Lisp and Fennel nest every form
-        one flat level; Clojure and Janet already carry the Lisp rules (`@aligned`
-        arguments, `@indent.body` for special forms), which these need per dialect.
+  - [ ] **Markdown blockquotes.** Reindent moves `> ` lines under a heading
+        four columns in, making them a code block, and does so again on a second
+        run; Markdown has no `sameStructure` check to refuse it.
   - [ ] **MATLAB is unreachable by extension.** `.m` is Objective-C's and MATLAB
         claims only `.mlx`, so a MATLAB file needs `set-mode`; `.m` wants the same
         content sniff `.v` has (Verilog vs V).

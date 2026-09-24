@@ -1522,21 +1522,26 @@ TEST_CASE("JavaMode indentColumn indents an anonymous class body from the statem
 // doing so -- janet/clojure never use the capture, and a "[...]" inside a
 // "(foo ...)" call still resolves through the call's own @aligned column.
 // This pins the pass-through, not the (separately imperfect) column itself.
-TEST_CASE("JanetMode indentColumn still lets a nested bracket inherit the enclosing call's alignment", "[Indent]") {
+TEST_CASE("JanetMode aligns a call's arguments under its first argument and a tuple's under its first element", "[Indent]") {
     const auto mode = JanetMode();
     Buffer     buffer("test.janet");
-    buffer.InsertAtPoint("(foo bar [a\n          b])\n");
+    buffer.InsertAtPoint("(foo bar [a\n          b]\n     baz)\n(qux\n x)\n");
 
-    const auto [contStart, contEnd] = LineRange(buffer, 1);
-    const auto contColumn           = mode.indentColumn(buffer.Text(), contStart, contEnd, {});
-    REQUIRE(contColumn.has_value());
-    // The enclosing call's own alignment column (right after "(", since "foo"
-    // is the only thing following the opener on its own line) plus one level
-    // -- the vector's own nesting -- counted strictly inside it: 1 + 1 *
-    // janet's own built-in width (2, IndentDefaults.h). Deliberately not "the
-    // byte column under 'bar'" (a coincidental reading that only held while
-    // the old flat default was 4, since 1 + 1*4 == 5 == that column too).
-    REQUIRE(*contColumn == 3);
+    const auto column = [&](std::size_t line) {
+        const auto [start, end] = LineRange(buffer, line);
+        return mode.indentColumn(buffer.Text(), start, end, {});
+    };
+    CHECK(column(1) == 10); // b   -- under a
+    CHECK(column(2) == 5);  // baz -- under bar
+    CHECK(column(4) == 1);  // x   -- under qux: no argument on the head's line
+}
+
+TEST_CASE("ClojureMode aligns let bindings under the first binding", "[Indent]") {
+    const auto mode = ClojureMode();
+    Buffer     buffer("test.clj");
+    buffer.InsertAtPoint("(let [x 1\n      y 2]\n  x)\n");
+    const auto [start, end] = LineRange(buffer, 1);
+    CHECK(mode.indentColumn(buffer.Text(), start, end, {}) == 6);
 }
 
 TEST_CASE("CppMode indentColumn does not indent a top-level namespace's own body", "[Indent]") {

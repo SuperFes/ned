@@ -447,3 +447,21 @@ TEST_CASE("PHP's case/default clauses give their own body a further indent level
         CHECK(ColumnOf(php, text, 7) == 0);     // endswitch;
     }
 }
+
+TEST_CASE("A Lisp special form's distinguished arguments align apart from its body", "[Indent]") {
+    // `(#set! indent.specials "2")`: Emacs's lisp-indent-specform.
+    const LanguageDefinition* lisp = ned::editor::BundledLanguage("commonlisp");
+    REQUIRE(lisp != nullptr);
+    const Mode mode = ned::editor::ModeFromDefinition(*lisp);
+    {
+        const std::string text = "(multiple-value-bind (a b)\n(values 1 2)\n(print a))\n";
+        CHECK(ColumnOf(mode, text, 1) == 21); // under (a b)
+        CHECK(ColumnOf(mode, text, 2) == 2);  // the body
+    }
+    {
+        const std::string text = "(multiple-value-bind\n(a b)\n(values 1 2)\n(print a))\n";
+        CHECK(ColumnOf(mode, text, 1) == 4);
+        CHECK(ColumnOf(mode, text, 2) == 4);
+        CHECK(ColumnOf(mode, text, 3) == 2);
+    }
+}
