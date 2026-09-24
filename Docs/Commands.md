@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-331 commands.
+332 commands.
 
 ## `acp-rewind`
 
@@ -1331,6 +1331,10 @@ Insert the character that was pressed.
 Key: `C-SPC`
 
 Set the mark at point, or deactivate it when pressed again in place.
+
+## `set-mode`
+
+Switch the current buffer to another major mode, whatever its file type says.
 
 ## `shift-select-backward-char`
 

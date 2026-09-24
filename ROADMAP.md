@@ -120,9 +120,12 @@ and code reading. Highest stakes first.
 - [ ] **A few upstream capture names still paint nothing**: `@symbol` (CUE), the
       `@text.note`/`@text.warning`/`@text.danger` comment-keyword family (make) and
       `@text` (D, Perl). `@error`/`@warning` stay unmapped on purpose, as in Neovim.
-- [ ] **A `.v` file opens in verilog-mode.** V and Verilog both claim `.v`; V's own
-      package only applies when chosen by hand. Needs a content sniff (`module`/
-      `endmodule` vs `fn`/`struct`/`import`), like Objective-C's `.h`.
+- [ ] **A modeline's tabs/width is parsed but not applied.** `vim: ts=4 sw=4 et` and
+      `-*- tab-width: 4; indent-tabs-mode: nil -*-` come back from `ParseModeline`
+      (`Editor/Modeline.h`), but indent style is keyed by mode name
+      (`EffectiveIndentStyle`) and the indent closure captures that name, so there is
+      no per-buffer style to put them in. Needs a file-local style carried on the
+      buffer's `Mode` and read by the ~15 `EffectiveIndentStyle` call sites.
 - [ ] **No symbol outline for Janet, Bash, Fish, Clojure, CMake or SQL** (no tags query:
       no symbol gutter, outline, breadcrumbs or class/file sync). Janet is ned's own
       extension language, so `init.janet` and every plugin go without. Config formats

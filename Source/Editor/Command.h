@@ -55,6 +55,7 @@ enum class InteractiveRequest { None,
                                 QueryReplace,
                                 ConfirmQuit,
                                 FindFile,
+                                SetMode,
                                 SwitchToBuffer,
                                 ProjectSearch,
                                 // multibuffer-search-in-results follow-up: a project search

@@ -113,6 +113,8 @@ add_library(ned_lib STATIC
         Editor/EmbeddedDocuments.cpp
         Editor/SyntaxTheme.cpp
         Editor/ModeOverrides.cpp
+        Editor/FileMagic.cpp
+        Editor/Modeline.cpp
         Editor/ModePrewarm.cpp
         Editor/Multibuffer.cpp
         Editor/MultibufferFoldSettings.cpp
@@ -525,6 +527,7 @@ target_link_libraries(ned_lib
         # CLI::App; ned_tests walks that same App to generate the invocation
         # reference, so the dependency is public, not main.cpp's alone.
         PUBLIC CLI11::CLI11
+        PRIVATE PkgConfig::LIBMAGIC
         PRIVATE ${CMAKE_DL_LIBS}
         # internal-project-search follow-up: only ProjectSearch.cpp's own
         # implementation includes RE2 headers, so this stays off the public

@@ -103,6 +103,13 @@ struct LanguageDefinition {
     // the whole basename and are checked first (Emacs' auto-mode-alist).
     std::vector<std::string> extensions;
     std::vector<std::string> filenames;
+    // An extension this language shares with the one that owns it (`.h`,
+    // owned by C): a file with it is this language when libmagic reports
+    // one of `mimeTypes`, or failing that when `contentPattern` (an
+    // ECMAScript regex, `^`/`$` per line) matches its first 8 KiB.
+    std::vector<std::string> sharedExtensions;
+    std::vector<std::string> mimeTypes;
+    std::string              contentPattern;
     // Empty = no line-comment syntax (JSON, HTML, CSS, XML, Markdown).
     std::string lineCommentPrefix;
     // `:block-comment ["(*" "*)"]`: opener and closer, both empty when unset.

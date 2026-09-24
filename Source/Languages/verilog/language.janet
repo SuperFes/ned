@@ -1,4 +1,4 @@
-# .v is Verilog's here (the V language keeps .vsh/.vv and v.mod).
+# .v is Verilog's unless it reads as V (see v/language.janet); .vh/.sv/.svh are its own.
 {:name "verilog"
  :extensions [".v" ".vh" ".sv" ".svh"]
  :line-comment "//"

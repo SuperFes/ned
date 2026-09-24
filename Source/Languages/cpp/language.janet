@@ -1,5 +1,9 @@
 {:name "cpp"
  :extensions [".cpp" ".cc" ".cxx" ".hpp" ".hh"]
+ # A .h is C's unless libmagic or the C++-only keywords say otherwise.
+ :shared-extensions [".h"]
+ :mime-types ["text/x-c++"]
+ :content-pattern "^\\s*(namespace\\s|class\\s+\\w+|template\\s*<)"
  :line-comment "//"
 
  # C's own imports query -- both grammars define preproc_include identically.

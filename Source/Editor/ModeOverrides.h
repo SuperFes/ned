@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "Mode.h"
 
@@ -130,6 +131,14 @@ void SetModeForFilename(const std::string& filename, const std::string& modeName
 // rename-file) whose extension resolves to a different mode -- otherwise
 // the cached Mode built for the old path would never update.
 void ClearModeCacheFor(const text::Buffer& buffer);
+
+// set-mode: buffer uses modeName from now on, whatever its path says --
+// until it is closed. False (and nothing changes) when modeName names no
+// mode.
+bool SetChosenModeForBuffer(const text::Buffer& buffer, const std::string& modeName);
+
+// Every mode name set-mode can offer, sorted.
+[[nodiscard]] std::vector<std::string> ModeNames();
 
 // background-mode-prewarm follow-up: installs mode into the cache for
 // buffer, but only if nothing is cached for it yet -- unlike

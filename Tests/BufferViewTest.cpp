@@ -40,6 +40,7 @@
 #include "Editor/Lsp/Transport.h"
 #include "Editor/MacroRegistry.h"
 #include "Editor/Mode.h"
+#include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
 #include "Editor/Project/Registry.h"
 #include "Editor/Project/Root.h"
@@ -16444,4 +16445,26 @@ TEST_CASE("Inline debug values can be turned off without affecting the values th
     REQUIRE(RowText(screen, 0, 60).find("total = 41") == std::string::npos);
     // Display only -- the value is still there for the debug panel.
     REQUIRE(manager.FrameLocals().at("total") == "41");
+}
+
+TEST_CASE("set-mode switches the current buffer's mode through the pane", "[BufferView]") {
+    Fixture                         fixture;
+    ned::ui::BufferView             view = fixture.View();
+    std::vector<ned::text::Buffer*> changed;
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+    view.SetOnActiveBufferChanged([&changed](ned::text::Buffer& buffer) { changed.push_back(&buffer); });
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "set-mode");
+    view.OnEvent(ned::ui::test::Return());
+    TypeText(view, "verilog-mode");
+    REQUIRE(CandidateSelected(fixture.candidates, "verilog-mode"));
+    view.OnEvent(ned::ui::test::Return());
+
+    CHECK(fixture.statusMessage == "Mode: verilog-mode");
+    CHECK(ned::editor::CachedModeForBuffer(fixture.buffer).name == "verilog-mode");
+    REQUIRE_FALSE(changed.empty());
+    CHECK(changed.back() == &fixture.buffer);
+    ned::editor::ClearModeCacheFor(fixture.buffer);
 }

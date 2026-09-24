@@ -264,6 +264,7 @@ add_executable(ned_tests
             LanguageTablesTest.cpp
             ScannersTest.cpp
             LanguagePackageTest.cpp
+            ModeDetectionTest.cpp
             LanguageToolsTest.cpp
             PersistentUndoTest.cpp
             ProjectUndoTest.cpp

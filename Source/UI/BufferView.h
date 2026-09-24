@@ -1342,6 +1342,7 @@ class BufferView : public Widget {
                            // HandleAcpPermissionPromptKey, the same numbered-list shape
                            // LspCodeActionSelect uses.
                            AcpAgentName,
+                           SetMode,
                            AcpPromptText,
                            AcpPermissionPrompt,
                            // rich-theme-set follow-up (Phase 1): the select-theme
@@ -2570,6 +2571,7 @@ class BufferView : public Widget {
     [[nodiscard]] bufferview::FuzzyPrompt SwitchProjectPrompt();
     [[nodiscard]] bufferview::FuzzyPrompt SwitchToBufferPrompt();
     [[nodiscard]] bufferview::FuzzyPrompt AcpAgentNamePrompt();
+    [[nodiscard]] bufferview::FuzzyPrompt SetModePrompt();
     [[nodiscard]] bufferview::FuzzyPrompt BookmarkJumpPrompt();
     [[nodiscard]] bufferview::FuzzyPrompt SelectThemePrompt();
 
@@ -2685,6 +2687,8 @@ class BufferView : public Widget {
     // editor::acp::AgentNames().
     void HandleAcpAgentNameKey(const editor::KeyChord& chord);
     void RefreshAcpAgentNameStatus();
+    void HandleSetModeKey(const editor::KeyChord& chord);
+    void RefreshSetModeStatus();
 
     // dropdown-path-completion follow-up: FindFile/OpenProjectPath/
     // FindScratch's shared candidate source (GatherPathCompletionCandidates)
@@ -5221,6 +5225,7 @@ class BufferView : public Widget {
     bufferview::CandidateList switchProjectList_;
     bufferview::CandidateList switchToBufferList_;
     bufferview::CandidateList acpAgentNameList_;
+    bufferview::CandidateList setModeList_;
     bufferview::CandidateList bookmarkList_;
     bufferview::CandidateList selectThemeList_;
     bufferview::CandidateList vcsBranchList_;

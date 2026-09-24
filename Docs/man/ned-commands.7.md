@@ -1038,6 +1038,10 @@ for the live keymap stack.
 
 :   Set the mark at point, or deactivate it when pressed again in place.
 
+`set-mode`
+
+:   Switch the current buffer to another major mode, whatever its file type says.
+
 `shift-select-backward-char` (`S-LEFT`)
 
 :   Move point backward one grapheme cluster, extending the selection.

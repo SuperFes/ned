@@ -1364,6 +1364,12 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         // (HandlePromptKey), same "just enter the mode and prime the
         // prompt" shape as DapEvaluate above; AcpStopSession is a one-shot
         // direct action, same shape as DapStop.
+        case editor::InteractiveRequest::SetMode:
+            inputMode_ = InputMode::SetMode;
+            prompt_.emplace("Mode: ");
+            setModeList_.SelectTop();
+            RefreshSetModeStatus();
+            return;
         case editor::InteractiveRequest::AcpStartSession:
             inputMode_ = InputMode::AcpAgentName;
             prompt_.emplace("ACP agent: ");
@@ -4836,6 +4842,25 @@ bufferview::FuzzyPrompt BufferView::AcpAgentNamePrompt() {
                 } }};
 }
 
+bufferview::FuzzyPrompt BufferView::SetModePrompt() {
+    return {.list          = &setModeList_,
+            .historyKey    = "set-mode",
+            .cancelMessage = "Set mode cancelled.",
+            .emptyMessage  = [](const std::string& query) { return "No mode matching \"" + query + "\""; },
+            .pool          = [] { return editor::ModeNames(); },
+            .commit        = [this](const std::string& selected) {
+                text::Buffer& buffer = activeBuffer_.Get();
+                if (!editor::SetChosenModeForBuffer(buffer, selected)) {
+                    ReportError("No mode named " + selected + ".");
+                    return;
+                }
+                // The pane re-reads the buffer's mode the way a buffer switch does.
+                if (onActiveBufferChanged_) {
+                    onActiveBufferChanged_(buffer);
+                }
+                statusMessage_ = "Mode: " + selected; }};
+}
+
 bufferview::FuzzyPrompt BufferView::BookmarkJumpPrompt() {
     const bool isDelete = (bookmarkPromptAction_ == BookmarkPromptAction::Delete);
     return {.list          = &bookmarkList_,
@@ -5010,6 +5035,14 @@ void BufferView::RefreshAcpAgentNameStatus() {
 
 void BufferView::HandleAcpAgentNameKey(const editor::KeyChord& chord) {
     HandleFuzzyPromptKey(AcpAgentNamePrompt(), chord);
+}
+
+void BufferView::RefreshSetModeStatus() {
+    RefreshFuzzyPrompt(SetModePrompt());
+}
+
+void BufferView::HandleSetModeKey(const editor::KeyChord& chord) {
+    HandleFuzzyPromptKey(SetModePrompt(), chord);
 }
 
 // named-projects follow-up: the shared tail of switch-project/open-project
@@ -5305,6 +5338,9 @@ void BufferView::ScrollCandidatePopup(int steps) {
                 break;
             case InputMode::AcpAgentName:
                 HandleAcpAgentNameKey(nav);
+                break;
+            case InputMode::SetMode:
+                HandleSetModeKey(nav);
                 break;
             case InputMode::BookmarkJump:
                 HandleBookmarkJumpKey(nav);

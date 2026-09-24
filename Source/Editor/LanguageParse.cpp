@@ -134,6 +134,15 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
         else if (key == "filenames") {
             definition.filenames = ExpectStrings(directoryName, value, ":filenames");
         }
+        else if (key == "shared-extensions") {
+            definition.sharedExtensions = ExpectStrings(directoryName, value, ":shared-extensions");
+        }
+        else if (key == "mime-types") {
+            definition.mimeTypes = ExpectStrings(directoryName, value, ":mime-types");
+        }
+        else if (key == "content-pattern") {
+            definition.contentPattern = ExpectString(directoryName, value, ":content-pattern");
+        }
         else if (key == "line-comment") {
             definition.lineCommentPrefix = ExpectString(directoryName, value, ":line-comment");
         }

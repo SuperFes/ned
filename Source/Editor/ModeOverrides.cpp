@@ -1,13 +1,19 @@
 #include "ModeOverrides.h"
 
+#include <algorithm>
+#include <fstream>
 #include <functional>
 #include <mutex>
+#include <optional>
+#include <regex>
 #include <stdexcept>
 #include <unordered_map>
 
 #include "BundledLanguages.h"
+#include "FileMagic.h"
 #include "LanguageDefinition.h"
 #include "LanguageRegistry.h"
+#include "Modeline.h"
 #include "Text/Buffer.h"
 
 namespace ned::editor {
@@ -33,6 +39,10 @@ namespace {
     // it's gone before any other buffer could reuse the same address; the
     // WindowManager close funnel guarantees that.
     std::unordered_map<const text::Buffer*, Mode> g_modeCache;
+
+    // set-mode's choice per buffer: outlives cache flushes (a language
+    // registration clears g_modeCache), dropped with the buffer.
+    std::unordered_map<const text::Buffer*, std::string> g_chosenModes;
 
     // The bundled definitions' extensions -> mode name, keyed with the
     // leading dot (std::filesystem::path::extension()'s own form). Derived
@@ -173,9 +183,111 @@ std::optional<Mode> ModeForFileOverride(const std::filesystem::path& path) {
     return ModeByName(*modeName);
 }
 
+namespace {
+
+    // A content pattern compiled once per process; nullopt for one std::regex
+    // rejects, which then never matches.
+    const std::optional<std::regex>& CompiledContentPattern(const std::string& pattern) {
+        static std::mutex                                                 mutex;
+        static std::unordered_map<std::string, std::optional<std::regex>> cache;
+        const std::lock_guard<std::mutex>                                 lock(mutex);
+        auto                                                              it = cache.find(pattern);
+        if (it == cache.end()) {
+            std::optional<std::regex> compiled;
+            try {
+                compiled.emplace(pattern, std::regex::ECMAScript | std::regex::multiline);
+            }
+            catch (const std::regex_error&) {
+            }
+            it = cache.emplace(pattern, std::move(compiled)).first;
+        }
+        return it->second;
+    }
+
+    // Which language sharing `path`'s extension the file's first bytes say it
+    // is: libmagic's MIME type first, then each sharer's content pattern.
+    // nullopt leaves the extension with its owner -- also the answer for a
+    // file that does not exist yet.
+    std::optional<std::string> SharedExtensionModeName(const std::filesystem::path& path, std::string_view head) {
+        const std::string               extension = path.extension().string();
+        std::vector<LanguageDefinition> sharers;
+        const auto                      consider = [&](const LanguageDefinition& definition) {
+            if (std::ranges::find(definition.sharedExtensions, extension) != definition.sharedExtensions.end()) {
+                sharers.push_back(definition);
+            }
+        };
+        for (const RegisteredLanguage& registered : RegisteredLanguages()) {
+            consider(registered.definition);
+        }
+        for (const LanguageDefinition& definition : BundledLanguages()) {
+            consider(definition);
+        }
+        if (sharers.empty()) {
+            return std::nullopt;
+        }
+
+        if (head.empty()) {
+            return std::nullopt;
+        }
+        if (const std::optional<std::string> mime = MimeTypeOf(head)) {
+            for (const LanguageDefinition& sharer : sharers) {
+                if (std::ranges::find(sharer.mimeTypes, *mime) != sharer.mimeTypes.end()) {
+                    return ModeNameFor(sharer);
+                }
+            }
+        }
+        for (const LanguageDefinition& sharer : sharers) {
+            if (sharer.contentPattern.empty()) {
+                continue;
+            }
+            if (const std::optional<std::regex>& pattern = CompiledContentPattern(sharer.contentPattern);
+                pattern && std::regex_search(head.begin(), head.end(), *pattern)) {
+                return ModeNameFor(sharer);
+            }
+        }
+        return std::nullopt;
+    }
+
+    // What content-based resolution reads: the first 8 KiB, and the last
+    // 4 KiB after an elision line when the file is longer -- enough for a
+    // sniff and for a modeline at either end. Empty for a file not on disk.
+    std::string ReadEnds(const std::filesystem::path& path) {
+        std::error_code error;
+        if (!std::filesystem::is_regular_file(path, error)) {
+            return {};
+        }
+        std::ifstream in(path, std::ios::binary | std::ios::ate);
+        if (!in) {
+            return {};
+        }
+        const std::streamoff size     = in.tellg();
+        const std::streamoff headSize = std::min<std::streamoff>(size, 8192);
+        std::string          text(static_cast<std::size_t>(headSize), '\0');
+        in.seekg(0);
+        in.read(text.data(), headSize);
+        if (size > headSize) {
+            const std::streamoff tailSize = std::min<std::streamoff>(size - headSize, 4096);
+            std::string          tail(static_cast<std::size_t>(tailSize), '\0');
+            in.seekg(size - tailSize);
+            in.read(tail.data(), tailSize);
+            text += "\n\n\n\n\n\n\n\n\n\n\n"; // keeps the head's last lines out of the tail's modeline window
+            text += tail;
+        }
+        return text;
+    }
+
+} // namespace
+
 Mode ModeForPath(const std::filesystem::path& path) {
     if (auto overrideMode = ModeForFileOverride(path); overrideMode) {
         return std::move(*overrideMode);
+    }
+    const std::string ends = ReadEnds(path);
+    // A modeline in the file outranks everything but the user's own override.
+    if (const std::optional<std::string> language = ParseModeline(ends).language) {
+        if (auto mode = ModeByName(*language + "-mode"); mode) {
+            return std::move(*mode);
+        }
     }
     if (const std::optional<std::string> registered = RegisteredModeNameForPath(path)) {
         if (auto mode = ModeByName(*registered); mode) {
@@ -185,6 +297,11 @@ Mode ModeForPath(const std::filesystem::path& path) {
     const auto& filenames = BundledFilenameTable();
     if (const auto it = filenames.find(path.filename().string()); it != filenames.end()) {
         if (auto mode = ModeByName(it->second); mode) {
+            return std::move(*mode);
+        }
+    }
+    if (const std::optional<std::string> shared = SharedExtensionModeName(path, std::string_view(ends).substr(0, 8192))) {
+        if (auto mode = ModeByName(*shared); mode) {
             return std::move(*mode);
         }
     }
@@ -217,7 +334,15 @@ Mode CachedModeForBuffer(const text::Buffer& buffer) {
     // header comment, so there's no real race to build the same buffer's
     // Mode twice; insert_or_assign rather than emplace just in case, so a
     // hypothetical double-build overwrites rather than leaving two entries.
-    Mode                  mode = ModeForBuffer(buffer);
+    std::optional<std::string> chosen;
+    {
+        const std::lock_guard lock(g_mutex);
+        if (const auto it = g_chosenModes.find(&buffer); it != g_chosenModes.end()) {
+            chosen = it->second;
+        }
+    }
+    std::optional<Mode>   chosenMode = chosen ? ModeByName(*chosen) : std::nullopt;
+    Mode                  mode       = chosenMode ? std::move(*chosenMode) : ModeForBuffer(buffer);
     const std::lock_guard lock(g_mutex);
     return g_modeCache.insert_or_assign(&buffer, std::move(mode)).first->second;
 }
@@ -225,6 +350,37 @@ Mode CachedModeForBuffer(const text::Buffer& buffer) {
 void ClearModeCacheFor(const text::Buffer& buffer) {
     const std::lock_guard lock(g_mutex);
     g_modeCache.erase(&buffer);
+    g_chosenModes.erase(&buffer);
+}
+
+bool SetChosenModeForBuffer(const text::Buffer& buffer, const std::string& modeName) {
+    std::optional<Mode> mode = ModeByName(modeName);
+    if (!mode) {
+        return false;
+    }
+    const std::lock_guard lock(g_mutex);
+    g_chosenModes.insert_or_assign(&buffer, modeName);
+    g_modeCache.insert_or_assign(&buffer, std::move(*mode));
+    return true;
+}
+
+std::vector<std::string> ModeNames() {
+    std::vector<std::string> names;
+    {
+        const std::lock_guard lock(g_mutex);
+        for (const auto& [name, mode] : g_registeredModes) {
+            names.push_back(name);
+        }
+    }
+    for (const RegisteredLanguage& registered : RegisteredLanguages()) {
+        names.push_back(ModeNameFor(registered.definition));
+    }
+    for (const LanguageDefinition& definition : BundledLanguages()) {
+        names.push_back(ModeNameFor(definition));
+    }
+    std::ranges::sort(names);
+    names.erase(std::ranges::unique(names).begin(), names.end());
+    return names;
 }
 
 void InsertPrewarmedMode(const text::Buffer& buffer, Mode mode) {

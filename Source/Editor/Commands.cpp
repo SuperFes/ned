@@ -2289,6 +2289,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         context.interactiveRequest = InteractiveRequest::SwitchToBuffer;
     });
 
+    registry.Register("set-mode", "Switch the current buffer to another major mode, whatever its file type says.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::SetMode; });
+
     registry.Register("list-buffers", "Open a keyboard-navigable buffer list panel (mark/kill, switch).",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::ListBuffers;

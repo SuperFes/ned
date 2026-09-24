@@ -96,6 +96,12 @@ pkg_check_modules(VTERM REQUIRED IMPORTED_TARGET vterm)
 add_library(vterm ALIAS PkgConfig::VTERM)
 #------------------------------------------------------------------------------
 
+#--- System libmagic -------------------------------------------------------------
+# file(1)'s content sniffing (Gentoo's sys-apps/file), consulted only for an
+# extension two languages share (`.h`: C, C++, Objective-C). Editor/FileMagic.h.
+pkg_check_modules(LIBMAGIC REQUIRED IMPORTED_TARGET libmagic)
+#------------------------------------------------------------------------------
+
 #--- Catch2 ---------------------------------------------------------------------
 if (NED_BUILD_TESTS)
     # System package (Gentoo's dev-cpp/catch, v3.15.3) ships Catch2Config.cmake,
