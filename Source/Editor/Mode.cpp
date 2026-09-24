@@ -883,6 +883,16 @@ grammar::Node UnwrapDeclaratorName(grammar::Node node) {
 // are all properties of ONE already-captured node, not something a query
 // predicate can express. A child that is neither a parameter_declaration
 // family node nor the bare "..." token (a comma, a paren) is skipped.
+// A parameter or argument list node is rewritten between its parens: its
+// own first and last bytes, or the bytes just outside it when the grammar
+// puts the parens beside the node (Crystal's param_list).
+bool DelimitedByParens(std::string_view text, std::size_t start, std::size_t end) {
+    if (end > start && text[start] == '(' && text[end - 1] == ')') {
+        return true;
+    }
+    return start > 0 && end < text.size() && text[start - 1] == '(' && text[end] == ')';
+}
+
 std::vector<SignatureParameter> ParametersFromList(const grammar::Node& parameterList) {
     std::vector<SignatureParameter> parameters;
     for (std::size_t i = 0; i < parameterList.ChildCount(); ++i) {
@@ -1799,12 +1809,14 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     continue; // re-derivation failed -- report no parameters rather than guess
                 }
                 // Rewriting replaces what lies between the parens, so a list
-                // written without them (Ruby's `def f a, b`) can't be.
-                if (bufferText[parametersStart] != '(' || bufferText[parametersEnd - 1] != ')') {
+                // written without them (Ruby's `def f a, b`) can't be. A grammar
+                // that puts the parens beside the list node (Crystal) is widened
+                // over them.
+                if (!DelimitedByParens(bufferText, parametersStart, parametersEnd)) {
                     continue;
                 }
-                marker.parametersStartByte = parametersStart;
-                marker.parametersEndByte   = parametersEnd;
+                marker.parametersStartByte = bufferText[parametersStart] == '(' ? parametersStart : parametersStart - 1;
+                marker.parametersEndByte   = bufferText[parametersStart] == '(' ? parametersEnd : parametersEnd + 1;
                 if (described.empty()) {
                     marker.parameters = ParametersFromList(parameterList);
                 }
@@ -1956,8 +1968,10 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     argumentList.EndByte() != argumentsEnd) {
                     continue;
                 }
-                marker.argumentsStartByte = argumentsStart;
-                marker.argumentsEndByte   = argumentsEnd;
+                const bool outside        = !(argumentsEnd > argumentsStart && bufferText[argumentsStart] == '(') &&
+                                            DelimitedByParens(bufferText, argumentsStart, argumentsEnd);
+                marker.argumentsStartByte = outside ? argumentsStart - 1 : argumentsStart;
+                marker.argumentsEndByte   = outside ? argumentsEnd + 1 : argumentsEnd;
                 for (std::size_t i = 0; i < argumentList.ChildCount(); ++i) {
                     const grammar::Node child = argumentList.Child(i);
                     if (!child.IsNamed() || child.IsExtra() || bufferText.substr(child.StartByte(), child.EndByte() - child.StartByte()) == ",") {
@@ -1972,7 +1986,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 }
                 // Without parens (Ruby's `f 1, 2`) the list can't be rewritten
                 // in place; a bare `f` has nothing to rewrite at all.
-                if (argumentsEnd == argumentsStart || bufferText[argumentsStart] != '(' || bufferText[argumentsEnd - 1] != ')') {
+                if (!DelimitedByParens(bufferText, argumentsStart, argumentsEnd)) {
                     if (marker.arguments.empty()) {
                         continue;
                     }

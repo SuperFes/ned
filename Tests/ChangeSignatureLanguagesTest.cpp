@@ -554,3 +554,92 @@ TEST_CASE("CUDA, HLSL, Objective-C and GLSL change-signature borrow C and C++'s 
         CHECK(ChangeSignature(language, c, "mix", "float b, float a") == swapped);
     }
 }
+
+TEST_CASE("Groovy change-signature reorders and declines map-argument calls", "[ChangeSignature]") {
+    const std::string source = "def scale(int v, factor = 2) { v * factor }\n"
+                               "scale(1, 3)\n"
+                               "obj.scale(4, 5)\n"
+                               "scale(v: 1)\n";
+    CHECK(ChangeSignature("groovy", source, "scale", "factor = 2, int v") ==
+          "def scale(factor = 2, int v) { v * factor }\n"
+          "scale(3, 1)\n"
+          "obj.scale(5, 4)\n"
+          "scale/*declined*/(v: 1)\n");
+}
+
+TEST_CASE("Crystal change-signature covers methods and initialize", "[ChangeSignature]") {
+    const std::string source = "class Box\n"
+                               "  def initialize(w : Int32, h : Int32)\n"
+                               "  end\n"
+                               "  def scale(v, factor = 2)\n"
+                               "  end\n"
+                               "end\n"
+                               "b = Box.new(1, 2)\n"
+                               "b.scale(3, 4)\n"
+                               "b.scale(v: 5)\n";
+    CHECK(ChangeSignature("crystal", source, "scale", "factor = 2, v") ==
+          "class Box\n"
+          "  def initialize(w : Int32, h : Int32)\n"
+          "  end\n"
+          "  def scale(factor = 2, v)\n"
+          "  end\n"
+          "end\n"
+          "b = Box.new(1, 2)\n"
+          "b.scale(4, 3)\n"
+          "b.scale/*declined*/(v: 5)\n");
+    CHECK(ChangeSignature("crystal", source, "initialize", "h : Int32, w : Int32") ==
+          "class Box\n"
+          "  def initialize(h : Int32, w : Int32)\n"
+          "  end\n"
+          "  def scale(v, factor = 2)\n"
+          "  end\n"
+          "end\n"
+          "b = Box.new(2, 1)\n"
+          "b.scale(3, 4)\n"
+          "b.scale(v: 5)\n");
+}
+
+TEST_CASE("D change-signature covers plain and member calls", "[ChangeSignature]") {
+    const std::string source = "int scale(int v, int factor = 2) { return v * factor; }\n"
+                               "void f() { scale(1, 3); obj.scale(4, 5); scale(v: 1); }\n";
+    CHECK(ChangeSignature("d", source, "scale", "int factor = 2, int v") ==
+          "int scale(int factor = 2, int v) { return v * factor; }\n"
+          "void f() { scale(3, 1); obj.scale(5, 4); scale/*declined*/(v: 1); }\n");
+}
+
+TEST_CASE("Julia change-signature leaves a definition's own signature alone as a call", "[ChangeSignature]") {
+    const std::string source = "function scale(v, factor=2)\n"
+                               "    v * factor\n"
+                               "end\n"
+                               "scale(1, 3)\n"
+                               "Base.scale(4, 5)\n"
+                               "scale(1, factor=3)\n";
+    CHECK(ChangeSignature("julia", source, "scale", "factor=2, v") ==
+          "function scale(factor=2, v)\n"
+          "    v * factor\n"
+          "end\n"
+          "scale(3, 1)\n"
+          "Base.scale(5, 4)\n"
+          "scale/*declined*/(1, factor=3)\n");
+}
+
+TEST_CASE("V change-signature reorders and drops", "[ChangeSignature]") {
+    const std::string source = "fn scale(v int, factor int) int { return v * factor }\n"
+                               "fn main() { scale(1, 3) obj.scale(4, 5) scale(...xs) }\n";
+    CHECK(ChangeSignature("v", source, "scale", "factor int, v int") ==
+          "fn scale(factor int, v int) int { return v * factor }\n"
+          "fn main() { scale(3, 1) obj.scale(5, 4) scale/*declined*/(...xs) }\n");
+}
+
+TEST_CASE("Nim change-signature keeps the dot-supplied first parameter first", "[ChangeSignature]") {
+    const std::string source = "proc scale(s: Shape, v: int, factor = 2): int = v\n"
+                               "scale(sh, 1, 3)\n"
+                               "sh.scale(4, 5)\n"
+                               "scale sh, 6, 7\n";
+    CHECK(ChangeSignature("nim", source, "scale", "s: Shape, factor = 2, v: int") ==
+          "proc scale(s: Shape, factor = 2, v: int): int = v\n"
+          "scale(sh, 3, 1)\n"
+          "sh.scale(5, 4)\n"
+          "scale /*declined*/sh, 6, 7\n");
+    CHECK(ChangeSignature("nim", source, "scale", "v: int, s: Shape, factor = 2").starts_with("declined: "));
+}

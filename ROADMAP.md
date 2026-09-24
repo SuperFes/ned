@@ -148,17 +148,23 @@ and code reading. Highest stakes first.
       hand, binds `^pinned` names inside a match and counts every call target as a
       variable use; Dart's function signature and body are siblings with no node
       covering both, so no scope capture can hold the parameters and their uses.
-- [ ] **change-signature for the remaining languages.** 22 have `signatures` + `calls`
+- [ ] **change-signature for the remaining languages.** 28 have `signatures` + `calls`
       queries (`sig` column): each describes its own parameters, receivers (`self`,
-      `cls`, Lua's colon calls, C#'s extension `this`), keyword-only parameters and
-      named/spread arguments, and `:signature-template` parses the retyped list. Not
-      yet: Swift (no parameter-list node, and its labels are mandatory at every call),
-      and the languages whose calls have no parenthesized argument list after the
-      callee -- the Lisps, Elixir's pipes, Haskell/OCaml/F#'s curried application.
+      `cls`, Lua's colon calls, Nim's dot calls, C#'s extension `this`), keyword-only
+      parameters and named/spread arguments, and `:signature-template` parses the
+      retyped list. Not yet:
+      - Swift, Solidity, Vala and Odin: their parameters (or, for Odin, a call's
+        arguments) are direct children of the definition with no list node, so
+        `@signature.parameters` has nothing to capture. Needs a list spanning the
+        `(`...`)` tokens. Swift additionally needs its labels carried with each
+        argument, and a new parameter's default written as `label: value`.
+      - The Lisps, Elixir's pipes and Haskell/OCaml/F#'s curried application: a call
+        has no parenthesized argument list after the callee.
       Known misses: a call reaching a constructor through its parent
       (`parent::__construct`, `super().__init__`, `super(...)`) names no class, so it
       isn't found; a C# extension method called statically with its trailing defaults
-      omitted is read as a member call.
+      omitted is read as a member call; Julia's keyword parameters (after `;`) read as
+      positional, so a call passing one by name is declined.
 - [ ] **Bundled formatter styles exist for PHP only.** Candidates with a single canonical
       guide: Go (gofmt), Rust (rustfmt), Kotlin (official conventions), C# (.NET
       conventions), JavaScript/TypeScript (Prettier). A bundled style changes on-save

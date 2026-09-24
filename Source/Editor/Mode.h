@@ -991,9 +991,9 @@ struct Mode {
     // a config format whose outline stops a few levels down but whose
     // nesting is its structure (LanguageDefinition::stickyScrollFromFolds).
     bool stickyScrollFromFolds = false;
-    // A declaration of a function named __ned_sig whose parameter list is
-    // `{}` -- change-signature parses the parameters the user retyped by
-    // substituting them in and running `signatures` over the result (C++:
+    // A declaration of a function whose parameter list is `{}` --
+    // change-signature parses the parameters the user retyped by substituting
+    // them in and running `signatures` over the result (C++:
     // "void __ned_sig({}) {}"). Empty: change-signature isn't offered.
     std::string signatureTemplate;
     // Which colour-literal spellings this mode's buffers admit -- the
