@@ -12,6 +12,7 @@
 #include "IndentStyle.h"
 #include "JanetData.h"
 #include "MaxConsecutiveBlankLines.h"
+#include "RustfmtConfig.h"
 #include "TrimOnSave.h"
 
 namespace ned::editor {
@@ -731,6 +732,7 @@ void ReloadFormatConfig(const std::filesystem::path& projectRoot) {
     const std::optional<FormatConfig> project  = ReadFormatConfigFile(ProjectFormatConfigPath(projectRoot));
     ClearFormatRuleLayer(FormatRuleLayer::File);
     ForgetFormatConfigSettings();
+    ApplyRustfmtRules(projectRoot);
     if (personal) {
         ApplyFormatConfig(*personal);
     }

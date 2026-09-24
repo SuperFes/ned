@@ -85,6 +85,7 @@
 #include "Editor/RecentFiles.h"
 #include "Editor/Register.h"
 #include "Editor/Repl/Config.h"
+#include "Editor/RustfmtConfig.h"
 #include "Editor/ScriptingSession.h"
 #include "Editor/Session.h"
 #include "Editor/TabWidth.h"
@@ -384,6 +385,7 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
 
     try {
         ned::editor::LoadBuiltinFormatStyles();
+        ned::editor::ApplyRustfmtRules(projectRoot);
         ned::editor::LoadFormatConfigFile(ned::editor::PersonalFormatConfigPath());
         ned::editor::LoadFormatConfigFile(ned::editor::ProjectFormatConfigPath(projectRoot));
     }
@@ -754,6 +756,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     catch (const std::exception& e) {
         statusMessage = std::string("style.janet error: ") + e.what();
     }
+    ned::editor::ApplyRustfmtRules(projectRoot);
     try {
         ned::editor::LoadFormatConfigFile(ned::editor::PersonalFormatConfigPath());
     }

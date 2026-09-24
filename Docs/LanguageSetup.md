@@ -128,6 +128,10 @@ standard, and `go test -json` is a direct, first-class fit for the built-in
 ```
 
 [rust-analyzer](https://rust-analyzer.github.io/) is unambiguous.
+With no setup, ned's own formatting follows rustfmt's defaults, adjusted by a
+project's `rustfmt.toml`/`.rustfmt.toml` (`hard_tabs`, `tab_spaces`, `max_width`,
+`brace_style`, `control_brace_style`, `blank_lines_upper_bound`); rust-analyzer's
+formatting runs rustfmt itself for everything else.
 [`lldb-dap`](https://lldb.llvm.org/use/map.html) (older LLVM releases name it
 `lldb-vscode`) is recommended over VS Code's bundled `codelldb` here
 specifically because it speaks plain stdio DAP the way `ned/set-dap-adapter`

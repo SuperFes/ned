@@ -165,11 +165,15 @@ and code reading. Highest stakes first.
       isn't found; a C# extension method called statically with its trailing defaults
       omitted is read as a member call; Julia's keyword parameters (after `;`) read as
       positional, so a call passing one by name is declined.
-- [ ] **Bundled formatter styles exist for PHP only.** Candidates with a single canonical
-      guide: Go (gofmt), Rust (rustfmt), Kotlin (official conventions), C# (.NET
-      conventions), JavaScript/TypeScript (Prettier). A bundled style changes on-save
-      output for every user of that language, so each needs the same care PSR-12 got
-      (`ned/set-format-builtin-style` is the escape hatch).
+- [ ] **Bundled formatter styles: PHP (PSR-12), Go (gofmt) and Rust (rustfmt).** A Rust
+      project's `rustfmt.toml` adjusts what rustfmt lets it (indentation, `max_width`,
+      brace and blank-line options -- `Editor/RustfmtConfig.h`); gofmt has no options.
+      Neither is complete: gofmt's field/comment alignment, its removal of a condition's
+      redundant parens, and rustfmt's width-driven wrapping and `where`-clause layout
+      are beyond the native formatter, so gopls/rust-analyzer formatting (or
+      `ned/set-format-command`) is still what makes a file canonical. Candidates next,
+      each needing the same care: Kotlin (official conventions), C# (.NET conventions),
+      JavaScript/TypeScript (Prettier).
 
 **Quick-fix gutter marker**
 
