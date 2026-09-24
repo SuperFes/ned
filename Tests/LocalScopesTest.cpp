@@ -361,3 +361,47 @@ TEST_CASE("LocalNodes binds a parent-scope definition around its own scope", "[L
                                                 Token(text, "g", 2, Reference)};
     CHECK(DescribeLocalNodes(text, captures) == std::vector<std::string>{"g@6:function", "g@10:function", "g@14:function"});
 }
+
+TEST_CASE("Same-spelled names in different namespaces never bind each other", "[LocalScopes]") {
+    // Perl: `my $x` and `my @x` are two variables whose captured name is `x`.
+    const std::string text    = "{ my $x; my @x; $x + $x[0]; }";
+    const auto        inSpace = [](LocalCapture capture, std::string space) {
+        capture.nameSpace = std::move(space);
+        return capture;
+    };
+    const std::vector<LocalCapture> captures{
+        BraceScope(text),
+        inSpace(Definition(text, "x", 0), "scalar"),
+        inSpace(Definition(text, "x", 1), "array"),
+        inSpace(Reference(text, "x", 2), "scalar"),
+        inSpace(Reference(text, "x", 3), "array"),
+    };
+
+    const auto scalar = ResolveBindingAt(captures, text, Nth(text, "x", 2));
+    REQUIRE(scalar.has_value());
+    CHECK(scalar->occurrences == std::vector<Range>{{Nth(text, "x", 0), Nth(text, "x", 0) + 1},
+                                                    {Nth(text, "x", 2), Nth(text, "x", 2) + 1}});
+
+    const std::vector<ned::editor::locals::LocalNode> nodes = ned::editor::locals::LocalNodes(captures, text);
+    CHECK(nodes.size() == 4);
+}
+
+TEST_CASE("A file-private definition at file level is still a local", "[LocalScopes]") {
+    const std::string text       = "my $count = 0; print $count;";
+    LocalCapture      definition = Definition(text, "count", 0);
+    const auto        resolve    = [&] {
+        return ResolveBindingAt(std::vector<LocalCapture>{definition, Reference(text, "count", 1)}, text,
+                                Nth(text, "count", 1));
+    };
+
+    const auto shared = resolve();
+    REQUIRE(shared.has_value());
+    CHECK(shared->scopeIsFile);
+
+    definition.filePrivate = true;
+    const auto priv        = resolve();
+    REQUIRE(priv.has_value());
+    CHECK_FALSE(priv->scopeIsFile);
+    CHECK_FALSE(priv->scope.has_value());
+    CHECK(priv->occurrences.size() == 2);
+}

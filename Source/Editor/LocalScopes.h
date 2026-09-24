@@ -78,7 +78,9 @@ struct LocalBinding {
     // i.e. the name is bound at file level. A file-level binding can be
     // referenced from other files, so it is exactly the case a caller must
     // NOT rename on its own; scopeIsFile below is the same fact as a bool
-    // for a caller that doesn't need the range.
+    // for a caller that doesn't need the range -- except for a file-private
+    // definition (LocalCapture::filePrivate), which has no scope and still
+    // isn't scopeIsFile.
     std::optional<Range> scope;
     bool                 scopeIsFile = false;
     // Every occurrence of this binding, sorted by start offset and

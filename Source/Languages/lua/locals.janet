@@ -17,23 +17,27 @@
   (for_statement)
 ] @local.scope
 
-(variable_declaration
-  "local"
-  (variable_list
-    name: (identifier) @local.definition.var))
+#; A chunk-level `local` is private to its file (`local.file-private`).
+((variable_declaration
+   "local"
+   (variable_list
+     name: (identifier) @local.definition.var))
+ (:set! local.file-private "true"))
 
-(variable_declaration
-  "local"
-  (assignment_statement
-    (variable_list
-      name: (identifier) @local.definition.var)))
+((variable_declaration
+   "local"
+   (assignment_statement
+     (variable_list
+       name: (identifier) @local.definition.var)))
+ (:set! local.file-private "true"))
 
 #; The name is visible after the function and inside it (recursion), so it
 #; binds in the scope around the function's own.
 ((function_declaration
    "local"
    name: (identifier) @local.definition.function)
- (:set! definition.function.scope "parent"))
+ (:set! definition.function.scope "parent")
+ (:set! local.file-private "true"))
 
 (parameters
   name: (identifier) @local.definition.parameter)

@@ -676,6 +676,23 @@ TEST_CASE("lua-mode binds a local function's name around the function", "[Mode][
     CHECK(helper->occurrences.size() == 3);
 }
 
+TEST_CASE("lua-mode treats a chunk-level local as private to the file", "[Mode][LocalScopes]") {
+    const std::string source = "local limit = 10\n"
+                               "local function clamp(n) return math.min(n, limit) end\n"
+                               "total = clamp(limit)\n";
+    const auto        limit  = Resolve("lua-mode", source, "limit", 1);
+    REQUIRE(limit.has_value());
+    CHECK_FALSE(limit->scopeIsFile);
+    CHECK(limit->occurrences.size() == 3);
+
+    const auto clamp = Resolve("lua-mode", source, "clamp", 0);
+    REQUIRE(clamp.has_value());
+    CHECK_FALSE(clamp->scopeIsFile);
+
+    // A global stays a language server's business.
+    CHECK_FALSE(Resolve("lua-mode", source, "total", 0).has_value());
+}
+
 TEST_CASE("nix-mode resolves parameters, let bindings and inherits", "[Mode][LocalScopes]") {
     const std::string source = "{ pkgs, lib ? pkgs.lib }:\n"
                                "let\n"
@@ -729,4 +746,165 @@ TEST_CASE("r-mode resolves function-level bindings and skips named arguments", "
     const auto v = Resolve("r-mode", source, "v ", 0);
     REQUIRE(v.has_value());
     CHECK(v->occurrences.size() == 2);
+}
+
+// Perl's sigil picks the variable: $x, @x and %x are three, and an element
+// or slice names its container by the sigil of what it yields.
+TEST_CASE("perl-mode keeps $x, @x and %x apart", "[Mode][LocalScopes]") {
+    const std::string source = "sub total {\n"
+                               "  my ($x, @x) = @_;\n"
+                               "  my %x = (a => 1);\n"
+                               "  my $sum = $x + $x[0] + $#x + $x{a};\n"
+                               "  print \"$x[1] @x[1, 2] @x{'a'}\\n\";\n"
+                               "  return $sum;\n"
+                               "}\n";
+    const auto        scalar = Resolve("perl-mode", source, "x", 0); // `my ($x`
+    REQUIRE(scalar.has_value());
+    CHECK_FALSE(scalar->scopeIsFile);
+    CHECK(scalar->occurrences.size() == 2); // the declaration and `$x +`
+
+    const auto array = Resolve("perl-mode", source, "x", 1); // `@x)`
+    REQUIRE(array.has_value());
+    CHECK(array->occurrences.size() == 5); // the decl, $x[0], $#x, "$x[1]", "@x[1, 2]"
+
+    const auto hash = Resolve("perl-mode", source, "x", 2); // `my %x`
+    REQUIRE(hash.has_value());
+    CHECK(hash->occurrences.size() == 3); // the decl, $x{a}, "@x{'a'}"
+}
+
+TEST_CASE("perl-mode scopes a my to its block and leaves our alone", "[Mode][LocalScopes]") {
+    const std::string source = "my $count = 0;\n"
+                               "our $VERSION = 1;\n"
+                               "for my $item (@ARGV) {\n"
+                               "  my $count = $item;\n"
+                               "  print $count;\n"
+                               "}\n"
+                               "print $count, $VERSION;\n";
+    // A file-level `my` is private to the file, so it is still a local.
+    const auto outer = Resolve("perl-mode", source, "count", 0);
+    REQUIRE(outer.has_value());
+    CHECK_FALSE(outer->scopeIsFile);
+    CHECK(OccurrenceTexts(*outer, source).size() == 2);
+
+    const auto inner = Resolve("perl-mode", source, "count", 1);
+    REQUIRE(inner.has_value());
+    CHECK(inner->occurrences.size() == 2);
+
+    const auto item = Resolve("perl-mode", source, "item", 0);
+    REQUIRE(item.has_value());
+    CHECK(item->occurrences.size() == 2);
+
+    CHECK_FALSE(Resolve("perl-mode", source, "VERSION", 0).has_value());
+}
+
+TEST_CASE("perl-mode binds signature parameters", "[Mode][LocalScopes]") {
+    const std::string source   = "sub greet ($name, $greeting = 'hi', @rest) {\n"
+                                 "  return \"$greeting, $name\" . scalar(@rest);\n"
+                                 "}\n";
+    const auto        greeting = Resolve("perl-mode", source, "greeting", 0);
+    REQUIRE(greeting.has_value());
+    CHECK(greeting->qualifier == "parameter");
+    CHECK(greeting->occurrences.size() == 2);
+
+    const auto rest = Resolve("perl-mode", source, "rest", 0);
+    REQUIRE(rest.has_value());
+    CHECK(rest->occurrences.size() == 2);
+}
+
+// Elixir binds by pattern: every name inside a match pattern binds, at any
+// depth, except what the pattern only reads (a pinned ^x, a call's target).
+TEST_CASE("elixir-mode binds every name a pattern holds, and nothing it only reads", "[Mode][LocalScopes]") {
+    const std::string source  = "defmodule M do\n"
+                                "  def fetch(id, %{retries: retries} = opts) when id > 0 do\n"
+                                "    {:ok, %{body: body, meta: [first | rest]}} = get(id, opts)\n"
+                                "    ^body = decode(body)\n"
+                                "    count = length(rest)\n"
+                                "    count = count + retries\n"
+                                "    {first, count}\n"
+                                "  end\n"
+                                "end\n";
+    const auto        retries = Resolve("elixir-mode", source, "retries", 1); // the value, not the `retries:` key
+    REQUIRE(retries.has_value());
+    CHECK(retries->qualifier == "parameter");
+    CHECK_FALSE(retries->scopeIsFile);
+    CHECK(OccurrenceTexts(*retries, source).size() == 2);
+
+    const auto body = Resolve("elixir-mode", source, "body", 1); // `body: body`'s value
+    REQUIRE(body.has_value());
+    CHECK(body->occurrences.size() == 3); // the binding, ^body, decode(body)
+
+    const auto first = Resolve("elixir-mode", source, "first", 0);
+    REQUIRE(first.has_value());
+    CHECK(first->occurrences.size() == 2);
+
+    const auto count = Resolve("elixir-mode", source, "count", 2); // `count + retries`
+    REQUIRE(count.has_value());
+    CHECK(count->occurrences.size() == 4);
+
+    CHECK_FALSE(Resolve("elixir-mode", source, "get", 0).has_value()); // a function, not a variable
+}
+
+TEST_CASE("elixir-mode scopes clause patterns to their clause", "[Mode][LocalScopes]") {
+    const std::string source = "def run(items) do\n"
+                               "  total = 0\n"
+                               "  for item <- items, do: item * 2\n"
+                               "  Enum.map(items, fn item -> item + total end)\n"
+                               "  case items do\n"
+                               "    [item | _] -> item\n"
+                               "    [] -> total\n"
+                               "  end\n"
+                               "end\n";
+    // "item" also matches inside "items": 1, 5 and 8 are the three binding sites.
+    for (const int site : {1, 5, 8}) {
+        const auto item = Resolve("elixir-mode", source, "item", site);
+        REQUIRE(item.has_value());
+        INFO("site " << site);
+        CHECK(item->occurrences.size() == 2);
+    }
+    const auto total = Resolve("elixir-mode", source, "total", 0);
+    REQUIRE(total.has_value());
+    CHECK(total->occurrences.size() == 3);
+}
+
+// Dart's function signature and body are siblings; the scope joins them so a
+// parameter and its uses share one.
+TEST_CASE("dart-mode scopes a function's parameters over its body", "[Mode][LocalScopes]") {
+    const std::string source = "int count = 0;\n"
+                               "int add(int count, [int step = 1]) {\n"
+                               "  var total = count + step;\n"
+                               "  for (final e in [1, 2]) { total += e; }\n"
+                               "  final (lo, hi) = (total, count);\n"
+                               "  return lo + hi;\n"
+                               "}\n"
+                               "class C {\n"
+                               "  int n = 0;\n"
+                               "  C(this.n);\n"
+                               "  int scale(int by) { final n = by * this.n; return n; }\n"
+                               "}\n";
+    const auto        count  = Resolve("dart-mode", source, "count", 1); // the parameter, not the top-level
+    REQUIRE(count.has_value());
+    CHECK(count->qualifier == "parameter");
+    CHECK_FALSE(count->scopeIsFile);
+    CHECK(count->occurrences.size() == 3);
+
+    const auto total = Resolve("dart-mode", source, "total", 0);
+    REQUIRE(total.has_value());
+    CHECK(total->occurrences.size() == 3);
+
+    const auto e = Resolve("dart-mode", source, "e in", 0);
+    REQUIRE(e.has_value());
+    CHECK(e->occurrences.size() == 2);
+
+    const auto hi = Resolve("dart-mode", source, "hi", 0);
+    REQUIRE(hi.has_value());
+    CHECK(hi->occurrences.size() == 2);
+
+    // A method's local shadows the field; `this.n` stays the field.
+    const auto local = Resolve("dart-mode", source, "n =", 1);
+    REQUIRE(local.has_value());
+    CHECK(OccurrenceTexts(*local, source) == std::vector<std::string>{"n", "n"});
+
+    const auto by = Resolve("dart-mode", source, "by", 0);
+    REQUIRE(by.has_value());
+    CHECK(by->occurrences.size() == 2);
 }

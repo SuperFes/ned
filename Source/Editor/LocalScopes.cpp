@@ -39,6 +39,8 @@ namespace {
         bool        isDefinition;
         std::string qualifier;
         bool        bindsInParentScope = false;
+        std::string nameSpace;
+        bool        filePrivate = false;
     };
 
     // Index into a scope vector, or nullopt for file level. Used instead of
@@ -64,7 +66,8 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
             continue;
         }
         occurrences.push_back(Occurrence{range, capture.kind == LocalCaptureKind::Definition, capture.qualifier,
-                                         capture.kind == LocalCaptureKind::Definition && capture.bindsInParentScope});
+                                         capture.kind == LocalCaptureKind::Definition && capture.bindsInParentScope,
+                                         capture.nameSpace, capture.kind == LocalCaptureKind::Definition && capture.filePrivate});
     }
     std::sort(scopes.begin(), scopes.end());
     scopes.erase(std::unique(scopes.begin(), scopes.end()), scopes.end());
@@ -132,7 +135,7 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
         if (occurrence.range.second - occurrence.range.first != name.size()) {
             continue;
         }
-        if (bufferText.compare(occurrence.range.first, name.size(), name) != 0) {
+        if (bufferText.compare(occurrence.range.first, name.size(), name) != 0 || occurrence.nameSpace != token->nameSpace) {
             continue;
         }
         const ScopeRef innermost = innermostScopeOf(occurrence.range);
@@ -197,7 +200,8 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
         binding.scope = scopes[**owner];
     }
 
-    bool seenDefinition = false;
+    bool seenDefinition      = false;
+    bool definitionIsPrivate = false;
     for (const Candidate& candidate : sameName) {
         if (resolve(candidate.occurrence->range) != owner) {
             continue;
@@ -206,13 +210,15 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
         if (candidate.occurrence->isDefinition && candidate.scope == *owner &&
             (!seenDefinition || candidate.occurrence->range.first < binding.definition.first)) {
             binding.definition = candidate.occurrence->range;
-            binding.qualifier  = candidate.occurrence->qualifier;
-            seenDefinition     = true;
+            binding.qualifier   = candidate.occurrence->qualifier;
+            definitionIsPrivate = candidate.occurrence->filePrivate;
+            seenDefinition      = true;
         }
     }
     if (!seenDefinition) {
         return std::nullopt; // ownerFor found one; not reachable, but never assumed
     }
+    binding.scopeIsFile = binding.scopeIsFile && !definitionIsPrivate;
     std::sort(binding.occurrences.begin(), binding.occurrences.end());
     binding.occurrences.erase(std::unique(binding.occurrences.begin(), binding.occurrences.end()),
                               binding.occurrences.end());
@@ -276,7 +282,7 @@ std::vector<LocalNode> LocalNodes(std::span<const LocalCapture> captures, std::s
     struct Frame {
         Range                                                  range;
         bool                                                   inherits;
-        std::unordered_map<std::string_view, std::string_view> names;
+        std::unordered_map<std::string, std::string_view>      names; // keyed by namespace, NUL, name
     };
     std::vector<Frame>     stack{Frame{Range{0, bufferText.size()}, false, {}}};
     std::size_t            nextScope = 0;
@@ -297,13 +303,16 @@ std::vector<LocalNode> LocalNodes(std::span<const LocalCapture> captures, std::s
             stack.push_back(Frame{scope.range, scope.inherits, {}});
         }
 
-        const std::string_view name = bufferText.substr(range.first, range.second - range.first);
-        if (!LooksLikeIdentifier(name)) {
+        const std::string_view text = bufferText.substr(range.first, range.second - range.first);
+        if (!LooksLikeIdentifier(text)) {
             continue;
         }
+        std::string name = token->nameSpace;
+        name.push_back('\0');
+        name.append(text);
         if (token->kind == LocalCaptureKind::Definition) {
             Frame& owner = token->bindsInParentScope && stack.size() > 1 ? stack[stack.size() - 2] : stack.back();
-            owner.names.try_emplace(name, token->qualifier);
+            owner.names.try_emplace(std::move(name), token->qualifier);
             if (out.empty() || out.back().range != range) {
                 out.push_back(LocalNode{range, token->qualifier});
             }

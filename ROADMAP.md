@@ -153,12 +153,14 @@ and code reading. Highest stakes first.
         separate from `IndentStyle::width`, which today doubles as both.
 - [ ] **Fish's outline names only functions**: `set`'s variable name follows any number
       of flags, which a query can't skip reliably.
-- [ ] **No locals query for Perl, Elixir or Dart**, so scope-aware rename and local
-      highlighting get no scope information there. None has a usable upstream query:
-      Perl's grammar ships none; nvim-treesitter's Elixir query unrolls pattern depth by
-      hand, binds `^pinned` names inside a match and counts every call target as a
-      variable use; Dart's function signature and body are siblings with no node
-      covering both, so no scope capture can hold the parameters and their uses.
+- [ ] **Locals query limits in Perl, Elixir and Dart** (all ned-authored). Perl: `my $x
+      = $x` resolves the right-hand `$x` to the new variable rather than the outer one
+      (the resolver binds from the declaration's start), `our`/`local` bind nothing, and
+      a lexical `my sub` isn't tracked. Elixir: a module body's variables aren't
+      visible to its functions by design, and a zero-arity call written without parens
+      reads as a variable when a same-named one is bound. Dart: a bare field name
+      inside a method binds nothing (members aren't locals), and a function-typed
+      parameter (`int cb(int x)`) isn't captured.
 - [ ] **change-signature for the remaining languages.** 28 have `signatures` + `calls`
       queries (`sig` column): each describes its own parameters, receivers (`self`,
       `cls`, Lua's colon calls, Nim's dot calls, C#'s extension `this`), keyword-only

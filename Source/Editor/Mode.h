@@ -651,6 +651,14 @@ struct LocalCapture {
     // "parent": it binds in the scope enclosing its innermost one -- Lua's
     // `local function f`, whose name sits inside the function's own scope.
     bool bindsInParentScope = false;
+    // Set by `local.namespace` on the pattern: names in different
+    // namespaces never bind each other even when spelled alike -- Perl's
+    // `$x`, `@x` and `%x`, whose captured name is the bare `x`.
+    std::string nameSpace;
+    // A Definition whose pattern set `local.file-private` true: bound at file
+    // level, it is still invisible to other files (Perl's file-level `my`,
+    // Lua's chunk-level `local`), so it is as safe to rename as any local.
+    bool filePrivate = false;
 };
 
 // Maps a locals.scm capture name (without the leading '@', e.g.
