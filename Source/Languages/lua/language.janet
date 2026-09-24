@@ -19,4 +19,5 @@
    "for ${1:k}, ${2:v} in pairs(${3:t}) do\n    $0\nend"
    "while"
    "while ${1:condition} do\n    $0\nend"}
+ :signature-template "function __ned_sig({}) end"
 }

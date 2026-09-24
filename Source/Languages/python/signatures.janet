@@ -71,3 +71,8 @@
          .
          (identifier) @parameter.receiver.always))))
  (:eq? @_init "__init__"))
+
+#; Parameters after a bare `*` are passed only by name; `/` is no parameter.
+(keyword_separator) @parameter.keyword.marker
+
+(positional_separator) @parameter.skip

@@ -21,6 +21,7 @@
    arguments: (argument_list) @call.arguments) @call.definition
  (:match? @_object "^[A-Z]"))
 
-(keyword_argument) @argument.named
+(keyword_argument
+  name: (identifier) @argument.name) @argument.named
 
 [(list_splat) (dictionary_splat)] @argument.spread

@@ -374,3 +374,183 @@ TEST_CASE("Python change-signature handles self, cls and __init__ receivers", "[
           "Box.square(4, 0)\n"
           "b.area(scale=2)\n");
 }
+
+TEST_CASE("Python change-signature passes keyword-only arguments through by name", "[ChangeSignature]") {
+    const std::string source = "def fetch(url, retries=3, *, timeout=10, verify=True):\n"
+                               "    pass\n"
+                               "fetch(u, 5, timeout=2, verify=False)\n"
+                               "fetch(u)\n"
+                               "fetch(url=u)\n";
+    CHECK(ChangeSignature("python", source, "fetch", "retries, url, *, timeout=10, headers=None") ==
+          "def fetch(retries, url, *, timeout=10, headers=None):\n"
+          "    pass\n"
+          "fetch(5, u, timeout=2)\n"
+          "fetch/*declined*/(u)\n"
+          "fetch/*declined*/(url=u)\n");
+    // Moving a parameter across the `*` changes how every caller has to pass it.
+    CHECK(ChangeSignature("python", source, "fetch", "url, retries=3, timeout=10, *, verify=True").starts_with("declined: "));
+}
+
+TEST_CASE("Ruby change-signature covers methods, keywords and initialize", "[ChangeSignature]") {
+    const std::string source = "class Mailer\n"
+                               "  def initialize(host, port = 25)\n"
+                               "  end\n"
+                               "  def deliver(to, subject, cc: nil, bcc: nil)\n"
+                               "  end\n"
+                               "end\n"
+                               "m = Mailer.new(\"smtp\", 587)\n"
+                               "m.deliver(\"a@b\", \"hi\", bcc: \"x@y\")\n"
+                               "m.deliver \"c@d\", \"yo\"\n";
+    CHECK(ChangeSignature("ruby", source, "deliver", "subject, to, cc: nil, reply_to: nil") ==
+          "class Mailer\n"
+          "  def initialize(host, port = 25)\n"
+          "  end\n"
+          "  def deliver(subject, to, cc: nil, reply_to: nil)\n"
+          "  end\n"
+          "end\n"
+          "m = Mailer.new(\"smtp\", 587)\n"
+          "m.deliver(\"hi\", \"a@b\")\n"
+          "m.deliver /*declined*/\"c@d\", \"yo\"\n");
+    CHECK(ChangeSignature("ruby", source, "initialize", "port = 25, host") ==
+          "class Mailer\n"
+          "  def initialize(port = 25, host)\n"
+          "  end\n"
+          "  def deliver(to, subject, cc: nil, bcc: nil)\n"
+          "  end\n"
+          "end\n"
+          "m = Mailer.new(587, \"smtp\")\n"
+          "m.deliver(\"a@b\", \"hi\", bcc: \"x@y\")\n"
+          "m.deliver \"c@d\", \"yo\"\n");
+}
+
+TEST_CASE("Lua change-signature supplies self through colon calls", "[ChangeSignature]") {
+    const std::string source = "local M = {}\n"
+                               "function M.scale(self, v, factor) end\n"
+                               "function M:shift(dx, dy) end\n"
+                               "local function add(a, b) end\n"
+                               "obj:scale(2, 3)\n"
+                               "M.scale(obj, 4, 5)\n"
+                               "obj:shift(1, 2)\n"
+                               "M.shift(obj, 1, 2)\n"
+                               "add(1, 2)\n";
+    CHECK(ChangeSignature("lua", source, "scale", "self, factor, v") ==
+          "local M = {}\n"
+          "function M.scale(self, factor, v) end\n"
+          "function M:shift(dx, dy) end\n"
+          "local function add(a, b) end\n"
+          "obj:scale(3, 2)\n"
+          "M.scale(obj, 5, 4)\n"
+          "obj:shift(1, 2)\n"
+          "M.shift(obj, 1, 2)\n"
+          "add(1, 2)\n");
+    // A colon-defined function called with a dot passes self explicitly: one
+    // argument more than the list shows, so that call is left alone.
+    CHECK(ChangeSignature("lua", source, "shift", "dy, dx") ==
+          "local M = {}\n"
+          "function M.scale(self, v, factor) end\n"
+          "function M:shift(dy, dx) end\n"
+          "local function add(a, b) end\n"
+          "obj:scale(2, 3)\n"
+          "M.scale(obj, 4, 5)\n"
+          "obj:shift(2, 1)\n"
+          "M.shift/*declined*/(obj, 1, 2)\n"
+          "add(1, 2)\n");
+}
+
+TEST_CASE("Scala change-signature covers methods, curried lists and class constructors", "[ChangeSignature]") {
+    const std::string source = "def add(a: Int, b: Int = 2): Int = a + b\n"
+                               "def curry(a: Int, b: Int)(c: Int): Int = a\n"
+                               "class Box(w: Int, h: Int)\n"
+                               "add(1, 3); add(1, b = 4); curry(1, 2)(3); new Box(5, 6); Box(7, 8)\n";
+    CHECK(ChangeSignature("scala", source, "add", "b: Int = 2, a: Int") ==
+          "def add(b: Int = 2, a: Int): Int = a + b\n"
+          "def curry(a: Int, b: Int)(c: Int): Int = a\n"
+          "class Box(w: Int, h: Int)\n"
+          "add(3, 1); add/*declined*/(1, b = 4); curry(1, 2)(3); new Box(5, 6); Box(7, 8)\n");
+    CHECK(ChangeSignature("scala", source, "curry", "b: Int, a: Int") ==
+          "def add(a: Int, b: Int = 2): Int = a + b\n"
+          "def curry(b: Int, a: Int)(c: Int): Int = a\n"
+          "class Box(w: Int, h: Int)\n"
+          "add(1, 3); add(1, b = 4); curry(2, 1)(3); new Box(5, 6); Box(7, 8)\n");
+    CHECK(ChangeSignature("scala", source, "Box", "h: Int, w: Int") ==
+          "def add(a: Int, b: Int = 2): Int = a + b\n"
+          "def curry(a: Int, b: Int)(c: Int): Int = a\n"
+          "class Box(h: Int, w: Int)\n"
+          "add(1, 3); add(1, b = 4); curry(1, 2)(3); new Box(6, 5); Box(8, 7)\n");
+}
+
+TEST_CASE("R change-signature reads named commas and declines named calls", "[ChangeSignature]") {
+    const std::string source = "scale <- function(v, factor = 2) v * factor\n"
+                               "scale(1, 3)\n"
+                               "scale(v = 1)\n"
+                               "stats::scale(4, 5)\n";
+    CHECK(ChangeSignature("r", source, "scale", "factor = 2, v") ==
+          "scale <- function(factor = 2, v) v * factor\n"
+          "scale(3, 1)\n"
+          "scale/*declined*/(v = 1)\n"
+          "stats::scale(5, 4)\n");
+}
+
+TEST_CASE("GDScript change-signature covers plain and attribute calls", "[ChangeSignature]") {
+    const std::string source = "func move(dx: int, dy := 0):\n"
+                               "\tpass\n"
+                               "func _ready():\n"
+                               "\tmove(1, 2)\n"
+                               "\tplayer.move(3, 4)\n";
+    CHECK(ChangeSignature("gdscript", source, "move", "dy := 0, dx: int, speed = 1.0") ==
+          "func move(dy := 0, dx: int, speed = 1.0):\n"
+          "\tpass\n"
+          "func _ready():\n"
+          "\tmove(2, 1, 1.0)\n"
+          "\tplayer.move(4, 3, 1.0)\n");
+}
+
+TEST_CASE("Dart change-signature reads optional groups and keeps named arguments by name", "[ChangeSignature]") {
+    const std::string source = "int scale(int v, [int factor = 2]) => v * factor;\n"
+                               "void send(String to, {String? cc, int retries = 3}) {}\n"
+                               "class Box { Box(this.w, this.h); int w; int h; }\n"
+                               "void main() {\n"
+                               "  scale(1, 3); scale(4); m.scale(5, 6);\n"
+                               "  send('a', retries: 1, cc: 'b');\n"
+                               "  var b = Box(1, 2); var c = new Box(3, 4); var d = const Box(5, 6);\n"
+                               "}\n";
+    CHECK(ChangeSignature("dart", source, "scale", "int factor, int v") ==
+          "int scale(int factor, int v) => v * factor;\n"
+          "void send(String to, {String? cc, int retries = 3}) {}\n"
+          "class Box { Box(this.w, this.h); int w; int h; }\n"
+          "void main() {\n"
+          "  scale(3, 1); scale/*declined*/(4); m.scale(6, 5);\n"
+          "  send('a', retries: 1, cc: 'b');\n"
+          "  var b = Box(1, 2); var c = new Box(3, 4); var d = const Box(5, 6);\n"
+          "}\n");
+    // Dropping `cc` drops its named argument; `urgent` needs nothing at the call.
+    CHECK(ChangeSignature("dart", source, "send", "String to, {int retries = 3, bool urgent = false}") ==
+          "int scale(int v, [int factor = 2]) => v * factor;\n"
+          "void send(String to, {int retries = 3, bool urgent = false}) {}\n"
+          "class Box { Box(this.w, this.h); int w; int h; }\n"
+          "void main() {\n"
+          "  scale(1, 3); scale(4); m.scale(5, 6);\n"
+          "  send('a', retries: 1);\n"
+          "  var b = Box(1, 2); var c = new Box(3, 4); var d = const Box(5, 6);\n"
+          "}\n");
+    CHECK(ChangeSignature("dart", source, "Box", "this.h, this.w") ==
+          "int scale(int v, [int factor = 2]) => v * factor;\n"
+          "void send(String to, {String? cc, int retries = 3}) {}\n"
+          "class Box { Box(this.h, this.w); int w; int h; }\n"
+          "void main() {\n"
+          "  scale(1, 3); scale(4); m.scale(5, 6);\n"
+          "  send('a', retries: 1, cc: 'b');\n"
+          "  var b = Box(2, 1); var c = new Box(4, 3); var d = const Box(6, 5);\n"
+          "}\n");
+}
+
+TEST_CASE("CUDA, HLSL, Objective-C and GLSL change-signature borrow C and C++'s queries", "[ChangeSignature]") {
+    const std::string c       = "float mix(float a, float b) { return a + b; }\n"
+                                "void run(void) { mix(1.0, 2.0); }\n";
+    const std::string swapped = "float mix(float b, float a) { return a + b; }\n"
+                                "void run(void) { mix(2.0, 1.0); }\n";
+    for (const std::string_view language : {"cuda", "hlsl", "objc", "glsl"}) {
+        INFO(language);
+        CHECK(ChangeSignature(language, c, "mix", "float b, float a") == swapped);
+    }
+}

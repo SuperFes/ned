@@ -516,6 +516,10 @@ struct SignatureParameter {
     bool        isVariadic       = false;
     // @parameter.receiver / .receiver.any / .receiver.always.
     ParameterReceiver receiver = ParameterReceiver::None;
+    // Passed only by name, never by position: Ruby's `k:`, Dart's `{named}`,
+    // Python's after a bare `*` (@parameter.keyword, or every parameter after
+    // a @parameter.keyword.marker).
+    bool isKeyword = false;
 };
 
 // change-signature follow-up: one function-like definition or bodyless
@@ -565,9 +569,12 @@ struct CallArgument {
     std::size_t endByte;
     // False for an argument bound by name or spread from a collection
     // (calls.janet's @argument.named/@argument.spread): its position says
-    // nothing about which parameter it fills, so the call can't be
-    // rewritten by position.
-    bool positional = true;
+    // nothing about which parameter it fills. A named one carries the name
+    // (@argument.name), which is how a keyword parameter's argument is
+    // kept, dropped or refused.
+    bool        positional    = true;
+    std::size_t nameStartByte = 0;
+    std::size_t nameEndByte   = 0;
 };
 
 // What a call's object supplies: Instance for `x.m(...)`, Type for

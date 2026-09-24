@@ -41,17 +41,30 @@ MappingResult BuildPositionMapping(std::string_view oldText, const std::vector<S
         return {.declined = true, .declineReason = "a variadic parameter can't be reordered, dropped or defaulted"};
     }
 
+    // Positional parameters are matched by place; keyword-only ones by name
+    // alone, so they are set aside first.
+    std::vector<SignatureParameter> oldPositional;
+    std::vector<std::string_view>   oldKeywords;
+    for (const SignatureParameter& parameter : oldParams) {
+        if (parameter.isKeyword) {
+            oldKeywords.push_back(Name(oldText, parameter));
+        }
+        else {
+            oldPositional.push_back(parameter);
+        }
+    }
+
     // Receivers lead the old list, and the new one keeps them first under
     // the same names. Whether a parameter is a receiver is the old
     // signature's to say: the new list was parsed out of context (a Python
     // `self` in a module-level wrapper is just a parameter).
     std::vector<ParameterReceiver> receivers;
-    while (receivers.size() < oldParams.size() && oldParams[receivers.size()].receiver != ParameterReceiver::None) {
-        receivers.push_back(oldParams[receivers.size()].receiver);
+    while (receivers.size() < oldPositional.size() && oldPositional[receivers.size()].receiver != ParameterReceiver::None) {
+        receivers.push_back(oldPositional[receivers.size()].receiver);
     }
     const auto receiverMoved = [&] {
-        for (std::size_t i = receivers.size(); i < oldParams.size(); ++i) {
-            if (oldParams[i].receiver != ParameterReceiver::None) {
+        for (std::size_t i = receivers.size(); i < oldPositional.size(); ++i) {
+            if (oldPositional[i].receiver != ParameterReceiver::None) {
                 return true; // a receiver after an ordinary parameter -- nothing to anchor on
             }
         }
@@ -59,7 +72,7 @@ MappingResult BuildPositionMapping(std::string_view oldText, const std::vector<S
             return true;
         }
         for (std::size_t i = 0; i < receivers.size(); ++i) {
-            if (Name(oldText, oldParams[i]) != Name(newText, newParams[i])) {
+            if (newParams[i].isKeyword || Name(oldText, oldPositional[i]) != Name(newText, newParams[i])) {
                 return true;
             }
         }
@@ -76,11 +89,11 @@ MappingResult BuildPositionMapping(std::string_view oldText, const std::vector<S
     // meant.
     std::unordered_map<std::string_view, std::size_t> oldIndexByName;
     std::unordered_map<std::string_view, bool>         oldNameIsAmbiguous;
-    for (std::size_t i = 0; i < oldParams.size(); ++i) {
-        if (oldParams[i].nameStartByte == oldParams[i].nameEndByte) {
+    for (std::size_t i = 0; i < oldPositional.size(); ++i) {
+        if (oldPositional[i].nameStartByte == oldPositional[i].nameEndByte) {
             continue; // nameless (an abstract declarator) -- can never be Kept, simply dropped
         }
-        const std::string_view name = Name(oldText, oldParams[i]);
+        const std::string_view name = Name(oldText, oldPositional[i]);
         if (oldIndexByName.contains(name)) {
             oldNameIsAmbiguous[name] = true;
             continue;
@@ -92,10 +105,13 @@ MappingResult BuildPositionMapping(std::string_view oldText, const std::vector<S
             oldIndexByName.erase(name);
         }
     }
+    const auto isOldKeyword = [&](std::string_view name) {
+        return std::find(oldKeywords.begin(), oldKeywords.end(), name) != oldKeywords.end();
+    };
 
+    MappingResult                              result;
     std::unordered_map<std::string_view, bool> newNameSeen;
-    std::vector<ParamOrigin>                    origins;
-    origins.reserve(newParams.size());
+    result.origins.reserve(newParams.size());
     for (const SignatureParameter& parameter : newParams) {
         if (parameter.nameStartByte == parameter.nameEndByte) {
             return {.declined = true, .declineReason = "new parameter list has an unnamed parameter"};
@@ -106,30 +122,71 @@ MappingResult BuildPositionMapping(std::string_view oldText, const std::vector<S
         }
         newNameSeen[name] = true;
 
+        if (parameter.isKeyword != isOldKeyword(name) && (isOldKeyword(name) || oldIndexByName.contains(name))) {
+            return {.declined      = true,
+                    .declineReason = "\"" + std::string(name) + "\" can't move between positional and keyword-only"};
+        }
+        if (parameter.isKeyword) {
+            if (!isOldKeyword(name) && !parameter.hasDefaultValue) {
+                return {.declined      = true,
+                        .declineReason = "new parameter \"" + std::string(name) + "\" needs a default value"};
+            }
+            if (isOldKeyword(name)) {
+                result.keptKeywords.emplace_back(name);
+            }
+            continue;
+        }
+
         const auto found = oldIndexByName.find(name);
         if (found != oldIndexByName.end()) {
-            origins.push_back(ParamOrigin{.kind = ParamOriginKind::Kept, .oldIndex = found->second});
+            result.origins.push_back(ParamOrigin{.kind = ParamOriginKind::Kept, .oldIndex = found->second});
             continue;
         }
         if (!parameter.hasDefaultValue) {
             return {.declined = true,
                    .declineReason = "new parameter \"" + std::string(name) + "\" needs a default value"};
         }
-        origins.push_back(ParamOrigin{.kind                = ParamOriginKind::New,
-                                      .newDefaultStartByte = parameter.defaultStartByte,
-                                      .newDefaultEndByte   = parameter.defaultEndByte});
+        result.origins.push_back(ParamOrigin{.kind                = ParamOriginKind::New,
+                                             .newDefaultStartByte = parameter.defaultStartByte,
+                                             .newDefaultEndByte   = parameter.defaultEndByte});
     }
-
-    return {.declined = false, .origins = std::move(origins), .oldArity = oldParams.size(), .receivers = std::move(receivers)};
+    for (const std::string_view name : oldKeywords) {
+        if (!newNameSeen.contains(name)) {
+            result.droppedKeywords.emplace_back(name);
+        }
+    }
+    result.oldArity  = oldPositional.size();
+    result.receivers = std::move(receivers);
+    return result;
 }
 
 ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector<CallArgument>& oldArgs,
                                     std::string_view newDefaultText, const MappingResult& mapping, CallReceiver receiver) {
+    // Positional arguments are realigned; a named one for a keyword
+    // parameter follows them as written, or goes with its parameter.
+    std::vector<CallArgument>     positional;
+    std::vector<std::string_view> named;
     for (const CallArgument& argument : oldArgs) {
-        if (!argument.positional) {
-            return {.declined = true, .declineReason = "call site passes an argument by name or spreads one"};
+        if (argument.positional) {
+            positional.push_back(argument);
+            continue;
         }
+        if (argument.nameStartByte == argument.nameEndByte) {
+            return {.declined = true, .declineReason = "call site spreads its arguments"};
+        }
+        const std::string_view name = callText.substr(argument.nameStartByte, argument.nameEndByte - argument.nameStartByte);
+        const auto             in   = [name](const std::vector<std::string>& names) {
+            return std::find(names.begin(), names.end(), name) != names.end();
+        };
+        if (in(mapping.droppedKeywords)) {
+            continue;
+        }
+        if (!in(mapping.keptKeywords)) {
+            return {.declined = true, .declineReason = "call site passes an argument by name"};
+        }
+        named.push_back(callText.substr(argument.startByte, argument.endByte - argument.startByte));
     }
+
     // The leading receivers this call's object supplies.
     std::size_t implicit = 0;
     for (const ParameterReceiver parameter : mapping.receivers) {
@@ -141,31 +198,35 @@ ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector
         }
         ++implicit;
     }
-    if (oldArgs.size() > mapping.oldArity - implicit) {
+    if (positional.size() > mapping.oldArity - implicit) {
         return {.declined = true, .declineReason = "call site supplies more arguments than the old signature has parameters"};
     }
     std::string result;
+    const auto  append = [&result](std::string_view piece) {
+        if (!result.empty()) {
+            result += ", ";
+        }
+        result += piece;
+    };
     for (std::size_t i = 0; i < mapping.origins.size(); ++i) {
         const ParamOrigin& origin = mapping.origins[i];
         if (i < implicit) {
             continue; // a receiver the object supplies, kept in place
         }
-        std::string_view piece;
         if (origin.kind == ParamOriginKind::Kept) {
-            if (origin.oldIndex - implicit >= oldArgs.size()) {
+            if (origin.oldIndex - implicit >= positional.size()) {
                 return {.declined = true,
                        .declineReason = "call site supplies fewer arguments than the old signature has parameters"};
             }
-            const CallArgument& argument = oldArgs[origin.oldIndex - implicit];
-            piece                        = callText.substr(argument.startByte, argument.endByte - argument.startByte);
+            const CallArgument& argument = positional[origin.oldIndex - implicit];
+            append(callText.substr(argument.startByte, argument.endByte - argument.startByte));
         }
         else {
-            piece = newDefaultText.substr(origin.newDefaultStartByte, origin.newDefaultEndByte - origin.newDefaultStartByte);
+            append(newDefaultText.substr(origin.newDefaultStartByte, origin.newDefaultEndByte - origin.newDefaultStartByte));
         }
-        if (!result.empty()) {
-            result += ", ";
-        }
-        result += piece;
+    }
+    for (const std::string_view piece : named) {
+        append(piece);
     }
     return {.declined = false, .argumentListText = std::move(result)};
 }

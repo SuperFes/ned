@@ -148,13 +148,17 @@ and code reading. Highest stakes first.
       hand, binds `^pinned` names inside a match and counts every call target as a
       variable use; Dart's function signature and body are siblings with no node
       covering both, so no scope capture can hold the parameters and their uses.
-- [ ] **change-signature for the remaining languages.** C, C++, Go, Rust, Java, Kotlin,
-      C#, JavaScript, TypeScript/TSX, Python and PHP have `signatures` + `calls` queries
-      (`sig` column); each language's queries describe its parameters, receivers and
-      named/spread arguments, and `:signature-template` parses the retyped list. Known
-      misses: a call reaching a constructor through its parent (`parent::__construct`,
-      `super().__init__`, `super(...)`) names no class, so it isn't found; a C# extension
-      method called statically with its trailing defaults omitted is read as a member call.
+- [ ] **change-signature for the remaining languages.** 22 have `signatures` + `calls`
+      queries (`sig` column): each describes its own parameters, receivers (`self`,
+      `cls`, Lua's colon calls, C#'s extension `this`), keyword-only parameters and
+      named/spread arguments, and `:signature-template` parses the retyped list. Not
+      yet: Swift (no parameter-list node, and its labels are mandatory at every call),
+      and the languages whose calls have no parenthesized argument list after the
+      callee -- the Lisps, Elixir's pipes, Haskell/OCaml/F#'s curried application.
+      Known misses: a call reaching a constructor through its parent
+      (`parent::__construct`, `super().__init__`, `super(...)`) names no class, so it
+      isn't found; a C# extension method called statically with its trailing defaults
+      omitted is read as a member call.
 - [ ] **Bundled formatter styles exist for PHP only.** Candidates with a single canonical
       guide: Go (gofmt), Rust (rustfmt), Kotlin (official conventions), C# (.NET
       conventions), JavaScript/TypeScript (Prettier). A bundled style changes on-save

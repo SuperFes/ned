@@ -75,10 +75,16 @@ struct MappingResult {
     bool                      declined = false;
     std::string               declineReason; // set only when declined
     std::vector<ParamOrigin> origins;        // one per NEW parameter, in order; valid only when !declined
-    // The old parameter count, and the receivers leading both lists (the
-    // mapping declines unless the new list keeps them first and unchanged).
+    // The old positional parameter count, and the receivers leading both
+    // lists (the mapping declines unless the new list keeps them first and
+    // unchanged).
     std::size_t                    oldArity = 0;
     std::vector<ParameterReceiver> receivers;
+    // Keyword-only parameters (SignatureParameter::isKeyword) take no place
+    // in `origins`: a call's argument for one the new list keeps passes
+    // through as written, and for one it drops is removed.
+    std::vector<std::string> keptKeywords;
+    std::vector<std::string> droppedKeywords;
 };
 
 // oldText/newText are whatever text oldParams/newParams's own byte ranges

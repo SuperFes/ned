@@ -6,5 +6,8 @@
  # queries mean nothing for a shader, and tags.janet stays HLSL's own.
  :queries {:highlights ["cpp/highlights.janet"]
            :locals ["cpp/locals.janet"]
-           :indents ["cpp/indents.janet"]}
+           :indents ["cpp/indents.janet"]
+           :signatures ["cpp/signatures.janet"]
+           :calls ["cpp/calls.janet"]}
+ :signature-template "void __ned_sig({}) {}"
 }

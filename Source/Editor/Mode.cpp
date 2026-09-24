@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -1681,7 +1682,26 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             // declarator walk. Several patterns may describe one parameter
             // (its name in one, its default in another): they merge.
             std::map<std::pair<std::size_t, std::size_t>, SignatureParameter> described;
+            // Children standing for several parameters (Dart's `[...]`/`{...}`),
+            // read through as if their parameters were the list's own.
+            std::set<std::pair<std::size_t, std::size_t>> groups;
+            // Python's bare `*`: no parameter itself, and the ones after it
+            // are keyword-only.
+            std::set<std::pair<std::size_t, std::size_t>> keywordMarkers;
+            // In the list but no parameter (Python's `/`).
+            std::set<std::pair<std::size_t, std::size_t>> skipped;
             for (const grammar::QueryMatch& match : matches) {
+                for (const grammar::QueryMatchCapture& capture : match.captures) {
+                    if (capture.name == "parameter.group") {
+                        groups.emplace(capture.startByte, capture.endByte);
+                    }
+                    else if (capture.name == "parameter.keyword.marker") {
+                        keywordMarkers.emplace(capture.startByte, capture.endByte);
+                    }
+                    else if (capture.name == "parameter.skip") {
+                        skipped.emplace(capture.startByte, capture.endByte);
+                    }
+                }
                 std::optional<SignatureParameter> parameter;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
                     static constexpr std::pair<std::string_view, ParameterReceiver> kWholeParameter[] = {
@@ -1689,13 +1709,15 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         {"parameter.variadic", ParameterReceiver::None},
                         {"parameter.receiver", ParameterReceiver::Instance},
                         {"parameter.receiver.any", ParameterReceiver::Any},
-                        {"parameter.receiver.always", ParameterReceiver::Always}};
+                        {"parameter.receiver.always", ParameterReceiver::Always},
+                        {"parameter.keyword", ParameterReceiver::None}};
                     for (const auto& [name, receiver] : kWholeParameter) {
                         if (capture.name == name) {
                             parameter = SignatureParameter{.startByte  = capture.startByte,
                                                            .endByte    = capture.endByte,
                                                            .isVariadic = name == "parameter.variadic",
-                                                           .receiver   = receiver};
+                                                           .receiver   = receiver,
+                                                           .isKeyword  = name == "parameter.keyword"};
                         }
                     }
                 }
@@ -1726,6 +1748,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         merged.defaultEndByte   = parameter->defaultEndByte;
                     }
                     merged.isVariadic = merged.isVariadic || parameter->isVariadic;
+                    merged.isKeyword  = merged.isKeyword || parameter->isKeyword;
                     merged.receiver   = std::max(merged.receiver, parameter->receiver);
                 }
             }
@@ -1791,14 +1814,29 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     // change-signature can drop but never match. A grammar that
                     // writes a default as the parameter's sibling (Kotlin's
                     // `b: Int = 2`) gives it to the parameter before the `=`.
-                    bool defaultFollows = false;
-                    parameterList.ForEachChild([&](const grammar::Node& child) {
+                    bool                                      defaultFollows = false;
+                    bool                                      keywordOnly    = false;
+                    std::function<void(const grammar::Node&)> visit          = [&](const grammar::Node& child) {
                         if (child.IsExtra()) {
                             return;
                         }
                         if (!child.IsNamed()) {
                             defaultFollows = child.Type() == "=" && !marker.parameters.empty();
                             return;
+                        }
+                        if (groups.contains({child.StartByte(), child.EndByte()})) {
+                            child.ForEachChild(visit);
+                            return;
+                        }
+                        if (keywordMarkers.contains({child.StartByte(), child.EndByte()})) {
+                            keywordOnly = true;
+                            return;
+                        }
+                        if (skipped.contains({child.StartByte(), child.EndByte()})) {
+                            return;
+                        }
+                        if (bufferText.substr(child.StartByte(), child.EndByte() - child.StartByte()) == ",") {
+                            return; // a grammar that names its commas (R)
                         }
                         if (defaultFollows) {
                             defaultFollows               = false;
@@ -1814,7 +1852,9 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         marker.parameters.push_back(found != described.end()
                                                         ? found->second
                                                         : SignatureParameter{.startByte = child.StartByte(), .endByte = child.EndByte()});
-                    });
+                        marker.parameters.back().isKeyword = marker.parameters.back().isKeyword || keywordOnly;
+                    };
+                    parameterList.ForEachChild(visit);
                 }
                 markers.push_back(std::move(marker));
             }
@@ -1856,13 +1896,22 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             const std::vector<grammar::QueryMatch> matches =
                 callMatchCache->Reconcile(*callQuery, tree, bufferText, sharedParse->LastEdit());
 
-            // Arguments bound by name or spread (@argument.named/.spread).
-            std::set<std::pair<std::size_t, std::size_t>> nonPositional;
+            // Arguments bound by name or spread (@argument.named/.spread), with
+            // a named one's name (@argument.name) where the query gives it.
+            std::map<std::pair<std::size_t, std::size_t>, std::pair<std::size_t, std::size_t>> nonPositional;
             for (const grammar::QueryMatch& match : matches) {
+                std::optional<std::pair<std::size_t, std::size_t>> argument;
+                std::pair<std::size_t, std::size_t>                name{0, 0};
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (capture.name == "argument.named" || capture.name == "argument.spread") {
-                        nonPositional.emplace(capture.startByte, capture.endByte);
+                        argument.emplace(capture.startByte, capture.endByte);
                     }
+                    else if (capture.name == "argument.name") {
+                        name = {capture.startByte, capture.endByte};
+                    }
+                }
+                if (argument) {
+                    nonPositional.insert_or_assign(*argument, name);
                 }
             }
 
@@ -1911,12 +1960,15 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 marker.argumentsEndByte   = argumentsEnd;
                 for (std::size_t i = 0; i < argumentList.ChildCount(); ++i) {
                     const grammar::Node child = argumentList.Child(i);
-                    if (!child.IsNamed() || child.IsExtra()) {
+                    if (!child.IsNamed() || child.IsExtra() || bufferText.substr(child.StartByte(), child.EndByte() - child.StartByte()) == ",") {
                         continue;
                     }
-                    marker.arguments.push_back(CallArgument{.startByte  = child.StartByte(),
-                                                            .endByte    = child.EndByte(),
-                                                            .positional = !nonPositional.contains({child.StartByte(), child.EndByte()})});
+                    const auto named = nonPositional.find({child.StartByte(), child.EndByte()});
+                    marker.arguments.push_back(CallArgument{.startByte     = child.StartByte(),
+                                                            .endByte       = child.EndByte(),
+                                                            .positional    = named == nonPositional.end(),
+                                                            .nameStartByte = named != nonPositional.end() ? named->second.first : 0,
+                                                            .nameEndByte   = named != nonPositional.end() ? named->second.second : 0});
                 }
                 // Without parens (Ruby's `f 1, 2`) the list can't be rewritten
                 // in place; a bare `f` has nothing to rewrite at all.
