@@ -1199,10 +1199,11 @@ void BufferView::RequestLspFormatThenSaveBuffer() {
     text::Buffer&       buffer     = activeBuffer_.Get();
     text::Buffer* const bufferPtr  = &buffer;
     const std::size_t   generation = lspFormatOnSaveRequest_.Begin();
+    const bool          closeAfter = std::exchange(closeWindowAfterLspSave_, false);
     statusMessage_                 = "Formatting...";
     lspManager_->RequestFormatting(
         buffer,
-        [this, bufferPtr, generation](std::optional<std::vector<editor::lsp::WorkspaceTextEdit>> edits) {
+        [this, bufferPtr, generation, closeAfter](std::optional<std::vector<editor::lsp::WorkspaceTextEdit>> edits) {
             if (lspFormatOnSaveRequest_.IsStale(generation) || bufferPtr != &activeBuffer_.Get()) {
                 return; // superseded, or the active buffer changed under us
             }
@@ -1211,12 +1212,18 @@ void BufferView::RequestLspFormatThenSaveBuffer() {
             if (edits && !edits->empty()) {
                 editor::lsp::ApplyWorkspaceTextEdits(buffer, *edits); // one undo group -- see Step 0's fix
             }
+            bool wrote = false;
             try {
                 editor::WriteBufferToDisk(buffer);
                 statusMessage_ = "Wrote " + buffer.Name() + (formatFailed ? " (LSP format failed)" : "");
+                wrote          = true;
             }
             catch (const std::exception& e) {
                 statusMessage_ = e.what();
+            }
+            if (wrote && closeAfter) {
+                CloseVimWindow(false); // may destroy *this* -- nothing after
+                return;
             }
             // Mirrors RunCommandAndHandleOutcome's own post-command refresh,
             // which the synchronous saveBufferBody path gets for free but

@@ -131,11 +131,6 @@ and code reading. Highest stakes first.
       settings for that buffer (`Buffer::Conventions`). Left:
   - [ ] Settled once, at open: a save-as to a path under a different `.editorconfig`, or
         an external reload that reformats the file, keeps the old settings.
-  - [ ] **Vim's `:w`/`ZZ`/`:wq` bypass save-buffer** (`Vim/Engine.cpp` calls
-        `Buffer::Save()` directly), so they ignore the file's conventions and the
-        global save settings alike -- no line-ending policy, no format-on-save, no
-        backup. Needs a save intent the host turns into save-buffer, like
-        `PendingIntent::CloseWindow`.
   - [ ] **A UTF-8 byte order mark doesn't survive a round trip.** Loading strips it and
         saving never writes one back unless `.editorconfig` says `charset = utf-8-bom`,
         so opening and saving a BOM file silently drops it. Remembering it at load

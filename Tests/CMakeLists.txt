@@ -95,6 +95,7 @@ add_executable(ned_tests
             BufferViewBlameGutterTest.cpp
             BufferViewDiffGutterTest.cpp
             BufferViewHunkNavigationTest.cpp
+            BufferViewVimSaveTest.cpp
             BufferViewIndentGuideDepthTest.cpp
             BufferViewTabGlyphTest.cpp
             BufferViewStickyScrollTest.cpp

@@ -1552,6 +1552,14 @@ class BufferView : public Widget {
     // window-management caution as DispatchChordNormally's own doc comment) -- always
     // this call's own return, nothing after.
     bool HandleVimKey(const editor::KeyChord& chord);
+    // Vim's quit and window-close, shared by HandleVimKey and a :wq whose
+    // save waited on LSP formatting. CloseVimWindow may destroy *this* when it
+    // isn't the last window -- nothing after it.
+    void QuitFromVim(bool forced);
+    void CloseVimWindow(bool forced);
+    // A :wq/ZZ whose save went to RequestLspFormatThenSaveBuffer: that request
+    // takes the flag and closes the window once the write lands.
+    bool closeWindowAfterLspSave_ = false;
     // KeymapStyle::Modern follow-up: called instead of DispatchChordNormally
     // from the same Normal-mode tail, when editor::GetKeymapStyle() ==
     // KeymapStyle::Modern and dispatcher_ isn't mid some other layer's

@@ -243,56 +243,35 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
         }
     }
 
-    // vim-quit-window-semantics follow-up: real vim's ":q"/"ZZ"/"ZQ" close the current
-    // WINDOW, not a buffer -- routing them through RequestCloseBuffer's Emacs-style
-    // kill-buffer (whose own "no buffers left" fallback conjures a fresh *scratch*, see
-    // its doc comment) is exactly why plain ":q" used to never exit ned at all: closing
-    // the last buffer just replaced it with another one, forever. A forced variant
-    // (":q!"/"ZQ", ":qa!") skips confirmation outright; the unforced ones reuse the
-    // "quit" command (C-x C-c) so a hidden, unsaved buffer elsewhere still blocks it.
     const editor::vim::PendingIntent intent  = vimEngine_.TakePendingIntent();
-    const auto                       quitApp = [this] {
-        editor::CommandContext quitContext = MakeContext();
-        RunCommandAndHandleOutcome(quitContext, [&] {
-            dispatcher_.Registry().Invoke("quit", quitContext);
+    const bool                       closing = intent == editor::vim::PendingIntent::CloseWindow;
+    const bool                       saved   = vimEngine_.TakePendingSave();
+    if (saved) {
+        // :w/:wq/ZZ save the way C-x C-s does. :wq only closes once the save
+        // has landed or is being written; a confirmation it stopped at, or a
+        // failure, leaves the window open.
+        text::Buffer&          buffer      = activeBuffer_.Get();
+        editor::CommandContext saveContext = MakeContext();
+        closeWindowAfterLspSave_           = closing;
+        RunCommandAndHandleOutcome(saveContext, [&] {
+            dispatcher_.Registry().Invoke("save-buffer", saveContext);
             return true;
         });
-    };
-    // Same "Shutting down..." final-frame message ConfirmQuitPrompt's own onConfirm
-    // leaves -- EventLoop::Run's post-Exit() repaint is what shows it (see that
-    // prompt's doc comment); the forced paths bypass "quit" entirely, so nothing else
-    // would set it.
-    const auto forceQuitApp = [this] {
-        statusMessage_ = "Shutting down...";
-        if (eventLoop_) {
-            eventLoop_->Exit();
-        }
-    };
-    if (intent == editor::vim::PendingIntent::Quit || intent == editor::vim::PendingIntent::QuitForced) {
-        if (intent == editor::vim::PendingIntent::QuitForced) {
-            forceQuitApp();
-        }
-        else {
-            quitApp();
-        }
-        return true;
-    }
-    if (intent == editor::vim::PendingIntent::CloseWindow || intent == editor::vim::PendingIntent::CloseWindowForced) {
-        const bool onlyWindow = !isOnlyWindowQuery_ || isOnlyWindowQuery_();
-        if (!onlyWindow) {
-            if (onWindowRequest_) {
-                onWindowRequest_(editor::InteractiveRequest::DeleteWindow); // may destroy *this* -- nothing after
-            }
+        const bool deferredToLsp = closing && !closeWindowAfterLspSave_;
+        closeWindowAfterLspSave_ = false;
+        if (closing && (deferredToLsp || (buffer.Modified() && !buffer.IsSaving()))) {
             return true;
         }
-        if (intent == editor::vim::PendingIntent::CloseWindowForced) {
-            forceQuitApp();
-        }
-        else {
-            quitApp();
-        }
+    }
+    if (intent == editor::vim::PendingIntent::Quit || intent == editor::vim::PendingIntent::QuitForced) {
+        QuitFromVim(intent == editor::vim::PendingIntent::QuitForced);
         return true;
     }
+    if (closing || intent == editor::vim::PendingIntent::CloseWindowForced) {
+        CloseVimWindow(intent == editor::vim::PendingIntent::CloseWindowForced); // may destroy *this*
+        return true;
+    }
+
     // vim-window-commands follow-up: ":sp"/":vs"/":on" and the native C-w s/v/o/w
     // prefix -- same "signal intent, host UI acts on it" forward as the ordinary
     // InteractiveRequest::SplitBelow/SplitRight/DeleteOtherWindows/OtherWindow path
@@ -351,7 +330,7 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
     else if (vimEngine_.CurrentMode() != editor::vim::Mode::Normal) {
         statusMessage_ = "-- " + vimEngine_.ModeIndicator() + " --";
     }
-    else {
+    else if (!saved) { // a save leaves its own "Wrote ..." or error
         statusMessage_.clear();
     }
     ClampPointToNarrowing();
@@ -363,6 +342,43 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
     }
     viewport_.ScrollToShowPoint();
     return true;
+}
+
+// vim-quit-window-semantics follow-up: real vim's ":q"/"ZZ"/"ZQ" close the current
+// WINDOW, not a buffer -- routing them through RequestCloseBuffer's Emacs-style
+// kill-buffer (whose own "no buffers left" fallback conjures a fresh *scratch*, see
+// its doc comment) is exactly why plain ":q" used to never exit ned at all: closing
+// the last buffer just replaced it with another one, forever. A forced variant
+// (":q!"/"ZQ", ":qa!") skips confirmation outright; the unforced ones reuse the
+// "quit" command (C-x C-c) so a hidden, unsaved buffer elsewhere still blocks it.
+void BufferView::QuitFromVim(bool forced) {
+    if (forced) {
+        // Same "Shutting down..." final-frame message ConfirmQuitPrompt's own onConfirm
+        // leaves -- EventLoop::Run's post-Exit() repaint is what shows it (see that
+        // prompt's doc comment); the forced path bypasses "quit" entirely, so nothing
+        // else would set it.
+        statusMessage_ = "Shutting down...";
+        if (eventLoop_) {
+            eventLoop_->Exit();
+        }
+        return;
+    }
+    editor::CommandContext quitContext = MakeContext();
+    RunCommandAndHandleOutcome(quitContext, [&] {
+        dispatcher_.Registry().Invoke("quit", quitContext);
+        return true;
+    });
+}
+
+void BufferView::CloseVimWindow(bool forced) {
+    const bool onlyWindow = !isOnlyWindowQuery_ || isOnlyWindowQuery_();
+    if (!onlyWindow) {
+        if (onWindowRequest_) {
+            onWindowRequest_(editor::InteractiveRequest::DeleteWindow); // may destroy *this* -- nothing after
+        }
+        return;
+    }
+    QuitFromVim(forced);
 }
 
 void BufferView::HandlePrefixArgumentKey(const editor::KeyChord& chord) {

@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iterator>
 #include <string_view>
+#include <utility>
 
 #include "Editor/HugeRegexScan.h"
 #include "Editor/Keymap.h"
@@ -227,6 +228,10 @@ PendingIntent Engine::TakePendingIntent() {
     const PendingIntent intent = pendingIntent_;
     pendingIntent_             = PendingIntent::None;
     return intent;
+}
+
+bool Engine::TakePendingSave() {
+    return std::exchange(pendingSave_, false);
 }
 
 std::optional<std::size_t> Engine::TakePendingTopLine() {
@@ -1239,7 +1244,7 @@ void Engine::HandleZPrefixed(text::Buffer& buffer, const KeyChord& chord) {
 
 void Engine::HandleCapitalZPrefixed(text::Buffer& buffer, const KeyChord& chord) {
     if (IsPlainChar(chord, U'Z')) { // ZZ -- save and close, same body as :wq
-        buffer.Save();
+        pendingSave_   = true;
         pendingIntent_ = PendingIntent::CloseWindow;
     }
     else if (IsPlainChar(chord, U'Q')) { // ZQ -- force-close without saving, same body as :q!
@@ -2740,8 +2745,7 @@ void Engine::ExecuteExCommand(text::Buffer& buffer, const std::string& text) {
         return;
     }
     if (cmd->name == "w" || cmd->name == "write") {
-        buffer.Save();
-        statusText_ = "written";
+        pendingSave_ = true;
         FinishCommand(buffer);
         return;
     }
@@ -2776,7 +2780,7 @@ void Engine::ExecuteExCommand(text::Buffer& buffer, const std::string& text) {
         return;
     }
     if (cmd->name == "wq" || cmd->name == "x" || cmd->name == "xit") {
-        buffer.Save();
+        pendingSave_   = true;
         pendingIntent_ = PendingIntent::CloseWindow;
         FinishCommand(buffer);
         return;

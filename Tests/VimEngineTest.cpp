@@ -1065,15 +1065,24 @@ TEST_CASE("d]c does not request hunk navigation (not an operator-pending motion)
     REQUIRE_FALSE(engine.TakePendingHunkNavigation().has_value());
 }
 
-TEST_CASE("ZZ saves and requests CloseWindow", "[Engine]") {
+// The engine asks for the save; BufferView runs save-buffer for it.
+TEST_CASE("ZZ requests a save and CloseWindow", "[Engine]") {
     Buffer buffer = MakeBuffer("content\n");
     Engine engine;
-    buffer.SetPath(std::filesystem::temp_directory_path() / "ned_vimengine_test_zz.txt");
 
     Feed(engine, buffer, "ZZ");
     REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseWindow);
-    REQUIRE_FALSE(buffer.Modified());
-    std::filesystem::remove(*buffer.Path());
+    REQUIRE(engine.TakePendingSave());
+    REQUIRE_FALSE(engine.TakePendingSave()); // taken once
+}
+
+TEST_CASE(":w requests a save and nothing else", "[Engine]") {
+    Buffer buffer = MakeBuffer("content\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":w\n");
+    REQUIRE(engine.TakePendingSave());
+    REQUIRE(engine.TakePendingIntent() == PendingIntent::None);
 }
 
 TEST_CASE("ZQ requests CloseWindowForced without saving", "[Engine]") {
@@ -1105,15 +1114,13 @@ TEST_CASE(":q! requests CloseWindowForced", "[Engine]") {
     REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseWindowForced);
 }
 
-TEST_CASE(":wq saves and requests CloseWindow, never forced", "[Engine]") {
+TEST_CASE(":wq requests a save and CloseWindow, never forced", "[Engine]") {
     Buffer buffer = MakeBuffer("content\n");
     Engine engine;
-    buffer.SetPath(std::filesystem::temp_directory_path() / "ned_vimengine_test_wq.txt");
 
     Feed(engine, buffer, ":wq\n");
     REQUIRE(engine.TakePendingIntent() == PendingIntent::CloseWindow);
-    REQUIRE_FALSE(buffer.Modified());
-    std::filesystem::remove(*buffer.Path());
+    REQUIRE(engine.TakePendingSave());
 }
 
 TEST_CASE(":qa requests Quit", "[Engine]") {

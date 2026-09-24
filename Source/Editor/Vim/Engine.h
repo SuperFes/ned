@@ -130,6 +130,11 @@ class Engine {
     // consumes it right after.
     [[nodiscard]] PendingIntent TakePendingIntent();
 
+    // Set by :w, :wq/:x and ZZ. BufferView runs save-buffer for it -- ahead of
+    // any CloseWindow intent from the same key -- so a vim save gets the same
+    // format-on-save, backup and save settings as C-x C-s.
+    [[nodiscard]] bool TakePendingSave();
+
     // Set by zz/zt/zb/C-e/C-y -- an explicit "scroll the viewport to this line" request
     // independent of point, which BufferView must apply (SetTopLine) *before* its own
     // ScrollToShowPoint() call, since that call only nudges topLine_ far enough to keep
@@ -438,6 +443,7 @@ class Engine {
 
     std::string   statusText_;
     PendingIntent pendingIntent_ = PendingIntent::None;
+    bool          pendingSave_   = false;
 
     // vim-global-marks follow-up: see TakePendingBufferJump's own doc comment above.
     std::optional<PendingBufferJump> pendingBufferJump_;
