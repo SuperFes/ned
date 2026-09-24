@@ -675,3 +675,31 @@ TEST_CASE("lua-mode binds a local function's name around the function", "[Mode][
     CHECK_FALSE(helper->scopeIsFile);
     CHECK(helper->occurrences.size() == 3);
 }
+
+TEST_CASE("nix-mode resolves parameters, let bindings and inherits", "[Mode][LocalScopes]") {
+    const std::string source = "{ pkgs, lib ? pkgs.lib }:\n"
+                               "let\n"
+                               "  version = \"1.0\";\n"
+                               "  name = \"demo-${version}\";\n"
+                               "  inherit (lib) mkIf;\n"
+                               "in\n"
+                               "pkgs.stdenv.mkDerivation {\n"
+                               "  inherit name version;\n"
+                               "  src = mkIf true ./.;\n"
+                               "}\n";
+    const auto version = Resolve("nix-mode", source, "version", 0);
+    REQUIRE(version.has_value());
+    CHECK(version->qualifier == "var");
+    CHECK_FALSE(version->scopeIsFile);
+    CHECK(version->occurrences.size() == 3); // the binding, ${version}, `inherit ... version`
+
+    const auto pkgs = Resolve("nix-mode", source, "pkgs", 0);
+    REQUIRE(pkgs.has_value());
+    CHECK(pkgs->qualifier == "parameter");
+    CHECK(pkgs->occurrences.size() == 3);
+
+    const auto mkIf = Resolve("nix-mode", source, "mkIf", 1);
+    REQUIRE(mkIf.has_value());
+    CHECK(mkIf->definition.first == source.find("mkIf"));
+    CHECK(mkIf->occurrences.size() == 2);
+}

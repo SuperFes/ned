@@ -1933,6 +1933,10 @@ TEST_CASE("Highlight patterns conditioned on locals consult the locals query", "
     CHECK(ClassAt(ruby, rb, "count\nend") == SyntaxClass::Method);
     CHECK(ClassAt(ruby, rb, "count)") == SyntaxClass::Variable);
     CHECK(ClassAt(ruby, rb, "puts") == SyntaxClass::Method);
+
+    const std::string nix = "let map = x: x; in map (map 1)\n";
+    CHECK(ClassAt(BundledMode("nix"), nix, "map (") != SyntaxClass::FunctionBuiltin);
+    CHECK(ClassAt(BundledMode("nix"), "builtins.map f [ ]\n", "map") == SyntaxClass::FunctionBuiltin);
 }
 
 TEST_CASE("Upstream's non-standard capture names reach a class", "[Mode]") {
