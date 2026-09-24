@@ -35,7 +35,7 @@ namespace ned::editor {
 
 // False for the capture names a query uses for its own bookkeeping rather
 // than to colour anything: "_"-prefixed predicate helpers, "spell"/
-// "nospell", "none".
+// "nospell", "none", "conceal".
 [[nodiscard]] bool IsHighlightableCapture(std::string_view captureName);
 
 // Cyclic heading-level class from a heading's depth (1-based).
@@ -46,12 +46,14 @@ namespace ned::editor {
 // the definition's own comment for the json case that made this necessary.
 class SpanCollector {
   public:
-    void                                     Add(std::string_view captureName, std::size_t startByte, std::size_t endByte, SyntaxClass syntaxClass);
+    // `paints` is false for a capture nothing maps, styles or classifies.
+    void                                     Add(std::string_view captureName, std::size_t startByte, std::size_t endByte, SyntaxClass syntaxClass, bool paints);
     [[nodiscard]] std::vector<HighlightSpan> Take();
 
   private:
     std::vector<HighlightSpan>                                 spans_;
     std::vector<int>                                           specificity_;
+    std::vector<bool>                                          paints_;
     std::map<std::pair<std::size_t, std::size_t>, std::size_t> byRange_;
 };
 

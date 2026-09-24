@@ -6,4 +6,5 @@
 {:name "jsonnet"
  :extensions [".jsonnet" ".libsonnet"]
  :line-comment "//"
+ :capture-classes {"define" :variable}
 }

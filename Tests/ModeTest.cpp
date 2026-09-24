@@ -1,15 +1,21 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <set>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "Editor/AutoPair.h"
 #include "Editor/BundledLanguages.h"
 #include "Editor/CodeFold.h"
 #include "Editor/Key.h"
 #include "Editor/LanguageDefinition.h"
+#include "Editor/LanguageFiles.h"
 #include "Editor/Mode.h"
+#include "Editor/ModeInternal.h"
 #include "Editor/Org.h"
+#include "Editor/QueryData.h"
 #include "Editor/SyntaxTheme.h"
 
 using ned::editor::BashMode;
@@ -1726,4 +1732,95 @@ TEST_CASE("markup.* captures paint headings, emphasis and list markers", "[Mode]
     // XML re-bases markup.heading: CDATA's delimiters are punctuation, not a heading.
     const std::string xml = "<a><![CDATA[x]]></a>\n";
     CHECK(ClassAt(BundledMode("xml"), xml, "<![CDATA[") == SyntaxClass::Punctuation);
+}
+
+namespace {
+
+void CollectCaptureNames(const std::vector<ned::editor::querydata::Form>& forms, std::set<std::string>& out) {
+    using ned::editor::querydata::Form;
+    for (const Form& form : forms) {
+        if (form.kind == Form::Kind::Symbol && form.text.starts_with('@')) {
+            out.insert(form.text.substr(1));
+        }
+        CollectCaptureNames(form.items, out);
+    }
+}
+
+} // namespace
+
+// A capture name that reaches no class paints nothing, so a newly vendored
+// query's names either map or are listed here on purpose.
+TEST_CASE("Every bundled highlights capture maps to a class", "[Mode]") {
+    // Left unmapped as Neovim leaves them.
+    static const std::set<std::string, std::less<>> kUnmappedAnywhere = {"error", "warning"};
+    // "language/capture": predicate helpers (make, nu), a catch-all that must
+    // not repaint what earlier patterns captured (pascal), whole-expression
+    // groupings (powershell), a classifier's input (org), XML's character
+    // data, and sub/superscript, which no class fits.
+    static const std::set<std::string, std::less<>> kUnmappedIn = {
+        "make/clean",
+        "nu/cmd",
+        "pascal/identifier",
+        "powershell/array",
+        "powershell/assignvalue",
+        "org/org.headline.stars",
+        "org/org.keyword.candidate",
+        "xml/markup",
+        "asciidoc-inline/markup.subscript",
+        "asciidoc-inline/markup.superscript",
+    };
+    std::vector<std::string> unmapped;
+    for (const ned::editor::LanguageDefinition& definition : ned::editor::BundledLanguages()) {
+        if (definition.queries.highlights.empty()) {
+            continue;
+        }
+        const auto            forms = ned::editor::querydata::ParseScm(ned::editor::CompileQueryFiles(definition.queries.highlights).text);
+        std::set<std::string> names;
+        CollectCaptureNames(forms, names);
+        for (const std::string& name : names) {
+            const std::string_view head = std::string_view(name).substr(0, name.find('.'));
+            if (!ned::editor::IsHighlightableCapture(name) || kUnmappedAnywhere.contains(head) ||
+                kUnmappedIn.contains(definition.name + "/" + name)) {
+                continue;
+            }
+            if (!ned::editor::MappedSyntaxClassForCapture(name, definition.name)) {
+                unmapped.push_back(definition.name + ": @" + name);
+            }
+        }
+    }
+    INFO([&] {
+        std::string joined;
+        for (const std::string& entry : unmapped) {
+            joined += entry + "\n";
+        }
+        return joined;
+    }());
+    CHECK(unmapped.empty());
+}
+
+// Pascal's query ends in a bare `(identifier) @identifier` that nothing maps;
+// the earlier, meaningful capture of the same node has to survive it.
+TEST_CASE("An unmapped catch-all capture doesn't erase an earlier one", "[Mode]") {
+    const std::string pascal = "program P;\nprocedure Foo(x: integer);\nbegin\n  WriteLn(x);\nend;\nbegin\n  Foo(1);\nend.\n";
+    CHECK(ClassAt(BundledMode("pascal"), pascal, "Foo") == SyntaxClass::Function);
+    CHECK(ClassAt(BundledMode("pascal"), pascal, "WriteLn") == SyntaxClass::Function);
+}
+
+TEST_CASE("Upstream's non-standard capture names reach a class", "[Mode]") {
+    const std::string make = "all:\n\t@echo hi\n$(warning careful)\n";
+    CHECK(ClassAt(BundledMode("make"), make, "careful") == SyntaxClass::String);
+
+    const std::string perl = "print 1;\n\n=pod\n\nSome docs.\n\n=cut\n";
+    CHECK(ClassAt(BundledMode("perl"), perl, "Some docs") == SyntaxClass::DocComment);
+
+    // Perl's __END__ is its @preproc; D's __EOF__ gets the same class.
+    const std::string d = "void main() {}\n__EOF__\nanything here\n";
+    CHECK(ClassAt(BundledMode("d"), d, "__EOF__") == SyntaxClass::Keyword);
+
+    const std::string awk = "{\n  if ($0 ~ /foo+/) print\n}\n";
+    CHECK(ClassAt(BundledMode("awk"), awk, "foo+") == SyntaxClass::String);
+
+    const std::string dart = "enum Color { red }\nvoid f(int count) {}\n";
+    CHECK(ClassAt(BundledMode("dart"), dart, "red") == SyntaxClass::Constant);
+    CHECK(ClassAt(BundledMode("dart"), dart, "count") == SyntaxClass::Parameter);
 }

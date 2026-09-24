@@ -18,6 +18,7 @@
 
 #include "AutoPair.h"
 #include "BundledLanguages.h"
+#include "CaptureClassifiers.h"
 #include "Grammar/IncrementalParse.h"
 #include "Grammar/Languages.h"
 #include "Grammar/MatchCache.h"
@@ -110,6 +111,7 @@ namespace {
             // stripping to string.special -> String would paint half a
             // Clojure buffer string-colored.
             {"string.special.symbol", SyntaxClass::Constant},
+            {"symbol", SyntaxClass::Constant}, // its older spelling
             // CSS at-rule captures from tree-sitter-css's own query
             // (@media/@import/@keyframes/@supports/@charset each capture
             // under a bare name matching the at-rule) -- previously fell
@@ -353,7 +355,7 @@ std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureN
     // parent fenced_code_block's own real "text.literal" (String) span.
     bool IsHighlightableCapture(std::string_view captureName) {
         return !captureName.empty() && captureName.front() != '_' && captureName != "spell" && captureName != "nospell" &&
-               captureName != "none";
+               captureName != "none" && captureName != "conceal";
     }
 
     // exhaustive-highlighting follow-up: collects query captures into
@@ -375,18 +377,27 @@ std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureN
     // leans on; equal specificity keeps the later one (the pre-existing
     // rule). Distinct-range overlaps are untouched -- the render-time
     // later-wins rule still handles genuine nesting.
-    void SpanCollector::Add(std::string_view captureName, std::size_t startByte, std::size_t endByte, SyntaxClass syntaxClass) {
+    void SpanCollector::Add(std::string_view captureName, std::size_t startByte, std::size_t endByte, SyntaxClass syntaxClass,
+                            bool paints) {
         const auto range = std::make_pair(startByte, endByte);
         const int  dots  = static_cast<int>(std::count(captureName.begin(), captureName.end(), '.'));
         if (const auto it = byRange_.find(range); it != byRange_.end()) {
-            if (dots < specificity_[it->second]) {
+            const std::size_t index = it->second;
+            // A capture that paints nothing never displaces one that does:
+            // Pascal's trailing `(identifier) @identifier` catch-all would
+            // otherwise erase every earlier capture of the same node.
+            if (paints_[index] && !paints) {
+                return;
+            }
+            if (paints == paints_[index] && dots < specificity_[index]) {
                 return; // a more specific capture already holds this exact range
             }
-            spans_[it->second]       = HighlightSpan{.startByte   = startByte,
-                                                     .endByte     = endByte,
-                                                     .syntaxClass = syntaxClass,
-                                                     .captureId   = InternCaptureName(captureName)};
-            specificity_[it->second] = dots;
+            spans_[index]       = HighlightSpan{.startByte   = startByte,
+                                                .endByte     = endByte,
+                                                .syntaxClass = syntaxClass,
+                                                .captureId   = InternCaptureName(captureName)};
+            specificity_[index] = dots;
+            paints_[index]      = paints;
             return;
         }
         byRange_.emplace(range, spans_.size());
@@ -395,6 +406,7 @@ std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureN
                                        .syntaxClass = syntaxClass,
                                        .captureId   = InternCaptureName(captureName)});
         specificity_.push_back(dots);
+        paints_.push_back(paints);
     }
 
     std::vector<HighlightSpan> SpanCollector::Take() {
@@ -968,7 +980,9 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 if (!IsHighlightableCapture(capture.name)) {
                     continue;
                 }
-                collector.Add(capture.name, capture.startByte, capture.endByte, SyntaxClassForCapture(capture.name, languageKey));
+                const std::optional<SyntaxClass> mapped = MappedSyntaxClassForCapture(capture.name, languageKey);
+                const bool                       paints = mapped || HasCaptureStyle(capture.name) || FindCaptureClassifier(languageKey, capture.name);
+                collector.Add(capture.name, capture.startByte, capture.endByte, mapped.value_or(SyntaxClass::Default), paints);
             }
             std::vector<HighlightSpan> spans = collector.Take();
             if (injectionQuery) {

@@ -6,4 +6,5 @@
 {:name "awk"
  :extensions [".awk" ".gawk" ".mawk"]
  :line-comment "#"
+ :capture-classes {"regexp" :string}
 }

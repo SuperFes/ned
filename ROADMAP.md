@@ -117,9 +117,11 @@ and code reading. Highest stakes first.
       `with`, pattern, `->`, expression) against EOF completion's three-token closer
       budget. Measured: raising it to five changes GDScript's "Variables Invalid"
       corpus case and still leaves the line at the `let` level, so it isn't the fix.
-- [ ] **A few upstream capture names still paint nothing**: `@symbol` (CUE), the
-      `@text.note`/`@text.warning`/`@text.danger` comment-keyword family (make) and
-      `@text` (D, Perl). `@error`/`@warning` stay unmapped on purpose, as in Neovim.
+- [ ] **Some upstream queries assume tree-sitter CLI's first-pattern-wins order**, while
+      ned (like Neovim) lets the later of two equal-range captures win. awk's
+      "Order matters" query lists `(regex) @regexp` before `(pattern) @namespace`, so a
+      rule-level `/re/ { ... }` paints as a namespace. Needs a per-query (or
+      per-language) order flag, or ned-side reordering of the affected files.
 - [ ] **Per-buffer indentation, taken from the file itself.** Indent style today is keyed
       by mode name (`EffectiveIndentStyle`), and the indent closure captures that name,
       so every buffer of a language indents alike whatever the file already does. In

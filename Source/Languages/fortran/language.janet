@@ -4,4 +4,5 @@
  :extensions [".f90" ".F90" ".f95" ".F95" ".f03" ".F03" ".f08" ".F08" ".f" ".F" ".for"]
  :line-comment "!"
  :lsp-root-markers ["fpm.toml"]
+ :capture-classes {"custom_directive" :keyword}
 }
