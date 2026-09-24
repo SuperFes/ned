@@ -1,12 +1,16 @@
 #include "FileSettings.h"
 
 #include <map>
+#include <mutex>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #include "EditorConfig.h"
 #include "IndentDetect.h"
 #include "Modeline.h"
 #include "Text/Buffer.h"
+#include "Text/BufferList.h"
 
 namespace ned::editor {
 
@@ -19,6 +23,17 @@ namespace {
 
     Properties EditorConfigFor(const std::filesystem::path& path) {
         return EditorConfigEnabled() ? EditorConfigPropertiesFor(path) : Properties{};
+    }
+
+    // Buffer::InstanceId -> the FileGeneration its settings were read at.
+    std::mutex& AppliedMutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    std::unordered_map<std::size_t, std::size_t>& AppliedGenerations() {
+        static std::unordered_map<std::size_t, std::size_t> generations;
+        return generations;
     }
 
     IndentOverride IndentFrom(std::string_view text, const Properties& editorConfig) {
@@ -45,6 +60,30 @@ void ApplyFileSettings(text::Buffer& buffer) {
     const Properties             editorConfig = EditorConfigFor(path);
     buffer.SetLocalIndent(IndentFrom(ReadFileEnds(path, kDetectionHeadBytes), editorConfig));
     buffer.SetConventions(EditorConfigConventions(editorConfig));
+    const std::lock_guard<std::mutex> lock(AppliedMutex());
+    AppliedGenerations()[buffer.InstanceId()] = buffer.FileGeneration();
+}
+
+void RefreshFileSettings(text::BufferList& bufferList) {
+    std::vector<text::Buffer*> stale;
+    {
+        const std::lock_guard<std::mutex>            lock(AppliedMutex());
+        std::unordered_map<std::size_t, std::size_t> live;
+        for (const auto& buffer : bufferList.Buffers()) {
+            const auto applied = AppliedGenerations().find(buffer->InstanceId());
+            if (applied == AppliedGenerations().end()) {
+                continue; // never file-backed when opened (a scratch buffer) -- nothing to refresh
+            }
+            live.emplace(applied->first, applied->second);
+            if (applied->second != buffer->FileGeneration()) {
+                stale.push_back(buffer.get());
+            }
+        }
+        AppliedGenerations() = std::move(live); // forget killed buffers
+    }
+    for (text::Buffer* buffer : stale) {
+        ApplyFileSettings(*buffer);
+    }
 }
 
 } // namespace ned::editor

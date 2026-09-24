@@ -1,6 +1,6 @@
 //
 // Settings a buffer takes from the file it shows, applied when the file is
-// opened. Indentation: what its content already does (IndentDetection),
+// opened and again whenever the file changes under the buffer. Indentation: what its content already does (IndentDetection),
 // then its .editorconfig (EditorConfigEnabled), then a Vim/Emacs modeline,
 // each overriding the one before field by field; whatever none of them
 // states stays the mode's. Save and layout conventions (line ending, final
@@ -17,6 +17,7 @@
 
 namespace ned::text {
 class Buffer;
+class BufferList;
 }
 
 namespace ned::editor {
@@ -29,6 +30,11 @@ namespace ned::editor {
 // a huge file get the same answer. A path that doesn't exist yet still gets
 // its .editorconfig.
 void ApplyFileSettings(text::Buffer& buffer);
+
+// ApplyFileSettings again for every buffer whose file changed under it since
+// (Buffer::FileGeneration: a revert, an external merge, a rename) -- the
+// periodic external-change sweep calls it.
+void RefreshFileSettings(text::BufferList& bufferList);
 
 } // namespace ned::editor
 

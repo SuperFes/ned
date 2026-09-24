@@ -478,6 +478,9 @@ const std::optional<std::filesystem::path>& Buffer::Path() const {
 }
 
 void Buffer::SetPath(std::filesystem::path path) {
+    if (Path_ != path) {
+        ++FileGeneration_;
+    }
     Path_ = std::move(path);
 }
 
@@ -708,6 +711,7 @@ void Buffer::Revert() {
     // any server yet, and a three-way merge and a snapshot restore both leave
     // content that is *not* what is on disk (Modified() stays true for both).
     ++SaveGeneration_;
+    ++FileGeneration_;
 }
 
 std::size_t Buffer::MergeExternalChanges() {
@@ -749,6 +753,7 @@ std::size_t Buffer::MergeExternalChanges() {
     // in Buffer.h for why.
     SavedSnapshot_ = std::move(fresh.Storage_);
     DiskTimestamp_ = fresh.DiskTimestamp_;
+    ++FileGeneration_;
 
     return result.conflictCount;
 }
@@ -838,6 +843,10 @@ std::size_t Buffer::ContentGeneration() const {
 
 std::size_t Buffer::SaveGeneration() const {
     return SaveGeneration_;
+}
+
+std::size_t Buffer::FileGeneration() const {
+    return FileGeneration_;
 }
 
 const EditJournal& Buffer::Edits() const {

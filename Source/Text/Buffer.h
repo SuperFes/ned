@@ -601,6 +601,13 @@ class Buffer {
     // remembering to wire it.
     [[nodiscard]] std::size_t SaveGeneration() const;
 
+    // Bumped whenever the file this buffer reflects changes under it -- a
+    // Revert(), a MergeExternalChanges(), a SetPath() to a different path --
+    // and never by an edit or a save, whose content the buffer already
+    // holds. What settings read from the file (Editor/FileSettings.h) poll to
+    // know they are stale.
+    [[nodiscard]] std::size_t FileGeneration() const;
+
     // The edits behind those generation bumps, for a holder that needs to
     // carry byte offsets resolved against an older one onto current content.
     //
@@ -1498,6 +1505,7 @@ class Buffer {
     std::optional<std::size_t>        GoalColumn_;
     std::size_t                       ContentGeneration_ = 0; // see ContentGeneration()
     std::size_t                       SaveGeneration_    = 0; // see SaveGeneration()
+    std::size_t                       FileGeneration_    = 0; // see FileGeneration()
     EditJournal                       Edits_;                 // see Edits(); advanced with ContentGeneration_ by the Commit* helpers
     // Fed by the Commit* helpers, so every anchor moves exactly once per
     // edit and a path that forgets to relocate one cannot exist -- the same

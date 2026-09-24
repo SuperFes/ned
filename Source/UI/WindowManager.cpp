@@ -14,6 +14,7 @@
 #include "Editor/Bookmark.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/DiagnosticsLog.h"
+#include "Editor/FileSettings.h"
 #include "Editor/Lsp/BackgroundSync.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/ModeOverrides.h"
@@ -1553,6 +1554,9 @@ void WindowManager::SweepExternalChanges() {
     // change stales the diff gutter too. See RefreshVcsDiffGutters' own doc
     // comment in the header.
     RefreshVcsDiffGutters();
+    // A reverted, merged or renamed file may carry different indentation or
+    // sit under a different .editorconfig.
+    editor::RefreshFileSettings(bufferList_);
 }
 
 void WindowManager::RefreshVcsDiffGutters() {

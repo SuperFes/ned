@@ -16,6 +16,7 @@
 #include "Editor/RulerSettings.h"
 #include "Editor/TrimOnSave.h"
 #include "Text/Buffer.h"
+#include "Text/BufferList.h"
 
 using ned::editor::EditorConfigConventions;
 using ned::editor::EditorConfigGlobMatches;
@@ -193,6 +194,38 @@ TEST_CASE("ApplyFileSettings reads the file on disk, and .editorconfig for a new
     ned::text::Buffer scratch("scratch");
     ned::editor::ApplyFileSettings(scratch);
     CHECK(scratch.LocalIndent().Empty());
+}
+
+TEST_CASE("RefreshFileSettings re-reads a file renamed or reverted under its buffer", "[EditorConfig][FileSettings]") {
+    const TogglesGuard guard;
+    const TempTree     tree("refresh");
+    tree.Write(".editorconfig", "root = true\n[*]\nend_of_line = crlf\n");
+    tree.Write("lf/.editorconfig", "root = true\n[*]\nend_of_line = lf\n");
+    const std::filesystem::path original = tree.Write("a.txt", "a\n    b\n");
+
+    ned::text::BufferList bufferList;
+    ned::text::Buffer&    buffer = bufferList.OpenFile(original);
+    ned::editor::ApplyFileSettings(buffer);
+    REQUIRE(buffer.Conventions().lineEnding == LineEnding::CRLF);
+    REQUIRE(buffer.LocalIndent() == IndentOverride{.useTabs = false, .width = 4});
+
+    // Nothing moved: nothing re-read.
+    buffer.SetConventions({});
+    ned::editor::RefreshFileSettings(bufferList);
+    CHECK_FALSE(buffer.Conventions().lineEnding.has_value());
+
+    // Renamed into a directory with its own .editorconfig.
+    const std::filesystem::path moved = tree.root / "lf" / "a.txt";
+    std::filesystem::rename(original, moved);
+    buffer.SetPath(moved);
+    ned::editor::RefreshFileSettings(bufferList);
+    CHECK(buffer.Conventions().lineEnding == LineEnding::LF);
+
+    // Reformatted on disk and reverted.
+    tree.Write("lf/a.txt", "a\n\tb\n");
+    buffer.Revert();
+    ned::editor::RefreshFileSettings(bufferList);
+    CHECK(buffer.LocalIndent() == IndentOverride{.useTabs = true});
 }
 
 TEST_CASE("EditorConfigConventions reads the save and layout properties", "[EditorConfig]") {

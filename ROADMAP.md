@@ -130,9 +130,9 @@ and code reading. Highest stakes first.
       the mode's style field by field; `convert-indentation-to-tabs`/`-spaces` switch a
       buffer outright. `.editorconfig`'s `end_of_line`, `insert_final_newline`,
       `trim_trailing_whitespace`, `charset` and `max_line_length` override ned's own
-      settings for that buffer (`Buffer::Conventions`). Left:
-  - [ ] Settled once, at open: a save-as to a path under a different `.editorconfig`, or
-        an external reload that reformats the file, keeps the old settings.
+      settings for that buffer (`Buffer::Conventions`), and are read again when the
+      file is reverted, merged or renamed under the buffer (`Buffer::FileGeneration`).
+      Left:
   - [ ] `charset` values other than `utf-8`/`utf-8-bom` (latin1, utf-16) are ignored:
         ned reads and writes UTF-8 only.
   - [ ] **Mixed tabs and spaces, if it has to exist:** Emacs's `indent-tabs-mode` with
