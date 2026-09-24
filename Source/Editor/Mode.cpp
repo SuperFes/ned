@@ -31,6 +31,7 @@
 #include "Key.h"
 #include "LanguageDefinition.h"
 #include "Link.h"
+#include "LocalScopes.h"
 #include "ModeInternal.h"
 #include "SyntaxTheme.h"
 
@@ -274,6 +275,22 @@ namespace {
             }
         }
         return std::nullopt;
+    }
+
+    // A whole-document locals pass runs on every edit to answer `#is? local`
+    // in a highlights query -- a full walk for any grammar with an external
+    // scanner, which MatchCache never reconciles incrementally (measured:
+    // +14 ms per keystroke on 128 KiB of JavaScript). Past this size the
+    // locals are skipped and no token counts as one.
+    constexpr std::size_t kMaxLocalConditionBytes = 64 * 1024;
+
+    bool LocalConditionHolds(const grammar::QueryCapture& capture, const std::vector<locals::LocalNode>& localNodes) {
+        const locals::Range range{capture.startByte, capture.endByte};
+        const auto          found   = std::lower_bound(localNodes.begin(), localNodes.end(), range,
+                                                       [](const locals::LocalNode& node, const locals::Range& key) { return node.range < key; });
+        const bool          isLocal = found != localNodes.end() && found->range == range &&
+                                      (capture.localKind.empty() || found->qualifier == capture.localKind);
+        return isLocal == (capture.localCondition == grammar::LocalCondition::Local);
     }
 
 } // namespace
@@ -964,11 +981,22 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
         injectionQuery        = std::make_shared<grammar::QueryMatcher>(language, queries.injections);
         embeddedLanguageCache = std::make_shared<EmbeddedLanguageCache>();
     }
+    // `#is?`/`#is-not? local` in the highlights query are answered from the
+    // locals query, built further down -- the slot is filled in there. The
+    // answer is memoized per parse generation: the minimap's chunked sweep
+    // calls highlight many times over one text.
+    struct LocalNodesMemo {
+        std::optional<std::uint64_t>   generation;
+        std::vector<locals::LocalNode> nodes;
+    };
+    const auto localsForHighlight = std::make_shared<LocalScopeFunction>();
+    const auto localNodesMemo     = std::make_shared<LocalNodesMemo>();
+
     HighlightFunction highlight;
     if (!queries.highlights.empty()) {
         highlightQuery = std::make_shared<grammar::QueryMatcher>(language, queries.highlights);
         highlight      = [parser, query = highlightQuery, injectionQuery, embeddedLanguageCache, sharedParse, languageKey,
-                          firstPatternWins = queries.highlightsFirstPatternWins](
+                          firstPatternWins = queries.highlightsFirstPatternWins, localsForHighlight, localNodesMemo](
                              std::string_view bufferText, HighlightWindow window) -> std::vector<HighlightSpan> {
             const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
@@ -976,9 +1004,24 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             }
 
             const grammar::Node root = tree.RootNode();
-            SpanCollector       collector(firstPatternWins);
+
+            // Without a locals query (or past the size a whole-document
+            // locals pass is worth paying on every edit) nothing is a local.
+            const std::uint64_t generation = sharedParse->Generation();
+            if (query->UsesLocalConditions() && localNodesMemo->generation != generation) {
+                localNodesMemo->nodes.clear();
+                if (*localsForHighlight && bufferText.size() <= kMaxLocalConditionBytes) {
+                    localNodesMemo->nodes = locals::LocalNodes((*localsForHighlight)(bufferText), bufferText);
+                }
+                localNodesMemo->generation = generation;
+            }
+
+            SpanCollector collector(firstPatternWins);
             for (const grammar::QueryCapture& capture : query->CapturesInRange(root, bufferText, window.startByte, window.endByte)) {
                 if (!IsHighlightableCapture(capture.name)) {
+                    continue;
+                }
+                if (capture.localCondition != grammar::LocalCondition::None && !LocalConditionHolds(capture, localNodesMemo->nodes)) {
                     continue;
                 }
                 const std::optional<SyntaxClass> mapped = MappedSyntaxClassForCapture(capture.name, languageKey);
@@ -1795,31 +1838,31 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
     LocalScopeFunction localScopes;
     if (!queries.locals.empty()) {
         const auto localsQuery = std::make_shared<grammar::QueryMatcher>(language, queries.locals);
-        // per-subtree-fact-memoization follow-up: this closure is one of the
-        // ORIGINAL four named in MatchCache.h's own header comment
-        // (highlight/symbolKind/locals/indent captures) -- unlike highlight
-        // (permanently excluded, see the symbolKind buildMarkers closure's
-        // own comment on why a windowed capability has nothing to gain),
-        // locals has no windowed variant at all, so it goes through the
-        // same whole-document Reconcile() shape symbolKind/testDiscovery/
-        // indent captures already do. Called far more sporadically than
-        // those three (rename-symbol only, not once per Paint()), which is
-        // safe rather than stale for the same reason BuildIndentFunction's
-        // on-demand indentColumn already relies on: sharedParse->LastEdit()
-        // is nullopt whenever some OTHER capability (highlight, at minimum)
-        // already advanced sharedParse to this exact bufferText first, and
-        // Reconcile() falls back to a full walk on nullopt -- so a call
-        // arriving many keystrokes after this cache's own last one either
-        // gets nullopt (common case, correct, just not maximally optimal)
-        // or the genuine single most-recent edit (when this really is the
-        // first capability to observe the new text), never a stale edit
-        // silently misapplied to a many-generations-old cached_.
+        // Whole-document, through MatchCache like symbolKind/testDiscovery:
+        // locals has no windowed variant. Reconciled against the edit since
+        // the generation it last saw (IncrementalParseCache::EditSince), so
+        // it stays incremental even when highlight saw the new text first; a
+        // skipped generation falls back to a full walk, never a stale edit.
         const auto localsMatchCache = std::make_shared<grammar::MatchCache>();
-        localScopes = [parser, localsQuery, sharedParse, localsMatchCache](std::string_view bufferText) -> std::vector<LocalCapture> {
+        // The captures from the last generation reconciled: the highlighter
+        // asks every repaint for `#is? local`, and unchanged text must not
+        // re-walk.
+        struct LocalsMemo {
+            std::optional<std::uint64_t> generation;
+            std::vector<LocalCapture>    captures;
+        };
+        const auto localsMemo = std::make_shared<LocalsMemo>();
+        localScopes           = [parser, localsQuery, sharedParse, localsMatchCache, localsMemo](std::string_view bufferText) -> std::vector<LocalCapture> {
             const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
                 return {};
             }
+            const std::uint64_t generation = sharedParse->Generation();
+            if (localsMemo->generation == generation) {
+                return localsMemo->captures;
+            }
+            const std::optional<text::ChangedSpan> edit =
+                localsMemo->generation ? sharedParse->EditSince(*localsMemo->generation) : std::nullopt;
 
             std::vector<LocalCapture> captures;
             // A "<qualifier>.pairs" capture names a CONTAINER whose children
@@ -1836,7 +1879,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             std::vector<std::pair<std::size_t, std::size_t>> skipRanges;
 
             for (const grammar::QueryMatch& match :
-                 localsMatchCache->Reconcile(*localsQuery, tree, bufferText, sharedParse->LastEdit())) {
+                 localsMatchCache->Reconcile(*localsQuery, tree, bufferText, edit)) {
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (capture.name == "local.skip") {
                         skipRanges.emplace_back(capture.startByte, capture.endByte);
@@ -1854,7 +1897,9 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                                                              qualifier.substr(0, qualifier.size() - kPairs.size())});
                         continue;
                     }
-                    captures.push_back(LocalCapture{capture.startByte, capture.endByte, *kind, std::move(qualifier)});
+                    const auto inherits = match.setDirectives.find("local.scope-inherits");
+                    captures.push_back(LocalCapture{capture.startByte, capture.endByte, *kind, std::move(qualifier),
+                                                    inherits == match.setDirectives.end() || inherits->second != "false"});
                 }
             }
 
@@ -1876,8 +1921,11 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     ExpandPairwiseBindings(node, container.qualifier, skipRanges, captures);
                 }
             }
+            localsMemo->generation = generation;
+            localsMemo->captures   = captures;
             return captures;
         };
+        *localsForHighlight = localScopes;
     }
 
     // configurable-formatter-rules follow-up: a tenth closure sharing the

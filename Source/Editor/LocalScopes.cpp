@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <unordered_map>
 
 namespace ned::editor::locals {
 
@@ -220,6 +221,87 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
         }
     }
     return binding;
+}
+
+std::vector<LocalNode> LocalNodes(std::span<const LocalCapture> captures, std::string_view bufferText) {
+    struct Scope {
+        Range range;
+        bool  inherits;
+    };
+    std::vector<Scope>               scopes;
+    std::vector<const LocalCapture*> tokens;
+    for (const LocalCapture& capture : captures) {
+        if (capture.startByte > capture.endByte || capture.endByte > bufferText.size()) {
+            continue;
+        }
+        if (capture.kind == LocalCaptureKind::Scope) {
+            scopes.push_back(Scope{Range{capture.startByte, capture.endByte}, capture.inherits});
+        }
+        else {
+            tokens.push_back(&capture);
+        }
+    }
+    // Outer before inner at a shared start, so the stack nests.
+    std::sort(scopes.begin(), scopes.end(), [](const Scope& a, const Scope& b) {
+        return a.range.first != b.range.first ? a.range.first < b.range.first : a.range.second > b.range.second;
+    });
+    // Definitions before references at one position: a token that is both is a definition.
+    std::stable_sort(tokens.begin(), tokens.end(), [](const LocalCapture* a, const LocalCapture* b) {
+        if (a->startByte != b->startByte) {
+            return a->startByte < b->startByte;
+        }
+        return a->kind == LocalCaptureKind::Definition && b->kind != LocalCaptureKind::Definition;
+    });
+
+    struct Frame {
+        Range                                                  range;
+        bool                                                   inherits;
+        std::unordered_map<std::string_view, std::string_view> names;
+    };
+    std::vector<Frame>     stack{Frame{Range{0, bufferText.size()}, false, {}}};
+    std::size_t            nextScope = 0;
+    std::vector<LocalNode> out;
+    for (const LocalCapture* token : tokens) {
+        const Range range{token->startByte, token->endByte};
+        while (stack.size() > 1 && !Contains(stack.back().range, range)) {
+            stack.pop_back();
+        }
+        for (; nextScope < scopes.size() && scopes[nextScope].range.first <= range.first; ++nextScope) {
+            const Scope& scope = scopes[nextScope];
+            if (!Contains(scope.range, range)) {
+                continue; // a scope already over, or one this token is not inside
+            }
+            while (stack.size() > 1 && !Contains(stack.back().range, scope.range)) {
+                stack.pop_back();
+            }
+            stack.push_back(Frame{scope.range, scope.inherits, {}});
+        }
+
+        const std::string_view name = bufferText.substr(range.first, range.second - range.first);
+        if (!LooksLikeIdentifier(name)) {
+            continue;
+        }
+        if (token->kind == LocalCaptureKind::Definition) {
+            stack.back().names.try_emplace(name, token->qualifier);
+            if (out.empty() || out.back().range != range) {
+                out.push_back(LocalNode{range, token->qualifier});
+            }
+            continue;
+        }
+        for (auto frame = stack.rbegin(); frame != stack.rend(); ++frame) {
+            if (const auto found = frame->names.find(name); found != frame->names.end()) {
+                if (out.empty() || out.back().range != range) {
+                    out.push_back(LocalNode{range, std::string(found->second)});
+                }
+                break;
+            }
+            if (!frame->inherits) {
+                break;
+            }
+        }
+    }
+    std::sort(out.begin(), out.end(), [](const LocalNode& a, const LocalNode& b) { return a.range < b.range; });
+    return out;
 }
 
 } // namespace ned::editor::locals

@@ -103,6 +103,22 @@ struct LocalBinding {
 [[nodiscard]] std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captures, std::string_view bufferText,
                                                            std::size_t point);
 
+// A token the locals query says is a local: a definition, or a reference
+// that resolves to one. `qualifier` is the definition's (see
+// LocalCapture::qualifier).
+struct LocalNode {
+    Range       range;
+    std::string qualifier;
+};
+
+// Every local token in `captures`, sorted by range -- what a highlights
+// query's `#is? local`/`#is-not? local` asks about. tree-sitter's own rule,
+// not ResolveBindingAt's: one pass in document order, a reference resolving
+// to a same-named definition seen earlier in an enclosing scope, the whole
+// file being the outermost scope. File-level bindings count here; colouring
+// a name has none of the risk that makes rename refuse them.
+[[nodiscard]] std::vector<LocalNode> LocalNodes(std::span<const LocalCapture> captures, std::string_view bufferText);
+
 } // namespace ned::editor::locals
 
 #endif // NED_EDITOR_LOCALSCOPES_H

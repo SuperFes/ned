@@ -24,6 +24,7 @@
 #ifndef NED_EDITOR_GRAMMAR_QUERYMATCHER_H
 #define NED_EDITOR_GRAMMAR_QUERYMATCHER_H
 
+#include <cstdint>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -46,11 +47,23 @@ namespace ned::editor::grammar {
 // nodes sharing the exact same byte range (real, not hypothetical: see
 // Node::Id()'s own doc comment for tree-sitter-python's "block" node), since
 // [startByte, endByte) alone can't disambiguate that case.
+enum class LocalCondition : std::uint8_t { None,
+                                           Local,
+                                           NotLocal };
+
 struct QueryCapture {
     std::string name;
     std::size_t startByte;
     std::size_t endByte;
     const void* nodeId;
+    // `#is? local` / `#is-not? local` on the capture's pattern: the capture
+    // holds only where its node is (or is not) a local, which the caller
+    // decides from the language's locals query -- the matcher itself lets
+    // the predicate pass. `localKind` narrows Local to one definition
+    // qualifier (`#is? @x "local.parameter"` -> "parameter"); it points into
+    // the matcher, so it lives as long as the matcher does.
+    LocalCondition   localCondition = LocalCondition::None;
+    std::string_view localKind;
 };
 
 // A capture within a QueryMatch -- same shape as QueryCapture, kept as a
@@ -175,6 +188,10 @@ class QueryMatcher {
     // Diagnostic/test-only accessor, pinned by the query census the same
     // way the rest of the bundled corpus's measured construct surface is.
     [[nodiscard]] std::size_t AncestorCrossingPatternCount() const;
+
+    // Whether any pattern carries `#is?`/`#is-not? local` (QueryCapture::
+    // localCondition) -- a caller with no use for them can skip the locals.
+    [[nodiscard]] bool UsesLocalConditions() const;
 
   private:
     struct Impl;

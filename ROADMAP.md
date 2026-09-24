@@ -71,7 +71,14 @@ whole-document highlight 50.7 ms -> 14.8 ms, keystroke+repaint on a 9 KiB C++ fi
       that path drops any range abutting its own tail). The real question is whether
       these become incremental -- MatchCache-style reuse keyed on the edit -- rather than
       windowed. Nothing pulled yet; typing no longer feels bad, which is what would drive
-      it.
+      it. MatchCache itself is less incremental than it looks: its external-token gate
+      (`NodeHasExternalTokens` on the root) fires on ordinary JavaScript -- a plain
+      `function f() {...}` already carries one -- so every MatchCache consumer re-walks
+      the whole document per edit in any scanner grammar. That now includes the locals
+      pass behind a highlights query's `#is? local` (JavaScript/TypeScript, Groovy,
+      Gleam, Ruby), capped at 64 KiB for that reason (`kMaxLocalConditionBytes`,
+      Mode.cpp): +14 ms per keystroke measured at 128 KiB of JavaScript. Narrowing the
+      gate to external tokens near the edit would lift the cap.
 - [ ] `sexpMotion`'s own O(depth^2) is closed: `NodePrevSiblingImpl`/`NodeNextSiblingImpl`
       used to call `NodeParent` (a full root-to-self descent) once per invocation
       regardless, so climbing an already-collected ancestor chain by sibling rather than
@@ -138,15 +145,10 @@ and code reading. Highest stakes first.
       natural shape, but every key is a definition, so it needs a depth or kind limit
       to stay an outline rather than a copy of the file. Fish names only functions:
       `set`'s variable name follows any number of flags.
-- [ ] **No locals query for Lua, Ruby, Perl, Elixir, Dart or R**, so scope-aware rename
-      and local highlighting get no scope information there. Lua is Tier A.
-- [ ] **`#is?`/`#is-not? local` are never evaluated**, so a pattern carrying one always
-      applies. Upstream highlights use them to keep a builtin/method colour off a local
-      that shadows it: Ruby's `((identifier) @function.method (#is-not? local))` paints
-      every local variable as a method call (518 hits in its corpus), and Groovy's
-      `#is? local.parameter` marks every identifier a parameter until a later pattern
-      overrides it. JavaScript, Nix, Gleam and C++ use them too. Needs the language's
-      locals query resolved during highlighting -- Ruby has none yet (item above).
+- [ ] **No locals query for Lua, Nix, Perl, Elixir, Dart or R**, so scope-aware rename
+      and local highlighting get no scope information there. Lua is Tier A. Nix's
+      highlights guard their builtins with `#is-not? local`, which without locals holds
+      everywhere, so a local shadowing a builtin still paints as one.
 - [ ] **change-signature is C++-only.** It needs `signatures` + `calls` queries, and only
       cpp ships them (`sig` column). Rust, Go, Java, Kotlin, C#, TypeScript and Python are
       the obvious next ones.

@@ -33,6 +33,7 @@
 #ifndef NED_EDITOR_GRAMMAR_INCREMENTALPARSE_H
 #define NED_EDITOR_GRAMMAR_INCREMENTALPARSE_H
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -60,10 +61,27 @@ class IncrementalParseCache {
         return lastEdit_;
     }
 
+    // Bumped whenever Update() sees text different from the previous call
+    // (0 before the first), so a consumer can memoize facts derived from
+    // the tree without keeping its own copy of the text to compare.
+    [[nodiscard]] std::uint64_t Generation() const {
+        return generation_;
+    }
+
+    // The edit that turned generation `since`'s text into the current one --
+    // nullopt unless `since` is exactly the previous generation. Unlike
+    // LastEdit() it survives later cache-hit calls, so a consumer that is
+    // not the first to see new text can still reconcile incrementally.
+    [[nodiscard]] std::optional<text::ChangedSpan> EditSince(std::uint64_t since) const {
+        return since + 1 == generation_ ? generationEdit_ : std::nullopt;
+    }
+
   private:
     std::string                      lastText_;
     std::optional<Tree>              lastTree_;
     std::optional<text::ChangedSpan> lastEdit_;
+    std::uint64_t                    generation_ = 0;
+    std::optional<text::ChangedSpan> generationEdit_;
 };
 
 } // namespace ned::editor::grammar

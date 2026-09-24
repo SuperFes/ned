@@ -33,10 +33,12 @@ const Tree& IncrementalParseCache::Update(const Parser& parser, std::string_view
         return *lastTree_;
     }
 
+    ++generation_;
     if (!lastTree_.has_value()) {
         lastTree_ = parser.Parse(bufferText);
         lastText_.assign(bufferText);
-        lastEdit_ = std::nullopt;
+        lastEdit_       = std::nullopt;
+        generationEdit_ = std::nullopt;
         return *lastTree_;
     }
 
@@ -74,6 +76,7 @@ const Tree& IncrementalParseCache::Update(const Parser& parser, std::string_view
         .newStart = startByte,
         .newEnd   = newEndByte,
     };
+    generationEdit_ = lastEdit_;
     lastText_.assign(newText);
     return *lastTree_;
 }

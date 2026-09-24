@@ -1910,6 +1910,31 @@ TEST_CASE("A later, unrelated capture overrides an earlier one", "[Mode]") {
     CHECK(ClassAt(BundledMode("python"), python, "size") == SyntaxClass::Property);
 }
 
+// `#is-not? local` keeps a builtin's colour off a local that shadows it;
+// `#is? local.parameter` marks only what the locals query binds as one.
+TEST_CASE("Highlight patterns conditioned on locals consult the locals query", "[Mode]") {
+    const std::string js         = "function f(console) {\n  return console;\n}\nconsole.log(1);\n";
+    const auto        javascript = BundledMode("javascript");
+    CHECK(ClassAt(javascript, js, "console;") != SyntaxClass::VariableBuiltin);
+    CHECK(ClassAt(javascript, js, "console.log") == SyntaxClass::VariableBuiltin);
+
+    const std::string groovy = "def total(int count) {\n  return count + other\n}\n";
+    const auto        mode   = BundledMode("groovy");
+    CHECK(ClassAt(mode, groovy, "count +") == SyntaxClass::Parameter);
+    CHECK(ClassAt(mode, groovy, "other") != SyntaxClass::Parameter);
+
+    // A Ruby `def` body sees none of the file's locals: there, a bare name
+    // is a method call.
+    const std::string rb   = "count = 1\ndef total(items)\n  sum = 0\n  items.each { |item| sum += item }\n"
+                             "  sum + count\nend\nputs(count)\n";
+    const auto        ruby = BundledMode("ruby");
+    CHECK(ClassAt(ruby, rb, "sum + ") == SyntaxClass::Variable);
+    CHECK(ClassAt(ruby, rb, "item }") == SyntaxClass::Variable);
+    CHECK(ClassAt(ruby, rb, "count\nend") == SyntaxClass::Method);
+    CHECK(ClassAt(ruby, rb, "count)") == SyntaxClass::Variable);
+    CHECK(ClassAt(ruby, rb, "puts") == SyntaxClass::Method);
+}
+
 TEST_CASE("Upstream's non-standard capture names reach a class", "[Mode]") {
     const std::string make = "all:\n\t@echo hi\n$(warning careful)\n";
     CHECK(ClassAt(BundledMode("make"), make, "careful") == SyntaxClass::String);

@@ -113,6 +113,14 @@ namespace {
         // it across a reparse, even when the underlying subtree is
         // byte-for-byte unchanged, because its ancestry may not be.
         bool readsOutsideSubtree = false;
+        // `#is?`/`#is-not? local` -> QueryCapture::localCondition.
+        static constexpr uint32_t kAllCaptures = UINT32_MAX;
+        struct LocalRule {
+            uint32_t       captureId = kAllCaptures; // a named capture, or every capture of the pattern
+            LocalCondition condition = LocalCondition::None;
+            std::string    kind;
+        };
+        std::vector<LocalRule> localRules;
     };
 
     struct Binding {
@@ -222,6 +230,8 @@ struct QueryMatcher::Impl {
     std::unordered_map<std::string, parse::abi::Symbol>              supertypes;
     // Some pattern has a `supertype/subtype` step (PatternNode::requiredSupertype).
     bool supertypeSteps = false;
+    // Some pattern has a Pattern::LocalRule.
+    bool usesLocalConditions = false;
 
     void BuildTypeTables() {
         const uint32_t count = parse::LanguageSymbolCount(language);
@@ -687,6 +697,34 @@ struct QueryMatcher::Impl {
                 predicate.regex        = CompilePredicateRegex(predicate.operands[1].text,
                                                                predicate.name.find("lua-match?") != std::string::npos);
                 predicate.regexInvalid = !predicate.regex.has_value();
+            }
+        }
+
+        for (Pattern& pattern : patterns) {
+            for (const CompiledPredicate& predicate : pattern.predicates) {
+                std::string_view name = predicate.name;
+                if (!name.empty() && (name.front() == '#' || name.front() == ':')) {
+                    name.remove_prefix(1);
+                }
+                if (name != "is?" && name != "is-not?") {
+                    continue;
+                }
+                Pattern::LocalRule rule;
+                rule.condition   = name == "is?" ? LocalCondition::Local : LocalCondition::NotLocal;
+                bool aboutLocals = false;
+                for (const CompiledOperand& operand : predicate.operands) {
+                    if (operand.isCapture) {
+                        rule.captureId = operand.captureId;
+                    }
+                    else if (operand.text == "local" || operand.text.starts_with("local.")) {
+                        aboutLocals = true;
+                        rule.kind   = operand.text == "local" ? "" : operand.text.substr(6);
+                    }
+                }
+                if (aboutLocals) {
+                    pattern.localRules.push_back(std::move(rule));
+                    usesLocalConditions = true;
+                }
             }
         }
 
@@ -1371,12 +1409,19 @@ struct QueryMatcher::Impl {
             sim.pattern = patternIndex;
             sim.caps.reserve(bindings.size());
             for (const Binding& binding : bindings) {
-                sim.caps.push_back(QueryCapture{
+                QueryCapture capture{
                     .name      = captureNames[binding.captureId],
                     .startByte = parse::NodeStartByte(binding.node),
                     .endByte   = parse::NodeEndByte(binding.node),
                     .nodeId    = binding.node.id,
-                });
+                };
+                for (const Pattern::LocalRule& rule : patterns[patternIndex].localRules) {
+                    if (rule.captureId == Pattern::kAllCaptures || rule.captureId == binding.captureId) {
+                        capture.localCondition = rule.condition;
+                        capture.localKind      = rule.kind;
+                    }
+                }
+                sim.caps.push_back(std::move(capture));
             }
             sim.activate = PreKey{sim.caps.front().startByte, sim.caps.front().endByte};
             // The completion node: the last-visited node the assignment
@@ -1553,6 +1598,10 @@ std::vector<QueryMatch> QueryMatcher::MatchesInRange(const Node& root, std::stri
         return {};
     }
     return impl_->CollectMatches(root.Raw(), sourceText, startByte, endByte);
+}
+
+bool QueryMatcher::UsesLocalConditions() const {
+    return impl_->usesLocalConditions;
 }
 
 std::size_t QueryMatcher::AncestorCrossingPatternCount() const {

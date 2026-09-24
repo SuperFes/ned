@@ -605,6 +605,9 @@ struct LocalCapture {
     // parameter \"n\" -- 4 occurrences") rather than just that it renamed
     // something; nothing about binding resolution depends on it.
     std::string qualifier;
+    // A Scope whose query set `local.scope-inherits` false: names bound
+    // outside it are not visible inside (a Ruby `def` body).
+    bool inherits = true;
 };
 
 // Maps a locals.scm capture name (without the leading '@', e.g.

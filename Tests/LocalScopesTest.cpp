@@ -285,3 +285,69 @@ TEST_CASE("ResolveBindingAt declines what it cannot resolve", "[LocalScopes]") {
         REQUIRE_FALSE(ResolveBindingAt({}, text, 3).has_value());
     }
 }
+
+namespace {
+
+LocalCapture Token(std::string_view text, std::string_view name, int n, LocalCaptureKind kind, std::string qualifier = {}) {
+    const std::size_t at = Nth(text, name, n);
+    return LocalCapture{at, at + name.size(), kind, std::move(qualifier)};
+}
+
+std::vector<std::string> DescribeLocalNodes(std::string_view text, const std::vector<LocalCapture>& captures) {
+    std::vector<std::string> out;
+    for (const ned::editor::locals::LocalNode& node : ned::editor::locals::LocalNodes(captures, text)) {
+        out.push_back(std::string(text.substr(node.range.first, node.range.second - node.range.first)) + "@" +
+                      std::to_string(node.range.first) + ":" + node.qualifier);
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("LocalNodes marks definitions and the references that resolve to them", "[LocalScopes]") {
+    using enum LocalCaptureKind;
+    const std::string               text     = "x = 1\nf(y) { y + x + z }\ny\n";
+    const std::vector<LocalCapture> captures = {
+        Token(text, "x", 0, Definition, "var"),
+        ScopeFrom(text, "f("),
+        Token(text, "y", 0, Definition, "parameter"),
+        Token(text, "y", 1, Reference),
+        Token(text, "x", 1, Reference),
+        Token(text, "z", 0, Reference),
+        Token(text, "y", 2, Reference), // outside the scope that bound it
+    };
+    CHECK(DescribeLocalNodes(text, captures) ==
+          std::vector<std::string>{"x@0:var", "y@8:parameter", "y@13:parameter", "x@17:var"});
+}
+
+TEST_CASE("LocalNodes resolves in document order, innermost scope first", "[LocalScopes]") {
+    using enum LocalCaptureKind;
+    const std::string               text     = "{ a { a = 2 a } a = 1 a }";
+    const std::vector<LocalCapture> captures = {
+        BraceScope(text, 0),
+        BraceScope(text, 1),
+        Token(text, "a", 0, Reference), // before any definition
+        Token(text, "a", 1, Definition, "inner"),
+        Token(text, "a", 2, Reference),
+        Token(text, "a", 3, Definition, "outer"),
+        Token(text, "a", 4, Reference),
+    };
+    CHECK(DescribeLocalNodes(text, captures) ==
+          std::vector<std::string>{"a@6:inner", "a@12:inner", "a@16:outer", "a@22:outer"});
+}
+
+TEST_CASE("LocalNodes lists a token captured as both definition and reference once", "[LocalScopes]") {
+    using enum LocalCaptureKind;
+    const std::string               text     = "n\n";
+    const std::vector<LocalCapture> captures = {Token(text, "n", 0, Reference), Token(text, "n", 0, Definition, "var")};
+    CHECK(DescribeLocalNodes(text, captures) == std::vector<std::string>{"n@0:var"});
+}
+
+TEST_CASE("LocalNodes stops at a scope that doesn't inherit outer names", "[LocalScopes]") {
+    using enum LocalCaptureKind;
+    const std::string text                   = "a = 1\ndef f { a }\n";
+    LocalCapture      body                   = ScopeFrom(text, "def");
+    body.inherits                            = false;
+    const std::vector<LocalCapture> captures = {Token(text, "a", 0, Definition), body, Token(text, "a", 1, Reference)};
+    CHECK(DescribeLocalNodes(text, captures) == std::vector<std::string>{"a@0:"});
+}
