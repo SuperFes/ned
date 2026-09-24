@@ -3,7 +3,7 @@
  :line-comment "//"
 
  # The richer C-family line-inspect node set -- see Languages/CLike.cpp.
- :escapes ["c.line-inspect"]
+ :escapes ["c.line-inspect" "c.test-body"]
  :lsp-root-markers ["compile_commands.json" ".clangd" "CMakeLists.txt"]
  :injection-aliases ["h"]
  :snippets

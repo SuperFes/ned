@@ -1,6 +1,6 @@
 # Per-language setup recipes
 
-`java`, `kotlin`, `csharp`, `go`, `rust`, `bash`, `lua`, and `cmake` all get syntax
+`java`, `kotlin`, `csharp`, `go`, `rust`, `c`, `bash`, `lua`, and `cmake` all get syntax
 highlighting, folding, and indentation with no setup at all (see
 [Language Intelligence](features/language-intelligence.md)). Language
 server, debugger, and test-runner integration is a separate, explicit step: ned never
@@ -136,6 +136,22 @@ manages, and ned doesn't (yet) support that transport.
 Replace `${cargo:program}` with your actual built binary path — that
 substitution is VS Code's own, not ned's. `cargo test` maps directly onto the
 built-in `"cargo"` format.
+
+## C
+
+```janet
+(ned/set-test-command ["./build/test_math"] "unity")
+```
+
+Test discovery (gutter marks, run-test-at-point) recognizes Unity and CMocka
+(`test*`-named functions), Check (`START_TEST`), Criterion (`Test(suite, name)`)
+and greatest (`TEST name(void)`). For results, a [Unity](https://www.throwtheswitch.org/unity)
+test binary's own output maps onto the built-in `"unity"` format; point the
+command at the binary, or at whatever builds and runs it. CMocka and Criterion
+both write JUnit XML (see each one's docs for the switch), which fits
+`ned/set-test-results-file` + `"junit-xml"`. `ctest` alone reports one result
+per test executable, not per test function, so gutter marks stay unmatched
+under the `"ctest"` format.
 
 ## Bash
 

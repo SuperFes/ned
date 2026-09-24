@@ -33,8 +33,71 @@ std::vector<std::string> MarkerNames(const std::vector<TestMarker>& markers) {
 TEST_CASE("Modes with no test query configured have an empty testDiscovery", "[TestRun]") {
     CHECK_FALSE(static_cast<bool>(ned::editor::FundamentalMode().testDiscovery));
     CHECK_FALSE(static_cast<bool>(ned::editor::JsonMode().testDiscovery));
-    CHECK_FALSE(static_cast<bool>(ned::editor::CMode().testDiscovery));
     CHECK_FALSE(static_cast<bool>(ned::editor::BashMode().testDiscovery));
+}
+
+TEST_CASE("CMode testDiscovery finds Unity, CMocka, Check, Criterion and greatest tests", "[TestRun]") {
+    const auto mode = ned::editor::CMode();
+    REQUIRE(static_cast<bool>(mode.testDiscovery));
+
+    const std::string text = "static int helper(void) { return 1; }\n"
+                             "void test_Add(void) {\n"
+                             "    TEST_ASSERT_EQUAL(2, add(1, 1));\n"
+                             "}\n"
+                             "static void test_add_state(void **state) {\n"
+                             "    assert_int_equal(2, add(1, 1));\n"
+                             "}\n"
+                             "START_TEST(test_check_add)\n"
+                             "{\n"
+                             "    ck_assert_int_eq(add(1, 1), 2);\n"
+                             "}\n"
+                             "END_TEST\n"
+                             "\n"
+                             "START_TEST(test_check_sub)\n"
+                             "{\n"
+                             "    ck_assert_int_eq(sub(2, 1), 1);\n"
+                             "}\n"
+                             "END_TEST\n"
+                             "\n"
+                             "int main(void) { return 0; }\n";
+
+    const auto checkMarkers = mode.testDiscovery(text);
+    CHECK(MarkerNames(checkMarkers) ==
+          std::vector<std::string>{"test_Add", "test_add_state", "test_check_add", "test_check_sub"});
+    // The second Check test fuses with the END_TEST before it; its marker
+    // still starts at its own START_TEST and covers its body.
+    REQUIRE(checkMarkers.size() == 4);
+    CHECK(checkMarkers[3].startByte == text.find("START_TEST(test_check_sub)"));
+    CHECK(checkMarkers[3].endByte > text.find("sub(2, 1)"));
+
+    const std::string greatest = "#include \"greatest.h\"\n"
+                                 "\n"
+                                 "TEST add_works(void) {\n"
+                                 "    ASSERT_EQ(2, add(1, 1));\n"
+                                 "    PASS();\n"
+                                 "}\n"
+                                 "\n"
+                                 "TEST sub_works(void) {\n"
+                                 "    PASS();\n"
+                                 "}\n";
+    CHECK(MarkerNames(mode.testDiscovery(greatest)) == std::vector<std::string>{"add_works", "sub_works"});
+
+    const std::string criterion = "#include <criterion/criterion.h>\n"
+                                  "\n"
+                                  "Test(math, add) {\n"
+                                  "    cr_assert(add(1, 1) == 2);\n"
+                                  "}\n"
+                                  "\n"
+                                  "Test(math, sub, .disabled = true) {\n"
+                                  "    cr_assert(sub(2, 1) == 1);\n"
+                                  "}\n";
+    const auto        markers   = mode.testDiscovery(criterion);
+    CHECK(MarkerNames(markers) == std::vector<std::string>{"add", "sub"});
+    // The body is a sibling of the call, as with Catch2 in C++.
+    const std::size_t insideBody = criterion.find("cr_assert");
+    REQUIRE_FALSE(markers.empty());
+    CHECK(markers[0].startByte < insideBody);
+    CHECK(insideBody < markers[0].endByte);
 }
 
 TEST_CASE("CppMode testDiscovery finds Catch2 and gtest definitions", "[TestRun]") {

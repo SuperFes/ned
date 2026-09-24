@@ -11,7 +11,7 @@
 
 namespace ned::editor::languages {
 
-// "c.line-inspect", "cpp.test-body"
+// "c.line-inspect", "c.test-body"
 void RegisterCLikeEscapes();
 // "markdown.indent" -- highlighting and section breadcrumbs moved to query
 // patterns (Source/Languages/markdown/), hanging list indent is the one

@@ -41,9 +41,9 @@ namespace {
         mode.lineInspect = BuildLineInspectFunction(*context.language, IsCLikeExpressionNodeType);
     }
 
-    // tree-sitter-cpp parses an unexpanded TEST_CASE("x") { ... } as a
-    // call_expression statement with the body left as a *sibling*
-    // compound_statement (the macro isn't valid C++ unexpanded) -- extend
+    // An unexpanded test macro -- Catch2's TEST_CASE("x") { ... }, Criterion's
+    // Test(suite, name) { ... } -- parses as a call_expression statement with
+    // the body left as a *sibling* compound_statement -- extend
     // each discovered test over an immediately adjacent compound_statement
     // sibling so point-inside-the-body still resolves to this test for
     // run-test-at-point. Wraps the generic closure and re-reads the tree it
@@ -92,7 +92,7 @@ namespace {
 
 void RegisterCLikeEscapes() {
     RegisterModeEscape("c.line-inspect", LineInspect);
-    RegisterModeEscape("cpp.test-body", TestBody);
+    RegisterModeEscape("c.test-body", TestBody);
 }
 
 } // namespace ned::editor::languages

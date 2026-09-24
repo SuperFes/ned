@@ -9,9 +9,9 @@
  # C's own imports query -- both grammars define preproc_include identically.
  :queries {:imports ["c/imports.janet"]}
 
- # cpp.test-body widens an unexpanded TEST_CASE macro over its sibling
+ # c.test-body widens an unexpanded TEST_CASE macro over its sibling
  # compound_statement -- see Languages/CLike.cpp.
- :escapes ["c.line-inspect" "cpp.test-body"]
+ :escapes ["c.line-inspect" "c.test-body"]
  :lsp-root-markers ["compile_commands.json" ".clangd" "CMakeLists.txt"]
  :injection-aliases ["c++" "cc" "cxx" "hpp"]
  :snippets

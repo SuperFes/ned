@@ -833,7 +833,7 @@ Set how much of the screen the terminal drawer covers, as a percentage (default 
 
 ## `ned/set-test-command`
 
-Set the project's test command and output format: (argv format), e.g. (ned/set-test-command ["ctest" "--test-dir" "build"] "ctest"). argv is an array or tuple of strings -- argv[0] the executable (resolved against $PATH). format names a built-in parser ("ctest", "catch2", "pytest", "go-json", "cargo", "junit-xml", "phpunit") or one registered via ned/register-test-parser (a registered name wins over a built-in). run-tests (C-c T t) streams raw output into *test output* and, on exit, parses it into the *test results* buffer and the per-test gutter marks. An empty argv clears the configured command.
+Set the project's test command and output format: (argv format), e.g. (ned/set-test-command ["ctest" "--test-dir" "build"] "ctest"). argv is an array or tuple of strings -- argv[0] the executable (resolved against $PATH). format names a built-in parser ("ctest", "catch2", "pytest", "go-json", "cargo", "junit-xml", "phpunit", "unity") or one registered via ned/register-test-parser (a registered name wins over a built-in). run-tests (C-c T t) streams raw output into *test output* and, on exit, parses it into the *test results* buffer and the per-test gutter marks. An empty argv clears the configured command.
 
 ## `ned/set-test-filter-command`
 

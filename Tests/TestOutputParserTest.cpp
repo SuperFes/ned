@@ -13,6 +13,7 @@ using ned::editor::testrun::ParseJUnitXml;
 using ned::editor::testrun::ParsePhpUnit;
 using ned::editor::testrun::ParsePytest;
 using ned::editor::testrun::ParseTestOutput;
+using ned::editor::testrun::ParseUnity;
 using ned::editor::testrun::TestResult;
 
 // Every fixture below is captured from a real tool run (2026-08: ctest 3.x,
@@ -533,6 +534,47 @@ TEST_CASE("ParsePhpUnit reads the all-OK summary", "[TestRun]") {
 }
 
 // --- dispatch ---------------------------------------------------------------
+
+// Captured from Unity master (ThrowTheSwitch/Unity), 2026-09-24. A PASS
+// line's number is the RUN_TEST call; a FAIL's is the failing assertion.
+constexpr const char* kUnityOutput = "test_math.c:12:test_add_passes:PASS\n"
+                                     "test_math.c:6:test_add_fails:FAIL: Expected 3 Was 2\n"
+                                     "test_math.c:7:test_ignored:IGNORE: not yet\n"
+                                     "test_math.c:8:test_ignored_plain:IGNORE\n"
+                                     "test_math.c:9:test_fail_message:FAIL:boom: with colon\n"
+                                     "\n"
+                                     "-----------------------\n"
+                                     "5 Tests 2 Failures 2 Ignored \n"
+                                     "FAIL\n";
+
+TEST_CASE("ParseUnity reads each test's line, status and message", "[TestRun]") {
+    const auto outcome = ParseUnity(kUnityOutput);
+    REQUIRE(outcome.parsedOk);
+    REQUIRE(outcome.results.size() == 5);
+    CHECK(outcome.passed == 1);
+    CHECK(outcome.failed == 2);
+    CHECK(outcome.skipped == 2);
+
+    const TestResult& failed = outcome.results[1];
+    CHECK(failed.name == "test_add_fails");
+    CHECK(failed.status == TestResult::Status::Failed);
+    CHECK(failed.file == "test_math.c");
+    CHECK(failed.line == 6);
+    CHECK(failed.message == "Expected 3 Was 2");
+
+    CHECK(outcome.results[2].message == "not yet");
+    CHECK(outcome.results[3].message.empty());
+    // A message's own colons stay in it.
+    CHECK(outcome.results[4].message == "boom: with colon");
+}
+
+TEST_CASE("ParseUnity keeps a Windows drive letter in the path", "[TestRun]") {
+    const auto outcome = ParseUnity("C:\\src\\test_io.c:40:test_read:PASS\n1 Tests 0 Failures 0 Ignored\n");
+    REQUIRE(outcome.results.size() == 1);
+    CHECK(outcome.results[0].file == "C:\\src\\test_io.c");
+    CHECK(outcome.results[0].line == 40);
+    CHECK(outcome.results[0].name == "test_read");
+}
 
 TEST_CASE("ParseTestOutput dispatches by format name and rejects unknown names", "[TestRun]") {
     const auto outcome = ParseTestOutput("ctest", kCtestOutput);

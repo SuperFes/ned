@@ -74,8 +74,13 @@ namespace ned::editor::testrun {
 // "/path/File.php:NN" trace (first frame taken). failuresOnly, like Catch2.
 [[nodiscard]] Outcome ParsePhpUnit(std::string_view output);
 
+// Unity (C): one "path:line:test_name:PASS|FAIL|IGNORE[: message]" line per
+// test, then "N Tests M Failures K Ignored". A test name is a C identifier,
+// so the line is split from the right and a Windows drive letter survives.
+[[nodiscard]] Outcome ParseUnity(std::string_view output);
+
 // Dispatch by format name -- "ctest", "catch2", "pytest", "go-json",
-// "cargo", "junit-xml", "phpunit". nullopt for an unknown name (the caller
+// "cargo", "junit-xml", "phpunit", "unity". nullopt for an unknown name (the caller
 // reports it; a Janet-registered parser under that name is TestRunner's
 // business, resolved before ever asking here).
 [[nodiscard]] std::optional<Outcome> ParseTestOutput(std::string_view format, std::string_view output);

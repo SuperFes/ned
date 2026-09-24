@@ -1230,6 +1230,69 @@ Outcome ParsePhpUnit(std::string_view output) {
     return outcome;
 }
 
+Outcome ParseUnity(std::string_view output) {
+    Outcome    outcome{.format = "unity"};
+    const auto isIdentifierChar = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+    for (const std::string_view raw : SplitLines(output)) {
+        const std::string_view line = Trim(raw);
+
+        // "5 Tests 2 Failures 2 Ignored"
+        if (const std::size_t tests = line.find(" Tests "); tests != std::string_view::npos && line.ends_with(" Ignored")) {
+            if (ParseSize(line.substr(0, tests))) {
+                outcome.parsedOk = true;
+            }
+            continue;
+        }
+
+        // "path:line:name:STATUS[:message]" -- the first colon followed by a
+        // line number, an identifier and a status word ends the path, so a
+        // drive letter or a message holding colons can't mislead it.
+        for (std::size_t colon = line.find(':'); colon != std::string_view::npos; colon = line.find(':', colon + 1)) {
+            std::size_t cursor = colon + 1;
+            while (cursor < line.size() && std::isdigit(static_cast<unsigned char>(line[cursor])) != 0) {
+                ++cursor;
+            }
+            if (cursor == colon + 1 || cursor >= line.size() || line[cursor] != ':') {
+                continue;
+            }
+            const std::size_t nameStart = cursor + 1;
+            std::size_t       nameEnd   = nameStart;
+            while (nameEnd < line.size() && isIdentifierChar(line[nameEnd])) {
+                ++nameEnd;
+            }
+            if (nameEnd == nameStart || nameEnd >= line.size() || line[nameEnd] != ':') {
+                continue;
+            }
+            const std::string_view            rest = line.substr(nameEnd + 1);
+            std::optional<TestResult::Status> status;
+            std::string_view                  message;
+            for (const auto& [word, mapped] : {std::pair{std::string_view("PASS"), TestResult::Status::Passed},
+                                               std::pair{std::string_view("FAIL"), TestResult::Status::Failed},
+                                               std::pair{std::string_view("IGNORE"), TestResult::Status::Skipped}}) {
+                if (rest.starts_with(word) && (rest.size() == word.size() || rest[word.size()] == ':')) {
+                    status  = mapped;
+                    message = rest.size() == word.size() ? std::string_view() : Trim(rest.substr(word.size() + 1));
+                    break;
+                }
+            }
+            if (!status) {
+                continue;
+            }
+            TestResult result;
+            result.name    = std::string(line.substr(nameStart, nameEnd - nameStart));
+            result.status  = *status;
+            result.file    = std::string(line.substr(0, colon));
+            result.line    = ParseSize(line.substr(colon + 1, cursor - colon - 1)).value_or(0);
+            result.message = std::string(message);
+            outcome.results.push_back(std::move(result));
+            outcome.parsedOk = true;
+            break;
+        }
+    }
+    CountFromResults(outcome);
+    return outcome;
+}
+
 std::optional<Outcome> ParseTestOutput(std::string_view format, std::string_view output) {
     if (format == "ctest") {
         return ParseCtest(output);
@@ -1252,11 +1315,14 @@ std::optional<Outcome> ParseTestOutput(std::string_view format, std::string_view
     if (format == "phpunit") {
         return ParsePhpUnit(output);
     }
+    if (format == "unity") {
+        return ParseUnity(output);
+    }
     return std::nullopt;
 }
 
 std::vector<std::string> BuiltInTestFormats() {
-    return {"ctest", "catch2", "pytest", "go-json", "cargo", "junit-xml", "phpunit"};
+    return {"ctest", "catch2", "pytest", "go-json", "cargo", "junit-xml", "phpunit", "unity"};
 }
 
 } // namespace ned::editor::testrun
