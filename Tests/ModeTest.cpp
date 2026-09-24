@@ -1806,6 +1806,79 @@ TEST_CASE("An unmapped catch-all capture doesn't erase an earlier one", "[Mode]"
     CHECK(ClassAt(BundledMode("pascal"), pascal, "WriteLn") == SyntaxClass::Function);
 }
 
+TEST_CASE("SpanCollector settles an equal-range collision by refinement, then pattern order", "[Mode]") {
+    const auto winner = [](bool firstPatternWins) {
+        ned::editor::SpanCollector collector(firstPatternWins);
+        collector.Add("function", 0, 3, SyntaxClass::Function, true);
+        collector.Add("variable", 0, 3, SyntaxClass::Variable, true);
+        collector.Add("comment", 4, 6, SyntaxClass::Comment, true);
+        const std::vector<ned::editor::HighlightSpan> spans = collector.Take();
+        REQUIRE(spans.size() == 2);
+        return spans[0].syntaxClass;
+    };
+    CHECK(winner(false) == SyntaxClass::Variable);
+    CHECK(winner(true) == SyntaxClass::Function);
+
+    // A name refining the other wins wherever it was listed...
+    for (const bool firstPatternWins : {false, true}) {
+        ned::editor::SpanCollector refined(firstPatternWins);
+        refined.Add("function.builtin", 0, 3, SyntaxClass::FunctionBuiltin, true);
+        refined.Add("function", 0, 3, SyntaxClass::Function, true);
+        CHECK(refined.Take()[0].syntaxClass == SyntaxClass::FunctionBuiltin);
+    }
+    // ...but more dots alone don't make an unrelated name more specific.
+    ned::editor::SpanCollector unrelated(false);
+    unrelated.Add("function.call", 0, 3, SyntaxClass::Function, true);
+    unrelated.Add("variable", 0, 3, SyntaxClass::Variable, true);
+    CHECK(unrelated.Take()[0].syntaxClass == SyntaxClass::Variable);
+}
+
+// These upstream queries list the specific pattern above a catch-all, the
+// order tree-sitter's own highlighter resolves first-pattern-first.
+TEST_CASE("A first-pattern-wins query keeps its specific captures", "[Mode]") {
+    const std::string go = "package main\n\nfunc main() {\n\tfoo(len(x))\n}\n";
+    CHECK(ClassAt(BundledMode("go"), go, "foo") == SyntaxClass::Function);
+    CHECK(ClassAt(BundledMode("go"), go, "len") == SyntaxClass::FunctionBuiltin);
+    CHECK(ClassAt(BundledMode("go"), go, "x") == SyntaxClass::Variable);
+
+    const std::string awk = "/needle/ { print $1 }\n";
+    CHECK(ClassAt(BundledMode("awk"), awk, "needle") == SyntaxClass::String);
+
+    const std::string pkl = "name = other\n";
+    CHECK(ClassAt(BundledMode("pkl"), pkl, "name") == SyntaxClass::Property);
+    CHECK(ClassAt(BundledMode("pkl"), pkl, "other") == SyntaxClass::Variable);
+
+    const std::string glsl = "void main() { foo(1.0); }\n";
+    CHECK(ClassAt(BundledMode("glsl"), glsl, "foo") == SyntaxClass::Function);
+
+    // cue's `#Definition` pattern follows the catch-all upstream; ned's own
+    // file reads it first.
+    const std::string cue = "#A: {x: int}\ny: #A\n";
+    CHECK(ClassAt(BundledMode("cue"), cue, "x") == SyntaxClass::Property);
+    CHECK(ClassAt(BundledMode("cue"), cue, "#A\n") == SyntaxClass::Type);
+}
+
+TEST_CASE("Haskell paints variables by role, not as types", "[Mode]") {
+    const std::string source = "double :: Int -> Int\ndouble n = twice n\n  where twice k = k + k\n";
+    const auto        mode   = BundledMode("haskell");
+    CHECK(ClassAt(mode, source, "n = ") == SyntaxClass::Parameter);
+    CHECK(ClassAt(mode, source, "twice n") == SyntaxClass::Function);
+    CHECK(ClassAt(mode, source, "n\n") == SyntaxClass::Variable);
+    CHECK(ClassAt(mode, source, "Int") == SyntaxClass::Type);
+}
+
+TEST_CASE("A later, unrelated capture overrides an earlier one", "[Mode]") {
+    // Erlang marks every atom, then the ones naming a function or module.
+    const std::string erlang = "-module(demo).\nrun() -> lists:reverse([ok]).\n";
+    CHECK(ClassAt(BundledMode("erlang"), erlang, "run") == SyntaxClass::Function);
+    CHECK(ClassAt(BundledMode("erlang"), erlang, "ok]") != SyntaxClass::Function);
+
+    // Python's own query lists the attribute catch-all after the method call.
+    const std::string python = "items.append(value)\nitems.size\n";
+    CHECK(ClassAt(BundledMode("python"), python, "append") == SyntaxClass::Method);
+    CHECK(ClassAt(BundledMode("python"), python, "size") == SyntaxClass::Property);
+}
+
 TEST_CASE("Upstream's non-standard capture names reach a class", "[Mode]") {
     const std::string make = "all:\n\t@echo hi\n$(warning careful)\n";
     CHECK(ClassAt(BundledMode("make"), make, "careful") == SyntaxClass::String);

@@ -6,4 +6,7 @@
 {:name "cue"
  :extensions [".cue"]
  :line-comment "//"
+ :first-pattern-wins true
+ :queries {:highlights ["cue/highlights.janet"
+                        "cue/upstream/highlights.janet"]}
 }

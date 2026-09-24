@@ -117,11 +117,6 @@ and code reading. Highest stakes first.
       `with`, pattern, `->`, expression) against EOF completion's three-token closer
       budget. Measured: raising it to five changes GDScript's "Variables Invalid"
       corpus case and still leaves the line at the `let` level, so it isn't the fix.
-- [ ] **Some upstream queries assume tree-sitter CLI's first-pattern-wins order**, while
-      ned (like Neovim) lets the later of two equal-range captures win. awk's
-      "Order matters" query lists `(regex) @regexp` before `(pattern) @namespace`, so a
-      rule-level `/re/ { ... }` paints as a namespace. Needs a per-query (or
-      per-language) order flag, or ned-side reordering of the affected files.
 - [ ] **Per-buffer settings, taken from the file itself.** Applied when a file opens
       (`Editor/FileSettings.h`). Indentation: its content (`ned/set-indent-detection`),
       then `.editorconfig` (`ned/set-editorconfig-enabled`), then a modeline, laid over
@@ -145,6 +140,13 @@ and code reading. Highest stakes first.
       shape there.
 - [ ] **No locals query for Lua, Ruby, Perl, Elixir, Dart or R**, so scope-aware rename
       and local highlighting get no scope information there. Lua is Tier A.
+- [ ] **`#is?`/`#is-not? local` are never evaluated**, so a pattern carrying one always
+      applies. Upstream highlights use them to keep a builtin/method colour off a local
+      that shadows it: Ruby's `((identifier) @function.method (#is-not? local))` paints
+      every local variable as a method call (518 hits in its corpus), and Groovy's
+      `#is? local.parameter` marks every identifier a parameter until a later pattern
+      overrides it. JavaScript, Nix, Gleam and C++ use them too. Needs the language's
+      locals query resolved during highlighting -- Ruby has none yet (item above).
 - [ ] **change-signature is C++-only.** It needs `signatures` + `calls` queries, and only
       cpp ships them (`sig` column). Rust, Go, Java, Kotlin, C#, TypeScript and Python are
       the obvious next ones.

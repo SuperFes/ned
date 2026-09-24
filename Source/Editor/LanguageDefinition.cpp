@@ -281,7 +281,9 @@ Mode ModeFromDefinition(const LanguageDefinition& definition, const grammar::Lan
     const CompiledQueries compiled = Compile(definition.queries);
     ModeBuildContext      context;
     try {
-        Mode mode = GrammarModeFromLanguage(ModeNameFor(definition), language, compiled.Views(), &context);
+        GrammarQuerySources sources        = compiled.Views();
+        sources.highlightsFirstPatternWins = definition.firstPatternWins;
+        Mode mode                          = GrammarModeFromLanguage(ModeNameFor(definition), language, sources, &context);
         return Finish(std::move(mode), definition, context);
     }
     catch (const grammar::QueryMatcherError& error) {

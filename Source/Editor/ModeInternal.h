@@ -14,6 +14,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -41,20 +42,26 @@ namespace ned::editor {
 // Cyclic heading-level class from a heading's depth (1-based).
 [[nodiscard]] SyntaxClass HeadlineLevelForStarCount(std::size_t starCount);
 
-// Collects query captures into HighlightSpans, letting the more specific
-// capture name win when two patterns capture the exact same range -- see
-// the definition's own comment for the json case that made this necessary.
+// Collects query captures into HighlightSpans, settling two patterns that
+// capture the exact same range -- a refining name wins, otherwise pattern
+// order; see the definition's comment.
 class SpanCollector {
   public:
+    // `firstPatternWins`: of two unrelated captures, keep the earlier
+    // (LanguageDefinition::firstPatternWins) rather than the later.
+    explicit SpanCollector(bool firstPatternWins = false) : firstPatternWins_(firstPatternWins) {
+    }
+
     // `paints` is false for a capture nothing maps, styles or classifies.
     void                                     Add(std::string_view captureName, std::size_t startByte, std::size_t endByte, SyntaxClass syntaxClass, bool paints);
     [[nodiscard]] std::vector<HighlightSpan> Take();
 
   private:
     std::vector<HighlightSpan>                                 spans_;
-    std::vector<int>                                           specificity_;
+    std::vector<std::string>                                   names_;
     std::vector<bool>                                          paints_;
     std::map<std::pair<std::size_t, std::size_t>, std::size_t> byRange_;
+    bool                                                       firstPatternWins_ = false;
 };
 
 // A Mode::lineInspect closure over its own parser (runs only on an explicit

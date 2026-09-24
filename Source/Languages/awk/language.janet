@@ -7,4 +7,5 @@
  :extensions [".awk" ".gawk" ".mawk"]
  :line-comment "#"
  :capture-classes {"regexp" :string}
+ :first-pattern-wins true
 }

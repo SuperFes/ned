@@ -372,7 +372,8 @@
 
 (type/star) @type
 
-(variable) @type
+# ned: upstream's bare `(variable) @type` dropped, as nvim-treesitter drops it:
+# listed after every other variable pattern, it painted all of them a type.
 
 (constructor) @constructor
 

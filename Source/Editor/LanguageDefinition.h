@@ -98,6 +98,11 @@ struct LanguageDefinition {
     // opinion on any line, so a reindent leaves every line as written and
     // newline carries the previous line's indentation forward.
     bool preserveIndent = false;
+    // The highlights query was written for tree-sitter's first-pattern-wins
+    // order (a specific pattern above a catch-all `(identifier) @variable`)
+    // rather than Neovim's later-pattern-wins: of two equally specific
+    // captures of one range, the earlier pattern's is kept.
+    bool firstPatternWins = false;
     // File-name matching: extensions carry their leading dot (".cpp"), the
     // form std::filesystem::path::extension() hands back; filenames match
     // the whole basename and are checked first (Emacs' auto-mode-alist).

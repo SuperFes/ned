@@ -1016,6 +1016,8 @@ struct GrammarQuerySources {
     // a Space/Break-kind capture query (Editor/FormatRules.h) -> Mode::
     // formatCaptures (configurable-formatter-rules follow-up)
     std::string_view format;
+    // LanguageDefinition::firstPatternWins, for the highlights query.
+    bool highlightsFirstPatternWins = false;
 };
 
 // One HighlightFunction cache per distinct embedded language actually

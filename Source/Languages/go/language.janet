@@ -2,4 +2,5 @@
  :extensions [".go"]
  :line-comment "//"
  :lsp-root-markers ["go.mod"]
+ :first-pattern-wins true
 }

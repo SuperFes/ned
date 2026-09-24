@@ -7,4 +7,5 @@
 {:name "pkl"
  :extensions [".pkl" ".pcf"]
  :line-comment "//"
+ :first-pattern-wins true
 }

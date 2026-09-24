@@ -358,29 +358,23 @@ std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureN
                captureName != "none" && captureName != "conceal";
     }
 
-    // exhaustive-highlighting follow-up: collects query captures into
-    // HighlightSpans, resolving one specific hazard the raw append never
-    // could: two patterns capturing the *exact same node* under different
-    // names (tree-sitter-json's own '(pair key: (_) @string.special.key)'
-    // plus '(string) @string' is the canonical case -- one key node, two
-    // equal-range captures). The documented "later span wins" render rule
-    // assumes later means more-nested, which equal ranges from separate
-    // patterns break: whichever pattern the query file happens to list
-    // second wins, and json lists the *generic* one second. Invisible while
-    // spans only carried a SyntaxClass (both resolve to String); a real,
-    // live-smoke-test-caught bug once captureId made the difference
-    // stylable (ned/set-capture-foreground "string.special.key" silently
-    // did nothing). For an equal-range collision, the more specific capture
-    // name (more dotted segments) wins regardless of pattern order --
-    // tree-sitter/Neovim's own most-to-least-specific naming convention,
-    // the same reasoning SyntaxClassForCapture's ancestor walk already
-    // leans on; equal specificity keeps the later one (the pre-existing
-    // rule). Distinct-range overlaps are untouched -- the render-time
-    // later-wins rule still handles genuine nesting.
+    // Two patterns capturing the exact same range under different names
+    // (tree-sitter-json's `(pair key: (_) @string.special.key)` and
+    // `(string) @string`). When one name extends the other ("string" ->
+    // "string.special.key") it is the same thing said more precisely, and the
+    // precise one wins wherever it was listed -- the most-to-least-specific
+    // naming convention SyntaxClassForCapture's ancestor walk leans on too.
+    // Unrelated names are a genuine disagreement the query settles by order:
+    // the later pattern wins (Neovim's order), or the earlier one for a
+    // query written for tree-sitter's first-pattern-wins order
+    // (LanguageDefinition::firstPatternWins). Haskell lists
+    // `(apply [(expression/variable) @function.call])` and then a pattern
+    // re-marking the arguments @variable; Erlang marks every atom and then
+    // the ones naming a function or module. Distinct-range overlaps are
+    // untouched -- the render-time later-wins rule handles nesting.
     void SpanCollector::Add(std::string_view captureName, std::size_t startByte, std::size_t endByte, SyntaxClass syntaxClass,
                             bool paints) {
         const auto range = std::make_pair(startByte, endByte);
-        const int  dots  = static_cast<int>(std::count(captureName.begin(), captureName.end(), '.'));
         if (const auto it = byRange_.find(range); it != byRange_.end()) {
             const std::size_t index = it->second;
             // A capture that paints nothing never displaces one that does:
@@ -389,15 +383,21 @@ std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureN
             if (paints_[index] && !paints) {
                 return;
             }
-            if (paints == paints_[index] && dots < specificity_[index]) {
-                return; // a more specific capture already holds this exact range
+            if (paints == paints_[index]) {
+                const auto refines = [](std::string_view general, std::string_view specific) {
+                    return specific.size() > general.size() && specific.starts_with(general) && specific[general.size()] == '.';
+                };
+                const std::string& held = names_[index];
+                if (refines(captureName, held) || (firstPatternWins_ && !refines(held, captureName))) {
+                    return;
+                }
             }
-            spans_[index]       = HighlightSpan{.startByte   = startByte,
-                                                .endByte     = endByte,
-                                                .syntaxClass = syntaxClass,
-                                                .captureId   = InternCaptureName(captureName)};
-            specificity_[index] = dots;
-            paints_[index]      = paints;
+            spans_[index]  = HighlightSpan{.startByte   = startByte,
+                                           .endByte     = endByte,
+                                           .syntaxClass = syntaxClass,
+                                           .captureId   = InternCaptureName(captureName)};
+            names_[index]  = captureName;
+            paints_[index] = paints;
             return;
         }
         byRange_.emplace(range, spans_.size());
@@ -405,7 +405,7 @@ std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureN
                                        .endByte     = endByte,
                                        .syntaxClass = syntaxClass,
                                        .captureId   = InternCaptureName(captureName)});
-        specificity_.push_back(dots);
+        names_.emplace_back(captureName);
         paints_.push_back(paints);
     }
 
@@ -967,7 +967,8 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
     HighlightFunction highlight;
     if (!queries.highlights.empty()) {
         highlightQuery = std::make_shared<grammar::QueryMatcher>(language, queries.highlights);
-        highlight      = [parser, query = highlightQuery, injectionQuery, embeddedLanguageCache, sharedParse, languageKey](
+        highlight      = [parser, query = highlightQuery, injectionQuery, embeddedLanguageCache, sharedParse, languageKey,
+                          firstPatternWins = queries.highlightsFirstPatternWins](
                              std::string_view bufferText, HighlightWindow window) -> std::vector<HighlightSpan> {
             const grammar::Tree& tree = sharedParse->Update(*parser, bufferText);
             if (tree.IsNull()) {
@@ -975,7 +976,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             }
 
             const grammar::Node root = tree.RootNode();
-            SpanCollector          collector;
+            SpanCollector       collector(firstPatternWins);
             for (const grammar::QueryCapture& capture : query->CapturesInRange(root, bufferText, window.startByte, window.endByte)) {
                 if (!IsHighlightableCapture(capture.name)) {
                     continue;
