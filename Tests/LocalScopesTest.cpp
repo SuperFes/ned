@@ -351,3 +351,13 @@ TEST_CASE("LocalNodes stops at a scope that doesn't inherit outer names", "[Loca
     const std::vector<LocalCapture> captures = {Token(text, "a", 0, Definition), body, Token(text, "a", 1, Reference)};
     CHECK(DescribeLocalNodes(text, captures) == std::vector<std::string>{"a@0:"});
 }
+
+TEST_CASE("LocalNodes binds a parent-scope definition around its own scope", "[LocalScopes]") {
+    using enum LocalCaptureKind;
+    const std::string text                   = "{ def g { g } g }";
+    LocalCapture      name                   = Token(text, "g", 0, Definition, "function");
+    name.bindsInParentScope                  = true;
+    const std::vector<LocalCapture> captures = {BraceScope(text, 0), ScopeFrom(text, "def"), name, Token(text, "g", 1, Reference),
+                                                Token(text, "g", 2, Reference)};
+    CHECK(DescribeLocalNodes(text, captures) == std::vector<std::string>{"g@6:function", "g@10:function", "g@14:function"});
+}

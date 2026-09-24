@@ -637,3 +637,41 @@ TEST_CASE("A destructuring binding is declined rather than renamed wholesale", "
     REQUIRE(param.has_value());
     CHECK(param->qualifier == "parameter");
 }
+
+// Lua binds only through `local`, parameters and loop variables: a plain
+// assignment is a use of whatever it names, and a field name is no use.
+TEST_CASE("lua-mode resolves a reassignment to the local it assigns", "[Mode][LocalScopes]") {
+    const std::string source = "local function make()\n"
+                               "  local count = 0\n"
+                               "  local t = {count = count}\n"
+                               "  local function inc(step)\n"
+                               "    count = count + step\n"
+                               "    return t.count + count\n"
+                               "  end\n"
+                               "  return inc\n"
+                               "end\n";
+    const auto        count  = Resolve("lua-mode", source, "count", 4); // `count = count` inside inc
+    REQUIRE(count.has_value());
+    CHECK(count->qualifier == "var");
+    CHECK_FALSE(count->scopeIsFile);
+    CHECK(count->occurrences.size() == 5); // not `{count =` or `t.count`
+
+    const auto step = Resolve("lua-mode", source, "step", 1);
+    REQUIRE(step.has_value());
+    CHECK(step->qualifier == "parameter");
+    CHECK(step->occurrences.size() == 2);
+}
+
+TEST_CASE("lua-mode binds a local function's name around the function", "[Mode][LocalScopes]") {
+    const std::string source = "local function outer()\n"
+                               "  local function helper(n)\n"
+                               "    return helper(n - 1)\n"
+                               "  end\n"
+                               "  return helper(3)\n"
+                               "end\n";
+    const auto        helper = Resolve("lua-mode", source, "helper", 2);
+    REQUIRE(helper.has_value());
+    CHECK(helper->qualifier == "function");
+    CHECK_FALSE(helper->scopeIsFile);
+    CHECK(helper->occurrences.size() == 3);
+}

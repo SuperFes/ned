@@ -145,8 +145,8 @@ and code reading. Highest stakes first.
       natural shape, but every key is a definition, so it needs a depth or kind limit
       to stay an outline rather than a copy of the file. Fish names only functions:
       `set`'s variable name follows any number of flags.
-- [ ] **No locals query for Lua, Nix, Perl, Elixir, Dart or R**, so scope-aware rename
-      and local highlighting get no scope information there. Lua is Tier A. Nix's
+- [ ] **No locals query for Nix, Perl, Elixir, Dart or R**, so scope-aware rename
+      and local highlighting get no scope information there. Nix's
       highlights guard their builtins with `#is-not? local`, which without locals holds
       everywhere, so a local shadowing a builtin still paints as one.
 - [ ] **change-signature is C++-only.** It needs `signatures` + `calls` queries, and only

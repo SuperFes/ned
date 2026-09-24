@@ -38,6 +38,7 @@ namespace {
         Range       range;
         bool        isDefinition;
         std::string qualifier;
+        bool        bindsInParentScope = false;
     };
 
     // Index into a scope vector, or nullopt for file level. Used instead of
@@ -62,8 +63,8 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
             }
             continue;
         }
-        occurrences.push_back(
-            Occurrence{range, capture.kind == LocalCaptureKind::Definition, capture.qualifier});
+        occurrences.push_back(Occurrence{range, capture.kind == LocalCaptureKind::Definition, capture.qualifier,
+                                         capture.kind == LocalCaptureKind::Definition && capture.bindsInParentScope});
     }
     std::sort(scopes.begin(), scopes.end());
     scopes.erase(std::unique(scopes.begin(), scopes.end()), scopes.end());
@@ -104,6 +105,24 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
         return best;
     };
 
+    // The smallest scope strictly enclosing `inner`, for a definition that
+    // binds in its scope's parent.
+    const auto parentScopeOf = [&scopes](ScopeRef inner) -> ScopeRef {
+        if (!inner) {
+            return inner;
+        }
+        ScopeRef best;
+        for (std::size_t i = 0; i < scopes.size(); ++i) {
+            if (i == *inner || !Contains(scopes[i], scopes[*inner]) || scopes[i] == scopes[*inner]) {
+                continue;
+            }
+            if (!best || (scopes[i].second - scopes[i].first) < (scopes[*best].second - scopes[*best].first)) {
+                best = i;
+            }
+        }
+        return best;
+    };
+
     struct Candidate {
         const Occurrence* occurrence;
         ScopeRef          scope;
@@ -116,7 +135,8 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
         if (bufferText.compare(occurrence.range.first, name.size(), name) != 0) {
             continue;
         }
-        sameName.push_back(Candidate{&occurrence, innermostScopeOf(occurrence.range)});
+        const ScopeRef innermost = innermostScopeOf(occurrence.range);
+        sameName.push_back(Candidate{&occurrence, occurrence.bindsInParentScope ? parentScopeOf(innermost) : innermost});
     }
 
     // Which binding a use resolves to: the innermost enclosing scope that
@@ -282,7 +302,8 @@ std::vector<LocalNode> LocalNodes(std::span<const LocalCapture> captures, std::s
             continue;
         }
         if (token->kind == LocalCaptureKind::Definition) {
-            stack.back().names.try_emplace(name, token->qualifier);
+            Frame& owner = token->bindsInParentScope && stack.size() > 1 ? stack[stack.size() - 2] : stack.back();
+            owner.names.try_emplace(name, token->qualifier);
             if (out.empty() || out.back().range != range) {
                 out.push_back(LocalNode{range, token->qualifier});
             }

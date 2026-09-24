@@ -92,7 +92,7 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | kdl | ✓ | · | ✓ | · | ✓ | · | · | · | · | · | ✓ | · | · |
 | kotlin | ✓ | ✓ | ✓ | ✓ | · | · | ✓ | · | ✓ | · | ✓ | ✓ | · |
 | latex | ✓ | ✓ | · | ✓ | · | · | · | · | · | · | ✓ | ✓ | · |
-| lua | ✓ | ✓ | · | ✓ | · | · | · | · | ✓ | · | ✓ | ✓ | · |
+| lua | ✓ | ✓ | ✓ | ✓ | · | · | · | · | ✓ | · | ✓ | ✓ | · |
 | make | ✓ | · | · | · | · | · | · | · | · | · | ✓ | · | · |
 | markdown | ✓ | · | · | ✓ | ✓ | · | · | · | · | · | b | · | · |
 | markdown-inline | ✓ | · | · | · | · | · | · | · | · | · | · | · | · |
@@ -152,4 +152,4 @@ for every language. See `LanguageCoverage.md` for tiers and admission policy.
 | wgsl | ✓ | · | · | · | · | · | · | · | · | · | ✓ | · | · |
 | xml | ✓ | ✓ | · | · | · | · | · | · | · | · | b | · | · |
 | yaml | ✓ | ✓ | · | · | · | · | · | · | · | · | ✓ | · | · |
-| **124 languages** | 123 | 34 | 50 | 86 | 44 | 13 | 11 | 1 | 19 | 1 | 115 | 40 | 11 |
+| **124 languages** | 123 | 34 | 51 | 86 | 44 | 13 | 11 | 1 | 19 | 1 | 115 | 40 | 11 |

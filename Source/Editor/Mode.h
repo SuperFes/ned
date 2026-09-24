@@ -608,6 +608,10 @@ struct LocalCapture {
     // A Scope whose query set `local.scope-inherits` false: names bound
     // outside it are not visible inside (a Ruby `def` body).
     bool inherits = true;
+    // A Definition whose query set `definition.<qualifier>.scope` to
+    // "parent": it binds in the scope enclosing its innermost one -- Lua's
+    // `local function f`, whose name sits inside the function's own scope.
+    bool bindsInParentScope = false;
 };
 
 // Maps a locals.scm capture name (without the leading '@', e.g.

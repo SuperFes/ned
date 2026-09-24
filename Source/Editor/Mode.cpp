@@ -1897,11 +1897,26 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                                                              qualifier.substr(0, qualifier.size() - kPairs.size())});
                         continue;
                     }
-                    const auto inherits = match.setDirectives.find("local.scope-inherits");
-                    captures.push_back(LocalCapture{capture.startByte, capture.endByte, *kind, std::move(qualifier),
-                                                    inherits == match.setDirectives.end() || inherits->second != "false"});
+                    const auto inherits    = match.setDirectives.find("local.scope-inherits");
+                    const auto parentScope = match.setDirectives.find("definition." + qualifier + ".scope");
+                    captures.push_back(LocalCapture{
+                        .startByte          = capture.startByte,
+                        .endByte            = capture.endByte,
+                        .kind               = *kind,
+                        .qualifier          = std::move(qualifier),
+                        .inherits           = inherits == match.setDirectives.end() || inherits->second != "false",
+                        .bindsInParentScope = *kind == LocalCaptureKind::Definition && parentScope != match.setDirectives.end() &&
+                                              parentScope->second == "parent"});
                 }
             }
+
+            // A skipped child is no reference either: Lua's `t.count` field
+            // name is an identifier like any local.
+            std::sort(skipRanges.begin(), skipRanges.end());
+            std::erase_if(captures, [&skipRanges](const LocalCapture& capture) {
+                return capture.kind == LocalCaptureKind::Reference &&
+                       std::binary_search(skipRanges.begin(), skipRanges.end(), std::make_pair(capture.startByte, capture.endByte));
+            });
 
             for (const PairwiseContainer& container : pairwise) {
                 grammar::Node node =
