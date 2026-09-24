@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <optional>
 #include <string_view>
+#include <vector>
 
 #include "Editor/Imprint.h"
 #include <string>
@@ -68,6 +69,13 @@ namespace ned::editor::imprint {
 // `{`; an indentation body has no pair at all. Every driver that has the
 // entry should ask this form.
 [[nodiscard]] std::optional<DelimiterPair> DelimitersOf(const grammar::Node& node, const DelimitedBody& body);
+
+// Every balanced pair of the same two tokens among the node's own children
+// within `pair`, in order. A production can carry more than one body itself:
+// Swift's `if c { } else { }` inlines both blocks, so DelimitersOf's first
+// `{` and last `}` enclose a `} else {` that belongs to neither. Just `pair`
+// for the ordinary single-body node, and for one whose tokens don't balance.
+[[nodiscard]] std::vector<DelimiterPair> SiblingPairsOf(const grammar::Node& node, const DelimiterPair& pair);
 
 // The pair whose opener or closer point sits on or immediately after, or
 // nullopt when point is not on a delimiter at all.

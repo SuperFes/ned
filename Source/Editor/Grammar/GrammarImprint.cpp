@@ -34,6 +34,30 @@ namespace {
         return *current;
     }
 
+    // Through precedence and field wrappers only: a field on a SEQ labels its
+    // members, which stay the node's own children, while a named alias makes
+    // the SEQ a node of its own.
+    const Rule& UnwrapFieldAndPrec(const Rule& rule) {
+        const Rule* current = &rule;
+        for (int depth = 0; depth < 16; ++depth) {
+            if (!IsWrapper(current->kind) || current->kind == Kind::Alias || current->children.empty())
+                break;
+            current = &current->Child();
+        }
+        return *current;
+    }
+
+    // Whether a SEQ's first (or last) member is always there: a token or a
+    // symbol, not an optional, a repeat or a choice -- the only kind of edge
+    // that can be a delimiter. Crystal's `when` ends in FIELD(body,
+    // SEQ[CHOICE[statements, BLANK]]), which is the body, not a closer.
+    bool EdgeIsFixed(const Rule& seq, bool last) {
+        if (seq.children.empty())
+            return false;
+        const Kind kind = UnwrapFieldAndPrec(last ? seq.children.back() : seq.children.front()).kind;
+        return kind == Kind::String || kind == Kind::Symbol || kind == Kind::Pattern;
+    }
+
     // A rule wrapped in TOKEN produces a single leaf node: whatever structure is
     // written inside it is not in the tree at all. Looking through one is
     // therefore backwards -- it finds delimiters in something that has no
@@ -122,8 +146,12 @@ namespace {
     }
 
     bool IsListLike(const Rule& member) {
-        const Kind kind = Unwrap(member).kind;
-        return kind == Kind::Repeat || kind == Kind::Repeat1 || kind == Kind::Choice;
+        const Rule& inner = Unwrap(member);
+        // A one-member SEQ is its member: Crystal's `while` body is
+        // FIELD(body, SEQ[CHOICE[statements, BLANK]]).
+        if (inner.kind == Kind::Seq && inner.children.size() == 1)
+            return IsListLike(inner.children.front());
+        return inner.kind == Kind::Repeat || inner.kind == Kind::Repeat1 || inner.kind == Kind::Choice;
     }
 
     // A SEQ's members, with hidden (_-prefixed) rules inlined.
@@ -196,10 +224,14 @@ namespace {
 
         for (const Rule& raw : inner.children) {
             // A bare SEQ that opens or closes a SEQ carries that delimiter
-            // (Elixir's do_block is SEQ[SEQ["do", ...], REPEAT(...), "end"]).
-            // Only at the ends: one in the middle is the body, whose shape
-            // decides listLikeInterior.
-            if (raw.kind == Kind::Seq && (&raw == &inner.children.front() || &raw == &inner.children.back())) {
+            // (Elixir's do_block is SEQ[SEQ["do", ...], REPEAT(...), "end"];
+            // Dart's switch_expression closes with FIELD(body, SEQ["{", ...,
+            // "}"])). Only at the ends: one in the middle is the body, whose
+            // shape decides listLikeInterior.
+            const bool  atFront = &raw == &inner.children.front();
+            const bool  atBack  = &raw == &inner.children.back();
+            const Rule& edgeSeq = UnwrapFieldAndPrec(raw);
+            if ((raw.kind == Kind::Seq || (edgeSeq.kind == Kind::Seq && EdgeIsFixed(edgeSeq, atBack))) && (atFront || atBack)) {
                 std::vector<const Rule*> nested;
                 bool                     nestedIndirect = false;
                 if (FlattenSeq(raw, rules, nested, depth, seen, &nestedIndirect)) {
@@ -276,7 +308,8 @@ namespace {
     // site found for a name is the one analysed, and both the bound and the
     // rule order (alphabetical, see the caller) are part of what the measured
     // tables pinned.
-    void CollectAliasedNodes(const Rule& node, const RuleMap& rules, std::map<std::string, const Rule*>& out, int depth) {
+    void CollectAliasedNodes(const Rule& node, const RuleMap& rules, std::map<std::string, const Rule*>& out,
+                             std::multimap<std::string, const Rule*>& every, int depth) {
         if (depth > 24)
             return;
         if (node.kind == Kind::Alias && node.named && !node.children.empty()) {
@@ -298,10 +331,11 @@ namespace {
                     target = rule->second;
             }
             out.emplace(node.text, target);
+            every.emplace(node.text, target);
         }
         const int step = (node.kind == Kind::Seq || node.kind == Kind::Choice) ? 2 : 1;
         for (const Rule& child : node.children)
-            CollectAliasedNodes(child, rules, out, depth + step);
+            CollectAliasedNodes(child, rules, out, every, depth + step);
     }
 
     // A keyword: letters and underscores only, so `fi`, `done`, `end`, `esac`
@@ -317,8 +351,13 @@ namespace {
     std::optional<imprint::DelimitedBody> MatchKeywordPair(const std::vector<const Rule*>& core) {
         if (core.size() < 3)
             return std::nullopt; // opener, something, closer -- two keywords alone is a phrase
+        // A leading optional modifier is not the opener: Crystal's class_def
+        // is SEQ[CHOICE["abstract", BLANK], "class", ..., "end"].
+        auto openerIt = core.begin();
+        while (core.end() - openerIt > 3 && IsOptional(**openerIt))
+            ++openerIt;
         const std::set<std::string> closers = Literals(*core.back());
-        const std::set<std::string> openers = Literals(*core.front());
+        const std::set<std::string> openers = Literals(**openerIt);
         if (closers.size() != 1 || openers.size() != 1)
             return std::nullopt;
         const std::string& closer = *closers.begin();
@@ -331,13 +370,13 @@ namespace {
         // after) and JavaScript's `new ... target`. Measured: those two are the
         // only non-list-like pairs in all 23 grammars, and the nine list-like
         // ones are exactly the nine bash/fish wrote by hand.
-        const bool listLike = std::any_of(core.begin() + 1, core.end() - 1, [](const Rule* m) { return IsListLike(*m); });
+        const bool listLike = std::any_of(openerIt + 1, core.end() - 1, [](const Rule* m) { return IsListLike(*m); });
         if (!listLike)
             return std::nullopt;
 
         imprint::DelimitedBody body;
         body.kind             = imprint::DelimiterKind::Keyword;
-        body.openerIsFirst    = true;
+        body.openerIsFirst    = true; // a leading modifier is still the node's own header row
         body.listLikeInterior = true;
         body.opener           = opener;
         body.closer           = closer;
@@ -440,9 +479,10 @@ imprint::ImprintTable InferDelimitedBodies(const compile::GrammarFile& grammar) 
     // like any other.
     // Rules are visited by name, not in grammar order: which alias site is
     // found first for a name decides its production.
-    std::map<std::string, const Rule*> aliased;
+    std::map<std::string, const Rule*>      aliased;
+    std::multimap<std::string, const Rule*> aliasSites;
     for (const auto& [name, rule] : rules)
-        CollectAliasedNodes(*rule, rules, aliased, 1);
+        CollectAliasedNodes(*rule, rules, aliased, aliasSites, 1);
 
     std::vector<std::pair<std::string, const Rule*>> candidates;
     candidates.reserve(rules.size() + aliased.size());
@@ -540,6 +580,26 @@ imprint::ImprintTable InferDelimitedBodies(const compile::GrammarFile& grammar) 
                 if (FlattenSeq(branch, rules, branchMembers, 1, branchSeen) && branchMembers.size() >= 2 &&
                     (body = inferBody(branchMembers, true)))
                     break;
+            }
+        }
+        // One type, two productions: Crystal aliases both `{ ... }` and
+        // `do ... end` to `block`. The site analysed above decides the entry;
+        // a keyword pair from another site rides along on a bracket one, so
+        // an instance carrying no brackets can still be paired.
+        if (body && body->kind == imprint::DelimiterKind::Bracket) {
+            const auto [first, last] = aliasSites.equal_range(name);
+            for (auto site = first; site != last && body->opener.empty(); ++site) {
+                std::vector<const Rule*> siteMembers;
+                std::set<std::string>    siteSeen;
+                bool                     siteIndirect = false;
+                if (site->second == rulePtr ||
+                    !FlattenSeq(*site->second, rules, siteMembers, 0, siteSeen, &siteIndirect) || siteMembers.size() < 2)
+                    continue;
+                if (const auto other = inferBody(siteMembers, siteIndirect);
+                    other && other->kind == imprint::DelimiterKind::Keyword) {
+                    body->opener = other->opener;
+                    body->closer = other->closer;
+                }
             }
         }
         if (body)

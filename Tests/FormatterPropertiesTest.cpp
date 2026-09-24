@@ -338,6 +338,18 @@ TEST_CASE("A flattened sample reindents back to its house style", "[FormatterPro
              {"sample.mli", "ocaml-interface"},
              {"sample.ex", "elixir"},
              {"sample.erl", "erlang"},
+             {"sample.swift", "swift"},
+             {"sample.dart", "dart"},
+             {"sample.jl", "julia"},
+             {"sample.cr", "crystal"},
+             {"sample.f90", "fortran"},
+             {"sample.v", "verilog"},
+             {"sample.adb", "ada"},
+             {"sample.ads", "ada"},
+             {"sample.m", "matlab"},
+             {"sample.vhd", "vhdl"},
+             {"meson.build", "meson"},
+             {"sample.nix", "nix"},
          }) {
         INFO("sample: " << file);
         const std::string original = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "reindent" / file);

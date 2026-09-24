@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "Editor/ImprintTables.h"
 #include "Editor/Grammar/Languages.h"
@@ -46,19 +47,21 @@ namespace {
             return; // an inner match already won
         }
 
-        const std::optional<DelimiterPair> pair = PairFor(node, table);
-        if (!pair.has_value()) {
+        const std::optional<DelimiterPair> outer = PairFor(node, table);
+        if (!outer.has_value()) {
             return;
         }
-        const bool onOpen  = point >= pair->openStart && point < pair->openEnd;
-        const bool onClose = point >= pair->closeStart && point < pair->closeEnd;
-        if (onOpen || onClose) {
-            onDelimiter = pair;
-            return;
-        }
-        // Immediately after either delimiter -- the caret-just-past-a-brace case.
-        if (!adjacent.has_value() && (point == pair->openEnd || point == pair->closeEnd)) {
-            adjacent = pair;
+        for (const DelimiterPair& pair : SiblingPairsOf(node, *outer)) {
+            const bool onOpen  = point >= pair.openStart && point < pair.openEnd;
+            const bool onClose = point >= pair.closeStart && point < pair.closeEnd;
+            if (onOpen || onClose) {
+                onDelimiter = pair;
+                return;
+            }
+            // Immediately after either delimiter -- the caret-just-past-a-brace case.
+            if (!adjacent.has_value() && (point == pair.openEnd || point == pair.closeEnd)) {
+                adjacent = pair;
+            }
         }
     }
 
@@ -98,7 +101,12 @@ std::optional<DelimiterPair> DelimitersOf(const grammar::Node& node) {
 std::optional<DelimiterPair> DelimitersOf(const grammar::Node& node, const DelimitedBody& body) {
     switch (body.kind) {
         case DelimiterKind::Bracket:
-            return DelimitersOf(node);
+            // A bracket entry may also carry a keyword pair another production
+            // of the same type spells (Crystal's `block`: `{ }` or `do end`).
+            if (const std::optional<DelimiterPair> pair = DelimitersOf(node); pair || body.closer.empty()) {
+                return pair;
+            }
+            break;
         case DelimiterKind::Indent:
             // A dedent is not a token, but the rule may have a bracketed
             // branch the table did not record (Scala's template_body is
@@ -130,6 +138,44 @@ std::optional<DelimiterPair> DelimitersOf(const grammar::Node& node, const Delim
     // bracketed one instead (OCaml's parenthesized_expression is `begin ...
     // end` or `( ... )`).
     return DelimitersOf(node);
+}
+
+std::vector<DelimiterPair> SiblingPairsOf(const grammar::Node& node, const DelimiterPair& pair) {
+    std::string_view openType;
+    std::string_view closeType;
+    node.ForEachChild([&](const grammar::Node& child) {
+        if (!child.IsNamed() && child.StartByte() == pair.openStart && child.EndByte() == pair.openEnd) {
+            openType = child.Type();
+        }
+        if (!child.IsNamed() && child.StartByte() == pair.closeStart && child.EndByte() == pair.closeEnd) {
+            closeType = child.Type();
+        }
+    });
+    std::vector<DelimiterPair> pairs;
+    std::optional<DelimiterPair> open;
+    int  depth    = 0;
+    bool balanced = !openType.empty() && !closeType.empty();
+    node.ForEachChild([&](const grammar::Node& child) {
+        if (!balanced || child.IsNamed() || child.StartByte() < pair.openStart || child.EndByte() > pair.closeEnd) {
+            return;
+        }
+        if (child.Type() == openType && depth++ == 0) {
+            open = DelimiterPair{child.StartByte(), child.EndByte(), 0, 0};
+        }
+        else if (child.Type() == closeType) {
+            if (depth == 0) {
+                balanced = false;
+            }
+            else if (--depth == 0) {
+                pairs.push_back(DelimiterPair{open->openStart, open->openEnd, child.StartByte(), child.EndByte()});
+            }
+        }
+    });
+    if (!balanced || depth != 0 || pairs.empty() || pairs.front().openStart != pair.openStart ||
+        pairs.back().closeEnd != pair.closeEnd) {
+        return {pair};
+    }
+    return pairs;
 }
 
 std::optional<DelimiterPair> MatchingDelimitersAt(const grammar::Node& root, std::string_view language,

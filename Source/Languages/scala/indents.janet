@@ -26,4 +26,7 @@
 (finally_clause (indented_block) @indent)
 (while_expression (indented_block) @indent)
 (for_expression (indented_block) @indent)
+# Enumerators written on their own lines under a bare `for` (not in parens or
+# braces, which the imprint already indents).
+(for_expression "for" . (enumerators) @indent)
 (colon_argument [(indented_block) (indented_cases)] @indent)

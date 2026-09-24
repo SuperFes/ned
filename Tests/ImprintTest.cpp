@@ -60,6 +60,9 @@ json Optional(const json& content) {
     return json{{"type", "CHOICE"}, {"members", json::array({content, json{{"type", "BLANK"}}})}};
 }
 json Prec(const json& content) { return json{{"type", "PREC_RIGHT"}, {"value", 0}, {"content", content}}; }
+json Field(const std::string& name, const json& content) {
+    return json{{"type", "FIELD"}, {"name", name}, {"content", content}};
+}
 
 json Grammar(const json& rules, const json& externals = json::array()) {
     return json{{"name", "crafted"}, {"rules", rules}, {"externals", externals}};
@@ -108,6 +111,57 @@ TEST_CASE("Delimiters inside a hidden rule are inlined", "[Imprint]") {
     const auto found = InferDelimitedBodies(grammar);
     CHECK(found.count("list_lit") == 1);
     CHECK(found.count("_bare_list_lit") == 0); // hidden rules are never nodes
+}
+
+TEST_CASE("A field-wrapped sequence closing a rule carries its delimiters", "[Imprint]") {
+    // Dart's switch_expression ends in FIELD(body, SEQ["{", cases, "}"]); a
+    // field labels its members, which stay the node's own children. Crystal's
+    // `when` ends in FIELD(body, SEQ[<optional statements>]) -- a body, not a
+    // closer, so its `then` is no keyword pair's.
+    const json grammar = Grammar({
+        {"switch_expression", Seq({Str("switch"), Sym("condition"),
+                                   Field("body", Seq({Str("{"), Repeat(Sym("case")), Str("}")}))})},
+        {"when", Seq({Str("when"), Sym("condition"), Str("then"), Field("body", Seq({Optional(Sym("statements"))}))})},
+    });
+    const auto found = InferDelimitedBodies(grammar);
+    REQUIRE(found.count("switch_expression") == 1);
+    CHECK(found.at("switch_expression").kind == DelimiterKind::Bracket);
+    CHECK(found.count("when") == 0);
+}
+
+TEST_CASE("A keyword pair's opener is its first required keyword", "[Imprint]") {
+    // Crystal's class_def: an optional `abstract` precedes `class`, and pairing
+    // `end` with `abstract` left every plain class unpaired. Its body is
+    // FIELD(body, SEQ[CHOICE[...]]) -- a one-member SEQ is its member, so the
+    // interior is list-like (and `while`, whose only list is that body, pairs).
+    const json body    = Field("body", Seq({Optional(Sym("statements"))}));
+    const json grammar = Grammar({
+        {"class_def", Seq({Optional(Str("abstract")), Str("class"), Sym("constant"), body, Str("end")})},
+        {"while", Seq({Str("while"), Sym("condition"), body, Str("end")})},
+    });
+    const auto found = InferDelimitedBodies(grammar);
+    REQUIRE(found.count("class_def") == 1);
+    CHECK(found.at("class_def").opener == "class");
+    CHECK(found.at("class_def").closer == "end");
+    REQUIRE(found.count("while") == 1);
+    CHECK(found.at("while").opener == "while");
+}
+
+TEST_CASE("A node type two productions share keeps the keyword pair alongside the brackets", "[Imprint]") {
+    // Crystal aliases both `{ ... }` and `do ... end` to `block`.
+    const auto alias = [](const std::string& rule) {
+        return json{{"type", "ALIAS"}, {"content", Sym(rule)}, {"named", true}, {"value", "block"}};
+    };
+    const json grammar = Grammar({
+        {"call", Seq({Sym("identifier"), json{{"type", "CHOICE"}, {"members", json::array({alias("brace_block"), alias("do_end_block")})}}})},
+        {"brace_block", Seq({Str("{"), Repeat(Sym("statement")), Str("}")})},
+        {"do_end_block", Seq({Str("do"), Repeat(Sym("statement")), Str("end")})},
+    });
+    const auto found = InferDelimitedBodies(grammar);
+    REQUIRE(found.count("block") == 1);
+    CHECK(found.at("block").kind == DelimiterKind::Bracket);
+    CHECK(found.at("block").opener == "do");
+    CHECK(found.at("block").closer == "end");
 }
 
 TEST_CASE("An external closer with no opener is an indent-delimited body", "[Imprint]") {

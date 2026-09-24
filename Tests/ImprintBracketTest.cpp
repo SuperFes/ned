@@ -254,3 +254,17 @@ TEST_CASE("A sigil-prefixed opener pairs with its bracket", "[ImprintBracket]") 
     const std::string js = "`a ${\n  b\n} c`\n";
     CHECK(Match("javascript", js, js.find("${")) == js.find('}'));
 }
+
+TEST_CASE("Sibling bodies one node carries each match their own braces", "[ImprintBracket]") {
+    // Swift's if_statement inlines both blocks: `{`, `}`, `else`, `{`, `}` are
+    // all its own children, so the first `{` and the last `}` are not a pair.
+    const std::string swift       = "if a {\n  f()\n} else {\n  g()\n}\n";
+    const std::size_t firstOpen   = swift.find('{');
+    const std::size_t firstClose  = swift.find('}');
+    const std::size_t secondOpen  = swift.find('{', firstClose);
+    const std::size_t secondClose = swift.rfind('}');
+    CHECK(Match("swift", swift, firstOpen) == firstClose);
+    CHECK(Match("swift", swift, firstClose) == firstOpen);
+    CHECK(Match("swift", swift, secondOpen) == secondClose);
+    CHECK(Match("swift", swift, secondClose) == secondOpen);
+}

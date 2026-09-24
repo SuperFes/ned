@@ -149,6 +149,18 @@ and code reading. Highest stakes first.
         level-3 line is one tab and two spaces). The worst of both worlds, and supported
         only so such a file can be edited without being rewritten: it needs a tab width
         separate from `IndentStyle::width`, which today doubles as both.
+- [ ] **Reindent: what is still unmodelled.** Every language with an `ind` cell
+      reindents a flattened sample back to its house style
+      (`Tests/Format/reindent/`). Left:
+  - [ ] **The other Lisps.** Scheme, Racket, Common Lisp and Fennel nest every form
+        one flat level; Clojure and Janet already carry the Lisp rules (`@aligned`
+        arguments, `@indent.body` for special forms), which these need per dialect.
+  - [ ] **MATLAB is unreachable by extension.** `.m` is Objective-C's and MATLAB
+        claims only `.mlx`, so a MATLAB file needs `set-mode`; `.m` wants the same
+        content sniff `.v` has (Verilog vs V).
+  - [ ] **Continuation lines** stay at their statement's level: Fortran's `&`,
+        VHDL's selected signal assignments, a multi-line Nix `if`/`then`/`else`
+        (nixfmt indents the branches), Scala's operator-continued enumerators.
 - [ ] **Locals query limits in Perl, Elixir and Dart** (all ned-authored). Perl: `my $x
       = $x` resolves the right-hand `$x` to the new variable rather than the outer one
       (the resolver binds from the declaration's start), `our`/`local` bind nothing, and

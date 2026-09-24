@@ -6,9 +6,11 @@
 #include <string>
 #include <string_view>
 
+#include "Editor/BundledLanguages.h"
 #include "Editor/CodeFold.h"
 #include "Editor/Indent.h"
 #include "Editor/IndentStyle.h"
+#include "Editor/LanguageDefinition.h"
 #include "Editor/Mode.h"
 #include "Editor/Grammar/Languages.h"
 #include "Editor/Grammar/Parser.h"
@@ -16,6 +18,7 @@
 #include "Editor/Grammar/Tree.h"
 
 using ned::editor::EffectiveIndentStyle;
+using ned::editor::LanguageDefinition;
 using ned::editor::Mode;
 
 namespace {
@@ -254,6 +257,78 @@ TEST_CASE("Lua's repeat_statement body indents from its own hand-authored query"
     CHECK(ColumnOf(lua, text, 1) == w); // i = i + 1
     CHECK(ColumnOf(lua, text, 2) == 0); // until i >= 3 -- aligns with "repeat"
     CHECK(ColumnOf(lua, text, 3) == 0); // print(i) -- outside the loop entirely
+}
+
+TEST_CASE("Sibling bodies one node carries each indent on their own", "[Indent][Imprint]") {
+    // Swift's if_statement holds both blocks' braces itself; the `else` between
+    // them is in neither body, and the first body's `}` closes it.
+    const LanguageDefinition* swift = ned::editor::BundledLanguage("swift");
+    REQUIRE(swift != nullptr);
+    const Mode        mode = ned::editor::ModeFromDefinition(*swift);
+    const std::string text = "if a {\nf()\n}\nelse {\ng()\n}\n";
+    const int         w    = Width(mode);
+    CHECK(ColumnOf(mode, text, 1) == w); // f()
+    CHECK(ColumnOf(mode, text, 2) == 0); // }
+    CHECK(ColumnOf(mode, text, 3) == 0); // else {
+    CHECK(ColumnOf(mode, text, 4) == w); // g()
+    CHECK(ColumnOf(mode, text, 5) == 0); // }
+}
+
+TEST_CASE("Crystal's clauses sit at their construct's level, and an empty body still opens", "[Indent][Imprint]") {
+    const LanguageDefinition* crystal = ned::editor::BundledLanguage("crystal");
+    REQUIRE(crystal != nullptr);
+    const Mode mode = ned::editor::ModeFromDefinition(*crystal);
+    const int  w    = Width(mode);
+    {
+        const std::string text = "if a\nb\nelsif c\nd\nelse\ne\nend\n";
+        CHECK(ColumnOf(mode, text, 1) == w); // b
+        CHECK(ColumnOf(mode, text, 2) == 0); // elsif c
+        CHECK(ColumnOf(mode, text, 3) == w); // d
+        CHECK(ColumnOf(mode, text, 4) == 0); // else
+        CHECK(ColumnOf(mode, text, 5) == w); // e
+        CHECK(ColumnOf(mode, text, 6) == 0); // end
+    }
+    {
+        // The line just opened by Enter, before anything is typed into it.
+        const std::string text = "if a\n\nelse\n\nend\n";
+        CHECK(ColumnOf(mode, text, 1) == w);
+        CHECK(ColumnOf(mode, text, 3) == w);
+    }
+    {
+        const std::string text = "case x\nwhen 1\na\nwhen 2\nb\nend\n";
+        CHECK(ColumnOf(mode, text, 1) == 0); // when 1
+        CHECK(ColumnOf(mode, text, 2) == w); // a
+        CHECK(ColumnOf(mode, text, 3) == 0); // when 2
+        CHECK(ColumnOf(mode, text, 4) == w); // b
+    }
+    {
+        // `do ... end` and `{ ... }` share the node type `block`.
+        const std::string text = "xs.each do |x|\np x\nend\n";
+        CHECK(ColumnOf(mode, text, 1) == w);
+        CHECK(ColumnOf(mode, text, 2) == 0);
+    }
+}
+
+TEST_CASE("A body's first statement opening a bracket keeps the body's level", "[Indent][Imprint]") {
+    // The body and the bracket start on one row, but only the bracket opens on
+    // it: the body's own interior began with that row's content.
+    const Mode        python = ned::editor::PythonMode();
+    const std::string text   = "def f():\n    x = foo(\n1,\n)\n";
+    const int         w      = Width(python);
+    CHECK(ColumnOf(python, text, 2) == 2 * w); // 1,
+    CHECK(ColumnOf(python, text, 3) == w);     // )
+
+    // Two openers on one row still count once.
+    const LanguageDefinition* json = ned::editor::BundledLanguage("json");
+    REQUIRE(json != nullptr);
+    const Mode        jsonMode = ned::editor::ModeFromDefinition(*json);
+    const std::string nested   = "[[\n1\n]]\n";
+    CHECK(ColumnOf(jsonMode, nested, 1) == Width(jsonMode));
+
+    // A top-level element is not inside itself.
+    const Mode        js  = ned::editor::JavaScriptMode();
+    const std::string jsx = "const a = 1;\n<div>{a}</div>;\n";
+    CHECK(ColumnOf(js, jsx, 1) == 0);
 }
 
 TEST_CASE("Go's switch/select case and default clauses align with their own switch/select",

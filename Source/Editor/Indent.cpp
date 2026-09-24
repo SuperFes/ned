@@ -213,6 +213,23 @@ namespace {
                     }
                 }
             }
+            // `(subprogram_body (handled_sequence_of_statements "exception"
+            // @indent.begin)) @indent`: the interior starts on the line after
+            // that token, which is how a section with no node of its own (Ada's
+            // exception handlers) sits one level in.
+            const auto begin = std::find_if(match.captures.begin(), match.captures.end(), [](const grammar::QueryMatchCapture& capture) {
+                return capture.name == "indent.begin" && capture.startByte != capture.endByte;
+            });
+            if (begin != match.captures.end()) {
+                const std::size_t newline  = bufferText.find('\n', begin->startByte);
+                const std::size_t interior = newline == std::string_view::npos ? bufferText.size() : newline + 1;
+                for (const grammar::QueryMatchCapture& capture : match.captures) {
+                    if (capture.name == "indent" || capture.name == "indent.headed") {
+                        captures.indent.insert_or_assign(IndentCaptures::NodeKey{capture.startByte, capture.endByte, capture.type},
+                                                         interior);
+                    }
+                }
+            }
         }
         return captures;
     }
@@ -242,6 +259,9 @@ void AddImprintCaptures(IndentCaptures& captures, const grammar::Tree& tree, std
             captures.indent.emplace(key, container.interiorStart);
             if (container.interiorEnd) {
                 captures.interiorEnd.emplace(key, *container.interiorEnd);
+            }
+            if (!container.gaps.empty()) {
+                captures.interiorGaps.emplace(key, container.gaps);
             }
             if (container.anchorsAtOwnColumn) {
                 captures.columnAnchored.insert(key);
@@ -317,6 +337,11 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
         if (cappedEnd != captures.interiorEnd.end() && position >= cappedEnd->second) {
             return false;
         }
+        if (const auto gaps = captures.interiorGaps.find(key); gaps != captures.interiorGaps.end()) {
+            return std::none_of(gaps->second.begin(), gaps->second.end(), [position](const auto& gap) {
+                return gap.first <= position && position < gap.second;
+            });
+        }
         return true;
     };
     const auto isAlignedCaptured    = [&captures, &keyOf](const grammar::Node& node) { return captures.aligned.contains(keyOf(node)); };
@@ -345,10 +370,11 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
     // otherwise-generic walk algorithm itself about any particular language.
     const auto resolveWalkStart = [&](std::size_t position) {
         grammar::Node node = tree.RootNode().NamedDescendantForByteRange(position, position);
-        // The lookup can stop at a node whose first child is a zero-width
-        // token at `position` (Scala 3's `_indent` opening an indented_block),
-        // answering the body rather than the code in it; keep descending.
-        for (bool descended = !node.IsNull() && node.StartByte() == position; descended;) {
+        // The lookup stops at a zero-width token at `position` (Scala 3's
+        // `_indent` opening an indented_block, Fortran's statement terminator
+        // before a `case`), answering its parent rather than the code there;
+        // keep descending.
+        for (bool descended = !node.IsNull(); descended;) {
             descended = false;
             node.ForEachChild([&](const grammar::Node& child) {
                 if (!descended && child.IsNamed() && child.StartByte() <= position && position < child.EndByte()) {
@@ -428,6 +454,26 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
                                      isBodyIndentCaptured(walkStart)) &&
                                     walkStart.StartByte() == position && !headed;
         std::size_t lastRow       = selfOpensHere ? walkStart.StartRow() : kNoRow;
+        // Two containers on one row count once only when both open on it
+        // (`foo(bar(`, `{"a": [`). One whose interior already holds the row's
+        // content -- the row is its first line rather than its opener's --
+        // opened earlier, so it still counts beneath one opening after that
+        // content: a body's first statement `x = foo(`, whose body starts at
+        // `x`.
+        const auto  interiorStartOf = [&](const grammar::Node& node) {
+            const auto found = captures.indent.find(keyOf(node));
+            return found != captures.indent.end() ? found->second : node.StartByte() + 1;
+        };
+        const auto rowContentStartOf = [&](const grammar::Node& node) {
+            const std::size_t lineStart = LineStartFor(bufferText, node.StartByte());
+            return FirstNonBlankByte(bufferText, lineStart, std::min(bufferText.find('\n', lineStart), bufferText.size()));
+        };
+        std::size_t lastInteriorStart   = selfOpensHere ? interiorStartOf(walkStart) : 0;
+        std::size_t lastRowContentStart = selfOpensHere ? rowContentStartOf(walkStart) : 0;
+        const auto  opensBeforeLastRow  = [&](const grammar::Node& node) {
+            return lastRow != kNoRow && interiorStartOf(node) <= lastRowContentStart && lastInteriorStart > lastRowContentStart &&
+                   !(keyOf(resolveWalkStart(lastRowContentStart)) == keyOf(node));
+        };
         int         level         = 0;
         // lambda-body-alignment follow-up: set once the walk has passed an
         // @align.barrier-captured body, after which no OUTER @aligned
@@ -477,9 +523,11 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
                 // other captured container.
             }
             if ((isIndentCaptured(node) || isAlignedCaptured(node) || isBodyIndentCaptured(node)) &&
-                node.StartRow() != lastRow && interiorContains(node, position)) {
+                (node.StartRow() != lastRow || opensBeforeLastRow(node)) && interiorContains(node, position)) {
                 ++level;
-                lastRow = node.StartRow();
+                lastRow             = node.StartRow();
+                lastInteriorStart   = interiorStartOf(node);
+                lastRowContentStart = rowContentStartOf(node);
             }
             if (isBarrierCaptured(node)) {
                 crossedBarrier = true;
@@ -500,7 +548,10 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
         // a byte-range/IsNamed() guess alone -- see IndentCaptures' own doc
         // comment) until the node that identity-matches the actual capture
         // is found -- correct regardless of which shape the query captured.
-        grammar::Node dedentNode = tree.RootNode().DescendantForByteRange(contentStart, contentStart);
+        // By the capture's own range, not the point: a zero-width token just
+        // before it (Fortran's statement terminator) would otherwise stop the
+        // descent at the parent.
+        grammar::Node dedentNode = tree.RootNode().DescendantForByteRange(dedentKey->startByte, dedentKey->endByte);
         if (!dedentNode.IsNull() && !(keyOf(dedentNode) == *dedentKey)) {
             // AncestorChain follow-up: one descent for the whole climb
             // instead of one re-descent from the root per Parent() step.

@@ -111,9 +111,11 @@ struct DelimitedBody {
     // one worth collapsing; one holding exactly one subexpression is not.
     bool listLikeInterior = false;
 
-    // The pair, for a `Keyword` body only -- empty otherwise. A bracket body's
+    // The pair, for a `Keyword` body -- empty otherwise. A bracket body's
     // pair is read off the node's own children (`ImprintBracket.h`), because
-    // one closing bracket names its opener; `fi` does not name `if`.
+    // one closing bracket names its opener; `fi` does not name `if`. A bracket
+    // body carries one too when another production of the same node type is
+    // keyword-delimited (Crystal aliases `{ }` and `do end` both to `block`).
     std::string opener;
     std::string closer;
 };

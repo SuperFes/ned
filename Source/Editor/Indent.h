@@ -156,7 +156,9 @@ struct IndentCaptures {
     std::vector<Dedent>                                   dedents;    // "dedent"
     // Also set from a query: an "indent.end" token captured in the same match
     // as an "indent"/"indent.headed" container caps it there (OCaml's
-    // `(try_expression "with" @indent.end) @indent.headed`).
+    // `(try_expression "with" @indent.end) @indent.headed`). Its counterpart
+    // "indent.begin" moves the interior's start to the line after that token
+    // instead (Ada's exception handlers, after `exception`).
     //
     // for-loop-header-imprint follow-up: an OPTIONAL cap on a container's own
     // contribution, set only for a node whose grammar production trails its
@@ -180,6 +182,9 @@ struct IndentCaptures {
     // there with no extra check needed, since an ancestor's own EndByte()
     // always contains any position inside it by construction.
     std::unordered_map<NodeKey, std::size_t, NodeKeyHash> interiorEnd;
+    // Ranges inside a container's interior that are not part of it: between
+    // the sibling bodies one node carries (Imprint's ImprintContainer::gaps).
+    std::unordered_map<NodeKey, std::vector<std::pair<std::size_t, std::size_t>>, NodeKeyHash> interiorGaps;
 };
 
 [[nodiscard]] IndentCaptures IndentCapturesFromQuery(const grammar::Tree& tree, std::string_view bufferText,

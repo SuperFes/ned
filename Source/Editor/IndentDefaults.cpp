@@ -31,6 +31,10 @@ namespace {
             {"scala",      {.useTabs = false, .width = 2}}, // scalafmt default, Scala style guide
             {"elixir",     {.useTabs = false, .width = 2}}, // mix format
             {"erlang",     {.useTabs = false, .width = 4}}, // erlfmt
+            {"dart",       {.useTabs = false, .width = 2}}, // dart format (not configurable)
+            {"julia",      {.useTabs = false, .width = 4}}, // Julia style guide
+            {"crystal",    {.useTabs = false, .width = 2}}, // crystal tool format
+            {"ada",        {.useTabs = false, .width = 3}}, // GNAT coding style, gnatpp's default
             {"make",       {.useTabs = true,  .width = 4}}, // GNU Make REQUIRES a literal tab to introduce a recipe line -- a hard syntax rule, not a style preference (same shape as YAML's ban, inverted); width here is display-only
 
             // -- common ecosystem/style-guide convention, no single canonical formatter --

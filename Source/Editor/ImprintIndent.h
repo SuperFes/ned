@@ -56,6 +56,7 @@
 #include <cstddef>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "Editor/Grammar/Node.h"
@@ -97,6 +98,10 @@ struct ImprintContainer {
     // for why this travels as a separate, optional field rather than
     // narrowing endByte itself.
     std::optional<std::size_t> interiorEnd;
+    // [closer end, next opener end) between sibling bodies the node carries
+    // itself (SiblingPairsOf): the `else` between Swift's two blocks is not
+    // inside either one.
+    std::vector<std::pair<std::size_t, std::size_t>> gaps;
 };
 
 struct ImprintIndentCaptures {

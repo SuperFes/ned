@@ -82,9 +82,15 @@ namespace {
             if (pair->closeEnd != node.EndByte()) {
                 container.interiorEnd = pair->closeEnd;
             }
+            const std::vector<DelimiterPair> siblings = SiblingPairsOf(node, *pair);
+            for (std::size_t i = 0; i + 1 < siblings.size(); ++i) {
+                container.gaps.emplace_back(siblings[i].closeEnd, siblings[i + 1].openEnd);
+            }
             out.containers.push_back(container);
-            if (const std::optional<ImprintDedent> closer = CloserOf(node, *pair)) {
-                out.dedents.push_back(*closer);
+            for (const DelimiterPair& sibling : siblings) {
+                if (const std::optional<ImprintDedent> closer = CloserOf(node, sibling)) {
+                    out.dedents.push_back(*closer);
+                }
             }
         }
         else if (body.kind == DelimiterKind::Indent && !body.openerIsFirst && HasHeader(body, node.StartByte(), text)) {
