@@ -26,6 +26,11 @@ namespace ned::editor::parse {
 inline constexpr std::uint16_t kTreeStateNone           = 0xFFFF;
 inline constexpr unsigned      kErrorCostPerRecovery    = 500;
 inline constexpr unsigned      kErrorCostPerMissingTree = 110;
+// A token the file stops before (SubtreeOwed): missing, with no recovery
+// to pay for -- nothing was skipped or repaired. Priced any lower, closing
+// at EOF would rescue readings that skipped text mid-file over ones that
+// repaired it.
+inline constexpr unsigned      kErrorCostPerOwedTree    = kErrorCostPerMissingTree;
 inline constexpr unsigned      kErrorCostPerSkippedTree = 100;
 inline constexpr unsigned      kErrorCostPerSkippedLine = 30;
 inline constexpr unsigned      kErrorCostPerSkippedChar = 1;
@@ -92,6 +97,7 @@ struct SubtreeInlineData {
     bool          hasChanges : 1;
     bool          isMissing : 1;
     bool          isKeyword : 1;
+    bool          isOwed : 1;
     std::uint8_t  symbol;
     std::uint16_t parseState;
     std::uint8_t  paddingColumns;
@@ -122,6 +128,7 @@ struct SubtreeHeapData {
     bool dependsOnColumn : 1;
     bool isMissing : 1;
     bool isKeyword : 1;
+    bool isOwed : 1;
 
     union {
         // Non-terminal subtrees (childCount > 0)
@@ -198,6 +205,11 @@ inline bool SubtreeHasChanges(Subtree self) {
 }
 inline bool SubtreeMissing(Subtree self) {
     return self.data.isInline ? self.data.isMissing : self.ptr->isMissing;
+}
+// A MISSING token the EOF pass inserted: owed by a file that is not
+// finished yet, rather than repaired in one that is wrong.
+inline bool SubtreeOwed(Subtree self) {
+    return self.data.isInline ? self.data.isOwed : self.ptr->isOwed;
 }
 inline bool SubtreeIsKeyword(Subtree self) {
     return self.data.isInline ? self.data.isKeyword : self.ptr->isKeyword;
@@ -282,7 +294,7 @@ inline std::uint32_t SubtreeVisibleChildCount(Subtree self) {
 
 inline std::uint32_t SubtreeErrorCost(Subtree self) {
     if (SubtreeMissing(self))
-        return kErrorCostPerMissingTree + kErrorCostPerRecovery;
+        return SubtreeOwed(self) ? kErrorCostPerOwedTree : kErrorCostPerMissingTree + kErrorCostPerRecovery;
     return self.data.isInline ? 0 : self.ptr->errorCost;
 }
 
@@ -330,7 +342,7 @@ MutableSubtree              SubtreeNewNode(abi::Symbol symbol, SubtreeArray* chi
                                            const abi::LanguageData* language);
 Subtree                     SubtreeNewErrorNode(SubtreeArray* children, bool extra, const abi::LanguageData* language);
 Subtree                     SubtreeNewMissingLeaf(SubtreePool* pool, abi::Symbol symbol, Length padding, std::uint32_t lookaheadBytes,
-                                                  const abi::LanguageData* language);
+                                                  const abi::LanguageData* language, bool owed = false);
 MutableSubtree              SubtreeClone(Subtree self);
 MutableSubtree              SubtreeMakeMut(SubtreePool* pool, Subtree self);
 void                        SubtreeRetain(Subtree self);

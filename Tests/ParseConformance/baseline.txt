@@ -45,8 +45,9 @@ ruby/corpus  cases=290 runs=290 passed=290 failed=0 skipped=0
 gitcommit/corpus  cases=64 runs=64 passed=63 failed=1 skipped=0
   FAIL subject.txt: fix #36
 gitrebase/corpus  cases=15 runs=15 passed=15 failed=0 skipped=0
-r/corpus  cases=89 runs=89 passed=88 failed=1 skipped=0
+r/corpus  cases=89 runs=89 passed=87 failed=2 skipped=0
   FAIL expressions-errors.txt: Dollar, At, Namespace, Namespace Internal With `if` RHS
+  FAIL literals-errors.txt: Unclosed Raw String
 ini/corpus  cases=11 runs=11 passed=11 failed=0 skipped=0
 json5/corpus  cases=39 runs=39 passed=39 failed=0 skipped=0
 meson/corpus  cases=22 runs=22 passed=22 failed=0 skipped=0
@@ -160,4 +161,4 @@ gdscript/corpus  cases=167 runs=167 passed=166 failed=1 skipped=0
 matlab/corpus  cases=157 runs=157 passed=155 failed=2 skipped=0
   FAIL call.txt: Function Call: Line Continuation
   FAIL strings.txt: Strings: Invalid termination
-total  cases=12718 runs=12696 passed=12655 failed=41 skipped=28
+total  cases=12718 runs=12696 passed=12654 failed=42 skipped=28

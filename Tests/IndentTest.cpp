@@ -533,7 +533,12 @@ TEST_CASE("OCaml Enter opens a body under an unfinished try or match", "[Indent]
     CHECK(BlankLineColumn(*ocaml, "let f x =\n  try\n", 2) == 4);
     CHECK(BlankLineColumn(*ocaml, "let f x =\n  try\n    a\n", 3) == 4);
     CHECK(BlankLineColumn(*ocaml, "let f x =\n  try\n\nlet g = 1\n", 2) == 4);
-    CHECK(BlankLineColumn(*ocaml, "let f x =\n  match x with\n", 2) == 4);
+    // After `with` comes an arm, level with its construct.
+    CHECK(BlankLineColumn(*ocaml, "let f x =\n  match x with\n", 2) == 2);
+    CHECK(BlankLineColumn(*ocaml, "let f x =\n  try\n    a\n  with\n", 4) == 2);
+    // `with` before any body is repaired mid-file; the arm closed at EOF
+    // must still beat wrapping the whole binding in an ERROR.
+    CHECK(BlankLineColumn(*ocaml, "let f x =\n  try\n  with\n", 3) == 2);
 }
 
 TEST_CASE("An .mli reindents with OCaml's indents query", "[Indent]") {

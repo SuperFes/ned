@@ -171,9 +171,15 @@ namespace {
                 else if (capture.name == "indent.headed") {
                     // The node's own first line is its header (OCaml's
                     // "f a" before continuation arguments): the interior
-                    // starts on the next line.
+                    // starts on the next line. A zero-width one (a match arm
+                    // the EOF pass supplied) has no header line yet -- the
+                    // next line is where it goes -- so no interior at all.
                     const std::size_t newline = bufferText.find('\n', capture.startByte);
-                    captures.indent.emplace(key, newline == std::string_view::npos ? bufferText.size() : newline + 1);
+                    const std::size_t interior =
+                        capture.startByte == capture.endByte ? std::string_view::npos
+                        : newline == std::string_view::npos  ? bufferText.size()
+                                                             : newline + 1;
+                    captures.indent.emplace(key, interior);
                 }
                 else if (capture.name == "aligned") {
                     captures.aligned.insert(key);
@@ -194,8 +200,11 @@ namespace {
             // `(try_expression "with" @indent.end) @indent.headed`: the
             // container's interior stops where that token starts, so the
             // token's line and everything after sit at the container's level.
-            const auto end = std::find_if(match.captures.begin(), match.captures.end(),
-                                          [](const grammar::QueryMatchCapture& capture) { return capture.name == "indent.end"; });
+            // Not a zero-width one: a `with` the EOF pass supplied hasn't
+            // been written, so the body before it is still open.
+            const auto end = std::find_if(match.captures.begin(), match.captures.end(), [](const grammar::QueryMatchCapture& capture) {
+                return capture.name == "indent.end" && capture.startByte != capture.endByte;
+            });
             if (end != match.captures.end()) {
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (capture.name == "indent" || capture.name == "indent.headed") {
@@ -554,7 +563,7 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
             bool opens = false;
             header.ForEachChild([&](const grammar::Node& child) {
                 opens = opens || (child.StartByte() == child.EndByte() && child.StartByte() > anchor &&
-                                  child.StartByte() <= lineStart && isIndentCaptured(child));
+                                  child.StartByte() <= lineStart && isIndentCaptured(child) && interiorContains(child, lineStart));
             });
             // Or the header is the whole container so far (OCaml's `let f x
             // =`, an @indent.headed let_binding): it ends at the anchor, and

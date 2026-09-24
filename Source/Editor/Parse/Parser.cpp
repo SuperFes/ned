@@ -1272,7 +1272,7 @@ unsigned Engine::CloseInnermostConstruct(StackVersion version, abi::Symbol endSy
             continue;
         }
 
-        stack_->Push(trial, SubtreeNewMissingLeaf(&treePool_, symbol, padding, lookaheadBytes, language_), false,
+        stack_->Push(trial, SubtreeNewMissingLeaf(&treePool_, symbol, padding, lookaheadBytes, language_, true), false,
                      shiftState);
         const unsigned trialDepth = SettleReductions(trial);
         const bool     closed     = trialDepth < depthToBeat || ParseCanFinish(trial, endSymbol);
@@ -1325,7 +1325,7 @@ bool Engine::ShiftMissingToken(StackVersion version, abi::Symbol symbol, Length 
         stack_->RenumberVersion(shifter, version);
     while (stack_->VersionCount() > version + 1)
         stack_->RemoveVersion(stack_->VersionCount() - 1);
-    stack_->Push(version, SubtreeNewMissingLeaf(&treePool_, symbol, padding, lookaheadBytes, language_), false, shiftState);
+    stack_->Push(version, SubtreeNewMissingLeaf(&treePool_, symbol, padding, lookaheadBytes, language_, true), false, shiftState);
     return true;
 }
 

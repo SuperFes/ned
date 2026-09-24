@@ -118,12 +118,6 @@ What each package ships is tracked in the generated `Docs/LanguageMatrix.md`; th
 below are the behavioural gaps behind its empty cells, verified with `ned --format` probes
 and code reading. Highest stakes first.
 
-- [ ] **OCaml `try` then `with` then end of file still parses as one ERROR.**
-      `let f x =`, `try`, `with`: `with` arrives with no body before it, so ordinary
-      recovery repairs that mid-file, and at EOF the completion pass then closes the
-      arm (`_ -> e`, three MISSING tokens). The final tree is still the ERROR-wrapped
-      reading, though -- version selection drops the repaired one. Not yet traced
-      which comparison does it. With an arm written (`| _ -> 0`) it parses.
 - [ ] **Per-buffer settings, taken from the file itself.** Applied when a file opens
       (`Editor/FileSettings.h`). Indentation: its content (`ned/set-indent-detection`),
       then `.editorconfig` (`ned/set-editorconfig-enabled`), then a modeline, laid over

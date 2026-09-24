@@ -406,7 +406,7 @@ TEST_CASE("Ned parse engine matches the bundled corpora", "[ParseEngine][Corpus]
             std::string_view file;
             std::string_view name;
         };
-        static constexpr std::array<Case, 30> kCases = {{
+        static constexpr std::array<Case, 31> kCases = {{
             {"yaml/corpus", "06_structures.txt", "Invalid Tag Shorthands"},
             {"gitcommit/corpus", "subject.txt", "fix #36"},
             {"latex/corpus", "commands.txt", "Command with incomplete argument"},
@@ -437,6 +437,7 @@ TEST_CASE("Ned parse engine matches the bundled corpora", "[ParseEngine][Corpus]
             {"dart/corpus", "errors.txt", "Regression"},
             {"gdscript/corpus", "source.txt", "Variables Invalid"},
             {"crystal/corpus", "errors.txt", "error recovery of curly brace"},
+            {"r/corpus", "literals-errors.txt", "Unclosed Raw String"},
         }};
         for (const Case& listed : kCases)
             if (listed.corpus == corpus && listed.file == file && listed.name == name)

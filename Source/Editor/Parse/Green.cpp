@@ -167,6 +167,7 @@ Subtree SubtreeNewLeaf(SubtreePool* pool, abi::Symbol symbol, Length padding, Le
             .hasChanges     = false,
             .isMissing      = false,
             .isKeyword      = isKeyword,
+            .isOwed         = false,
             .symbol         = static_cast<std::uint8_t>(symbol),
             .parseState     = parseState,
             .paddingColumns = static_cast<std::uint8_t>(padding.extent.column),
@@ -199,6 +200,7 @@ Subtree SubtreeNewLeaf(SubtreePool* pool, abi::Symbol symbol, Length padding, Le
     data->dependsOnColumn               = dependsOnColumn;
     data->isMissing                     = false;
     data->isKeyword                     = isKeyword;
+    data->isOwed                        = false;
     data->firstLeaf                     = {.symbol = 0, .parseState = 0};
     return Subtree{.ptr = data};
 }
@@ -447,13 +449,15 @@ Subtree SubtreeNewErrorNode(SubtreeArray* children, bool extra, const abi::Langu
 }
 
 Subtree SubtreeNewMissingLeaf(SubtreePool* pool, abi::Symbol symbol, Length padding, std::uint32_t lookaheadBytes,
-                              const abi::LanguageData* language) {
+                              const abi::LanguageData* language, bool owed) {
     Subtree result = SubtreeNewLeaf(pool, symbol, padding, LengthZero(), lookaheadBytes, 0, false, false, false, language);
     if (result.data.isInline) {
         result.data.isMissing = true;
+        result.data.isOwed    = owed;
     }
     else {
         const_cast<SubtreeHeapData*>(result.ptr)->isMissing = true;
+        const_cast<SubtreeHeapData*>(result.ptr)->isOwed    = owed;
     }
     return result;
 }
@@ -610,6 +614,7 @@ Subtree SubtreeEdit(Subtree self, const InputEdit& inputEdit, SubtreePool* pool)
                 data->dependsOnColumn               = false;
                 data->isMissing                     = result.data.isMissing;
                 data->isKeyword                     = result.data.isKeyword;
+                data->isOwed                        = result.data.isOwed;
                 result.ptr                          = data;
             }
         }
