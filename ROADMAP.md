@@ -164,9 +164,6 @@ and code reading. Highest stakes first.
       `:trim-trailing-whitespace`, `:ensure-final-newline` and
       `:max-consecutive-blank-lines` still only ever overwrite, so deleting one needs a
       restart.
-- [ ] **Test discovery is missing for Ruby, Swift, Scala, Dart, Elixir and Haskell**
-      (`test` column) -- the runner can still run them as tasks, but there are no
-      gutter markers or run-test-at-point.
 
 **Quick-fix gutter marker**
 

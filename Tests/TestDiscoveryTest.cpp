@@ -1,9 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "Editor/Mode.h"
+#include "Editor/ModeOverrides.h"
 
 using ned::editor::CppMode;
 using ned::editor::CSharpMode;
@@ -426,4 +428,79 @@ TEST_CASE("JavaScriptMode testDiscovery stays correct across a sequence of incre
         const auto fresh       = JavaScriptMode().testDiscovery(steps[i]);
         REQUIRE(DescribeTestMarkers(incremental) == DescribeTestMarkers(fresh));
     }
+}
+
+namespace {
+
+std::vector<std::string> DiscoveredNames(const std::string& modeName, const std::string& text) {
+    const std::optional<ned::editor::Mode> mode = ned::editor::ModeByName(modeName);
+    REQUIRE(mode.has_value());
+    REQUIRE(static_cast<bool>(mode->testDiscovery));
+    return MarkerNames(mode->testDiscovery(text));
+}
+
+} // namespace
+
+TEST_CASE("Ruby, Elixir, Swift, Scala, Dart and Haskell discover their frameworks' tests", "[TestRun]") {
+    using V = std::vector<std::string>;
+    CHECK(DiscoveredNames("ruby-mode", "RSpec.describe Calculator do\n"
+                                       "  context \"adding\" do\n"
+                                       "    it \"sums\" do\n"
+                                       "      expect(1).to eq(1)\n"
+                                       "    end\n"
+                                       "  end\n"
+                                       "end\n"
+                                       "class CalcTest < Minitest::Test\n"
+                                       "  def test_add\n"
+                                       "  end\n"
+                                       "  def helper\n"
+                                       "  end\n"
+                                       "end\n") == V{"Calculator", "adding", "sums", "CalcTest", "test_add"});
+
+    CHECK(DiscoveredNames("elixir-mode", "defmodule CalcTest do\n"
+                                         "  use ExUnit.Case\n"
+                                         "  describe \"add\" do\n"
+                                         "    test \"sums\", %{a: a} do\n"
+                                         "      assert 1 == 1\n"
+                                         "    end\n"
+                                         "  end\n"
+                                         "  test \"plain\" do\n"
+                                         "  end\n"
+                                         "end\n") == V{"add", "sums", "plain"});
+
+    CHECK(DiscoveredNames("swift-mode", "final class CalcTests: XCTestCase {\n"
+                                        "  func testAdd() throws {}\n"
+                                        "  func helper() {}\n"
+                                        "}\n"
+                                        "@Test func adds() {}\n"
+                                        "@Suite struct Math {\n"
+                                        "  @Test(\"named\") func named() {}\n"
+                                        "}\n") == V{"CalcTests", "testAdd", "adds", "Math", "named"});
+
+    CHECK(DiscoveredNames("scala-mode", "class CalcSuite extends AnyFunSuite {\n"
+                                        "  test(\"adds\") {\n"
+                                        "    assert(1 == 1)\n"
+                                        "  }\n"
+                                        "}\n"
+                                        "class CalcSpec extends AnyFlatSpec {\n"
+                                        "  \"Calc\" should \"add\" in {}\n"
+                                        "  it should \"subtract\" in {}\n"
+                                        "}\n") == V{"adds", "add", "subtract"});
+
+    CHECK(DiscoveredNames("dart-mode", "void main() {\n"
+                                       "  group('calc', () {\n"
+                                       "    test('adds', () {\n"
+                                       "      expect(1, 1);\n"
+                                       "    });\n"
+                                       "  });\n"
+                                       "  testWidgets('renders', (tester) async {});\n"
+                                       "}\n") == V{"calc", "adds", "renders"});
+
+    CHECK(DiscoveredNames("haskell-mode", "spec :: Spec\n"
+                                          "spec = describe \"calc\" $ do\n"
+                                          "  it \"adds\" $ do\n"
+                                          "    1 `shouldBe` 1\n"
+                                          "\n"
+                                          "tests = testGroup \"group\" [ testCase \"one\" $ 1 @?= 1 ]\n") ==
+          V{"calc", "adds", "group", "one"});
 }
