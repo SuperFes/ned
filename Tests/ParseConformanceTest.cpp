@@ -406,7 +406,7 @@ TEST_CASE("Ned parse engine matches the bundled corpora", "[ParseEngine][Corpus]
             std::string_view file;
             std::string_view name;
         };
-        static constexpr std::array<Case, 17> kCases = {{
+        static constexpr std::array<Case, 30> kCases = {{
             {"yaml/corpus", "06_structures.txt", "Invalid Tag Shorthands"},
             {"gitcommit/corpus", "subject.txt", "fix #36"},
             {"latex/corpus", "commands.txt", "Command with incomplete argument"},
@@ -424,6 +424,19 @@ TEST_CASE("Ned parse engine matches the bundled corpora", "[ParseEngine][Corpus]
             {"perl/corpus", "variables", "Double dollar edge cases"},
             {"matlab/corpus", "call.txt", "Function Call: Line Continuation"},
             {"matlab/corpus", "strings.txt", "Strings: Invalid termination"},
+            {"erlang/corpus", "fault_tolerance.txt", "function reference missing dot (limitation)"},
+            {"r/corpus", "expressions-errors.txt", "Dollar, At, Namespace, Namespace Internal With `if` RHS"},
+            {"elm/corpus", "case_incomplete.txt", "Case without branches followed by newline"},
+            {"elm/corpus", "case_incomplete.txt", "Case without branches directly on file end without comment before update - Hangs in v4.5.0"},
+            {"elm/corpus", "case_incomplete.txt", "Case without branches directly on file end with comment before update"},
+            {"elm/corpus", "case_incomplete.txt", "Case without branches leading with one line comment at file end"},
+            {"elm/corpus", "case_incomplete.txt", "Case without branches leading with one line comment + newline"},
+            {"elm/corpus", "case_incomplete.txt", "Case without branches followed by new line + space + comment"},
+            {"elm/corpus", "case_incomplete.txt", "Case without branches followed by new line + without space + last line comment"},
+            {"dart/corpus", "big_tests.txt", "Weird file"},
+            {"dart/corpus", "errors.txt", "Regression"},
+            {"gdscript/corpus", "source.txt", "Variables Invalid"},
+            {"crystal/corpus", "errors.txt", "error recovery of curly brace"},
         }};
         for (const Case& listed : kCases)
             if (listed.corpus == corpus && listed.file == file && listed.name == name)
@@ -1000,8 +1013,12 @@ bool CheckRefNode(const RefNode& ref, const RefNode* parent, std::size_t index, 
             else if (!check("next named sibling", actual, expected))
                 return false;
         }
-        // The previous-sibling search is a byte-position heuristic that can
-        // give up (null) when this node itself is zero-width; exact otherwise.
+        // The previous-sibling search is a byte-position heuristic that, when
+        // this node itself is zero-width, can give up (null), stop on another
+        // zero-width sibling at the same position, or descend into the true
+        // sibling and answer its last descendant -- several MISSING tokens
+        // closing nested constructs at EOF all sit at one position. Exact
+        // otherwise.
         const auto prevBefore = [&](bool namedOnly) {
             for (std::size_t j = index; j-- > 0;)
                 if (!namedOnly || NodeIsNamed(siblings[j].node))
@@ -1009,7 +1026,14 @@ bool CheckRefNode(const RefNode& ref, const RefNode* parent, std::size_t index, 
             return NodeNull();
         };
         const auto checkPrev = [&](const char* op, RedNode actual, RedNode expected) {
-            return (start == end && NodeIsNull(actual)) || check(op, actual, expected);
+            const bool besideItself   = !NodeIsNull(actual) && NodeStartByte(actual) == start && NodeEndByte(actual) == start;
+            const auto insideExpected = [&] {
+                for (RedNode up = actual; !NodeIsNull(up); up = NodeParent(up))
+                    if (SameNode(up, expected))
+                        return true;
+                return false;
+            };
+            return (start == end && (NodeIsNull(actual) || besideItself || insideExpected())) || check(op, actual, expected);
         };
         if (!checkPrev("prev sibling", NodePrevSibling(node), prevBefore(false)))
             return false;

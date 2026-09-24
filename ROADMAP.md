@@ -118,25 +118,12 @@ What each package ships is tracked in the generated `Docs/LanguageMatrix.md`; th
 below are the behavioural gaps behind its empty cells, verified with `ned --format` probes
 and code reading. Highest stakes first.
 
-- [ ] **An unfinished OCaml `try` doesn't recover at end of file.** `let f x =` then
-      `try` (or `try` and a body) and Enter parses as one ERROR, so the new line gets no
-      indent. Probed 2026-09-24; the indent side is fine (with the parse repaired, the
-      MISSING tokens sit at the end of the `try` line and the new line lands one level
-      in). Three causes, all in EOF completion (`Engine::CloseOpenConstructsAtEof`):
-      - **Nothing counts as closed until `try` reduces**, so its closer is one 4-5
-        token unit (`expr with pattern -> expr`) against `kMaxCloserTokens = 3`.
-      - **The candidate ranking is flat in OCaml's expression states** (no candidate
-        repairs in place, all share one weight), so it falls back to symbol order:
-        `with` ranks 20th of 87 and `->` about 10th, past the 4/2 branch limits.
-        Widening the branches instead is exponential (32 wide x 8 deep never finished).
-      - **Trial stack versions trip the GLR version cap.** Every trial is a stack
-        version, and `Reduce` drops slices past index 10 (`kMaxVersionCount` +
-        overflow), a limit meant for real ambiguity; four tokens deep with a three-way
-        settle family, the right sequence's reductions silently vanish (`->` "can't
-        shift"). Lifting the cap alone repaired `try a` under wider limits.
-      Separately, `try` then `with` on the next line fails mid-file, before EOF
-      completion runs -- ordinary recovery doesn't insert the missing body; not yet
-      diagnosed.
+- [ ] **OCaml `try` then `with` then end of file still parses as one ERROR.**
+      `let f x =`, `try`, `with`: `with` arrives with no body before it, so ordinary
+      recovery repairs that mid-file, and at EOF the completion pass then closes the
+      arm (`_ -> e`, three MISSING tokens). The final tree is still the ERROR-wrapped
+      reading, though -- version selection drops the repaired one. Not yet traced
+      which comparison does it. With an arm written (`| _ -> 0`) it parses.
 - [ ] **Per-buffer settings, taken from the file itself.** Applied when a file opens
       (`Editor/FileSettings.h`). Indentation: its content (`ned/set-indent-detection`),
       then `.editorconfig` (`ned/set-editorconfig-enabled`), then a modeline, laid over

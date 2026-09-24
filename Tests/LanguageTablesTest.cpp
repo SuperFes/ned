@@ -161,3 +161,19 @@ TEST_CASE("Token regexes take class set operations and emoji properties", "[Lang
         "{:name \"dash\" :extras [(:pattern \"\\\\s\")] :rules {source_file (:repeat (:choice op word)) op (:pattern \"[--][gG][tT]\") word (:pattern \"[a-z]+\")}}"));
     CHECK(ParseWith(*dash, "a -gt b") == "(source_file (word) (op) (word))");
 }
+
+// "<" opens a construct only a five-token unit closes, past what the EOF
+// search can spell; the compiler's closers spell it from the tables.
+TEST_CASE("A construct left open at EOF is closed by the closer the compiler spelled for it", "[LanguageTables]") {
+    const std::unique_ptr<CompiledLanguage> compiled = CompileGrammar(ParseGrammarJanet(
+        "{:name \"closers\" :extras [(:pattern \"\\\\s\")]\n"
+        " :rules {source_file (:repeat _item)\n"
+        "         _item (:choice guard word)\n"
+        "         guard (:seq \"<\" (:repeat _item) \"|\" word \":\" word \">\")\n"
+        "         word (:pattern \"[a-z]+\")}}"));
+    CHECK(ParseWith(*compiled, "< a | b : c >") == "(source_file (guard (word) (word) (word)))");
+    CHECK(ParseWith(*compiled, "< a < b") ==
+          "(source_file (guard (word) "
+          "(guard (word) (MISSING \"|\") (MISSING word) (MISSING \":\") (MISSING word) (MISSING \">\")) "
+          "(MISSING \"|\") (MISSING word) (MISSING \":\") (MISSING word) (MISSING \">\")))");
+}

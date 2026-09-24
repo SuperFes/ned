@@ -17,7 +17,7 @@
 namespace ned::editor::grammar::compile {
 
 inline constexpr std::string_view kTableFileMagic   = "NEDTABLE";
-inline constexpr std::uint32_t    kTableFileVersion = 1;
+inline constexpr std::uint32_t    kTableFileVersion = 2;
 
 [[nodiscard]] std::string SerializeLanguage(const CompiledLanguage& language);
 

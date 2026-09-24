@@ -64,6 +64,8 @@ class CompiledLanguage {
     std::vector<parse::abi::Symbol>           supertypeSymbols;
     std::vector<parse::abi::MapSlice>         supertypeMapSlices;
     std::vector<parse::abi::Symbol>           supertypeMapEntries;
+    std::vector<std::uint32_t>                eofCloserStarts;
+    std::vector<parse::abi::Symbol>           eofCloserSymbols;
     std::unique_ptr<bool[]>                   externalScannerStates; // externalScannerStateCount x externalTokenCount
     std::size_t                               externalScannerStateCount = 0;
 };

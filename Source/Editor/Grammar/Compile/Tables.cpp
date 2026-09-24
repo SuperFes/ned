@@ -385,6 +385,34 @@ namespace {
                 out->primaryStateIds.push_back(static_cast<parse::abi::StateId>(firstStateForCore.try_emplace(in.parseTable.states[i].coreId, i).first->second));
         }
 
+        // Each closer is stored as its matched count, its tokens, then 0. A
+        // closer naming a symbol the table never numbered is dropped whole.
+        void AddEofClosers() {
+            for (const ParseState& state : in.parseTable.states) {
+                out->eofCloserStarts.push_back(static_cast<std::uint32_t>(out->eofCloserSymbols.size()));
+                for (const EofCloser& closer : state.eofClosers) {
+                    std::vector<parse::abi::Symbol> ids;
+                    for (const Symbol symbol : closer.tokens) {
+                        Symbol numbered = symbol;
+                        if (symbol.IsExternal() && symbolIds.count(symbol) == 0)
+                            numbered = in.syntax.externalTokens[symbol.index].correspondingInternalToken.value_or(symbol);
+                        const auto id = symbolIds.find(numbered);
+                        if (id == symbolIds.end() || id->second == 0) {
+                            ids.clear();
+                            break;
+                        }
+                        ids.push_back(id->second);
+                    }
+                    if (ids.empty())
+                        continue;
+                    out->eofCloserSymbols.push_back(static_cast<parse::abi::Symbol>(closer.matched));
+                    out->eofCloserSymbols.insert(out->eofCloserSymbols.end(), ids.begin(), ids.end());
+                    out->eofCloserSymbols.push_back(0);
+                }
+            }
+            out->eofCloserStarts.push_back(static_cast<std::uint32_t>(out->eofCloserSymbols.size()));
+        }
+
         void AddFieldSequences() {
             using FlatMap = std::vector<std::pair<std::string, FieldLocation>>;
             std::vector<std::pair<std::size_t, FlatMap>> flatMaps;
@@ -601,6 +629,7 @@ namespace {
             AddAliasSequences();
             AddNonTerminalAliasMap();
             AddPrimaryStateIds();
+            AddEofClosers();
             AddFieldSequences();
             AddSupertypeMap();
             AddLexModes();
@@ -684,6 +713,8 @@ void CompiledLanguage::Link() {
     data.supertypeMapSlices  = supertypeSymbols.empty() ? nullptr : supertypeMapSlices.data();
     data.supertypeMapEntries = supertypeSymbols.empty() ? nullptr : supertypeMapEntries.data();
     data.metadata            = {.majorVersion = 0, .minorVersion = 0, .patchVersion = 0};
+    data.eofCloserStarts     = eofCloserStarts.data();
+    data.eofCloserSymbols    = eofCloserSymbols.empty() ? nullptr : eofCloserSymbols.data();
 }
 
 void CompiledLanguage::AdoptExternalScanner(const parse::ScannerVTable& scanner) {

@@ -171,6 +171,13 @@ class SymbolMap {
     std::vector<value_type> entries_;
 };
 
+struct EofCloser {
+    std::uint32_t       matched = 0; // symbols of the item already on the stack
+    std::vector<Symbol> tokens;
+
+    bool operator==(const EofCloser&) const = default;
+};
+
 struct ParseState {
     ParseStateId                      id = 0;
     SymbolMap<ParseTableEntry>        terminalEntries;
@@ -179,6 +186,10 @@ struct ParseState {
     LexStateId                        lexStateId         = 0;
     std::size_t                       externalLexStateId = 0;
     std::size_t                       coreId             = 0;
+    // Terminal sequences that finish one of this state's unfinished items,
+    // cheapest first -- what the parser inserts at EOF to close a construct
+    // the document never closed.
+    std::vector<EofCloser> eofClosers;
 
     [[nodiscard]] bool                      IsEndOfNonTerminalExtra() const;
     [[nodiscard]] std::vector<ParseStateId> ReferencedStates() const;

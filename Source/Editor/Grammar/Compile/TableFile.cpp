@@ -340,6 +340,8 @@ std::string SerializeLanguage(const CompiledLanguage& language) {
     w.U16s(language.supertypeSymbols);
     w.Slices(language.supertypeMapSlices);
     w.U16s(language.supertypeMapEntries);
+    w.U32s(language.eofCloserStarts);
+    w.U16s(language.eofCloserSymbols);
 
     w.Size(dfa.largeCharacterSets.size());
     for (const std::vector<parse::LexCharacterRange>& set : dfa.largeCharacterSets) {
@@ -421,6 +423,8 @@ std::unique_ptr<CompiledLanguage> LoadLanguage(std::string_view bytes) {
     language->supertypeSymbols    = r.U16s();
     language->supertypeMapSlices  = r.Slices();
     language->supertypeMapEntries = r.U16s();
+    language->eofCloserStarts     = r.U32s();
+    language->eofCloserSymbols    = r.U16s();
 
     parse::DfaLanguage& dfa = *language->language_;
     dfa.largeCharacterSets.resize(r.Size());
@@ -441,7 +445,8 @@ std::unique_ptr<CompiledLanguage> LoadLanguage(std::string_view bytes) {
         language->publicSymbolMap.size() != language->symbolNameStorage.size() || language->lexModes.size() != data.stateCount ||
         language->primaryStateIds.size() != data.stateCount || language->parseTable.size() != static_cast<std::size_t>(data.largeStateCount) * data.symbolCount ||
         language->fieldNameStorage.size() != data.fieldCount + 1 || language->supertypeSymbols.size() != data.supertypeCount ||
-        language->externalScannerSymbolMap.size() != data.externalTokenCount ||
+        language->externalScannerSymbolMap.size() != data.externalTokenCount || language->eofCloserStarts.size() != data.stateCount + 1 ||
+        (!language->eofCloserStarts.empty() && language->eofCloserStarts.back() != language->eofCloserSymbols.size()) ||
         (data.stateCount > data.largeStateCount && language->smallParseTableMap.size() != data.stateCount - data.largeStateCount))
         throw CompileError("tables: table sizes disagree with the header counts");
 

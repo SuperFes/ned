@@ -526,6 +526,16 @@ TEST_CASE("OCaml Enter opens a body after a binding or arm", "[Indent]") {
     CHECK(BlankLineColumn(*ocaml, "let f x =\n  match x with\n  | 0 ->\n", 3) == 4);
 }
 
+// Closing these at EOF takes a whole unit ("with _ -> e"), not a token.
+TEST_CASE("OCaml Enter opens a body under an unfinished try or match", "[Indent]") {
+    const std::optional<Mode> ocaml = ned::editor::ModeByName("ocaml-mode");
+    REQUIRE(ocaml.has_value());
+    CHECK(BlankLineColumn(*ocaml, "let f x =\n  try\n", 2) == 4);
+    CHECK(BlankLineColumn(*ocaml, "let f x =\n  try\n    a\n", 3) == 4);
+    CHECK(BlankLineColumn(*ocaml, "let f x =\n  try\n\nlet g = 1\n", 2) == 4);
+    CHECK(BlankLineColumn(*ocaml, "let f x =\n  match x with\n", 2) == 4);
+}
+
 TEST_CASE("An .mli reindents with OCaml's indents query", "[Indent]") {
     const std::optional<Mode> mli = ned::editor::ModeByName("ocaml-interface-mode");
     REQUIRE(mli.has_value());

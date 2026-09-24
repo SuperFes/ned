@@ -103,6 +103,7 @@ class Engine {
     bool            DoAllPotentialReductions(StackVersion startingVersion, abi::Symbol lookaheadSymbol);
 
     // The EOF completion pass -- see CloseOpenConstructsAtEof (Parser.cpp).
+    void                            ReduceWholeFamily(StackVersion version);
     unsigned                        SettleReductions(StackVersion version);
     std::uint32_t                   LargestReductionIn(abi::StateId state);
     bool                            ParseCanFinish(StackVersion version, abi::Symbol endSymbol);
@@ -110,6 +111,14 @@ class Engine {
     unsigned                        CloseInnermostConstruct(StackVersion version, abi::Symbol endSymbol, unsigned depthToBeat,
                                                             unsigned tokenBudget, bool firstToken, Length padding,
                                                             std::uint32_t lookaheadBytes);
+    bool                            ShiftMissingToken(StackVersion version, abi::Symbol symbol, Length padding,
+                                                      std::uint32_t lookaheadBytes);
+    bool                            TableCloserCloses(StackVersion member, const abi::Symbol* first,
+                                                      const abi::Symbol* last, abi::Symbol endSymbol,
+                                                      unsigned itemDepth, Length padding,
+                                                      std::uint32_t lookaheadBytes, bool keep);
+    unsigned                        ApplyTableCloser(StackVersion version, abi::Symbol endSymbol, Length padding,
+                                                     std::uint32_t lookaheadBytes);
     unsigned                        CloseEveryOpenConstruct(StackVersion version, abi::Symbol endSymbol, Length padding,
                                                             std::uint32_t lookaheadBytes);
     bool                            CloseOpenConstructsAtEof(StackVersion version, Subtree lookahead);
@@ -134,6 +143,13 @@ class Engine {
     std::unordered_map<abi::StateId, std::vector<abi::Symbol>> eofClosers_;
     std::unordered_map<abi::StateId, std::uint32_t>            stateReductionSizes_;
     unsigned                                                   eofClosuresApplied_ = 0;
+    // The first version Reduce treats as part of the reading it is reducing:
+    // it caps forks counting from here and merges only into versions from
+    // here up. The EOF pass reduces trial copies above the live versions,
+    // and its zero-width MISSING tokens leave a trial at the same position
+    // as every other reading, so an unscoped merge would fold the trial's
+    // reductions into readings it has nothing to do with.
+    StackVersion versionBase_ = 0;
 
     const abi::LanguageData*    language_;
     Lexer                       lexer_;

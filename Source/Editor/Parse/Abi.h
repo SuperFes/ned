@@ -152,6 +152,13 @@ struct LanguageData {
     const MapSlice*  supertypeMapSlices;
     const Symbol*    supertypeMapEntries;
     LanguageMetadata metadata;
+    // ned's own, past the tree-sitter layout: per state, the closers the
+    // EOF pass inserts (Engine::ApplyTableCloser). State s owns
+    // eofCloserSymbols[eofCloserStarts[s], eofCloserStarts[s + 1]), a run
+    // of closers, each stored as how many symbols of its item are already
+    // on the stack, then its tokens, then symbol 0.
+    const std::uint32_t* eofCloserStarts;
+    const Symbol*        eofCloserSymbols;
 };
 
 } // namespace ned::editor::parse::abi

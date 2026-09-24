@@ -45,7 +45,8 @@ ruby/corpus  cases=290 runs=290 passed=290 failed=0 skipped=0
 gitcommit/corpus  cases=64 runs=64 passed=63 failed=1 skipped=0
   FAIL subject.txt: fix #36
 gitrebase/corpus  cases=15 runs=15 passed=15 failed=0 skipped=0
-r/corpus  cases=89 runs=89 passed=89 failed=0 skipped=0
+r/corpus  cases=89 runs=89 passed=88 failed=1 skipped=0
+  FAIL expressions-errors.txt: Dollar, At, Namespace, Namespace Internal With `if` RHS
 ini/corpus  cases=11 runs=11 passed=11 failed=0 skipped=0
 json5/corpus  cases=39 runs=39 passed=39 failed=0 skipped=0
 meson/corpus  cases=22 runs=22 passed=22 failed=0 skipped=0
@@ -92,7 +93,8 @@ swift/corpus  cases=238 runs=238 passed=238 failed=0 skipped=0
 nim/corpus  cases=72 runs=72 passed=71 failed=1 skipped=0
   FAIL errors.txt: Error within variant object declaration
 odin/corpus  cases=2 runs=2 passed=2 failed=0 skipped=0
-crystal/corpus  cases=245 runs=245 passed=242 failed=3 skipped=0
+crystal/corpus  cases=245 runs=245 passed=241 failed=4 skipped=0
+  FAIL errors.txt: error recovery of curly brace
   FAIL errors.txt: unterminated percent literal array
   FAIL errors.txt: unterminated regex
   FAIL todo.txt: macro calls with keyword type declaration args
@@ -109,10 +111,18 @@ haskell/corpus  cases=725 runs=725 passed=724 failed=1 skipped=0
   FAIL varsym.txt: varsym: error: carrow
 elixir/corpus  cases=292 runs=292 passed=291 failed=1 skipped=0
   FAIL integration/spec.txt: [error] type guard cannot end with keyword separator
-erlang/corpus  cases=228 runs=228 passed=226 failed=2 skipped=0
+erlang/corpus  cases=228 runs=228 passed=225 failed=3 skipped=0
+  FAIL fault_tolerance.txt: function reference missing dot (limitation)
   FAIL fault_tolerance.txt: incomplete behaviour attribute WIP
   FAIL fault_tolerance.txt: missing dot after variable (limitation)
-elm/corpus  cases=119 runs=119 passed=118 failed=1 skipped=0
+elm/corpus  cases=119 runs=119 passed=111 failed=8 skipped=0
+  FAIL case_incomplete.txt: Case without branches directly on file end with comment before update
+  FAIL case_incomplete.txt: Case without branches directly on file end without comment before update - Hangs in v4.5.0
+  FAIL case_incomplete.txt: Case without branches followed by new line + space + comment
+  FAIL case_incomplete.txt: Case without branches followed by new line + without space + last line comment
+  FAIL case_incomplete.txt: Case without branches followed by newline
+  FAIL case_incomplete.txt: Case without branches leading with one line comment + newline
+  FAIL case_incomplete.txt: Case without branches leading with one line comment at file end
   FAIL glsl.txt: Simple glsl function no end
 purescript/corpus  cases=147 runs=147 passed=146 failed=1 skipped=0
   FAIL exp_do_ado.txt: Ado-notation, single line
@@ -129,7 +139,9 @@ groovy/corpus  cases=87 runs=87 passed=87 failed=0 skipped=0
 perl/corpus  cases=283 runs=283 passed=282 failed=1 skipped=0
   FAIL variables: Double dollar edge cases
 julia/corpus  cases=63 runs=63 passed=63 failed=0 skipped=0
-dart/corpus  cases=187 runs=187 passed=187 failed=0 skipped=0
+dart/corpus  cases=187 runs=187 passed=185 failed=2 skipped=0
+  FAIL big_tests.txt: Weird file
+  FAIL errors.txt: Regression
 tcl/corpus  cases=19 runs=19 passed=19 failed=0 skipped=0
 nu/corpus  cases=309 runs=309 passed=309 failed=0 skipped=0
 powershell/corpus  cases=139 runs=139 passed=139 failed=0 skipped=0
@@ -143,8 +155,9 @@ cuda/corpus  cases=184 runs=184 passed=184 failed=0 skipped=0
 verilog/corpus  cases=70 runs=70 passed=70 failed=0 skipped=0
 vhdl/corpus  cases=34 runs=34 passed=34 failed=0 skipped=0
 solidity/corpus  cases=125 runs=125 passed=125 failed=0 skipped=0
-gdscript/corpus  cases=167 runs=167 passed=167 failed=0 skipped=0
+gdscript/corpus  cases=167 runs=167 passed=166 failed=1 skipped=0
+  FAIL source.txt: Variables Invalid
 matlab/corpus  cases=157 runs=157 passed=155 failed=2 skipped=0
   FAIL call.txt: Function Call: Line Continuation
   FAIL strings.txt: Strings: Invalid termination
-total  cases=12718 runs=12696 passed=12668 failed=28 skipped=28
+total  cases=12718 runs=12696 passed=12655 failed=41 skipped=28

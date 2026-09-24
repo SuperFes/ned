@@ -36,6 +36,22 @@ namespace {
     constexpr unsigned kMaxSummaryDepth         = 16;
     constexpr unsigned kMaxCostDifference       = 18 * kErrorCostPerSkippedTree;
 
+    class ScopedValue {
+      public:
+        ScopedValue(StackVersion& slot, StackVersion value) : slot_(slot), saved_(slot) {
+            slot_ = value;
+        }
+        ~ScopedValue() {
+            slot_ = saved_;
+        }
+        ScopedValue(const ScopedValue&)            = delete;
+        ScopedValue& operator=(const ScopedValue&) = delete;
+
+      private:
+        StackVersion& slot_;
+        StackVersion  saved_;
+    };
+
 } // namespace
 
 // --- ReusableNode -----------------------------------------------------------
@@ -605,7 +621,7 @@ StackVersion Engine::Reduce(StackVersion version, abi::Symbol symbol, std::uint3
 
         // Allow the maximum version count to be temporarily exceeded, but
         // only by a limited threshold.
-        if (sliceVersion > kMaxVersionCount + kMaxVersionCountOverflow + haltedVersionCount) {
+        if (sliceVersion > versionBase_ + kMaxVersionCount + kMaxVersionCountOverflow + haltedVersionCount) {
             stack_->RemoveVersion(sliceVersion);
             SubtreeArrayDelete(&treePool_, &slice.subtrees);
             removedVersionCount++;
@@ -666,7 +682,7 @@ StackVersion Engine::Reduce(StackVersion version, abi::Symbol symbol, std::uint3
         for (std::uint32_t j = 0; j < trailingExtras_.size; j++)
             stack_->Push(sliceVersion, trailingExtras_[j], false, nextState);
 
-        for (StackVersion j = 0; j < sliceVersion; j++) {
+        for (StackVersion j = versionBase_; j < sliceVersion; j++) {
             if (j == version)
                 continue;
             if (stack_->Merge(j, sliceVersion)) {
@@ -1015,7 +1031,7 @@ void Engine::Recover(StackVersion version, Subtree lookahead) {
 // `version` must be the newest one on the stack -- every caller here has
 // just copied it -- so that the family is exactly the versions above it.
 unsigned Engine::SettleReductions(StackVersion version) {
-    DoAllPotentialReductions(version, 0);
+    ReduceWholeFamily(version);
 
     StackVersion shallowest = version;
     unsigned     bestDepth  = stack_->Depth(version);
@@ -1035,6 +1051,18 @@ unsigned Engine::SettleReductions(StackVersion version) {
     return bestDepth;
 }
 
+// Every reading `version` reduces to regardless of lookahead, each in a
+// version of its own above it. DoAllPotentialReductions alone misses some:
+// in a state with only reductions it follows the last one and never returns
+// to the others it forked. So each member is reduced in turn, and a reading
+// reached twice merges into the first.
+//
+// `version` must be the newest one on the stack.
+void Engine::ReduceWholeFamily(StackVersion version) {
+    for (StackVersion member = version; member < stack_->VersionCount(); member++)
+        DoAllPotentialReductions(member, 0);
+}
+
 // Whether `version` could consume the end token from where it stands --
 // after every reduction that token licenses, is it actually accepted?
 //
@@ -1050,6 +1078,7 @@ unsigned Engine::SettleReductions(StackVersion version) {
 // not a move the parse gets to keep.
 bool Engine::ParseCanFinish(StackVersion version, abi::Symbol endSymbol) {
     const StackVersion probe     = stack_->CopyVersion(version);
+    const ScopedValue  base(versionBase_, probe);
     bool               canFinish = false;
 
     for (unsigned step = 0; step < kMaxFinishReductions && !canFinish; step++) {
@@ -1226,6 +1255,7 @@ unsigned Engine::CloseInnermostConstruct(StackVersion version, abi::Symbol endSy
             break;
 
         const StackVersion trial = stack_->CopyVersion(version);
+        const ScopedValue  base(versionBase_, trial);
 
         // Take the token the way the parse loop would: the reductions its
         // own lookahead licenses first, then the shift.
@@ -1273,6 +1303,140 @@ unsigned Engine::CloseInnermostConstruct(StackVersion version, abi::Symbol endSy
     return 0;
 }
 
+// Takes `symbol` as a MISSING token the way the parse loop takes a real one:
+// the reductions it licenses, then the shift, on whichever reading those
+// reductions leave able to shift it. `version` must be the newest one on the
+// stack; on false it may be gone, and the caller drops everything from it up.
+bool Engine::ShiftMissingToken(StackVersion version, abi::Symbol symbol, Length padding, std::uint32_t lookaheadBytes) {
+    DoAllPotentialReductions(version, symbol);
+
+    StackVersion shifter    = kStackVersionNone;
+    abi::StateId shiftState = 0;
+    for (StackVersion candidate = version; candidate < stack_->VersionCount() && shifter == kStackVersionNone;
+         candidate++) {
+        shiftState = LanguageNextState(language_, stack_->State(candidate), symbol);
+        if (shiftState != 0)
+            shifter = candidate;
+    }
+    if (shifter == kStackVersionNone)
+        return false;
+
+    if (shifter != version)
+        stack_->RenumberVersion(shifter, version);
+    while (stack_->VersionCount() > version + 1)
+        stack_->RemoveVersion(stack_->VersionCount() - 1);
+    stack_->Push(version, SubtreeNewMissingLeaf(&treePool_, symbol, padding, lookaheadBytes, language_), false, shiftState);
+    return true;
+}
+
+// Whether the closer [first, last) finishes its item from `member`: shifted
+// onto a copy, it leaves the document able to finish, or the stack no
+// deeper than `itemDepth`, where the finished item's node sits -- and, if
+// that is no shallower than `member` was, in another state, since a
+// repetition ("item*" taking one more item) finishes its item right where
+// it started. The copy is left on top when `keep`, and removed otherwise.
+bool Engine::TableCloserCloses(StackVersion member, const abi::Symbol* first, const abi::Symbol* last,
+                               abi::Symbol endSymbol, unsigned itemDepth, Length padding,
+                               std::uint32_t lookaheadBytes, bool keep) {
+    const std::uint32_t top   = stack_->VersionCount();
+    const StackVersion  trial = stack_->CopyVersion(member);
+    const ScopedValue   base(versionBase_, trial);
+
+    bool shifted = true;
+    for (const abi::Symbol* symbol = first; symbol != last && shifted; symbol++)
+        shifted = ShiftMissingToken(trial, *symbol, padding, lookaheadBytes);
+    bool closes = false;
+    if (shifted) {
+        const unsigned settled = SettleReductions(trial);
+        const bool     moved   = settled < stack_->Depth(member) || stack_->State(trial) != stack_->State(member);
+        closes                 = (settled <= itemDepth && moved) || ParseCanFinish(trial, endSymbol);
+    }
+
+    while (stack_->VersionCount() > (closes && keep ? top + 1 : top))
+        stack_->RemoveVersion(stack_->VersionCount() - 1);
+    return closes;
+}
+
+// Applies the shortest closer the grammar compiler worked out for any
+// settled reading of `version` -- the rest of an unfinished item there,
+// spelled in its fewest terminals. The compiler knows what a construct is
+// owed however long it is ("with _ -> e" for OCaml's try), where the search
+// below can only afford a few tokens and a few candidates at each.
+//
+// Every reading, not only `version`'s own: which one the closer starts from
+// decides what it closes ("class A {...}" is owed a ";" as a declaration of
+// nothing, but a name and a ";" once read as a declaration's specifiers).
+// Most-reduced first, so between closers of one length the one that closes
+// the most of what is already there wins.
+//
+// `version` must be the newest one on the stack.
+unsigned Engine::ApplyTableCloser(StackVersion version, abi::Symbol endSymbol, Length padding,
+                                  std::uint32_t lookaheadBytes) {
+    if (language_->eofCloserStarts == nullptr)
+        return 0;
+
+    const std::uint32_t familyBegin = stack_->VersionCount();
+    const StackVersion  working     = stack_->CopyVersion(version);
+    {
+        const ScopedValue base(versionBase_, working);
+        ReduceWholeFamily(working);
+    }
+    const std::uint32_t familyEnd = stack_->VersionCount();
+
+    unsigned freeDepth = stack_->Depth(working);
+    for (StackVersion member = familyBegin; member < familyEnd; member++)
+        freeDepth = std::min(freeDepth, stack_->Depth(member));
+
+    const abi::Symbol* symbols    = language_->eofCloserSymbols;
+    StackVersion       bestMember = kStackVersionNone;
+    std::uint32_t      bestAt     = 0;
+    std::uint32_t      bestLength = 0;
+    unsigned           bestItem   = 0;
+    for (StackVersion member = familyEnd; member-- > familyBegin && bestLength != 1;) {
+        const abi::StateId  state = stack_->State(member);
+        const unsigned      depth = stack_->Depth(member);
+        const std::uint32_t end   = language_->eofCloserStarts[state + 1];
+        for (std::uint32_t at = language_->eofCloserStarts[state]; at < end;) {
+            const std::uint32_t matched = symbols[at];
+            const std::uint32_t first   = at + 1;
+            std::uint32_t       last    = first;
+            while (symbols[last] != 0)
+                last++;
+            at = last + 1;
+
+            // A state's closers are shortest first.
+            if (bestMember != kStackVersionNone && last - first >= bestLength)
+                break;
+
+            // Finishing the item leaves its node at this depth. A reading
+            // that gets that shallow for free already finished everything
+            // the item would, so the closer would only extend a construct
+            // that was complete -- an argument to "f x" nobody wrote.
+            const unsigned itemDepth = depth > matched ? depth - matched + 1 : 1;
+            if (itemDepth > freeDepth)
+                continue;
+
+            if (TableCloserCloses(member, symbols + first, symbols + last, endSymbol, itemDepth, padding,
+                                  lookaheadBytes, false)) {
+                bestMember = member;
+                bestAt     = first;
+                bestLength = last - first;
+                bestItem   = itemDepth;
+                break;
+            }
+        }
+    }
+
+    if (bestMember != kStackVersionNone) {
+        TableCloserCloses(bestMember, symbols + bestAt, symbols + bestAt + bestLength, endSymbol, bestItem, padding,
+                          lookaheadBytes, true);
+        stack_->RenumberVersion(stack_->VersionCount() - 1, version);
+    }
+    while (stack_->VersionCount() > familyBegin)
+        stack_->RemoveVersion(stack_->VersionCount() - 1);
+    return bestLength;
+}
+
 // Closes open constructs on one reading of the stack until the document is
 // finished, and reports how many tokens that took (zero if it could not
 // finish, in which case the caller drops this reading whole).
@@ -1286,7 +1450,7 @@ unsigned Engine::CloseEveryOpenConstruct(StackVersion version, abi::Symbol endSy
 
         const unsigned depth = stack_->Depth(version);
 
-        unsigned closerTokens = 0;
+        unsigned closerTokens = ApplyTableCloser(version, endSymbol, padding, lookaheadBytes);
         for (unsigned budget = 1; budget <= kMaxCloserTokens && closerTokens == 0; budget++)
             closerTokens = CloseInnermostConstruct(version, endSymbol, depth, budget, true, padding, lookaheadBytes);
 
@@ -1343,7 +1507,10 @@ bool Engine::CloseOpenConstructsAtEof(StackVersion version, Subtree lookahead) {
     // the order HandleError's own single-token search would have taken them.
     const StackVersion familyBegin = stack_->VersionCount();
     const StackVersion working     = stack_->CopyVersion(version);
-    DoAllPotentialReductions(working, 0);
+    {
+        const ScopedValue base(versionBase_, working);
+        DoAllPotentialReductions(working, 0);
+    }
     const std::uint32_t familyEnd = stack_->VersionCount();
 
     // Fewest inserted tokens wins, not first found: a document is owed one

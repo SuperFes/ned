@@ -592,6 +592,7 @@ namespace {
         ParseTableBuilder(const SyntaxGrammar& syntax, const LexicalGrammar& lexical, ParseItemSetBuilder itemSetBuilder, const std::vector<VariableInfo>& variableInfo) : syntax_(syntax), lexical_(lexical), itemSetBuilder_(std::move(itemSetBuilder)), variableInfo_(variableInfo) {
             for (const std::vector<Symbol>& conflict : syntax.expectedConflicts)
                 actualConflicts_.insert(conflict);
+            ComputeShortestYields();
         }
 
         ParseTable Build() {
@@ -649,6 +650,141 @@ namespace {
         std::vector<std::pair<Symbol, ParseStateId>>               nonTerminalExtraStates_;
         std::set<std::vector<Symbol>>                              actualConflicts_;
         ParseTable                                                 table_;
+        // What a spelling costs, compared in this order: terminals, then how
+        // many of those only an external scanner produces (a user types the
+        // identifier, not the scanner's layout token), then the nodes it
+        // builds (a bare identifier over a float wrapping a hex literal).
+        struct YieldCost {
+            std::size_t tokens    = 0;
+            std::size_t externals = 0;
+            std::size_t nodes     = 0;
+
+            auto       operator<=>(const YieldCost&) const = default;
+            YieldCost& operator+=(const YieldCost& other) {
+                tokens += other.tokens;
+                externals += other.externals;
+                nodes += other.nodes;
+                return *this;
+            }
+        };
+
+        // Per variable: its cheapest spelling and that spelling's cost (the
+        // spelling left empty past kMaxEofCloserLength -- no closer could
+        // use it).
+        std::vector<std::optional<YieldCost>> shortestYieldCosts_;
+        std::vector<std::vector<Symbol>>      shortestYields_;
+
+        static constexpr std::size_t kMaxEofCloserLength    = 16;
+        static constexpr std::size_t kMaxEofClosersPerState = 4;
+
+        static YieldCost TerminalCost(Symbol symbol) {
+            return {.tokens = 1, .externals = symbol.IsExternal() ? 1U : 0U, .nodes = 0};
+        }
+
+        // Knuth's generalization of Dijkstra: variables are finalized
+        // cheapest-first, each from a production whose nonterminals are all
+        // finalized already, so no spelling can refer back to itself.
+        void ComputeShortestYields() {
+            const std::size_t count = syntax_.variables.size();
+            shortestYieldCosts_.assign(count, std::nullopt);
+            shortestYields_.assign(count, {});
+            for (std::size_t round = 0; round < count; ++round) {
+                std::size_t              bestVariable = count;
+                std::optional<YieldCost> bestCost;
+                const Production*        bestProduction = nullptr;
+                for (std::size_t variable = 0; variable < count; ++variable) {
+                    if (shortestYieldCosts_[variable])
+                        continue;
+                    for (const Production& production : syntax_.variables[variable].productions) {
+                        YieldCost cost{.nodes = 1};
+                        bool      ready = true;
+                        for (const ProductionStep& step : production.steps) {
+                            if (!step.symbol.IsNonTerminal()) {
+                                cost += TerminalCost(step.symbol);
+                                continue;
+                            }
+                            if (!shortestYieldCosts_[step.symbol.index]) {
+                                ready = false;
+                                break;
+                            }
+                            cost += *shortestYieldCosts_[step.symbol.index];
+                        }
+                        if (ready && (!bestCost || cost < *bestCost)) {
+                            bestVariable   = variable;
+                            bestCost       = cost;
+                            bestProduction = &production;
+                        }
+                    }
+                }
+                if (bestVariable == count)
+                    break;
+                shortestYieldCosts_[bestVariable] = bestCost;
+                if (bestCost->tokens > kMaxEofCloserLength)
+                    continue;
+                std::vector<Symbol>& spelling = shortestYields_[bestVariable];
+                for (const ProductionStep& step : bestProduction->steps) {
+                    if (step.symbol.IsNonTerminal())
+                        spelling.insert(spelling.end(), shortestYields_[step.symbol.index].begin(), shortestYields_[step.symbol.index].end());
+                    else
+                        spelling.push_back(step.symbol);
+                }
+            }
+        }
+
+        // The rest of each unfinished kernel item, spelled out in terminals.
+        [[nodiscard]] std::vector<EofCloser> EofClosers(const ParseItemSet& kernel) const {
+            struct Candidate {
+                std::vector<Symbol> tokens;
+                YieldCost           cost;
+                std::uint32_t       stepIndex = 0;
+            };
+            std::vector<Candidate> candidates;
+            for (const ParseItemSetEntry& entry : kernel.entries) {
+                const ParseItem& item = entry.item;
+                if (item.IsAugmented() || item.IsDone())
+                    continue;
+                Candidate candidate{.stepIndex = item.stepIndex};
+                bool      spelled = true;
+                for (std::size_t i = item.stepIndex; i < item.production->steps.size() && spelled; ++i) {
+                    const Symbol symbol = item.production->steps[i].symbol;
+                    if (!symbol.IsNonTerminal()) {
+                        candidate.tokens.push_back(symbol);
+                        candidate.cost += TerminalCost(symbol);
+                        continue;
+                    }
+                    const std::optional<YieldCost>& cost = shortestYieldCosts_[symbol.index];
+                    spelled                              = cost && cost->tokens <= kMaxEofCloserLength;
+                    if (spelled) {
+                        candidate.tokens.insert(candidate.tokens.end(), shortestYields_[symbol.index].begin(), shortestYields_[symbol.index].end());
+                        candidate.cost += *cost;
+                    }
+                }
+                // An empty rest is all empty nonterminals, which the parser
+                // reduces for no inserted token at all.
+                if (spelled && !candidate.tokens.empty() && candidate.tokens.size() <= kMaxEofCloserLength)
+                    candidates.push_back(std::move(candidate));
+            }
+            // Cheapest first; between equals, the item further along, whose
+            // construct started earlier and so encloses the other's.
+            std::stable_sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+                if (a.cost.tokens != b.cost.tokens)
+                    return a.cost.tokens < b.cost.tokens;
+                if (a.cost.externals != b.cost.externals)
+                    return a.cost.externals < b.cost.externals;
+                if (a.stepIndex != b.stepIndex)
+                    return a.stepIndex > b.stepIndex;
+                return a.cost.nodes < b.cost.nodes;
+            });
+            std::vector<EofCloser> closers;
+            for (Candidate& candidate : candidates) {
+                if (closers.size() == kMaxEofClosersPerState)
+                    break;
+                const bool seen = std::any_of(closers.begin(), closers.end(), [&](const EofCloser& closer) { return closer.tokens == candidate.tokens; });
+                if (!seen)
+                    closers.push_back({.matched = candidate.stepIndex, .tokens = std::move(candidate.tokens)});
+            }
+            return closers;
+        }
 
         ParseStateId AddParseState(const std::vector<Symbol>& precedingSymbols, const std::vector<AuxiliarySymbolInfo>& precedingAuxiliarySymbols, ParseItemSet itemSet) {
             if (const auto existing = stateIdsByItemSet_.find(itemSet); existing != stateIdsByItemSet_.end())
@@ -662,7 +798,7 @@ namespace {
 
             const ParseStateId stateId = table_.states.size();
             stateInfoById_.push_back({precedingSymbols, itemSet});
-            table_.states.push_back(ParseState{.id = stateId, .coreId = coreId});
+            table_.states.push_back(ParseState{.id = stateId, .coreId = coreId, .eofClosers = EofClosers(itemSet)});
             queue_.push_back({stateId, precedingAuxiliarySymbols});
             stateIdsByItemSet_.emplace(std::move(itemSet), stateId);
             return stateId;
