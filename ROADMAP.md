@@ -126,16 +126,26 @@ and code reading. Highest stakes first.
       `trim_trailing_whitespace`, `charset` and `max_line_length` override ned's own
       settings for that buffer (`Buffer::Conventions`), and are read again when the
       file is reverted, merged or renamed under the buffer (`Buffer::FileGeneration`).
-      Left:
-  - [ ] **Charsets other than UTF-8 are named but not converted.** `Text/Charset.h` is
-        the seam: every load sniffs a file's charset there and strips its preamble, every
-        save writes it back, and `.editorconfig` can state latin1 or utf-16le/-be. A
-        charset that doesn't convert yet (`CharsetConverts`) is read and written byte for
-        byte, and a UTF-16 file still trips the binary guard. Converting one is a decode
-        where the three load paths strip the preamble (`Buffer::FromFile`,
-        `Buffer::FromHugeFile`, `UI/AsyncFileLoader`) plus an encode in `SavePlan`'s
-        `WritePlanContent`; the huge-file path maps the file's bytes directly, so it would
-        stay UTF-8-only or materialize.
+      Charsets (`Text/Charset.h`): a file is decoded from what its BOM announces, else
+      what `.editorconfig` states, else read as UTF-8 byte for byte (bytes that aren't
+      UTF-8 stay exactly as read -- no latin1 guess); a save encodes back and refuses,
+      naming line and column, a character the charset can't hold. `set-buffer-charset`
+      and `revert-buffer-with-charset` choose one; the mode line names any charset but
+      plain UTF-8. Left:
+  - [ ] **Charset edges.** UTF-16 is always written with a BOM, so a BOM-less UTF-16
+        file (only reachable by stating or choosing the charset) gains one on save;
+        modelling "BOM or not" apart from the encoding would fix it. The huge-file path
+        maps bytes and never decodes: a UTF-16 huge file is refused, a latin1 one opens
+        byte for byte and ignores a stated latin1; its streaming reindent
+        (`--format --force-huge`, huge `format-buffer`) writes the content without the
+        preamble, so it drops a UTF-8 BOM. Project search and the case checker
+        decode only what a BOM announces, not a per-file `.editorconfig` statement. A
+        charset stated in `.editorconfig` for files opened before `init.janet` disables
+        `.editorconfig` has already decoded them.
+  - [ ] **Show bytes that aren't UTF-8 as themselves.** They round-trip untouched but
+        paint as U+FFFD; showing each as its value (Emacs's `\351`) would say what's
+        actually there. `VisualColumn`, `ByteOffsetForColumnInLine` and `SkipToColumn`
+        all have to agree on the wider cell.
   - [ ] **Mixed tabs and spaces, if it has to exist:** Emacs's `indent-tabs-mode` with
         an indent width below the tab width (GNU C: 2-column levels, 8-column tabs, so a
         level-3 line is one tab and two spaces). The worst of both worlds, and supported

@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "Text/BinaryDetect.h"
 #include "Text/Buffer.h"
 #include "Text/Charset.h"
 
@@ -237,7 +238,7 @@ TEST_CASE("An async load's byte-order mark is kept for the save", "[Buffer]") {
     std::filesystem::remove(path);
 }
 
-TEST_CASE("SniffCharset reads byte order marks, and only the UTF-8 family converts", "[Buffer][Charset]") {
+TEST_CASE("SniffCharset reads byte order marks", "[Buffer][Charset]") {
     using ned::text::Charset;
     CHECK(ned::text::SniffCharset("\xEF\xBB\xBFx") == Charset::Utf8Bom);
     CHECK(ned::text::SniffCharset("\xFF\xFEx\0") == Charset::Utf16Le);
@@ -246,10 +247,83 @@ TEST_CASE("SniffCharset reads byte order marks, and only the UTF-8 family conver
     CHECK(ned::text::SniffCharset("") == Charset::Utf8);
     CHECK(ned::text::CharsetFromName("utf-16le") == Charset::Utf16Le);
     CHECK_FALSE(ned::text::CharsetFromName("ebcdic").has_value());
-    CHECK(ned::text::CharsetConverts(Charset::Utf8Bom));
-    CHECK_FALSE(ned::text::CharsetConverts(Charset::Latin1));
     CHECK(ned::text::CharsetPreamble(Charset::Utf8Bom) == "\xEF\xBB\xBF");
     CHECK(ned::text::CharsetPreamble(Charset::Latin1).empty());
+}
+
+TEST_CASE("A UTF-16 file opens as its text and saves back to the same bytes", "[Buffer][Charset]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_utf16.txt";
+    // BOM, "é\r\nx\r\n" in UTF-16LE -- NUL bytes throughout, none of them binary.
+    const std::string bytes("\xFF\xFE\xE9\x00\r\x00\n\x00x\x00\r\x00\n\x00", 14);
+    WriteFileBytes(path, bytes);
+    REQUIRE_FALSE(ned::text::LooksBinary(path));
+
+    Buffer buffer = Buffer::FromFile(path);
+    CHECK(buffer.Text() == "\xC3\xA9\nx\n");
+    CHECK(buffer.FileCharset() == ned::text::Charset::Utf16Le);
+    CHECK(buffer.LineEndingKind() == ned::text::LineEnding::CRLF);
+    buffer.SaveToFile(path, false, false);
+    CHECK(ReadFileBytes(path) == bytes);
+
+    buffer.InsertAt(buffer.Size(), "\xF0\x9F\x98\x80");
+    buffer.SaveToFile(path, false, false);
+    CHECK(ReadFileBytes(path) == bytes + std::string("\x3D\xD8\x00\xDE", 4));
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("A UTF-16 file that doesn't decode is binary, and opened anyway keeps its bytes", "[Buffer][Charset]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_utf16_bad.txt";
+    const std::string           bytes("\xFF\xFEx\x00\x00\xDC", 6); // a lone low surrogate
+    WriteFileBytes(path, bytes);
+
+    CHECK(ned::text::LooksBinary(path));
+    CHECK_THROWS_AS(Buffer::FromFile(path), ned::text::BinaryFileError);
+    Buffer buffer = Buffer::FromFile(path, /*allowBinary=*/true);
+    CHECK(buffer.Text() == bytes);
+    CHECK(buffer.FileCharset() == ned::text::Charset::Utf8);
+    buffer.SaveToFile(path, false, false);
+    CHECK(ReadFileBytes(path) == bytes);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("A chosen charset is what the next save writes and what later reverts decode", "[Buffer][Charset]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_charset_choice.txt";
+    WriteFileBytes(path, "caf\xC3\xA9\n");
+
+    Buffer buffer = Buffer::FromFile(path);
+    buffer.SetFileCharset(ned::text::Charset::Latin1);
+    CHECK(buffer.CharsetChosen());
+    CHECK(ReadFileBytes(path) == "caf\xC3\xA9\n"); // nothing on disk changes yet
+    buffer.SaveToFile(path, false, false);
+    CHECK(ReadFileBytes(path) == "caf\xE9\n");
+
+    // Latin-1 announces nothing, so only the choice lets a revert read it.
+    WriteFileBytes(path, "na\xEFve\n");
+    buffer.Revert();
+    CHECK(buffer.Text() == "na\xC3\xAFve\n");
+
+    // And reading a file as a charset is a choice too.
+    buffer.RevertWithCharset(ned::text::Charset::Utf8);
+    CHECK(buffer.Text() == "na\xEFve\n");
+    CHECK(buffer.FileCharset() == ned::text::Charset::Utf8);
+
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Reverting as a charset the file doesn't decode in leaves the buffer as it was", "[Buffer][Charset]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_charset_bad_revert.txt";
+    WriteFileBytes(path, "abcd\n"); // odd length: not UTF-16
+
+    Buffer buffer = Buffer::FromFile(path);
+    CHECK_THROWS_AS(buffer.RevertWithCharset(ned::text::Charset::Utf16Le), ned::text::BinaryFileError);
+    CHECK(buffer.Text() == "abcd\n");
+    CHECK_FALSE(buffer.CharsetChosen());
+    buffer.Revert();
+    CHECK(buffer.Text() == "abcd\n");
+
+    std::filesystem::remove(path);
 }
 
 TEST_CASE("FromFile normalizes CRLF to LF and records the detected ending", "[Buffer][LineEnding]") {

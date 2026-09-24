@@ -148,7 +148,7 @@ Buffer& BufferList::OpenFile(const std::filesystem::path& path, bool allowBinary
     // opener hook below can carry the same LikelyBinary() signal
     // Buffer::FromFile/FromHugeFile's own synchronous paths already set
     // internally -- see Buffer::SetLikelyBinary's own doc comment.
-    const bool likelyBinary = LooksBinary(path);
+    const bool likelyBinary = LooksBinaryToLoad(path);
     if (!allowBinary && likelyBinary) {
         throw BinaryFileError("ned: refusing to open binary file as text: " + path.string());
     }
@@ -171,6 +171,7 @@ Buffer& BufferList::OpenFile(const std::filesystem::path& path, bool allowBinary
         std::error_code      ec;
         const std::uintmax_t size = std::filesystem::file_size(path, ec);
         if (!ec && size > HugeFileThreshold()) {
+            Buffer::RefuseUndecodableHugeFile(path, allowBinary);
             if (asyncHugeFileOpener_) {
                 Buffer placeholder = Buffer::NewFile(path);
                 placeholder.Rename(UniqueName(placeholder.Name()));

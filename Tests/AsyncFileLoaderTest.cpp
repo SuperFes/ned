@@ -17,7 +17,9 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <fstream>
 #include <string>
+#include <tuple>
 #include <unistd.h>
 
 #include "Text/Buffer.h"
@@ -108,4 +110,34 @@ TEST_CASE("A failed async load says nothing about a placeholder already closed b
     }
 
     CHECK_FALSE(announced);
+}
+
+TEST_CASE("An async load decodes a UTF-16 file, and keeps one that stops decoding byte for byte", "[AsyncFileLoader][Charset]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / ("ned_loader_utf16_" + std::to_string(::getpid()));
+    std::filesystem::create_directories(dir);
+    const auto load = [&](const std::string& bytes) {
+        const std::filesystem::path path = dir / "wide.txt";
+        std::ofstream(path, std::ios::binary) << bytes;
+        ned::text::BufferList bufferList;
+        ned::ui::EventLoop    eventLoop;
+        ned::text::Buffer&    placeholder = bufferList.CreateBuffer("wide.txt");
+        {
+            ned::ui::AsyncFileLoader loader(placeholder, bufferList, path, eventLoop, nullptr);
+            PumpUntilDone(eventLoop, loader);
+        }
+        return std::tuple(placeholder.Text(), placeholder.FileCharset(), placeholder.LikelyBinary());
+    };
+
+    const auto [text, charset, binary] = load(std::string("\xFE\xFF\x00x\x00\xE9\x00\n", 8));
+    CHECK(text == "x\xC3\xA9\n");
+    CHECK(charset == ned::text::Charset::Utf16Be);
+    CHECK_FALSE(binary);
+
+    const std::string malformed("\xFE\xFF\x00x\xDC\x00", 6);
+    const auto [rawText, rawCharset, rawBinary] = load(malformed);
+    CHECK(rawText == malformed);
+    CHECK(rawCharset == ned::text::Charset::Utf8);
+    CHECK(rawBinary);
+
+    std::filesystem::remove_all(dir);
 }

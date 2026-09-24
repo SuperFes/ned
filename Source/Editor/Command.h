@@ -56,6 +56,10 @@ enum class InteractiveRequest { None,
                                 ConfirmQuit,
                                 FindFile,
                                 SetMode,
+                                // set-buffer-charset / revert-buffer-with-charset:
+                                // one picker over Text/Charset.h's charsets.
+                                SetBufferCharset,
+                                RevertBufferWithCharset,
                                 SwitchToBuffer,
                                 ProjectSearch,
                                 // multibuffer-search-in-results follow-up: a project search

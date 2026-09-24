@@ -48,7 +48,7 @@ namespace {
         }
         std::ostringstream contents;
         contents << file.rdbuf();
-        return contents.str();
+        return text::DecodeAnnouncedCharset(contents.str()).value_or(std::string());
     }
 
     std::size_t LineNumberForByte(const std::string& text, std::size_t byteOffset) {

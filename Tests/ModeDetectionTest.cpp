@@ -97,6 +97,28 @@ TEST_CASE("A modeline outranks the file's extension", "[ModeDetection]") {
     CHECK(ned::editor::ModeForPath(WriteSample("tail.c", longFile.substr(21) + "// vim: ft=cpp\n")).name == "cpp-mode");
 }
 
+TEST_CASE("A UTF-16 file's modeline is read from its text", "[ModeDetection]") {
+    const auto utf16le = [](std::string_view text) {
+        std::string bytes = "\xFF\xFE";
+        for (const char c : text) {
+            bytes += c;
+            bytes += '\0';
+        }
+        return bytes;
+    };
+    CHECK(ned::editor::ModeForPath(WriteSample("wide.txt", utf16le("# vim: ft=python\nx = 1\n"))).name == "python-mode");
+
+    // The tail can start on either byte of a unit.
+    std::string body = "# vim: ft=python\n";
+    for (int i = 0; i < 3000; ++i) {
+        body += "x\n";
+    }
+    for (const std::string& tail : {std::string("# vim: ft=ruby\n"), std::string("#  vim: ft=ruby\n")}) {
+        const std::string ends = ned::editor::ReadFileEnds(WriteSample("wide-tail.txt", utf16le(body + tail)));
+        CHECK(ned::editor::ParseModeline(ends).language == "ruby");
+    }
+}
+
 TEST_CASE("A chosen mode outlives cache flushes and goes with its buffer", "[ModeDetection]") {
     ned::text::Buffer buffer = ned::text::Buffer::FromFile(WriteSample("chosen.c", "int x;\n"));
     CHECK(ned::editor::CachedModeForBuffer(buffer).name == "c-mode");

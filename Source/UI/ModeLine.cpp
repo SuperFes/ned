@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "Editor/BackgroundActivity.h"
+#include "Editor/BufferSave.h"
 #include "Editor/IndentDetect.h"
 #include "Editor/IndentStyle.h"
 #include "Editor/Org.h"
@@ -156,7 +157,11 @@ void ModeLine::Paint(Canvas c) {
     // direct buffer access for everything else on this line, and unlike an
     // embedded language this is meaningful for every buffer, not just a
     // rare per-point case.
-    const std::string lineEndingSuffix = std::string("  ") + text::LineEndingName(buffer.Conventions().lineEnding.value_or(buffer.LineEndingKind()));
+    std::string lineEndingSuffix = std::string("  ") + text::LineEndingName(buffer.Conventions().lineEnding.value_or(buffer.LineEndingKind()));
+    // Named only when it isn't plain UTF-8, the charset nearly every file is in.
+    if (const text::Charset charset = editor::CharsetForSave(buffer); charset != text::Charset::Utf8) {
+        lineEndingSuffix += "  " + std::string(text::CharsetName(charset));
+    }
 
     // configurable-formatter follow-up: indent-style indicator. A huge
     // buffer never gets a whole-content scan here -- same "second-class

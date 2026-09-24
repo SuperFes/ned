@@ -982,6 +982,10 @@ for the live keymap stack.
 
 :   Re-run every currently-failed test, one filtered run per test, merging the results.
 
+`revert-buffer-with-charset`
+
+:   Reload this buffer's file, decoding it as a charset you name.
+
 `run-repl` (`C-c r`)
 
 :   Open (or switch to) a Janet-configured REPL's own interactive session (see ned/set-repl-command).
@@ -1041,6 +1045,10 @@ for the live keymap stack.
 `self-insert-command` (`!`)
 
 :   Insert the character that was pressed.
+
+`set-buffer-charset`
+
+:   Save this buffer in another charset (utf-8, utf-8-bom, latin1, utf-16le, utf-16be) from its next save on.
 
 `set-mark-command` (`C-SPC`)
 

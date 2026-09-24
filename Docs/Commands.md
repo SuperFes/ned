@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-334 commands.
+336 commands.
 
 ## `acp-rewind`
 
@@ -1250,6 +1250,10 @@ Key: `C-c T f`
 
 Re-run every currently-failed test, one filtered run per test, merging the results.
 
+## `revert-buffer-with-charset`
+
+Reload this buffer's file, decoding it as a charset you name.
+
 ## `run-repl`
 
 Key: `C-c r`
@@ -1333,6 +1337,10 @@ Switch the color theme, narrowed by fuzzy matching, previewing the highlighted c
 Key: `!`
 
 Insert the character that was pressed.
+
+## `set-buffer-charset`
+
+Save this buffer in another charset (utf-8, utf-8-bom, latin1, utf-16le, utf-16be) from its next save on.
 
 ## `set-mark-command`
 

@@ -45,6 +45,7 @@
 #include "Editor/Clipboard.h"
 #include "Editor/Commands.h"
 #include "Editor/Dap/Manager.h"
+#include "Editor/EditorConfig.h"
 #include "Editor/FileSettings.h"
 #include "Editor/Format.h"
 #include "Editor/FormatBlankLines.h"
@@ -371,6 +372,7 @@ int RunMcpStdioRelay(const std::string& socketPathStr) {
 // -- a documented v1 scope cut for this one CLI-only entry point, not
 // silently missing.
 int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
+    ned::editor::InstallEditorConfigCharsetResolver();
     if (paths.empty()) {
         std::cerr << "ned: --format: no files given\n";
         return 1;
@@ -537,6 +539,7 @@ int MinimapOverlayReserve() {
 // child process, and it can only happen once this function returns, not
 // from inside it.
 int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& keymapStyle, const std::vector<std::string>& paths) {
+    ned::editor::InstallEditorConfigCharsetResolver();
     std::setlocale(LC_ALL, "");
 
     Ned::Application::SetTitle("Ned");

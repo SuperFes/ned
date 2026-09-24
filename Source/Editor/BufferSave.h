@@ -47,6 +47,12 @@ enum class SaveDispatch {
 // and its outcome arrives later.
 void WriteBufferToDisk(text::Buffer& buffer, SaveDispatch dispatch = SaveDispatch::ForceSynchronous);
 
+// The charset the next save writes: the buffer's own, unless .editorconfig
+// states another and set-buffer-charset hasn't chosen one. A binary buffer
+// keeps its bytes as read, and a huge one only takes a stated charset
+// within the UTF-8 family (it holds its file's bytes undecoded).
+[[nodiscard]] text::Charset CharsetForSave(const text::Buffer& buffer);
+
 // Everything a save does outside the buffer: the pre-save backup version,
 // the write, and dropping the now-obsolete crash-recovery autosave. Touches
 // no Buffer and no editor state, so it is equally callable on a background

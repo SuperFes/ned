@@ -626,3 +626,9 @@ TEST_CASE("Buffer progressive huge-load: SaveToFile refuses while loading and su
 
     std::filesystem::remove(path);
 }
+
+TEST_CASE("The huge-file path refuses a UTF-16 file rather than mapping its bytes", "[Buffer][HugeFile][Charset]") {
+    const std::filesystem::path path = WriteTempFile("ned_buffer_huge_utf16.txt", std::string("\xFF\xFEx\x00\n\x00", 6));
+    CHECK_THROWS_WITH(Buffer::FromHugeFile(path), Catch::Matchers::ContainsSubstring("utf-16le"));
+    std::filesystem::remove(path);
+}

@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include "Text/Charset.h"
+
 namespace ned::editor {
 
 namespace {
@@ -219,18 +221,35 @@ std::string ReadFileEnds(const std::filesystem::path& path, std::size_t headByte
     }
     const std::streamoff size     = in.tellg();
     const std::streamoff headSize = std::min<std::streamoff>(size, static_cast<std::streamoff>(headBytes));
-    std::string          text(static_cast<std::size_t>(headSize), '\0');
+    std::string          ends(static_cast<std::size_t>(headSize), '\0');
     in.seekg(0);
-    in.read(text.data(), headSize);
+    in.read(ends.data(), headSize);
+
+    // A UTF-16 file is read as its text; each end is decoded as far as it
+    // goes, since either can cut a character in half.
+    const text::Charset charset = text::SniffCharset(ends);
+    const bool          utf16   = charset == text::Charset::Utf16Le || charset == text::Charset::Utf16Be;
+    const auto          decoded = [&](std::string_view bytes) {
+        std::string          out;
+        text::CharsetDecoder decoder(charset);
+        return decoder.Feed(bytes, out) ? out : std::string();
+    };
+    if (utf16) {
+        ends = decoded(std::string_view(ends).substr(text::PreambleLength(ends, charset)));
+    }
+
     if (size > headSize) {
-        const std::streamoff tailSize = std::min<std::streamoff>(size - headSize, static_cast<std::streamoff>(tailBytes));
-        std::string          tail(static_cast<std::size_t>(tailSize), '\0');
+        std::streamoff tailSize = std::min<std::streamoff>(size - headSize, static_cast<std::streamoff>(tailBytes));
+        if (utf16 && (size - tailSize) % 2 != 0) {
+            --tailSize; // start on a unit boundary
+        }
+        std::string tail(static_cast<std::size_t>(tailSize), '\0');
         in.seekg(size - tailSize);
         in.read(tail.data(), tailSize);
-        text += std::string(kModelineLines * 2 + 1, '\n');
-        text += tail;
+        ends += std::string(kModelineLines * 2 + 1, '\n');
+        ends += utf16 ? decoded(tail) : tail;
     }
-    return text;
+    return ends;
 }
 
 } // namespace ned::editor

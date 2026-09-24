@@ -54,6 +54,7 @@ add_executable(ned_tests
             BufferViewChoicePromptTest.cpp
             BufferViewPromptDriverTest.cpp
             BufferTest.cpp
+            CharsetTest.cpp
             BufferHugeFileTest.cpp
             DiskSpaceTest.cpp
             BufferSaveEquivalenceTest.cpp

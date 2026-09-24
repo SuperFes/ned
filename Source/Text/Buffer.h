@@ -71,8 +71,11 @@ class Buffer {
     // false (the default) -- open-binary-anyway follow-up: pass true to
     // load it as text anyway (an explicit user override, e.g. a confirmed
     // "open anyway?" prompt or a --force-binary CLI flag; never set based on
-    // file content itself).
-    [[nodiscard]] static Buffer FromFile(const std::filesystem::path& path, bool allowBinary = false);
+    // file content itself). `charset` decodes the file as that charset
+    // instead of the one ResolveLoadCharset settles on (Text/Charset.h); a
+    // file that doesn't decode is treated as binary.
+    [[nodiscard]] static Buffer FromFile(const std::filesystem::path& path, bool allowBinary = false,
+                                         std::optional<Charset> charset = std::nullopt);
 
     // huge-file-editing follow-up: opens path via a PieceTableStorage
     // (Text/PieceTable.h) instead of reading the whole file into memory --
@@ -213,10 +216,30 @@ class Buffer {
     // disk changes until the next explicit save actually writes it out.
     void SetLineEndingOverride(ned::text::LineEnding ending);
 
-    // How the file's bytes are encoded (Text/Charset.h), sniffed at load:
-    // its byte order mark is stripped from the content and a save writes it
-    // back (BeginSave), so opening and saving a file keeps it byte for byte.
+    // How the file's bytes are encoded (Text/Charset.h), settled at load:
+    // the content is decoded from it without its byte order mark, and a
+    // save encodes back into it and writes the mark (BeginSave), so opening
+    // and saving a file keeps it byte for byte.
     [[nodiscard]] Charset FileCharset() const;
+
+    // set-buffer-charset: what the next save encodes into. Chosen by the
+    // user, so .editorconfig's charset doesn't override it, and once saved
+    // it's what a revert decodes the file with. Like SetLineEndingOverride,
+    // nothing on disk changes until that save.
+    void               SetFileCharset(Charset charset);
+    [[nodiscard]] bool CharsetChosen() const;
+
+    // revert-buffer-with-charset: Revert(), decoding the file as `charset`,
+    // which later reverts keep using. Throws like Revert(), and
+    // BinaryFileError if the file doesn't decode, leaving the buffer
+    // untouched.
+    void RevertWithCharset(Charset charset);
+
+    // Throws std::runtime_error for a file the huge-file path can't read as
+    // text: it maps a file's bytes rather than decoding them, so a UTF-16
+    // one would open as mojibake. Latin-1 opens byte for byte. A no-op with
+    // allowBinary.
+    static void RefuseUndecodableHugeFile(const std::filesystem::path& path, bool allowBinary);
 
     // The indentation this buffer's own file asks for (a modeline,
     // .editorconfig, or what its content already does), laid over the
@@ -1215,6 +1238,7 @@ class Buffer {
 
   private:
     void ClampCursorsToContent();
+    void RevertDecoding(std::optional<Charset> charset);
     void MoveToLine(std::size_t targetLine, std::size_t tabWidth);
 
     // Shared body of InsertAt/AppendWhileReadOnly -- both public entry
@@ -1470,6 +1494,10 @@ class Buffer {
     // Defaults to LF, matching a NewFile() buffer's own implicit ending.
     ned::text::LineEnding LineEnding_ = ned::text::LineEnding::LF;
     Charset               Charset_    = Charset::Utf8;
+    bool                  CharsetChosen_ = false;
+    // What the user said the file on disk is encoded in -- see
+    // RevertWithCharset. Revert and MergeExternalChanges decode with it.
+    std::optional<Charset> DiskCharset_;
     IndentOverride        LocalIndent_;
     FileConventions       Conventions_;
     // See Content()'s own doc comment above -- Rope-backed for every

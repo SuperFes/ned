@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <fstream>
 #include <stdexcept>
+#include <string>
 #include <system_error>
 
 #include "WhitespaceHygiene.h"
@@ -10,6 +11,41 @@
 namespace ned::text {
 
 namespace {
+    // Where every byte of a save goes: straight to the file for the UTF-8
+    // family, through the charset's encoder for anything else. A character
+    // the encoder refuses fails the stream, which each write mode already
+    // treats as a failed write -- ValidateSavePlanCharset is what keeps
+    // that from being reached.
+    class EncodingSink {
+      public:
+        EncodingSink(std::ofstream& file, Charset charset) : file_(file), encoder_(charset), passThrough_(IsUtf8Family(charset)) {
+        }
+
+        void Write(const char* data, std::size_t size) {
+            if (passThrough_) {
+                file_.write(data, static_cast<std::streamsize>(size));
+                return;
+            }
+            encoded_.clear();
+            if (!encoder_.Feed(std::string_view(data, size), encoded_)) {
+                file_.setstate(std::ios::failbit);
+            }
+            file_.write(encoded_.data(), static_cast<std::streamsize>(encoded_.size()));
+        }
+
+        void Finish() {
+            if (!encoder_.Finish()) {
+                file_.setstate(std::ios::failbit);
+            }
+        }
+
+      private:
+        std::ofstream& file_;
+        CharsetEncoder encoder_;
+        bool           passThrough_;
+        std::string    encoded_;
+    };
+
     // huge-file-editing follow-up (streaming save): reproduces the non-huge
     // save path's trim-trailing-whitespace / ensure-final-newline /
     // line-ending-expansion pipeline as a single forward streaming pass over
@@ -35,7 +71,7 @@ namespace {
     // no second pass or full-content buffer needed.
     class StreamingSaveWriter {
       public:
-        StreamingSaveWriter(std::ofstream& file, LineEnding ending, bool trim, bool ensureFinalNewline,
+        StreamingSaveWriter(EncodingSink& file, LineEnding ending, bool trim, bool ensureFinalNewline,
                             const std::function<void(std::uintmax_t)>& onProgress) :
             file_(file), ending_(ending), trim_(trim), ensureFinalNewline_(ensureFinalNewline), onProgress_(onProgress) {
         }
@@ -120,7 +156,7 @@ namespace {
 
         void FlushBuffer() {
             if (!outBuffer_.empty()) {
-                file_.write(outBuffer_.data(), static_cast<std::streamsize>(outBuffer_.size()));
+                file_.Write(outBuffer_.data(), outBuffer_.size());
                 bytesWritten_ += outBuffer_.size();
                 outBuffer_.clear();
                 if (onProgress_) {
@@ -131,7 +167,7 @@ namespace {
 
         static constexpr std::size_t kFlushThreshold = 256 * 1024;
 
-        std::ofstream&                             file_;
+        EncodingSink&                              file_;
         LineEnding                                 ending_;
         bool                                       trim_;
         bool                                       ensureFinalNewline_;
@@ -152,7 +188,7 @@ namespace {
     // failure state for the caller to check: the two modes recover from a
     // failed write very differently (remove the temp file vs. report a
     // possibly-truncated real file).
-    void WriteBufferContent(std::ofstream& file, const ITextStorage& storage, LineEnding effectiveEnding, bool trimTrailingWhitespace,
+    void WriteBufferContent(EncodingSink& file, const ITextStorage& storage, LineEnding effectiveEnding, bool trimTrailingWhitespace,
                             bool ensureFinalNewline, const std::function<void(std::uintmax_t)>& onProgress) {
         if (storage.IsHuge()) {
             // huge-file-editing follow-up: same trim/ensureFinalNewline/
@@ -213,7 +249,7 @@ namespace {
         std::uintmax_t        written          = 0;
         for (std::size_t offset = 0; offset < content.size(); offset += kWriteChunkBytes) {
             const std::size_t count = std::min(kWriteChunkBytes, content.size() - offset);
-            file.write(content.data() + offset, static_cast<std::streamsize>(count));
+            file.Write(content.data() + offset, count);
             written += count;
             if (onProgress) {
                 onProgress(written);
@@ -228,8 +264,10 @@ namespace {
     void WritePlanContent(std::ofstream& file, const SavePlan& plan) {
         const std::string_view preamble = CharsetPreamble(plan.charset);
         file.write(preamble.data(), static_cast<std::streamsize>(preamble.size()));
-        WriteBufferContent(file, *plan.snapshot, plan.lineEnding, plan.trimTrailingWhitespace, plan.ensureFinalNewline,
+        EncodingSink sink(file, plan.charset);
+        WriteBufferContent(sink, *plan.snapshot, plan.lineEnding, plan.trimTrailingWhitespace, plan.ensureFinalNewline,
                            plan.onProgress);
+        sink.Finish();
     }
 
     void WriteInPlace(const SavePlan& plan) {
@@ -255,7 +293,34 @@ namespace {
 
 } // namespace
 
+void ValidateSavePlanCharset(const SavePlan& plan) {
+    if (IsUtf8Family(plan.charset)) {
+        return;
+    }
+    CharsetEncoder encoder(plan.charset);
+    std::string    discard;
+    bool           encodable = true;
+    plan.snapshot->ForEachChunk([&](std::string_view chunk) {
+        discard.clear();
+        encodable = encodable && encoder.Feed(chunk, discard);
+    });
+    if (encodable && encoder.Finish()) {
+        return;
+    }
+
+    const ITextStorage& storage = *plan.snapshot;
+    const std::size_t   offset  = encoder.FailedAt();
+    const std::size_t   line    = storage.ByteOffsetToLine(offset);
+    const std::string   before  = storage.Substring(storage.LineToByteOffset(line), offset - storage.LineToByteOffset(line));
+    const std::size_t   column  = static_cast<std::size_t>(
+        std::ranges::count_if(before, [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
+    throw std::runtime_error("ned: can't save " + plan.target.string() + " as " + std::string(CharsetName(plan.charset)) +
+                             ": line " + std::to_string(line + 1) + ", column " + std::to_string(column + 1) +
+                             " has a character it can't hold -- set-buffer-charset picks another");
+}
+
 void ExecuteSavePlan(const SavePlan& plan) {
+    ValidateSavePlanCharset(plan);
     // A multiply-linked file can only stay linked if its own inode is
     // written; a rename would give every other link the stale content. That
     // costs this path's crash atomicity, which is acceptable precisely

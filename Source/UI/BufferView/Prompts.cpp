@@ -1386,6 +1386,18 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             setModeList_.SelectTop();
             RefreshSetModeStatus();
             return;
+        case editor::InteractiveRequest::SetBufferCharset:
+        case editor::InteractiveRequest::RevertBufferWithCharset:
+            charsetPromptReverts_ = request == editor::InteractiveRequest::RevertBufferWithCharset;
+            if (charsetPromptReverts_ && !activeBuffer_.Get().Path()) {
+                statusMessage_ = "Buffer \"" + activeBuffer_.Get().Name() + "\" has no file to reload.";
+                return;
+            }
+            inputMode_ = InputMode::BufferCharset;
+            prompt_.emplace(charsetPromptReverts_ ? "Reload as charset: " : "Save as charset: ");
+            bufferCharsetList_.SelectTop();
+            RefreshBufferCharsetStatus();
+            return;
         case editor::InteractiveRequest::AcpStartSession:
             inputMode_ = InputMode::AcpAgentName;
             prompt_.emplace("ACP agent: ");
@@ -3444,8 +3456,8 @@ bufferview::ConfirmPrompt BufferView::ConfirmRecoverFilePrompt() {
         recoverChoice_ < recoverVersions_.size() ? recoverVersions_[recoverChoice_] : editor::BackupVersion{};
     return {.cancelMessage = "Recover cancelled.", .onConfirm = [this, chosen] {
                 try {
-                    const std::string content = editor::ReadBackupVersion(chosen.path);
-                    activeBuffer_.Get().RestoreContent(content);
+                    text::Buffer& buffer = activeBuffer_.Get();
+                    buffer.RestoreContent(editor::ReadBackupText(chosen, buffer.FileCharset()));
                     statusMessage_ = "Recovered " + chosen.label + " -- buffer is modified; save to keep it";
                 }
                 catch (const std::exception& e) {
@@ -4877,6 +4889,39 @@ bufferview::FuzzyPrompt BufferView::SetModePrompt() {
                 statusMessage_ = "Mode: " + selected; }};
 }
 
+bufferview::FuzzyPrompt BufferView::BufferCharsetPrompt() {
+    return {.list          = &bufferCharsetList_,
+            .historyKey    = "buffer-charset",
+            .cancelMessage = charsetPromptReverts_ ? "Reload cancelled." : "Set charset cancelled.",
+            .emptyMessage  = [](const std::string& query) { return "No charset matching \"" + query + "\""; },
+            .pool          = [] {
+                std::vector<std::string> names;
+                for (const text::Charset charset : {text::Charset::Utf8, text::Charset::Utf8Bom, text::Charset::Latin1,
+                                                    text::Charset::Utf16Le, text::Charset::Utf16Be}) {
+                    names.emplace_back(text::CharsetName(charset));
+                }
+                return names; },
+            .commit        = [this](const std::string& selected) {
+                const std::optional<text::Charset> charset = text::CharsetFromName(selected);
+                if (!charset) {
+                    ReportError("No charset named " + selected + ".");
+                    return;
+                }
+                text::Buffer& buffer = activeBuffer_.Get();
+                if (!charsetPromptReverts_) {
+                    buffer.SetFileCharset(*charset);
+                    statusMessage_ = "Buffer will be saved as " + selected + " next.";
+                    return;
+                }
+                try {
+                    buffer.RevertWithCharset(*charset);
+                    statusMessage_ = "Reloaded " + buffer.Name() + " as " + selected + ".";
+                }
+                catch (const std::exception& e) {
+                    ReportError(e.what());
+                } }};
+}
+
 bufferview::FuzzyPrompt BufferView::BookmarkJumpPrompt() {
     const bool isDelete = (bookmarkPromptAction_ == BookmarkPromptAction::Delete);
     return {.list          = &bookmarkList_,
@@ -5059,6 +5104,14 @@ void BufferView::RefreshSetModeStatus() {
 
 void BufferView::HandleSetModeKey(const editor::KeyChord& chord) {
     HandleFuzzyPromptKey(SetModePrompt(), chord);
+}
+
+void BufferView::RefreshBufferCharsetStatus() {
+    RefreshFuzzyPrompt(BufferCharsetPrompt());
+}
+
+void BufferView::HandleBufferCharsetKey(const editor::KeyChord& chord) {
+    HandleFuzzyPromptKey(BufferCharsetPrompt(), chord);
 }
 
 // named-projects follow-up: the shared tail of switch-project/open-project
@@ -5357,6 +5410,9 @@ void BufferView::ScrollCandidatePopup(int steps) {
                 break;
             case InputMode::SetMode:
                 HandleSetModeKey(nav);
+                break;
+            case InputMode::BufferCharset:
+                HandleBufferCharsetKey(nav);
                 break;
             case InputMode::BookmarkJump:
                 HandleBookmarkJumpKey(nav);

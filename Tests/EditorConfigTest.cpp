@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -302,16 +303,49 @@ TEST_CASE("ApplyFileSettings takes a file's conventions from its .editorconfig",
     CHECK(buffer.Conventions() == FileConventions{});
 }
 
-TEST_CASE("A charset ned can't convert yet leaves the file's bytes as they were", "[EditorConfig][FileSettings]") {
+TEST_CASE("charset = latin1 decodes a file at load and encodes it back on save", "[EditorConfig][FileSettings]") {
     const TempTree              tree("latin1");
     const std::filesystem::path path = tree.Write("caf.txt", "caf\xE9\n"); // Latin-1: not valid UTF-8
+    tree.Write(".editorconfig", "root = true\n[*]\ncharset = latin1\n");
+    ned::editor::InstallEditorConfigCharsetResolver();
+    const struct ResolverReset {
+        ~ResolverReset() {
+            ned::text::SetStatedCharsetResolver(nullptr);
+        }
+    } resolverReset;
 
     ned::text::Buffer buffer = ned::text::Buffer::FromFile(path);
-    buffer.SetConventions({.charset = ned::text::Charset::Latin1});
+    CHECK(buffer.Text() == "caf\xC3\xA9\n");
+    CHECK(buffer.FileCharset() == ned::text::Charset::Latin1);
+    ned::editor::ApplyFileSettings(buffer);
     buffer.InsertAt(0, "le ");
     ned::editor::WriteBufferToDisk(buffer);
     CHECK(ReadBytes(path) == "le caf\xE9\n");
-    CHECK(buffer.FileCharset() == ned::text::Charset::Utf8);
+
+    // A character Latin-1 can't hold refuses the save and leaves the file alone.
+    buffer.InsertAt(0, "\xE2\x9C\x93");
+    CHECK_THROWS_WITH(ned::editor::WriteBufferToDisk(buffer),
+                      Catch::Matchers::ContainsSubstring("line 1, column 1") && Catch::Matchers::ContainsSubstring("latin1"));
+    CHECK(ReadBytes(path) == "le caf\xE9\n");
+}
+
+TEST_CASE("Bytes that aren't UTF-8 are never re-encoded into a stated charset", "[EditorConfig][FileSettings]") {
+    const TempTree              tree("latin1-late");
+    const std::filesystem::path path = tree.Write("caf.txt", "caf\xE9\n");
+
+    // Read before anything stated a charset: the byte is kept as it is.
+    ned::text::Buffer buffer = ned::text::Buffer::FromFile(path);
+    CHECK(buffer.Text() == "caf\xE9\n");
+    buffer.SetConventions({.charset = ned::text::Charset::Latin1});
+    CHECK_THROWS(ned::editor::WriteBufferToDisk(buffer));
+    CHECK(ReadBytes(path) == "caf\xE9\n");
+
+    // Reloading it as the stated charset is the way through.
+    buffer.RevertWithCharset(ned::text::Charset::Latin1);
+    CHECK(buffer.Text() == "caf\xC3\xA9\n");
+    buffer.InsertAt(0, "le ");
+    ned::editor::WriteBufferToDisk(buffer);
+    CHECK(ReadBytes(path) == "le caf\xE9\n");
 }
 
 TEST_CASE("charset = utf-8 drops a file's own byte-order mark on save", "[EditorConfig][FileSettings]") {

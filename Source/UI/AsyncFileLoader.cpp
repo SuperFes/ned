@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <fstream>
+#include <iterator>
+#include <optional>
 #include <system_error>
 
 #include "EventLoop.h"
@@ -58,11 +60,23 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
         return;
     }
 
-    std::string content;
-    std::string chunk(kChunkBytes, '\0');
-    bool          sniffed     = false;
-    text::Charset charset     = text::Charset::Utf8;
-    auto        lastPreview = std::chrono::steady_clock::now();
+    std::string                         content;
+    std::string                         chunk(kChunkBytes, '\0');
+    std::optional<text::Charset>        charset;
+    std::optional<text::CharsetDecoder> decoder;
+    bool                                undecodable = false;
+    auto                                lastPreview = std::chrono::steady_clock::now();
+
+    // BufferList only sends a file here once its head decodes, so this is a
+    // malformed stretch further in: the file's bytes are kept exactly as
+    // they are, the way a confirmed binary open keeps them.
+    const auto keepRawBytes = [&] {
+        undecodable = true;
+        charset     = text::Charset::Utf8;
+        file.clear();
+        file.seekg(0);
+        content.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    };
 
     while (!stopToken.stop_requested()) {
         file.read(chunk.data(), static_cast<std::streamsize>(chunk.size()));
@@ -70,18 +84,17 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
         if (bytesRead == 0) {
             break;
         }
-        content.append(chunk.data(), bytesRead);
         progress_->bytesRead.fetch_add(bytesRead, std::memory_order_relaxed);
 
-        if (!sniffed) {
-            sniffed = true;
-            charset = text::SniffCharset(content);
-            if (text::CharsetConverts(charset)) {
-                content.erase(0, text::CharsetPreamble(charset).size());
-            }
-            else {
-                charset = text::Charset::Utf8; // kept byte for byte (Text/Charset.h)
-            }
+        std::string_view bytes(chunk.data(), bytesRead);
+        if (!charset) {
+            charset = text::ResolveLoadCharset(path, bytes, std::nullopt);
+            decoder.emplace(*charset);
+            bytes.remove_prefix(text::PreambleLength(bytes, *charset));
+        }
+        if (!decoder->Feed(bytes, content)) {
+            keepRawBytes();
+            break;
         }
 
         if (file.bad()) {
@@ -114,11 +127,19 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
         return; // loader destroyed (buffer closed / app exiting) -- nothing left to post
     }
 
+    if (!undecodable && decoder && !decoder->Finish()) {
+        keepRawBytes(); // ended partway through a character
+    }
+
+    const text::Charset    finalCharset   = charset.value_or(text::Charset::Utf8);
     const text::LineEnding detectedEnding = text::DetectLineEnding(content);
     text::Rope             finalContent(text::HasCarriageReturn(content) ? text::NormalizeToLf(content) : content);
-    eventLoop.Post([this, finalContent, detectedEnding, charset] {
+    eventLoop.Post([this, finalContent, detectedEnding, finalCharset, undecodable] {
         if (text::Buffer* buffer = bufferList_.Find(bufferName_)) {
-            buffer->FinishLoad(finalContent, detectedEnding, charset);
+            if (undecodable) {
+                buffer->SetLikelyBinary(true);
+            }
+            buffer->FinishLoad(finalContent, detectedEnding, finalCharset);
         }
         done_ = true;
     });

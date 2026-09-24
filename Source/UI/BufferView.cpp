@@ -530,6 +530,10 @@ bool BufferView::HandleChord(const editor::KeyChord& chord) {
         case InputMode::AcpAgentName:
             HandleAcpAgentNameKey(chord);
             break;
+        case InputMode::BufferCharset:
+            HandleBufferCharsetKey(chord);
+            ClampPointToNarrowing();
+            return true;
         case InputMode::SetMode:
             HandleSetModeKey(chord);
             ClampPointToNarrowing();

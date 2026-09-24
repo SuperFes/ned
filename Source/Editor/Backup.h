@@ -69,6 +69,13 @@ struct BackupVersion {
 // it who needs to hear why.
 [[nodiscard]] std::string ReadBackupVersion(const std::filesystem::path& versionPath);
 
+// The version as text for the buffer it's restored into. A backup is a copy
+// of the file, so it's read the way a load reads the file -- decoded from
+// `charset` (the buffer's FileCharset), line endings normalized, bytes that
+// don't decode kept as they are; an autosave already holds the buffer's own
+// text. Throws like ReadBackupVersion.
+[[nodiscard]] std::string ReadBackupText(const BackupVersion& version, text::Charset charset);
+
 // Preserves file's current on-disk content as a new timestamped version --
 // called immediately before a save's rename clobbers it, which also captures
 // any content written externally since the buffer loaded. A silent no-op when

@@ -2329,6 +2329,12 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("set-mode", "Switch the current buffer to another major mode, whatever its file type says.",
                       [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::SetMode; });
 
+    registry.Register("set-buffer-charset",
+                      "Save this buffer in another charset (utf-8, utf-8-bom, latin1, utf-16le, utf-16be) from its next save on.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::SetBufferCharset; });
+    registry.Register("revert-buffer-with-charset", "Reload this buffer's file, decoding it as a charset you name.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::RevertBufferWithCharset; });
+
     registry.Register("list-buffers", "Open a keyboard-navigable buffer list panel (mark/kill, switch).",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::ListBuffers;

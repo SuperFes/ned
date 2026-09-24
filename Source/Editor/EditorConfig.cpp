@@ -430,4 +430,13 @@ bool EditorConfigEnabled() {
     return EnabledStorage();
 }
 
+void InstallEditorConfigCharsetResolver() {
+    text::SetStatedCharsetResolver([](const std::filesystem::path& path) -> std::optional<text::Charset> {
+        if (!EditorConfigEnabled()) {
+            return std::nullopt;
+        }
+        return EditorConfigConventions(EditorConfigPropertiesFor(path)).charset;
+    });
+}
+
 } // namespace ned::editor

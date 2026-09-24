@@ -1,21 +1,61 @@
 #include "BinaryDetect.h"
 
-#include <algorithm>
 #include <array>
 #include <fstream>
+#include <string>
 
 namespace ned::text {
 
-bool LooksBinary(const std::filesystem::path& path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        return true; // unreadable -- not worth treating as text either
+namespace {
+
+    constexpr std::size_t kHeadBytes = 8192;
+
+    std::optional<std::string> ReadHead(const std::filesystem::path& path) {
+        std::ifstream file(path, std::ios::binary);
+        if (!file) {
+            return std::nullopt;
+        }
+        std::string head(kHeadBytes, '\0');
+        file.read(head.data(), static_cast<std::streamsize>(head.size()));
+        head.resize(static_cast<std::size_t>(file.gcount()));
+        return head;
     }
 
-    std::array<char, 8192> buffer{};
-    file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
-    const auto bytesRead = static_cast<std::size_t>(file.gcount());
-    return std::find(buffer.data(), buffer.data() + bytesRead, '\0') != buffer.data() + bytesRead;
+} // namespace
+
+bool HeadLooksBinary(std::string_view head, Charset charset) {
+    if (head.find('\0') == std::string_view::npos) {
+        return false;
+    }
+    if (charset != Charset::Utf16Le && charset != Charset::Utf16Be) {
+        return true;
+    }
+    // The head may end partway through a unit or pair; only what decodes
+    // before that is judged.
+    CharsetDecoder decoder(charset);
+    std::string    text;
+    if (!decoder.Feed(head.substr(PreambleLength(head, charset)), text)) {
+        return true;
+    }
+    return text.find('\0') != std::string::npos;
+}
+
+bool LooksBinary(const std::filesystem::path& path) {
+    const std::optional<std::string> head = ReadHead(path);
+    return !head || HeadLooksBinary(*head, SniffCharset(*head));
+}
+
+bool LooksBinaryToLoad(const std::filesystem::path& path, std::optional<Charset> chosen) {
+    const std::optional<std::string> head = ReadHead(path);
+    if (!head) {
+        return true;
+    }
+    // Resolving can read .editorconfig files, so only a head that could be
+    // binary pays for it.
+    if (head->find('\0') == std::string::npos) {
+        return false;
+    }
+    return HeadLooksBinary(*head, ResolveLoadCharset(path, *head, chosen));
 }
 
 } // namespace ned::text

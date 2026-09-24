@@ -467,7 +467,8 @@ namespace {
         if (index < 0 || static_cast<std::size_t>(index) >= versions.size()) {
             throw std::runtime_error("ned: no backup version " + std::to_string(index) + " (have " + std::to_string(versions.size()) + ")");
         }
-        context.buffer.RestoreContent(editor::ReadBackupVersion(versions[static_cast<std::size_t>(index)].path));
+        context.buffer.RestoreContent(
+            editor::ReadBackupText(versions[static_cast<std::size_t>(index)], context.buffer.FileCharset()));
     }
 
     void NedSetAutoRevert(bool enabled) {
@@ -1721,7 +1722,8 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-editorconfig-enabled",
         "Read .editorconfig files (default true). For the files they match, indent_style, indent_size and tab_width "
         "set the indentation (above what the content shows, below a modeline), and end_of_line, "
-        "insert_final_newline, trim_trailing_whitespace, charset (utf-8 or utf-8-bom; latin1 and utf-16 are recognized but read and written unconverted) and max_line_length (the "
+        "insert_final_newline, trim_trailing_whitespace, charset (utf-8, utf-8-bom, latin1, utf-16le or utf-16be: what a file is decoded from and saved as, "
+        "unless it starts with a byte order mark or set-buffer-charset chose one) and max_line_length (the "
         "ruler and fill column) override ned's own settings for that buffer.");
     env.Register<&NedSetIndentRule>(
         "ned", "set-indent-rule",

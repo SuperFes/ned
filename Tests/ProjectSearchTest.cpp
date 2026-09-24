@@ -10,6 +10,7 @@
 #include "EnvOverride.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
+#include "Text/Charset.h"
 
 using ned::editor::SearchDirectory;
 using ned::editor::SearchFiles;
@@ -132,6 +133,23 @@ TEST_CASE("SearchDirectory skips files that look binary", "[ProjectSearch]") {
 
     REQUIRE(matches.size() == 1);
     REQUIRE(matches.front().file.filename() == "text.txt");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("SearchDirectory searches a UTF-16 file as its text", "[ProjectSearch][Charset]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_utf16";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+
+    const std::string bytes =
+        "\xFF\xFE" + ned::text::EncodeCharset("first\ncaf\xC3\xA9 needle\n", ned::text::Charset::Utf16Le).value();
+    std::ofstream(dir / "wide.txt", std::ios::binary) << bytes;
+
+    const std::vector<SearchMatch> matches = SearchDirectory(dir, "caf\xC3\xA9 needle");
+    REQUIRE(matches.size() == 1);
+    CHECK(matches.front().lineNumber == 2);
+    CHECK(matches.front().lineText == "caf\xC3\xA9 needle");
 
     std::filesystem::remove_all(dir);
 }

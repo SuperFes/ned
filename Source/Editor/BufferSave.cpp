@@ -47,9 +47,19 @@ void RunSavePlanWithBackup(const text::SavePlan& plan, const std::filesystem::pa
     // than inside Buffer::Save so Text/ stays policy-free and scratch
     // auto-save (which calls Buffer::Save directly) never creates backup
     // versions.
+    text::ValidateSavePlanCharset(plan);
     BackupFileBeforeSave(bufferPath);
     ExecuteSavePlan(plan);
     RemoveAutoSave(bufferPath);
+}
+
+text::Charset CharsetForSave(const text::Buffer& buffer) {
+    const std::optional<text::Charset> stated = buffer.Conventions().charset;
+    if (!stated || buffer.CharsetChosen() || buffer.BinarySafeguardsActive() ||
+        (buffer.Content().IsHuge() && !text::IsUtf8Family(*stated))) {
+        return buffer.FileCharset();
+    }
+    return *stated;
 }
 
 void WriteBufferToDisk(text::Buffer& buffer, SaveDispatch dispatch) {
@@ -69,16 +79,10 @@ void WriteBufferToDisk(text::Buffer& buffer, SaveDispatch dispatch) {
     const std::optional<text::LineEnding> ending =
         binarySafeguards ? std::optional<text::LineEnding>{} : std::optional<text::LineEnding>(ResolveLineEndingForSave(buffer));
 
-    // The file's own charset round-trips (BeginSave); .editorconfig's can
-    // replace it when it converts -- adding or dropping a UTF-8 BOM --
-    // except on a binary buffer, whose bytes stay as read.
-    std::optional<text::Charset> statedCharset = binarySafeguards ? std::nullopt : buffer.Conventions().charset;
-    if (statedCharset && !text::CharsetConverts(*statedCharset)) {
-        statedCharset.reset();
-    }
-    const auto beginPlan = [&] {
+    const text::Charset charset   = CharsetForSave(buffer);
+    const auto          beginPlan = [&] {
         text::SavePlan plan = buffer.BeginSave(bufferPath, finalNewline, trim, ending);
-        plan.charset        = statedCharset.value_or(plan.charset);
+        plan.charset        = charset;
         return plan;
     };
     text::SavePlan plan = beginPlan();

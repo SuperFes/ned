@@ -1343,6 +1343,7 @@ class BufferView : public Widget {
                            // LspCodeActionSelect uses.
                            AcpAgentName,
                            SetMode,
+                           BufferCharset,
                            AcpPromptText,
                            AcpPermissionPrompt,
                            // rich-theme-set follow-up (Phase 1): the select-theme
@@ -2580,6 +2581,7 @@ class BufferView : public Widget {
     [[nodiscard]] bufferview::FuzzyPrompt SwitchToBufferPrompt();
     [[nodiscard]] bufferview::FuzzyPrompt AcpAgentNamePrompt();
     [[nodiscard]] bufferview::FuzzyPrompt SetModePrompt();
+    [[nodiscard]] bufferview::FuzzyPrompt BufferCharsetPrompt();
     [[nodiscard]] bufferview::FuzzyPrompt BookmarkJumpPrompt();
     [[nodiscard]] bufferview::FuzzyPrompt SelectThemePrompt();
 
@@ -2697,6 +2699,9 @@ class BufferView : public Widget {
     void RefreshAcpAgentNameStatus();
     void HandleSetModeKey(const editor::KeyChord& chord);
     void RefreshSetModeStatus();
+    // set-buffer-charset / revert-buffer-with-charset, per charsetPromptReverts_.
+    void HandleBufferCharsetKey(const editor::KeyChord& chord);
+    void RefreshBufferCharsetStatus();
 
     // dropdown-path-completion follow-up: FindFile/OpenProjectPath/
     // FindScratch's shared candidate source (GatherPathCompletionCandidates)
@@ -4156,6 +4161,7 @@ class BufferView : public Widget {
     std::filesystem::path pendingOpenProjectRoot_;
 
     BookmarkPromptAction bookmarkPromptAction_ = BookmarkPromptAction::Jump;
+    bool                 charsetPromptReverts_ = false;
 
     std::optional<Theme>              themeBeforePreview_;
     std::function<void(const Theme&)> themeApplier_;
@@ -5234,6 +5240,7 @@ class BufferView : public Widget {
     bufferview::CandidateList switchToBufferList_;
     bufferview::CandidateList acpAgentNameList_;
     bufferview::CandidateList setModeList_;
+    bufferview::CandidateList bufferCharsetList_;
     bufferview::CandidateList bookmarkList_;
     bufferview::CandidateList selectThemeList_;
     bufferview::CandidateList vcsBranchList_;

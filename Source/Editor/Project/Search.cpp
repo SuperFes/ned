@@ -204,12 +204,26 @@ namespace {
     // DFA state cache it builds up while matching guards itself internally),
     // so every worker below shares the one compiled `regex` rather than each
     // needing its own copy.
+    std::vector<SearchMatch> SearchOneText(const std::filesystem::path& path, const std::string& text, const re2::RE2& regex);
+
     std::vector<SearchMatch> SearchOneFile(const std::filesystem::path& path, const re2::RE2& regex) {
         std::vector<SearchMatch> matches;
 
-        std::ifstream file(path);
+        std::ifstream file(path, std::ios::binary);
         if (!file) {
             return matches;
+        }
+
+        // A UTF-16 file is searched as the text it holds, not its bytes.
+        std::array<char, 2> head{};
+        file.read(head.data(), head.size());
+        const text::Charset charset = text::SniffCharset(std::string_view(head.data(), static_cast<std::size_t>(file.gcount())));
+        file.clear();
+        file.seekg(0);
+        if (charset == text::Charset::Utf16Le || charset == text::Charset::Utf16Be) {
+            std::string                      bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            const std::optional<std::string> decoded = text::DecodeAnnouncedCharset(std::move(bytes));
+            return decoded ? SearchOneText(path, *decoded, regex) : matches;
         }
 
         std::string line;

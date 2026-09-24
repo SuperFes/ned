@@ -44,7 +44,7 @@ struct SavePlan {
     LineEnding lineEnding             = LineEnding::LF;
     bool       trimTrailingWhitespace = false;
     bool       ensureFinalNewline     = false;
-    Charset    charset                = Charset::Utf8; // its preamble is written ahead of the content
+    Charset    charset                = Charset::Utf8; // encoded into, its preamble written ahead of the content
 
     // Called at flush boundaries with the running total of bytes handed to
     // the stream, from whichever thread runs the write -- an asynchronous
@@ -54,6 +54,12 @@ struct SavePlan {
     // Never called once ExecuteSavePlan has returned.
     std::function<void(std::uintmax_t bytesWritten)> onProgress;
 };
+
+// Throws std::runtime_error, naming the line and column, when the plan's
+// charset can't hold some character of its content (Text/Charset.h) --
+// checked before anything is written, since the in-place write mode can't
+// take a half-written file back. ExecuteSavePlan checks it too.
+void ValidateSavePlanCharset(const SavePlan& plan);
 
 // Writes plan.target: atomically via a sibling temp file and a rename
 // where that is available, in place where a hard-linked file or an

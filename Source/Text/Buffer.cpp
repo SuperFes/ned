@@ -138,7 +138,7 @@ Buffer::Buffer(std::string name, Rope initialContent) : Name_(std::move(name)),
                                                         InstanceId_(NextBufferInstanceId()) {
 }
 
-Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
+Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary, std::optional<Charset> charsetChoice) {
     // large-file-async-load follow-up: checked before any sizing/reading --
     // decoding arbitrary binary content as UTF-8 text is meaningless, and
     // this is meant to be cheap-fail-fast rather than paying for a
@@ -148,7 +148,7 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
     // site changes. open-binary-anyway follow-up: allowBinary is the
     // explicit, caller-opted-in escape hatch -- see BinaryFileError's own
     // doc comment.
-    const bool likelyBinary = LooksBinary(path);
+    const bool likelyBinary = LooksBinaryToLoad(path, charsetChoice);
     if (!allowBinary && likelyBinary) {
         throw BinaryFileError("ned: refusing to open binary file as text: " + path.string());
     }
@@ -181,12 +181,22 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
     }
     content.resize(static_cast<std::size_t>(file.gcount())); // handles a short read (e.g. file shrank concurrently)
 
-    // The one encoding artifact a converting charset leaves in the text is
-    // its byte order mark (Text/Charset.h); one that doesn't convert is kept
-    // byte for byte.
-    const Charset charset = SniffCharset(content);
-    if (CharsetConverts(charset)) {
-        content.erase(0, CharsetPreamble(charset).size());
+    // A file that doesn't decode in its charset is binary as far as a load
+    // is concerned; opened anyway, its bytes are kept exactly as read.
+    Charset charset = ResolveLoadCharset(path, content, charsetChoice);
+    if (IsUtf8Family(charset)) {
+        content.erase(0, PreambleLength(content, charset));
+    }
+    else if (std::optional<std::string> decoded =
+                 DecodeCharset(std::string_view(content).substr(PreambleLength(content, charset)), charset)) {
+        content = std::move(*decoded);
+    }
+    else if (!allowBinary) {
+        throw BinaryFileError("ned: refusing to open " + path.string() + " as text: it doesn't decode as " +
+                              std::string(CharsetName(charset)));
+    }
+    else {
+        charset = Charset::Utf8;
     }
 
     // crlf-handling follow-up: detect before normalizing -- the detected
@@ -202,7 +212,7 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary) {
     Buffer buffer(path.filename().string(), Rope(content));
     buffer.Path_         = path;
     buffer.LineEnding_   = detectedEnding;
-    buffer.Charset_      = CharsetConverts(charset) ? charset : Charset::Utf8;
+    buffer.Charset_      = charset;
     buffer.LikelyBinary_ = likelyBinary; // only ever true here if allowBinary let a real binary-detected open through
     if (!timestampError) {
         buffer.DiskTimestamp_ = diskTime;
@@ -214,10 +224,11 @@ Buffer Buffer::FromHugeFile(const std::filesystem::path& path, bool allowBinary)
     // Same cheap-fail-fast reasoning as FromFile above: LooksBinary only
     // reads the first 8 KiB, so this stays cheap regardless of the file's
     // real size.
-    const bool likelyBinary = LooksBinary(path);
+    const bool likelyBinary = LooksBinaryToLoad(path);
     if (!allowBinary && likelyBinary) {
         throw BinaryFileError("ned: refusing to open binary file as text: " + path.string());
     }
+    RefuseUndecodableHugeFile(path, allowBinary);
 
     std::error_code                       timestampError;
     const std::filesystem::file_time_type diskTime = std::filesystem::last_write_time(path, timestampError);
@@ -254,11 +265,13 @@ Buffer Buffer::FromHugeFile(const std::filesystem::path& path, bool allowBinary)
         }
     }
 
-    // The byte order mark is stripped the same way FromFile does above --
-    // cheap even here, a short prefix check plus (if present) one small
-    // Erased() at offset 0, not a full-document scan.
+    // The UTF-8 byte order mark is stripped the same way FromFile does above
+    // -- cheap even here, a short prefix check plus (if present) one small
+    // Erased() at offset 0, not a full-document scan. Nothing else decodes:
+    // a mapped file is read as its bytes (RefuseUndecodableHugeFile).
     const Charset charset = SniffCharset(table.Substring(0, std::min<std::size_t>(table.ByteLength(), 4)));
-    if (CharsetConverts(charset)) {
+    const bool    hasBom  = charset == Charset::Utf8Bom;
+    if (hasBom) {
         table = table.Erased(0, CharsetPreamble(charset).size());
     }
 
@@ -267,7 +280,7 @@ Buffer Buffer::FromHugeFile(const std::filesystem::path& path, bool allowBinary)
     buffer.UndoTree_      = UndoTree(buffer.Storage_->Clone());
     buffer.SavedSnapshot_ = buffer.Storage_->Clone();
     buffer.Path_          = path;
-    buffer.Charset_       = CharsetConverts(charset) ? charset : Charset::Utf8;
+    buffer.Charset_       = hasBom ? Charset::Utf8Bom : Charset::Utf8;
     buffer.LikelyBinary_  = likelyBinary; // only ever true here if allowBinary let a real binary-detected open through
     // Storage_ is always LF-only for this path regardless of allowBinary --
     // for a text open this is guaranteed by the refusal above; for a binary
@@ -369,6 +382,9 @@ void Buffer::FinishSave(const std::filesystem::path& path, SavePlan plan) {
     Path_       = path;
     LineEnding_ = plan.lineEnding;
     Charset_    = plan.charset;
+    if (CharsetChosen_) {
+        DiskCharset_ = plan.charset;
+    }
     // What was written, not what Storage_ holds now: an edit that landed
     // while the write was running must not be counted as saved.
     SavedSnapshot_ = std::move(plan.snapshot);
@@ -444,6 +460,30 @@ void Buffer::SetLineEndingOverride(LineEnding ending) {
 
 Charset Buffer::FileCharset() const {
     return Charset_;
+}
+
+void Buffer::SetFileCharset(Charset charset) {
+    Charset_       = charset;
+    CharsetChosen_ = true;
+}
+
+bool Buffer::CharsetChosen() const {
+    return CharsetChosen_;
+}
+
+void Buffer::RefuseUndecodableHugeFile(const std::filesystem::path& path, bool allowBinary) {
+    if (allowBinary) {
+        return;
+    }
+    std::ifstream file(path, std::ios::binary);
+    std::string   head(4, '\0');
+    file.read(head.data(), static_cast<std::streamsize>(head.size()));
+    head.resize(static_cast<std::size_t>(file.gcount()));
+    const Charset charset = ResolveLoadCharset(path, head, std::nullopt);
+    if (charset == Charset::Utf16Le || charset == Charset::Utf16Be) {
+        throw std::runtime_error("ned: huge-file opening reads UTF-8 only, and " + path.string() + " is " +
+                                 std::string(CharsetName(charset)) + " -- convert it to UTF-8 first");
+    }
 }
 
 const IndentOverride& Buffer::LocalIndent() const {
@@ -661,6 +701,16 @@ bool Buffer::ExternallyModified() const {
 }
 
 void Buffer::Revert() {
+    RevertDecoding(DiskCharset_);
+}
+
+void Buffer::RevertWithCharset(Charset charset) {
+    RevertDecoding(charset);
+    DiskCharset_   = charset;
+    CharsetChosen_ = true;
+}
+
+void Buffer::RevertDecoding(std::optional<Charset> charset) {
     if (!Path_) {
         throw std::runtime_error("ned: buffer \"" + Name_ + "\" has no associated file path");
     }
@@ -675,7 +725,10 @@ void Buffer::Revert() {
     std::error_code       sizeError;
     const std::uintmax_t  diskSize = std::filesystem::file_size(*Path_, sizeError);
     const bool             reloadAsHuge = !sizeError && diskSize > HugeFileThreshold();
-    Buffer fresh = reloadAsHuge ? FromHugeFile(*Path_) : FromFile(*Path_); // throws on any read failure, leaving this buffer untouched
+    if (reloadAsHuge && charset && !IsUtf8Family(*charset)) {
+        throw std::runtime_error("ned: huge-file reverting reads UTF-8 only, not " + std::string(CharsetName(*charset)));
+    }
+    Buffer fresh = reloadAsHuge ? FromHugeFile(*Path_) : FromFile(*Path_, false, charset); // throws on any read failure, leaving this buffer untouched
 
     Storage_ = std::move(fresh.Storage_);
     Charset_ = fresh.Charset_;
@@ -718,7 +771,7 @@ std::size_t Buffer::MergeExternalChanges() {
     if (!Path_) {
         throw std::runtime_error("ned: buffer \"" + Name_ + "\" has no associated file path");
     }
-    Buffer fresh = FromFile(*Path_); // throws on any read failure, leaving this buffer untouched
+    Buffer fresh = FromFile(*Path_, false, DiskCharset_); // throws on any read failure, leaving this buffer untouched
 
     const std::string       base   = SavedSnapshot_->ToString();
     const std::string       ours   = Storage_->ToString();

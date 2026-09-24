@@ -300,6 +300,19 @@ TEST_CASE("ReadBackupVersion throws for a missing version file", "[Backup]") {
     REQUIRE_THROWS_AS(ReadBackupVersion(sandbox.root / "no-such-file"), std::runtime_error);
 }
 
+TEST_CASE("A backup restores as the text its file loads as; an autosave as it was written", "[Backup][Charset]") {
+    const BackupSandbox         sandbox("ned_backup_test_read_text");
+    const std::filesystem::path file = sandbox.WriteWorkFile("notes.txt", "caf\xE9\r\n");
+    BackupFileBeforeSave(file, 1755734399);
+    WriteAutoSave(file, "caf\xC3\xA9 edited\n");
+
+    const std::vector<BackupVersion> versions = ListBackupVersions(file);
+    REQUIRE(versions.size() == 2);
+    CHECK(ned::editor::ReadBackupText(versions[0], ned::text::Charset::Latin1) == "caf\xC3\xA9 edited\n");
+    CHECK(ned::editor::ReadBackupText(versions[1], ned::text::Charset::Latin1) == "caf\xC3\xA9\n");
+    CHECK(ned::editor::ReadBackupText(versions[1], ned::text::Charset::Utf8) == "caf\xE9\n");
+}
+
 TEST_CASE("WriteAutoSave and RemoveAutoSave round-trip the autosave snapshot", "[Backup]") {
     const BackupSandbox         sandbox("ned_backup_test_autosave_roundtrip");
     const std::filesystem::path file = sandbox.work / "notes.txt"; // needn't exist on disk

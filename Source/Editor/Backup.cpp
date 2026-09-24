@@ -348,6 +348,13 @@ std::string ReadBackupVersion(const std::filesystem::path& versionPath) {
     return content;
 }
 
+std::string ReadBackupText(const BackupVersion& version, text::Charset charset) {
+    if (version.isAutoSave) {
+        return ReadBackupVersion(version.path);
+    }
+    return text::Buffer::FromFile(version.path, /*allowBinary=*/true, charset).Text();
+}
+
 void BackupFileBeforeSave(const std::filesystem::path& file, std::optional<std::int64_t> nowSeconds) {
     if (!BackupVersionsEnabled()) {
         return;

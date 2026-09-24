@@ -8,15 +8,29 @@
 #define NED_TEXT_BINARYDETECT_H
 
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
+#include <string_view>
+
+#include "Charset.h"
 
 namespace ned::text {
 
 // Reads up to the first 8KiB of path and reports whether it contains a NUL
 // byte -- the same git/grep heuristic ProjectSearch originally used on its
-// own. An unreadable path counts as binary too (nothing useful to do with
-// it either way). Never throws.
+// own -- except in a file whose byte order mark announces UTF-16, where
+// NUL bytes are ordinary and it's a NUL character or a malformed unit that
+// counts. An unreadable path counts as binary too (nothing useful to do
+// with it either way). Never throws.
 [[nodiscard]] bool LooksBinary(const std::filesystem::path& path);
+
+// LooksBinary as a load decides it: judged in the charset the load would
+// decode with (ResolveLoadCharset, `chosen` included), so a UTF-16 file
+// .editorconfig states without a BOM isn't mistaken for binary.
+[[nodiscard]] bool LooksBinaryToLoad(const std::filesystem::path& path, std::optional<Charset> chosen = std::nullopt);
+
+// The judgement itself, over a file's first bytes.
+[[nodiscard]] bool HeadLooksBinary(std::string_view head, Charset charset);
 
 // open-binary-anyway follow-up: thrown by Buffer::FromFile/BufferList::
 // OpenFile specifically for a LooksBinary refusal, distinct from the plain
