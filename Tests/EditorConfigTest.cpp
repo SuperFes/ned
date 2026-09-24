@@ -2,20 +2,30 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <unistd.h>
 
+#include "Editor/BufferSave.h"
 #include "Editor/EditorConfig.h"
-#include "Editor/FileIndent.h"
+#include "Editor/FileSettings.h"
+#include "Editor/FillColumn.h"
+#include "Editor/FinalNewline.h"
 #include "Editor/IndentDetect.h"
+#include "Editor/LineEndingPolicy.h"
+#include "Editor/RulerSettings.h"
+#include "Editor/TrimOnSave.h"
 #include "Text/Buffer.h"
 
+using ned::editor::EditorConfigConventions;
 using ned::editor::EditorConfigGlobMatches;
 using ned::editor::EditorConfigIndent;
 using ned::editor::EditorConfigPropertiesFor;
 using ned::editor::FileIndentOverride;
 using ned::editor::IndentOverride;
 using ned::editor::ParseEditorConfig;
+using ned::text::FileConventions;
+using ned::text::LineEnding;
 
 namespace {
 
@@ -41,6 +51,19 @@ struct TempTree {
         std::filesystem::create_directories(path.parent_path());
         std::ofstream(path, std::ios::binary) << content;
         return path;
+    }
+};
+
+std::string ReadBytes(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+struct SaveSettingsGuard {
+    ~SaveSettingsGuard() {
+        ned::editor::SetEnsureFinalNewline(true);
+        ned::editor::SetTrimTrailingWhitespaceOnSave(true);
+        ned::editor::SetLineEndingPolicy({});
     }
 };
 
@@ -131,7 +154,7 @@ TEST_CASE("EditorConfigPropertiesFor layers files nearest-last and stops at root
     CHECK(EditorConfigPropertiesFor(tree.root / "project/go/other.c").at("indent_size") == "4");
 }
 
-TEST_CASE("A file's modeline outranks its .editorconfig, which outranks its content", "[EditorConfig][FileIndent]") {
+TEST_CASE("A file's modeline outranks its .editorconfig, which outranks its content", "[EditorConfig][FileSettings]") {
     const TogglesGuard guard;
     const TempTree     tree("precedence");
     tree.Write(".editorconfig", "root = true\n[*.c]\nindent_style = space\n");
@@ -151,7 +174,7 @@ TEST_CASE("A file's modeline outranks its .editorconfig, which outranks its cont
     CHECK(FileIndentOverride(file, tabbed).Empty());
 }
 
-TEST_CASE("ApplyFileIndent reads the file on disk, and .editorconfig for a new one", "[EditorConfig][FileIndent]") {
+TEST_CASE("ApplyFileSettings reads the file on disk, and .editorconfig for a new one", "[EditorConfig][FileSettings]") {
     const TogglesGuard guard;
     const TempTree     tree("apply");
     tree.Write(".editorconfig", "root = true\n[*.py]\nindent_size = 2\n");
@@ -159,15 +182,86 @@ TEST_CASE("ApplyFileIndent reads the file on disk, and .editorconfig for a new o
 
     ned::text::Buffer buffer("tabs.txt");
     buffer.SetPath(existing);
-    ned::editor::ApplyFileIndent(buffer);
+    ned::editor::ApplyFileSettings(buffer);
     CHECK(buffer.LocalIndent() == IndentOverride{.useTabs = true});
 
     ned::text::Buffer fresh("new.py");
     fresh.SetPath(tree.root / "new.py");
-    ned::editor::ApplyFileIndent(fresh);
+    ned::editor::ApplyFileSettings(fresh);
     CHECK(fresh.LocalIndent() == IndentOverride{.width = 2});
 
     ned::text::Buffer scratch("scratch");
-    ned::editor::ApplyFileIndent(scratch);
+    ned::editor::ApplyFileSettings(scratch);
     CHECK(scratch.LocalIndent().Empty());
+}
+
+TEST_CASE("EditorConfigConventions reads the save and layout properties", "[EditorConfig]") {
+    CHECK(EditorConfigConventions({{"end_of_line", "crlf"},
+                                   {"insert_final_newline", "false"},
+                                   {"trim_trailing_whitespace", "true"},
+                                   {"charset", "utf-8-bom"},
+                                   {"max_line_length", "100"}}) ==
+          FileConventions{.ensureFinalNewline     = false,
+                          .trimTrailingWhitespace = true,
+                          .lineEnding             = LineEnding::CRLF,
+                          .utf8Bom                = true,
+                          .maxLineLength          = 100});
+    CHECK(EditorConfigConventions({{"charset", "utf-8"}, {"max_line_length", "off"}}) ==
+          FileConventions{.utf8Bom = false, .maxLineLength = 0});
+    // Encodings ned can't write, and values it doesn't know, state nothing.
+    CHECK(EditorConfigConventions({{"charset", "latin1"}, {"end_of_line", "nel"}, {"insert_final_newline", "maybe"}}) ==
+          FileConventions{});
+}
+
+TEST_CASE("A save follows the buffer's conventions over the global settings", "[EditorConfig][FileSettings]") {
+    const SaveSettingsGuard guard;
+    const TempTree          tree("save");
+    ned::editor::SetLineEndingPolicy({.mode = ned::editor::LineEndingPolicyMode::Force, .forcedEnding = LineEnding::LF});
+
+    ned::text::Buffer buffer("a.txt");
+    buffer.SetPath(tree.root / "a.txt");
+    buffer.InsertAtPoint("a  \nb");
+    buffer.SetConventions({.ensureFinalNewline     = false,
+                           .trimTrailingWhitespace = false,
+                           .lineEnding             = LineEnding::CRLF,
+                           .utf8Bom                = true});
+    ned::editor::WriteBufferToDisk(buffer);
+    CHECK(ReadBytes(tree.root / "a.txt") == "\xEF\xBB\xBF"
+                                            "a  \r\nb");
+
+    ned::editor::SetEnsureFinalNewline(false);
+    ned::editor::SetTrimTrailingWhitespaceOnSave(false);
+    buffer.SetConventions({.ensureFinalNewline = true, .trimTrailingWhitespace = true});
+    buffer.InsertAtPoint(" ");
+    ned::editor::WriteBufferToDisk(buffer);
+    CHECK(ReadBytes(tree.root / "a.txt") == "a\nb\n"); // the forced LF policy again, with no stated ending
+}
+
+TEST_CASE("A buffer's max line length moves its ruler and fill column", "[EditorConfig][FileSettings]") {
+    ned::text::Buffer buffer("a.txt");
+    CHECK(ned::editor::RulerColumn(buffer) == ned::editor::RulerColumn());
+    CHECK(ned::editor::FillColumn(buffer) == ned::editor::FillColumn());
+
+    buffer.SetConventions({.maxLineLength = 100});
+    CHECK(ned::editor::RulerColumn(buffer) == 100);
+    CHECK(ned::editor::FillColumn(buffer) == 100);
+
+    buffer.SetConventions({.maxLineLength = 0}); // "off"
+    CHECK_FALSE(ned::editor::RulerColumn(buffer).has_value());
+    CHECK(ned::editor::FillColumn(buffer) == ned::editor::FillColumn());
+}
+
+TEST_CASE("ApplyFileSettings takes a file's conventions from its .editorconfig", "[EditorConfig][FileSettings]") {
+    const TogglesGuard guard;
+    const TempTree     tree("conventions");
+    tree.Write(".editorconfig", "root = true\n[*]\nend_of_line = crlf\nmax_line_length = 72\n");
+
+    ned::text::Buffer buffer("a.txt");
+    buffer.SetPath(tree.root / "a.txt");
+    ned::editor::ApplyFileSettings(buffer);
+    CHECK(buffer.Conventions() == FileConventions{.lineEnding = LineEnding::CRLF, .maxLineLength = 72});
+
+    ned::editor::SetEditorConfigEnabled(false);
+    ned::editor::ApplyFileSettings(buffer);
+    CHECK(buffer.Conventions() == FileConventions{});
 }

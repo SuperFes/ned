@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "Editor/IndentStyle.h"
+#include "Text/FileConventions.h"
 
 namespace ned::editor {
 
@@ -46,6 +47,11 @@ struct EditorConfigFile {
 
 // indent_style / indent_size / tab_width, as far as the properties state them.
 [[nodiscard]] IndentOverride EditorConfigIndent(const std::map<std::string, std::string>& properties);
+
+// end_of_line, insert_final_newline, trim_trailing_whitespace, charset
+// (utf-8 / utf-8-bom; an encoding ned can't write is ignored) and
+// max_line_length ("off" is no limit).
+[[nodiscard]] text::FileConventions EditorConfigConventions(const std::map<std::string, std::string>& properties);
 
 // Process-wide toggle, ned/set-editorconfig-enabled (default true).
 void               SetEditorConfigEnabled(bool enabled);

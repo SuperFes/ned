@@ -447,6 +447,14 @@ void Buffer::SetLocalIndent(IndentOverride indent) {
     LocalIndent_ = indent;
 }
 
+const FileConventions& Buffer::Conventions() const {
+    return Conventions_;
+}
+
+void Buffer::SetConventions(FileConventions conventions) {
+    Conventions_ = conventions;
+}
+
 const std::string& Buffer::Name() const {
     return Name_;
 }

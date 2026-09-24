@@ -2,6 +2,8 @@
 
 #include <mutex>
 
+#include "Text/Buffer.h"
+
 namespace ned::editor {
 
 namespace {
@@ -26,6 +28,10 @@ void SetEnsureFinalNewline(bool enabled) {
 bool EnsureFinalNewline() {
     const std::lock_guard<std::mutex> lock(FinalNewlineMutex());
     return FinalNewlineStorage();
+}
+
+bool EnsureFinalNewline(const text::Buffer& buffer) {
+    return buffer.Conventions().ensureFinalNewline.value_or(EnsureFinalNewline());
 }
 
 } // namespace ned::editor

@@ -383,6 +383,48 @@ IndentOverride EditorConfigIndent(const std::map<std::string, std::string>& prop
     return indent;
 }
 
+text::FileConventions EditorConfigConventions(const std::map<std::string, std::string>& properties) {
+    const auto value = [&properties](const char* key) -> std::string_view {
+        const auto it = properties.find(key);
+        return it == properties.end() ? std::string_view() : std::string_view(it->second);
+    };
+    const auto boolean = [&value](const char* key) -> std::optional<bool> {
+        if (value(key) == "true") {
+            return true;
+        }
+        if (value(key) == "false") {
+            return false;
+        }
+        return std::nullopt;
+    };
+
+    text::FileConventions conventions;
+    conventions.ensureFinalNewline     = boolean("insert_final_newline");
+    conventions.trimTrailingWhitespace = boolean("trim_trailing_whitespace");
+    if (value("end_of_line") == "lf") {
+        conventions.lineEnding = text::LineEnding::LF;
+    }
+    else if (value("end_of_line") == "crlf") {
+        conventions.lineEnding = text::LineEnding::CRLF;
+    }
+    else if (value("end_of_line") == "cr") {
+        conventions.lineEnding = text::LineEnding::CR;
+    }
+    if (value("charset") == "utf-8") {
+        conventions.utf8Bom = false;
+    }
+    else if (value("charset") == "utf-8-bom") {
+        conventions.utf8Bom = true;
+    }
+    if (value("max_line_length") == "off") {
+        conventions.maxLineLength = 0;
+    }
+    else if (const std::optional<long long> length = ParseInteger(value("max_line_length")); length && *length > 0) {
+        conventions.maxLineLength = static_cast<int>(std::min<long long>(*length, 10000));
+    }
+    return conventions;
+}
+
 void SetEditorConfigEnabled(bool enabled) {
     const std::lock_guard<std::mutex> lock(EnabledMutex());
     EnabledStorage() = enabled;

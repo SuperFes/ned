@@ -2855,7 +2855,8 @@ void BufferView::PaintCurrentLineHighlight(Canvas& c, const std::vector<std::siz
 // whatever the backing already holds) rather than one clobbering the
 // other at the row/column the two cross.
 void BufferView::PaintRuler(Canvas& c, std::size_t gutterWidth) const {
-    if (!editor::RulerEnabled()) {
+    const std::optional<int> rulerColumn = editor::RulerColumn(activeBuffer_.Get());
+    if (!rulerColumn) {
         return;
     }
     const Surface surface = SurfaceFor(theme_, "buffer.ruler");
@@ -2863,7 +2864,7 @@ void BufferView::PaintRuler(Canvas& c, std::size_t gutterWidth) const {
         return;
     }
 
-    const int col = static_cast<int>(gutterWidth) + editor::RulerColumn() - static_cast<int>(viewport_.LeftColumn());
+    const int col = static_cast<int>(gutterWidth) + *rulerColumn - static_cast<int>(viewport_.LeftColumn());
     if (col < 0 || col >= c.size().width) {
         return; // off the pane's own edge -- scrolled away, or narrower than the configured column
     }

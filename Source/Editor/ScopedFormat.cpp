@@ -52,7 +52,7 @@ namespace {
     std::vector<FormatTextEdit> ScopedTrimEdits(std::string_view text, const text::Buffer& buffer, std::size_t startLine,
                                                 std::size_t endLineExclusive) {
         std::vector<FormatTextEdit> edits;
-        if (!TrimTrailingWhitespaceOnSave()) {
+        if (!TrimTrailingWhitespaceOnSave(buffer)) {
             return edits;
         }
         const auto& content = buffer.Content();
@@ -188,7 +188,7 @@ bool ApplyScopedFormatOnSave(text::Buffer& buffer, const Mode& mode) {
             // trailing newline the user can see. Re-read fresh -- the trim
             // step just above may have changed the buffer's own last byte.
             const std::string finalText = buffer.Text();
-            if (EnsureFinalNewline() && currentEndLine >= buffer.Content().LineCount() && !finalText.empty() &&
+            if (EnsureFinalNewline(buffer) && currentEndLine >= buffer.Content().LineCount() && !finalText.empty() &&
                 scopeEnd == buffer.Content().ByteLength() && finalText.back() != '\n') {
                 buffer.InsertAt(scopeEnd, "\n");
                 changed = true;

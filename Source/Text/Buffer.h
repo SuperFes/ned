@@ -28,6 +28,7 @@
 
 #include "AnchorSet.h"
 #include "EditJournal.h"
+#include "FileConventions.h"
 #include "ITextStorage.h"
 #include "IndentStyle.h"
 #include "LineEnding.h"
@@ -218,6 +219,11 @@ class Buffer {
     // resolves the two.
     [[nodiscard]] const IndentOverride& LocalIndent() const;
     void                                SetLocalIndent(IndentOverride indent);
+
+    // Save and layout conventions the file's project states for it
+    // (.editorconfig), each overriding ned's global setting for this buffer.
+    [[nodiscard]] const FileConventions& Conventions() const;
+    void                                 SetConventions(FileConventions conventions);
 
     // Storage-agnostic: an ordinary buffer is Rope-backed underneath, a huge
     // (multi-GB) buffer is piece-table-backed (see Text/PieceTable.h,
@@ -1451,6 +1457,7 @@ class Buffer {
     // Defaults to LF, matching a NewFile() buffer's own implicit ending.
     ned::text::LineEnding LineEnding_ = ned::text::LineEnding::LF;
     IndentOverride        LocalIndent_;
+    FileConventions       Conventions_;
     // See Content()'s own doc comment above -- Rope-backed for every
     // ordinary buffer, piece-table-backed only for a huge one. Every
     // internal mutator/query below goes through this, never a bare Rope

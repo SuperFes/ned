@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <mutex>
 
+#include "Text/Buffer.h"
+
 namespace ned::editor {
 
 namespace {
@@ -42,6 +44,17 @@ void SetRulerColumn(int column) {
 int RulerColumn() {
     const std::lock_guard<std::mutex> lock(SettingsMutex());
     return ColumnStorage();
+}
+
+std::optional<int> RulerColumn(const text::Buffer& buffer) {
+    if (!RulerEnabled()) {
+        return std::nullopt;
+    }
+    const std::optional<int> stated = buffer.Conventions().maxLineLength;
+    if (stated && *stated <= 0) {
+        return std::nullopt;
+    }
+    return stated ? *stated : RulerColumn();
 }
 
 } // namespace ned::editor

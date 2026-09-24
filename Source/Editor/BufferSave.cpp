@@ -64,13 +64,18 @@ void WriteBufferToDisk(text::Buffer& buffer, SaveDispatch dispatch) {
     // BinarySafeguardsActive()'s own doc comment.
     const bool binarySafeguards = buffer.BinarySafeguardsActive();
 
-    const bool                            finalNewline = EnsureFinalNewline() && !binarySafeguards;
-    const bool                            trim         = TrimTrailingWhitespaceOnSave() && !binarySafeguards;
+    const bool                            finalNewline = EnsureFinalNewline(buffer) && !binarySafeguards;
+    const bool                            trim         = TrimTrailingWhitespaceOnSave(buffer) && !binarySafeguards;
     const std::optional<text::LineEnding> ending =
-        binarySafeguards ? std::optional<text::LineEnding>{}
-                         : std::optional<text::LineEnding>(ResolveLineEndingForSave(buffer.LineEndingKind()));
+        binarySafeguards ? std::optional<text::LineEnding>{} : std::optional<text::LineEnding>(ResolveLineEndingForSave(buffer));
 
-    text::SavePlan plan = buffer.BeginSave(bufferPath, finalNewline, trim, ending);
+    const bool utf8Bom   = buffer.Conventions().utf8Bom.value_or(false) && !binarySafeguards;
+    const auto beginPlan = [&] {
+        text::SavePlan plan = buffer.BeginSave(bufferPath, finalNewline, trim, ending);
+        plan.utf8Bom        = utf8Bom;
+        return plan;
+    };
+    text::SavePlan plan = beginPlan();
 
     if (dispatch == SaveDispatch::Automatic && ShouldSaveAsynchronously(buffer)) {
         if (const std::function<bool(AsyncSaveRequest)> dispatcher = CurrentDispatcher()) {
@@ -91,7 +96,7 @@ void WriteBufferToDisk(text::Buffer& buffer, SaveDispatch dispatch) {
             // Refused: write it here after all. The plan moved into the
             // request, so the buffer has to be re-armed for a fresh one.
             buffer.AbandonSave();
-            plan = buffer.BeginSave(bufferPath, finalNewline, trim, ending);
+            plan = beginPlan();
         }
     }
 

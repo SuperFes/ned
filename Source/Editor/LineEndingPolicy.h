@@ -19,6 +19,10 @@
 
 #include "../Text/LineEnding.h"
 
+namespace ned::text {
+class Buffer;
+}
+
 namespace ned::editor {
 
 enum class LineEndingPolicyMode {
@@ -43,6 +47,11 @@ void SetLineEndingPolicyFromString(const std::string& value);
 // bufferEnding should actually be saved as, under the current policy --
 // the one call site Buffer::SaveToFile needs.
 [[nodiscard]] ned::text::LineEnding ResolveLineEndingForSave(ned::text::LineEnding bufferEnding);
+
+// The buffer's own convention (Buffer::Conventions) when it states one --
+// a file's project outranks the process-wide policy -- else the policy
+// applied to the buffer's tracked ending.
+[[nodiscard]] ned::text::LineEnding ResolveLineEndingForSave(const ned::text::Buffer& buffer);
 
 } // namespace ned::editor
 

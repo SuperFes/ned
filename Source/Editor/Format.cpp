@@ -15,13 +15,13 @@ bool ApplyHygienePass(text::Buffer& buffer) {
     const std::string original = buffer.Text();
     std::string       result   = original;
 
-    if (TrimTrailingWhitespaceOnSave()) {
+    if (TrimTrailingWhitespaceOnSave(buffer)) {
         result = text::TrimTrailingWhitespaceAndBlankLines(std::move(result));
     }
     if (const std::optional<int> maxBlank = MaxConsecutiveBlankLines()) {
         result = text::CollapseBlankLineRuns(std::move(result), *maxBlank);
     }
-    if (EnsureFinalNewline()) {
+    if (EnsureFinalNewline(buffer)) {
         result = text::EnsureTrailingNewline(std::move(result));
     }
 

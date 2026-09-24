@@ -9,6 +9,12 @@
 #ifndef NED_EDITOR_RULERSETTINGS_H
 #define NED_EDITOR_RULERSETTINGS_H
 
+#include <optional>
+
+namespace ned::text {
+class Buffer;
+}
+
 namespace ned::editor {
 
 // Default true: a passive, always-visible reference line costs nothing to
@@ -26,6 +32,11 @@ void               SetRulerEnabled(bool enabled);
 // TabWidth/MinimapWidth already establish.
 void              SetRulerColumn(int column);
 [[nodiscard]] int RulerColumn();
+
+// Where the ruler goes in this buffer, nullopt for none: hidden when the
+// ruler is off or the buffer's convention is "no line limit", else the
+// buffer's max line length when it states one.
+[[nodiscard]] std::optional<int> RulerColumn(const text::Buffer& buffer);
 
 } // namespace ned::editor
 

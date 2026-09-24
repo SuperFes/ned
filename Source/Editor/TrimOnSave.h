@@ -18,10 +18,17 @@
 #ifndef NED_EDITOR_TRIMONSAVE_H
 #define NED_EDITOR_TRIMONSAVE_H
 
+namespace ned::text {
+class Buffer;
+}
+
 namespace ned::editor {
 
 void               SetTrimTrailingWhitespaceOnSave(bool enabled);
 [[nodiscard]] bool TrimTrailingWhitespaceOnSave();
+
+// The buffer's own convention (Buffer::Conventions) when it states one.
+[[nodiscard]] bool TrimTrailingWhitespaceOnSave(const text::Buffer& buffer);
 
 } // namespace ned::editor
 

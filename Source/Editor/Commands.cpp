@@ -2289,6 +2289,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 return;
             }
             context.buffer.SetLineEndingOverride(ending);
+            // An explicit choice outranks the one the file's .editorconfig made.
+            text::FileConventions conventions = context.buffer.Conventions();
+            conventions.lineEnding.reset();
+            context.buffer.SetConventions(conventions);
             if (context.message) {
                 *context.message = std::string("Buffer will be saved as ") + text::LineEndingName(ending) + " next.";
             }
@@ -4349,7 +4353,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         "Reflow the paragraph at point to fill-column, preserving indentation and (if uniform) a per-line comment prefix.",
         [](CommandContext& context) {
             const std::string prefix = (context.mode != nullptr) ? context.mode->lineCommentPrefix : std::string();
-            FillParagraph(context.buffer, static_cast<std::size_t>(FillColumn()), prefix);
+            FillParagraph(context.buffer, static_cast<std::size_t>(FillColumn(context.buffer)), prefix);
         });
 
     // smart-indentation follow-up: the batch/linter-reuse half of

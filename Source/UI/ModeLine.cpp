@@ -156,7 +156,7 @@ void ModeLine::Paint(Canvas c) {
     // direct buffer access for everything else on this line, and unlike an
     // embedded language this is meaningful for every buffer, not just a
     // rare per-point case.
-    const std::string lineEndingSuffix = std::string("  ") + text::LineEndingName(buffer.LineEndingKind());
+    const std::string lineEndingSuffix = std::string("  ") + text::LineEndingName(buffer.Conventions().lineEnding.value_or(buffer.LineEndingKind()));
 
     // configurable-formatter follow-up: indent-style indicator. A huge
     // buffer never gets a whole-content scan here -- same "second-class

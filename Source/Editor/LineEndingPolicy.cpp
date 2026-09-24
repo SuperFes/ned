@@ -1,6 +1,9 @@
 #include "LineEndingPolicy.h"
 
 #include <mutex>
+#include <optional>
+
+#include "Text/Buffer.h"
 
 namespace ned::editor {
 
@@ -50,6 +53,13 @@ ned::text::LineEnding ResolveLineEndingForSave(ned::text::LineEnding bufferEndin
         return policy.forcedEnding;
     }
     return bufferEnding;
+}
+
+ned::text::LineEnding ResolveLineEndingForSave(const ned::text::Buffer& buffer) {
+    if (const std::optional<ned::text::LineEnding> stated = buffer.Conventions().lineEnding) {
+        return *stated;
+    }
+    return ResolveLineEndingForSave(buffer.LineEndingKind());
 }
 
 } // namespace ned::editor

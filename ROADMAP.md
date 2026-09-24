@@ -122,17 +122,26 @@ and code reading. Highest stakes first.
       "Order matters" query lists `(regex) @regexp` before `(pattern) @namespace`, so a
       rule-level `/re/ { ... }` paints as a namespace. Needs a per-query (or
       per-language) order flag, or ned-side reordering of the affected files.
-- [ ] **Per-buffer indentation, taken from the file itself.** A file's own indentation is
-      adopted when it opens (`Editor/FileIndent.h`): its content
-      (`ned/set-indent-detection`), then `.editorconfig` (`ned/set-editorconfig-enabled`),
-      then a modeline, laid over the mode's style field by field;
-      `convert-indentation-to-tabs`/`-spaces` switch a buffer outright. Left:
-  - [ ] **The rest of `.editorconfig`:** `end_of_line`, `insert_final_newline`,
-        `trim_trailing_whitespace`, `charset` and `max_line_length` are read
-        (`EditorConfigPropertiesFor`) but nothing applies them yet; each has a ned
-        setting it would override per file.
-  - [ ] The style is settled once, at open: a save-as to a path under a different
-        `.editorconfig`, or an external reload that reformats the file, keeps the old one.
+- [ ] **Per-buffer settings, taken from the file itself.** Applied when a file opens
+      (`Editor/FileSettings.h`). Indentation: its content (`ned/set-indent-detection`),
+      then `.editorconfig` (`ned/set-editorconfig-enabled`), then a modeline, laid over
+      the mode's style field by field; `convert-indentation-to-tabs`/`-spaces` switch a
+      buffer outright. `.editorconfig`'s `end_of_line`, `insert_final_newline`,
+      `trim_trailing_whitespace`, `charset` and `max_line_length` override ned's own
+      settings for that buffer (`Buffer::Conventions`). Left:
+  - [ ] Settled once, at open: a save-as to a path under a different `.editorconfig`, or
+        an external reload that reformats the file, keeps the old settings.
+  - [ ] **Vim's `:w`/`ZZ`/`:wq` bypass save-buffer** (`Vim/Engine.cpp` calls
+        `Buffer::Save()` directly), so they ignore the file's conventions and the
+        global save settings alike -- no line-ending policy, no format-on-save, no
+        backup. Needs a save intent the host turns into save-buffer, like
+        `PendingIntent::CloseWindow`.
+  - [ ] **A UTF-8 byte order mark doesn't survive a round trip.** Loading strips it and
+        saving never writes one back unless `.editorconfig` says `charset = utf-8-bom`,
+        so opening and saving a BOM file silently drops it. Remembering it at load
+        (sync, async and huge paths each strip it separately) would preserve it.
+  - [ ] `charset` values other than `utf-8`/`utf-8-bom` (latin1, utf-16) are ignored:
+        ned reads and writes UTF-8 only.
   - [ ] **Mixed tabs and spaces, if it has to exist:** Emacs's `indent-tabs-mode` with
         an indent width below the tab width (GNU C: 2-column levels, 8-column tabs, so a
         level-3 line is one tab and two spaces). The worst of both worlds, and supported

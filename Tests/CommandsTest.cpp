@@ -4353,3 +4353,15 @@ TEST_CASE("convert-indentation-to-tabs converts only the region and keeps a part
 
     CHECK(EffectiveIndentStyle(fixture.buffer, cMode.name).useTabs); // new lines follow
 }
+
+TEST_CASE("convert-line-endings overrides the ending a file's .editorconfig stated", "[Commands]") {
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    Fixture        fixture;
+    CommandContext context = fixture.Context();
+    fixture.buffer.SetConventions({.lineEnding = ned::text::LineEnding::CRLF});
+    registry.Invoke("convert-line-endings-to-lf", context);
+    CHECK_FALSE(fixture.buffer.Conventions().lineEnding.has_value());
+    CHECK(fixture.buffer.LineEndingKind() == ned::text::LineEnding::LF);
+}

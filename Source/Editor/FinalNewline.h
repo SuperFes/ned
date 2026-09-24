@@ -26,10 +26,17 @@
 #ifndef NED_EDITOR_FINALNEWLINE_H
 #define NED_EDITOR_FINALNEWLINE_H
 
+namespace ned::text {
+class Buffer;
+}
+
 namespace ned::editor {
 
 void               SetEnsureFinalNewline(bool enabled);
 [[nodiscard]] bool EnsureFinalNewline();
+
+// The buffer's own convention (Buffer::Conventions) when it states one.
+[[nodiscard]] bool EnsureFinalNewline(const text::Buffer& buffer);
 
 } // namespace ned::editor
 

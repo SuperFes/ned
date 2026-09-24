@@ -2,6 +2,8 @@
 
 #include <mutex>
 
+#include "Text/Buffer.h"
+
 namespace ned::editor {
 
 namespace {
@@ -26,6 +28,10 @@ void SetTrimTrailingWhitespaceOnSave(bool enabled) {
 bool TrimTrailingWhitespaceOnSave() {
     const std::lock_guard<std::mutex> lock(TrimOnSaveMutex());
     return TrimOnSaveStorage();
+}
+
+bool TrimTrailingWhitespaceOnSave(const text::Buffer& buffer) {
+    return buffer.Conventions().trimTrailingWhitespace.value_or(TrimTrailingWhitespaceOnSave());
 }
 
 } // namespace ned::editor

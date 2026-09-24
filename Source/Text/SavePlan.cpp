@@ -225,14 +225,21 @@ namespace {
     // hanging off it (mode, owner, xattrs/ACLs, and every hard link) at the
     // cost of the sibling-temp-then-rename path's crash atomicity. See
     // ExecuteSavePlan below for the two situations that select this.
+    void WritePlanContent(std::ofstream& file, const SavePlan& plan) {
+        if (plan.utf8Bom) {
+            file.write("\xEF\xBB\xBF", 3);
+        }
+        WriteBufferContent(file, *plan.snapshot, plan.lineEnding, plan.trimTrailingWhitespace, plan.ensureFinalNewline,
+                           plan.onProgress);
+    }
+
     void WriteInPlace(const SavePlan& plan) {
         std::ofstream file(plan.target, std::ios::binary | std::ios::trunc);
         if (!file) {
             throw std::runtime_error("ned: cannot open file for writing: " + plan.target.string());
         }
 
-        WriteBufferContent(file, *plan.snapshot, plan.lineEnding, plan.trimTrailingWhitespace, plan.ensureFinalNewline,
-                           plan.onProgress);
+        WritePlanContent(file, plan);
         const bool writeFailed = !file;
         file.close();
 
@@ -284,8 +291,7 @@ void ExecuteSavePlan(const SavePlan& plan) {
         throw std::runtime_error("ned: cannot open file for writing: " + tempPath.string());
     }
 
-    WriteBufferContent(file, *plan.snapshot, plan.lineEnding, plan.trimTrailingWhitespace, plan.ensureFinalNewline,
-                       plan.onProgress);
+    WritePlanContent(file, plan);
     const bool writeFailed = !file;
     file.close();
 

@@ -9,10 +9,17 @@
 #ifndef NED_EDITOR_FILLCOLUMN_H
 #define NED_EDITOR_FILLCOLUMN_H
 
+namespace ned::text {
+class Buffer;
+}
+
 namespace ned::editor {
 
 void              SetFillColumn(int columns);
 [[nodiscard]] int FillColumn();
+
+// The buffer's max line length (Buffer::Conventions) when it states one.
+[[nodiscard]] int FillColumn(const text::Buffer& buffer);
 
 } // namespace ned::editor
 

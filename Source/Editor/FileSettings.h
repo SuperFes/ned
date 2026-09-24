@@ -1,0 +1,35 @@
+//
+// Settings a buffer takes from the file it shows, applied when the file is
+// opened. Indentation: what its content already does (IndentDetection),
+// then its .editorconfig (EditorConfigEnabled), then a Vim/Emacs modeline,
+// each overriding the one before field by field; whatever none of them
+// states stays the mode's. Save and layout conventions (line ending, final
+// newline, trimming, BOM, line length): its .editorconfig.
+//
+
+#ifndef NED_EDITOR_FILESETTINGS_H
+#define NED_EDITOR_FILESETTINGS_H
+
+#include <filesystem>
+#include <string_view>
+
+#include "Editor/IndentStyle.h"
+
+namespace ned::text {
+class Buffer;
+}
+
+namespace ned::editor {
+
+// `text` is the file's content, or its head and tail (ReadFileEnds).
+[[nodiscard]] IndentOverride FileIndentOverride(const std::filesystem::path& path, std::string_view text);
+
+// Sets buffer's LocalIndent and Conventions from its file on disk -- read
+// directly rather than from the buffer, so an async-loading placeholder and
+// a huge file get the same answer. A path that doesn't exist yet still gets
+// its .editorconfig.
+void ApplyFileSettings(text::Buffer& buffer);
+
+} // namespace ned::editor
+
+#endif // NED_EDITOR_FILESETTINGS_H

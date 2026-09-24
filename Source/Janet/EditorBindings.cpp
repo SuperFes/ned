@@ -1719,8 +1719,10 @@ void InstallEditorBindings(Environment& env) {
         "mode's style, and a file's .editorconfig or modeline outranks what its content shows.");
     env.Register<&NedSetEditorConfigEnabled>(
         "ned", "set-editorconfig-enabled",
-        "Read .editorconfig files (default true): indent_style, indent_size and tab_width set the indentation of the "
-        "files they match, above what the content shows and below a modeline.");
+        "Read .editorconfig files (default true). For the files they match, indent_style, indent_size and tab_width "
+        "set the indentation (above what the content shows, below a modeline), and end_of_line, "
+        "insert_final_newline, trim_trailing_whitespace, charset (utf-8 or utf-8-bom) and max_line_length (the "
+        "ruler and fill column) override ned's own settings for that buffer.");
     env.Register<&NedSetIndentRule>(
         "ned", "set-indent-rule",
         "Override the indent of every line whose own leading construct is a given grammar node type (e.g. "

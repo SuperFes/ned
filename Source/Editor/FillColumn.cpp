@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <mutex>
 
+#include "Text/Buffer.h"
+
 namespace ned::editor {
 
 namespace {
@@ -27,6 +29,11 @@ void SetFillColumn(int columns) {
 int FillColumn() {
     const std::lock_guard<std::mutex> lock(ColumnMutex());
     return ColumnStorage();
+}
+
+int FillColumn(const text::Buffer& buffer) {
+    const std::optional<int> stated = buffer.Conventions().maxLineLength;
+    return stated && *stated > 0 ? *stated : FillColumn();
 }
 
 } // namespace ned::editor
