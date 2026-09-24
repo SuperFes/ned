@@ -184,6 +184,23 @@ RedNode TreeCursor::CurrentNode() const {
     return NodeNew(tree_, lastEntry.subtree, lastEntry.position, aliasSymbol);
 }
 
+std::uint32_t TreeCursor::CurrentSupertypes(abi::Symbol* out, std::uint32_t capacity) const {
+    std::uint32_t count = 0;
+    for (unsigned i = stack_.size - 1; i > 0 && count < capacity; i--) {
+        if (i != stack_.size - 1) {
+            if (IsEntryVisible(i))
+                break;
+            const TreeCursorEntry& entry = stack_[i];
+            if (!SubtreeExtra(*entry.subtree)) {
+                const abi::Symbol symbol = SubtreeSymbol(*entry.subtree);
+                if (LanguageSymbolMetadata(tree_->language, symbol).supertype)
+                    out[count++] = symbol;
+            }
+        }
+    }
+    return count;
+}
+
 abi::FieldId TreeCursor::CurrentFieldId() const {
     // Walk up through the current node and its invisible ancestors: fields
     // can refer to nodes through hidden wrapper nodes.

@@ -105,6 +105,11 @@ class TreeCursor {
     bool                       GotoParent();
     [[nodiscard]] RedNode      CurrentNode() const;
     [[nodiscard]] abi::FieldId CurrentFieldId() const;
+    // The supertypes the current node was reduced through below its visible
+    // parent (hidden supertype wrappers, innermost first) -- what a query's
+    // `supertype/subtype` step checks. Writes at most `capacity`, returns
+    // the count written.
+    std::uint32_t CurrentSupertypes(abi::Symbol* out, std::uint32_t capacity) const;
 
   private:
     enum class Step : std::uint8_t { None,

@@ -347,9 +347,8 @@ TEST_CASE("query construct census: every bundled query file uses only the enumer
         "quantifier '?' on wildcard",    // x2
         "quantifier '?' on alternation", // x1, sql upstream -- `parameter: [(literal)]?`
         // Supertype-scoped names (`expression/variable`): the subtype's symbol
-        // must be in the supertype's subtype set (validated at compile time);
-        // membership is the whole check, the node's position under a hidden
-        // supertype is not consulted.
+        // must be in the supertype's subtype set (validated at compile time),
+        // and the node must sit under that hidden supertype in its parent.
         "supertype-scoped type name", // x42, haskell/upstream/highlights.janet
         // Predicates: placement.
         "predicate in node children", // x50
@@ -890,4 +889,20 @@ TEST_CASE("QueryMatcher: quantifier on a single-element alternation matches its 
         CHECK(a.empty());
         CHECK(b.empty());
     }
+}
+
+// tree-sitter matches `supertype/subtype` only where the parent reduced the
+// node through that supertype: Haskell's locals tell a binding
+// (`pattern/variable`) from a use (`expression/variable`) this way.
+TEST_CASE("QueryMatcher: a supertype-scoped name matches only in that supertype's position", "[QueryMatcher]") {
+    const auto language = LanguageByName("haskell");
+    REQUIRE(language);
+    const QueryMatcher       matcher(*language, "(pattern/variable) @binding\n(expression/variable) @use\n");
+    const std::string        source = "f x = g x\n";
+    const auto               tree   = ned::editor::grammar::Parser(*language).Parse(source);
+    std::vector<std::string> described;
+    for (const QueryCapture& capture : matcher.Captures(tree.RootNode(), source)) {
+        described.push_back(capture.name + " " + std::to_string(capture.startByte));
+    }
+    CHECK(described == std::vector<std::string>{"binding 2", "use 6", "use 8"});
 }

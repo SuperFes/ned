@@ -65,6 +65,9 @@ namespace {
         std::vector<ChildItem>                 children;       // Named/AnyNamed children; Alternation branches; Group items
         std::vector<parse::abi::FieldId>       negatedFields;
         bool                                   trailingAnchor = false;
+        // `supertype/subtype`: the supertype the node must have been reduced
+        // through in its parent (0 = any position).
+        parse::abi::Symbol requiredSupertype = 0;
     };
 
     struct ChildItem {
@@ -117,19 +120,42 @@ namespace {
         parse::RedNode node;
     };
 
-    struct ChildInfo {
-        parse::RedNode      node;
-        parse::abi::FieldId field;
-        bool                named;
+    // Where a node sits in its parent: the field naming it and the hidden
+    // supertypes it was reduced through there.
+    struct NodeSlot {
+        parse::abi::FieldId               field = 0;
+        std::array<parse::abi::Symbol, 4> supertypes{};
+        std::uint32_t                     supertypeCount = 0;
+
+        [[nodiscard]] bool HasSupertype(parse::abi::Symbol symbol) const {
+            return std::find(supertypes.begin(), supertypes.begin() + supertypeCount, symbol) !=
+                   supertypes.begin() + supertypeCount;
+        }
     };
 
-    void CollectChildren(parse::RedNode parent, std::vector<ChildInfo>& out) {
+    // Supertypes are read only for a query that has a `supertype/subtype`
+    // step; every other query pays nothing for them.
+    NodeSlot SlotAt(const parse::TreeCursor& cursor, bool withSupertypes) {
+        NodeSlot slot{.field = cursor.CurrentFieldId()};
+        if (withSupertypes) {
+            slot.supertypeCount = cursor.CurrentSupertypes(slot.supertypes.data(), slot.supertypes.size());
+        }
+        return slot;
+    }
+
+    struct ChildInfo {
+        parse::RedNode node;
+        NodeSlot       slot;
+        bool           named;
+    };
+
+    void CollectChildren(parse::RedNode parent, bool withSupertypes, std::vector<ChildInfo>& out) {
         out.clear();
         parse::TreeCursor cursor(parent);
         if (cursor.GotoFirstChild()) {
             do {
                 const parse::RedNode node = cursor.CurrentNode();
-                out.push_back(ChildInfo{node, cursor.CurrentFieldId(), parse::NodeIsNamed(node)});
+                out.push_back(ChildInfo{node, SlotAt(cursor, withSupertypes), parse::NodeIsNamed(node)});
             }
             while (cursor.GotoNextSibling());
         }
@@ -194,6 +220,8 @@ struct QueryMatcher::Impl {
     std::unordered_map<std::string, std::vector<parse::abi::Symbol>> namedTypes;
     std::unordered_map<std::string, std::vector<parse::abi::Symbol>> anonymousTypes;
     std::unordered_map<std::string, parse::abi::Symbol>              supertypes;
+    // Some pattern has a `supertype/subtype` step (PatternNode::requiredSupertype).
+    bool supertypeSteps = false;
 
     void BuildTypeTables() {
         const uint32_t count = parse::LanguageSymbolCount(language);
@@ -339,9 +367,9 @@ struct QueryMatcher::Impl {
             else if (const std::size_t slash = head->text.find('/'); slash != std::string::npos) {
                 // A supertype-scoped name, `expression/variable`: the subtype
                 // must be one of the supertype's declared subtypes, checked
-                // here; matching is by the subtype's symbols alone -- the
-                // node's position under the hidden supertype is not
-                // consulted (haskell's highlights are written this way).
+                // here, and a node matches only where its parent reduced it
+                // through that supertype (NodeSlot) -- haskell's
+                // `pattern/variable` binds, `expression/variable` uses.
                 const std::string superName = head->text.substr(0, slash);
                 const std::string subName   = head->text.substr(slash + 1);
                 const auto        supertype = supertypes.find(superName);
@@ -361,8 +389,10 @@ struct QueryMatcher::Impl {
                 if (node.symbols.empty()) {
                     throw QueryMatcherError(head->line, "'" + subName + "' is not a subtype of '" + superName + "'");
                 }
-                node.kind = PatternNode::Kind::Named;
-                node.type = head->text;
+                node.kind              = PatternNode::Kind::Named;
+                node.type              = head->text;
+                node.requiredSupertype = supertype->second;
+                supertypeSteps         = true;
             }
             else if (const auto symbols = namedTypes.find(head->text); symbols != namedTypes.end()) {
                 node.kind    = PatternNode::Kind::Named;
@@ -732,9 +762,9 @@ struct QueryMatcher::Impl {
     using MatchFn = std::function<void()>;
 
     // Matches `pattern` against exactly `node` (quantifiers/anchors are the
-    // sequence layer's business). `nodeField` is the field the node holds in
-    // its own parent (0 = none/unknown) -- an alternation's field-prefixed
-    // branch constrains against it. Binds `captures` plus everything inside,
+    // sequence layer's business). `slot` is where the node sits in its own
+    // parent (field 0 = none/unknown) -- an alternation's field-prefixed
+    // branch and a `supertype/subtype` step constrain against it. Binds `captures` plus everything inside,
     // invoking `next` once per complete assignment.
     // The symbol comparison that replaces `pattern.type != ts_node_type(node)`
     // plus the namedness check: ts_node_symbol resolves aliases exactly the
@@ -751,7 +781,7 @@ struct QueryMatcher::Impl {
     }
 
     void MatchNode(const PatternNode& pattern, const std::vector<uint32_t>& captures, parse::RedNode node,
-                   parse::abi::FieldId nodeField, std::vector<Binding>& bindings, const MatchFn& next) const {
+                   const NodeSlot& slot, std::vector<Binding>& bindings, const MatchFn& next) const {
         switch (pattern.kind) {
             case PatternNode::Kind::AnyNode:
                 break;
@@ -771,6 +801,9 @@ struct QueryMatcher::Impl {
                 if (!SymbolMatches(pattern.symbols, node)) {
                     return;
                 }
+                if (pattern.requiredSupertype != 0 && !slot.HasSupertype(pattern.requiredSupertype)) {
+                    return;
+                }
                 break;
             case PatternNode::Kind::Supertype:
                 if (!parse::NodeIsNamed(node) || !pattern.subtypeSymbols.contains(parse::NodeSymbol(node))) {
@@ -785,7 +818,7 @@ struct QueryMatcher::Impl {
             case PatternNode::Kind::Alternation: {
                 const parse::abi::Symbol nodeSymbol = parse::NodeSymbol(node);
                 for (const ChildItem& branch : pattern.children) {
-                    if (branch.field != 0 && branch.field != nodeField) {
+                    if (branch.field != 0 && branch.field != slot.field) {
                         continue; // a field-prefixed branch constrains this branch alone
                     }
                     // Cheap pre-gate: a concrete branch whose symbol set
@@ -806,7 +839,7 @@ struct QueryMatcher::Impl {
                     for (const uint32_t id : captures) {
                         bindings.push_back(Binding{id, node});
                     }
-                    MatchNode(branch.node, branch.captures, node, nodeField, bindings, [&] {
+                    MatchNode(branch.node, branch.captures, node, slot, bindings, [&] {
                         matched = true;
                         next();
                     });
@@ -840,7 +873,7 @@ struct QueryMatcher::Impl {
             }
             else {
                 std::vector<ChildInfo> children;
-                CollectChildren(node, children);
+                CollectChildren(node, supertypeSteps, children);
                 EnumSequence(pattern, 0, children, 0, -1, false, /*bounded=*/true, bindings, next);
             }
         }
@@ -904,7 +937,7 @@ struct QueryMatcher::Impl {
 
         for (std::size_t c = childIdx; c < children.size(); ++c) {
             const ChildInfo& child = children[c];
-            if (item.field != 0 && child.field != item.field) {
+            if (item.field != 0 && child.slot.field != item.field) {
                 continue;
             }
             if (anchored) {
@@ -926,7 +959,7 @@ struct QueryMatcher::Impl {
                 continue;
             }
 
-            MatchNode(item.node, item.captures, child.node, child.field, bindings, [&] {
+            MatchNode(item.node, item.captures, child.node, child.slot, bindings, [&] {
                 anyOccurrence = true;
                 EnumSequence(parent, itemIdx + 1, children, c + 1, static_cast<std::ptrdiff_t>(c), false, bounded,
                              bindings, next);
@@ -951,13 +984,13 @@ struct QueryMatcher::Impl {
             return false;
         }
         const ChildInfo& before = children[static_cast<std::size_t>(prev)];
-        return ProbeMatches(item.node, before.node, before.field);
+        return ProbeMatches(item.node, before.node, before.slot);
     }
 
-    bool ProbeMatches(const PatternNode& pattern, parse::RedNode node, parse::abi::FieldId nodeField) const {
+    bool ProbeMatches(const PatternNode& pattern, parse::RedNode node, const NodeSlot& slot) const {
         bool                 matched = false;
         std::vector<Binding> probe;
-        MatchNode(pattern, kNoCaptures, node, nodeField, probe, [&] { matched = true; });
+        MatchNode(pattern, kNoCaptures, node, slot, probe, [&] { matched = true; });
         return matched;
     }
 
@@ -967,7 +1000,7 @@ struct QueryMatcher::Impl {
     void ExtendStarRun(const PatternNode& parent, std::size_t itemIdx, const std::vector<ChildInfo>& children,
                        std::size_t c, bool bounded, std::vector<Binding>& bindings, const MatchFn& next) const {
         const ChildItem& item = parent.children[itemIdx];
-        MatchNode(item.node, item.captures, children[c].node, children[c].field, bindings, [&] {
+        MatchNode(item.node, item.captures, children[c].node, children[c].slot, bindings, [&] {
             // The next rep candidate: the next named sibling, except for an
             // anonymous/any-node item pattern, whose reps can be anonymous.
             const bool  scanAnonymous = item.node.kind == PatternNode::Kind::Anonymous ||
@@ -978,7 +1011,7 @@ struct QueryMatcher::Impl {
                     ++n;
                 }
             }
-            if (n < children.size() && ProbeMatches(item.node, children[n].node, children[n].field)) {
+            if (n < children.size() && ProbeMatches(item.node, children[n].node, children[n].slot)) {
                 ExtendStarRun(parent, itemIdx, children, n, bounded, bindings, next);
             }
             else {
@@ -992,52 +1025,49 @@ struct QueryMatcher::Impl {
     // Per-node pattern trial and the tree walk.
     // ------------------------------------------------------------------
 
-    // `nodeField` is the field `node` holds in its own parent (0 =
-    // none/unknown) -- it only matters for the rare
-    // alternation-with-field-branches root, and the walk reads it off its
-    // cursor for free.
-    void TryPattern(std::size_t patternIndex, parse::RedNode node, parse::abi::FieldId nodeField, std::vector<Binding>& bindings,
+    // `slot` is where `node` sits in its own parent -- its field only
+    // matters for the rare alternation-with-field-branches root, and the
+    // walk reads it off its cursor.
+    void TryPattern(std::size_t patternIndex, parse::RedNode node, const NodeSlot& slot, std::vector<Binding>& bindings,
                     const MatchFn& next) const {
         const ChildItem& root = patterns[patternIndex].root;
-        if (root.field != 0 && root.field != nodeField) {
+        if (root.field != 0 && root.field != slot.field) {
             // A top-level field-prefixed pattern (diff's `forward: (binary_hunk
             // ...)`) constrains which field `node` must hold in ITS OWN
             // parent, the same way a field-prefixed alternation branch does
             // -- checked against the field the walk/RunAtNode already
-            // resolved for this node (FieldOfNode for the entry node, the
+            // resolved for this node (SlotOfNode for the entry node, the
             // cursor's own field for everything below it), so no extra
             // parent lookup is needed here.
             return;
         }
         if (root.node.kind == PatternNode::Kind::Group) {
             std::vector<ChildInfo> children;
-            CollectChildren(node, children);
+            CollectChildren(node, supertypeSteps, children);
             if (children.empty()) {
                 return;
             }
             EnumSequence(root.node, 0, children, 0, -1, false, /*bounded=*/false, bindings, next);
             return;
         }
-        MatchNode(root.node, root.captures, node, nodeField, bindings, next);
+        MatchNode(root.node, root.captures, node, slot, bindings, next);
     }
 
-    static parse::abi::FieldId FieldOfNode(parse::RedNode node) {
+    NodeSlot SlotOfNode(parse::RedNode node) const {
         const parse::RedNode parent = parse::NodeParent(node);
         if (parse::NodeIsNull(parent)) {
-            return 0;
+            return {};
         }
-        parse::abi::FieldId field = 0;
-        parse::TreeCursor   cursor(parent);
+        parse::TreeCursor cursor(parent);
         if (cursor.GotoFirstChild()) {
             do {
                 if (parse::NodeEq(cursor.CurrentNode(), node)) {
-                    field = cursor.CurrentFieldId();
-                    break;
+                    return SlotAt(cursor, supertypeSteps);
                 }
             }
             while (cursor.GotoNextSibling());
         }
-        return field;
+        return {};
     }
 
     // `node`'s ancestors, nearest first, from the path the walk arrived by.
@@ -1074,11 +1104,11 @@ struct QueryMatcher::Impl {
     }
 
     template <typename Sink>
-    void RunAtNode(parse::RedNode node, parse::abi::FieldId nodeField, Sink& sink) const {
+    void RunAtNode(parse::RedNode node, const NodeSlot& slot, Sink& sink) const {
         std::vector<Binding> bindings;
         const auto           tryOne = [&](std::size_t patternIndex) {
             bindings.clear();
-            TryPattern(patternIndex, node, nodeField, bindings, [&] {
+            TryPattern(patternIndex, node, slot, bindings, [&] {
                 if (EvaluatePatternPredicates(patternIndex, bindings)) {
                     sink(patternIndex, bindings, node);
                 }
@@ -1131,7 +1161,7 @@ struct QueryMatcher::Impl {
         if (!InRange(node, startByte, endByte)) {
             return false;
         }
-        RunAtNode(node, cursor.CurrentFieldId(), sink);
+        RunAtNode(node, SlotAt(cursor, supertypeSteps), sink);
         return true;
     }
 
@@ -1160,7 +1190,7 @@ struct QueryMatcher::Impl {
         std::reverse(walkPath.begin(), walkPath.end());
         walkPath.push_back(node);
 
-        RunAtNode(node, FieldOfNode(node), sink);
+        RunAtNode(node, SlotOfNode(node), sink);
         parse::TreeCursor cursor(node);
         bool              mayDescend = true;
         for (;;) {
