@@ -145,6 +145,7 @@ dressed up as settled fact, and are the most likely settings you'll want to over
 | JSON | spaces | 2 | matches the JS/npm ecosystem convention |
 | YAML | spaces | 2 | **the YAML spec forbids literal tabs for indentation at all** -- overriding to tabs produces invalid YAML |
 | HTML / XML / CSS | spaces | 2 | common web-ecosystem convention |
+| SCSS / Svelte / Vue / Astro | spaces | 2 | Prettier default |
 | Java | spaces | 4 | most common convention (Google style uses 2; Oracle/IntelliJ-default/Android use 4) -- judgment call |
 | C# | spaces | 4 | Microsoft's own default `.editorconfig`/conventions |
 | Kotlin | spaces | 4 | official Kotlin coding conventions |
@@ -153,7 +154,25 @@ dressed up as settled fact, and are the most likely settings you'll want to over
 | C / C++ | spaces | 4 | **no single canonical convention exists** -- 4 is the more common cross-ecosystem pick, a judgment call |
 | Lua | spaces | 2 | most common community convention |
 | TOML / CMake / HCL / Nix | spaces | 2 | common per-ecosystem convention (Cargo.toml style, cmake-format, terraform fmt, nixfmt) |
-| Clojure / Janet / jank | spaces | 2 | Lisp community convention (Emacs `lisp-indent-function` default) |
+| Clojure / Janet / jank / Scheme / Racket / Common Lisp | spaces | 2 | Lisp community convention (Emacs `lisp-indent-function` default) |
+| Fennel | spaces | 2 | fnlfmt |
+| GDScript | tabs | 4 (display only) | Godot's GDScript style guide |
+| Nim | spaces | 2 | NEP-1; the compiler rejects tab indentation |
+| OCaml | spaces | 2 | ocamlformat default |
+| Pascal | spaces | 2 | Delphi (Embarcadero) Object Pascal style guide |
+| Scala | spaces | 2 | scalafmt default |
+| Elixir | spaces | 2 | `mix format` |
+| Erlang | spaces | 4 | erlfmt |
+| Dart | spaces | 2 | `dart format` (not configurable) |
+| Julia | spaces | 4 | Julia style guide |
+| Crystal | spaces | 2 | `crystal tool format` |
+| Ada | spaces | 3 | GNAT coding style, gnatpp's default |
+| Gleam / ReScript | spaces | 2 | `gleam format`, `rescript format` (neither configurable) |
+| PureScript | spaces | 2 | purs-tidy default |
+| Odin | tabs | 4 (display only) | odinfmt default |
+| V / CUE | tabs | 4 (display only) | `v fmt`, `cue fmt` (neither configurable) |
+| Jsonnet / Pkl / Typst | spaces | 2 | jsonnetfmt, `pkl format`, typstyle |
+| Protocol Buffers | spaces | 2 | `buf format`, clang-format's proto default |
 | R | spaces | 2 | tidyverse style guide |
 | Make | tabs | 4 (display only) | GNU Make *requires* a literal tab to introduce a recipe line -- a syntax rule, not a style preference |
 | SQL | spaces | 4 | common convention -- judgment call |

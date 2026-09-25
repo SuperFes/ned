@@ -36,11 +36,25 @@ namespace {
             {"crystal",    {.useTabs = false, .width = 2}}, // crystal tool format
             {"ada",        {.useTabs = false, .width = 3}}, // GNAT coding style, gnatpp's default
             {"make",       {.useTabs = true,  .width = 4}}, // GNU Make REQUIRES a literal tab to introduce a recipe line -- a hard syntax rule, not a style preference (same shape as YAML's ban, inverted); width here is display-only
+            {"gleam",      {.useTabs = false, .width = 2}}, // gleam format (not configurable)
+            {"odin",       {.useTabs = true,  .width = 4}}, // odinfmt default, and Odin's own core library
+            {"v",          {.useTabs = true,  .width = 4}}, // v fmt (not configurable)
+            {"cue",        {.useTabs = true,  .width = 4}}, // cue fmt (not configurable)
+            {"rescript",   {.useTabs = false, .width = 2}}, // rescript format (not configurable)
+            {"purescript", {.useTabs = false, .width = 2}}, // purs-tidy default
+            {"jsonnet",    {.useTabs = false, .width = 2}}, // jsonnetfmt default
+            {"pkl",        {.useTabs = false, .width = 2}}, // pkl format, and Pkl's own standard library
+            {"typst",      {.useTabs = false, .width = 2}}, // typstyle default
+            {"proto",      {.useTabs = false, .width = 2}}, // buf format, and clang-format's proto default
 
             // -- common ecosystem/style-guide convention, no single canonical formatter --
             {"html",       {.useTabs = false, .width = 2}}, // common web-ecosystem convention
             {"xml",        {.useTabs = false, .width = 2}}, // common web-ecosystem convention
             {"css",        {.useTabs = false, .width = 2}}, // common web-ecosystem convention
+            {"scss",       {.useTabs = false, .width = 2}}, // Prettier default, same as css
+            {"svelte",     {.useTabs = false, .width = 2}}, // Prettier (prettier-plugin-svelte) default
+            {"vue",        {.useTabs = false, .width = 2}}, // Prettier default
+            {"astro",      {.useTabs = false, .width = 2}}, // Prettier (prettier-plugin-astro) default
             {"bash",       {.useTabs = false, .width = 2}}, // Google Shell Style Guide, the closest thing to a canonical shell convention
             {"fish",       {.useTabs = false, .width = 2}}, // no canonical style guide of its own; follows the same shell convention as bash
             {"lua",        {.useTabs = false, .width = 2}}, // most common community convention; no widely-adopted canonical formatter

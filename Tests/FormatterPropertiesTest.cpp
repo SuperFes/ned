@@ -355,6 +355,13 @@ TEST_CASE("A flattened sample reindents back to its house style", "[FormatterPro
              {"sample.lisp", "commonlisp"},
              {"sample.fnl", "fennel"},
              {"sample.clj", "clojure"},
+             {"sample.gleam", "gleam"},
+             {"sample.odin", "odin"},
+             {"vlang.v", "v"},
+             {"sample.cue", "cue"},
+             {"sample.jsonnet", "jsonnet"},
+             {"sample.pkl", "pkl"},
+             {"sample.typ", "typst"},
          }) {
         INFO("sample: " << file);
         const std::string original = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "reindent" / file);

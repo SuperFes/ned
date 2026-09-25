@@ -1,0 +1,9 @@
+class Person {
+  name: String
+}
+
+people {
+  new Person {
+    name = "x"
+  }
+}
