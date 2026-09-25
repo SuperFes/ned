@@ -27,6 +27,7 @@
 #ifndef NED_EDITOR_FORMAT_H
 #define NED_EDITOR_FORMAT_H
 
+#include <filesystem>
 #include <string_view>
 #include <vector>
 
@@ -79,6 +80,12 @@ bool ApplyHygienePass(text::Buffer& buffer, const Mode* mode = nullptr);
 // re-reads a fresh capture list from the buffer's own text: an earlier pass
 // may have shifted every byte offset after its own edits.
 bool ApplyNativeFormat(text::Buffer& buffer, const Mode* mode);
+
+// `ned --format` for one file within the huge-file threshold: loaded with the
+// settings it takes from itself (FileSettings.h) the way opening it would,
+// formatted by the configured external command or else the Native tier, and
+// saved. Throws what loading or saving throws.
+void FormatFileOnDisk(const std::filesystem::path& path);
 
 } // namespace ned::editor
 

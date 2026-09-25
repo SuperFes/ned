@@ -1,11 +1,15 @@
 #include "Format.h"
 
+#include "BufferSave.h"
+#include "FileSettings.h"
 #include "FinalNewline.h"
 #include "FormatEdit.h"
+#include "FormatOnSave.h"
 #include "FormatPasses.h"
 #include "Indent.h"
 #include "MaxConsecutiveBlankLines.h"
 #include "Mode.h"
+#include "ModeOverrides.h"
 #include "Text/WhitespaceHygiene.h"
 #include "TrimOnSave.h"
 
@@ -80,6 +84,25 @@ bool ApplyNativeFormat(text::Buffer& buffer, const Mode* mode) {
     changed = ApplyHygienePass(buffer, mode) || changed;
     buffer.EndUndoGroup();
     return changed;
+}
+
+void FormatFileOnDisk(const std::filesystem::path& path) {
+    text::Buffer buffer = text::Buffer::FromFile(path);
+    ApplyFileSettings(buffer);
+    const Mode mode = ModeForPath(path);
+
+    std::optional<std::string> formatted;
+    if (FormatCommand()) {
+        formatted = RunFormatCommand(buffer.Text());
+    }
+    if (formatted) {
+        buffer.DeleteRange(0, buffer.Size());
+        buffer.InsertAt(0, *formatted);
+    }
+    else {
+        ApplyNativeFormat(buffer, &mode);
+    }
+    WriteBufferToDisk(buffer);
 }
 
 } // namespace ned::editor

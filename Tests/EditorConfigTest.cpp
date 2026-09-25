@@ -12,6 +12,7 @@
 #include "Editor/FileSettings.h"
 #include "Editor/FillColumn.h"
 #include "Editor/FinalNewline.h"
+#include "Editor/Format.h"
 #include "Editor/IndentDetect.h"
 #include "Editor/LineEndingPolicy.h"
 #include "Editor/RulerSettings.h"
@@ -195,6 +196,22 @@ TEST_CASE("ApplyFileSettings reads the file on disk, and .editorconfig for a new
     ned::text::Buffer scratch("scratch");
     ned::editor::ApplyFileSettings(scratch);
     CHECK(scratch.LocalIndent().Empty());
+}
+
+TEST_CASE("Headless formatting indents a file the way its own settings say", "[EditorConfig][FileSettings]") {
+    const TogglesGuard guard;
+    const TempTree     tree("headless");
+    tree.Write(".editorconfig", "root = true\n[stated/*.c]\nindent_size = 2\nend_of_line = crlf\n");
+
+    const std::filesystem::path stated = tree.Write("stated/flat.c", "int f(void) {\nreturn 1;\n}\n");
+    ned::editor::FormatFileOnDisk(stated);
+    CHECK(ReadBytes(stated) == "int f(void) {\r\n  return 1;\r\n}\r\n");
+
+    // No .editorconfig says otherwise, so the file's own two columns stand
+    // over C's four.
+    const std::filesystem::path detected = tree.Write("detected.c", "int f(void) {\n  if (x) {\n    return 1;\n  }\n    return 0;\n}\n");
+    ned::editor::FormatFileOnDisk(detected);
+    CHECK(ReadBytes(detected) == "int f(void) {\n  if (x) {\n    return 1;\n  }\n  return 0;\n}\n");
 }
 
 TEST_CASE("RefreshFileSettings re-reads a file renamed or reverted under its buffer", "[EditorConfig][FileSettings]") {

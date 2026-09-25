@@ -435,6 +435,7 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
         if (isHuge) {
             try {
                 ned::text::Buffer         buffer = ned::text::Buffer::FromHugeFile(path);
+                ned::editor::ApplyFileSettings(buffer);
                 const ned::editor::Mode   mode   = ned::editor::ModeForPath(path);
                 const ned::editor::IndentStyle style  = ned::editor::EffectiveIndentStyle(buffer, mode.name);
 
@@ -475,33 +476,7 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
             continue;
         }
         try {
-            ned::text::Buffer buffer = ned::text::Buffer::FromFile(path);
-            const ned::editor::Mode mode = ned::editor::ModeForPath(path);
-
-            // Same fall-through-on-failure rule format-buffer's own chain
-            // documents: only unset if External genuinely isn't configured
-            // OR ran and failed, never left unset just because it wasn't
-            // tried.
-            std::optional<std::string> formatted;
-
-            if (ned::editor::FormatCommand()) {
-                formatted = ned::editor::RunFormatCommand(buffer.Text());
-            }
-
-            if (formatted) {
-                buffer.DeleteRange(0, buffer.Size());
-                buffer.InsertAt(0, *formatted);
-            }
-            else {
-                // One Native chain, shared with format-buffer -- see
-                // Editor/Format.h. This used to be a hand-copied second
-                // copy of it, and had silently fallen three rule kinds
-                // behind (Rewrite, Arrange, Align) while its own comment
-                // still claimed "same order".
-                ned::editor::ApplyNativeFormat(buffer, &mode);
-            }
-
-            ned::editor::WriteBufferToDisk(buffer);
+            ned::editor::FormatFileOnDisk(path);
             std::cout << "Formatted " << pathStr << '\n';
         }
         catch (const std::exception& e) {
