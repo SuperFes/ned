@@ -154,6 +154,25 @@ TEST_CASE("SearchDirectory searches a UTF-16 file as its text", "[ProjectSearch]
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("SearchDirectory decodes a file in the charset its .editorconfig states", "[ProjectSearch][Charset]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_stated";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    std::ofstream(dir / ".editorconfig", std::ios::binary) << "root = true\n[*.txt]\ncharset = latin1\n";
+    std::ofstream(dir / "old.txt", std::ios::binary) << "first\ncaf\xE9 needle\n";
+    std::ofstream(dir / "marked.txt", std::ios::binary) << "\xEF\xBB\xBF" "caf\xC3\xA9 needle\n"; // its BOM wins
+
+    std::vector<SearchMatch> matches = SearchDirectory(dir, "caf\xC3\xA9 needle");
+    std::sort(matches.begin(), matches.end(), [](const SearchMatch& a, const SearchMatch& b) { return a.file < b.file; });
+    REQUIRE(matches.size() == 2);
+    CHECK(matches[0].file.filename() == "marked.txt");
+    CHECK(matches[1].file.filename() == "old.txt");
+    CHECK(matches[1].lineNumber == 2);
+    CHECK(matches[1].lineText == "caf\xC3\xA9 needle");
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("SearchDirectory returns an empty list for a nonexistent root, without throwing", "[ProjectSearch]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_missing";
     std::filesystem::remove_all(dir);

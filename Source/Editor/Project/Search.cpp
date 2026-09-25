@@ -10,6 +10,7 @@
 #include <memory>
 #include <unordered_map>
 
+#include "Editor/EditorConfig.h"
 #include "Editor/GitIgnore.h"
 #include "Editor/SearchSettings.h"
 #include "Text/BinaryDetect.h"
@@ -206,7 +207,10 @@ namespace {
     // needing its own copy.
     std::vector<SearchMatch> SearchOneText(const std::filesystem::path& path, const std::string& text, const re2::RE2& regex);
 
-    std::vector<SearchMatch> SearchOneFile(const std::filesystem::path& path, const re2::RE2& regex) {
+    // `stated` is the charset the file's surroundings (.editorconfig) say
+    // it's in; its own byte order mark still wins.
+    std::vector<SearchMatch> SearchOneFile(const std::filesystem::path& path, std::optional<text::Charset> stated,
+                                           const re2::RE2& regex) {
         std::vector<SearchMatch> matches;
 
         std::ifstream file(path, std::ios::binary);
@@ -214,15 +218,16 @@ namespace {
             return matches;
         }
 
-        // A UTF-16 file is searched as the text it holds, not its bytes.
-        std::array<char, 2> head{};
+        // A file that isn't UTF-8 is searched as the text it holds, not its bytes.
+        std::array<char, 3> head{};
         file.read(head.data(), head.size());
-        const text::Charset charset = text::SniffCharset(std::string_view(head.data(), static_cast<std::size_t>(file.gcount())));
+        const text::Charset sniffed = text::SniffCharset(std::string_view(head.data(), static_cast<std::size_t>(file.gcount())));
         file.clear();
         file.seekg(0);
-        if (charset == text::Charset::Utf16Le || charset == text::Charset::Utf16Be) {
+        const text::Charset charset = (sniffed == text::Charset::Utf8 && stated) ? *stated : sniffed;
+        if (!text::IsUtf8Family(charset)) {
             std::string                      bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-            const std::optional<std::string> decoded = text::DecodeAnnouncedCharset(std::move(bytes));
+            const std::optional<std::string> decoded = text::DecodeAnnouncedCharset(std::move(bytes), stated);
             return decoded ? SearchOneText(path, *decoded, regex) : matches;
         }
 
@@ -287,6 +292,9 @@ namespace {
             1u, std::min({static_cast<unsigned int>(ProjectSearchThreads()), hardwareThreads == 0 ? 4u : hardwareThreads,
                           static_cast<unsigned int>(files.size())}));
 
+        // Resolved before any worker exists: it reads .editorconfig files.
+        const std::vector<std::optional<text::Charset>> stated = EditorConfigCharsets(files);
+
         std::vector<std::vector<SearchMatch>> perFile(files.size());
         std::atomic<std::size_t>              nextIndex{0};
 
@@ -301,7 +309,7 @@ namespace {
                 }
                 else {
                     perFile[i] = (liveText[i] != nullptr) ? SearchOneText(files[i], *liveText[i], regex)
-                                                          : SearchOneFile(files[i], regex);
+                                                          : SearchOneFile(files[i], stated[i], regex);
                 }
             }
         };

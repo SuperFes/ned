@@ -20,6 +20,7 @@
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 
+using ned::editor::EditorConfigCharsets;
 using ned::editor::EditorConfigConventions;
 using ned::editor::EditorConfigGlobMatches;
 using ned::editor::EditorConfigIndent;
@@ -155,6 +156,27 @@ TEST_CASE("EditorConfigPropertiesFor layers files nearest-last and stops at root
     CHECK_FALSE(go.contains("indent_size"));
 
     CHECK(EditorConfigPropertiesFor(tree.root / "project/go/other.c").at("indent_size") == "4");
+}
+
+TEST_CASE("EditorConfigCharsets gives each file its stated charset, and none while disabled", "[EditorConfig]") {
+    const TempTree tree("charsets");
+    tree.Write("project/.editorconfig", "root = true\n[*.txt]\ncharset = latin1\n");
+    tree.Write("project/wide/.editorconfig", "[*.txt]\ncharset = utf-16le\n");
+    const std::vector<std::filesystem::path> files = {tree.root / "project/a.txt", tree.root / "project/b.c",
+                                                      tree.root / "project/wide/c.txt", tree.root / "project/d.txt"};
+
+    const auto charsets = EditorConfigCharsets(files);
+    REQUIRE(charsets.size() == files.size());
+    CHECK(charsets[0] == ned::text::Charset::Latin1);
+    CHECK_FALSE(charsets[1].has_value());
+    CHECK(charsets[2] == ned::text::Charset::Utf16Le);
+    CHECK(charsets[3] == ned::text::Charset::Latin1);
+
+    const TogglesGuard guard;
+    ned::editor::SetEditorConfigEnabled(false);
+    for (const auto& charset : EditorConfigCharsets(files)) {
+        CHECK_FALSE(charset.has_value());
+    }
 }
 
 TEST_CASE("A file's modeline outranks its .editorconfig, which outranks its content", "[EditorConfig][FileSettings]") {

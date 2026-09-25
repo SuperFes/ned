@@ -14,12 +14,15 @@
 
 #include <filesystem>
 #include <map>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 #include "Editor/IndentStyle.h"
+#include "Text/Charset.h"
 #include "Text/FileConventions.h"
 
 namespace ned::editor {
@@ -59,6 +62,11 @@ struct EditorConfigFile {
 // them, written as csharp-scoped rules into the File layer over C#'s bundled
 // style. Nothing while .editorconfig is disabled.
 void ApplyEditorConfigFormatRules(const std::filesystem::path& projectRoot);
+
+// The charset .editorconfig states for each of `files`, reading each
+// directory's .editorconfig once -- for scans over many files. All nullopt
+// while .editorconfig is disabled.
+[[nodiscard]] std::vector<std::optional<text::Charset>> EditorConfigCharsets(std::span<const std::filesystem::path> files);
 
 // Makes every load decode a file in the charset .editorconfig states for it
 // (text::SetStatedCharsetResolver), while .editorconfig is enabled. A file's

@@ -264,8 +264,9 @@ std::optional<std::string> DecodeCharset(std::string_view bytes, Charset charset
     return out;
 }
 
-std::optional<std::string> DecodeAnnouncedCharset(std::string bytes) {
-    const Charset charset = SniffCharset(bytes);
+std::optional<std::string> DecodeAnnouncedCharset(std::string bytes, std::optional<Charset> stated) {
+    const Charset sniffed = SniffCharset(bytes);
+    const Charset charset = (sniffed == Charset::Utf8 && stated) ? *stated : sniffed;
     if (IsUtf8Family(charset)) {
         bytes.erase(0, PreambleLength(bytes, charset));
         return bytes;

@@ -82,11 +82,10 @@ class CharsetDecoder {
     bool        failed_ = false;
 };
 
-// A whole file's bytes as the text a load would show, going by its byte
-// order mark alone (project-wide scans can't afford a stated charset per
-// file): the mark stripped and UTF-16 decoded, anything else unchanged.
-// nullopt when it doesn't decode.
-[[nodiscard]] std::optional<std::string> DecodeAnnouncedCharset(std::string bytes);
+// A whole file's bytes as the text a load would show: decoded from what its
+// byte order mark announces, else from `stated`, the mark stripped; the
+// UTF-8 family unchanged. nullopt when it doesn't decode.
+[[nodiscard]] std::optional<std::string> DecodeAnnouncedCharset(std::string bytes, std::optional<Charset> stated = std::nullopt);
 
 // One-shot CharsetDecoder; nullopt if `bytes` don't decode.
 [[nodiscard]] std::optional<std::string> DecodeCharset(std::string_view bytes, Charset charset);

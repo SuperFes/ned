@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "Editor/EditorConfig.h"
 #include "Editor/GitIgnore.h"
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
@@ -34,7 +35,7 @@ namespace {
     // Live-over-disk: an open, modified, non-huge buffer's own text is what
     // the user is actually looking at, so a case scan should report against
     // that rather than the stale content still on disk.
-    std::string ReadContent(text::BufferList* bufferList, const std::filesystem::path& path) {
+    std::string ReadContent(text::BufferList* bufferList, const std::filesystem::path& path, std::optional<text::Charset> stated) {
         if (bufferList) {
             if (text::Buffer* open = bufferList->FindByPath(path)) {
                 if (open->Modified() && !open->Content().IsHuge()) {
@@ -48,7 +49,7 @@ namespace {
         }
         std::ostringstream contents;
         contents << file.rdbuf();
-        return text::DecodeAnnouncedCharset(contents.str()).value_or(std::string());
+        return text::DecodeAnnouncedCharset(contents.str(), stated).value_or(std::string());
     }
 
     std::size_t LineNumberForByte(const std::string& text, std::size_t byteOffset) {
@@ -77,6 +78,7 @@ std::vector<ProjectCaseViolation> CollectProjectCaseViolations(const std::filesy
 
     const GitIgnoreMatcher& gitIgnore = CachedGitIgnoreMatcher(root);
 
+    std::vector<std::filesystem::path> files;
     for (; it != end; it.increment(ec)) {
         if (ec) {
             break;
@@ -103,15 +105,20 @@ std::vector<ProjectCaseViolation> CollectProjectCaseViolations(const std::filesy
         if (!mode.localScopes && !mode.symbolKind) {
             continue; // nothing ComputeCaseViolations could ever report for this file
         }
+        files.push_back(entry.path());
+    }
 
-        const std::string text = ReadContent(bufferList, entry.path());
+    const std::vector<std::optional<text::Charset>> stated = EditorConfigCharsets(files);
+    for (std::size_t i = 0; i < files.size(); ++i) {
+        const std::string text = ReadContent(bufferList, files[i], stated[i]);
         if (text.empty()) {
             continue;
         }
+        const Mode        mode        = ModeForPath(files[i]);
         const std::string languageKey = LanguageKeyForMode(mode);
         for (CaseViolation& violation : ComputeCaseViolations(text, languageKey, mode)) {
             const std::size_t line = LineNumberForByte(text, violation.nameStartByte);
-            violations.push_back(ProjectCaseViolation{entry.path(), line, std::move(violation)});
+            violations.push_back(ProjectCaseViolation{files[i], line, std::move(violation)});
         }
     }
 

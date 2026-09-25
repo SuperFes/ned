@@ -139,3 +139,11 @@ TEST_CASE("A preamble is stripped only when the file actually starts with it", "
     CHECK(ned::text::PreambleLength(Bytes({'a', 0}), Charset::Utf16Le) == 0);
     CHECK(ned::text::PreambleLength("abc", Charset::Latin1) == 0);
 }
+
+TEST_CASE("A whole-file decode follows a stated charset unless a byte order mark says otherwise", "[Charset]") {
+    using ned::text::DecodeAnnouncedCharset;
+    CHECK(DecodeAnnouncedCharset("caf\xE9", Charset::Latin1) == "caf\xC3\xA9");
+    CHECK(DecodeAnnouncedCharset("caf\xE9") == "caf\xE9"); // nothing stated: bytes kept as read
+    CHECK(DecodeAnnouncedCharset("\xEF\xBB\xBF" "caf\xC3\xA9", Charset::Latin1) == "caf\xC3\xA9");
+    CHECK(DecodeAnnouncedCharset(std::string("a\0b\0", 4), Charset::Utf16Le) == "ab");
+}

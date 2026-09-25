@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <deque>
 #include <fstream>
 #include <mutex>
 #include <optional>
 #include <sstream>
 #include <system_error>
+#include <unordered_map>
 
 #include "FormatRules.h"
 
@@ -322,45 +324,81 @@ bool EditorConfigGlobMatches(std::string_view pattern, std::string_view relative
     }
 }
 
-std::map<std::string, std::string> EditorConfigPropertiesFor(const std::filesystem::path& path) {
-    std::error_code             error;
-    const std::filesystem::path file = std::filesystem::absolute(path, error).lexically_normal();
-    if (error) {
-        return {};
-    }
+namespace {
 
-    std::vector<std::pair<std::filesystem::path, EditorConfigFile>> found; // nearest first
-    for (std::filesystem::path directory = file.parent_path();; directory = directory.parent_path()) {
-        if (const std::optional<std::string> text = ReadFile(directory / ".editorconfig")) {
-            found.emplace_back(directory, ParseEditorConfig(*text));
-            if (found.back().second.root) {
+    // The shared walk: `fileIn(directory)` is that directory's parsed
+    // .editorconfig, or null when it has none.
+    template <typename FileIn>
+    std::map<std::string, std::string> PropertiesFor(const std::filesystem::path& path, FileIn fileIn) {
+        std::error_code             error;
+        const std::filesystem::path file = std::filesystem::absolute(path, error).lexically_normal();
+        if (error) {
+            return {};
+        }
+
+        std::vector<std::pair<std::filesystem::path, const EditorConfigFile*>> found; // nearest first
+        for (std::filesystem::path directory = file.parent_path();; directory = directory.parent_path()) {
+            if (const EditorConfigFile* config = fileIn(directory)) {
+                found.emplace_back(directory, config);
+                if (config->root) {
+                    break;
+                }
+            }
+            if (directory == directory.parent_path()) {
                 break;
             }
         }
-        if (directory == directory.parent_path()) {
-            break;
+
+        std::map<std::string, std::string> properties;
+        for (auto it = found.rbegin(); it != found.rend(); ++it) {
+            const std::string relative = file.lexically_relative(it->first).generic_string();
+            for (const EditorConfigSection& section : it->second->sections) {
+                if (!EditorConfigGlobMatches(section.pattern, relative)) {
+                    continue;
+                }
+                for (const auto& [key, value] : section.properties) {
+                    std::string lowered = Lower(value);
+                    if (lowered == "unset") {
+                        properties.erase(key);
+                    }
+                    else {
+                        properties.insert_or_assign(key, std::move(lowered));
+                    }
+                }
+            }
         }
+        return properties;
     }
 
-    std::map<std::string, std::string> properties;
-    for (auto it = found.rbegin(); it != found.rend(); ++it) {
-        const std::string relative = file.lexically_relative(it->first).generic_string();
-        for (const EditorConfigSection& section : it->second.sections) {
-            if (!EditorConfigGlobMatches(section.pattern, relative)) {
-                continue;
-            }
-            for (const auto& [key, value] : section.properties) {
-                std::string lowered = Lower(value);
-                if (lowered == "unset") {
-                    properties.erase(key);
-                }
-                else {
-                    properties.insert_or_assign(key, std::move(lowered));
-                }
+} // namespace
+
+std::map<std::string, std::string> EditorConfigPropertiesFor(const std::filesystem::path& path) {
+    std::deque<EditorConfigFile> parsed;
+    return PropertiesFor(path, [&parsed](const std::filesystem::path& directory) -> const EditorConfigFile* {
+        const std::optional<std::string> text = ReadFile(directory / ".editorconfig");
+        return text ? &parsed.emplace_back(ParseEditorConfig(*text)) : nullptr;
+    });
+}
+
+std::vector<std::optional<text::Charset>> EditorConfigCharsets(std::span<const std::filesystem::path> files) {
+    std::vector<std::optional<text::Charset>> charsets(files.size());
+    if (!EditorConfigEnabled()) {
+        return charsets;
+    }
+    std::unordered_map<std::string, std::optional<EditorConfigFile>> byDirectory;
+    const auto fileIn = [&byDirectory](const std::filesystem::path& directory) -> const EditorConfigFile* {
+        auto [it, inserted] = byDirectory.try_emplace(directory.string());
+        if (inserted) {
+            if (const std::optional<std::string> text = ReadFile(directory / ".editorconfig")) {
+                it->second = ParseEditorConfig(*text);
             }
         }
+        return it->second ? &*it->second : nullptr;
+    };
+    for (std::size_t i = 0; i < files.size(); ++i) {
+        charsets[i] = EditorConfigConventions(PropertiesFor(files[i], fileIn)).charset;
     }
-    return properties;
+    return charsets;
 }
 
 IndentOverride EditorConfigIndent(const std::map<std::string, std::string>& properties) {

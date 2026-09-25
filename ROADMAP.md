@@ -136,10 +136,9 @@ and code reading. Highest stakes first.
         file (only reachable by stating or choosing the charset) gains one on save;
         modelling "BOM or not" apart from the encoding would fix it. The huge-file path
         maps bytes and never decodes: a UTF-16 huge file is refused, a latin1 one opens
-        byte for byte and ignores a stated latin1. Project search and the case checker
-        decode only what a BOM announces, not a per-file `.editorconfig` statement. A
-        charset stated in `.editorconfig` for files opened before `init.janet` disables
-        `.editorconfig` has already decoded them.
+        byte for byte and ignores a stated latin1. A charset stated in `.editorconfig`
+        for files opened before `init.janet` disables `.editorconfig` has already
+        decoded them.
   - [ ] **Overlong and surrogate sequences read as codepoints.** A byte that isn't
         UTF-8 paints as its value (`◁\xE9▷`, `Text/DisplayWidth.h`), but the decoders
         accept an overlong `C0 80` or a CESU-8 surrogate as the codepoint it spells,
