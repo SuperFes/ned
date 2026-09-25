@@ -21,6 +21,30 @@
    arguments: (argument_list) @call.arguments) @call.definition
  (:match? @_object "^[A-Z]"))
 
+#; A constructor reached through its class: `super().__init__(...)` in a
+#; class whose first base is Widget, or `Widget.__init__(self, ...)`.
+((call
+   function: (attribute
+     object: (call
+       function: (identifier) @_super) @call.callee.base
+     attribute: (identifier) @_name) @call.receiver
+   arguments: (argument_list) @call.arguments) @call.definition
+ (:eq? @_super "super")
+ (:eq? @_name "__init__"))
+
+((call
+   function: (attribute
+     object: (identifier) @call.callee
+     attribute: (identifier) @_name) @call.receiver.explicit
+   arguments: (argument_list) @call.arguments) @call.definition
+ (:eq? @_name "__init__"))
+
+(class_definition
+  superclasses: (argument_list
+    .
+    [(identifier) @call.base
+     (attribute attribute: (identifier) @call.base)])) @call.class
+
 (keyword_argument
   name: (identifier) @argument.name) @argument.named
 

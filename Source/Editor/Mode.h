@@ -583,10 +583,16 @@ struct CallArgument {
 
 // What a call's object supplies: Instance for `x.m(...)`, Type for
 // `Cls.m(...)` (calls.janet's @call.receiver/@call.receiver.type), None for a
-// plain or path call that passes every parameter itself.
+// plain or path call that passes every parameter itself. Explicit
+// (@call.receiver.explicit) passes even a receiver every other call gets
+// for free: `Widget.__init__(self, ...)`. First (@call.receiver.first) is an
+// object that fills the first parameter of a function that marks no
+// receiver: Odin's `x->f(a)` is `f(x, a)`.
 enum class CallReceiver : std::uint8_t { None,
                                          Instance,
-                                         Type };
+                                         Type,
+                                         Explicit,
+                                         First };
 
 // One call expression. [startByte, endByte) is the whole call;
 // [calleeStartByte, calleeEndByte) is just the identifier being called -- a
@@ -596,6 +602,9 @@ enum class CallReceiver : std::uint8_t { None,
 struct CallMarker {
     std::size_t               startByte;
     std::size_t               endByte;
+    // The name the call spells -- for a call through its class
+    // (`parent::__construct()`, Java's `this(...)`: @call.callee.base/.class),
+    // that base's or class's name in the class header.
     std::size_t               calleeStartByte;
     std::size_t               calleeEndByte;
     // The argument_list node's own range, parens included -- same

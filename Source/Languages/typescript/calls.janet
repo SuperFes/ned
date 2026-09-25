@@ -16,3 +16,23 @@
   arguments: (arguments) @call.arguments) @call.definition
 
 (spread_element) @argument.spread
+
+#; `super(...)` calls the constructor of the class this one extends.
+(call_expression
+  function: (super) @call.callee.base
+  arguments: (arguments) @call.arguments) @call.definition
+(class_declaration
+  (class_heritage
+    (extends_clause
+      value: [(identifier) @call.base
+              (member_expression property: (property_identifier) @call.base)]))) @call.class
+(abstract_class_declaration
+  (class_heritage
+    (extends_clause
+      value: [(identifier) @call.base
+              (member_expression property: (property_identifier) @call.base)]))) @call.class
+(class
+  (class_heritage
+    (extends_clause
+      value: [(identifier) @call.base
+              (member_expression property: (property_identifier) @call.base)]))) @call.class

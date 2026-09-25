@@ -27,3 +27,24 @@
 (named_argument
   (label
     (identifier) @argument.name)) @argument.named
+
+#; `: super(...)` and `: this(...)` call the unnamed constructor of the class
+#; this one extends, or of this one.
+(initializer_list_entry
+  (super) @call.callee.base
+  .
+  (arguments) @call.arguments) @call.definition
+
+(redirection
+  (this) @call.callee.class
+  .
+  (arguments) @call.arguments) @call.definition
+
+(class_definition
+  name: (identifier) @call.class.name
+  superclass: (superclass
+    .
+    (type_identifier) @call.base)) @call.class
+
+(class_definition
+  name: (identifier) @call.class.name) @call.class

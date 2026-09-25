@@ -8,8 +8,10 @@
   name: (identifier) @signature.name
   (formal_parameter_list) @signature.parameters) @signature.definition
 
+#; A named constructor (`Box.square(...)`) is named by its last part.
 (constructor_signature
   name: (identifier) @signature.name
+  .
   parameters: (formal_parameter_list) @signature.parameters) @signature.definition
 
 (formal_parameter

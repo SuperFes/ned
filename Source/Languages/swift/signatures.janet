@@ -18,6 +18,25 @@
   .
   "(" @signature.parameters.open) @signature.definition
 
+#; An initializer is called as its type: `Box(w: 1, h: 2)`.
+(class_declaration
+  name: (type_identifier) @signature.callee
+  body: (class_body
+    (init_declaration
+      "init" @signature.name
+      .
+      "(" @signature.parameters.open) @signature.definition))
+
+(class_declaration
+  name: (user_type
+    (type_identifier) @signature.callee
+    .)
+  body: (class_body
+    (init_declaration
+      "init" @signature.name
+      .
+      "(" @signature.parameters.open) @signature.definition))
+
 ((parameter
    external_name: (simple_identifier) @parameter.label
    name: (simple_identifier) @parameter.name) @parameter

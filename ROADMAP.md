@@ -190,16 +190,22 @@ and code reading. Highest stakes first.
       parameters and named/spread arguments, and `:signature-template` parses the
       retyped list. A list written flat, as the definition's or call's own children, is
       named by its opening paren (`.open`: Swift, Solidity, Vala, Odin), and a Swift
-      parameter's label (`@parameter.label`) goes with a new default. Not yet:
-      - Constructors in Swift (`init`) and Solidity (`constructor`, called through
-        `new`), and Odin's `x->f()` calls, which pass `x` as well and are skipped.
-      - The Lisps, Elixir's pipes and Haskell/OCaml/F#'s curried application: a call
-        has no parenthesized argument list after the callee.
-      Known misses: a call reaching a constructor through its parent
-      (`parent::__construct`, `super().__init__`, `super(...)`) names no class, so it
-      isn't found; a C# extension method called statically with its trailing defaults
-      omitted is read as a member call; Julia's keyword parameters (after `;`) read as
-      positional, so a call passing one by name is declined.
+      parameter's label (`@parameter.label`) goes with a new default. A constructor is
+      found wherever it is called: by its class (`new Box(...)`, Swift's `Box(...)`,
+      Solidity's `is Vault(...)`), and through the class or its base
+      (`parent::__construct`, `super().__init__`, `super(...)`, `this(...)`,
+      `: base(...)`, `super.init`/`self.init` -- `@call.class` with `@call.base`/
+      `@call.class.name`, and a call marked `@call.callee.base`/`.class`). Odin's
+      `x->f(a)` passes `x` as f's first parameter, so it declines when that moves. Not
+      yet: the Lisps, Elixir's pipes and Haskell/OCaml/F#'s curried application (a
+      call has no parenthesized argument list after the callee); Ruby's and Crystal's
+      bare `super`, which calls the parent's same-named method.
+      Known misses: a class's base is the first type it lists, so a C#/Kotlin/Swift
+      class listing an interface first sends `base`/`super` to the interface; a C#
+      extension method called statically with its trailing defaults omitted is read as
+      a member call; Julia's keyword parameters (after `;`) read as positional, so a
+      call passing one by name is declined; overloaded constructors (Java's `Box(int)`
+      beside `Box(int, int)`) trip the same-name arity check and decline.
 - [ ] **Bundled formatter styles: PHP (PSR-12), Go (gofmt), Rust (rustfmt), Kotlin
       (official conventions), C# (.NET conventions) and JavaScript/TypeScript/TSX
       (Prettier).** A Rust project's `rustfmt.toml` adjusts what rustfmt lets it

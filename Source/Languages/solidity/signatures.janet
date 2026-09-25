@@ -12,5 +12,15 @@
   name: (identifier) @signature.name
   "(" @signature.parameters.open) @signature.definition
 
+#; A constructor is called as its contract: `new Vault(...)`, or a base
+#; constructor's arguments in `is Vault(...)` and `constructor() Vault(...)`.
+(contract_declaration
+  name: (identifier) @signature.callee
+  body: (contract_body
+    (constructor_definition
+      "constructor" @signature.name
+      .
+      "(" @signature.parameters.open) @signature.definition))
+
 (parameter
   name: (identifier) @parameter.name) @parameter

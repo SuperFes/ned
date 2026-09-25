@@ -2055,9 +2055,22 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             // Arguments bound by name or spread (@argument.named/.spread), with
             // a named one's name (@argument.name) where the query gives it.
             std::map<std::pair<std::size_t, std::size_t>, std::pair<std::size_t, std::size_t>> nonPositional;
+            // Classes (@call.class), with the class each extends (@call.base)
+            // or its own name (@call.class.name), for a call spelled through
+            // one of them: `parent::__construct()`, Java's `this(...)`.
+            using Range = std::pair<std::size_t, std::size_t>;
+            struct ClassNames {
+                Range                classRange;
+                std::optional<Range> base;
+                std::optional<Range> name;
+            };
+            std::vector<ClassNames> classes;
             for (const grammar::QueryMatch& match : matches) {
                 std::optional<std::pair<std::size_t, std::size_t>> argument;
                 std::pair<std::size_t, std::size_t>                name{0, 0};
+                std::optional<Range>                               classRange;
+                std::optional<Range>                               baseRange;
+                std::optional<Range>                               nameRange;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (capture.name == "argument.named" || capture.name == "argument.spread") {
                         argument.emplace(capture.startByte, capture.endByte);
@@ -2065,17 +2078,48 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     else if (capture.name == "argument.name") {
                         name = {capture.startByte, capture.endByte};
                     }
+                    else if (capture.name == "call.class") {
+                        classRange.emplace(capture.startByte, capture.endByte);
+                    }
+                    else if (capture.name == "call.base") {
+                        baseRange.emplace(capture.startByte, capture.endByte);
+                    }
+                    else if (capture.name == "call.class.name") {
+                        nameRange.emplace(capture.startByte, capture.endByte);
+                    }
                 }
                 if (argument) {
                     nonPositional.insert_or_assign(*argument, name);
                 }
+                if (classRange && (baseRange || nameRange)) {
+                    classes.push_back(ClassNames{*classRange, baseRange, nameRange});
+                }
             }
+            // The innermost class around [start, end), and its base or name --
+            // nullopt outside any class, or when that class has none.
+            const auto enclosingClassName = [&classes](std::size_t start, std::size_t end, bool base) -> std::optional<Range> {
+                const ClassNames* best = nullptr;
+                for (const ClassNames& candidate : classes) {
+                    const Range& range = candidate.classRange;
+                    if (range.first <= start && end <= range.second &&
+                        (best == nullptr || range.second - range.first < best->classRange.second - best->classRange.first ||
+                         (range == best->classRange && !(base ? best->base : best->name)))) {
+                        best = &candidate;
+                    }
+                }
+                return best == nullptr ? std::nullopt : base ? best->base
+                                                             : best->name;
+            };
 
             std::vector<CallMarker> markers;
             for (const grammar::QueryMatch& match : matches) {
                 CallMarker  marker{};
                 bool        haveDefinition = false;
                 bool        haveCallee     = false;
+                enum class ClassCallee : std::uint8_t { None,
+                                                        Base,
+                                                        Own };
+                ClassCallee                                        calleeFromClass = ClassCallee::None;
                 std::size_t argumentsStart = 0;
                 std::size_t argumentsEnd   = 0;
                 bool        haveArguments  = false;
@@ -2094,6 +2138,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         marker.calleeEndByte   = capture.endByte;
                         haveCallee             = true;
                     }
+                    else if (capture.name == "call.callee.base") {
+                        calleeFromClass = ClassCallee::Base;
+                    }
+                    else if (capture.name == "call.callee.class") {
+                        calleeFromClass = ClassCallee::Own;
+                    }
                     else if (capture.name == "call.arguments") {
                         argumentsStart = capture.startByte;
                         argumentsEnd   = capture.endByte;
@@ -2104,6 +2154,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     }
                     else if (capture.name == "call.receiver.type") {
                         marker.receiver = CallReceiver::Type;
+                    }
+                    else if (capture.name == "call.receiver.explicit") {
+                        marker.receiver = CallReceiver::Explicit;
+                    }
+                    else if (capture.name == "call.receiver.first") {
+                        marker.receiver = CallReceiver::First;
                     }
                 }
                 // A flat list: the call's own children between its parens.
@@ -2118,6 +2174,18 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     argumentsStart = openParen->first;
                     argumentsEnd   = list->closeEnd;
                     haveArguments  = true;
+                }
+                if (calleeFromClass != ClassCallee::None && haveDefinition) {
+                    // Named by the enclosing class or the class it extends; a
+                    // call with neither names nothing.
+                    const std::optional<Range> named =
+                        enclosingClassName(marker.startByte, marker.endByte, calleeFromClass == ClassCallee::Base);
+                    if (!named) {
+                        continue;
+                    }
+                    marker.calleeStartByte = named->first;
+                    marker.calleeEndByte   = named->second;
+                    haveCallee             = true;
                 }
                 if (!haveDefinition || !haveCallee || !haveArguments) {
                     continue;

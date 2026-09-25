@@ -20,3 +20,38 @@
 
 (value_argument
   "*") @argument.spread
+
+#; `class B : A(x)` calls A's constructor; a secondary constructor's
+#; `: super(...)` and `: this(...)` call the base's or this class's.
+(constructor_invocation
+  (user_type
+    (type_identifier) @call.callee
+    .)
+  (value_arguments) @call.arguments) @call.definition
+
+(constructor_delegation_call
+  "super" @call.callee.base
+  (value_arguments) @call.arguments) @call.definition
+
+(constructor_delegation_call
+  "this" @call.callee.class
+  (value_arguments) @call.arguments) @call.definition
+
+(class_declaration
+  (type_identifier) @call.class.name
+  (delegation_specifier
+    (constructor_invocation
+      (user_type
+        (type_identifier) @call.base
+        .)))) @call.class
+
+(class_declaration
+  (type_identifier) @call.class.name
+  .
+  (delegation_specifier
+    (user_type
+      (type_identifier) @call.base
+      .))) @call.class
+
+(class_declaration
+  (type_identifier) @call.class.name) @call.class

@@ -23,6 +23,26 @@
   name: (name) @call.callee
   arguments: (arguments) @call.arguments) @call.definition
 
+#; A constructor reached through its class: `Widget::__construct(...)`, or
+#; `parent::__construct(...)` in a class that extends Widget.
+((scoped_call_expression
+   scope: (name) @call.callee
+   name: (name) @_name
+   arguments: (arguments) @call.arguments) @call.definition
+ (:eq? @_name "__construct"))
+
+((scoped_call_expression
+   scope: (relative_scope) @_scope @call.callee.base
+   name: (name) @_name
+   arguments: (arguments) @call.arguments) @call.definition
+ (:any-of? @_scope "parent" "Parent" "PARENT")
+ (:eq? @_name "__construct"))
+
+(class_declaration
+  (base_clause
+    [(name) @call.base
+     (qualified_name (name) @call.base)])) @call.class
+
 (object_creation_expression
   (name) @call.callee
   (arguments) @call.arguments) @call.definition

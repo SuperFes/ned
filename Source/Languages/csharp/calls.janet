@@ -23,3 +23,28 @@
 
 (argument
   name: (identifier)) @argument.named
+
+#; `: base(...)` and `: this(...)` call a constructor of the class this one
+#; extends, or of this one. The first base in the list is the class.
+(constructor_initializer
+  "base" @call.callee.base
+  (argument_list) @call.arguments) @call.definition
+
+(constructor_initializer
+  "this" @call.callee.class
+  (argument_list) @call.arguments) @call.definition
+
+(class_declaration
+  name: (identifier) @call.class.name
+  (base_list
+    .
+    [(identifier) @call.base
+     (generic_name (identifier) @call.base)
+     (qualified_name name: (identifier) @call.base)])) @call.class
+
+(class_declaration
+  name: (identifier) @call.class.name) @call.class
+(struct_declaration
+  name: (identifier) @call.class.name) @call.class
+(record_declaration
+  name: (identifier) @call.class.name) @call.class

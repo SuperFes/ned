@@ -136,6 +136,129 @@ TEST_CASE("PHP change-signature follows a constructor to its `new` call sites", 
           "$n = new \\App\\Mailer(1, $smtp, null);\n");
 }
 
+TEST_CASE("PHP change-signature follows a constructor through a subclass's parent call", "[ChangeSignature]") {
+    const std::string source = "<?php\n"
+                               "class Mailer {\n"
+                               "  public function __construct(Transport $transport, int $retries) {}\n"
+                               "}\n"
+                               "class QueuedMailer extends \\App\\Mailer {\n"
+                               "  public function __construct(Transport $t, private Queue $q) {\n"
+                               "    parent::__construct($t, 3);\n"
+                               "  }\n"
+                               "}\n"
+                               "class Other extends Base {\n"
+                               "  public function __construct() { parent::__construct($x, 1); Mailer::__construct($y, 2); }\n"
+                               "}\n"
+                               "parent::__construct($z, 0);\n";
+    CHECK(ChangeSignature("php", source, "__construct", "int $retries, Transport $transport") ==
+          "<?php\n"
+          "class Mailer {\n"
+          "  public function __construct(int $retries, Transport $transport) {}\n"
+          "}\n"
+          "class QueuedMailer extends \\App\\Mailer {\n"
+          "  public function __construct(Transport $t, private Queue $q) {\n"
+          "    parent::__construct(3, $t);\n"
+          "  }\n"
+          "}\n"
+          "class Other extends Base {\n"
+          "  public function __construct() { parent::__construct($x, 1); Mailer::__construct(2, $y); }\n"
+          "}\n"
+          "parent::__construct($z, 0);\n");
+}
+
+TEST_CASE("Python change-signature follows __init__ through super() and the base class", "[ChangeSignature]") {
+    const std::string source = "class Widget:\n"
+                               "    def __init__(self, name, size=1):\n"
+                               "        pass\n"
+                               "class Button(ui.Widget, Clickable):\n"
+                               "    def __init__(self, label):\n"
+                               "        super().__init__(label, 2)\n"
+                               "        Widget.__init__(self, label, 3)\n"
+                               "class Other(Base):\n"
+                               "    def __init__(self):\n"
+                               "        super().__init__(1, 2)\n"
+                               "w = Widget('a', 4)\n";
+    CHECK(ChangeSignature("python", source, "__init__", "self, size, name") ==
+          "class Widget:\n"
+          "    def __init__(self, size, name):\n"
+          "        pass\n"
+          "class Button(ui.Widget, Clickable):\n"
+          "    def __init__(self, label):\n"
+          "        super().__init__(2, label)\n"
+          "        Widget.__init__(self, 3, label)\n"
+          "class Other(Base):\n"
+          "    def __init__(self):\n"
+          "        super().__init__(1, 2)\n"
+          "w = Widget(4, 'a')\n");
+}
+
+TEST_CASE("change-signature follows a constructor through super, this and base calls", "[ChangeSignature]") {
+    CHECK(ChangeSignature("javascript",
+                          "class Box { constructor(w, h) {} }\n"
+                          "class Crate extends lib.Box { constructor(d) { super(d, 1); } }\n"
+                          "class Other extends Thing { constructor() { super(2, 3); } }\n",
+                          "constructor", "h, w") ==
+          "class Box { constructor(h, w) {} }\n"
+          "class Crate extends lib.Box { constructor(d) { super(1, d); } }\n"
+          "class Other extends Thing { constructor() { super(2, 3); } }\n");
+    CHECK(ChangeSignature("typescript",
+                          "class Box { constructor(w: number, h: number) {} }\n"
+                          "class Crate extends Box implements Packed { constructor(d: number) { super(d, 1); } }\n",
+                          "constructor", "h: number, w: number") ==
+          "class Box { constructor(h: number, w: number) {} }\n"
+          "class Crate extends Box implements Packed { constructor(d: number) { super(1, d); } }\n");
+    CHECK(ChangeSignature("java",
+                          "class Box {\n"
+                          "  Box(int w, int h) {}\n"
+                          "  Box(int s) { this(s, s + 1); }\n"
+                          "}\n"
+                          "class Crate extends Box {\n"
+                          "  Crate(int d) { super(d, 2); }\n"
+                          "  Crate() { this(4); }\n"
+                          "}\n",
+                          "Box", "int h, int w") ==
+          "class Box {\n"
+          "  Box(int h, int w) {}\n"
+          "  Box(int s) { this(s + 1, s); }\n"
+          "}\n"
+          "class Crate extends Box {\n"
+          "  Crate(int d) { super(2, d); }\n"
+          "  Crate() { this(4); }\n"
+          "}\n");
+    CHECK(ChangeSignature("csharp",
+                          "class Box {\n"
+                          "  public Box(int w, int h) {}\n"
+                          "  public Box(int s) : this(s, s + 1) {}\n"
+                          "}\n"
+                          "class Crate : Box, IPacked {\n"
+                          "  public Crate(int d) : base(d, 2) {}\n"
+                          "}\n",
+                          "Box", "int h, int w") ==
+          "class Box {\n"
+          "  public Box(int h, int w) {}\n"
+          "  public Box(int s) : this(s + 1, s) {}\n"
+          "}\n"
+          "class Crate : Box, IPacked {\n"
+          "  public Crate(int d) : base(2, d) {}\n"
+          "}\n");
+    CHECK(ChangeSignature("kotlin",
+                          "open class Box(val w: Int, val h: Int) {\n"
+                          "  constructor(s: Int) : this(s, s + 1)\n"
+                          "}\n"
+                          "class Crate(d: Int) : Box(d, 2)\n"
+                          "class Bin : Box {\n"
+                          "  constructor(d: Int) : super(d, 3)\n"
+                          "}\n",
+                          "Box", "val h: Int, val w: Int") ==
+          "open class Box(val h: Int, val w: Int) {\n"
+          "  constructor(s: Int) : this(s + 1, s)\n"
+          "}\n"
+          "class Crate(d: Int) : Box(2, d)\n"
+          "class Bin : Box {\n"
+          "  constructor(d: Int) : super(3, d)\n"
+          "}\n");
+}
+
 TEST_CASE("PHP change-signature leaves named and spread call sites alone", "[ChangeSignature]") {
     const std::string source = "<?php\n"
                                "function pair(int $a, int $b) {}\n"
@@ -505,6 +628,35 @@ TEST_CASE("GDScript change-signature covers plain and attribute calls", "[Change
           "\tplayer.move(4, 3, 1.0)\n");
 }
 
+TEST_CASE("Dart change-signature follows a constructor through super and this", "[ChangeSignature]") {
+    const std::string source = "class Box {\n"
+                               "  Box(int w, int h);\n"
+                               "  Box.square(int s) : this(s, s + 1);\n"
+                               "}\n"
+                               "class Crate extends Box with Packed {\n"
+                               "  Crate(int d) : super(d, 2);\n"
+                               "}\n"
+                               "final b = Box(1, 2);\n";
+    CHECK(ChangeSignature("dart", source, "Box", "int h, int w") ==
+          "class Box {\n"
+          "  Box(int h, int w);\n"
+          "  Box.square(int s) : this(s + 1, s);\n"
+          "}\n"
+          "class Crate extends Box with Packed {\n"
+          "  Crate(int d) : super(2, d);\n"
+          "}\n"
+          "final b = Box(2, 1);\n");
+
+    // A named constructor is its own signature, not another arity of `Box`.
+    const std::optional<ned::editor::Mode> mode = ned::editor::ModeByName("dart-mode");
+    REQUIRE(mode.has_value());
+    std::vector<std::string> names;
+    for (const SignatureMarker& signature : mode->signatures(source)) {
+        names.emplace_back(Slice(source, signature.callNameStartByte, signature.callNameEndByte));
+    }
+    CHECK(names == std::vector<std::string>{"Box", "square", "Crate"});
+}
+
 TEST_CASE("Dart change-signature reads optional groups and keeps named arguments by name", "[ChangeSignature]") {
     const std::string source = "int scale(int v, [int factor = 2]) => v * factor;\n"
                                "void send(String to, {String? cc, int retries = 3}) {}\n"
@@ -646,6 +798,35 @@ TEST_CASE("Nim change-signature keeps the dot-supplied first parameter first", "
 
 // Solidity, Vala and Odin write a definition's parameters or a call's
 // arguments flat, as its own children after the paren.
+TEST_CASE("Solidity change-signature follows a constructor and a modifier to their call sites", "[ChangeSignature]") {
+    const std::string source = "contract Vault {\n"
+                               "  constructor(uint cap, address owner) {}\n"
+                               "  modifier capped(uint a, uint b) { _; }\n"
+                               "  function f() public capped(1, 2) {}\n"
+                               "}\n"
+                               "contract Big is Vault(1, msg.sender) {}\n"
+                               "contract Lazy is Vault { constructor() Vault(2, msg.sender) {} }\n"
+                               "contract User { function f() public { Vault v = new Vault(3, msg.sender); } }\n";
+    CHECK(ChangeSignature("solidity", source, "constructor", "address owner, uint cap") ==
+          "contract Vault {\n"
+          "  constructor(address owner, uint cap) {}\n"
+          "  modifier capped(uint a, uint b) { _; }\n"
+          "  function f() public capped(1, 2) {}\n"
+          "}\n"
+          "contract Big is Vault(msg.sender, 1) {}\n"
+          "contract Lazy is Vault { constructor() Vault(msg.sender, 2) {} }\n"
+          "contract User { function f() public { Vault v = new Vault(msg.sender, 3); } }\n");
+    CHECK(ChangeSignature("solidity", source, "capped", "uint b, uint a") ==
+          "contract Vault {\n"
+          "  constructor(uint cap, address owner) {}\n"
+          "  modifier capped(uint b, uint a) { _; }\n"
+          "  function f() public capped(2, 1) {}\n"
+          "}\n"
+          "contract Big is Vault(1, msg.sender) {}\n"
+          "contract Lazy is Vault { constructor() Vault(2, msg.sender) {} }\n"
+          "contract User { function f() public { Vault v = new Vault(3, msg.sender); } }\n");
+}
+
 TEST_CASE("Solidity change-signature reorders a flat parameter list and its calls", "[ChangeSignature]") {
     const std::string source = "contract Vault {\n"
                                "  function deposit(address who, uint amount) public returns (bool) { return true; }\n"
@@ -678,6 +859,37 @@ TEST_CASE("Odin change-signature rewrites flat call arguments and declines named
     CHECK(ChangeSignature("odin", source, "clamp", "lo := 0, v: int") ==
           "clamp :: proc(lo := 0, v: int) -> int { return v }\n"
           "main :: proc() { clamp(1, 5); m.clamp/*declined*/(7); clamp/*declined*/(v = 2) }\n");
+}
+
+TEST_CASE("Odin change-signature passes a selector call's object as the first parameter", "[ChangeSignature]") {
+    const std::string source = "grow :: proc(b: ^Buf, by: int, fill := 0) {}\n"
+                               "main :: proc() { grow(&x, 1, 2); b->grow(3, 4) }\n";
+    CHECK(ChangeSignature("odin", source, "grow", "b: ^Buf, fill := 0, by: int") ==
+          "grow :: proc(b: ^Buf, fill := 0, by: int) {}\n"
+          "main :: proc() { grow(&x, 2, 1); b->grow(4, 3) }\n");
+    CHECK(ChangeSignature("odin", source, "grow", "by: int, b: ^Buf, fill := 0") ==
+          "grow :: proc(by: int, b: ^Buf, fill := 0) {}\n"
+          "main :: proc() { grow(1, &x, 2); b->grow/*declined*/(3, 4) }\n");
+}
+
+TEST_CASE("Swift change-signature follows an initializer to its type, super.init and self.init calls", "[ChangeSignature]") {
+    const std::string source = "class Box {\n"
+                               "    init(w: Int, h: Int) {}\n"
+                               "}\n"
+                               "class Crate: Box, Packed {\n"
+                               "    init(d: Int) { super.init(w: d, h: 2) }\n"
+                               "}\n"
+                               "extension Box { convenience init(s: Int) { self.init(w: s, h: s + 1) } }\n"
+                               "let b = Box(w: 1, h: 2)\n";
+    CHECK(ChangeSignature("swift", source, "init", "h: Int, w: Int") ==
+          "class Box {\n"
+          "    init(h: Int, w: Int) {}\n"
+          "}\n"
+          "class Crate: Box, Packed {\n"
+          "    init(d: Int) { super.init(h: 2, w: d) }\n"
+          "}\n"
+          "extension Box { convenience init(s: Int) { self.init(h: s + 1, w: s) } }\n"
+          "let b = Box(h: 2, w: 1)\n");
 }
 
 TEST_CASE("Swift change-signature moves labels with their arguments and labels new defaults", "[ChangeSignature]") {

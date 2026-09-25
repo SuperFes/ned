@@ -192,13 +192,21 @@ ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector
     // The leading receivers this call's object supplies.
     std::size_t implicit = 0;
     for (const ParameterReceiver parameter : mapping.receivers) {
-        const bool supplied = parameter == ParameterReceiver::Always ||
+        const bool supplied = (parameter == ParameterReceiver::Always && receiver != CallReceiver::Explicit) ||
                               (parameter == ParameterReceiver::Instance && receiver == CallReceiver::Instance) ||
-                              (parameter == ParameterReceiver::Any && receiver != CallReceiver::None);
+                              (parameter == ParameterReceiver::Any && receiver != CallReceiver::None &&
+                               receiver != CallReceiver::Explicit);
         if (!supplied) {
             break;
         }
         ++implicit;
+    }
+    if (receiver == CallReceiver::First && implicit == 0) {
+        if (mapping.oldArity == 0 || mapping.origins.empty() || mapping.origins.front().kind != ParamOriginKind::Kept ||
+            mapping.origins.front().oldIndex != 0) {
+            return {.declined = true, .declineReason = "call site passes its object as the first parameter, which moved"};
+        }
+        implicit = 1;
     }
     if (positional.size() > mapping.oldArity - implicit) {
         return {.declined = true, .declineReason = "call site supplies more arguments than the old signature has parameters"};
