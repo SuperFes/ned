@@ -182,8 +182,11 @@ and code reading. Highest stakes first.
       function-typed parameter (`int cb(int x)`) isn't captured. OCaml and F#: a
       punned label or field (`f ~x`, `{ x }`) is both the variable and the label, so
       a rename misses it; F# class members and their parameters aren't modelled.
-      Racket's plain `let` is read as `let*`: a later binding's value sees an
-      earlier one.
+      PowerShell names are case-insensitive and the resolver isn't, so `$Acc` and
+      `$acc` are two bindings; `$script:`/`$global:` and braced `${x}` variables are
+      left out. Tcl has no locals query: `global`/`upvar` rebind a proc's name to
+      another scope's, which a proc-local rename would get wrong. Erlang binds only a
+      top-level or one-level-nested pattern variable (`{A, [B]}`'s `B` is a use).
 - [ ] **change-signature for the remaining languages.** 32 have `signatures` + `calls`
       queries (`sig` column): each describes its own parameters, receivers (`self`,
       `cls`, Lua's colon calls, Nim's dot calls, C#'s extension `this`), keyword-only

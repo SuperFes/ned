@@ -1274,3 +1274,103 @@ TEST_CASE("ruby-mode's block assignment writes the method's local", "[Mode][Loca
     REQUIRE(scratch.has_value());
     CHECK(scratch->occurrences.size() == 1);
 }
+
+TEST_CASE("erlang-mode binds a variable once per clause, a pattern matching it after", "[Mode][LocalScopes]") {
+    const std::string source = "f(Xs, Acc) ->\n"
+                               "    Total = Acc + 1,\n"
+                               "    {Total, _} = g(Xs),\n"
+                               "    G = fun(Xs) -> Xs * Total end,\n"
+                               "    G(Total).\n";
+    const auto        total  = Resolve("erlang-mode", source, "Total", 1);
+    REQUIRE(total.has_value());
+    CHECK(total->definition.first == source.find("Total"));
+    CHECK(total->occurrences.size() == 4);
+
+    // The fun's own parameter shadows the clause's.
+    const auto inner = Resolve("erlang-mode", source, "Xs", 3);
+    REQUIRE(inner.has_value());
+    CHECK(inner->occurrences.size() == 2);
+    CHECK(Resolve("erlang-mode", source, "Xs", 0)->occurrences.size() == 2);
+}
+
+TEST_CASE("scheme-mode resolves define parameters and a plain let's outer reads", "[Mode][LocalScopes]") {
+    const std::string source = "(define (scale vec factor)\n"
+                               "  (let ((factor (* factor 2)) (size (length vec)))\n"
+                               "    (map (lambda (item) (* item factor size)) vec)))\n";
+    // The let's own `factor` binds after its values, so `(* factor 2)` reads the parameter.
+    const auto parameter = Resolve("scheme-mode", source, "factor", 0);
+    REQUIRE(parameter.has_value());
+    CHECK(parameter->qualifier == "parameter");
+    CHECK(parameter->occurrences.size() == 2);
+
+    const auto rebound = Resolve("scheme-mode", source, "factor", 3);
+    REQUIRE(rebound.has_value());
+    CHECK(rebound->occurrences.size() == 2);
+
+    CHECK(Resolve("scheme-mode", source, "item", 1)->occurrences.size() == 2);
+    CHECK(Resolve("scheme-mode", source, "vec", 2)->occurrences.size() == 3);
+}
+
+TEST_CASE("commonlisp-mode resolves lambda-list parameters and let bindings", "[Mode][LocalScopes]") {
+    const std::string source = "(defun scale (vec &optional (factor 2))\n"
+                               "  (let ((size (length vec)))\n"
+                               "    (dolist (item vec) (print (* item factor size)))))\n";
+    CHECK(Resolve("commonlisp-mode", source, "factor", 0)->occurrences.size() == 2);
+    CHECK(Resolve("commonlisp-mode", source, "vec", 2)->occurrences.size() == 3);
+    CHECK(Resolve("commonlisp-mode", source, "size", 1)->occurrences.size() == 2);
+    CHECK(Resolve("commonlisp-mode", source, "item", 1)->occurrences.size() == 2);
+    CHECK_FALSE(Resolve("commonlisp-mode", source, "scale", 0).has_value());
+}
+
+TEST_CASE("fennel-mode resolves parameters, locals and loop bindings", "[Mode][LocalScopes]") {
+    const std::string source = "(fn total [items start]\n"
+                               "  (var acc start)\n"
+                               "  (each [_ item (ipairs items)] (set acc (+ acc item.weight)))\n"
+                               "  acc)\n";
+    const auto        acc    = Resolve("fennel-mode", source, "acc", 0);
+    REQUIRE(acc.has_value());
+    CHECK(acc->occurrences.size() == 4);
+    CHECK(Resolve("fennel-mode", source, "item", 0)->occurrences.size() == 2); // `item.weight`'s head
+    CHECK(Resolve("fennel-mode", source, "start", 0)->qualifier == "parameter");
+}
+
+TEST_CASE("powershell-mode renames a variable's name, never its sigil", "[Mode][LocalScopes]") {
+    const std::string source = "function Sum($Items, [int]$Start) {\n"
+                               "  $acc = $Start\n"
+                               "  foreach ($item in $Items) { $acc += $item }\n"
+                               "  return $acc + $script:acc\n"
+                               "}\n";
+    const auto        acc    = Resolve("powershell-mode", source, "acc", 0);
+    REQUIRE(acc.has_value());
+    CHECK(OccurrenceTexts(*acc, source) == std::vector<std::string>{"acc", "acc", "acc"}); // not $script:acc
+    CHECK(Resolve("powershell-mode", source, "Start", 0)->qualifier == "parameter");
+    CHECK(Resolve("powershell-mode", source, "item", 1)->occurrences.size() == 2);
+}
+
+TEST_CASE("nu-mode resolves parameters, let and mut bindings and loop variables", "[Mode][LocalScopes]") {
+    const std::string source = "def total [items: list, start] {\n"
+                               "  mut acc = $start\n"
+                               "  for item in $items { $acc = $acc + $item }\n"
+                               "  $acc + $env.OFFSET\n"
+                               "}\n";
+    CHECK(Resolve("nu-mode", source, "acc", 0)->occurrences.size() == 4);
+    CHECK(Resolve("nu-mode", source, "item", 1)->occurrences.size() == 2);
+    CHECK(Resolve("nu-mode", source, "start", 0)->qualifier == "parameter");
+}
+
+TEST_CASE("racket-mode binds every define parameter and reads a plain let's values outside it", "[Mode][LocalScopes]") {
+    const std::string source = "#lang racket\n"
+                               "(define (scale vec factor)\n"
+                               "  (let ([factor 3] [size (* factor 2)])\n"
+                               "    (let* ([width size] [height (* width size)])\n"
+                               "      (list factor height vec))))\n";
+    // `(* factor 2)` sits in a plain let, so it reads the parameter, not the let's own factor.
+    const auto parameter = Resolve("racket-mode", source, "factor", 0);
+    REQUIRE(parameter.has_value());
+    CHECK(parameter->qualifier == "parameter");
+    CHECK(parameter->occurrences.size() == 2);
+    CHECK(Resolve("racket-mode", source, "factor", 1)->occurrences.size() == 2);
+    // let* binds one by one: `(* width size)` reads the width just bound.
+    CHECK(Resolve("racket-mode", source, "width", 0)->occurrences.size() == 2);
+    CHECK(Resolve("racket-mode", source, "vec", 1)->occurrences.size() == 2);
+}
