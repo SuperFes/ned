@@ -222,8 +222,10 @@ std::optional<fs::path> ResolveAt(const fs::path& file, const std::string& at) {
     return resolved ? std::optional<fs::path>(resolved->path.lexically_normal()) : std::nullopt;
 }
 
-// `file`'s text after planning `moved` and applying its fixups.
-std::string FixedText(const std::vector<ned::editor::importfix::MovedFile>& moved, const fs::path& file) {
+// `file`'s text after planning `moved` and applying its fixups -- found under
+// `as` when the file itself moves.
+std::string FixedText(const std::vector<ned::editor::importfix::MovedFile>& moved, const fs::path& file,
+                      const fs::path& as = {}) {
     const auto reader = [](const fs::path& path) -> std::optional<std::string> {
         if (!fs::exists(path)) {
             return std::nullopt;
@@ -232,7 +234,7 @@ std::string FixedText(const std::vector<ned::editor::importfix::MovedFile>& move
     };
     const ned::editor::importfix::FixupPlan plan = ned::editor::importfix::PlanImportFixups(moved, {file}, reader);
     for (const auto& fixup : plan.files) {
-        if (fixup.file == file) {
+        if (fixup.file == (as.empty() ? file : as)) {
             return ned::editor::importfix::ApplyFixup(fixup);
         }
     }
@@ -591,4 +593,31 @@ TEST_CASE("A component's script imports resolve and follow moves", "[ImportLangu
 
     Write(project.root / "src/App.vue", "<script setup>\nimport { x } from '@/lib/util'\n</script>\n");
     CHECK(ResolveAt(project.root / "src/App.vue", "util") == project.root / "src/lib/util.ts");
+}
+
+TEST_CASE("A JVM class moving package rewrites its package and the imports it and its old package need",
+          "[ImportLanguages]") {
+    const ScratchProject project("jvm_package_move");
+    const fs::path       util = project.root / "src/main/java/com/acme/util";
+    Write(util / "Strings.java", "package com.acme.util;\n\npublic class Strings {\n    Helper h;\n}\n");
+    Write(util / "Helper.java", "package com.acme.util;\n\nclass Helper {\n    Strings s;\n}\n");
+    Write(util / "Unrelated.java", "package com.acme.util;\n\nclass Unrelated {}\n");
+    Write(project.root / "src/main/java/com/acme/app/Main.java",
+          "package com.acme.app;\n\nimport com.acme.util.Strings;\n\nclass Main {}\n");
+    const std::vector<ned::editor::importfix::MovedFile> moved{
+        {util / "Strings.java", project.root / "src/main/java/com/acme/text/Strings.java"}};
+
+    CHECK(FixedText(moved, util / "Strings.java", project.root / "src/main/java/com/acme/text/Strings.java") ==
+          "package com.acme.text;\n\nimport com.acme.util.Helper;\n\npublic class Strings {\n    Helper h;\n}\n");
+    CHECK(FixedText(moved, util / "Helper.java") ==
+          "package com.acme.util;\n\nimport com.acme.text.Strings;\n\nclass Helper {\n    Strings s;\n}\n");
+    CHECK(FixedText(moved, util / "Unrelated.java") == Read(util / "Unrelated.java"));
+    CHECK(FixedText(moved, project.root / "src/main/java/com/acme/app/Main.java") ==
+          "package com.acme.app;\n\nimport com.acme.text.Strings;\n\nclass Main {}\n");
+
+    // Kotlin doesn't tie a package to its directory; one that doesn't match is left alone.
+    Write(project.root / "src/main/kotlin/x/Tool.kt", "package com.acme.tools\n\nclass Tool\n");
+    const std::vector<ned::editor::importfix::MovedFile> kotlin{
+        {project.root / "src/main/kotlin/x/Tool.kt", project.root / "src/main/kotlin/y/Tool.kt"}};
+    CHECK(FixedText(kotlin, project.root / "src/main/kotlin/x/Tool.kt") == "package com.acme.tools\n\nclass Tool\n");
 }

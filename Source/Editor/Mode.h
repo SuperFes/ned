@@ -312,6 +312,9 @@ struct ImportTarget {
     int         relativeLevel    = 0;
     bool        isNamespacePath  = false;
     bool        isModDeclaration = false;
+    // The file's own package declaration (@import.package), which a move
+    // rewrites; never something go-to-file opens.
+    bool        isPackageDeclaration = false;
     std::size_t targetStartByte  = 0;
     std::size_t targetEndByte    = 0;
 };

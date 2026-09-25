@@ -8,3 +8,6 @@
   (scoped_identifier scope: (_) @import.module)
   (:match? @import.statement "^import\\s+static\\s")
   (:not-match? @import.statement "\\*")) @import.statement
+
+#; The file's own package, which a move rewrites.
+(package_declaration [(scoped_identifier) (identifier)] @import.package) @import.statement

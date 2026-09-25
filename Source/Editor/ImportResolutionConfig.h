@@ -69,6 +69,9 @@ struct ImportResolutionConfig {
     // nearest go.mod's module, a required module or the standard library,
     // and nowhere else.
     bool goModules = false;
+    // How an import is written, `{}` standing for the module path
+    // ("import {};"): what a move inserts where a file newly needs one.
+    std::string importStatement;
     // Odin's `collection:path` imports (Editor/OdinCollections.h).
     bool odinCollections = false;
     // An import names a directory, and go-to-file opens the file that stands

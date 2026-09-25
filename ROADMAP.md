@@ -105,11 +105,6 @@ What each package ships is the generated `Docs/LanguageMatrix.md`; the query cap
 and `language.janet` keys behind its columns are in `Docs/LanguageAuthoring.md`. What's
 below is behaviour that is wrong or missing today, verified with `ned --format` probes.
 
-- [ ] **Imports: what is still unmodelled.**
-  - [ ] **JVM moves are half a refactor.** A moved Java/Kotlin/Scala/Groovy class's
-        importers are rewritten; its own `package` line and its same-package users,
-        which import nothing, are not. Scala reads only a plain `import a.b.C`, not
-        selectors or renames.
 **Quick-fix gutter marker**
 
 - [ ] The marker only ever names a **diagnostic-attached** quick fix, because an
@@ -1405,6 +1400,10 @@ these accumulate detail in place.
       Bazel labels, VHDL libraries. Each needs a project-wide index from module name to
       file rather than a specifier-to-path rule. Justified by a language whose users
       rename files often enough to want the fixup.
+- [ ] **Scala selector and rename imports.** `import a.b.{C, D}` and `import a.b.{C => D}`
+      aren't read: the path is sibling identifiers rather than one node, so each
+      selector would need its own composed target. Justified when Scala go-to-file or
+      move fixups are missed through them.
 - [ ] **Import source roots read from the build.** Cabal's `hs-source-dirs`,
       `elm.json`'s `source-directories`, Maven/Gradle source sets and rebar's include
       dirs are approximated by the bundled defaults and a project's

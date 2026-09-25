@@ -291,7 +291,11 @@ through the nearest `ols.json`'s collections, then the toolchain's own under
 project's
 `importResolution.<language>.sourceRoots` replaces the roots. A host language with
 `:injected-imports` (Svelte, Vue, Astro, HTML) also reads its embedded scripts'
-imports, resolved with the host's own `:import-resolution`. The same resolution drives
+imports, resolved with the host's own `:import-resolution`. `@import.package` marks
+a file's own package declaration (Java, Kotlin, Groovy, Scala): when a move takes the
+file to another directory under the same source root, its package is rewritten, and
+`:import-statement` (`"import {};"`) is how the imports it and its old package's other
+files then need are written. The same resolution drives
 go-to-file and the fixups when a file is renamed or moved.
 
 ### Formatting

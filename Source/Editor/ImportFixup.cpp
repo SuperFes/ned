@@ -389,6 +389,102 @@ namespace {
         return std::nullopt;
     }
 
+    // Whether `word` appears in text as a whole identifier.
+    bool MentionsWord(std::string_view text, std::string_view word) {
+        const auto identifier = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+        for (std::size_t at = text.find(word); at != std::string_view::npos; at = text.find(word, at + 1)) {
+            const bool startsWord = at == 0 || !identifier(text[at - 1]);
+            const bool endsWord   = at + word.size() >= text.size() || !identifier(text[at + word.size()]);
+            if (startsWord && endsWord) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // A file whose package declaration names its directory (Java's rule)
+    // moving to another directory under the same source root.
+    struct PackageMove {
+        std::filesystem::path oldDirectory;
+        std::filesystem::path newDirectory;
+        std::string           stem;
+        std::string           oldPackage;
+        std::string           newPackage;
+    };
+
+    // The source root a package declaration implies: its directory minus the
+    // package's own steps. nullopt when the package doesn't name its
+    // directory, which Kotlin allows.
+    std::optional<std::filesystem::path> PackageRoot(std::string_view oldPackage, const std::filesystem::path& oldDirectory) {
+        std::vector<std::string> packageParts;
+        for (std::size_t start = 0;;) {
+            const std::size_t dot = oldPackage.find('.', start);
+            packageParts.emplace_back(oldPackage.substr(start, dot == std::string_view::npos ? dot : dot - start));
+            if (dot == std::string_view::npos) {
+                break;
+            }
+            start = dot + 1;
+        }
+        std::filesystem::path root = oldDirectory.lexically_normal();
+        for (auto part = packageParts.rbegin(); part != packageParts.rend(); ++part) {
+            if (root.filename() != *part) {
+                return std::nullopt;
+            }
+            root = root.parent_path();
+        }
+        return root;
+    }
+
+    // The package newDirectory stands for under root; nullopt outside it.
+    std::optional<std::string> PackageUnder(const std::filesystem::path& root, const std::filesystem::path& newDirectory) {
+        const std::vector<std::string> parts = Components(RelativeBetween(newDirectory, root));
+        if (parts.empty() || parts.front() == "..") {
+            return std::nullopt;
+        }
+        std::string joined;
+        for (const std::string& part : parts) {
+            joined += joined.empty() ? part : "." + part;
+        }
+        return joined;
+    }
+
+    // Where a new import goes: after the last one, else after the package
+    // declaration.
+    std::optional<SpecEdit> ImportInsertion(const std::vector<ImportTarget>& targets, const std::set<std::string>& modules,
+                                            const ImportResolutionConfig& resolution) {
+        const std::size_t placeholder = resolution.importStatement.find("{}");
+        if (modules.empty() || placeholder == std::string::npos) {
+            return std::nullopt;
+        }
+        std::optional<std::size_t> lastImport;
+        std::optional<std::size_t> package;
+        for (const ImportTarget& target : targets) {
+            if (target.isPackageDeclaration) {
+                package = target.endByte;
+            }
+            else if (!lastImport || target.endByte > *lastImport) {
+                lastImport = target.endByte;
+            }
+        }
+        if (!lastImport && !package) {
+            return std::nullopt;
+        }
+        std::string text = lastImport ? "" : "\n";
+        for (const std::string& module : modules) {
+            text += "\n" + resolution.importStatement.substr(0, placeholder) + module +
+                    resolution.importStatement.substr(placeholder + 2);
+        }
+        const std::size_t at = lastImport ? *lastImport : *package;
+        return SpecEdit{at, at, std::move(text)};
+    }
+
+    // Whether the file already imports `module` (or it by its package's wildcard).
+    bool Imports(const std::vector<ImportTarget>& targets, std::string_view module) {
+        return std::any_of(targets.begin(), targets.end(), [&](const ImportTarget& target) {
+            return !target.isPackageDeclaration && target.target == module;
+        });
+    }
+
     // Whether a package directory went with its file: every source file in
     // it moved to one directory. A directory already gone (a move ned only
     // hears about afterwards) has nothing left behind to check.
@@ -457,6 +553,48 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
         }
     }
 
+    std::map<std::filesystem::path, PackageMove> packageMoves; // by the moved file's canonical old path
+    for (const MovedFile& move : moved) {
+        std::optional<std::string> text = readText(move.from);
+        if (!text) {
+            text = readText(move.to);
+        }
+        if (!text) {
+            continue;
+        }
+        const Mode& mode = modes.For(move.from);
+        if (!mode.importTargets) {
+            continue;
+        }
+        std::vector<ImportTarget> targets;
+        try {
+            targets = mode.importTargets(*text);
+        }
+        catch (const std::exception&) {
+            continue;
+        }
+        const auto package = std::find_if(targets.begin(), targets.end(),
+                                          [](const ImportTarget& target) { return target.isPackageDeclaration; });
+        if (package == targets.end()) {
+            continue;
+        }
+        const std::filesystem::path                oldDirectory = Canonical(move.from).parent_path();
+        const std::filesystem::path                newDirectory = move.to.lexically_normal().parent_path();
+        const std::optional<std::filesystem::path> root         = PackageRoot(package->target, oldDirectory);
+        if (!root) {
+            continue;
+        }
+        const std::optional<std::string> newPackage = PackageUnder(*root, newDirectory);
+        if (!newPackage) {
+            ++plan.declined; // moved out of the source root its package counts from
+            continue;
+        }
+        if (*newPackage != package->target) {
+            packageMoves[Canonical(move.from)] =
+                PackageMove{oldDirectory, newDirectory, move.from.stem().string(), package->target, *newPackage};
+        }
+    }
+
     for (const std::filesystem::path& candidate : scanList) {
         const auto                  movedIt       = moves.find(Canonical(candidate));
         const bool                  importerMoved = movedIt != moves.end();
@@ -500,7 +638,8 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
         fixup.file                              = newCandidate;
         fixup.text                              = *text;
         for (const ImportTarget& target : targets) {
-            if (target.targetEndByte > text->size() || target.targetEndByte < target.targetStartByte) {
+            if (target.targetEndByte > text->size() || target.targetEndByte < target.targetStartByte ||
+                target.isPackageDeclaration) {
                 continue;
             }
             const link::DetectedLink      detected = ImportLinkFor(target, resolution);
@@ -564,6 +703,55 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
                 continue; // already says the right thing
             }
             fixup.edits.push_back(SpecEdit{target.targetStartByte, target.targetEndByte, newText});
+        }
+
+        // A package move: the moved file's own declaration, the imports it
+        // now needs for what it used from its old package, and the imports
+        // that package's other files now need for it.
+        std::set<std::string> newImports;
+        if (const auto own = packageMoves.find(Canonical(candidate)); own != packageMoves.end()) {
+            const PackageMove& move    = own->second;
+            const auto         package = std::find_if(targets.begin(), targets.end(),
+                                                      [](const ImportTarget& target) { return target.isPackageDeclaration; });
+            if (package != targets.end()) {
+                fixup.edits.push_back(SpecEdit{package->targetStartByte, package->targetEndByte, move.newPackage});
+            }
+            std::error_code ec;
+            for (const auto& entry : std::filesystem::directory_iterator(move.oldDirectory, ec)) {
+                const std::filesystem::path& sibling     = entry.path();
+                const std::string            stem        = sibling.stem().string();
+                const std::string            extension   = sibling.extension().string();
+                const bool                   source      = std::ranges::any_of(resolution.extensions, [&](const std::string& candidateExtension) {
+                    return extension == "." + candidateExtension;
+                });
+                const auto                   siblingMove = moves.find(Canonical(sibling));
+                const bool                   staysBehind = siblingMove == moves.end();
+                if (!source || stem == move.stem || !staysBehind || !MentionsWord(*text, stem)) {
+                    continue;
+                }
+                if (const std::string module = move.oldPackage + "." + stem; !Imports(targets, module)) {
+                    newImports.insert(module);
+                }
+            }
+        }
+        else if (!importerMoved) {
+            const auto package = std::find_if(targets.begin(), targets.end(),
+                                              [](const ImportTarget& target) { return target.isPackageDeclaration; });
+            for (const auto& [from, move] : packageMoves) {
+                if (package == targets.end() || package->target != move.oldPackage ||
+                    Canonical(candidate).parent_path() != move.oldDirectory || !MentionsWord(*text, move.stem)) {
+                    continue;
+                }
+                if (const std::string module = move.newPackage + "." + move.stem; !Imports(targets, module)) {
+                    newImports.insert(module);
+                }
+            }
+        }
+        if (const std::optional<SpecEdit> insertion = ImportInsertion(targets, newImports, resolution)) {
+            fixup.edits.push_back(*insertion);
+        }
+        else if (!newImports.empty()) {
+            ++plan.declined;
         }
 
         if (!fixup.edits.empty()) {

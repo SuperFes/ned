@@ -508,7 +508,8 @@ std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureN
                                       Module,
                                       Relative,
                                       Namespace,
-                                      ModDeclaration };
+                                      ModDeclaration,
+                                      Package };
 
         struct ImportCapture {
             std::size_t      targetStart = 0;
@@ -561,6 +562,11 @@ std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureN
                     // path.
                     captures.targets.push_back({capture.startByte, capture.endByte, ImportTargetKind::Namespace});
                 }
+                else if (capture.name == "import.package") {
+                    // A file's own package declaration (Java's `package a.b;`):
+                    // not an import, but what a move rewrites.
+                    captures.targets.push_back({capture.startByte, capture.endByte, ImportTargetKind::Package});
+                }
                 else if (capture.name == "import.moddecl") {
                     // resolver-gaps follow-up: Rust's own bodyless "mod foo;"
                     // declaration -- resolved via a baseDirectory adjustment
@@ -612,6 +618,7 @@ std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureN
                 }
                 case ImportTargetKind::Namespace:
                 case ImportTargetKind::ModDeclaration:
+                case ImportTargetKind::Package:
                     break; // kept as raw captured text
                 case ImportTargetKind::Relative:
                     // "from . import x" / "from ..foo import x" -- the captured
@@ -629,15 +636,16 @@ std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureN
                     break;
             }
             const bool isModulePath = capture.kind == ImportTargetKind::Module || capture.kind == ImportTargetKind::Relative;
-            return ImportTarget{.target           = std::move(text),
-                                .isModulePath     = isModulePath,
-                                .startByte        = rangeStart,
-                                .endByte          = rangeEnd,
-                                .relativeLevel    = relativeLevel,
-                                .isNamespacePath  = capture.kind == ImportTargetKind::Namespace,
-                                .isModDeclaration = capture.kind == ImportTargetKind::ModDeclaration,
-                                .targetStartByte  = targetStart,
-                                .targetEndByte    = targetEnd};
+            return ImportTarget{.target               = std::move(text),
+                                .isModulePath         = isModulePath,
+                                .startByte            = rangeStart,
+                                .endByte              = rangeEnd,
+                                .relativeLevel        = relativeLevel,
+                                .isNamespacePath      = capture.kind == ImportTargetKind::Namespace,
+                                .isModDeclaration     = capture.kind == ImportTargetKind::ModDeclaration,
+                                .isPackageDeclaration = capture.kind == ImportTargetKind::Package,
+                                .targetStartByte      = targetStart,
+                                .targetEndByte        = targetEnd};
         }
 
     } // namespace
@@ -1678,6 +1686,9 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             std::size_t          bestEnd   = 0;
             bool                 bestAtPoint = false;
             for (const ImportCapture& target : captures.targets) {
+                if (target.kind == ImportTargetKind::Package) {
+                    continue; // names this file, not one to open
+                }
                 const auto [rangeStart, rangeEnd] = ImportStatementRangeFor(captures, target);
                 if (rangeStart > point || point > rangeEnd) {
                     continue;

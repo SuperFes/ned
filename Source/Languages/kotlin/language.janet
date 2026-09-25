@@ -13,5 +13,5 @@
  :lsp-root-markers ["pom.xml" "build.gradle" "build.gradle.kts" "settings.gradle" "settings.gradle.kts"]
  # A class parameter list also takes plain function parameters.
  :signature-template "class __ned_sig({})"
- :import-resolution {:extensions ["kt" "kts" "java"] :source-roots ["src/main/kotlin" "src/test/kotlin" "src/commonMain/kotlin" "src/jvmMain/kotlin" "src/main/java" "src/test/java" "src"]}
+ :import-resolution {:extensions ["kt" "kts" "java"] :source-roots ["src/main/kotlin" "src/test/kotlin" "src/commonMain/kotlin" "src/jvmMain/kotlin" "src/main/java" "src/test/java" "src"] :import-statement "import {}"}
 }

@@ -5,3 +5,6 @@
   path: (identifier) .
   (:match? @import.module "^import [^ ]")
   (:offset! @import.module 0 7 0 0)) @import.module
+
+#; The file's own package, which a move rewrites.
+(package_clause (package_identifier) @import.package) @import.statement
