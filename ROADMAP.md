@@ -151,8 +151,6 @@ below is behaviour that is wrong or missing today, verified with `ned --format` 
         which import nothing, are not. Scala reads only a plain `import a.b.C`, not
         selectors or renames.
   - [ ] **`~` in ssh_config and gitconfig includes** isn't expanded.
-- [ ] **Test discovery** has no query for Janet, bats files (their own grammar), Fennel,
-      MATLAB's class-based tests, SRFI-64 or SQL (pgTAP).
 - [ ] **Format queries** (`fmt`): Swift, whose if/else bodies are bare `statements`
       between braces the whole `if` node owns, so each pair needs anchoring rather than
       a body capture; Dart's functions and methods, whose signature and body are sibling
@@ -1448,8 +1446,11 @@ these accumulate detail in place.
       (`${CMAKE_CURRENT_LIST_DIR}/x.cmake`), globs (Caddy, nginx, Apache), Just's bare
       `mod name`, Nim's `pkg/[a, b]` groups. Justified when go-to-file on one of them is
       missed in practice.
-- [ ] **D `unittest` blocks in test discovery.** They're unnamed, and no runner filters
-      on a name. Justified if a D test runner with per-test filtering becomes common.
+- [ ] **Tests with no name to run by.** D's `unittest` blocks are unnamed and no runner
+      filters on a name; MATLAB's script-based `%%` sections run by a name MATLAB derives
+      from the title in an undocumented way; judge's (Janet) top-level `test` forms run
+      only by position. Justified if a D runner with per-test filtering becomes common,
+      MATLAB documents the mapping, or someone wants run-at-point by `file:line`.
 - [ ] **Native formatter parity with the canonical formatters.** The bundled styles
       (PSR-12, gofmt, rustfmt, Kotlin, .NET, Prettier, `dart format`, scalafmt,
       `forge fmt`, dfmt) stop short of gofmt's field/comment alignment and

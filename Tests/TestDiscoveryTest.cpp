@@ -570,6 +570,64 @@ TEST_CASE("Scripting, functional and systems languages discover their frameworks
                                              "  }\n"
                                              "}\n") == V{"calc", "add", "sums"});
 
+    CHECK(DiscoveredNames("janet-mode", "(deftest one (is true))\n"
+                                        "(deftest \"two\" (test 1 1))\n"
+                                        "(deftest: stateful \"three\" [c] 1)\n"
+                                        "(deftest (is true))\n"
+                                        "(test (+ 1 2) 3)\n") == V{"one", "two", "three"});
+
+    CHECK(DiscoveredNames("fennel-mode", "(deftest adds (testing \"x\" 1))\n"
+                                         "(describe \"stack\" (fn [] (it \"pushes\" (fn [] 1))))\n"
+                                         "(fn test-sub [] 1)\n"
+                                         "(fn helper [] 1)\n"
+                                         "{: test-sub}\n") == V{"adds", "stack", "pushes", "test-sub"});
+
+    CHECK(DiscoveredNames("scheme-mode", "(test-begin \"calc\")\n"
+                                         "(test-assert \"adds\" (= 2 (+ 1 1)))\n"
+                                         "(test-assert (= 2 2))\n"
+                                         "(test-equal \"sums\" 2 (+ 1 1))\n"
+                                         "(test-equal \"2\" (number->string 2))\n"
+                                         "(test-approximate \"near\" 1.0 1.01 0.1)\n"
+                                         "(test-group \"nested\" (test-error \"fails\" #t (car '())))\n"
+                                         "(test-end \"calc\")\n") ==
+          V{"calc", "adds", "sums", "near", "nested", "fails"});
+
+    CHECK(DiscoveredNames("matlab-mode", "classdef CalcTest < matlab.unittest.TestCase\n"
+                                         "    methods (Test, TestTags = {'Unit'})\n"
+                                         "        function adds(testCase)\n"
+                                         "        end\n"
+                                         "    end\n"
+                                         "    methods (TestMethodSetup)\n"
+                                         "        function setup(testCase)\n"
+                                         "        end\n"
+                                         "    end\n"
+                                         "end\n") == V{"adds"});
+
+    CHECK(DiscoveredNames("matlab-mode", "function tests = calcTest\n"
+                                         "tests = functiontests(localfunctions);\n"
+                                         "end\n"
+                                         "function testAdd(testCase)\n"
+                                         "end\n"
+                                         "function subTest(testCase)\n"
+                                         "end\n"
+                                         "function setup(testCase)\n"
+                                         "end\n") == V{"testAdd", "subTest"});
+
+    CHECK(DiscoveredNames("matlab-mode", "function r = latest(x)\n"
+                                         "r = x;\n"
+                                         "end\n"
+                                         "function y = contest(x)\n"
+                                         "y = x;\n"
+                                         "end\n")
+              .empty());
+
+    CHECK(DiscoveredNames("sql-mode", "CREATE OR REPLACE FUNCTION test_user() RETURNS SETOF TEXT AS $$\n"
+                                      "  SELECT is(1, 1, 'one');\n"
+                                      "$$ LANGUAGE sql;\n"
+                                      "CREATE FUNCTION tap.Test_Nick() RETURNS SETOF TEXT AS $$ SELECT 1; $$ LANGUAGE sql;\n"
+                                      "CREATE FUNCTION setup_users() RETURNS SETOF TEXT AS $$ SELECT 1; $$ LANGUAGE sql;\n") ==
+          V{"test_user", "Test_Nick"});
+
     CHECK(DiscoveredNames("bash-mode", "setup() { x=1; }\n"
                                        "@test \"adds numbers\" {\n"
                                        "  run echo 1\n"
