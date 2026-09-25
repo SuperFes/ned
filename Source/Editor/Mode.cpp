@@ -2651,8 +2651,11 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         break;
                     }
                 }
+                // By start alone: a definition paired from sibling nodes
+                // (Dart's signature and body) spans more than the one node
+                // a "." anchor can name.
                 for (const auto& [name, start, end] : firstMarkers) {
-                    if (capture.name == name && capture.startByte == start && capture.endByte == end) {
+                    if (capture.name == name && capture.startByte == start) {
                         capture.isFirst = true;
                         break;
                     }

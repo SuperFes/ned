@@ -5,4 +5,7 @@
          "brace.class"     {:placement :same-line}
          "brace.control"   {:placement :same-line}
          "control.keyword" {:before false}}
- :space {"control.parens" {:before true :within false}}}
+ :space {"control.parens" {:before true :within false}}
+ # dart format keeps at most one blank line.
+ :blank {"def.toplevel" {:max-before 1}
+         "def.method"   {:max-before 1}}}

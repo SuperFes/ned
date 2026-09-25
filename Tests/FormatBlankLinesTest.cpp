@@ -8,6 +8,7 @@
 #include "Editor/FormatBlankLines.h"
 #include "Editor/FormatRules.h"
 #include "Editor/Mode.h"
+#include "Editor/ModeOverrides.h"
 #include "Text/Buffer.h"
 
 using ned::editor::ApplyFormatTextEdits;
@@ -1054,4 +1055,58 @@ TEST_CASE("End to end: blank lines applied to a real janet-mode buffer", "[Forma
     ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "janet", mode.formatCaptures(buffer.Text())));
 
     REQUIRE(buffer.Text() == "(defn foo [] 1)\n\n(defn bar [] 2)\n");
+}
+
+TEST_CASE("dart-mode's format.janet pairs a signature with its body into one definition", "[FormatBlankLines]") {
+    const Mode        mode     = *ned::editor::ModeByName("dart-mode");
+    const std::string source   = "int add(int a) {\n"
+                                 "  return a;\n"
+                                 "}\n"
+                                 "int get x => 1;\n"
+                                 "class A {\n"
+                                 "  void m() {}\n"
+                                 "  int get y => 2;\n"
+                                 "}\n";
+    auto              captures = mode.formatCaptures(source);
+    std::ranges::sort(captures, {}, &FormatCapture::startByte);
+
+    const auto toplevel = CapturesNamed(captures, "def.toplevel");
+    REQUIRE(toplevel.size() == 3);
+    CHECK(source.substr(toplevel[0].startByte, toplevel[0].endByte - toplevel[0].startByte) ==
+          "int add(int a) {\n  return a;\n}");
+    CHECK(toplevel[0].isFirst);
+    CHECK_FALSE(toplevel[1].isFirst);
+
+    const auto methods = CapturesNamed(captures, "def.method");
+    REQUIRE(methods.size() == 2);
+    CHECK(source.substr(methods[0].startByte, methods[0].endByte - methods[0].startByte) == "void m() {}");
+    CHECK(methods[0].isFirst);
+    CHECK_FALSE(methods[1].isFirst);
+}
+
+TEST_CASE("End to end: blank lines applied to a real dart-mode buffer", "[FormatBlankLines]") {
+    const FormatRulesGuard guard;
+    SetBlankMinBefore("def.toplevel", 1);
+    SetBlankMinBefore("def.method", 1);
+
+    const Mode mode = *ned::editor::ModeByName("dart-mode");
+    Buffer     buffer("test.dart");
+    buffer.InsertAtPoint("int a() => 1;\n"
+                         "int b() => 2;\n"
+                         "class C {\n"
+                         "  void m() {}\n"
+                         "  void n() {}\n"
+                         "}\n");
+
+    ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "dart", mode.formatCaptures(buffer.Text())));
+
+    REQUIRE(buffer.Text() == "int a() => 1;\n"
+                             "\n"
+                             "int b() => 2;\n"
+                             "\n"
+                             "class C {\n"
+                             "  void m() {}\n"
+                             "\n"
+                             "  void n() {}\n"
+                             "}\n");
 }

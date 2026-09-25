@@ -1,7 +1,6 @@
 # Format captures (see Docs/FormattingRules.md for each name's pass). A
 # function's or method's signature and body are siblings, not one node, so
-# no def.toplevel/def.method is named for them: a blank-line rule needs the
-# whole definition's span.
+# its definition is paired from the two (.open/.close).
 
 (function_body (block) @brace.function)
 (function_body (block . (_) .) @brace.function.simple)
@@ -44,4 +43,14 @@
 (do_statement "while" @control.keyword)
 
 (program [(class_definition) (mixin_declaration) (extension_declaration) (enum_declaration)] @def.toplevel)
-(program . [(class_definition) (mixin_declaration) (extension_declaration) (enum_declaration)] @def.toplevel.first)
+(program
+  [(function_signature) (getter_signature) (setter_signature)] @def.toplevel.open
+  .
+  (function_body) @def.toplevel.close)
+(program
+  .
+  [(class_definition) (mixin_declaration) (extension_declaration) (enum_declaration)
+   (function_signature) (getter_signature) (setter_signature)] @def.toplevel.first)
+
+(class_body (method_signature) @def.method.open . (function_body) @def.method.close)
+(class_body . (method_signature) @def.method.first)

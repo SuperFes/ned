@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <vector>
@@ -2633,4 +2634,49 @@ TEST_CASE("End to end: a NextLine :placement applies to dart-mode and is refused
     CHECK(format("odin-mode", "odin", "test.odin", odin) == odin);
 
     SetBracePlacement("brace.function", std::nullopt);
+}
+
+TEST_CASE("swift-mode's format.janet pairs each control body's own braces", "[FormatBracePlacement]") {
+    const Mode        mode    = *ned::editor::ModeByName("swift-mode");
+    const std::string source  = "func f(a: Int) {\n"
+                                "  if a > 0 {\n"
+                                "    g()\n"
+                                "  } else {\n"
+                                "  }\n"
+                                "  guard a < 9 else { return }\n"
+                                "}\n";
+    auto              control = CapturesNamed(mode.formatCaptures(source), "brace.control");
+    std::ranges::sort(control, {}, &FormatCapture::startByte);
+    std::vector<std::string> spans;
+    for (const FormatCapture& capture : control) {
+        spans.push_back(source.substr(capture.startByte, capture.endByte - capture.startByte));
+    }
+    CHECK(spans == std::vector<std::string>{"{\n    g()\n  }", "{\n  }", "{ return }"});
+    CHECK(CapturesNamed(mode.formatCaptures(source), "brace.function").size() == 1);
+}
+
+TEST_CASE("End to end: an Allman :placement applies to swift-mode's if/else", "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.control", BracePlacement::NextLine);
+
+    const Mode mode = *ned::editor::ModeByName("swift-mode");
+    Buffer     buffer("test.swift");
+    buffer.InsertAtPoint("func f() {\n"
+                         "    if a {\n"
+                         "        g()\n"
+                         "    } else {\n"
+                         "        h()\n"
+                         "    }\n"
+                         "}\n");
+    ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), "swift", mode.formatCaptures(buffer.Text())));
+    CHECK(buffer.Text() == "func f() {\n"
+                           "    if a\n"
+                           "    {\n"
+                           "        g()\n"
+                           "    } else\n"
+                           "    {\n"
+                           "        h()\n"
+                           "    }\n"
+                           "}\n");
+    SetBracePlacement("brace.control", std::nullopt);
 }
