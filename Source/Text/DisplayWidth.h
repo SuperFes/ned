@@ -10,7 +10,9 @@
 // glyph). A cluster that is invisible or unsafe to send to a terminal --
 // a C0/C1 control, a zero-width format character (bidi overrides, ZWSP, a
 // BOM), a combining mark with no base -- is drawn as a hex placeholder
-// ("◁200B▷") instead, and measures as that placeholder's width.
+// ("◁200B▷") instead, and measures as that placeholder's width. A byte that
+// isn't part of well-formed UTF-8 is a glyph of its own, drawn as its value
+// ("◁\xE9▷"), so a file in another encoding shows what it actually holds.
 //
 // Measurement needs a UTF-8 LC_CTYPE. Under any other locale Notcurses
 // cannot measure (or print) non-ASCII text, and every printable cluster
@@ -32,7 +34,8 @@ struct Glyph {
     std::size_t byteLength  = 0;     // the whole cluster
     char32_t    codepoint   = 0;     // its first codepoint
     int         columns     = 1;     // cells it occupies; a tab reports 1 -- see GlyphColumns
-    bool        placeholder = false; // drawn as PlaceholderText(codepoint), not as itself
+    bool        placeholder = false; // drawn as PlaceholderText(glyph), not as itself
+    bool        rawByte     = false; // a malformed byte; codepoint is the byte's value
 };
 
 // The grapheme cluster starting at offset, never extending past end. A tab
@@ -53,13 +56,14 @@ struct Glyph {
 [[nodiscard]] int PlaceholderDigits(char32_t codepoint);
 // The placeholder's text, "◁XX▷", and its width (digits plus the brackets).
 [[nodiscard]] std::string PlaceholderText(char32_t codepoint);
+// A placeholder glyph's text: its codepoint's, or "◁\xE9▷" for a raw byte.
+[[nodiscard]] std::string PlaceholderText(const Glyph& glyph);
 [[nodiscard]] inline int  PlaceholderColumns(char32_t codepoint) {
     return PlaceholderDigits(codepoint) + 2;
 }
 
 // What a glyph looks like in its cell: the cluster's codepoints re-encoded
-// (so a malformed byte arrives as U+FFFD, never as itself), or the
-// placeholder.
+// or the placeholder.
 [[nodiscard]] std::string GlyphText(const ITextStorage& content, std::size_t offset, const Glyph& glyph);
 [[nodiscard]] std::string GlyphText(std::string_view text, std::size_t offset, const Glyph& glyph);
 

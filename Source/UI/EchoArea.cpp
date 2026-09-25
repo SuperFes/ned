@@ -135,7 +135,7 @@ void EchoArea::Paint(Canvas c) {
         }
         // A control character (a newline inside a message, say) shows as
         // its placeholder, a cell per character; anything else is one glyph.
-        const std::string glyphText = glyph.placeholder ? text::PlaceholderText(glyph.codepoint)
+        const std::string glyphText = glyph.placeholder ? text::PlaceholderText(glyph)
                                                         : text::GlyphText(message_, i, glyph);
         const int         columns   = glyph.placeholder ? text::StringColumns(glyphText) : glyph.columns;
         if (x + columns > c.size().width) {

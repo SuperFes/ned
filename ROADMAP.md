@@ -140,10 +140,11 @@ and code reading. Highest stakes first.
         decode only what a BOM announces, not a per-file `.editorconfig` statement. A
         charset stated in `.editorconfig` for files opened before `init.janet` disables
         `.editorconfig` has already decoded them.
-  - [ ] **Show bytes that aren't UTF-8 as themselves.** They round-trip untouched but
-        paint as U+FFFD; showing each as its value (Emacs's `\351`) would say what's
-        actually there. `VisualColumn`, `ByteOffsetForColumnInLine` and `SkipToColumn`
-        all have to agree on the wider cell.
+  - [ ] **Overlong and surrogate sequences read as codepoints.** A byte that isn't
+        UTF-8 paints as its value (`◁\xE9▷`, `Text/DisplayWidth.h`), but the decoders
+        accept an overlong `C0 80` or a CESU-8 surrogate as the codepoint it spells,
+        so they show as `◁00▷`/`◁D800▷`, and cursor motion steps over them whole.
+        Rejecting them belongs in `Rope`/`PieceTable::CodepointAt`, not the painter.
   - [ ] **Mixed tabs and spaces, if it has to exist:** Emacs's `indent-tabs-mode` with
         an indent width below the tab width (GNU C: 2-column levels, 8-column tabs, so a
         level-3 line is one tab and two spaces). The worst of both worlds, and supported

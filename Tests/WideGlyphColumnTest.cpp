@@ -118,6 +118,16 @@ TEST_CASE("A control or zero-width character is as wide as its placeholder", "[W
     CHECK(VisualColumn(content, 0, 4, 1000) == 1 + 6);
 }
 
+TEST_CASE("A byte that isn't UTF-8 is as wide as its placeholder in every column walk", "[WideGlyph]") {
+    const RopeStorage content{Rope("a\xe9" "b")};
+    CHECK(VisualColumn(content, 0, 2, 1000) == 1 + 6);
+    CHECK(ByteOffsetForColumnInLine(content, 0, 3, 4, 4, {}) == 1);
+    CHECK(ByteOffsetForColumnInLine(content, 0, 3, 7, 4, {}) == 2);
+    const auto straddle = SkipToColumn(content, 0, 3, 3);
+    CHECK(straddle.offset == 2);
+    CHECK(straddle.columns == 7);
+}
+
 TEST_CASE("Up and down keep the visual column across wide glyphs", "[WideGlyph]") {
     ned::text::Buffer buffer{"scratch"};
     buffer.InsertAtPoint("漢字x\nabcdef\n");
@@ -165,6 +175,25 @@ TEST_CASE("Paint keeps a combining sequence in one cell and shows invisible char
     view.Paint(ned::ui::Canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 4}));
     CHECK(screen.PixelAt(gutter, 0).character == "é");
     CHECK(RowText(screen, gutter + 1, 0, 8) == "x◁200B▷y");
+}
+
+TEST_CASE("Paint shows a byte that isn't UTF-8 as its value", "[WideGlyph][BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("caf\xe9 x\n");
+    fixture.buffer.SetPoint(0);
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 4});
+    REQUIRE(view.CursorPosition().has_value());
+    const int gutter = view.CursorPosition()->x;
+
+    ned::ui::Screen screen(30, 5);
+    view.Paint(ned::ui::Canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 4}));
+    CHECK(RowText(screen, gutter, 0, 11) == "caf◁\\xE9▷ x");
+    CHECK(screen.PixelAt(gutter + 3, 0).foreground_color == fixture.theme.binaryForeground);
+
+    fixture.buffer.SetPoint(4);
+    REQUIRE(view.CursorPosition().has_value());
+    CHECK(view.CursorPosition()->x == gutter + 3 + 6);
 }
 
 TEST_CASE("A wide glyph with no room at the row's end gives way to the truncation indicator",

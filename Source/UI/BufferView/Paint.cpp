@@ -1566,7 +1566,8 @@ void BufferView::EmitGlyphCells(Canvas& c, int row, int& col, const text::ITextS
         // Same reasoning as the tab case above: a control character (some
         // of them genuine terminal control codes -- a bare ESC is the
         // sharpest example) or a zero-width one (a bidi override, a ZWSP)
-        // must never reach the terminal as itself. Rendered as a "◁XX▷"
+        // must never reach the terminal as itself, and neither may a byte
+        // that isn't UTF-8. Rendered as a "◁XX▷" (or "◁\xE9▷")
         // hex placeholder instead -- entirely safe, printable characters --
         // with a dedicated foreground so it reads as "this is escaped data",
         // not literal text; whatever background isearch/selection already
@@ -1574,7 +1575,7 @@ void BufferView::EmitGlyphCells(Canvas& c, int row, int& col, const text::ITextS
         Brush binaryBrush      = brush;
         binaryBrush.foreground = theme_.binaryForeground;
         const int start        = col;
-        col += DrawText(c, col, row, text::PlaceholderText(glyph.codepoint), binaryBrush, c.size().width);
+        col += DrawText(c, col, row, text::PlaceholderText(glyph), binaryBrush, c.size().width);
         if (secondaryCaretHere && col > start) {
             c[{.x = start, .y = row}].inverted = true;
         }

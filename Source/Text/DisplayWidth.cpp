@@ -15,6 +15,7 @@ namespace {
 
     constexpr char32_t kPlaceholderOpen  = U'◁';
     constexpr char32_t kPlaceholderClose = U'▷';
+    constexpr int      kRawByteColumns   = 6; // ◁\xE9▷
 
     bool IsControl(char32_t cp) {
         return (cp < 0x20 && cp != U'\t') || (cp >= 0x7F && cp <= 0x9F);
@@ -27,6 +28,18 @@ namespace {
     Glyph PlaceholderGlyph(char32_t cp, std::size_t byteLength) {
         return Glyph{.byteLength = byteLength, .codepoint = cp, .columns = PlaceholderColumns(cp), .placeholder = true};
     }
+
+    Glyph RawByteGlyph(char32_t byte) {
+        return Glyph{.byteLength = 1, .codepoint = byte, .columns = kRawByteColumns, .placeholder = true, .rawByte = true};
+    }
+
+    // One decoded step: a codepoint, or a byte that isn't part of well-formed
+    // UTF-8 (codepoint holds the byte's value).
+    struct Decoded {
+        char32_t    codepoint = 0;
+        std::size_t length    = 0;
+        bool        raw       = false;
+    };
 
     // Measures an already-segmented, well-formed cluster.
     Glyph Measure(const std::string& cluster, char32_t first, std::size_t byteLength) {
@@ -42,65 +55,90 @@ namespace {
         return PlaceholderGlyph(first, byteLength);
     }
 
-    // The shared segmentation: `decode(offset)` yields {codepoint, byteLength}.
+    // The shared segmentation: `decode(offset)` yields a Decoded.
     template <typename Decode>
     Glyph ClusterAt(std::size_t offset, std::size_t end, Decode decode) {
-        const auto [first, firstLength] = decode(offset);
-        if (first == U'\t') {
-            return Glyph{.byteLength = firstLength, .codepoint = first, .columns = 1};
+        const Decoded first = decode(offset);
+        if (first.raw) {
+            return RawByteGlyph(first.codepoint);
         }
-        if (IsControl(first)) {
-            return PlaceholderGlyph(first, firstLength);
+        if (first.codepoint == U'\t') {
+            return Glyph{.byteLength = first.length, .codepoint = first.codepoint, .columns = 1};
+        }
+        if (IsControl(first.codepoint)) {
+            return PlaceholderGlyph(first.codepoint, first.length);
         }
 
-        std::size_t next = offset + firstLength;
-        if (IsAsciiPrintable(first)) {
+        std::size_t next = offset + first.length;
+        if (IsAsciiPrintable(first.codepoint)) {
             // ASCII is its own cluster unless something combines with it.
-            if (next >= end || decode(next).first < 0x80) {
-                return Glyph{.byteLength = firstLength, .codepoint = first, .columns = 1};
+            if (next >= end || decode(next).codepoint < 0x80) {
+                return Glyph{.byteLength = first.length, .codepoint = first.codepoint, .columns = 1};
             }
         }
 
-        std::string      cluster = EncodeCodepointUtf8(first);
-        char32_t         prev    = first;
+        std::string      cluster = EncodeCodepointUtf8(first.codepoint);
+        char32_t         prev    = first.codepoint;
         utf8proc_int32_t state   = 0;
         while (next < end) {
-            const auto [cp, length] = decode(next);
-            if (IsControl(cp) || cp == U'\t' ||
-                utf8proc_grapheme_break_stateful(static_cast<utf8proc_int32_t>(prev), static_cast<utf8proc_int32_t>(cp), &state)) {
+            const Decoded step = decode(next);
+            if (step.raw || IsControl(step.codepoint) || step.codepoint == U'\t' ||
+                utf8proc_grapheme_break_stateful(static_cast<utf8proc_int32_t>(prev),
+                                                 static_cast<utf8proc_int32_t>(step.codepoint), &state)) {
                 break;
             }
-            cluster += EncodeCodepointUtf8(cp);
-            prev = cp;
-            next += length;
+            cluster += EncodeCodepointUtf8(step.codepoint);
+            prev = step.codepoint;
+            next += step.length;
         }
-        return Measure(cluster, first, next - offset);
+        return Measure(cluster, first.codepoint, next - offset);
     }
 
     template <typename Decode>
     std::string ClusterText(std::size_t offset, const Glyph& glyph, Decode decode) {
         if (glyph.placeholder) {
-            return PlaceholderText(glyph.codepoint);
+            return PlaceholderText(glyph);
         }
         std::string text;
         for (std::size_t at = offset; at < offset + glyph.byteLength;) {
-            const auto [cp, length] = decode(at);
-            text += EncodeCodepointUtf8(cp);
-            at += length;
+            const Decoded step = decode(at);
+            text += EncodeCodepointUtf8(step.codepoint);
+            at += step.length;
         }
         return text;
     }
 
+    // The length a lead byte announces; only asked of a sequence that decoded.
+    std::size_t SequenceLength(unsigned char lead) {
+        if (lead < 0x80) {
+            return 1;
+        }
+        if ((lead & 0xE0) == 0xC0) {
+            return 2;
+        }
+        return (lead & 0xF0) == 0xE0 ? 3 : 4;
+    }
+
+    // Both decoders step over a malformed byte one byte at a time, which is
+    // how the storage already decodes it ({U+FFFD, 1}); a real U+FFFD is
+    // three bytes long.
     auto StorageDecoder(const ITextStorage& content) {
         return [&content](std::size_t at) {
             const auto decoded = content.CodepointAt(at);
-            return std::pair<char32_t, std::size_t>{decoded.codepoint, decoded.byteLength};
+            if (decoded.codepoint == 0xFFFD && decoded.byteLength == 1) {
+                return Decoded{.codepoint = static_cast<unsigned char>(content.Substring(at, 1)[0]), .length = 1, .raw = true};
+            }
+            return Decoded{.codepoint = decoded.codepoint, .length = decoded.byteLength};
         };
     }
 
     auto StringDecoder(std::string_view text) {
         return [text](std::size_t at) {
-            return std::pair<char32_t, std::size_t>{DecodeCodepointUtf8(text, at), NextCodepointBoundary(text, at) - at};
+            const char32_t cp = DecodeCodepointUtf8(text, at);
+            if (cp == 0xFFFD && text.substr(at, 3) != "\xEF\xBF\xBD") {
+                return Decoded{.codepoint = static_cast<unsigned char>(text[at]), .length = 1, .raw = true};
+            }
+            return Decoded{.codepoint = cp, .length = SequenceLength(static_cast<unsigned char>(text[at]))};
         };
     }
 
@@ -127,6 +165,19 @@ std::string PlaceholderText(char32_t codepoint) {
     for (int digit = PlaceholderDigits(codepoint) - 1; digit >= 0; --digit) {
         text += kHex[(codepoint >> (digit * 4)) & 0xF];
     }
+    text += EncodeCodepointUtf8(kPlaceholderClose);
+    return text;
+}
+
+std::string PlaceholderText(const Glyph& glyph) {
+    if (!glyph.rawByte) {
+        return PlaceholderText(glyph.codepoint);
+    }
+    static constexpr char kHex[] = "0123456789ABCDEF";
+    std::string           text   = EncodeCodepointUtf8(kPlaceholderOpen);
+    text += "\\x";
+    text += kHex[(glyph.codepoint >> 4) & 0xF];
+    text += kHex[glyph.codepoint & 0xF];
     text += EncodeCodepointUtf8(kPlaceholderClose);
     return text;
 }

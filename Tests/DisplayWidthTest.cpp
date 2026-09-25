@@ -96,11 +96,54 @@ TEST_CASE("A tab runs to the next tab stop and is its own glyph", "[DisplayWidth
     CHECK(GlyphAt(std::string_view("\t́"), 0).byteLength == 1);
 }
 
-TEST_CASE("Malformed bytes are one column and re-encode as U+FFFD", "[DisplayWidth]") {
-    const std::string text  = "\xff";
-    const Glyph       glyph = GlyphAt(std::string_view(text), 0);
-    CHECK(glyph.columns == 1);
-    CHECK(GlyphText(std::string_view(text), 0, glyph) == "�");
+TEST_CASE("A byte that isn't UTF-8 is a glyph of its own, shown as its value", "[DisplayWidth]") {
+    const std::string text  = "caf\xe9!";
+    const Glyph       glyph = GlyphAt(std::string_view(text), 3);
+    CHECK(glyph.byteLength == 1);
+    CHECK(glyph.placeholder);
+    CHECK(glyph.rawByte);
+    CHECK(glyph.columns == 6);
+    CHECK(GlyphText(std::string_view(text), 3, glyph) == "◁\\xE9▷");
+    CHECK(StringColumns(text) == 3 + 6 + 1);
+
+    const RopeStorage rope{Rope(text)};
+    const Glyph       fromStorage = GlyphAt(rope, 3, rope.ByteLength());
+    CHECK(fromStorage.rawByte);
+    CHECK(GlyphText(rope, 3, fromStorage) == "◁\\xE9▷");
+}
+
+TEST_CASE("Each byte of a broken sequence is its own glyph, in strings and storage alike", "[DisplayWidth]") {
+    // A truncated three-byte lead, stray continuations, and a lead with no
+    // room left before the end.
+    for (const std::string text : {std::string("\xe6\x97x"), std::string("\x80\x80"), std::string("a\xf0")}) {
+        const RopeStorage rope{Rope(text)};
+        for (std::size_t offset = 0; offset < text.size();) {
+            const Glyph fromString  = GlyphAt(std::string_view(text), offset);
+            const Glyph fromStorage = GlyphAt(rope, offset, rope.ByteLength());
+            CHECK(fromString.byteLength == 1);
+            CHECK(fromString.byteLength == fromStorage.byteLength);
+            CHECK(fromString.rawByte == fromStorage.rawByte);
+            CHECK(fromString.codepoint == fromStorage.codepoint);
+            offset += fromString.byteLength;
+        }
+    }
+}
+
+TEST_CASE("A raw byte never joins a cluster, and a real U+FFFD is not a raw byte", "[DisplayWidth]") {
+    const std::string afterBase = "e\xcc";
+    CHECK(GlyphAt(std::string_view(afterBase), 0).byteLength == 1);
+
+    const Glyph replacement = GlyphAt(std::string_view("\xef\xbf\xbd"), 0);
+    CHECK(replacement.byteLength == 3);
+    CHECK_FALSE(replacement.rawByte);
+    CHECK_FALSE(replacement.placeholder);
+}
+
+TEST_CASE("A raw byte and the C1 codepoint of the same value look different", "[DisplayWidth]") {
+    const std::string raw = "\x85";
+    const std::string nel = "\u0085";
+    CHECK(GlyphText(std::string_view(raw), 0, GlyphAt(std::string_view(raw), 0)) == "◁\\x85▷");
+    CHECK(GlyphText(std::string_view(nel), 0, GlyphAt(std::string_view(nel), 0)) == "◁85▷");
 }
 
 TEST_CASE("A prefix never splits a wide glyph", "[DisplayWidth]") {
