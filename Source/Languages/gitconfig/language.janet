@@ -1,7 +1,8 @@
-# .git/config itself has the basename "config", too generic to claim by
-# name; ~/.gitconfig and .gitmodules share the syntax and are claimed.
+# ~/.gitconfig, .gitmodules, a repository's .git/config and the XDG
+# ~/.config/git/config share the syntax.
 {:name "gitconfig"
  :extensions [".gitconfig"]
- :filenames [".gitconfig" ".gitmodules" "gitconfig"]
+ :filenames [".gitconfig" ".gitmodules" "gitconfig" ".git/config" "git/config"]
  :line-comment "#"
+ :import-resolution {:home-prefix true}
 }

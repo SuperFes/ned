@@ -510,3 +510,11 @@ TEST_CASE("A grammarless definition builds a mode with no capabilities", "[Langu
     REQUIRE_FALSE(static_cast<bool>(mode.expandSelection));
     REQUIRE(mode.autoPairs == ned::editor::DefaultAutoPairs());
 }
+
+TEST_CASE("A filename holding a slash claims a path by its trailing components", "[LanguageDefinition]") {
+    CHECK(ned::editor::ModeForPath("/home/u/.ssh/config").name == "ssh_config-mode");
+    CHECK(ned::editor::ModeForPath("/src/repo/.git/config").name == "gitconfig-mode");
+    CHECK(ned::editor::ModeForPath("/home/u/.config/git/config").name == "gitconfig-mode");
+    CHECK(ned::editor::ModeForPath("/home/u/project/config").name != "ssh_config-mode");
+    CHECK(ned::editor::ModeForPath("/home/u/not.ssh/config").name != "ssh_config-mode");
+}

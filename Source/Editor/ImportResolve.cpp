@@ -1,6 +1,7 @@
 #include "ImportResolve.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
 #include <system_error>
 
@@ -10,6 +11,7 @@
 #include "Editor/ImportResolutionConfig.h"
 #include "Editor/Lsp/RootResolver.h"
 #include "Editor/NodeModules.h"
+#include "Editor/OdinCollections.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Settings.h"
 #include "Editor/ToolchainIncludePaths.h"
@@ -258,6 +260,20 @@ link::DetectedLink ImportLinkFor(const ImportTarget& target, const ImportResolut
 std::optional<PrefixedImport> MatchImportPrefix(const std::string& target, const std::filesystem::path& importingFile,
                                                 const Mode& mode) {
     const ImportResolutionConfig config = ImportResolutionConfigFor(mode);
+    if (config.homePrefix && target.starts_with("~/")) {
+        const char* home = std::getenv("HOME");
+        return PrefixedImport{.prefix    = "~/",
+                              .remainder = target.substr(2),
+                              .root      = home != nullptr ? std::filesystem::path(home) : std::filesystem::path{}};
+    }
+    if (config.odinCollections) {
+        if (const std::optional<std::string> collection = OdinCollectionName(target)) {
+            const std::filesystem::path start = importingFile.empty() ? ProjectRoot() : importingFile.parent_path();
+            return PrefixedImport{.prefix    = *collection + ":",
+                                  .remainder = target.substr(collection->size() + 1),
+                                  .root      = OdinCollectionRoot(*collection, start, OdinRoot())};
+        }
+    }
     if (config.goModules) {
         GoImportRoot root = GoImportRootFor(target, importingFile.empty() ? ProjectRoot() : importingFile.parent_path());
         return PrefixedImport{.prefix = std::move(root.prefix), .remainder = std::move(root.remainder), .root = std::move(root.root)};

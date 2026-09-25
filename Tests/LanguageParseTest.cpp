@@ -144,7 +144,7 @@ TEST_CASE("The definitions carry the facts the old C++ tables held", "[LanguageP
     const std::set<std::string>              kImportResolutionLanguages = {"asciidoc", "awk", "bash", "clojure",
                                                                            "cmake", "commonlisp", "crystal", "css",
                                                                            "d", "dart", "elm", "erlang", "fennel",
-                                                                           "fish", "fortran", "fsharp", "gdscript",
+                                                                           "fish", "fortran", "fsharp", "gdscript", "gitconfig",
                                                                            "gleam", "go", "groovy", "haskell", "hcl",
                                                                            "janet", "jank", "java", "javascript",
                                                                            "jsonnet", "julia", "just", "kotlin",
@@ -152,7 +152,7 @@ TEST_CASE("The definitions carry the facts the old C++ tables held", "[LanguageP
                                                                            "php", "pkl", "powershell", "proto",
                                                                            "purescript", "python", "r", "racket",
                                                                            "rst", "ruby", "rust", "scala", "scheme",
-                                                                           "scss", "solidity", "tcl", "thrift", "tsx",
+                                                                           "scss", "solidity", "ssh_config", "tcl", "thrift", "tsx",
                                                                            "typescript", "typst", "v", "verilog"};
     const std::map<std::string, std::string> kAliases                   = {
         {"adb", "ada"},

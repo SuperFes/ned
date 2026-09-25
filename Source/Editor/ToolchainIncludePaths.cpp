@@ -95,8 +95,35 @@ namespace {
 
 } // namespace
 
+std::vector<std::filesystem::path> VSearchRoots(const std::optional<std::filesystem::path>& vExecutable,
+                                                const char* vmodules, const char* home) {
+    std::vector<std::filesystem::path> roots;
+    std::error_code                    ec;
+    if (vExecutable) {
+        const std::filesystem::path vlib = std::filesystem::weakly_canonical(*vExecutable, ec).parent_path() / "vlib";
+        if (!ec && std::filesystem::is_directory(vlib, ec)) {
+            roots.push_back(vlib);
+        }
+    }
+    const std::filesystem::path modules = vmodules != nullptr && *vmodules != '\0'
+                                              ? std::filesystem::path(vmodules)
+                                              : (home != nullptr ? std::filesystem::path(home) / ".vmodules"
+                                                                 : std::filesystem::path{});
+    if (!modules.empty() && std::filesystem::is_directory(modules, ec)) {
+        roots.push_back(modules);
+    }
+    return roots;
+}
+
 std::optional<std::vector<std::filesystem::path>> QueryToolchainIncludePaths(const std::string&        language,
                                                                              std::chrono::milliseconds readTimeout) {
+    if (language == "v") {
+        const std::optional<std::string>   executable = process::ResolveExecutable("v");
+        std::vector<std::filesystem::path> roots =
+            VSearchRoots(executable ? std::optional<std::filesystem::path>(*executable) : std::nullopt,
+                         std::getenv("VMODULES"), std::getenv("HOME"));
+        return roots.empty() ? std::nullopt : std::optional(std::move(roots));
+    }
     const auto compilerAndFlag = CompilerAndLanguageFlagFor(language);
     if (!compilerAndFlag) {
         return std::nullopt;

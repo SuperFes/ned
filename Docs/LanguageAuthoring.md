@@ -275,7 +275,10 @@ directives and requirements (in the module cache), then the standard library und
 `GOROOT`. `:package-directories` says an import names a directory (Go, V, Odin):
 go-to-file opens `doc.<ext>`, else the file named after the directory, else its first
 non-`_test` source file, and a move rewrites the import only when every source file in
-the directory went to the same place. A project's
+the directory went to the same place. `:odin-collections` reads `name:path` imports
+through the nearest `ols.json`'s collections, then the toolchain's own under
+`ODIN_ROOT`; `:home-prefix` counts a `~/` path from `$HOME` (ssh_config, gitconfig). A
+project's
 `importResolution.<language>.sourceRoots` replaces the roots. The same resolution drives
 go-to-file and the fixups when a file is renamed or moved.
 

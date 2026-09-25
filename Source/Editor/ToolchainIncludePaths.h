@@ -54,6 +54,12 @@ namespace ned::editor {
 // call site reads ProcessTimeouts.h's Janet-configurable
 // SubprocessReadTimeoutMs() instead of a fixed literal, per the
 // ChildProcess-hang-protection-round-2 follow-up). Never throws.
+// V's module search roots: the toolchain's vlib (beside the `v` executable,
+// symlinks resolved) and the user's modules ($VMODULES, else ~/.vmodules),
+// whichever exist.
+[[nodiscard]] std::vector<std::filesystem::path> VSearchRoots(const std::optional<std::filesystem::path>& vExecutable,
+                                                              const char* vmodules, const char* home);
+
 [[nodiscard]] std::optional<std::vector<std::filesystem::path>> QueryToolchainIncludePaths(
     const std::string& language, std::chrono::milliseconds readTimeout = SubprocessReadTimeoutMs());
 

@@ -131,9 +131,6 @@ below is behaviour that is wrong or missing today, verified with `ned --format` 
       entry and decline; Ruby's and Crystal's bare `super` (the parent's same-named
       method) isn't followed.
 - [ ] **Imports: what is still unmodelled.**
-  - [ ] **Toolchain packages for V and Odin.** Their project-local imports resolve;
-        V's `vlib` and `~/.vmodules` and Odin's `core:`/`base:`/`vendor:`
-        collections (under `ODIN_ROOT`) aren't searched.
   - [ ] **Svelte, Vue and Astro** script imports belong to the injected language,
         which `importTarget` doesn't follow the way the outline does
         (`:injected-symbols`).
@@ -141,7 +138,6 @@ below is behaviour that is wrong or missing today, verified with `ned --format` 
         importers are rewritten; its own `package` line and its same-package users,
         which import nothing, are not. Scala reads only a plain `import a.b.C`, not
         selectors or renames.
-  - [ ] **`~` in ssh_config and gitconfig includes** isn't expanded.
 **Quick-fix gutter marker**
 
 - [ ] The marker only ever names a **diagnostic-attached** quick fix, because an

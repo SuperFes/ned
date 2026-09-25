@@ -21,6 +21,7 @@
 #include "Editor/ImportResolve.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/Project/Root.h"
+#include "Editor/ToolchainIncludePaths.h"
 
 namespace {
 
@@ -525,4 +526,49 @@ TEST_CASE("Odin and V imports name package directories too", "[ImportLanguages]"
     const std::vector<ned::editor::importfix::MovedFile> movedV{
         {project.root / "modules/net/http/client.v", project.root / "modules/web/http/client.v"}};
     CHECK(FixedText(movedV, project.root / "cmd/main.v") == "module main\nimport web.http\nfn main() {}\n");
+}
+
+TEST_CASE("A ~/ include is counted from $HOME and keeps its ~/ when it moves", "[ImportLanguages]") {
+    const ScratchProject project("home_prefix");
+    const EnvVarGuard    home("HOME", (project.root / "home").string());
+    Write(project.root / "home/.gitconfig.d/work.gitconfig", "[user]\n\tname = x\n");
+    Write(project.root / "home/.ssh/work", "Host w\n");
+    Write(project.root / "home/.gitconfig", "[include]\n\tpath = ~/.gitconfig.d/work.gitconfig\n");
+    Write(project.root / "etc/ssh/ssh_config", "Include ~/.ssh/work\n");
+    CHECK(ResolveAt(project.root / "home/.gitconfig", "work") == project.root / "home/.gitconfig.d/work.gitconfig");
+    CHECK(ResolveAt(project.root / "etc/ssh/ssh_config", "work") == project.root / "home/.ssh/work");
+
+    const std::vector<ned::editor::importfix::MovedFile> moved{
+        {project.root / "home/.gitconfig.d/work.gitconfig", project.root / "home/conf/work.gitconfig"}};
+    CHECK(FixedText(moved, project.root / "home/.gitconfig") == "[include]\n\tpath = ~/conf/work.gitconfig\n");
+}
+
+TEST_CASE("An Odin collection import resolves through ODIN_ROOT and ols.json", "[ImportLanguages]") {
+    const ScratchProject project("odin_collections");
+    const EnvVarGuard    odinRoot("ODIN_ROOT", (project.root / "odin").string());
+    Write(project.root / "odin/core/fmt/fmt.odin", "package fmt\n");
+    Write(project.root / "app/libs/ui/ui.odin", "package ui\n");
+    Write(project.root / "app/ols.json", "{\"collections\": [{\"name\": \"libs\", \"path\": \"libs\"}]}");
+    Write(project.root / "app/main.odin", "package main\nimport \"core:fmt\"\nimport \"libs:ui\"\nimport \"vendor:x\"\n");
+    const fs::path main = project.root / "app/main.odin";
+    CHECK(ResolveAt(main, "fmt") == project.root / "odin/core/fmt/fmt.odin");
+    CHECK(ResolveAt(main, "ui") == project.root / "app/libs/ui/ui.odin");
+    CHECK_FALSE(ResolveAt(main, "vendor").has_value());
+
+    const std::vector<ned::editor::importfix::MovedFile> moved{
+        {project.root / "app/libs/ui/ui.odin", project.root / "app/libs/widgets/ui.odin"}};
+    CHECK(FixedText(moved, main) == "package main\nimport \"core:fmt\"\nimport \"libs:widgets\"\nimport \"vendor:x\"\n");
+}
+
+TEST_CASE("V searches the toolchain's vlib and the user's modules", "[ImportLanguages]") {
+    const ScratchProject project("v_roots");
+    Write(project.root / "v/vlib/os/os.v", "module os\n");
+    Write(project.root / "v/v", "");
+    Write(project.root / "home/.vmodules/pkg/pkg.v", "module pkg\n");
+    const std::string home = (project.root / "home").string();
+    CHECK(ned::editor::VSearchRoots(project.root / "v/v", nullptr, home.c_str()) ==
+          std::vector<fs::path>{project.root / "v/vlib", project.root / "home/.vmodules"});
+    const std::string custom = (project.root / "v").string();
+    CHECK(ned::editor::VSearchRoots(std::nullopt, custom.c_str(), home.c_str()) == std::vector<fs::path>{project.root / "v"});
+    CHECK(ned::editor::VSearchRoots(std::nullopt, nullptr, nullptr).empty());
 }

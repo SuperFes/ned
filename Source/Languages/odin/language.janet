@@ -4,5 +4,5 @@
  :lsp-root-markers ["ols.json"]
  :signature-template "__ned_sig :: proc({}) {}"
  :braces-on-header-line true
- :import-resolution {:extensions ["odin"] :package-directories true}
+ :import-resolution {:extensions ["odin"] :odin-collections true :package-directories true}
 }

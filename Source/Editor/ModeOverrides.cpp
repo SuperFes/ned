@@ -61,17 +61,46 @@ namespace {
         return table;
     }
 
+    // A `:filenames` entry holding a `/` claims a path by its trailing
+    // components (".ssh/config"), where the basename alone is too generic.
+    bool IsPathClaim(std::string_view filename) {
+        return filename.find('/') != std::string_view::npos;
+    }
+
+    bool PathEndsWith(const std::filesystem::path& path, std::string_view claim) {
+        const std::string generic = path.lexically_normal().generic_string();
+        return generic.size() > claim.size() && generic.ends_with(claim) &&
+               generic[generic.size() - claim.size() - 1] == '/';
+    }
+
     const std::unordered_map<std::string, std::string>& BundledFilenameTable() {
         static const std::unordered_map<std::string, std::string> table = [] {
             std::unordered_map<std::string, std::string> built;
             for (const LanguageDefinition& definition : BundledLanguages()) {
                 for (const std::string& filename : definition.filenames) {
-                    built.emplace(filename, ModeNameFor(definition));
+                    if (!IsPathClaim(filename)) {
+                        built.emplace(filename, ModeNameFor(definition));
+                    }
                 }
             }
             return built;
         }();
         return table;
+    }
+
+    const std::vector<std::pair<std::string, std::string>>& BundledPathClaims() {
+        static const std::vector<std::pair<std::string, std::string>> claims = [] {
+            std::vector<std::pair<std::string, std::string>> built;
+            for (const LanguageDefinition& definition : BundledLanguages()) {
+                for (const std::string& filename : definition.filenames) {
+                    if (IsPathClaim(filename)) {
+                        built.emplace_back(filename, ModeNameFor(definition));
+                    }
+                }
+            }
+            return built;
+        }();
+        return claims;
     }
 
     // A definition-backed mode is built fresh on every lookup -- a new
@@ -105,7 +134,7 @@ namespace {
         std::optional<std::string> byExtension;
         for (const RegisteredLanguage& registered : RegisteredLanguages()) {
             for (const std::string& candidate : registered.definition.filenames) {
-                if (candidate == filename) {
+                if (IsPathClaim(candidate) ? PathEndsWith(path, candidate) : candidate == filename) {
                     return ModeNameFor(registered.definition);
                 }
             }
@@ -268,6 +297,13 @@ Mode ModeForPath(const std::filesystem::path& path) {
     if (const std::optional<std::string> registered = RegisteredModeNameForPath(path)) {
         if (auto mode = ModeByName(*registered); mode) {
             return std::move(*mode);
+        }
+    }
+    for (const auto& [claim, modeName] : BundledPathClaims()) {
+        if (PathEndsWith(path, claim)) {
+            if (auto mode = ModeByName(modeName); mode) {
+                return std::move(*mode);
+            }
         }
     }
     const auto& filenames = BundledFilenameTable();

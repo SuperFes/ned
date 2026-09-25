@@ -62,10 +62,15 @@ struct ImportResolutionConfig {
     // .dart_tool/package_config.json maps it, or as the enclosing
     // pubspec.yaml names its own package when there is none.
     std::string packageScheme;
+    // A `~/` path is counted from $HOME (ssh_config, gitconfig). Opt-in: to
+    // JS tooling `~/` is a project alias.
+    bool homePrefix = false;
     // Go's import paths (Editor/GoModules.h): a path is found under the
     // nearest go.mod's module, a required module or the standard library,
     // and nowhere else.
     bool goModules = false;
+    // Odin's `collection:path` imports (Editor/OdinCollections.h).
+    bool odinCollections = false;
     // An import names a directory, and go-to-file opens the file that stands
     // for it: doc.<ext>, else <directory name>.<ext>, else the first file
     // with one of `extensions` that isn't a `_test` file. A fixup follows

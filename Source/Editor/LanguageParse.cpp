@@ -338,6 +338,12 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
                 else if (field.IsKeyword() && field.text == "package-scheme") {
                     config.packageScheme = ExpectString(directoryName, v, ":package-scheme");
                 }
+                else if (field.IsKeyword() && field.text == "home-prefix") {
+                    config.homePrefix = ExpectBool(directoryName, v, ":home-prefix");
+                }
+                else if (field.IsKeyword() && field.text == "odin-collections") {
+                    config.odinCollections = ExpectBool(directoryName, v, ":odin-collections");
+                }
                 else if (field.IsKeyword() && field.text == "go-modules") {
                     config.goModules = ExpectBool(directoryName, v, ":go-modules");
                 }
@@ -348,7 +354,7 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
                     Fail(directoryName, field.line,
                          ":import-resolution keys are :extensions/:index-basenames/:search-package-dirs/"
                          ":module-separator/:module-substitutions/:source-roots/:partial-prefix/"
-                         ":root-prefixes/:package-scheme/:go-modules/:package-directories");
+                         ":root-prefixes/:package-scheme/:home-prefix/:go-modules/:odin-collections/:package-directories");
                 }
             }
             definition.importResolution = std::move(config);
