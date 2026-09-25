@@ -173,9 +173,9 @@ int RunForegroundBroker() {
 
     if (probe.state == ned::editor::lsp::BrokerProbe::State::Supervised) {
         std::cerr << "ned: an always-on ned server is already running" << pidSuffix << ".\n"
-                  << "ned: only one --foreground instance can exist at a time -- restart that one instead, e.g.\n"
-                  << "ned:   systemctl --user restart ned-server\n"
-                  << "ned: or stop it first with `ned --lsp-broker-stop`.\n";
+            << "ned: only one --foreground instance can exist at a time -- restart that one instead, e.g.\n"
+            << "ned:   systemctl --user restart ned-server\n"
+            << "ned: or stop it first with `ned --lsp-broker-stop`.\n";
         return Ned::ToExitCode(Ned::ExitStatus::Failure);
     }
 
@@ -183,7 +183,7 @@ int RunForegroundBroker() {
         std::cout << "ned: an LSP broker" << pidSuffix << " already holds the socket; shutting it down first...\n";
         if (!ned::editor::lsp::ShutDownBrokerAndWait()) {
             std::cerr << "ned: the running LSP broker" << pidSuffix << " did not exit -- refusing to race it for the socket.\n"
-                      << "ned: stop it with `ned --lsp-broker-stop` (or kill it) and try again.\n";
+                << "ned: stop it with `ned --lsp-broker-stop` (or kill it) and try again.\n";
             return Ned::ToExitCode(Ned::ExitStatus::Failure);
         }
         std::cout << "ned: the previous LSP broker has exited.\n";
@@ -194,8 +194,8 @@ int RunForegroundBroker() {
     // (BrokerDaemon::Run()) is what a supervisor stop or Ctrl-C shuts it
     // down with.
     return ned::editor::lsp::RunLspBrokerDaemon(/*maxConcurrentServers=*/8,
-                                                /*wholeDaemonIdleTimeout=*/std::chrono::milliseconds::zero(),
-                                                /*supervised=*/true);
+    /*wholeDaemonIdleTimeout=*/std::chrono::milliseconds::zero(),
+    /*supervised=*/true);
 }
 
 // `ned --lsp-broker-stop`: connects to the running LSP broker daemon (see// `ned --lsp-broker-stop`: connects to the running LSP broker daemon (see
@@ -400,12 +400,16 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
     }
 
     int exitCode = 0;
+
     for (const std::string& pathStr : paths) {
         const std::filesystem::path path = pathStr;
         std::error_code             isDirEc;
+
         if (std::filesystem::is_directory(path, isDirEc)) {
             std::cerr << "ned: --format: " << pathStr << " is a directory, skipping\n";
+
             exitCode = 1;
+
             continue;
         }
 
@@ -413,7 +417,9 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
 
         if (!std::filesystem::exists(path, existsEc)) {
             std::cerr << "ned: --format: " << pathStr << ": no such file\n";
+
             exitCode = 1;
+
             continue;
         }
 
@@ -423,9 +429,9 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
 
         if (isHuge && !forceHuge) {
             std::cerr << "ned: --format: " << pathStr << ": file exceeds the huge-file threshold ("
-                      << ned::text::HugeFileThreshold()
-                      << " bytes) -- pass --force-huge to reindent it via the streaming engine (Native reindent "
-                         "only; no external formatter, no space/break/wrap/blank rules)\n";
+                << ned::text::HugeFileThreshold()
+                << " bytes) -- pass --force-huge to reindent it via the streaming engine (Native reindent "
+                "only; no external formatter, no space/break/wrap/blank rules)\n";
 
             exitCode = 1;
 
@@ -440,39 +446,52 @@ int RunFormatFiles(const std::vector<std::string>& paths, bool forceHuge) {
                 const ned::editor::IndentStyle style  = ned::editor::EffectiveIndentStyle(buffer, mode.name);
 
                 const std::filesystem::path       tmpPath = path.string() + ".ned-tmp";
+
                 ned::editor::HugeReindentOutcome outcome;
+
                 {
                     std::ofstream out(tmpPath, std::ios::binary | std::ios::trunc);
                     if (!out) {
                         std::cerr << "ned: --format: " << pathStr << ": could not create a temp file for the streaming reindent\n";
+
                         exitCode = 1;
+
                         continue;
                     }
                     outcome = ned::editor::StreamHugeReindent(buffer.Content(), out, mode.lineCommentPrefix, style,
                                                               ned::text::CharsetPreamble(buffer.FileCharset()));
                 }
+
                 if (!outcome.success) {
                     std::filesystem::remove(tmpPath);
                     std::cerr << "ned: --format: " << pathStr << ": streaming reindent aborted (" << outcome.errorMessage
-                              << ") -- file left untouched\n";
+                        << ") -- file left untouched\n";
+
                     exitCode = 1;
+
                     continue;
                 }
+
                 std::error_code renameEc;
                 std::filesystem::rename(tmpPath, path, renameEc);
+
                 if (renameEc) {
                     std::filesystem::remove(tmpPath);
                     std::cerr << "ned: --format: " << pathStr << ": " << renameEc.message() << '\n';
+
                     exitCode = 1;
+
                     continue;
                 }
+
                 std::cout << "Formatted " << pathStr << " (huge-file streaming reindent, " << outcome.linesChanged
-                          << " line(s) changed)\n";
+                    << " line(s) changed)\n";
             }
             catch (const std::exception& e) {
                 std::cerr << "ned: --format: " << pathStr << ": " << e.what() << '\n';
                 exitCode = 1;
             }
+
             continue;
         }
         try {
@@ -714,7 +733,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // The bundled set is the lower-precedence sibling, read from
     // DataDir()/languages through BundledLanguages.h.
     for (const std::filesystem::path& languageDir :
-         ned::editor::LanguageDirectories(ned::janet::InitFilePath().parent_path() / "languages")) {
+        ned::editor::LanguageDirectories(ned::janet::InitFilePath().parent_path() / "languages")) {
         try {
             ned::editor::LoadLanguageDirectory(languageDir);
         }
@@ -787,7 +806,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // basename -- a language.janet is loaded through LoadLanguageDirectory,
     // never evaluated as Janet.
     for (const std::filesystem::path& languageDir :
-         ned::editor::LanguageDirectories(projectRoot / ".ned" / "languages")) {
+        ned::editor::LanguageDirectories(projectRoot / ".ned" / "languages")) {
         projectTrustCandidates.push_back(languageDir / "language.janet");
     }
     {
@@ -871,16 +890,6 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // call at quit the way SaveFilePlaces/SaveRecentFiles/SaveBookmarks
     // need (ProjectRegistry.h's own "save on write" contract).
     ned::editor::LoadProjectRegistry();
-
-    // backup-and-recovery follow-up: startup backup pruning -- after
-    // LoadInitFile for the same reason as LoadFilePlaces above, so a
-    // ned/set-backup-max-* retention knob configured there governs it.
-    try {
-        ned::editor::PruneBackups();
-    }
-    catch (const std::exception&) {
-        // Unprunable backups must never block startup.
-    }
 
     // variables-store follow-up: editor-remembered key/value facts
     // ($XDG_STATE_HOME/ned/variables.json) -- UI state the editor picked up
@@ -1264,19 +1273,19 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // blocks and the active tab's own focus accent do that row's jobs now;
     // see TabBar.h.
     Container mainColumn(Axis::Vertical, {
-                                             {tabBar.get(), SizeSpec::Fixed(1)},
-                                             {&windowManager->RootComponent(), SizeSpec::Flex()},
-                                         });
+                             {tabBar.get(), SizeSpec::Fixed(1)},
+                             {&windowManager->RootComponent(), SizeSpec::Flex()},
+                         });
 
     Container bufferRow(Axis::Horizontal, {
-                                              {leftDock.get(), SizeSpec::DynamicFixed([raw = leftDock.get()] { return raw->Width(); })},
-                                              {&mainColumn, SizeSpec::Flex()},
-                                          });
+                            {leftDock.get(), SizeSpec::DynamicFixed([raw = leftDock.get()] { return raw->Width(); })},
+                            {&mainColumn, SizeSpec::Flex()},
+                        });
 
     Container head(Axis::Vertical, {
-                                       {&bufferRow, SizeSpec::Flex()},
-                                       {echoArea.get(), SizeSpec::Fixed(1)},
-                                   });
+                       {&bufferRow, SizeSpec::Flex()},
+                       {echoArea.get(), SizeSpec::Fixed(1)},
+                   });
 
     // Widget::TakeFocus (Widget.h) is a flat, direct write to a
     // process-wide registry, indifferent to whatever tree shape does or
@@ -1313,66 +1322,66 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     if (!deferredTrustPrompts.empty()) {
         auto promptNext = std::make_shared<std::function<void()>>();
         *promptNext     = [wm = windowManager.get(), &janetEnv, &statusMessage, &theme, deferredTrustPrompts,
-                           promptNext]() mutable -> void {
-            if (deferredTrustPrompts.empty()) {
-                return;
-            }
-            const std::filesystem::path path = deferredTrustPrompts.front();
-            deferredTrustPrompts.pop_front();
-            wm->RequestTrustProjectInit(
-                path, [&janetEnv, &statusMessage, &theme, promptNext](const std::filesystem::path& initPath, ned::editor::ProjectInitDecision decision) -> void {
-                    if (decision == ned::editor::ProjectInitDecision::Decline) {
-                        statusMessage = initPath.string() + " not loaded.";
-                    }
-                    else {
-                        if (decision == ned::editor::ProjectInitDecision::LoadAlways) {
-                            if (const auto hash = ned::editor::HashFileContent(initPath)) {
-                                ned::editor::RecordProjectInitTrust(initPath, *hash);
-                            }
+            promptNext]() mutable -> void {
+                if (deferredTrustPrompts.empty()) {
+                    return;
+                }
+                const std::filesystem::path path = deferredTrustPrompts.front();
+                deferredTrustPrompts.pop_front();
+                wm->RequestTrustProjectInit(
+                    path, [&janetEnv, &statusMessage, &theme, promptNext](const std::filesystem::path& initPath, ned::editor::ProjectInitDecision decision) -> void {
+                        if (decision == ned::editor::ProjectInitDecision::Decline) {
+                            statusMessage = initPath.string() + " not loaded.";
                         }
-                        try {
-                            // Dispatches on basename: a .ned/languages/*/
-                            // language.janet loads through the language
-                            // registry, never evaluated as Janet code --
-                            // same rule as the trusted-at-startup branch.
-                            if (initPath.filename() == "language.janet") {
-                                ned::editor::LoadLanguageDirectory(initPath.parent_path());
+                        else {
+                            if (decision == ned::editor::ProjectInitDecision::LoadAlways) {
+                                if (const auto hash = ned::editor::HashFileContent(initPath)) {
+                                    ned::editor::RecordProjectInitTrust(initPath, *hash);
+                                }
                             }
-                            else {
-                                janetEnv.DoFile(initPath);
-                            }
-                            ned::editor::TouchProjectTrust(initPath);
-                            statusMessage = "Loaded " + initPath.string();
+                            try {
+                                // Dispatches on basename: a .ned/languages/*/
+                                // language.janet loads through the language
+                                // registry, never evaluated as Janet code --
+                                // same rule as the trusted-at-startup branch.
+                                if (initPath.filename() == "language.janet") {
+                                    ned::editor::LoadLanguageDirectory(initPath.parent_path());
+                                }
+                                else {
+                                    janetEnv.DoFile(initPath);
+                                }
+                                ned::editor::TouchProjectTrust(initPath);
+                                statusMessage = "Loaded " + initPath.string();
 
-                            // A project init that was already trusted loads
-                            // well before the theme is resolved, so its
-                            // ned/set-theme / ned/theme-set / ned/theme-gradient
-                            // calls are simply part of the startup pipeline. One
-                            // reaching this branch instead -- the *first* time a
-                            // project is opened, or any time its content hash
-                            // changes -- lands after that pipeline has already
-                            // run, so its calls sit in Editor/ThemeSetting.h's
-                            // override store with nothing to apply them.
-                            // Confirmed live before this line existed: a
-                            // .ned/init.janet setting a background did nothing on
-                            // the open that prompted for it, then worked on the
-                            // next launch, which reads as the trust prompt
-                            // silently ignoring half the file.
-                            //
-                            // Re-running the whole pipeline is the fix rather than
-                            // applying just the new calls: it rebuilds from the
-                            // same accumulated stores in the same order startup
-                            // uses, so the result cannot drift from what the next
-                            // launch will produce.
-                            theme = ned::ui::ResolveConfiguredTheme().theme;
+                                // A project init that was already trusted loads
+                                // well before the theme is resolved, so its
+                                // ned/set-theme / ned/theme-set / ned/theme-gradient
+                                // calls are simply part of the startup pipeline. One
+                                // reaching this branch instead -- the *first* time a
+                                // project is opened, or any time its content hash
+                                // changes -- lands after that pipeline has already
+                                // run, so its calls sit in Editor/ThemeSetting.h's
+                                // override store with nothing to apply them.
+                                // Confirmed live before this line existed: a
+                                // .ned/init.janet setting a background did nothing on
+                                // the open that prompted for it, then worked on the
+                                // next launch, which reads as the trust prompt
+                                // silently ignoring half the file.
+                                //
+                                // Re-running the whole pipeline is the fix rather than
+                                // applying just the new calls: it rebuilds from the
+                                // same accumulated stores in the same order startup
+                                // uses, so the result cannot drift from what the next
+                                // launch will produce.
+                                theme = ned::ui::ResolveConfiguredTheme().theme;
+                            }
+                            catch (const std::exception& e) {
+                                statusMessage = initPath.string() + " error: " + e.what();
+                            }
                         }
-                        catch (const std::exception& e) {
-                            statusMessage = initPath.string() + " error: " + e.what();
-                        }
-                    }
-                    (*promptNext)();
-                });
-        };
+                        (*promptNext)();
+                    });
+            };
         (*promptNext)();
     }
 
@@ -1507,12 +1516,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
             std::vector<ned::editor::dap::Manager::PersistedBreakpoint>& out = converted[key];
             for (const auto& bp : entries) {
                 out.push_back(ned::editor::dap::Manager::PersistedBreakpoint{
-                    .line         = bp.line,
-                    .condition    = bp.condition,
-                    .logMessage   = bp.logMessage,
-                    .hitCondition = bp.hitCondition,
-                    .enabled      = bp.enabled,
-                });
+                                  .line         = bp.line,
+                                  .condition    = bp.condition,
+                                  .logMessage   = bp.logMessage,
+                                  .hitCondition = bp.hitCondition,
+                                  .enabled      = bp.enabled,
+                              });
             }
         }
         dapManager.RestoreBreakpoints(std::move(converted));
@@ -1778,9 +1787,9 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         const int yMax   = std::max(1, size.height - 2); // above the echo area row
         const int height = std::max(6, size.height * 30 / 100);
         return Box{.x_min = 0,
-                   .x_max = std::max(0, size.width - 1 - MinimapOverlayReserve()),
-                   .y_min = std::max(1, yMax - height + 1),
-                   .y_max = yMax};
+            .x_max = std::max(0, size.width - 1 - MinimapOverlayReserve()),
+            .y_min = std::max(1, yMax - height + 1),
+            .y_max = yMax};
     });
     // Both directions of a hunk-apply (staging out of the worktree diff,
     // unstaging out of the staged diff) re-fetch the same (path, staged)
@@ -1797,7 +1806,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
                         path, !stage,
                         [&vcsDiffPreview, path, stage](std::string rawDiff) {
                             vcsDiffPreview.SetModel(ned::ui::VcsDiffPreviewModel{
-                                .path = path, .staged = !stage, .hunks = ned::editor::vcs::ParseDiffHunks(rawDiff)});
+                                                        .path = path, .staged = !stage, .hunks = ned::editor::vcs::ParseDiffHunks(rawDiff)});
                         },
                         [&vcsDiffPreview](const std::string&) { vcsDiffPreview.SetModel(std::nullopt); });
                 },
@@ -1934,48 +1943,48 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // not TitleText(), which carries transient exited/search/scrollback
     // suffixes that would defeat the comparison).
     auto addTerminalTab = [&panelDock, &terminalTabs, &closeTerminalTab, &toggleTerminal, &theme,
-                           &eventLoop]() -> TerminalTab& {
-        std::string label  = "Terminal";
-        int         suffix = 2;
+        &eventLoop]() -> TerminalTab& {
+            std::string label  = "Terminal";
+            int         suffix = 2;
 
-        while (std::any_of(terminalTabs.begin(), terminalTabs.end(),
-                           [&label](const TerminalTab& tab) { return tab.panel->Label() == label; })) {
-            label = "Terminal <" + std::to_string(suffix++) + ">";
-        }
-
-        auto                    panel    = std::make_shared<ned::ui::TerminalPanel>(theme, std::vector<std::string>{}, label);
-
-        ned::ui::TerminalPanel* rawPanel = panel.get();
-
-        panel->SetEventLoop(&eventLoop);
-
-        // toggleTerminal's own reserved-chord wiring: while this panel
-        // itself has focus, TerminalPanel handles `` C-` `` internally and
-        // calls this callback directly (bypassing the global keymap
-        // entirely) -- the run-repl precedent this whole file already
-        // established, extended to every terminal tab rather than just one.
-        panel->SetOnToggleRequest([&toggleTerminal] {
-            if (toggleTerminal) {
-                toggleTerminal();
+            while (std::any_of(terminalTabs.begin(), terminalTabs.end(),
+                               [&label](const TerminalTab& tab) { return tab.panel->Label() == label; })) {
+                label = "Terminal <" + std::to_string(suffix++) + ">";
             }
-        });
 
-        const std::size_t tabId = panelDock.AddPanel(
-            label, *panel, [rawPanel] { return rawPanel->TitleText(); }, &ned::editor::terminal::TerminalHeightPercent,
-            &ned::editor::terminal::SetTerminalHeightPercent, [rawPanel, &closeTerminalTab] {
-                // The scrollback-search icon plus a restart icon for
-                // CloseSession() -- terminal-panel follow-up's own
-                // affordances -- and (multiple-terminal-tabs follow-up) a
-                // close icon that removes this tab entirely rather than
-                // just killing/restarting its shell in place.
-                return std::vector<ned::ui::PanelDock::TabAction>{
-                    {.icon = U'/', .onClick = [rawPanel] { rawPanel->EnterSearch(); }},
-                    {.icon = U'↻', .onClick = [rawPanel] { rawPanel->CloseSession(); }},
-                    {.icon = U'×', .onClick = [rawPanel, &closeTerminalTab] { closeTerminalTab(rawPanel); }},
-                }; });
-        terminalTabs.push_back(TerminalTab{.panel = std::move(panel), .tabId = tabId});
-        return terminalTabs.back();
-    };
+            auto                    panel    = std::make_shared<ned::ui::TerminalPanel>(theme, std::vector<std::string>{}, label);
+
+            ned::ui::TerminalPanel* rawPanel = panel.get();
+
+            panel->SetEventLoop(&eventLoop);
+
+            // toggleTerminal's own reserved-chord wiring: while this panel
+            // itself has focus, TerminalPanel handles `` C-` `` internally and
+            // calls this callback directly (bypassing the global keymap
+            // entirely) -- the run-repl precedent this whole file already
+            // established, extended to every terminal tab rather than just one.
+            panel->SetOnToggleRequest([&toggleTerminal] {
+                if (toggleTerminal) {
+                    toggleTerminal();
+                }
+            });
+
+            const std::size_t tabId = panelDock.AddPanel(
+                label, *panel, [rawPanel] { return rawPanel->TitleText(); }, &ned::editor::terminal::TerminalHeightPercent,
+                &ned::editor::terminal::SetTerminalHeightPercent, [rawPanel, &closeTerminalTab] {
+                    // The scrollback-search icon plus a restart icon for
+                    // CloseSession() -- terminal-panel follow-up's own
+                    // affordances -- and (multiple-terminal-tabs follow-up) a
+                    // close icon that removes this tab entirely rather than
+                    // just killing/restarting its shell in place.
+                    return std::vector<ned::ui::PanelDock::TabAction>{
+                        {.icon = U'/', .onClick = [rawPanel] { rawPanel->EnterSearch(); }},
+                        {.icon = U'↻', .onClick = [rawPanel] { rawPanel->CloseSession(); }},
+                        {.icon = U'×', .onClick = [rawPanel, &closeTerminalTab] { closeTerminalTab(rawPanel); }},
+                    }; });
+            terminalTabs.push_back(TerminalTab{.panel = std::move(panel), .tabId = tabId});
+            return terminalTabs.back();
+        };
 
     // Shows/switches/focuses a terminal tab -- the single "make this
     // terminal visible" seam every entry point below (toggle-terminal,
@@ -2028,9 +2037,9 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         const int height =
             panel->Maximized() ? yMax : std::max(4, size.height * panel->Percent() / 100);
         return Box{.x_min = 0,
-                   .x_max = std::max(0, size.width - 1 - MinimapOverlayReserve()),
-                   .y_min = std::max(1, yMax - height + 1),
-                   .y_max = yMax};
+            .x_max = std::max(0, size.width - 1 - MinimapOverlayReserve()),
+            .y_min = std::max(1, yMax - height + 1),
+            .y_max = yMax};
     });
     // The maximize toggle changes what the placement above computes; Show on
     // an already-visible overlay is exactly a re-box from the current size.
@@ -2100,27 +2109,27 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
             panelDock.SwitchTo(tabIndex);
         });
         auto toggleAcpPanel = [&overlays, &panelDock, tabIndex, &acpManager, wm = windowManager.get(),
-                               lastAcpAgent = restoredSession ? restoredSession->lastAcpAgent : std::nullopt] {
-            if (!overlays.IsVisible(panelDock) || panelDock.ActiveIndex() != tabIndex) {
-                overlays.Show(panelDock);
-                panelDock.SwitchTo(tabIndex);
-                // ACP auto-reconnect follow-up: opening the panel reconnects
-                // to whichever agent this project last used, instead of
-                // always requiring the "ACP agent:" prompt again -- a no-op
-                // if a session is already running (e.g. re-showing after a
-                // hide), if this project has never started one before, or if
-                // the remembered agent name is no longer configured
-                // (renamed/removed from init.janet since).
-                if (acpManager.State() == ned::editor::acp::Manager::SessionState::Inactive && lastAcpAgent &&
-                    ned::editor::acp::AgentCommand(*lastAcpAgent)) {
-                    acpManager.StartSession(*lastAcpAgent);
+            lastAcpAgent = restoredSession ? restoredSession->lastAcpAgent : std::nullopt] {
+                if (!overlays.IsVisible(panelDock) || panelDock.ActiveIndex() != tabIndex) {
+                    overlays.Show(panelDock);
+                    panelDock.SwitchTo(tabIndex);
+                    // ACP auto-reconnect follow-up: opening the panel reconnects
+                    // to whichever agent this project last used, instead of
+                    // always requiring the "ACP agent:" prompt again -- a no-op
+                    // if a session is already running (e.g. re-showing after a
+                    // hide), if this project has never started one before, or if
+                    // the remembered agent name is no longer configured
+                    // (renamed/removed from init.janet since).
+                    if (acpManager.State() == ned::editor::acp::Manager::SessionState::Inactive && lastAcpAgent &&
+                        ned::editor::acp::AgentCommand(*lastAcpAgent)) {
+                        acpManager.StartSession(*lastAcpAgent);
+                    }
                 }
-            }
-            else {
-                overlays.Hide(panelDock);
-                wm->TakeFocus();
-            }
-        };
+                else {
+                    overlays.Hide(panelDock);
+                    wm->TakeFocus();
+                }
+            };
         windowManager->SetOnAcpPanelToggle(toggleAcpPanel);
         acpPanel.SetOnToggleRequest(toggleAcpPanel);
         // ACP checkpoint/rewind follow-up: acp-rewind (C-c A r) ensures the
@@ -2159,20 +2168,20 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
             panel->SetCollapsed(false);
         });
         auto toggleAcpPanel = [&overlays, panel = &acpPanel, &acpManager,
-                               lastAcpAgent = restoredSession ? restoredSession->lastAcpAgent : std::nullopt] {
-            if (!overlays.IsVisible(*panel)) {
-                overlays.Show(*panel);
-                panel->SetCollapsed(false);
-                panel->TakeFocus();
-                if (acpManager.State() == ned::editor::acp::Manager::SessionState::Inactive && lastAcpAgent &&
-                    ned::editor::acp::AgentCommand(*lastAcpAgent)) {
-                    acpManager.StartSession(*lastAcpAgent);
+            lastAcpAgent = restoredSession ? restoredSession->lastAcpAgent : std::nullopt] {
+                if (!overlays.IsVisible(*panel)) {
+                    overlays.Show(*panel);
+                    panel->SetCollapsed(false);
+                    panel->TakeFocus();
+                    if (acpManager.State() == ned::editor::acp::Manager::SessionState::Inactive && lastAcpAgent &&
+                        ned::editor::acp::AgentCommand(*lastAcpAgent)) {
+                        acpManager.StartSession(*lastAcpAgent);
+                    }
                 }
-            }
-            else {
-                overlays.Hide(*panel);
-            }
-        };
+                else {
+                    overlays.Hide(*panel);
+                }
+            };
         windowManager->SetOnAcpPanelToggle(toggleAcpPanel);
         acpPanel.SetOnToggleRequest(toggleAcpPanel);
         windowManager->SetOnAcpRewindRequest([&overlays, panel = &acpPanel] {
@@ -2223,35 +2232,35 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // shared_ptr/declared-after-eventLoop lifetime convention, so a fresh
     // TerminalPanel here owns its own real PtyProcess exactly the same way.
     auto runOrShowRepl = [&overlays, &panelDock, &replPanels, &replTabIndices, &theme, &eventLoop,
-                          wm = windowManager.get()](const std::string& name) {
-        auto existing = replPanels.find(name);
-        if (existing == replPanels.end()) {
-            const std::optional<std::vector<std::string>> argv = ned::editor::repl::Command(name);
-            if (!argv) {
-                return; // BufferView already validated this before calling -- defensive only
+        wm = windowManager.get()](const std::string& name) {
+            auto existing = replPanels.find(name);
+            if (existing == replPanels.end()) {
+                const std::optional<std::vector<std::string>> argv = ned::editor::repl::Command(name);
+                if (!argv) {
+                    return; // BufferView already validated this before calling -- defensive only
+                }
+                auto panel = std::make_shared<ned::ui::TerminalPanel>(theme, *argv, name);
+                panel->SetEventLoop(&eventLoop);
+                const std::size_t tabIndex =
+                    panelDock.AddPanel(name, *panel, [panel] { return panel->TitleText(); }, &ned::editor::terminal::TerminalHeightPercent, &ned::editor::terminal::SetTerminalHeightPercent);
+                // toggleTerminal's own reserved-chord wiring: while this panel
+                // itself has focus, TerminalPanel handles `` C-` `` internally
+                // and calls this callback directly (bypassing the global
+                // keymap entirely) -- without it, the reserved chord silently
+                // did nothing on a spawned REPL tab, unlike the built-in
+                // Terminal tab (confirmed live: only the tab strip's own mouse
+                // [x] still closed the dock).
+                panel->SetOnToggleRequest([&overlays, &panelDock, wm] {
+                    overlays.Hide(panelDock);
+                    wm->TakeFocus();
+                });
+                existing             = replPanels.emplace(name, std::move(panel)).first;
+                replTabIndices[name] = tabIndex;
             }
-            auto panel = std::make_shared<ned::ui::TerminalPanel>(theme, *argv, name);
-            panel->SetEventLoop(&eventLoop);
-            const std::size_t tabIndex =
-                panelDock.AddPanel(name, *panel, [panel] { return panel->TitleText(); }, &ned::editor::terminal::TerminalHeightPercent, &ned::editor::terminal::SetTerminalHeightPercent);
-            // toggleTerminal's own reserved-chord wiring: while this panel
-            // itself has focus, TerminalPanel handles `` C-` `` internally
-            // and calls this callback directly (bypassing the global
-            // keymap entirely) -- without it, the reserved chord silently
-            // did nothing on a spawned REPL tab, unlike the built-in
-            // Terminal tab (confirmed live: only the tab strip's own mouse
-            // [x] still closed the dock).
-            panel->SetOnToggleRequest([&overlays, &panelDock, wm] {
-                overlays.Hide(panelDock);
-                wm->TakeFocus();
-            });
-            existing             = replPanels.emplace(name, std::move(panel)).first;
-            replTabIndices[name] = tabIndex;
-        }
-        existing->second->EnsureStarted();
-        overlays.Show(panelDock);
-        panelDock.SwitchTo(replTabIndices[name]); // SwitchTo itself takes focus for the panel
-    };
+            existing->second->EnsureStarted();
+            overlays.Show(panelDock);
+            panelDock.SwitchTo(replTabIndices[name]); // SwitchTo itself takes focus for the panel
+        };
     windowManager->SetOnRunReplRequest(runOrShowRepl);
 
     // Debugging wishlist: the live thread window (BufferListPanel's own
@@ -2372,10 +2381,10 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
                                                ned::editor::ColorValue          colour,
                                                ned::editor::ColorSyntax         syntax,
                                                ned::editor::ColorLiteralOptions options) {
-        panel->Open(colour, syntax, options);
-        overlays.Show(*panel);
-        panel->TakeFocus();
-    });
+            panel->Open(colour, syntax, options);
+            overlays.Show(*panel);
+            panel->TakeFocus();
+        });
 
     // which-key follow-up (generic-popup follow-up: now a ListPopup in its
     // non-focusable mode): a small popup shown the instant a prefix chord
@@ -2663,43 +2672,43 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         return Box{.x_min = xMin, .x_max = xMax, .y_min = yMin, .y_max = yMax};
     });
     tabBar->SetOnContextMenuRequest([&overlays, panel = &tabContextMenu, &tabContextMenuActions,
-                                     wm = windowManager.get(), sidebar = projectSidebar.get()](
+                                        wm = windowManager.get(), sidebar = projectSidebar.get()](
                                         ned::text::Buffer& target, ned::ui::Point anchor) {
-        ned::ui::ListPopupModel model;
-        model.title  = "Tab";
-        model.anchor = anchor;
-        tabContextMenuActions.clear();
+            ned::ui::ListPopupModel model;
+            model.title  = "Tab";
+            model.anchor = anchor;
+            tabContextMenuActions.clear();
 
-        auto addRow = [&](std::string label, std::function<void()> action) {
-            model.rows.push_back({.left = "", .main = std::move(label)});
-            tabContextMenuActions.push_back(std::move(action));
-        };
-        addRow("Close", [wm, target = &target] { wm->RequestCloseBuffer(*target); });
-        addRow("Close Others", [wm, target = &target] { wm->CloseOtherTabs(*target); });
-        addRow("Close to the Right", [wm, target = &target] { wm->CloseTabsToTheRight(*target); });
-        if (target.Path()) {
-            addRow("Reveal in Sidebar", [sidebar, path = *target.Path()] { sidebar->RevealPath(path); });
-        }
+            auto addRow = [&](std::string label, std::function<void()> action) {
+                model.rows.push_back({.left = "", .main = std::move(label)});
+                tabContextMenuActions.push_back(std::move(action));
+            };
+            addRow("Close", [wm, target = &target] { wm->RequestCloseBuffer(*target); });
+            addRow("Close Others", [wm, target = &target] { wm->CloseOtherTabs(*target); });
+            addRow("Close to the Right", [wm, target = &target] { wm->CloseTabsToTheRight(*target); });
+            if (target.Path()) {
+                addRow("Reveal in Sidebar", [sidebar, path = *target.Path()] { sidebar->RevealPath(path); });
+            }
 
-        model.selectedIndex = 0;
-        panel->SetModel(std::move(model));
-        overlays.Show(*panel);
-        panel->TakeFocus();
-    });
+            model.selectedIndex = 0;
+            panel->SetModel(std::move(model));
+            overlays.Show(*panel);
+            panel->TakeFocus();
+        });
     tabContextMenu.SetOnActivate([&tabContextMenuActions, &overlays, panel = &tabContextMenu,
-                                  wm = windowManager.get()](std::size_t index) {
-        // Focus must come back to a pane *before* the action runs, not
-        // after -- every action closure routes through WindowManager's own
-        // "whichever pane is currently focused" lookup (RequestCloseBuffer/
-        // CloseOtherTabs/CloseTabsToTheRight), which sees no pane focused
-        // at all while this popup still holds it (a real bug caught live:
-        // running the action first made every one of these a silent no-op).
-        overlays.Hide(*panel);
-        wm->TakeFocus();
-        if (index < tabContextMenuActions.size()) {
-            tabContextMenuActions[index]();
-        }
-    });
+                                     wm = windowManager.get()](std::size_t index) {
+            // Focus must come back to a pane *before* the action runs, not
+            // after -- every action closure routes through WindowManager's own
+            // "whichever pane is currently focused" lookup (RequestCloseBuffer/
+            // CloseOtherTabs/CloseTabsToTheRight), which sees no pane focused
+            // at all while this popup still holds it (a real bug caught live:
+            // running the action first made every one of these a silent no-op).
+            overlays.Hide(*panel);
+            wm->TakeFocus();
+            if (index < tabContextMenuActions.size()) {
+                tabContextMenuActions[index]();
+            }
+        });
     tabContextMenu.SetOnCancel([&overlays, panel = &tabContextMenu, wm = windowManager.get()] {
         overlays.Hide(*panel);
         wm->TakeFocus();
@@ -2757,7 +2766,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     });
     projectSidebar->SetOnContextMenuRequest(
         [&overlays, panel = &sidebarContextMenu, &sidebarContextMenuActions, wm = windowManager.get(),
-         &revealPathInTerminal](const std::filesystem::path& path, bool isDirectory, ned::ui::Point anchor) {
+            &revealPathInTerminal](const std::filesystem::path& path, bool isDirectory, ned::ui::Point anchor) {
             ned::ui::ListPopupModel model;
             // project-root-context-menu follow-up: ProjectSidebar now
             // reports a right-press on its own header row as the project
@@ -2802,18 +2811,18 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
             panel->TakeFocus();
         });
     sidebarContextMenu.SetOnActivate([&sidebarContextMenuActions, &overlays, panel = &sidebarContextMenu,
-                                      wm = windowManager.get()](std::size_t index) {
-        // Focus must return to a pane before the action runs -- tabContextMenu's
-        // own live-caught bug (see its comment above) applies identically
-        // here: StartCreateFileAt/StartRenameFileAt/StartDeleteFileAt all
-        // route through WindowManager's own focused-pane lookup, which sees
-        // nothing focused while this popup still holds the keyboard.
-        overlays.Hide(*panel);
-        wm->TakeFocus();
-        if (index < sidebarContextMenuActions.size()) {
-            sidebarContextMenuActions[index]();
-        }
-    });
+                                         wm = windowManager.get()](std::size_t index) {
+            // Focus must return to a pane before the action runs -- tabContextMenu's
+            // own live-caught bug (see its comment above) applies identically
+            // here: StartCreateFileAt/StartRenameFileAt/StartDeleteFileAt all
+            // route through WindowManager's own focused-pane lookup, which sees
+            // nothing focused while this popup still holds the keyboard.
+            overlays.Hide(*panel);
+            wm->TakeFocus();
+            if (index < sidebarContextMenuActions.size()) {
+                sidebarContextMenuActions[index]();
+            }
+        });
     sidebarContextMenu.SetOnCancel([&overlays, panel = &sidebarContextMenu, wm = windowManager.get()] {
         overlays.Hide(*panel);
         wm->TakeFocus();
@@ -2860,7 +2869,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     });
     vcsPanel->SetOnContextMenuRequest(
         [&overlays, panel = &vcsContextMenu, &vcsContextMenuActions, &revealPathInTerminal,
-         vp = vcsPanel.get()](const ned::ui::VcsPanelContextMenuTarget& target, ned::ui::Point anchor) {
+            vp = vcsPanel.get()](const ned::ui::VcsPanelContextMenuTarget& target, ned::ui::Point anchor) {
             ned::ui::ListPopupModel model;
             model.anchor = anchor;
             vcsContextMenuActions.clear();
@@ -2938,17 +2947,17 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
             panel->TakeFocus();
         });
     vcsContextMenu.SetOnActivate([&vcsContextMenuActions, &overlays, panel = &vcsContextMenu,
-                                  wm = windowManager.get()](std::size_t index) {
-        // Focus must return to a pane before the action runs -- tabContextMenu's
-        // own live-caught bug (see its comment above) applies identically
-        // here; the one action that needs VcsPanel itself focused instead
-        // (Discard Changes...) explicitly re-takes it afterward.
-        overlays.Hide(*panel);
-        wm->TakeFocus();
-        if (index < vcsContextMenuActions.size()) {
-            vcsContextMenuActions[index]();
-        }
-    });
+                                     wm = windowManager.get()](std::size_t index) {
+            // Focus must return to a pane before the action runs -- tabContextMenu's
+            // own live-caught bug (see its comment above) applies identically
+            // here; the one action that needs VcsPanel itself focused instead
+            // (Discard Changes...) explicitly re-takes it afterward.
+            overlays.Hide(*panel);
+            wm->TakeFocus();
+            if (index < vcsContextMenuActions.size()) {
+                vcsContextMenuActions[index]();
+            }
+        });
     vcsContextMenu.SetOnCancel([&overlays, panel = &vcsContextMenu, wm = windowManager.get()] {
         overlays.Hide(*panel);
         wm->TakeFocus();
@@ -3467,11 +3476,11 @@ auto main(int argc, char** argv) -> int {
     }
     if (argc > 0 && !cli.lspBroker && !cli.lspBrokerStop && !cli.foreground && cli.mcpStdioRelaySocketPath.empty() && !cli.format) {
         if (ned::editor::InvokedAsNedLangc(argv[0]))
-            cli.compileLanguage = true;
+        cli.compileLanguage = true;
         else if (ned::editor::InvokedAsNedImportLanguage(argv[0]))
-            cli.importLanguage = true;
+        cli.importLanguage = true;
         else if (ned::editor::InvokedAsNedTestLanguage(argv[0]))
-            cli.testLanguage = true;
+        cli.testLanguage = true;
     }
 
     // `ned --lsp-broker`: runs the headless LSP broker daemon itself (see
@@ -3520,6 +3529,10 @@ auto main(int argc, char** argv) -> int {
     }
 
     if (cli.format) {
+        // Batch runs over throwaway trees would otherwise leave a backup
+        // directory per file formatted.
+        ned::editor::SetTransientMode(cli.transient);
+        ned::editor::ApplyTransientMode();
         return RunFormatFiles(cli.paths, cli.forceHuge);
     }
 
