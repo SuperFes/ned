@@ -139,7 +139,8 @@ TEST_CASE("The definitions carry the facts the old C++ tables held", "[LanguageP
                                                                            "scala", "haskell", "elixir", "erlang", "elm", "purescript", "rescript", "gleam", "fsharp", "ocaml",
                                                                            "ocaml-interface", "groovy", "perl", "julia", "dart", "solidity", "gdscript",
                                                                            "ruby", "nix", "r", "hcl", "clojure", "cuda", "objc", "svelte", "vue", "astro", "vhdl",
-                                                                           "proto", "jsonnet", "cue", "pkl", "janet", "commonlisp", "typst", "toml", "markdown"};
+                                                                           "proto", "jsonnet", "cue", "pkl", "janet", "commonlisp", "typst", "toml", "markdown",
+                                                                           "racket", "vala", "pascal", "powershell"};
     const std::set<std::string>              kImportResolutionLanguages = {"asciidoc", "awk", "bash", "clojure",
                                                                            "cmake", "commonlisp", "crystal", "css",
                                                                            "d", "dart", "elm", "erlang", "fennel",

@@ -3,4 +3,5 @@
  :injection-aliases ["delphi" "pas"]
  :line-comment "//"
  :signature-template "procedure NedSig({});\nbegin end;"
+ :lsp-root-markers ["*.lpi" "*.lpk" "*.dproj" "*.dpr"]
 }
