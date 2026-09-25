@@ -8,4 +8,5 @@
  :line-comment "#"
  :line-continuation "\\"
  :lsp-root-markers ["MODULE.bazel" "WORKSPACE" "WORKSPACE.bazel"]
+ :signature-template "def __ned_sig({}):\n    pass"
 }

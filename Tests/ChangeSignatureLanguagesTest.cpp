@@ -903,3 +903,103 @@ TEST_CASE("Swift change-signature moves labels with their arguments and labels n
           "host.greet(loud: false, name: who, 3, style: 0, \"\")\n"
           "greet(loud: false, name: \"b\", 1, style: 0, \"\") { print(\"done\") }\n");
 }
+
+TEST_CASE("WGSL, Starlark and Jsonnet change-signature reorder their calls", "[ChangeSignature]") {
+    CHECK(ChangeSignature("wgsl", "fn total(a: i32, b: i32) -> i32 { return a; }\n"
+                                  "fn main() { let x = total(1, 2); let v = vec2<f32>(1.0, 2.0); }\n",
+                          "total", "b: i32, a: i32") ==
+          "fn total(b: i32, a: i32) -> i32 { return a; }\n"
+          "fn main() { let x = total(2, 1); let v = vec2<f32>(1.0, 2.0); }\n");
+
+    CHECK(ChangeSignature("starlark", "def total(items, scale = 2, *, round = False):\n"
+                                      "    pass\n"
+                                      "total(xs, 3, round = True)\n"
+                                      "lib.total(ys, 5)\n",
+                          "total", "scale, items, *, round = False") ==
+          "def total(scale, items, *, round = False):\n"
+          "    pass\n"
+          "total(3, xs, round = True)\n"
+          "lib.total(5, ys)\n");
+
+    CHECK(ChangeSignature("jsonnet", "local total(items, scale=2) = items;\n"
+                                     "total([1], 3) + total([2], scale=4)\n",
+                          "total", "scale, items") ==
+          "local total(scale, items) = items;\n"
+          "total(3, [1]) + total/*declined*/([2], scale=4)\n");
+}
+
+TEST_CASE("Gleam change-signature keeps a piped value first", "[ChangeSignature]") {
+    CHECK(ChangeSignature("gleam", "pub fn total(items: List(Int), scale: Int, offset: Int) -> Int { 1 }\n"
+                                   "fn main() {\n"
+                                   "  total([1], 2, 0)\n"
+                                   "  [2] |> total(3, 1)\n"
+                                   "}\n",
+                          "total", "items: List(Int), offset: Int, scale: Int") ==
+          "pub fn total(items: List(Int), offset: Int, scale: Int) -> Int { 1 }\n"
+          "fn main() {\n"
+          "  total([1], 0, 2)\n"
+          "  [2] |> total(1, 3)\n"
+          "}\n");
+
+    // Moving the parameter a pipe fills can't be written as a pipe.
+    CHECK(ChangeSignature("gleam", "pub fn total(items: List(Int), scale: Int) -> Int { 1 }\n"
+                                   "fn main() { [2] |> total(3) }\n",
+                          "total", "scale: Int, items: List(Int)") ==
+          "pub fn total(scale: Int, items: List(Int)) -> Int { 1 }\n"
+          "fn main() { [2] |> total/*declined*/(3) }\n");
+}
+
+TEST_CASE("Fortran, MATLAB, Pascal and Ada change-signature reorder their calls", "[ChangeSignature]") {
+    CHECK(ChangeSignature("fortran", "subroutine total(items, scale)\n"
+                                     "  integer :: items, scale\n"
+                                     "end subroutine\n"
+                                     "program p\n"
+                                     "  call total(1, scale=2)\n"
+                                     "  call total(3, 4)\n"
+                                     "end program\n",
+                          "total", "scale, items") ==
+          "subroutine total(scale, items)\n"
+          "  integer :: items, scale\n"
+          "end subroutine\n"
+          "program p\n"
+          "  call total/*declined*/(1, scale=2)\n"
+          "  call total(4, 3)\n"
+          "end program\n");
+
+    CHECK(ChangeSignature("matlab", "function r = total(items, scale)\n"
+                                    "  r = items;\n"
+                                    "end\n"
+                                    "x = total(1, 2);\n",
+                          "total", "scale, items") ==
+          "function r = total(scale, items)\n"
+          "  r = items;\n"
+          "end\n"
+          "x = total(2, 1);\n");
+
+    CHECK(ChangeSignature("pascal", "procedure Total(Items: Integer; Scale: Integer = 2);\n"
+                                    "begin end;\n"
+                                    "begin Total(1, 3); end.\n",
+                          "Total", "Scale: Integer; Items: Integer") ==
+          "procedure Total(Scale: Integer; Items: Integer);\n"
+          "begin end;\n"
+          "begin Total(3, 1); end.\n");
+
+    CHECK(ChangeSignature("ada", "procedure Total (Items : Integer; Scale : Integer := 2) is\n"
+                                 "begin\n"
+                                 "   Total (1, Scale => 3);\n"
+                                 "   Total (4, 5);\n"
+                                 "end Total;\n",
+                          "Total", "Scale : Integer; Items : Integer") ==
+          "procedure Total (Scale : Integer; Items : Integer) is\n"
+          "begin\n"
+          "   Total /*declined*/(1, Scale => 3);\n"
+          "   Total (5, 4);\n"
+          "end Total;\n");
+}
+
+TEST_CASE("Pascal and Ada decline a parameter group sharing one type", "[ChangeSignature]") {
+    CHECK(ChangeSignature("pascal", "function F(A, B: Integer): Integer;\nbegin end;\n", "F", "B: Integer; A: Integer")
+              .starts_with("declined"));
+    CHECK(ChangeSignature("ada", "procedure P (A, B : Integer) is begin null; end P;\n", "P", "B : Integer; A : Integer")
+              .starts_with("declined"));
+}

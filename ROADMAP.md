@@ -187,7 +187,7 @@ and code reading. Highest stakes first.
       left out. Tcl has no locals query: `global`/`upvar` rebind a proc's name to
       another scope's, which a proc-local rename would get wrong. Erlang binds only a
       top-level or one-level-nested pattern variable (`{A, [B]}`'s `B` is a use).
-- [ ] **change-signature for the remaining languages.** 32 have `signatures` + `calls`
+- [ ] **change-signature for the remaining languages.** 40 have `signatures` + `calls`
       queries (`sig` column): each describes its own parameters, receivers (`self`,
       `cls`, Lua's colon calls, Nim's dot calls, C#'s extension `this`), keyword-only
       parameters and named/spread arguments, and `:signature-template` parses the
@@ -200,9 +200,14 @@ and code reading. Highest stakes first.
       `: base(...)`, `super.init`/`self.init` -- `@call.class` with `@call.base`/
       `@call.class.name`, and a call marked `@call.callee.base`/`.class`). Odin's
       `x->f(a)` passes `x` as f's first parameter, so it declines when that moves. Not
-      yet: the Lisps, Elixir's pipes and Haskell/OCaml/F#'s curried application (a
-      call has no parenthesized argument list after the callee); Ruby's and Crystal's
-      bare `super`, which calls the parent's same-named method.
+      yet: the Lisps, and Haskell/OCaml/F#'s curried application (a call has no
+      parenthesized argument list after the callee); Erlang's and Elixir's
+      multi-clause functions, whose clause heads are patterns each change would have
+      to rewrite separately; Ruby's and Crystal's bare `super`, which calls the
+      parent's same-named method. A pipe fills the first parameter (Gleam's `|>`,
+      `@call.receiver.first`), so moving that parameter declines the piped call.
+      Pascal's and Ada's grouped parameters (`A, B : Integer`) are one nameless entry
+      and decline.
       Known misses: a class's base is the first type it lists, so a C#/Kotlin/Swift
       class listing an interface first sends `base`/`super` to the interface; a C#
       extension method called statically with its trailing defaults omitted is read as

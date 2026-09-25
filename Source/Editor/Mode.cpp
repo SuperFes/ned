@@ -2253,8 +2253,19 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 }
                 markers.push_back(std::move(marker));
             }
-            std::sort(markers.begin(), markers.end(),
-                      [](const CallMarker& a, const CallMarker& b) { return a.startByte < b.startByte; });
+            // One marker per call: a call two patterns describe (Gleam's
+            // `x |> f(y)` is a call and a piped one) keeps the one that says
+            // what its receiver supplies.
+            std::sort(markers.begin(), markers.end(), [](const CallMarker& a, const CallMarker& b) {
+                return std::tie(a.startByte, a.endByte, a.calleeStartByte, b.receiver) <
+                       std::tie(b.startByte, b.endByte, b.calleeStartByte, a.receiver);
+            });
+            markers.erase(std::unique(markers.begin(), markers.end(),
+                                      [](const CallMarker& a, const CallMarker& b) {
+                                          return a.startByte == b.startByte && a.endByte == b.endByte &&
+                                                 a.calleeStartByte == b.calleeStartByte;
+                                      }),
+                          markers.end());
             return markers;
         };
     }

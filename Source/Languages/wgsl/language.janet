@@ -11,4 +11,5 @@
 {:name "wgsl"
  :extensions [".wgsl"]
  :line-comment "//"
+ :signature-template "fn __ned_sig({}) {}"
 }

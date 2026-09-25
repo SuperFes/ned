@@ -7,4 +7,5 @@
  :lsp-root-markers ["fpm.toml"]
  :capture-classes {"custom_directive" :keyword}
  :import-resolution {:extensions ["inc" "f90" "f"]}
+ :signature-template "subroutine ned_sig({})\nend subroutine"
 }

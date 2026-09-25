@@ -7,4 +7,5 @@
  :shared-extensions [".m"]
  :content-pattern "^\\s*(function\\s+[\\w\\[]|classdef\\b|%)|^\\s*(end|endfunction|endif|endfor|endwhile)\\s*;?\\s*$"
  :line-comment "%"
+ :signature-template "function ned_sig({})\nend"
 }

@@ -12,4 +12,5 @@
  # The outline stops two levels down; breadcrumbs follow every level.
  :sticky-scroll-from-folds true
  :import-resolution {:extensions ["jsonnet" "libsonnet"]}
+ :signature-template "local __ned_sig({}) = null; null"
 }
