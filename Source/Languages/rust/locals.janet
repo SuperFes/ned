@@ -54,6 +54,12 @@
   pattern: (mut_pattern
     (identifier) @local.definition.var))
 
+#; A `let` binds after its initializer: `let x = x + 1` reads the x before it.
+(let_declaration
+  value: (_) @local.initializer) @local.declaration
+(let_condition
+  value: (_) @local.initializer) @local.declaration
+
 #; `let ... else` and `if let`/`while let`/`match` pattern bindings. A
 #; lowercase identifier anywhere inside one of these patterns is a binding;
 #; an uppercase one is a variant or struct name -- see this file's header.

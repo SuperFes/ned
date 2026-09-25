@@ -809,7 +809,10 @@ void ExpandPairwiseBindings(const grammar::Node& container, const std::string& q
                            });
     };
 
-    std::size_t index = 0;
+    // A name is visible from the end of its own value, so `[x (inc x)]`
+    // reads the enclosing x.
+    std::size_t index   = 0;
+    std::size_t pending = out.size();
     for (std::size_t i = 0; i < container.ChildCount(); ++i) {
         const grammar::Node child = container.Child(i);
         if (!child.IsNamed() || child.IsExtra() || skipped(child)) {
@@ -818,8 +821,12 @@ void ExpandPairwiseBindings(const grammar::Node& container, const std::string& q
         const bool isName = index % 2 == 0;
         ++index;
         if (!isName) {
+            for (; pending < out.size(); ++pending) {
+                out[pending].visibleFrom = child.EndByte();
+            }
             continue;
         }
+        pending = out.size();
 
         // The identifier's own text, which is what a rename edits: a grammar
         // that gives its symbol a `name` field (Clojure's `sym_lit`) hands it
@@ -842,14 +849,16 @@ void ExpandPairwiseBindings(const grammar::Node& container, const std::string& q
 }
 
 // A `@local.definition.<qualifier>.pattern` capture names a match pattern
-// rather than a name: every `identifier` inside it binds, however deep --
+// rather than a name: every `identifier` (or the `local.pattern.name` type
+// the pattern sets -- OCaml's `value_pattern`) inside it binds, however deep --
 // Elixir's `{:ok, %{id: id}} = fetch()` binds `id` four levels down, which a
 // query could only reach by unrolling the nesting by hand. The query marks
 // what inside a pattern binds nothing (`@local.pattern.exclude`: a pinned
 // `^x`, which is a use; a call's target) and what is no name at all
 // (`@local.skip`); both subtrees are passed over whole.
-void ExpandPatternBindings(const grammar::Node& pattern, const std::string& qualifier,
-                           const std::vector<std::pair<std::size_t, std::size_t>>& excluded, std::vector<LocalCapture>& out) {
+void ExpandPatternBindings(const grammar::Node& pattern, const std::string& qualifier, std::string_view nameType,
+                           bool bindsInParentScope, const std::vector<std::pair<std::size_t, std::size_t>>& excluded,
+                           std::vector<LocalCapture>& out) {
     const auto isExcluded = [&excluded](const grammar::Node& node) {
         return std::any_of(excluded.begin(), excluded.end(), [&node](const std::pair<std::size_t, std::size_t>& range) {
             return node.StartByte() >= range.first && node.EndByte() <= range.second;
@@ -862,8 +871,12 @@ void ExpandPatternBindings(const grammar::Node& pattern, const std::string& qual
         if (node.IsExtra() || isExcluded(node)) {
             continue;
         }
-        if (node.Type() == "identifier") {
-            out.push_back(LocalCapture{node.StartByte(), node.EndByte(), LocalCaptureKind::Definition, qualifier});
+        if (node.Type() == nameType) {
+            out.push_back(LocalCapture{.startByte          = node.StartByte(),
+                                       .endByte            = node.EndByte(),
+                                       .kind               = LocalCaptureKind::Definition,
+                                       .qualifier          = qualifier,
+                                       .bindsInParentScope = bindsInParentScope});
             continue;
         }
         for (std::size_t i = node.ChildCount(); i-- > 0;) {
@@ -2227,7 +2240,21 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 std::size_t startByte;
                 std::size_t endByte;
                 std::string qualifier;
+                // Patterns only: the node type that is a name, and whether
+                // the names bind in the enclosing scope.
+                std::string nameType           = "identifier";
+                bool        bindsInParentScope = false;
             };
+            // `@local.declaration` + `@local.initializer`: the definitions
+            // inside a declaration ahead of its initializer are hidden until
+            // the initializer ends -- `let x = x + 1` reads the enclosing x.
+            struct Declaration {
+                std::size_t startByte;
+                std::size_t endByte;
+                std::size_t initializerStart;
+                std::size_t initializerEnd;
+            };
+            std::vector<Declaration>                         declarations;
             std::vector<PairwiseContainer>                   pairwise;
             std::vector<PairwiseContainer>                   patterns;
             std::vector<std::pair<std::size_t, std::size_t>> skipRanges;
@@ -2245,6 +2272,20 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                                                          std::max(joined->second, capture.endByte))
                                         : std::make_pair(capture.startByte, capture.endByte);
                     }
+                }
+                const grammar::QueryMatchCapture* declaration = nullptr;
+                const grammar::QueryMatchCapture* initializer = nullptr;
+                for (const grammar::QueryMatchCapture& capture : match.captures) {
+                    if (capture.name == "local.declaration") {
+                        declaration = &capture;
+                    }
+                    else if (capture.name == "local.initializer") {
+                        initializer = &capture;
+                    }
+                }
+                if (declaration != nullptr && initializer != nullptr) {
+                    declarations.push_back(Declaration{declaration->startByte, declaration->endByte, initializer->startByte,
+                                                       initializer->endByte});
                 }
                 if (joined) {
                     const auto inherits = match.setDirectives.find("local.scope-inherits");
@@ -2278,8 +2319,15 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     constexpr std::string_view kPattern = ".pattern";
                     if (*kind == LocalCaptureKind::Definition && qualifier.size() > kPattern.size() &&
                         std::string_view(qualifier).ends_with(kPattern)) {
-                        patterns.push_back(PairwiseContainer{capture.startByte, capture.endByte,
-                                                             qualifier.substr(0, qualifier.size() - kPattern.size())});
+                        const std::string base        = qualifier.substr(0, qualifier.size() - kPattern.size());
+                        const auto        nameType    = match.setDirectives.find("local.pattern.name");
+                        const auto        parentScope = match.setDirectives.find("definition." + base + ".scope");
+                        patterns.push_back(PairwiseContainer{
+                            .startByte          = capture.startByte,
+                            .endByte            = capture.endByte,
+                            .qualifier          = base,
+                            .nameType           = nameType != match.setDirectives.end() ? nameType->second : "identifier",
+                            .bindsInParentScope = parentScope != match.setDirectives.end() && parentScope->second == "parent"});
                         continue;
                     }
                     const auto inherits    = match.setDirectives.find("local.scope-inherits");
@@ -2333,7 +2381,28 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 patternExcludes.insert(patternExcludes.end(), skipRanges.begin(), skipRanges.end());
                 for (const PairwiseContainer& container : patterns) {
                     if (const grammar::Node node = containerNode(container); !node.IsNull()) {
-                        ExpandPatternBindings(node, container.qualifier, patternExcludes, captures);
+                        ExpandPatternBindings(node, container.qualifier, container.nameType, container.bindsInParentScope,
+                                              patternExcludes, captures);
+                    }
+                }
+            }
+            if (!declarations.empty()) {
+                std::vector<std::size_t> definitions;
+                for (std::size_t i = 0; i < captures.size(); ++i) {
+                    if (captures[i].kind == LocalCaptureKind::Definition) {
+                        definitions.push_back(i);
+                    }
+                }
+                std::sort(definitions.begin(), definitions.end(),
+                          [&captures](std::size_t a, std::size_t b) { return captures[a].startByte < captures[b].startByte; });
+                for (const Declaration& declaration : declarations) {
+                    auto it = std::lower_bound(definitions.begin(), definitions.end(), declaration.startByte,
+                                               [&captures](std::size_t i, std::size_t at) { return captures[i].startByte < at; });
+                    for (; it != definitions.end() && captures[*it].startByte < declaration.initializerStart; ++it) {
+                        LocalCapture& definition = captures[*it];
+                        if (definition.endByte <= declaration.endByte) {
+                            definition.visibleFrom = std::max(definition.visibleFrom.value_or(0), declaration.initializerEnd);
+                        }
                     }
                 }
             }

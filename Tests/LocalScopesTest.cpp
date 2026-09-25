@@ -405,3 +405,73 @@ TEST_CASE("A file-private definition at file level is still a local", "[LocalSco
     CHECK_FALSE(priv->scope.has_value());
     CHECK(priv->occurrences.size() == 2);
 }
+
+TEST_CASE("A definition hidden by its own initializer leaves that initializer to the outer binding", "[LocalScopes]") {
+    // `let x = x + 1;` reads the parameter, then shadows it.
+    const std::string text  = "fn f(x) { { let x = x + 1; use(x); } }";
+    LocalCapture      inner = Definition(text, "x", 1, "var");
+    inner.visibleFrom       = text.find(';');
+    const std::vector<LocalCapture> captures{
+        ScopeFrom(text, "fn f"),
+        BraceScope(text, 1),
+        Definition(text, "x", 0, "parameter"),
+        inner,
+        Reference(text, "x", 2),
+        Reference(text, "x", 3),
+    };
+
+    const auto initializer = ResolveBindingAt(captures, text, Nth(text, "x", 2));
+    REQUIRE(initializer.has_value());
+    CHECK(initializer->qualifier == "parameter");
+    CHECK(initializer->occurrences == std::vector<Range>{{Nth(text, "x", 0), Nth(text, "x", 0) + 1},
+                                                         {Nth(text, "x", 2), Nth(text, "x", 2) + 1}});
+
+    const auto shadow = ResolveBindingAt(captures, text, Nth(text, "x", 1));
+    REQUIRE(shadow.has_value());
+    CHECK(shadow->qualifier == "var");
+    CHECK(shadow->occurrences == std::vector<Range>{{Nth(text, "x", 1), Nth(text, "x", 1) + 1},
+                                                    {Nth(text, "x", 3), Nth(text, "x", 3) + 1}});
+    CHECK_FALSE(shadow->usedBeforeDefinition);
+}
+
+TEST_CASE("A stated visibility point holds even with nothing outer to bind", "[LocalScopes]") {
+    // Lua's `local print = print` at chunk level: the right side is the global.
+    const std::string text = "local x = x\nuse(x)\n";
+    LocalCapture      def  = Definition(text, "x", 0, "var");
+    def.visibleFrom        = text.find('\n');
+    const std::vector<LocalCapture> captures{def, Reference(text, "x", 1), Reference(text, "x", 2)};
+
+    CHECK_FALSE(ResolveBindingAt(captures, text, Nth(text, "x", 1)).has_value());
+    const auto local = ResolveBindingAt(captures, text, Nth(text, "x", 0));
+    REQUIRE(local.has_value());
+    CHECK(local->occurrences.size() == 2);
+}
+
+TEST_CASE("A definition's own site resolves to it when also captured as a reference", "[LocalScopes]") {
+    const std::string text = "{ x; { let x = x; x } }";
+    LocalCapture      def  = Definition(text, "x", 1);
+    def.visibleFrom        = Nth(text, ";", 1);
+    const std::vector<LocalCapture> captures{
+        BraceScope(text, 0),
+        BraceScope(text, 1),
+        Definition(text, "x", 0),
+        def,
+        Reference(text, "x", 1),
+        Reference(text, "x", 2),
+        Reference(text, "x", 3),
+    };
+    const auto shadow = ResolveBindingAt(captures, text, Nth(text, "x", 1));
+    REQUIRE(shadow.has_value());
+    CHECK(shadow->occurrences == std::vector<Range>{{Nth(text, "x", 1), Nth(text, "x", 1) + 1},
+                                                    {Nth(text, "x", 3), Nth(text, "x", 3) + 1}});
+}
+
+TEST_CASE("LocalNodes looks past a definition not yet visible", "[LocalScopes]") {
+    using enum LocalCaptureKind;
+    const std::string text                   = "{ a { a = a } }";
+    LocalCapture      inner                  = Token(text, "a", 1, Definition, "inner");
+    inner.visibleFrom                        = Nth(text, "}", 0);
+    const std::vector<LocalCapture> captures = {BraceScope(text, 0), BraceScope(text, 1), Token(text, "a", 0, Definition, "outer"),
+                                                inner, Token(text, "a", 2, Reference)};
+    CHECK(DescribeLocalNodes(text, captures) == std::vector<std::string>{"a@2:outer", "a@6:inner", "a@10:outer"});
+}

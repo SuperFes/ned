@@ -41,6 +41,10 @@ namespace {
         bool        bindsInParentScope = false;
         std::string nameSpace;
         bool        filePrivate = false;
+        // Where a definition becomes visible: its start, unless the query
+        // said later (LocalCapture::visibleFrom).
+        std::size_t visibleFrom           = 0;
+        bool        explicitlyVisibleFrom = false;
     };
 
     // Index into a scope vector, or nullopt for file level. Used instead of
@@ -65,9 +69,11 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
             }
             continue;
         }
-        occurrences.push_back(Occurrence{range, capture.kind == LocalCaptureKind::Definition, capture.qualifier,
-                                         capture.kind == LocalCaptureKind::Definition && capture.bindsInParentScope,
-                                         capture.nameSpace, capture.kind == LocalCaptureKind::Definition && capture.filePrivate});
+        const bool isDefinition = capture.kind == LocalCaptureKind::Definition;
+        occurrences.push_back(Occurrence{range, isDefinition, capture.qualifier, isDefinition && capture.bindsInParentScope,
+                                         capture.nameSpace, isDefinition && capture.filePrivate,
+                                         isDefinition && capture.visibleFrom ? std::max(*capture.visibleFrom, range.first) : range.first,
+                                         isDefinition && capture.visibleFrom.has_value()});
     }
     std::sort(scopes.begin(), scopes.end());
     scopes.erase(std::unique(scopes.begin(), scopes.end()), scopes.end());
@@ -154,7 +160,9 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
     // definition, in every language. That second pass is what makes a
     // Python comprehension work -- `[n * n for n in xs]` reads n twice
     // before binding it, and nothing else in the file binds n -- without
-    // giving up the ordered walk where it actually matters.
+    // giving up the ordered walk where it actually matters. A visibility
+    // point the query stated (`let x = x + 1`) is a fact of the language,
+    // not a guess, so neither pass looks past it.
     const auto ownerFor = [&](Range use, bool respectPosition) -> std::optional<ScopeRef> {
         std::vector<std::size_t> chain;
         for (std::size_t i = 0; i < scopes.size(); ++i) {
@@ -167,8 +175,14 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
         });
         const auto boundIn = [&](ScopeRef scope) {
             return std::any_of(sameName.begin(), sameName.end(), [&](const Candidate& candidate) {
-                return candidate.occurrence->isDefinition && candidate.scope == scope &&
-                       (!respectPosition || candidate.occurrence->range.first <= use.first);
+                const Occurrence& definition = *candidate.occurrence;
+                if (!definition.isDefinition || candidate.scope != scope) {
+                    return false;
+                }
+                if (definition.explicitlyVisibleFrom && use.first < definition.visibleFrom) {
+                    return false;
+                }
+                return !respectPosition || definition.visibleFrom <= use.first;
             });
         };
         for (const std::size_t index : chain) {
@@ -182,6 +196,13 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
         return std::nullopt;
     };
     const auto resolve = [&](Range use) -> std::optional<ScopeRef> {
+        // A definition's own site is that definition, however late it
+        // becomes visible.
+        for (const Candidate& candidate : sameName) {
+            if (candidate.occurrence->isDefinition && candidate.occurrence->range == use) {
+                return candidate.scope;
+            }
+        }
         if (const std::optional<ScopeRef> ordered = ownerFor(use, /*respectPosition=*/true)) {
             return ordered;
         }
@@ -279,10 +300,14 @@ std::vector<LocalNode> LocalNodes(std::span<const LocalCapture> captures, std::s
         return a->kind == LocalCaptureKind::Definition && b->kind != LocalCaptureKind::Definition;
     });
 
+    struct Binding {
+        std::string_view qualifier;
+        std::size_t      visibleFrom;
+    };
     struct Frame {
-        Range                                                  range;
-        bool                                                   inherits;
-        std::unordered_map<std::string, std::string_view>      names; // keyed by namespace, NUL, name
+        Range                                    range;
+        bool                                     inherits;
+        std::unordered_map<std::string, Binding> names; // keyed by namespace, NUL, name
     };
     std::vector<Frame>     stack{Frame{Range{0, bufferText.size()}, false, {}}};
     std::size_t            nextScope = 0;
@@ -312,16 +337,17 @@ std::vector<LocalNode> LocalNodes(std::span<const LocalCapture> captures, std::s
         name.append(text);
         if (token->kind == LocalCaptureKind::Definition) {
             Frame& owner = token->bindsInParentScope && stack.size() > 1 ? stack[stack.size() - 2] : stack.back();
-            owner.names.try_emplace(std::move(name), token->qualifier);
+            owner.names.try_emplace(std::move(name), Binding{token->qualifier, token->visibleFrom.value_or(range.first)});
             if (out.empty() || out.back().range != range) {
                 out.push_back(LocalNode{range, token->qualifier});
             }
             continue;
         }
         for (auto frame = stack.rbegin(); frame != stack.rend(); ++frame) {
-            if (const auto found = frame->names.find(name); found != frame->names.end()) {
+            if (const auto found = frame->names.find(name);
+                found != frame->names.end() && found->second.visibleFrom <= range.first) {
                 if (out.empty() || out.back().range != range) {
-                    out.push_back(LocalNode{range, std::string(found->second)});
+                    out.push_back(LocalNode{range, std::string(found->second.qualifier)});
                 }
                 break;
             }

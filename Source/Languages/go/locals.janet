@@ -44,10 +44,21 @@
   left: (expression_list
     (identifier) @local.definition.var))
 
+#; A declared name's scope begins at the end of its spec, so `x := x + 1`
+#; reads the enclosing x.
+(var_spec
+  value: (_) @local.initializer) @local.declaration
+(const_spec
+  value: (_) @local.initializer) @local.declaration
+(short_var_declaration
+  right: (_) @local.initializer) @local.declaration
+
 #; `for i, item := range items` and the type-switch binding.
 (range_clause
   left: (expression_list
     (identifier) @local.definition.var))
+(range_clause
+  right: (_) @local.initializer) @local.declaration
 (type_switch_statement
   (expression_list
     (identifier) @local.definition.var))

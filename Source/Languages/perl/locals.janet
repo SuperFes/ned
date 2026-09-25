@@ -12,10 +12,12 @@
 #; captured, so a rename keeps every sigil, and `local.namespace` keeps the
 #; three apart.
 
-#; Scopes: blocks, plus the constructs whose variables reach into one -- a
-#; sub's signature, a loop's variable, a variable declared in a condition.
+#; Scopes: blocks, bare ones included, plus the constructs whose variables
+#; reach into one -- a sub's signature, a loop's variable, a variable declared
+#; in a condition.
 [
   (block)
+  (block_statement)
   (subroutine_declaration_statement)
   (method_declaration_statement)
   (anonymous_subroutine_expression)
@@ -49,6 +51,12 @@
 #; `for my $x (...)`; without `my` the loop aliases an existing variable.
 ((for_statement ["my" "state"] variable: (scalar (varname) @local.definition.var))
  (:set! local.namespace "scalar"))
+
+#; A lexical is introduced after its statement: `my $x = $x` copies the
+#; outer $x.
+(assignment_expression
+  left: (variable_declaration)
+  right: (_) @local.initializer) @local.declaration
 
 #; Signature parameters, each wrapped in its kind (mandatory, optional,
 #; named, slurpy).

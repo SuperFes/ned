@@ -31,6 +31,12 @@
        name: (identifier) @local.definition.var)))
  (:set! local.file-private "true"))
 
+#; A `local` is visible from the next statement: `local print = print` keeps
+#; the global on its right.
+(variable_declaration
+  (assignment_statement
+    (expression_list) @local.initializer)) @local.declaration
+
 #; The name is visible after the function and inside it (recursion), so it
 #; binds in the scope around the function's own.
 ((function_declaration

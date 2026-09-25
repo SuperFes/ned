@@ -39,6 +39,13 @@
 (variable_declaration
   (simple_identifier) @local.definition.var)
 
+#; A property's own initializer can't see it: `val x = x + 1` in a nested
+#; scope reads the outer x.
+(property_declaration
+  "="
+  .
+  (_) @local.initializer) @local.declaration
+
 #; References
 ((simple_identifier) @local.reference
   (:not-has-parent? @local.reference "navigation_suffix"))

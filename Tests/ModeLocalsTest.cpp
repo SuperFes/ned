@@ -908,3 +908,222 @@ TEST_CASE("dart-mode scopes a function's parameters over its body", "[Mode][Loca
     REQUIRE(by.has_value());
     CHECK(by->occurrences.size() == 2);
 }
+
+// `let x = x + 1` shadows x with a value computed from the x before it: the
+// initializer's x is the enclosing binding, and binding it to the new one
+// would make a rename of either rewrite the other's uses.
+TEST_CASE("A shadowing declaration's initializer reads the enclosing binding", "[Mode][LocalScopes]") {
+    struct Case {
+        const char*      mode;
+        std::string      source;
+        std::vector<int> outer;  // occurrences of "x" that are the enclosing binding
+        std::vector<int> shadow; // occurrences that are the new one
+    };
+    const std::vector<Case> cases = {
+        {"rust-mode", "fn f(x: i32) {\n    let x = x + 1;\n    use_it(x);\n}\n", {0, 2}, {1, 3}},
+        {"rust-mode", "fn f(x: Option<i32>) {\n    if let Some(x) = x {\n        use_it(x);\n    }\n}\n", {0, 2}, {1, 3}},
+        {"go-mode", "package p\nfunc f(x int) {\n\tif true {\n\t\tx := x + 1\n\t\tuse(x)\n\t}\n}\n", {0, 2}, {1, 3}},
+        {"lua-mode", "local function f(x)\n  do\n    local x = x + 1\n    print(x)\n  end\nend\n", {0, 2}, {1, 3}},
+        {"kotlin-mode", "fun f(x: Int) {\n    run {\n        val x = x + 1\n        println(x)\n    }\n}\n", {0, 2}, {1, 3}},
+        {"perl-mode", "sub f {\n  my $x = 1;\n  {\n    my $x = $x + 1;\n    print $x;\n  }\n}\n", {0, 2}, {1, 3}},
+        {"elixir-mode", "defmodule M do\n  def f(x) do\n    x = x + 1\n    x\n  end\nend\n", {0, 2}, {1, 3}},
+        {"gleam-mode", "fn f(x) {\n  let x = x + 1\n  x\n}\n", {0, 2}, {1, 3}},
+        {"clojure-mode", "(defn f [x]\n  (let [x (inc x)]\n    x))\n", {0, 2}, {1, 3}},
+        {"janet-mode", "(defn f [x]\n  (let [x (inc x)]\n    x))\n", {0, 2}, {1, 3}},
+        {"racket-mode", "(define (f x)\n  (let ([x (add1 x)])\n    x))\n", {0, 2}, {1, 3}},
+    };
+    const auto offsets = [](std::string_view source, const std::vector<int>& indexes) {
+        std::vector<std::pair<std::size_t, std::size_t>> ranges;
+        for (const int index : indexes) {
+            std::size_t at = 0;
+            for (int i = 0; i <= index; ++i) {
+                at = source.find('x', i == 0 ? 0 : at + 1);
+            }
+            ranges.emplace_back(at, at + 1);
+        }
+        return ranges;
+    };
+    for (const Case& c : cases) {
+        INFO(c.mode << ": " << c.source);
+        const auto initializer = Resolve(c.mode, c.source, "x", c.outer.back());
+        REQUIRE(initializer.has_value());
+        CHECK(initializer->occurrences == offsets(c.source, c.outer));
+        const auto shadow = Resolve(c.mode, c.source, "x", c.shadow.front());
+        REQUIRE(shadow.has_value());
+        CHECK(shadow->occurrences == offsets(c.source, c.shadow));
+    }
+}
+
+// Lua's `local print = print` keeps the global on its right.
+TEST_CASE("lua-mode leaves a chunk-level local's initializer to the global", "[Mode][LocalScopes]") {
+    const std::string source = "local print = print\nprint(1)\n";
+    CHECK_FALSE(Resolve("lua-mode", source, "print", 1).has_value());
+    const auto local = Resolve("lua-mode", source, "print", 0);
+    REQUIRE(local.has_value());
+    CHECK(OccurrenceTexts(*local, source).size() == 2);
+}
+
+// A `let ... in` binds for its body, and for its own right side only under
+// `rec`; a let pattern's names are `value_name`, every other pattern's
+// `value_pattern`.
+TEST_CASE("ocaml-mode binds let, parameters and match cases", "[Mode][LocalScopes]") {
+    const std::string source = "let f x ?(y = x) ~z =\n"
+                               "  let x = x + 1 in\n"
+                               "  let rec go n = if n = 0 then x else go (n - 1) in\n"
+                               "  let (a, b) = (y, z) in\n"
+                               "  match a with\n"
+                               "  | Some v | Other v -> fun w -> v + w + b + go x\n"
+                               "  | None -> List.length x\n";
+    const auto        param  = Resolve("ocaml-mode", source, "x", 0);
+    REQUIRE(param.has_value());
+    CHECK(param->qualifier == "parameter");
+    CHECK(param->occurrences.size() == 3); // `f x`, `?(y = x)`, `let x = x`
+
+    const auto shadow = Resolve("ocaml-mode", source, "x", 2); // `let x`
+    REQUIRE(shadow.has_value());
+    CHECK_FALSE(shadow->scopeIsFile);
+    CHECK(shadow->occurrences.size() == 4); // the let, `then x`, `go x`, `length x`
+
+    const auto go = Resolve("ocaml-mode", source, "go", 0);
+    REQUIRE(go.has_value());
+    CHECK(go->occurrences.size() == 3); // `let rec` sees itself
+
+    const auto b = Resolve("ocaml-mode", source, "b", 0);
+    REQUIRE(b.has_value());
+    CHECK(b->occurrences.size() == 2);
+
+    const auto v = Resolve("ocaml-mode", source, "v", 0);
+    REQUIRE(v.has_value());
+    CHECK(v->occurrences.size() == 3); // both or-pattern arms and the use
+
+    // A top-level let is the module's, visible to other files.
+    const auto f = Resolve("ocaml-mode", source, "f", 0);
+    REQUIRE(f.has_value());
+    CHECK(f->scopeIsFile);
+}
+
+// A `let` inside a block binds for the rest of it; its own body reads the
+// names from before it unless it is `rec`.
+TEST_CASE("fsharp-mode binds let, parameters and match rules", "[Mode][LocalScopes]") {
+    const std::string source = "let f x (y: int) =\n"
+                               "    let x = x + 1\n"
+                               "    let rec go n = if n = 0 then x else go (n - 1)\n"
+                               "    let (a, b) = (y, x)\n"
+                               "    let r = { Name = a; Age = b }\n"
+                               "    match Some a with\n"
+                               "    | Some v -> (fun w -> v + w + b + go x + r.Age + x.Length)\n"
+                               "    | None -> List.length [x]\n";
+    const auto        param  = Resolve("fsharp-mode", source, "x", 0);
+    REQUIRE(param.has_value());
+    CHECK(param->qualifier == "parameter");
+    CHECK(param->occurrences.size() == 2); // `f x` and `let x = x`
+
+    const auto shadow = Resolve("fsharp-mode", source, "x", 1);
+    REQUIRE(shadow.has_value());
+    CHECK(shadow->occurrences.size() == 6); // the let, `then x`, `(y, x)`, `go x`, `x.Length`, `[x]`
+
+    const auto go = Resolve("fsharp-mode", source, "go", 0);
+    REQUIRE(go.has_value());
+    CHECK(go->occurrences.size() == 3);
+
+    const auto a = Resolve("fsharp-mode", source, "a", 0); // `let (a`
+    REQUIRE(a.has_value());
+    CHECK(a->occurrences.size() == 3); // not the `Age` field or `Name`
+
+    const auto v = Resolve("fsharp-mode", source, "v", 0);
+    REQUIRE(v.has_value());
+    CHECK(v->occurrences.size() == 2);
+
+    // `Some` is a union case, not a binding.
+    CHECK_FALSE(Resolve("fsharp-mode", source, "Some", 1).has_value());
+    // A module-level function is visible to other files.
+    const auto f = Resolve("fsharp-mode", source, "f", 0);
+    REQUIRE(f.has_value());
+    CHECK(f->scopeIsFile);
+}
+
+// `if let x = x` unwraps the outer x; the shorthand `guard let x` binds
+// nothing new, so it stays with the outer binding.
+TEST_CASE("swift-mode binds parameters, properties, if/guard let and patterns", "[Mode][LocalScopes]") {
+    const std::string source = "func f(for x: Int?, _ y: Int = 2) -> Int {\n"
+                               "    let a = 1, b: Int = a\n"
+                               "    var c = x\n"
+                               "    if let x = x, let z: Int = y {\n"
+                               "        print(x.bitWidth, z)\n"
+                               "    }\n"
+                               "    guard let x else { return 0 }\n"
+                               "    for (i, v) in [1, 2].enumerated() { print(i, v) }\n"
+                               "    switch c {\n"
+                               "    case .some(let w): print(w)\n"
+                               "    case let .none: break\n"
+                               "    }\n"
+                               "    let g = { (p: Int, q) in p + q }\n"
+                               "    return g(a, b) + f(for: x, c)\n"
+                               "}\n";
+    const auto        param  = Resolve("swift-mode", source, "x", 0);
+    REQUIRE(param.has_value());
+    CHECK(param->qualifier == "parameter");
+    CHECK(param->occurrences.size() == 5); // decl, `c = x`, `= x {`, `guard let x`, `for: x`
+
+    const auto unwrapped = Resolve("swift-mode", source, "x", 2); // `if let x`
+    REQUIRE(unwrapped.has_value());
+    CHECK(unwrapped->occurrences.size() == 2);
+
+    const auto a = Resolve("swift-mode", source, "a", 0);
+    REQUIRE(a.has_value());
+    CHECK(a->occurrences.size() == 3);
+
+    const auto c = Resolve("swift-mode", source, "c = x", 0);
+    REQUIRE(c.has_value());
+    CHECK(c->occurrences.size() == 3);
+
+    const auto w = Resolve("swift-mode", source, "w)", 0);
+    REQUIRE(w.has_value());
+    CHECK(w->occurrences.size() == 2);
+
+    const auto q = Resolve("swift-mode", source, "q)", 0);
+    REQUIRE(q.has_value());
+    CHECK(q->occurrences.size() == 2);
+
+    // Neither an argument label nor an enum case is a variable.
+    CHECK_FALSE(Resolve("swift-mode", source, "for", 2).has_value());
+    CHECK_FALSE(Resolve("swift-mode", source, "none", 0).has_value());
+    // A top-level function is visible to the rest of the module.
+    const auto f = Resolve("swift-mode", source, "f(for x", 0);
+    REQUIRE(f.has_value());
+    CHECK(f->scopeIsFile);
+}
+
+// A loop body assigning a local updates it, so the loop is no scope; a
+// call's keyword argument is a label, not a binding or a use.
+TEST_CASE("julia-mode binds parameters and assignments, not keyword arguments", "[Mode][LocalScopes]") {
+    const std::string source = "function f(x, y::Int, z=1; k=2)\n"
+                               "    s = 0\n"
+                               "    for i in 1:x\n"
+                               "        s = s + i\n"
+                               "    end\n"
+                               "    plot(y; k=k, z=s)\n"
+                               "    g = (a, b) -> a + b\n"
+                               "    return g(s, z)\n"
+                               "end\n";
+    const auto        x      = Resolve("julia-mode", source, "x", 0);
+    REQUIRE(x.has_value());
+    CHECK(x->qualifier == "parameter");
+    CHECK(x->occurrences.size() == 2);
+
+    const auto s = Resolve("julia-mode", source, "s = 0", 0);
+    REQUIRE(s.has_value());
+    CHECK(s->occurrences.size() == 5);
+
+    const auto k = Resolve("julia-mode", source, "k=2", 0);
+    REQUIRE(k.has_value());
+    CHECK(k->occurrences.size() == 2); // the parameter and `k=k`'s value
+
+    const auto z = Resolve("julia-mode", source, "z=1", 0);
+    REQUIRE(z.has_value());
+    CHECK(z->occurrences.size() == 2); // not the `z=s` keyword
+
+    const auto a = Resolve("julia-mode", source, "a,", 0);
+    REQUIRE(a.has_value());
+    CHECK(a->occurrences.size() == 2);
+}

@@ -663,6 +663,11 @@ struct LocalCapture {
     // level, it is still invisible to other files (Perl's file-level `my`,
     // Lua's chunk-level `local`), so it is as safe to rename as any local.
     bool filePrivate = false;
+    // A Definition not yet visible before this byte: it sits in a
+    // `@local.declaration` ahead of that declaration's `@local.initializer`
+    // (`let x = x + 1` reads the enclosing x), or it is a binding pair's
+    // name, visible after its value. Unset, it is visible from its start.
+    std::optional<std::size_t> visibleFrom;
 };
 
 // Maps a locals.scm capture name (without the leading '@', e.g.

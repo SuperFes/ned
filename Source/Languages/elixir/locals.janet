@@ -60,6 +60,12 @@
   left: (_) @local.definition.var.pattern
   operator: "<-")
 
+#; The right side is evaluated before the pattern binds: `x = x + 1` reads
+#; the x already bound.
+(binary_operator
+  operator: ["=" "<-"]
+  right: (_) @local.initializer) @local.declaration
+
 #; What a pattern reads rather than binds.
 (unary_operator
   operator: "^"

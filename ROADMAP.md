@@ -171,14 +171,19 @@ and code reading. Highest stakes first.
       afterwards against a stack of openers -- fixing them means the scanner keeping
       that stack. The twelfth is a link label of only whitespace read as a shortcut
       link.
-- [ ] **Locals query limits in Perl, Elixir and Dart** (all ned-authored). Perl: `my $x
-      = $x` resolves the right-hand `$x` to the new variable rather than the outer one
-      (the resolver binds from the declaration's start), `our`/`local` bind nothing, and
-      a lexical `my sub` isn't tracked. Elixir: a module body's variables aren't
-      visible to its functions by design, and a zero-arity call written without parens
-      reads as a variable when a same-named one is bound. Dart: a bare field name
-      inside a method binds nothing (members aren't locals), and a function-typed
-      parameter (`int cb(int x)`) isn't captured.
+- [ ] **Locals query limits.** A declaration's initializer reads the names from
+      before it (`@local.declaration` + `@local.initializer`: `let x = x + 1`,
+      `my $x = $x`, `if let x = x`, Lisp binding pairs), and OCaml, F#, Swift and
+      Julia have ned-authored queries. Left: Perl's `our`/`local` bind nothing and a
+      lexical `my sub` isn't tracked. Elixir: a module body's variables aren't
+      visible to its functions by design, and a zero-arity call written without
+      parens reads as a variable when a same-named one is bound. Dart: a bare field
+      name inside a method binds nothing (members aren't locals), and a
+      function-typed parameter (`int cb(int x)`) isn't captured. OCaml and F#: a
+      punned label or field (`f ~x`, `{ x }`) is both the variable and the label, so
+      a rename misses it; F# class members and their parameters aren't modelled.
+      Racket's plain `let` is read as `let*`: a later binding's value sees an
+      earlier one.
 - [ ] **change-signature for the remaining languages.** 32 have `signatures` + `calls`
       queries (`sig` column): each describes its own parameters, receivers (`self`,
       `cls`, Lua's colon calls, Nim's dot calls, C#'s extension `this`), keyword-only
