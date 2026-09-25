@@ -143,6 +143,9 @@ std::vector<Case> OffsideCorpus() {
              {"sample.gd", "gdscript"},
              {"sample.nim", "nim"},
              {"sample.ml", "ocaml"},
+             {"sample.py", "python"},
+             {"BUILD.bazel", "starlark"},
+             {"Earthfile", "earthfile"},
          })
         cases.push_back({file, language, BundledMode(language)});
     return cases;
@@ -293,7 +296,7 @@ TEST_CASE("An offside sample in its house style reindents to itself", "[Formatte
     }
 }
 
-TEST_CASE("Reindent brings a re-widened GDScript or Nim file back to house style", "[FormatterProperties]") {
+TEST_CASE("Reindent brings a re-widened GDScript, Nim, Python, Starlark or Earthfile back to house style", "[FormatterProperties]") {
     // Widening every indent keeps the program the same (and parseable), so
     // this is what reindent recomputing -- not merely preserving -- looks like.
     // Flattening would not do: it changes the program.
@@ -314,6 +317,9 @@ TEST_CASE("Reindent brings a re-widened GDScript or Nim file back to house style
     for (const auto& [file, language, unit] : std::vector<std::tuple<std::string, std::string, std::string>>{
              {"sample.gd", "gdscript", "\t"},
              {"sample.nim", "nim", " "},
+             {"sample.py", "python", " "},
+             {"BUILD.bazel", "starlark", " "},
+             {"Earthfile", "earthfile", " "},
          }) {
         INFO("sample: " << file);
         const ned::editor::Mode mode     = BundledMode(language);
@@ -365,6 +371,10 @@ TEST_CASE("A flattened sample reindents back to its house style", "[FormatterPro
              {"sample.res", "rescript"},
              {"sample.proto", "proto"},
              {"sample.sql", "sql"},
+             {"httpd.conf", "apacheconf"},
+             {"continuation.css", "css"},
+             {"continuation.scss", "scss"},
+             {"nginx.conf", "nginx"},
              {"continuation.c", "c"},
              {"continuation.cpp", "cpp"},
              {"continuation.java", "java"},

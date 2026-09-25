@@ -28,3 +28,13 @@ class Inner:
 
 	func bump() -> void:
 		value += 1
+
+
+func describe(v) -> String:
+	match v:
+		1:
+			return "one"
+		[var a, ..]:
+			return str(a)
+		_:
+			return "other"

@@ -1,0 +1,27 @@
+VERSION 0.8
+
+build:
+    FROM golang:1.21
+    RUN go build
+    IF [ -f x ]
+        RUN echo x
+    ELSE IF [ -f y ]
+        RUN echo y
+    ELSE
+        FOR f IN a b
+            RUN echo $f
+        END
+    END
+    TRY
+        RUN go test
+    FINALLY
+        SAVE ARTIFACT out.xml
+    END
+    WITH DOCKER
+        RUN docker ps
+    END
+    SAVE ARTIFACT out
+
+test:
+    FROM +build
+    RUN go test

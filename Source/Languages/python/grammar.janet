@@ -176,8 +176,13 @@
                     (:repeat (:seq "," (:field :subject expression))))
                    (:choice "," :blank)
                    ":"
-                   (:field :body (:alias _match_block block)))
-  _match_block (:choice (:seq _indent (:repeat (:field :alternative case_clause)) _dedent) _newline)
+                   # _indent stays outside the body, as in _suite: the zero-width
+                   # token sits on the header's line, and a body starting there
+                   # reads as a mid-line one.
+                   (:choice
+                    (:seq _indent (:field :body (:alias _match_block block)))
+                    (:field :body (:alias _newline block))))
+  _match_block (:seq (:repeat (:field :alternative case_clause)) _dedent)
   case_clause (:seq
                "case"
                (:seq case_pattern (:repeat (:seq "," case_pattern)))

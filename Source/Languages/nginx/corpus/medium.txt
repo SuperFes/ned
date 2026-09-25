@@ -207,3 +207,45 @@ server {
             (keyword)
             (value))
           (comment))))
+
+==================
+Block directives with arguments
+==================
+
+upstream up {
+    server 127.0.0.1:8080 weight=5;
+    server 10.0.0.2;
+}
+server {
+    listen 80;
+    allow 10.0.0.0/8;
+    client_max_body_size 1.5;
+}
+
+---
+
+(source_file
+  (attribute
+    (keyword)
+    (value)
+    (block
+      (attribute
+        (keyword)
+        (value)
+        (value))
+      (attribute
+        (keyword)
+        (value))))
+  (attribute
+    (keyword)
+    (block
+      (attribute
+        (keyword)
+        (numeric_literal))
+      (attribute
+        (keyword)
+        (value))
+      (attribute
+        (keyword)
+        (numeric_literal)))))
+

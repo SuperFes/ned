@@ -50,7 +50,7 @@ udev/corpus  cases=5 runs=5 passed=5 failed=0 skipped=0
 systemd/corpus  cases=21 runs=21 passed=21 failed=0 skipped=0
 desktop/corpus  cases=7 runs=7 passed=7 failed=0 skipped=0
 gitignore/corpus  cases=14 runs=14 passed=14 failed=0 skipped=0
-nginx/corpus  cases=30 runs=30 passed=30 failed=0 skipped=0
+nginx/corpus  cases=31 runs=31 passed=31 failed=0 skipped=0
 apacheconf/corpus  cases=10 runs=10 passed=10 failed=0 skipped=0
 awk/corpus  cases=117 runs=117 passed=117 failed=0 skipped=0
 cue/corpus  cases=37 runs=37 passed=37 failed=0 skipped=0
@@ -138,7 +138,7 @@ dart/corpus  cases=187 runs=187 passed=185 failed=2 skipped=0
 tcl/corpus  cases=19 runs=19 passed=19 failed=0 skipped=0
 nu/corpus  cases=309 runs=309 passed=309 failed=0 skipped=0
 powershell/corpus  cases=139 runs=139 passed=139 failed=0 skipped=0
-scss/corpus  cases=59 runs=59 passed=59 failed=0 skipped=0
+scss/corpus  cases=60 runs=60 passed=60 failed=0 skipped=0
 vue/corpus  cases=10 runs=10 passed=10 failed=0 skipped=0
 svelte/corpus  cases=45 runs=45 passed=45 failed=0 skipped=0
 astro/corpus  cases=22 runs=22 passed=22 failed=0 skipped=0
@@ -153,4 +153,4 @@ gdscript/corpus  cases=167 runs=167 passed=166 failed=1 skipped=0
 matlab/corpus  cases=157 runs=157 passed=155 failed=2 skipped=0
   FAIL call.txt: Function Call: Line Continuation
   FAIL strings.txt: Strings: Invalid termination
-total  cases=12724 runs=12708 passed=12674 failed=34 skipped=22
+total  cases=12726 runs=12710 passed=12676 failed=34 skipped=22

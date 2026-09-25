@@ -1,0 +1,20 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+cc_library(
+    name = "core",
+    srcs = glob([
+        "src/*.cc",
+    ]),
+    deps = [":util"],
+)
+
+
+def pick(xs, want):
+    for x in xs:
+        if x == want:
+            return x
+        elif x > want:
+            break
+        else:
+            continue
+    return None

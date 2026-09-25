@@ -8,6 +8,7 @@
  # The upstream query is a delta over CSS's (nvim's `inherits: css`).
  :queries {:highlights ["css/upstream/highlights.janet"
                         "scss/upstream/highlights.janet"
-                        "scss/highlights.janet"]}
+                        "scss/highlights.janet"]
+           :indents ["css/indents.janet"]}
  :import-resolution {:extensions ["scss" "sass" "css"] :index-basenames ["_index" "index"] :partial-prefix "_"}
 }

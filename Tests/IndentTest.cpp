@@ -8,10 +8,12 @@
 #include <string_view>
 #include <vector>
 
+#include "Editor/BundledLanguages.h"
 #include "Editor/HugeStructuralWindow.h"
 #include "Editor/Indent.h"
 #include "Editor/IndentStyle.h"
 #include "Editor/InjectedIndent.h"
+#include "Editor/LanguageDefinition.h"
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/TabWidth.h"
@@ -864,6 +866,17 @@ TEST_CASE("indentColumn keeps indenting while a document is still unfinished", "
         REQUIRE(mode.indentColumn(buffer.Text(), signatureStart, signatureEnd, {}) == 4);
         const auto [bodyStart, bodyEnd] = LineRange(buffer, 2); // "width_ = w;"
         REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 8);
+    }
+
+    SECTION("apacheconf, two sections still open") {
+        const auto mode = ned::editor::ModeFromDefinition(*ned::editor::BundledLanguage("apacheconf"));
+        Buffer     buffer("httpd.conf");
+        buffer.InsertAtPoint("<VirtualHost *:80>\n<Directory /srv>\nRequire all granted\n");
+
+        const auto [dirStart, dirEnd] = LineRange(buffer, 1); // "<Directory /srv>"
+        REQUIRE(mode.indentColumn(buffer.Text(), dirStart, dirEnd, {}) == 4);
+        const auto [requireStart, requireEnd] = LineRange(buffer, 2); // "Require all granted"
+        REQUIRE(mode.indentColumn(buffer.Text(), requireStart, requireEnd, {}) == 8);
     }
 
     SECTION("rust, one block still open") {

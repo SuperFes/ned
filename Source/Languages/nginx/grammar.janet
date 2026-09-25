@@ -22,13 +22,19 @@
                     connection_method
                     size
                     time
+                    (:alias address value)
                     numeric_literal
                     (:alias random_value value))
   attribute (:seq
              (:alias (:choice _word "''") keyword)
+             # A block may follow arguments too: `upstream name {`, `geo $x {`,
+             # `limit_except GET {`.
              (:choice
               block
-              (:seq _attribute_value (:repeat (:seq (:pattern "\\s") _attribute_value)) ";"))
+              (:seq
+               _attribute_value
+               (:repeat (:seq (:pattern "\\s") _attribute_value))
+               (:choice ";" (:seq (:choice (:pattern "\\s") :blank) block))))
              _newline)
   condition (:token (:seq "(" (:repeat (:pattern "[^)]|(\\\\\\))")) ")"))
   if (:seq "if" (:field :condition condition) block)
@@ -78,6 +84,19 @@
   quoted_string_literal (:prec-right 0
                          (:token (:seq "'" (:repeat (:pattern "[^']|(\\\\\\')")) "'")))
   string_literal (:token (:seq "\"" (:repeat (:pattern "[^\"]|(\\\\\\\")")) "\""))
+  # An IPv4 address, with a port or prefix length: `127.0.0.1:8080`,
+  # `10.0.0.0/8`. Outranks numeric_literal, which would stop at `127.0`.
+  address (:token
+           (:prec 1
+            (:seq
+             (:repeat1 (:pattern "[0-9]"))
+             "."
+             (:repeat1 (:pattern "[0-9]"))
+             "."
+             (:repeat1 (:pattern "[0-9]"))
+             "."
+             (:repeat1 (:pattern "[0-9]"))
+             (:choice (:seq (:choice ":" "/") (:repeat1 (:pattern "[0-9]"))) :blank))))
   numeric_literal (:token
                    (:seq
                     (:repeat1 (:pattern "[0-9]"))

@@ -1,0 +1,38 @@
+$sizes: (
+  1px,
+  2px
+);
+
+@mixin pad($n) {
+  padding: $n * 4px;
+}
+
+.card {
+  color: red;
+  transition:
+    opacity 1s ease,
+    color 2s;
+
+  &:hover {
+    color: blue;
+  }
+
+  .title {
+    @include pad(2);
+
+    @if $n > 2 {
+      margin: 0;
+    } @else {
+      margin: 1px;
+    }
+  }
+
+  @each $name in home, user {
+    .icon-#{$name} {
+      background: linear-gradient(
+        to right,
+        $name
+      );
+    }
+  }
+}

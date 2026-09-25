@@ -146,7 +146,19 @@ and code reading. Highest stakes first.
         separate from `IndentStyle::width`, which today doubles as both.
 - [ ] **Reindent: what is still unmodelled.** Every language with an `ind` cell
       reindents a flattened sample back to its house style
-      (`Tests/Format/reindent/`). Left:
+      (`Tests/Format/reindent/`), or a widened one where indentation is syntax
+      (`Tests/Format/offside/`: GDScript, Nim, Python, Starlark, Earthfile). Left:
+  - [ ] **Offside bodies that open empty.** Enter after an Earthfile target header
+        (`build:`) or an unclosed `IF` lands at column 0: its grammar makes a
+        target's body optional, so an empty one parses as finished rather than
+        being recovered as a zero-width body the way Python's `def f():` is.
+        just has no indents query on purpose: a recipe body is shell text, and a
+        shebang recipe's own nesting belongs to its interpreter's language, which
+        a reindent to one level would flatten without changing the parse.
+  - [ ] **Parse gaps that stop a reindent.** SCSS maps (`$m: (key: 1px, other:
+        2px)`) don't parse: `plain_value` may contain `:`, so `key:` lexes as one
+        value, and narrowing it touches every SCSS value. Nor does a `url(` whose
+        argument starts on the next line.
   - [ ] **Continuation lines: what's left.** A statement or expression written
         across lines (`x = a +` then `b`, a method chain, a ternary) goes a
         continuation step past its first line wherever the indents query

@@ -1,0 +1,21 @@
+.grid {
+  grid-template-areas:
+    "a b"
+    "c d";
+  transition:
+    opacity 1s ease,
+    color 2s;
+  box-shadow: 0 0 0 1px red,
+    inset 0 1px blue;
+  background: linear-gradient(
+    to right,
+    red,
+    blue
+  );
+  color: red;
+}
+
+.b,
+.c {
+  margin: 0;
+}

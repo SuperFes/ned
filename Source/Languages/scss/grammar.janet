@@ -308,6 +308,7 @@
                   (:field :value variable)
                   "in"
                   _value
+                  (:repeat (:seq (:choice "," :blank) _value))
                   block)
   for_statement (:seq
                  "@for"

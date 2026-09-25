@@ -705,6 +705,54 @@ Each statements
             (variable)))))))
 
 =================================
+Each statements over a written list
+=================================
+
+@each $name in home, user {
+  .icon-#{$name} {
+    width: 1px;
+  }
+}
+
+@each $weight in 400 700 {
+  .w { font-weight: $weight; }
+}
+
+---
+
+(stylesheet
+  (each_statement
+    (variable)
+    (plain_value)
+    (plain_value)
+    (block
+      (rule_set
+        (selectors
+          (class_selector
+            (class_name
+              (identifier)
+              (interpolation
+                (variable)))))
+        (block
+          (declaration
+            (property_name)
+            (integer_value
+              (unit)))))))
+  (each_statement
+    (variable)
+    (integer_value)
+    (integer_value)
+    (block
+      (rule_set
+        (selectors
+          (class_selector
+            (class_name)))
+        (block
+          (declaration
+            (property_name)
+            (variable)))))))
+
+=================================
 For statements
 =================================
 
