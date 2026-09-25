@@ -142,7 +142,7 @@ dressed up as settled fact, and are the most likely settings you'll want to over
 | Go | tabs | 4 (display only) | gofmt mandates tabs; it has no width knob at all |
 | PHP | spaces | 4 | PSR-12 §2.2 |
 | JavaScript / TypeScript / TSX | spaces | 2 | Prettier default, de facto ecosystem standard |
-| JSON | spaces | 2 | matches the JS/npm ecosystem convention |
+| JSON / JSON5 | spaces | 2 | matches the JS/npm ecosystem convention; the json5 README |
 | YAML | spaces | 2 | **the YAML spec forbids literal tabs for indentation at all** -- overriding to tabs produces invalid YAML |
 | HTML / XML / CSS | spaces | 2 | common web-ecosystem convention |
 | SCSS / Svelte / Vue / Astro | spaces | 2 | Prettier default |
@@ -150,8 +150,9 @@ dressed up as settled fact, and are the most likely settings you'll want to over
 | C# | spaces | 4 | Microsoft's own default `.editorconfig`/conventions |
 | Kotlin | spaces | 4 | official Kotlin coding conventions |
 | Ruby | spaces | 2 | community Ruby Style Guide / RuboCop default |
-| Bash / Fish | spaces | 2 | Google Shell Style Guide |
-| C / C++ | spaces | 4 | **no single canonical convention exists** -- 4 is the more common cross-ecosystem pick, a judgment call |
+| Bash | spaces | 2 | Google Shell Style Guide |
+| Fish | spaces | 4 | `fish_indent`, shipped with fish |
+| C / C++ / CUDA | spaces | 4 | **no single canonical convention exists** -- 4 is the more common cross-ecosystem pick, a judgment call (NVIDIA's cuda-samples use 4, CCCL uses 2) |
 | Lua | spaces | 2 | most common community convention |
 | TOML / CMake / HCL / Nix | spaces | 2 | common per-ecosystem convention (Cargo.toml style, cmake-format, terraform fmt, nixfmt) |
 | Clojure / Janet / jank / Scheme / Racket / Common Lisp | spaces | 2 | Lisp community convention (Emacs `lisp-indent-function` default) |
@@ -176,10 +177,43 @@ dressed up as settled fact, and are the most likely settings you'll want to over
 | R | spaces | 2 | tidyverse style guide |
 | Make | tabs | 4 (display only) | GNU Make *requires* a literal tab to introduce a recipe line -- a syntax rule, not a style preference |
 | SQL | spaces | 4 | common convention -- judgment call |
+| D | spaces | 4 | D style guide, dfmt default |
+| Elm | spaces | 4 | elm-format (not configurable) |
+| F# | spaces | 4 | F# style guide, Fantomas default |
+| Haskell | spaces | 2 | Ormolu, the Haskell Language Server's default formatter (Fourmolu's 4 is opt-in) |
+| Perl | spaces | 4 | perlstyle ("4-column indent"), Perl::Tidy default |
+| PowerShell | spaces | 4 | PowerShell Practice and Style guide, PSScriptAnalyzer default |
+| Solidity | spaces | 4 | Solidity style guide |
+| Starlark | spaces | 4 | buildifier (not configurable) |
+| Tcl | spaces | 4 | Tcl Style Guide §6 |
+| MATLAB | spaces | 4 | MATLAB Editor's default indent size |
+| Meson / just / Nushell | spaces | 4 | `meson format`, `just --fmt`, nufmt |
+| RON / KDL / WGSL | spaces | 4 | ron's PrettyConfig, kdlfmt, wgslfmt and naga (the KDL and WGSL specs' own examples use 2) |
+| Fortran | spaces | 3 | fprettify and findent defaults (fortran-lang's guide leaves 2-4 to preference) |
+| Verilog / SystemVerilog | spaces | 2 | verible-verilog-format default, lowRISC style guide |
+| VHDL | spaces | 2 | VHDL Style Guide (vsg) default, Emacs `vhdl-mode` |
+| Groovy | spaces | 4 | npm-groovy-lint default, the Java-family convention Gradle scripts follow |
+| Apache / nginx | spaces | 4 | the shipped `httpd.conf` and `nginx.conf` |
+| Dockerfile / Earthfile | spaces | 4 | dockerfmt default (continuation lines); Earthly's own Earthfiles and docs |
+| Thrift | spaces | 2 | Apache Thrift's `tutorial.thrift` -- no formatter exists |
+| reStructuredText | spaces | 3 | Python devguide: "All reST files use an indentation of 3 spaces" |
+| Caddyfile | tabs | 4 (display only) | `caddy fmt` |
+| AWK | tabs | 4 (display only) | `gawk --pretty-print` (the manual's own examples use 4 spaces) |
+| Assembly | tabs | 4 (display only) | GCC/Clang `-S` output: a tab before each instruction, labels at column 0 |
+| gitconfig | tabs | 4 (display only) | `git config` writes a tab before each key |
+| GLSL / HLSL | spaces | 4 | no canonical source; Khronos's and Microsoft's own samples use 4 -- judgment call |
+| Objective-C / Swift | spaces | 4 | Xcode's default (Google's Objective-C guide and swift-format use 2) -- judgment call |
+| Vala | spaces | 4 | elementary's Vala style guide and vala-lint (the compiler's own sources use tabs) -- judgment call |
+| LaTeX | tabs | 4 (display only) | latexindent's and TeXstudio's default (Overleaf's editor uses 4 spaces) -- judgment call |
+| ssh_config | spaces | 2 | OpenSSH's shipped `ssh_config` -- judgment call |
 
 Markdown and Org aren't in this table: both use their own hand-rolled hanging/outline
 indent (a bullet's continuation lines up under its own content column, not a fixed
-width), not this engine's flat-width model.
+width), not this engine's flat-width model. Neither is AsciiDoc, where an indented line is
+a literal paragraph, nor the formats where nothing nests (CSV/TSV/PSV, INI, `.properties`,
+`.env`, `.editorconfig`, systemd units, udev rules, `.desktop` entries, HTTP requests,
+PEM, diffs, the git commit/rebase/ignore/attributes files, `requirements.txt`). A test
+(`Tests/IndentDefaultsTest.cpp`) keeps every other bundled language in the table.
 
 The full table, with each entry's own one-line source citation, lives in
 `Source/Editor/IndentDefaults.cpp`.

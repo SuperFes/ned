@@ -1,5 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <set>
+#include <string_view>
+
+#include "Editor/BundledLanguages.h"
 #include "Editor/IndentDefaults.h"
 #include "Editor/IndentStyle.h"
 
@@ -29,7 +33,7 @@ TEST_CASE("BuiltinIndentStyleForLanguage returns the documented default for a re
     REQUIRE_FALSE(python->useTabs);
     REQUIRE(python->width == 4);
 
-    // gofmt mandates literal tabs -- the one entry where useTabs is true.
+    // gofmt mandates literal tabs.
     const auto go = BuiltinIndentStyleForLanguage("go");
     REQUIRE(go.has_value());
     REQUIRE(go->useTabs);
@@ -46,9 +50,8 @@ TEST_CASE("BuiltinIndentStyleForLanguage returns the documented default for a re
     REQUIRE(yaml.has_value());
     REQUIRE_FALSE(yaml->useTabs);
 
-    // GNU Make requires a literal tab to introduce a recipe line -- the
-    // other useTabs=true entry, for a different (syntactic, not stylistic)
-    // reason than Go's.
+    // GNU Make requires a literal tab to introduce a recipe line -- a
+    // syntactic reason rather than Go's stylistic one.
     const auto make = BuiltinIndentStyleForLanguage("make");
     REQUIRE(make.has_value());
     REQUIRE(make->useTabs);
@@ -62,6 +65,43 @@ TEST_CASE("BuiltinIndentStyleForLanguage returns nullopt for an unknown or unlis
     // this engine's flat-width model. See Docs/FormattingRules.md.
     REQUIRE_FALSE(BuiltinIndentStyleForLanguage("markdown").has_value());
     REQUIRE_FALSE(BuiltinIndentStyleForLanguage("org").has_value());
+}
+
+TEST_CASE("Every bundled language has a built-in indent default unless it has no indentation to style",
+          "[IndentDefaults]") {
+    // Flat formats (nothing nests), plus the prose formats whose indentation
+    // is content: Markdown's and Org's hanging indents, AsciiDoc's literal
+    // paragraphs. Anything else needs an entry citing its style guide.
+    const std::set<std::string_view> noConvention = {
+        "asciidoc",
+        "asciidoc-inline",
+        "csv",
+        "desktop",
+        "diff",
+        "dotenv",
+        "editorconfig",
+        "fundamental",
+        "gitattributes",
+        "gitcommit",
+        "gitignore",
+        "gitrebase",
+        "http",
+        "ini",
+        "markdown",
+        "markdown-inline",
+        "org",
+        "pem",
+        "properties",
+        "psv",
+        "requirements",
+        "systemd",
+        "tsv",
+        "udev",
+    };
+    for (const ned::editor::LanguageDefinition& language : ned::editor::BundledLanguages()) {
+        INFO("language: " << language.name);
+        CHECK(BuiltinIndentStyleForLanguage(language.name).has_value() != noConvention.contains(language.name));
+    }
 }
 
 TEST_CASE("EffectiveIndentStyle falls through to the built-in per-language default when no per-mode "

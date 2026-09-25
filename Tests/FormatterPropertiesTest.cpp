@@ -510,7 +510,7 @@ TEST_CASE("Reindent leaves continued lines as their author laid them out", "[For
              {"ruby", "x = 1 + \\\n      2\nputs x\n"},
              {"dockerfile", "FROM alpine\nRUN apt-get update \\\n && apt-get install -y \\\n      curl \\\n && rm -rf /tmp/*\n"
                             "RUN if [ -f x ]; then \\\n        echo yes; \\\n    fi\n"},
-             {"awk", "BEGIN {\n    x = 1 + \\\n          2\n}\n"},
+             {"awk", "BEGIN {\n\tx = 1 + \\\n          2\n}\n"},
          }) {
         INFO("language: " << language);
         CHECK(IndentAll(text, BundledMode(language)) == text);
