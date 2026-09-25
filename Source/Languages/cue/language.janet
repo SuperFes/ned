@@ -9,4 +9,6 @@
  :first-pattern-wins true
  :queries {:highlights ["cue/highlights.janet"
                         "cue/upstream/highlights.janet"]}
+ # The outline stops two levels down; breadcrumbs follow every level.
+ :sticky-scroll-from-folds true
 }

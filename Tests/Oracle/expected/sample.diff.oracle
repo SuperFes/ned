@@ -1,5 +1,5 @@
 # sample.diff  (diff-mode)
-# 30 facts
+# 34 facts
 highlight 0..4  [function]  "diff"
 highlight 5..10  [parameter]  "--git"
 highlight 11..40  [string]  "a/src/widget.c b/src/widget.c"
@@ -30,3 +30,7 @@ highlight 471..482  [string]  "b/README.md"
 highlight 483..498  [attribute]  "@@ -0,0 +1,2 @@"
 highlight 499..508  [diff-added]  "+# Widget"
 highlight 509..526  [diff-added]  "+A small example."
+symbol 0..374  [Namespace b/src/widget.c]  "diff --git a/src/widget.c b/ … n value;\n }\n"
+symbol 109..374  [Callable @@ -10,7 +10,8 @@ int widget_size(const Widget* w) {]  "@@ -10,7 +10,8 @@ int widget … n value;\n }\n"
+symbol 374..527  [Namespace b/README.md]  "diff --git a/README.md b/REA … ll example.\n"
+symbol 483..527  [Callable @@ -0,0 +1,2 @@]  "@@ -0,0 +1,2 @@\n+# Widget\n+A small example.\n"

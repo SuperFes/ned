@@ -1,5 +1,5 @@
 # sample.hcl  (hcl-mode)
-# 94 facts
+# 98 facts
 highlight 0..74  [comment]  "# A representative config: b … terpolation."
 highlight 75..83  [type]  "variable"
 highlight 84..85  [string]  "\""
@@ -94,3 +94,7 @@ indent 345..353  [0]  "locals {"
 indent 354..390  [2]  "  full_name = \"${var.region}-sample\""
 indent 391..392  [0]  "}"
 indent 393..393  [0]
+symbol 75..139  [Data region]  "variable \"region\" {\n  type   … us-east-1\"\n}"
+symbol 141..343  [TypeLike sample]  "resource \"aws_instance\" \"sam … gion}\"\n  }\n}"
+symbol 345..392  [Namespace locals]  "locals {\n  full_name = \"${va … n}-sample\"\n}"
+symbol 356..390  [Data full_name]  "full_name = \"${var.region}-sample\""

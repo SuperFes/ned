@@ -977,10 +977,6 @@ TEST_CASE("SyntaxClassFor borrows each SymbolKind's color from the matching synt
     REQUIRE(SyntaxClassFor(SymbolKind::Data) == SyntaxClass::Constant);
 }
 
-TEST_CASE("A language with no bundled tags.scm (e.g. DiffMode) has no symbolKind support configured", "[Mode]") {
-    REQUIRE_FALSE(static_cast<bool>(ned::editor::DiffMode().symbolKind));
-}
-
 TEST_CASE("CMode's symbolKind classifies a function definition and a struct definition", "[Mode]") {
     using ned::editor::SymbolKind;
     const auto mode = CMode();
@@ -1588,6 +1584,10 @@ ned::editor::Mode BundledMode(std::string_view name) {
 
 } // namespace
 
+TEST_CASE("A language with no bundled tags query (e.g. CSV) has no symbolKind support configured", "[Mode]") {
+    REQUIRE_FALSE(static_cast<bool>(BundledMode("csv").symbolKind));
+}
+
 TEST_CASE("Every language's block-comment pair wraps a comment", "[Mode]") {
     // toggle-line-comment wraps a line in this pair when there is no line comment.
     std::size_t checked = 0;
@@ -1903,6 +1903,92 @@ TEST_CASE("Config formats outline their keys two levels deep", "[Mode]") {
     CHECK(NamedSymbols("json", "{\n  \"name\": \"x\",\n  \"scripts\": {\n    \"build\": \"tsc\",\n"
                                "    \"deep\": {\"no\": 1}\n  },\n  \"list\": [{\"no\": 2}]\n}\n") ==
           V{"name:field", "scripts:namespace", "build:field", "deep:namespace", "list:field"});
+}
+
+TEST_CASE("F# tags name module-level bindings, types and members", "[Mode]") {
+    using V = std::vector<std::string>;
+    CHECK(NamedSymbols("fsharp", "namespace App.Core\n\nmodule Helpers =\n    let add x y =\n        let inner = 1\n"
+                                 "        x + y + inner\n    let limit = 10\n\n"
+                                 "type Shape =\n    | Circle of float\n    | Square of float\n\n"
+                                 "type Point = { X: int; Y: int }\n\n"
+                                 "type Counter(start: int) =\n    let mutable count = start\n"
+                                 "    member this.Next() = count\n    member val Name = \"c\" with get, set\n"
+                                 "    static member Zero = Counter(0)\n    abstract member Reset : unit -> unit\n\n"
+                                 "type Alias = int list\n\nexception MyError of string\n\n"
+                                 "let rec fib n = n\nand other n = n\n") ==
+          V{"App.Core:module", "Helpers:module", "add:function", "limit:variable", "Shape:enum", "Circle:enum_member",
+            "Square:enum_member", "Point:struct", "X:field", "Y:field", "Counter:class", "Next:method", "Name:property",
+            "Zero:property", "Reset:method", "Alias:type", "MyError:class", "fib:function", "other:function"});
+}
+
+TEST_CASE("Build and infrastructure files outline their top-level declarations", "[Mode]") {
+    using V = std::vector<std::string>;
+    CHECK(NamedSymbols("hcl", "terraform {\n  required_version = \">= 1.0\"\n}\nvariable \"region\" {\n  default = \"x\"\n}\n"
+                              "resource \"aws_instance\" \"web\" {\n  ami = \"x\"\n  lifecycle {\n    a = true\n  }\n}\n"
+                              "locals {\n  env = \"prod\"\n}\nmodule \"vpc\" {\n  source = \"./vpc\"\n}\n"
+                              "output \"ip\" {\n  value = 1\n}\ntop = 1\n") ==
+          V{"terraform:namespace", "region:variable", "web:class", "locals:namespace", "env:variable", "vpc:module",
+            "ip:variable", "top:field"});
+    CHECK(NamedSymbols("make", "all: build\n\nbuild test: main.o\n\t$(CC) -o app $^\n\n%.o: %.c\n\t$(CC) -c $<\n\n"
+                               "CC := gcc\nCFLAGS += -O2\napp: LDFLAGS = -g\n\ndefine greet\n@echo hi\nendef\n\n"
+                               ".PHONY: all build\n") ==
+          V{"all:function", "build:function", "test:function", "CC:variable", "greet:macro"});
+    CHECK(NamedSymbols("dockerfile", "ARG BASE=debian\nFROM golang:1.22 AS build\nENV GO111=on X=1\nRUN make\n"
+                                     "FROM alpine\nCOPY --from=build /app /app\n") ==
+          V{"BASE:variable", "build:namespace", "GO111:variable", "X:variable", "alpine:namespace"});
+}
+
+TEST_CASE("Stylesheets outline their rules, at-rules and variables", "[Mode]") {
+    using V = std::vector<std::string>;
+    CHECK(NamedSymbols("css", "@import \"base.css\";\n:root { --main: red; }\n.btn,\na.link:hover { color: red; }\n"
+                              "@media (max-width: 600px) {\n  .inner { color: blue; }\n}\n"
+                              "@keyframes spin { from { x: 1 } to { x: 2 } }\n") ==
+          V{":root:class", "--main:variable", ".btn:class", "(max-width: 600px):namespace", ".inner:class",
+            "spin:function"});
+    CHECK(NamedSymbols("scss", "$primary: red;\n%placeholder { x: 1; }\n@mixin theme($c) { color: $c; }\n"
+                               "@function double($n) { @return $n * 2; }\n.btn {\n  $local: 1;\n  &:hover { color: red; }\n}\n") ==
+          V{"$primary:variable", "%placeholder:class", "theme:function", "double:function", ".btn:class", "&:hover:class"});
+}
+
+TEST_CASE("WGSL tags name functions, structs and module-scope declarations", "[Mode]") {
+    using V = std::vector<std::string>;
+    CHECK(NamedSymbols("wgsl", "type Vec = vec3<f32>;\nstruct Light { pos: vec3<f32>, color: vec3<f32> }\n"
+                               "override scale: f32 = 1.0;\n@group(0) @binding(0) var<uniform> light: Light;\n"
+                               "@vertex\nfn vs_main(@location(0) p: vec3<f32>) -> @builtin(position) vec4<f32> {\n"
+                               "  let x = 1.0;\n  return vec4<f32>(p, 1.0);\n}\n") ==
+          V{"Vec:type", "Light:struct", "pos:field", "color:field", "scale:constant", "light:variable", "vs_main:function"});
+}
+
+TEST_CASE("Configuration languages outline their top-level bindings two levels deep", "[Mode]") {
+    using V = std::vector<std::string>;
+    CHECK(NamedSymbols("jsonnet", "local lib = import \"lib.libsonnet\";\nlocal add(a, b) = a + b;\n{\n  name: \"x\",\n"
+                                  "  nested: { deep: 1, deeper: { no: 1 } },\n  fn(x):: x,\n  local inner = 2,\n}\n") ==
+          V{"lib:variable", "add:function", "name:field", "nested:namespace", "fn:method"});
+    CHECK(NamedSymbols("kdl", "package {\n  name \"ned\"\n  deps {\n    serde \"1\"\n  }\n}\nsingle 1\n") ==
+          V{"package:namespace", "name:field", "deps:namespace", "single:field"});
+    CHECK(NamedSymbols("pkl", "module app.Config\ntypealias Port = Int\nclass Server {\n  host: String\n"
+                              "  function url(): String = host\n}\nname = \"x\"\nfunction greet(n: String) = n\n"
+                              "database {\n  user = \"root\"\n}\n") ==
+          V{"app.Config:module", "Port:type", "Server:class", "host:property", "url:method", "name:field",
+            "greet:function", "database:namespace", "user:field"});
+    CHECK(NamedSymbols("ron", "Config(\n    name: \"x\",\n    window: (width: 800, height: 600),\n    items: [1, 2],\n)\n") ==
+          V{"name:field", "window:namespace", "width:field", "height:field", "items:field"});
+    CHECK(NamedSymbols("cue", "package app\n\n#Server: {\n  host: string\n}\nserver: #Server & {\n  host: \"a\"\n}\n"
+                              "db: {\n  user: \"root\"\n}\nname: \"x\"\nlet X = 1\n") ==
+          V{"app:module", "#Server:type", "host:field", "server:field", "db:namespace", "user:field", "name:field", "X:variable"});
+    CHECK(NamedSymbols("json5", "// c\n{\n  name: \"x\",\n  'quoted': 1,\n  nested: { deep: 1, \"q\": 2 },\n}\n") ==
+          V{"name:field", "quoted:field", "nested:namespace", "deep:field", "q:field"});
+}
+
+TEST_CASE("Request, patch and environment files outline their entries", "[Mode]") {
+    using V = std::vector<std::string>;
+    CHECK(NamedSymbols("http", "@host = example.com\n\n### Get users\nGET https://{{host}}/users\nAccept: text/plain\n\n"
+                               "###\n# @name create\nPOST https://example.com/users\n") ==
+          V{"host:variable", "Get users:function", "https://example.com/users:function"});
+    CHECK(NamedSymbols("diff", "diff --git a/x.c b/x.c\nindex 3b18e51..a9c2e4f 100644\n--- a/x.c\n+++ b/x.c\n"
+                               "@@ -1,2 +1,2 @@ int main\n-a\n+b\n@@ -10 +10 @@\n-d\n+e\n") ==
+          V{"b/x.c:module", "@@ -1,2 +1,2 @@ int main:function", "@@ -10 +10 @@:function"});
+    CHECK(NamedSymbols("dotenv", "A=1\nexport B=\"x\"\n# c\nC=\n") == V{"A:variable", "B:variable", "C:variable"});
 }
 
 TEST_CASE("Haskell paints variables by role, not as types", "[Mode]") {

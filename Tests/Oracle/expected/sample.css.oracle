@@ -1,5 +1,5 @@
 # sample.css  (css-mode)
-# 60 facts
+# 64 facts
 fold 5..39  "{\n    color: red;\n    margin: 0;\n}"
 fold 49..85  "{\n    display: flex;\n    gap: 4px;\n}"
 fold 113..154  "{\n    .widget {\n        gap: 8px;\n    }\n}"
@@ -60,3 +60,7 @@ indent 129..146  [4]  "        gap: 8px;"
 indent 147..152  [2]  "    }"
 indent 153..154  [0]  "}"
 indent 155..155  [0]
+symbol 0..39  [TypeLike body]  "body {\n    color: red;\n    margin: 0;\n}"
+symbol 41..85  [TypeLike .widget]  ".widget {\n    display: flex;\n    gap: 4px;\n}"
+symbol 87..154  [Namespace (min-width: 600px)]  "@media (min-width: 600px) {\n … 8px;\n    }\n}"
+symbol 119..152  [TypeLike .widget]  ".widget {\n        gap: 8px;\n    }"

@@ -1,5 +1,5 @@
 # sample.dockerfile  (dockerfile-mode)
-# 46 facts
+# 50 facts
 highlight 0..72  [comment]  "# A representative multi-sta … V, ARG, CMD."
 highlight 73..76  [keyword]  "ARG"
 highlight 90..94  [keyword]  "FROM"
@@ -46,3 +46,7 @@ indent 360..371  [0]  "USER nobody"
 indent 372..398  [0]  "ENTRYPOINT [\"/app/sample\"]"
 indent 399..421  [0]  "CMD [\"--port\", \"8080\"]"
 indent 422..422  [0]
+symbol 73..88  [Data VERSION]  "ARG VERSION=1.0"
+symbol 90..117  [Namespace builder]  "FROM golang:1.23 AS builder"
+symbol 224..240  [Namespace alpine]  "FROM alpine:3.20"
+symbol 283..296  [Data APP_HOME]  "APP_HOME=/app"

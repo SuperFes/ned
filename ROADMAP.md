@@ -209,6 +209,14 @@ and code reading. Highest stakes first.
       reads as a variable when a same-named one is bound. Dart: a bare field name
       inside a method binds nothing (members aren't locals), and a function-typed
       parameter (`int cb(int x)`) isn't captured.
+- [ ] **Outline (`tags`) gaps.** A tags query only sees its own language's tree, so
+      Svelte/Vue/Astro list nothing from their `<script>` blocks (nor Markdown/Org
+      from code blocks); following injections would mean running each injected
+      language's tags query over its regions, as highlighting already does. HTML
+      and XML have none by choice -- their element tree is the file again. Two
+      grammars stop short of what their files hold: WGSL's (tree-sitter-wgsl-bevy)
+      predates the spec's `const` and `alias` declarations, which parse as errors
+      and so name nothing, and RON's has no `#![enable(...)]` extension header.
 - [ ] **change-signature for the remaining languages.** 32 have `signatures` + `calls`
       queries (`sig` column): each describes its own parameters, receivers (`self`,
       `cls`, Lua's colon calls, Nim's dot calls, C#'s extension `this`), keyword-only
