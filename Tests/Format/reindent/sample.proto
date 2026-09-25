@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+message Person {
+  string name = 1;
+  enum Kind {
+    A = 0;
+    B = 1;
+  }
+}
+
+service Svc {
+  rpc Get(Person) returns (Person) {
+    option deprecated = true;
+  }
+}
+
+service Stream {
+  rpc Watch(stream Person) returns (stream Person);
+  rpc Tail(Person) returns (Person) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+    option deprecated = true;
+  }
+}
+
+message Outer {
+  oneof choice {
+    string a = 1;
+    int32 b = 2;
+  }
+  map<string, int32> counts = 3 [deprecated = true];
+}

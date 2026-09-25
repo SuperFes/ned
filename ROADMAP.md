@@ -155,6 +155,14 @@ and code reading. Highest stakes first.
   - [ ] **Continuation lines** stay at their statement's level: Fortran's `&`,
         VHDL's selected signal assignments, a multi-line Nix `if`/`then`/`else`
         (nixfmt indents the branches), Scala's operator-continued enumerators.
+        SQL and Dockerfiles have no indents query, so reindent actively moves
+        theirs to column 0: a select list continued onto the next line, and
+        `RUN ... \` continuation lines.
+  - [ ] **ReScript's braced switch arm.** `rescript format` indents a `| A => {`
+        arm's block two levels past the `|` and its `}` one; ned gives the block
+        one level and puts the `}` under the `|`, because the arm and the block
+        open on the same row and the walk counts a row once. Needs a capture that
+        stacks on a same-row container, closer included.
 - [ ] **Markdown, what the 2026-09-24 audit left.** Reindent, fill-paragraph, save
       trimming, tables, Enter/Backspace, the outline and folds were fixed against
       `cmark`'s rendering (`Tools/markdown-oracle.py`; the block parser itself
