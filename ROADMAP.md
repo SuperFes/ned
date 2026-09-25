@@ -99,82 +99,20 @@ whole-document highlight 50.7 ms -> 14.8 ms, keystroke+repaint on a 9 KiB C++ fi
 
 ### Language Intelligence
 
-- [ ] **Android device tooling** (the one part of the Java/Kotlin work below that
-      didn't fall out of it). Editing, building and testing an Android project works
-      today via Java/Kotlin modes + the generic task runner (`ned/set-task-command`
-      pointed at `./gradlew ...`) + the bundled XML mode for layout files. What has no
-      natural home in anything that exists: `adb logcat` streaming, and a one-click
-      "install + run on device/emulator" flow. Deliberately left unscoped — worth
-      building only if plain shelled-out `adb`/`gradlew` tasks prove too manual in
-      practice, not speculatively.
-- [ ] Whether Markdown fenced code blocks / Org `#+BEGIN_SRC` blocks should get the same
-      real-LSP-sync treatment HTML `<script>`/`<style>` embedded documents already have
-      is an open question — spawning a live language server per code fence in an
-      ordinary notes file could be noisy for illustrative/incomplete snippets.
+**Language handling gaps**
 
-**Language handling gaps (audit 2026-09-23)**
+What each package ships is the generated `Docs/LanguageMatrix.md`; the query captures
+and `language.janet` keys behind its columns are in `Docs/LanguageAuthoring.md`. What's
+below is behaviour that is wrong or missing today, verified with `ned --format` probes.
 
-What each package ships is tracked in the generated `Docs/LanguageMatrix.md`; the items
-below are the behavioural gaps behind its empty cells, verified with `ned --format` probes
-and code reading. Highest stakes first.
-
-- [ ] **Per-buffer settings, taken from the file itself.** Applied when a file opens
-      (`Editor/FileSettings.h`). Indentation: its content (`ned/set-indent-detection`),
-      then `.editorconfig` (`ned/set-editorconfig-enabled`), then a modeline, laid over
-      the mode's style field by field; `convert-indentation-to-tabs`/`-spaces` switch a
-      buffer outright. `.editorconfig`'s `end_of_line`, `insert_final_newline`,
-      `trim_trailing_whitespace`, `charset` and `max_line_length` override ned's own
-      settings for that buffer (`Buffer::Conventions`), and are read again when the
-      file is reverted, merged or renamed under the buffer (`Buffer::FileGeneration`).
-      Charsets (`Text/Charset.h`): a file is decoded from what its BOM announces, else
-      what `.editorconfig` states, else read as UTF-8 byte for byte (bytes that aren't
-      UTF-8 stay exactly as read -- no latin1 guess); a save encodes back and refuses,
-      naming line and column, a character the charset can't hold. `set-buffer-charset`
-      and `revert-buffer-with-charset` choose one; the mode line names any charset but
-      plain UTF-8. Left:
-  - [ ] **Charset edges.** UTF-16 is always written with a BOM, so a BOM-less UTF-16
-        file (only reachable by stating or choosing the charset) gains one on save;
-        modelling "BOM or not" apart from the encoding would fix it. The huge-file path
-        maps bytes and never decodes: a UTF-16 huge file is refused, a latin1 one opens
-        byte for byte and ignores a stated latin1. A charset stated in `.editorconfig`
-        for files opened before `init.janet` disables `.editorconfig` has already
-        decoded them.
-  - [ ] **Mixed tabs and spaces, if it has to exist:** Emacs's `indent-tabs-mode` with
-        an indent width below the tab width (GNU C: 2-column levels, 8-column tabs, so a
-        level-3 line is one tab and two spaces). The worst of both worlds, and supported
-        only so such a file can be edited without being rewritten: it needs a tab width
-        separate from `IndentStyle::width`, which today doubles as both.
-- [ ] **Reindent: what is still unmodelled.** Every language with an `ind` cell
-      reindents a flattened sample back to its house style
-      (`Tests/Format/reindent/`), or a widened one where indentation is syntax
-      (`Tests/Format/offside/`: GDScript, Nim, Python, Starlark, Earthfile). Left:
-  - [ ] **Offside bodies that open empty.** Enter after an Earthfile target header
-        (`build:`) or an unclosed `IF` lands at column 0: its grammar makes a
-        target's body optional, so an empty one parses as finished rather than
-        being recovered as a zero-width body the way Python's `def f():` is.
-        just has no indents query on purpose: a recipe body is shell text, and a
-        shebang recipe's own nesting belongs to its interpreter's language, which
-        a reindent to one level would flatten without changing the parse.
-  - [ ] **Parse gaps that stop a reindent.** SCSS maps (`$m: (key: 1px, other:
-        2px)`) don't parse: `plain_value` may contain `:`, so `key:` lexes as one
-        value, and narrowing it touches every SCSS value. Nor does a `url(` whose
-        argument starts on the next line.
-  - [ ] **Continuation lines: what's left.** A statement or expression written
-        across lines (`x = a +` then `b`, a method chain, a ternary) goes a
-        continuation step past its first line wherever the indents query
-        captures `@indent.continuation` (`cont` in the matrix;
-        `IndentStyle::continuation`, `ned/set-continuation-indent`, two levels for
-        Java and Dart), and Enter after an unfinished one lands there too. SQL's
-        clauses do the same through their own headed captures; a line continued
-        with a `:line-continuation` marker (`\` in C's preprocessor, shells,
-        Python, Ruby, awk and Dockerfiles) is left as written, GDScript continues
-        only inside brackets or after one, and an Objective-C message lines its
-        selector parts up on their colons (`@aligned.colons`). Left: a chain
-        after a Scala 3 colon-lambda body (`xs.foldUse(g): _ ?=>` ... then
-        `.topN(max)`) goes a level in; the body ends by dedent, which the
-        multi-line-root rule (a closer on the line above) can't see.
-- [ ] **Markdown inline: CommonMark's delimiter-run rules.** The inline grammar
-      (generated with upstream's extensions, so wiki links and `#tags` parse) passes
+- [ ] **Enter after an empty offside body.** Enter after an Earthfile target header
+      (`build:`) or an unclosed `IF` lands at column 0: the grammar makes a target's
+      body optional, so an empty one parses as finished rather than being recovered as
+      a zero-width body the way Python's `def f():` is.
+- [ ] **Scala 3 chain after a colon-lambda body.** `xs.foldUse(g): _ ?=>` ... then
+      `.topN(max)` reindents a level in: the body ends by dedent, which the
+      multi-line-root rule (a closer on the line above) can't see.
+- [ ] **Markdown inline: CommonMark's delimiter-run rules.** The inline grammar passes
       351 of 363 corpus cases; the 12 in `markdown-inline/corpus/failing.txt` fail
       upstream too. Eleven are emphasis: flanking against punctuation and trailing
       whitespace (`a**"foo"**`, `**foo bar **`, `*  a *`) and the rule of three
@@ -183,115 +121,44 @@ and code reading. Highest stakes first.
       afterwards against a stack of openers -- fixing them means the scanner keeping
       that stack. The twelfth is a link label of only whitespace read as a shortcut
       link.
-- [ ] **Locals query limits.** A declaration's initializer reads the names from
-      before it (`@local.declaration` + `@local.initializer`: `let x = x + 1`,
-      `my $x = $x`, `if let x = x`, Lisp binding pairs), and OCaml, F#, Swift and
-      Julia have ned-authored queries. Left: Perl's `our`/`local` bind nothing and a
-      lexical `my sub` isn't tracked. Elixir: a module body's variables aren't
-      visible to its functions by design, and a zero-arity call written without
-      parens reads as a variable when a same-named one is bound. Dart: a bare field
-      name inside a method binds nothing (members aren't locals), and a
-      function-typed parameter (`int cb(int x)`) isn't captured. OCaml and F#: a
-      punned label or field (`f ~x`, `{ x }`) is both the variable and the label, so
-      a rename misses it; F# class members and their parameters aren't modelled.
-      PowerShell names are case-insensitive and the resolver isn't, so `$Acc` and
-      `$acc` are two bindings; `$script:`/`$global:` and braced `${x}` variables are
-      left out. Tcl has no locals query: `global`/`upvar` rebind a proc's name to
-      another scope's, which a proc-local rename would get wrong. Erlang binds only a
-      top-level or one-level-nested pattern variable (`{A, [B]}`'s `B` is a use).
-- [ ] **change-signature for the remaining languages.** 40 have `signatures` + `calls`
-      queries (`sig` column): each describes its own parameters, receivers (`self`,
-      `cls`, Lua's colon calls, Nim's dot calls, C#'s extension `this`), keyword-only
-      parameters and named/spread arguments, and `:signature-template` parses the
-      retyped list. A list written flat, as the definition's or call's own children, is
-      named by its opening paren (`.open`: Swift, Solidity, Vala, Odin), and a Swift
-      parameter's label (`@parameter.label`) goes with a new default. A constructor is
-      found wherever it is called: by its class (`new Box(...)`, Swift's `Box(...)`,
-      Solidity's `is Vault(...)`), and through the class or its base
-      (`parent::__construct`, `super().__init__`, `super(...)`, `this(...)`,
-      `: base(...)`, `super.init`/`self.init` -- `@call.class` with `@call.base`/
-      `@call.class.name`, and a call marked `@call.callee.base`/`.class`). Odin's
-      `x->f(a)` passes `x` as f's first parameter, so it declines when that moves. Not
-      yet: the Lisps, and Haskell/OCaml/F#'s curried application (a call has no
-      parenthesized argument list after the callee); Erlang's and Elixir's
-      multi-clause functions, whose clause heads are patterns each change would have
-      to rewrite separately; Ruby's and Crystal's bare `super`, which calls the
-      parent's same-named method. A pipe fills the first parameter (Gleam's `|>`,
-      `@call.receiver.first`), so moving that parameter declines the piped call.
-      Pascal's and Ada's grouped parameters (`A, B : Integer`) are one nameless entry
-      and decline.
-      Known misses: a class's base is the first type it lists, so a C#/Kotlin/Swift
-      class listing an interface first sends `base`/`super` to the interface; a C#
-      extension method called statically with its trailing defaults omitted is read as
-      a member call; Julia's keyword parameters (after `;`) read as positional, so a
-      call passing one by name is declined; overloaded constructors (Java's `Box(int)`
-      beside `Box(int, int)`) trip the same-name arity check and decline.
-- [ ] **Imports: what is still unmodelled.** 68 languages go to a file through their
-      imports and have them rewritten when a file moves (`imp`). A language's
-      `:import-resolution` says how a specifier becomes a path: `:source-roots` under the
-      package root (the nearest LSP root marker) and the project root, `:module-separator`
-      (Perl's `::`), `:module-substitutions` (Clojure's `-` for `_`), `:partial-prefix`
-      (Sass's `_`), `:root-prefixes` (Godot's `res://`) and `:package-scheme` (Dart's
-      `package:`, through `.dart_tool/package_config.json`, else the enclosing pubspec);
-      a project's `importResolution.<language>.sourceRoots` replaces the roots. Left:
-  - [ ] **No imports query.** Go (a package is a directory, found through `go.mod`'s
-        module path), C# and F# namespaces, Swift and Elixir modules, OCaml and ReScript's
-        flat module names, V and Odin's directory packages, Pascal units (a unit name
-        isn't a path, so a move couldn't be written back into one), Ada's GNAT
-        `foo-bar.ads` naming, Starlark's Bazel labels, VHDL libraries. Svelte, Vue and
-        Astro script imports belong to the injected language, which `importTarget`
-        doesn't follow the way the outline does (`:injected-symbols`).
+- [ ] **Locals: names a rename misses.** Perl's `our`/`local` bind nothing and a
+      lexical `my sub` isn't tracked. Elixir: a zero-arity call written without parens
+      reads as a variable when a same-named one is bound. Dart: a function-typed
+      parameter (`int cb(int x)`) isn't captured. OCaml and F#: a punned label or field
+      (`f ~x`, `{ x }`) is both the variable and the label; F# class members and their
+      parameters aren't modelled. PowerShell names are case-insensitive and the
+      resolver isn't (`$Acc` and `$acc` are two bindings); `$script:`/`$global:` and
+      braced `${x}` are left out. Erlang binds only a top-level or one-level-nested
+      pattern variable (`{A, [B]}`'s `B` is a use).
+- [ ] **change-signature: known misses.** A class's base is the first type it lists,
+      so a C#/Kotlin/Swift class listing an interface first sends `base`/`super` to the
+      interface; a C# extension method called statically with its trailing defaults
+      omitted is read as a member call; Julia's keyword parameters (after `;`) read as
+      positional, so a call passing one by name is declined; overloaded constructors
+      (Java's `Box(int)` beside `Box(int, int)`) trip the same-name arity check and
+      decline; Pascal's and Ada's grouped parameters (`A, B : Integer`) are one nameless
+      entry and decline; Ruby's and Crystal's bare `super` (the parent's same-named
+      method) isn't followed.
+- [ ] **Imports: what is still unmodelled.**
+  - [ ] **Toolchain packages for V and Odin.** Their project-local imports resolve;
+        V's `vlib` and `~/.vmodules` and Odin's `core:`/`base:`/`vendor:`
+        collections (under `ODIN_ROOT`) aren't searched.
+  - [ ] **Svelte, Vue and Astro** script imports belong to the injected language,
+        which `importTarget` doesn't follow the way the outline does
+        (`:injected-symbols`).
   - [ ] **JVM moves are half a refactor.** A moved Java/Kotlin/Scala/Groovy class's
-        importers are rewritten; its own `package` line and its same-package users, which
-        import nothing, are not. Scala reads only a plain `import a.b.C`, not selectors or
-        renames, since its path is sibling identifiers rather than one node.
-  - [ ] **Source roots are conventions, not read from the build.** Cabal's
-        `hs-source-dirs`, `elm.json`'s `source-directories`, Maven/Gradle source sets and
-        rebar's include dirs are all approximated by the bundled defaults.
-  - [ ] **Spellings that name no one file.** CMake paths through variables
-        (`${CMAKE_CURRENT_LIST_DIR}/x.cmake`), `~` in ssh_config and gitconfig includes,
-        globs (Caddy, nginx, Apache), Just's bare `mod name`, Nim's `pkg/[a, b]` groups.
-- [ ] **Test discovery: what is still unmodelled.** 41 languages mark their tests in the
-      gutter and run the one at point (`test`), each for its common frameworks (busted,
-      Spock, testthat, Pester, EUnit, Alcotest/ppx_expect, Expecto, FiveAM, rackunit,
-      Foundry, XCTest, ...). Left: D's `unittest` blocks and Zig's `test` blocks are
-      unnamed or named by a string no runner filters on; Bash's bats files are their own
-      grammar; MATLAB's class-based tests, SRFI-64, Fennel, Janet and SQL (pgTAP) have
-      no query. Discovery only finds tests -- running one still needs
-      `ned/set-test-filter-command`, and only the output formats `Editor/TestRun/`
-      parses produce per-test results.
-- [ ] **Format queries: what is still unmodelled.** 31 languages name their braces,
-      control parens, `else`/`catch` keywords and top-level/method definitions for the
-      capture-driven formatter rules (`fmt`); Go, Odin and V keep a brace on its header's
-      line (`:braces-on-header-line`), so a placement rule moving it is refused. Left:
-      Swift, whose if/else bodies are bare `statements` between braces the whole `if`
-      node owns, so each pair needs anchoring rather than a body capture; Dart's
-      functions and methods, whose signature and body are sibling nodes, get no
-      `def.toplevel`/`def.method` (a blank-line rule needs the whole definition's
-      span); the keyword-bodied languages (Crystal, Julia, Elixir, Nim, Ada, Fortran,
-      ...) have no format query at all.
-- [ ] **Bundled formatter styles: PHP (PSR-12), Go (gofmt), Rust (rustfmt), Kotlin
-      (official conventions), C# (.NET conventions), JavaScript/TypeScript/TSX
-      (Prettier), Dart (`dart format`), Scala (scalafmt), Solidity (`forge fmt`) and D
-      (dfmt's Allman).** Scala's braced if/else body written on the line after its
-      header parses as an `indented_block`, so moving its brace up would change the
-      tree and is left as written. A Rust project's `rustfmt.toml` adjusts what rustfmt lets it
-      (indentation, `max_width`, brace and blank-line options --
-      `Editor/RustfmtConfig.h`), and a Prettier config its `useTabs`/`tabWidth`/
-      `printWidth` for every file Prettier formats and its quote style for
-      JS/TS (`Editor/PrettierConfig.h`; a config written as JavaScript, a shared
-      config package and `overrides` blocks aren't read); gofmt has no options.
-      None is complete: gofmt's
-      field/comment alignment and redundant-paren removal, rustfmt's and Prettier's
-      width-driven wrapping, and rustfmt's `where`-clause layout are beyond the native
-      formatter, so the language server's formatting (or `ned/set-format-command`) is
-      still what makes a file canonical. Quotes are only rewritten where a Prettier
-      config says which (Prettier's default is double, but plenty of projects set
-      `singleQuote`). C#'s own `.editorconfig` keys adjust its style
-      (`csharp_new_line_before_open_brace` for types, methods and control blocks,
-      `_before_else/catch/finally` when they agree, control-flow paren spacing);
-      the finer brace categories (accessors, lambdas, initializers) have no
-      capture of their own yet.
+        importers are rewritten; its own `package` line and its same-package users,
+        which import nothing, are not. Scala reads only a plain `import a.b.C`, not
+        selectors or renames.
+  - [ ] **`~` in ssh_config and gitconfig includes** isn't expanded.
+- [ ] **Test discovery** has no query for Janet, bats files (their own grammar), Fennel,
+      MATLAB's class-based tests, SRFI-64 or SQL (pgTAP).
+- [ ] **Format queries** (`fmt`): Swift, whose if/else bodies are bare `statements`
+      between braces the whole `if` node owns, so each pair needs anchoring rather than
+      a body capture; Dart's functions and methods, whose signature and body are sibling
+      nodes, get no `def.toplevel`/`def.method` (a blank-line rule needs the whole
+      definition's span); the keyword-bodied languages (Crystal, Julia, Elixir, Nim,
+      Ada, Fortran, ...) have no format query at all.
 
 **Quick-fix gutter marker**
 
@@ -1535,6 +1402,65 @@ else works without it.
 Ideas worth remembering but not worth scoping yet — too undecided for "Open Items",
 not disliked enough for "Won't do". Promote or delete on revisit rather than letting
 these accumulate detail in place.
+
+- [ ] **Android device tooling.** Editing, building and testing an Android project
+      works today via Java/Kotlin modes, the task runner (`ned/set-task-command` pointed
+      at `./gradlew ...`) and XML mode for layout files. `adb logcat` streaming and a
+      one-click "install + run on device/emulator" flow have no home in anything that
+      exists. Justified when shelled-out `adb`/`gradlew` tasks prove too manual in
+      practice.
+- [ ] **Language servers for Markdown fences and Org `#+BEGIN_SRC` blocks**, the way
+      HTML `<script>`/`<style>` embedded documents already get one. A live server per
+      fence in an ordinary notes file could be noisy for illustrative, incomplete
+      snippets. Justified when someone wants diagnostics or completion in literate files.
+- [ ] **Charset edges.** UTF-16 is always written with a BOM, so a BOM-less UTF-16 file
+      (reachable only by stating or choosing the charset) gains one on save; modelling
+      "BOM or not" apart from the encoding would fix it. The huge-file path maps bytes
+      and never decodes: a UTF-16 huge file is refused, a latin1 one opens byte for byte
+      and ignores a stated latin1. A charset stated in `.editorconfig` for files opened
+      before `init.janet` disables `.editorconfig` has already decoded them. Justified
+      when one of these files turns up.
+- [ ] **Mixed tabs and spaces:** Emacs's `indent-tabs-mode` with an indent width below
+      the tab width (GNU C: 2-column levels, 8-column tabs, so a level-3 line is one tab
+      and two spaces). Needs a tab width separate from `IndentStyle::width`, which today
+      doubles as both. Justified when such a file has to be edited without being
+      rewritten.
+- [ ] **Tcl locals.** `global`/`upvar` rebind a proc's name to another scope's, which a
+      proc-local rename would get wrong. Justified once the resolver can decline a name
+      a `global`/`upvar` touches rather than renaming half of it.
+- [ ] **change-signature for curried and multi-clause languages.** Haskell, OCaml and
+      F# apply a function without a parenthesized argument list, and the Lisps have no
+      separate list at all; Erlang's and Elixir's multi-clause functions have a pattern
+      per clause head that each change would rewrite separately. Justified when someone
+      asks for change-signature in one of them.
+- [ ] **Imports for module systems that aren't paths.** C# and F# namespaces, Swift and
+      Elixir modules, OCaml and ReScript's flat module names, Pascal units (a unit name
+      can't be written back after a move), Ada's GNAT `foo-bar.ads` naming, Starlark's
+      Bazel labels, VHDL libraries. Each needs a project-wide index from module name to
+      file rather than a specifier-to-path rule. Justified by a language whose users
+      rename files often enough to want the fixup.
+- [ ] **Import source roots read from the build.** Cabal's `hs-source-dirs`,
+      `elm.json`'s `source-directories`, Maven/Gradle source sets and rebar's include
+      dirs are approximated by the bundled defaults and a project's
+      `importResolution.<language>.sourceRoots`. Justified when a real project's layout
+      defeats both.
+- [ ] **Import spellings that name no one file.** CMake paths through variables
+      (`${CMAKE_CURRENT_LIST_DIR}/x.cmake`), globs (Caddy, nginx, Apache), Just's bare
+      `mod name`, Nim's `pkg/[a, b]` groups. Justified when go-to-file on one of them is
+      missed in practice.
+- [ ] **D `unittest` blocks in test discovery.** They're unnamed, and no runner filters
+      on a name. Justified if a D test runner with per-test filtering becomes common.
+- [ ] **Native formatter parity with the canonical formatters.** The bundled styles
+      (PSR-12, gofmt, rustfmt, Kotlin, .NET, Prettier, `dart format`, scalafmt,
+      `forge fmt`, dfmt) stop short of gofmt's field/comment alignment and
+      redundant-paren removal, rustfmt's and Prettier's width-driven wrapping, rustfmt's
+      `where`-clause layout, a Prettier config written as JavaScript or a shared package
+      or with `overrides`, C#'s finer brace categories (accessors, lambdas,
+      initializers), and a Scala braced body on the line after its header (an
+      `indented_block`, so moving its brace would change the tree). The language
+      server's formatting or `ned/set-format-command` is what makes a file canonical.
+      Justified per item when a language people use here has no working external
+      formatter.
 
 - [ ] **Code-block definitions in a Markdown/Org outline.** HTML, Svelte, Vue and
       Astro list what their `<script>`/`<style>` blocks define (`:injected-symbols`);

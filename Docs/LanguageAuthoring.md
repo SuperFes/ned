@@ -219,15 +219,74 @@ needs a cast, an enum assigned an `int`. The bundled scanners under
 
 ned's queries are Janet files, one per kind, discovered beside `language.janet`:
 `highlights.janet`, `tags.janet`, `indents.janet`, `locals.janet`, `injections.janet`,
-`imports.janet`, `tests.janet`, `format.janet`, `signatures.janet`, `calls.janet`
-(change-signature's own pair -- `@signature.definition`/`@signature.name`/
-`@signature.parameters` and `@call.definition`/`@call.callee`/`@call.arguments`,
-`Source/Languages/cpp/` the only bundled language with either so far). An
-`upstream/<kind>.janet` is read
-first and ned's own file after it, so a grammar's shipped queries are consumed
-unmodified and ned's additions are a delta. `Docs/Scripting.md`'s `ned/register-language`
-entry lists every `language.janet` key; the bundled languages are the reference for the
-query dialect (`Source/Languages/python/` is a complete one).
+`imports.janet`, `tests.janet`, `format.janet`, `signatures.janet`, `calls.janet`. An
+`upstream/<kind>.janet` is read first and ned's own file after it, so a grammar's
+shipped queries are consumed unmodified and ned's additions are a delta.
+`Docs/Scripting.md`'s `ned/register-language` entry lists every `language.janet` key;
+the bundled languages are the reference for the query dialect
+(`Source/Languages/python/` is a complete one). `Docs/LanguageMatrix.md` shows which
+bundled language ships which kind.
+
+### Indentation
+
+Without an indents query, indentation comes from the grammar's delimited bodies alone.
+`:preserve-indent true` marks a language whose indentation is syntax (Haskell, Elm, F#,
+PureScript): a reindent leaves every line as written and Enter copies the previous
+line's indent.
+
+A statement or expression written across lines (`x = a +` then `b`, a method chain, a
+ternary) goes a continuation step past its first line wherever the indents query
+captures `@indent.continuation`; Enter after an unfinished one lands there too. The
+step is `IndentStyle::continuation` (`ned/set-continuation-indent`; two levels for Java
+and Dart). A line continued with a `:line-continuation` marker (`\` in C's
+preprocessor, shells, Python, Ruby, awk and Dockerfiles), which most grammars skip as
+whitespace, is left as written. `@aligned.colons` lines an Objective-C message's
+selector parts up on their colons.
+
+### change-signature
+
+`signatures.janet` and `calls.janet` pair up: `@signature.definition`/`@signature.name`/
+`@signature.parameters` and `@call.definition`/`@call.callee`/`@call.arguments`. Each
+language describes its own parameters (`@parameter` with `.name`, `.default`,
+`.variadic`, `.keyword`, `.group`, `.skip`), receivers (`@parameter.receiver` for
+`self`, `cls`, Lua's colon calls, Nim's dot calls, C#'s extension `this`), and
+named/spread arguments (`@argument.named` with `@argument.name`, `@argument.spread`);
+`:signature-template` parses the retyped list. A list written flat, as the definition's
+or call's own children, is named by its opening paren (`@signature.parameters.open`,
+`@call.arguments.open`: Swift, Solidity, Vala, Odin), and a Swift parameter's label
+(`@parameter.label`) goes with a new default. A constructor is found wherever it is
+called: by its class (`new Box(...)`, Swift's `Box(...)`, Solidity's `is Vault(...)`,
+`@signature.callee`), and through the class or its base (`parent::__construct`,
+`super().__init__`, `this(...)`, `: base(...)` -- `@call.class` with `@call.base`/
+`@call.class.name`, and a call marked `@call.callee.base`/`.class`). A pipe fills the
+first parameter (Gleam's `|>`, `@call.receiver.first`), so moving that parameter
+declines the piped call. C and C++ read their declarators directly instead.
+
+### Imports
+
+`imports.janet` marks the specifiers; `:import-resolution` in `language.janet` says how
+one becomes a path: `:source-roots` under the package root (the nearest LSP root marker)
+and the project root, `:module-separator` (Perl's `::`), `:module-substitutions`
+(Clojure's `-` for `_`), `:partial-prefix` (Sass's `_`), `:root-prefixes` (Godot's
+`res://`) and `:package-scheme` (Dart's `package:`, through
+`.dart_tool/package_config.json`, else the enclosing pubspec). `:go-modules` reads Go
+import paths through the nearest `go.mod`: its own module, then its `replace`
+directives and requirements (in the module cache), then the standard library under
+`GOROOT`. `:package-directories` says an import names a directory (Go, V, Odin):
+go-to-file opens `doc.<ext>`, else the file named after the directory, else its first
+non-`_test` source file, and a move rewrites the import only when every source file in
+the directory went to the same place. A project's
+`importResolution.<language>.sourceRoots` replaces the roots. The same resolution drives
+go-to-file and the fixups when a file is renamed or moved.
+
+### Formatting
+
+`format.janet` names a language's braces, control parens, `else`/`catch` keywords and
+top-level/method definitions for the capture-driven formatter rules
+(`Docs/FormattingRules.md`); `:braces-on-header-line` (Go, Odin, V) refuses a placement
+rule that would move a brace off its header's line. A bundled `style.janet` gives the
+rules defaults with no user config, following the language's official style guide or
+canonical formatter.
 
 ## Bundling
 
