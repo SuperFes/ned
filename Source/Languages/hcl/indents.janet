@@ -10,3 +10,6 @@
 [(block_end)
  (object_end)
  (tuple_end)] @dedent
+
+# Continuation lines -- see c-indents.scm.
+[(attribute) (binary_operation) (conditional)] @indent.continuation

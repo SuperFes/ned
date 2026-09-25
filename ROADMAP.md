@@ -158,11 +158,11 @@ and code reading. Highest stakes first.
         indents query captures `@indent.continuation` (`cont` in the matrix;
         `IndentStyle::continuation`, `ned/set-continuation-indent`, two levels for
         Java and Dart), and Enter after an unfinished one lands there too. Not yet
-        captured: Crystal, Julia, GDScript, Nim, MATLAB, Pascal, Verilog, Ada,
-        SQL, HCL, fish, Meson, Erlang and ReScript, and R, Perl and PowerShell,
-        which have no indents query at all yet. (A line continued with a `:line-continuation`
-        marker, `\` in C's preprocessor, shells, Python, Ruby, awk and
-        Dockerfiles, is left as written.) Known misses:
+        captured: MATLAB, Pascal, Verilog, Ada, SQL, fish, Meson, Erlang and
+        ReScript. (A line continued with a `:line-continuation` marker, `\` in
+        C's preprocessor, shells, Python, Ruby, awk and Dockerfiles, is left as
+        written; GDScript continues only inside brackets or after one.) Known
+        misses:
         - A chain after a Scala 3 colon-lambda body (`xs.foldUse(g): _ ?=>` ...
           then `.topN(max)`) goes a level in; the body ends by dedent, which the
           multi-line-root rule (a closer on the line above) can't see.

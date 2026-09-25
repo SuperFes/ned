@@ -3,3 +3,6 @@
 # construct's own level. A module body stays at column zero (Julia's style
 # guide), which it already does: the imprint pairs no `module ... end`.
 [(elseif_clause) (else_clause) (catch_clause) (finally_clause)] @dedent
+
+# Continuation lines -- see c-indents.scm.
+[(assignment) (binary_expression) (ternary_expression) (return_statement)] @indent.continuation

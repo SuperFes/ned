@@ -139,7 +139,7 @@ indent 198..199  [0]  "}"
 indent 200..200  [0]
 indent 201..231  [0]  "widgets <- list(\"a\", \"b\", \"c\")"
 indent 232..253  [0]  "results <- widgets |>"
-indent 254..311  [0]  "  purrr::map(function(w) sum … c(1, 2, 3)))"
+indent 254..311  [2]  "  purrr::map(function(w) sum … c(1, 2, 3)))"
 indent 312..312  [0]
 indent 313..355  [0]  "print.widget_summary <- function(x, ...) {"
 indent 356..399  [2]  "  cat(sprintf(\"%s: %d\\n\", x$name, x$total))"

@@ -393,6 +393,12 @@ TEST_CASE("A flattened sample reindents back to its house style", "[FormatterPro
              {"continuation.odin", "odin"},
              {"continuation.sol", "solidity"},
              {"continuation.vala", "vala"},
+             {"continuation.jl", "julia"},
+             {"continuation.cr", "crystal"},
+             {"continuation.R", "r"},
+             {"continuation.pl", "perl"},
+             {"continuation.ps1", "powershell"},
+             {"continuation.tf", "hcl"},
          }) {
         INFO("sample: " << file);
         const std::string original = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "reindent" / file);
@@ -412,10 +418,16 @@ TEST_CASE("A flattened sample reindents back to its house style", "[FormatterPro
     }
 }
 
-TEST_CASE("A re-widened Scala sample reindents back to its house style", "[FormatterProperties]") {
-    // Scala 3 reads indentation, so the sample is widened (which keeps its
-    // parse) rather than flattened. Braces and Scala 3's indented syntax both.
-    for (const std::string file : {"sample.scala", "sample3.scala", "continuation.scala"}) {
+TEST_CASE("A re-widened sample of a language that reads indentation reindents back to its house style",
+          "[FormatterProperties]") {
+    // Scala 3 and Nim read indentation, so the sample is widened (which keeps
+    // its parse) rather than flattened. Braces and Scala 3's indented syntax both.
+    for (const auto& [file, language] : std::vector<std::pair<std::string, std::string>>{
+             {"sample.scala", "scala"},
+             {"sample3.scala", "scala"},
+             {"continuation.scala", "scala"},
+             {"continuation.nim", "nim"},
+         }) {
         INFO("sample: " << file);
         const std::string original = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "reindent" / file);
         std::string       wide;
@@ -425,8 +437,8 @@ TEST_CASE("A re-widened Scala sample reindents back to its house style", "[Forma
             atLineStart = (atLineStart && c == ' ') || c == '\n';
         }
         REQUIRE(wide != original);
-        RequireSameStructure("scala", original, wide);
-        CHECK(IndentAll(wide, BundledMode("scala")) == original);
+        RequireSameStructure(language, original, wide);
+        CHECK(IndentAll(wide, BundledMode(language)) == original);
     }
 }
 
