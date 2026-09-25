@@ -112,15 +112,6 @@ below is behaviour that is wrong or missing today, verified with `ned --format` 
 - [ ] **Scala 3 chain after a colon-lambda body.** `xs.foldUse(g): _ ?=>` ... then
       `.topN(max)` reindents a level in: the body ends by dedent, which the
       multi-line-root rule (a closer on the line above) can't see.
-- [ ] **Markdown inline: CommonMark's delimiter-run rules.** The inline grammar passes
-      351 of 363 corpus cases; the 12 in `markdown-inline/corpus/failing.txt` fail
-      upstream too. Eleven are emphasis: flanking against punctuation and trailing
-      whitespace (`a**"foo"**`, `**foo bar **`, `*  a *`) and the rule of three
-      (`*foo**bar*`, `**foo*bar*baz**`). The scanner decides each delimiter run as it
-      reads it, from the grammar's last-token hints, where CommonMark matches runs
-      afterwards against a stack of openers -- fixing them means the scanner keeping
-      that stack. The twelfth is a link label of only whitespace read as a shortcut
-      link.
 - [ ] **Locals: names a rename misses.** Perl's `our`/`local` bind nothing and a
       lexical `my sub` isn't tracked. Elixir: a zero-arity call written without parens
       reads as a variable when a same-named one is bound. Dart: a function-typed
@@ -1288,6 +1279,12 @@ just fixing-and-forgetting or letting it fade from memory between sessions. Fixe
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
 
+- **Markdown emphasis on a pathological paragraph.** Each `*`/`_` run that can open reads
+  ahead (up to 4096 codepoints) to see whether anything closes it, so a single paragraph
+  of thousands of openers that never close costs that read-ahead for every one: 15,000 of
+  them in one 45KB paragraph parse in 0.65s, against 0.09s before. Ordinary text resolves
+  within a few characters and is faster than before. Worth a closer-free memo in the
+  scanner state if a real generated document ever hits it.
 - **UBSan: `TypstScanner.cpp` loads invalid `enum container` values (2494, 2501, 2557).**
   Three `runtime error: load of value 8, which is not a valid value for type 'enum
   container'` reports every sanitizer run of `Ned parse engine matches the bundled
@@ -1439,6 +1436,11 @@ these accumulate detail in place.
       (`${CMAKE_CURRENT_LIST_DIR}/x.cmake`), globs (Caddy, nginx, Apache), Just's bare
       `mod name`, Nim's `pkg/[a, b]` groups. Justified when go-to-file on one of them is
       missed in practice.
+- [ ] **A whitespace-only link label.** `[ ]` (and `[\n ]`) parses as a shortcut link,
+      where CommonMark requires a label to hold a non-whitespace character (GFM example
+      560, the one case left in `markdown-inline/corpus/failing.txt`). Excluding it means
+      a non-blank variant of `_inline_no_link` for shortcut and reference links. Justified
+      if a blank bracket pair styled as a link turns up in a real document.
 - [ ] **Tests with no name to run by.** D's `unittest` blocks are unnamed and no runner
       filters on a name; MATLAB's script-based `%%` sections run by a name MATLAB derives
       from the title in an undocumented way; judge's (Janet) top-level `test` forms run

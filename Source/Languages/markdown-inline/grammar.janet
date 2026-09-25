@@ -87,7 +87,8 @@
              _strikethrough_close
              _latex_span_start
              _latex_span_close
-             _unclosed_span]
+             _unclosed_span
+             _emphasis_text]
  :inline []
  :supertypes []
  :rules
@@ -1028,7 +1029,8 @@
                   (:alias _html_tag html_tag)
                   _text_base
                   tag
-                  _unclosed_span)))
+                  _unclosed_span
+                  _emphasis_text)))
   _text_base (:choice
               _word
               (:seq
@@ -1071,8 +1073,6 @@
               "<![CDATA[")
   _text_inline_no_link (:choice
                         _text_base
-                        _emphasis_open_star
-                        _emphasis_open_underscore
                         _unclosed_span)
   tag (:pattern "#[0-9]*[a-zA-Z_\\-\\/][a-zA-Z_\\-\\/0-9]*")
   _inline_element (:choice
@@ -1082,8 +1082,6 @@
                    (:alias _emphasis_underscore emphasis)
                    (:alias _strong_emphasis_underscore strong_emphasis)
                    (:alias _strikethrough strikethrough)
-                   _emphasis_open_star
-                   _emphasis_open_underscore
                    _strikethrough_open
                    shortcut_link
                    full_reference_link
@@ -1099,7 +1097,6 @@
                            (:alias _emphasis_underscore emphasis)
                            (:alias _strong_emphasis_underscore strong_emphasis)
                            (:alias _strikethrough strikethrough)
-                           _emphasis_open_underscore
                            _strikethrough_open
                            shortcut_link
                            full_reference_link
@@ -1115,7 +1112,6 @@
                                  (:alias _emphasis_underscore emphasis)
                                  (:alias _strong_emphasis_underscore strong_emphasis)
                                  (:alias _strikethrough strikethrough)
-                                 _emphasis_open_star
                                  _strikethrough_open
                                  shortcut_link
                                  full_reference_link
@@ -1131,8 +1127,6 @@
                             (:alias _emphasis_underscore emphasis)
                             (:alias _strong_emphasis_underscore strong_emphasis)
                             (:alias _strikethrough strikethrough)
-                            _emphasis_open_star
-                            _emphasis_open_underscore
                             shortcut_link
                             full_reference_link
                             collapsed_reference_link
@@ -1175,8 +1169,6 @@
                            (:alias _emphasis_underscore_no_link emphasis)
                            (:alias _strong_emphasis_underscore_no_link strong_emphasis)
                            (:alias _strikethrough_no_link strikethrough)
-                           _emphasis_open_star
-                           _emphasis_open_underscore
                            _strikethrough_open)
   _inline_no_link (:repeat1 _inline_element_no_link)
   _inline_element_no_star_no_link (:choice
@@ -1186,7 +1178,6 @@
                                    (:alias _emphasis_underscore_no_link emphasis)
                                    (:alias _strong_emphasis_underscore_no_link strong_emphasis)
                                    (:alias _strikethrough_no_link strikethrough)
-                                   _emphasis_open_underscore
                                    _strikethrough_open)
   _inline_no_star_no_link (:repeat1 _inline_element_no_star_no_link)
   _inline_element_no_underscore_no_link (:choice
@@ -1198,7 +1189,6 @@
                                           _strong_emphasis_underscore_no_link
                                           strong_emphasis)
                                          (:alias _strikethrough_no_link strikethrough)
-                                         _emphasis_open_star
                                          _strikethrough_open)
   _inline_no_underscore_no_link (:repeat1 _inline_element_no_underscore_no_link)
   _inline_element_no_tilde_no_link (:choice
@@ -1207,9 +1197,7 @@
                                     (:alias _strong_emphasis_star_no_link strong_emphasis)
                                     (:alias _emphasis_underscore_no_link emphasis)
                                     (:alias _strong_emphasis_underscore_no_link strong_emphasis)
-                                    (:alias _strikethrough_no_link strikethrough)
-                                    _emphasis_open_star
-                                    _emphasis_open_underscore)
+                                    (:alias _strikethrough_no_link strikethrough))
   _inline_no_tilde_no_link (:repeat1 _inline_element_no_tilde_no_link)
   _strikethrough_no_link (:prec-dynamic 1
                           (:seq
