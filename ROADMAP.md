@@ -231,6 +231,15 @@ and code reading. Highest stakes first.
   - [ ] **Spellings that name no one file.** CMake paths through variables
         (`${CMAKE_CURRENT_LIST_DIR}/x.cmake`), `~` in ssh_config and gitconfig includes,
         globs (Caddy, nginx, Apache), Just's bare `mod name`, Nim's `pkg/[a, b]` groups.
+- [ ] **Test discovery: what is still unmodelled.** 41 languages mark their tests in the
+      gutter and run the one at point (`test`), each for its common frameworks (busted,
+      Spock, testthat, Pester, EUnit, Alcotest/ppx_expect, Expecto, FiveAM, rackunit,
+      Foundry, XCTest, ...). Left: D's `unittest` blocks and Zig's `test` blocks are
+      unnamed or named by a string no runner filters on; Bash's bats files are their own
+      grammar; MATLAB's class-based tests, SRFI-64, Fennel, Janet and SQL (pgTAP) have
+      no query. Discovery only finds tests -- running one still needs
+      `ned/set-test-filter-command`, and only the output formats `Editor/TestRun/`
+      parses produce per-test results.
 - [ ] **Bundled formatter styles: PHP (PSR-12), Go (gofmt), Rust (rustfmt), Kotlin
       (official conventions), C# (.NET conventions) and JavaScript/TypeScript/TSX
       (Prettier).** A Rust project's `rustfmt.toml` adjusts what rustfmt lets it

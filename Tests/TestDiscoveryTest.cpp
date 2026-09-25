@@ -504,3 +504,110 @@ TEST_CASE("Ruby, Elixir, Swift, Scala, Dart and Haskell discover their framework
                                           "tests = testGroup \"group\" [ testCase \"one\" $ 1 @?= 1 ]\n") ==
           V{"calc", "adds", "group", "one"});
 }
+
+TEST_CASE("Scripting, functional and systems languages discover their frameworks' tests", "[TestRun]") {
+    using V = std::vector<std::string>;
+    CHECK(DiscoveredNames("lua-mode", "describe(\"calc\", function()\n"
+                                      "  it(\"adds\", function() end)\n"
+                                      "end)\n"
+                                      "function TestCalc:testSub() end\n"
+                                      "function testPlain() end\n"
+                                      "function helper() end\n") == V{"calc", "adds", "testSub", "testPlain"});
+
+    CHECK(DiscoveredNames("groovy-mode", "class CalcSpec extends Specification {\n"
+                                         "  def \"adds numbers\"() { expect: 1 == 1 }\n"
+                                         "  @Test void plainTest() {}\n"
+                                         "  void helper() {}\n"
+                                         "}\n") == V{"adds numbers", "plainTest"});
+
+    CHECK(DiscoveredNames("crystal-mode", "describe Calc do\n"
+                                          "  it \"adds\" do\n"
+                                          "  end\n"
+                                          "end\n") == V{"Calc", "adds"});
+
+    CHECK(DiscoveredNames("julia-mode", "@testset \"calc\" begin\n"
+                                        "  @test 1 == 1\n"
+                                        "end\n") == V{"calc"});
+
+    CHECK(DiscoveredNames("r-mode", "describe(\"calc\", {\n"
+                                    "  it(\"adds\", { expect_equal(1, 1) })\n"
+                                    "})\n"
+                                    "test_that(\"subtracts\", { expect_equal(0, 0) })\n") ==
+          V{"calc", "adds", "subtracts"});
+
+    CHECK(DiscoveredNames("perl-mode", "subtest \"adds\" => sub { ok(1) };\n"
+                                       "subtest('subtracts', sub { ok(1) });\n") == V{"adds", "subtracts"});
+
+    CHECK(DiscoveredNames("clojure-mode", "(deftest adds\n"
+                                          "  (testing \"small numbers\" (is (= 2 (+ 1 1)))))\n"
+                                          "(defn helper [] 1)\n") == V{"adds", "small numbers"});
+
+    CHECK(DiscoveredNames("erlang-mode", "add_test() -> ok.\n"
+                                         "add_gen_test_() -> [].\n"
+                                         "helper() -> ok.\n") == V{"add_test", "add_gen_test_"});
+
+    CHECK(DiscoveredNames("nim-mode", "suite \"calc\":\n"
+                                      "  test \"adds\":\n"
+                                      "    check 1 == 1\n") == V{"calc", "adds"});
+
+    CHECK(DiscoveredNames("gleam-mode", "pub fn add_test() { 1 }\n"
+                                        "pub fn helper() { 1 }\n") == V{"add_test"});
+
+    CHECK(DiscoveredNames("ocaml-mode", "let tests = [ test_case \"adds\" `Quick f ]\n"
+                                        "let%expect_test \"prints\" = ()\n"
+                                        "let%test \"truth\" = true\n") == V{"adds", "prints", "truth"});
+
+    CHECK(DiscoveredNames("fsharp-mode", "let tests = testList \"calc\" [ testCase \"adds\" <| fun () -> () ]\n"
+                                         "[<Fact>]\n"
+                                         "let ``subtracts numbers`` () = ()\n"
+                                         "[<Test>]\n"
+                                         "let multiplies () = ()\n") ==
+          V{"calc", "adds", "subtracts numbers", "multiplies"});
+
+    CHECK(DiscoveredNames("powershell-mode", "Describe \"calc\" {\n"
+                                             "  Context \"add\" {\n"
+                                             "    It \"sums\" { 1 | Should -Be 1 }\n"
+                                             "  }\n"
+                                             "}\n") == V{"calc", "add", "sums"});
+
+    CHECK(DiscoveredNames("racket-mode", "#lang racket\n"
+                                         "(define s (test-suite \"calc\"))\n"
+                                         "(test-case \"adds\" (check-equal? 1 1))\n") == V{"calc", "adds"});
+
+    CHECK(DiscoveredNames("commonlisp-mode", "(test adds (is (= 1 1)))\n"
+                                             "(define-test sums (true t))\n"
+                                             "(defun helper () 1)\n") == V{"adds", "sums"});
+}
+
+TEST_CASE("Compiled and markup-adjacent languages discover their frameworks' tests", "[TestRun]") {
+    using V = std::vector<std::string>;
+    CHECK(DiscoveredNames("v-mode", "fn test_add() { assert 1 == 1 }\n"
+                                    "fn helper() {}\n") == V{"test_add"});
+
+    CHECK(DiscoveredNames("odin-mode", "package calc\n"
+                                       "@(test)\n"
+                                       "test_add :: proc(t: ^testing.T) {}\n"
+                                       "helper :: proc() {}\n") == V{"test_add"});
+
+    CHECK(DiscoveredNames("solidity-mode", "contract CalcTest is Test {\n"
+                                           "  function test_Add() public {}\n"
+                                           "  function testFuzz_Add(uint x) public {}\n"
+                                           "  function invariant_Total() public {}\n"
+                                           "  function helper() internal {}\n"
+                                           "}\n") == V{"test_Add", "testFuzz_Add", "invariant_Total"});
+
+    CHECK(DiscoveredNames("objc-mode", "@implementation CalcTests\n"
+                                       "- (void)testAdd { }\n"
+                                       "- (void)helper { }\n"
+                                       "@end\n") == V{"testAdd"});
+
+    CHECK(DiscoveredNames("elm-mode", "suite = describe \"calc\" [ test \"adds\" <| \\_ -> Expect.equal 1 1 ]\n") ==
+          V{"calc", "adds"});
+
+    CHECK(DiscoveredNames("purescript-mode", "spec = describe \"calc\" do\n"
+                                             "  it \"adds\" do\n"
+                                             "    pure unit\n") == V{"calc", "adds"});
+
+    CHECK(DiscoveredNames("tcl-mode", "test add-1.1 {adds} -body { expr 1 } -result 1\n"
+                                      "proc helper {} {}\n") == V{"add-1.1"});
+}
