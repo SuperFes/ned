@@ -858,23 +858,57 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
             }
             while (header.IsExtra());
 
+            // The empty body sits right after the header, or spans the blank
+            // lines up to the closer below it (Earthfile's `IF` ... `END`):
+            // only whitespace between.
+            const auto blankUpTo = [&](std::size_t position) {
+                return bufferText.find_first_not_of(" \t\r\n", anchor + 1) >= position;
+            };
+            // The header, and what it ends (the anchor can be the condition's
+            // last token rather than the construct's own).
+            std::vector<grammar::Node> chain;
+            header.AncestorChain(chain);
+            chain.insert(chain.begin(), header);
             bool opens = false;
-            header.ForEachChild([&](const grammar::Node& child) {
-                opens = opens || (child.StartByte() == child.EndByte() && child.StartByte() > anchor &&
-                                  child.StartByte() <= lineStart && isIndentCaptured(child) && interiorContains(child, lineStart));
-            });
+            for (const grammar::Node& node : chain) {
+                if (opens || node.StartByte() > anchor || node.EndByte() <= anchor) {
+                    break;
+                }
+                node.ForEachChild([&](const grammar::Node& child) {
+                    if (opens || child.StartByte() <= anchor || !isIndentCaptured(child)) {
+                        return;
+                    }
+                    const bool zeroWidth = child.StartByte() == child.EndByte();
+                    // A body holding nothing but the blank line itself.
+                    const bool blank = bufferText.find_first_not_of(" \t\r\n", child.StartByte()) >= child.EndByte();
+                    opens            = (zeroWidth && child.StartByte() <= lineStart && interiorContains(child, lineStart)) ||
+                                       ((zeroWidth || blank) && child.EndByte() >= lineStart && blankUpTo(child.StartByte()));
+                });
+            }
             // Or the header is the whole container so far (OCaml's `let f x
             // =`, an @indent.headed let_binding): it ends at the anchor, and
             // its interior would begin at this line.
             if (!opens) {
-                std::vector<grammar::Node> chain;
-                header.AncestorChain(chain);
-                chain.insert(chain.begin(), header);
                 // A continuation that ends there is finished, not empty.
-                opens = std::any_of(chain.begin(), chain.end(), [&](const grammar::Node& node) {
-                    return node.EndByte() == anchor + 1 && isIndentCaptured(node) && !captures.continuation.contains(keyOf(node)) &&
+                // It may own the line end after the anchor (Earthfile's target).
+                const auto endsAtAnchor = [&](const grammar::Node& node) {
+                    return node.EndByte() > anchor && node.EndByte() <= lineStart &&
+                           bufferText.find_first_not_of(" \t\r\n", anchor + 1) >= node.EndByte();
+                };
+                const auto opener = std::find_if(chain.begin(), chain.end(), [&](const grammar::Node& node) {
+                    return endsAtAnchor(node) && isIndentCaptured(node) && !captures.continuation.contains(keyOf(node)) &&
                            !interiorContains(node, anchor) && interiorContains(node, lineStart);
                 });
+                opens             = opener != chain.end();
+                // A construct only an error node knows about (Earthfile's
+                // `IF` before its END is written) has lost the structure
+                // around it: its body is one level past its own line.
+                if (opens && opener->Type() == "ERROR") {
+                    const std::size_t headerLine = LineStartFor(bufferText, anchor);
+                    const int         column     = VisualColumnInLine(
+                        bufferText, headerLine, FirstNonBlankByte(bufferText, headerLine, anchor + 1), style.width);
+                    return IndentComputation{IndentComputation::Kind::Column, column + IndentColumnForLevel(1, style)};
+                }
             }
             if (!opens) {
                 return std::nullopt;

@@ -465,3 +465,16 @@ TEST_CASE("A Lisp special form's distinguished arguments align apart from its bo
         CHECK(ColumnOf(mode, text, 3) == 2);
     }
 }
+
+TEST_CASE("Enter after an Earthfile target with no body yet opens one", "[Indent][Imprint]") {
+    const LanguageDefinition* earthfile = ned::editor::BundledLanguage("earthfile");
+    REQUIRE(earthfile != nullptr);
+    const Mode mode = ned::editor::ModeFromDefinition(*earthfile);
+    const int  w    = Width(mode);
+    CHECK(ColumnOf(mode, "VERSION 0.8\nbuild:\n\n", 2) == w);
+    CHECK(ColumnOf(mode, "VERSION 0.8\nbuild:\n\ntest:\n    RUN echo\n", 2) == w);
+    CHECK(ColumnOf(mode, "VERSION 0.8\nbuild:\n    IF true\n\n", 3) == 2 * w);
+    CHECK(ColumnOf(mode, "VERSION 0.8\nbuild:\n    IF true\n\n    END\n", 3) == 2 * w);
+    // A target with a body is indented by its block alone.
+    CHECK(ColumnOf(mode, "VERSION 0.8\nbuild:\n    RUN a\n    RUN b\n", 3) == w);
+}

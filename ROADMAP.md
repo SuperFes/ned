@@ -105,10 +105,6 @@ What each package ships is the generated `Docs/LanguageMatrix.md`; the query cap
 and `language.janet` keys behind its columns are in `Docs/LanguageAuthoring.md`. What's
 below is behaviour that is wrong or missing today, verified with `ned --format` probes.
 
-- [ ] **Enter after an empty offside body.** Enter after an Earthfile target header
-      (`build:`) or an unclosed `IF` lands at column 0: the grammar makes a target's
-      body optional, so an empty one parses as finished rather than being recovered as
-      a zero-width body the way Python's `def f():` is.
 - [ ] **Scala 3 chain after a colon-lambda body.** `xs.foldUse(g): _ ?=>` ... then
       `.topN(max)` reindents a level in: the body ends by dedent, which the
       multi-line-root rule (a closer on the line above) can't see.
