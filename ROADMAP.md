@@ -151,13 +151,6 @@ below is behaviour that is wrong or missing today, verified with `ned --format` 
         which import nothing, are not. Scala reads only a plain `import a.b.C`, not
         selectors or renames.
   - [ ] **`~` in ssh_config and gitconfig includes** isn't expanded.
-- [ ] **Format queries** (`fmt`): Swift, whose if/else bodies are bare `statements`
-      between braces the whole `if` node owns, so each pair needs anchoring rather than
-      a body capture; Dart's functions and methods, whose signature and body are sibling
-      nodes, get no `def.toplevel`/`def.method` (a blank-line rule needs the whole
-      definition's span); the keyword-bodied languages (Crystal, Julia, Elixir, Nim,
-      Ada, Fortran, ...) have no format query at all.
-
 **Quick-fix gutter marker**
 
 - [ ] The marker only ever names a **diagnostic-attached** quick fix, because an

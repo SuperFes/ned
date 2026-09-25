@@ -1110,3 +1110,62 @@ TEST_CASE("End to end: blank lines applied to a real dart-mode buffer", "[Format
                              "  void n() {}\n"
                              "}\n");
 }
+
+namespace {
+
+struct KeywordDefinitionCase {
+    const char*              mode;
+    std::string              source;
+    std::vector<std::string> toplevel; // each capture's first line, "*" marking isFirst
+    std::vector<std::string> methods;
+};
+
+std::vector<std::string> FirstLines(const std::string& source, std::vector<FormatCapture> captures) {
+    std::ranges::sort(captures, {}, &FormatCapture::startByte);
+    std::vector<std::string> lines;
+    for (const FormatCapture& capture : captures) {
+        const std::size_t end = source.find('\n', capture.startByte);
+        lines.push_back((capture.isFirst ? "*" : "") + source.substr(capture.startByte, end - capture.startByte));
+    }
+    return lines;
+}
+
+} // namespace
+
+TEST_CASE("Keyword-bodied languages name their top-level and member definitions", "[FormatBlankLines]") {
+    const KeywordDefinitionCase cases[] = {
+        {"crystal-mode",
+         "def f\n  1\nend\nclass A\n  def m\n  end\n  def n\n  end\nend\n",
+         {"*def f", "class A"},
+         {"*def m", "def n"}},
+        {"julia-mode",
+         "module M\nfunction f(x)\n  x\nend\nstruct S\n  a\nend\nend\n",
+         {"*module M", "*function f(x)", "struct S"},
+         {}},
+        {"elixir-mode",
+         "defmodule M do\n  def a, do: 1\n\n  defp b(x) do\n    x\n  end\nend\n",
+         {"*defmodule M do"},
+         {"*def a, do: 1", "defp b(x) do"}},
+        {"nim-mode",
+         "proc a(x: int): int =\n  x\ntype T = object\n  f: int\nfunc b() = discard\n",
+         {"*proc a(x: int): int =", "type T = object", "func b() = discard"},
+         {}},
+        {"ada-mode",
+         "package body P is\n   procedure A is\n   begin\n      null;\n   end A;\n   procedure B is\n   begin\n"
+         "      null;\n   end B;\nend P;\n",
+         {"*package body P is"},
+         {"*procedure A is", "procedure B is"}},
+        {"fortran-mode",
+         "module m\ncontains\n  subroutine s()\n  end subroutine s\n  function f() result(r)\n    integer :: r\n"
+         "  end function f\nend module m\nprogram p\nend program p\n",
+         {"*module m", "program p"},
+         {"*subroutine s()", "function f() result(r)"}},
+    };
+    for (const KeywordDefinitionCase& testCase : cases) {
+        INFO(testCase.mode);
+        const Mode mode     = *ned::editor::ModeByName(testCase.mode);
+        const auto captures = mode.formatCaptures(testCase.source);
+        CHECK(FirstLines(testCase.source, CapturesNamed(captures, "def.toplevel")) == testCase.toplevel);
+        CHECK(FirstLines(testCase.source, CapturesNamed(captures, "def.method")) == testCase.methods);
+    }
+}

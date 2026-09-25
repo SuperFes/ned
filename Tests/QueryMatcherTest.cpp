@@ -376,6 +376,9 @@ TEST_CASE("query construct census: every bundled query file uses only the enumer
         "predicate :set! (string string)",                        // x1, fsharp/upstream/locals.janet -- nvim scope directive, inert
         "predicate :set! (capture token string)",                 // x1, vue/upstream/highlights.janet -- nvim bo.commentstring, inert
         "predicate :not-has-parent? (capture token token token)", // x2, c/highlights.janet:181
+        // Variadic too: a Crystal definition outside every type or module body.
+        "predicate :not-has-ancestor? (capture token token token token token)",       // x2, crystal/format.janet
+        "predicate :not-has-ancestor? (capture token token token token token token)", // x1, crystal/format.janet
         // Non-filtering directives.
         "predicate :set! (token string)",             // x7 -- injection.language, read by Matches()
         "predicate :set! (token token)",              // x3 -- priority, currently unread
@@ -655,6 +658,7 @@ TEST_CASE("query census: ancestor-crossing patterns are pinned per language/kind
         {"c/highlights", 3},
         {"cpp/highlights", 7},
         {"cpp/indents", 1},
+        {"crystal/format", 3}, // a top-level definition is one outside every type/module body
         {"csharp/locals", 1},
         {"cuda/highlights", 7}, // cpp's, layered under cuda's own delta
         {"cuda/indents", 1},    // cpp's, named in cuda's language.janet
@@ -670,7 +674,7 @@ TEST_CASE("query census: ancestor-crossing patterns are pinned per language/kind
         {"yaml/indents", 2},
     };
     CHECK(counts == expected);
-    CHECK(total == 43);
+    CHECK(total == 46);
 }
 
 // Ned's own emission order, pinned. The matcher's capture stream reproduces
