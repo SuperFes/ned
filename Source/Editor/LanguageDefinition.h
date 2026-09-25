@@ -151,6 +151,10 @@ struct LanguageDefinition {
     // query (Svelte's <script>). Off by default: a Markdown notes file's
     // outline is its headings, not the functions in its code blocks.
     bool injectedSymbols = false;
+    // Go-to-file and rename fixups also read each injected region's imports
+    // (a component's <script>), resolved with this language's
+    // :import-resolution.
+    bool injectedImports = false;
     // (key sequence in ParseKeySequence's syntax, command name).
     std::vector<std::pair<std::string, std::string>> keymap;
     // Per-language capture -> SyntaxClass defaults, consulted ahead of the

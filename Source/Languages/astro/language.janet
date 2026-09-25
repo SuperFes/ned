@@ -13,5 +13,9 @@
  # The outline lists what the embedded scripts define; breadcrumbs follow
  # the element nesting.
  :injected-symbols true
+ # Their <script> imports resolve and follow moves like the script's own
+ # language's would (SvelteKit's $lib and Vite's @/ are the conventional aliases).
+ :injected-imports true
+ :import-resolution {:extensions ["ts" "js" "astro" "tsx" "jsx" "mjs"] :index-basenames ["index"] :search-package-dirs true}
  :sticky-scroll-from-folds true
 }

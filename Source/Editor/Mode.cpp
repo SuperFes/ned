@@ -1719,6 +1719,47 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
         };
     }
 
+    // A component's <script> imports belong to the injected language.
+    if (queries.injectedImports && injectionQuery) {
+        const auto embeddedImportCache = std::make_shared<EmbeddedImportCache>();
+        importTargets                  = [own = std::move(importTargets), parser, sharedParse, injectionQuery,
+                                          embeddedImportCache](std::string_view bufferText) {
+            std::vector<ImportTarget> targets = own ? own(bufferText) : std::vector<ImportTarget>{};
+            const grammar::Tree&      tree    = sharedParse->Update(*parser, bufferText);
+            if (!tree.IsNull()) {
+                std::vector<ImportTarget> injected =
+                    CollectInjectedImportTargets(tree.RootNode(), bufferText, *injectionQuery, *embeddedImportCache);
+                targets.insert(targets.end(), std::make_move_iterator(injected.begin()),
+                               std::make_move_iterator(injected.end()));
+            }
+            return targets;
+        };
+        importTarget = [own = std::move(importTarget), all = importTargets](std::string_view bufferText,
+                                                                            std::size_t      point) -> std::optional<ImportTarget> {
+            if (own) {
+                if (std::optional<ImportTarget> found = own(bufferText, point)) {
+                    return found;
+                }
+            }
+            // The tightest statement around point, preferring the target point is on.
+            std::optional<ImportTarget> best;
+            for (ImportTarget& target : all(bufferText)) {
+                if (target.startByte > point || point > target.endByte) {
+                    continue;
+                }
+                const bool atPoint = target.targetStartByte <= point && point <= target.targetEndByte;
+                const bool bestAtPoint =
+                    best && best->targetStartByte <= point && point <= best->targetEndByte;
+                const std::size_t size = target.endByte - target.startByte;
+                if (!best || size < best->endByte - best->startByte ||
+                    (size == best->endByte - best->startByte && atPoint && !bestAtPoint)) {
+                    best = std::move(target);
+                }
+            }
+            return best;
+        };
+    }
+
     // test-runner integration: a seventh closure sharing the same
     // parser/sharedParse. Captures pair a "@test.definition" (the whole
     // definition node) with a "@test.name" nested inside it -- paired here

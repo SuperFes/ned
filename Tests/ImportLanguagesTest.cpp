@@ -572,3 +572,23 @@ TEST_CASE("V searches the toolchain's vlib and the user's modules", "[ImportLang
     CHECK(ned::editor::VSearchRoots(std::nullopt, custom.c_str(), home.c_str()) == std::vector<fs::path>{project.root / "v"});
     CHECK(ned::editor::VSearchRoots(std::nullopt, nullptr, nullptr).empty());
 }
+
+TEST_CASE("A component's script imports resolve and follow moves", "[ImportLanguages]") {
+    const ScratchProject project("component_imports");
+    Write(project.root / "package.json", "{}\n");
+    Write(project.root / "src/lib/util.ts", "export const x = 1;\n");
+    Write(project.root / "src/routes/Button.svelte", "<button />\n");
+    Write(project.root / "src/routes/Page.svelte",
+          "<script>\n  import Button from './Button.svelte';\n  import { x } from '$lib/util';\n</script>\n<Button />\n");
+    const fs::path page = project.root / "src/routes/Page.svelte";
+    CHECK(ResolveAt(page, "Button.svelte") == project.root / "src/routes/Button.svelte");
+    CHECK(ResolveAt(page, "util") == project.root / "src/lib/util.ts");
+
+    const std::vector<ned::editor::importfix::MovedFile> moved{
+        {project.root / "src/routes/Button.svelte", project.root / "src/components/Button.svelte"}};
+    CHECK(FixedText(moved, page) == "<script>\n  import Button from '../components/Button.svelte';\n  import { x } from "
+                                    "'$lib/util';\n</script>\n<Button />\n");
+
+    Write(project.root / "src/App.vue", "<script setup>\nimport { x } from '@/lib/util'\n</script>\n");
+    CHECK(ResolveAt(project.root / "src/App.vue", "util") == project.root / "src/lib/util.ts");
+}

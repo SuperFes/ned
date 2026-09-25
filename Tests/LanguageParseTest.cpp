@@ -141,19 +141,19 @@ TEST_CASE("The definitions carry the facts the old C++ tables held", "[LanguageP
                                                                            "ruby", "nix", "r", "hcl", "clojure", "cuda", "objc", "svelte", "vue", "astro", "vhdl",
                                                                            "proto", "jsonnet", "cue", "pkl", "janet", "commonlisp", "typst", "toml", "markdown",
                                                                            "racket", "vala", "pascal", "powershell"};
-    const std::set<std::string>              kImportResolutionLanguages = {"asciidoc", "awk", "bash", "clojure",
+    const std::set<std::string>              kImportResolutionLanguages = {"asciidoc", "astro", "awk", "bash", "clojure",
                                                                            "cmake", "commonlisp", "crystal", "css",
                                                                            "d", "dart", "elm", "erlang", "fennel",
                                                                            "fish", "fortran", "fsharp", "gdscript", "gitconfig",
-                                                                           "gleam", "go", "groovy", "haskell", "hcl",
+                                                                           "gleam", "go", "groovy", "haskell", "hcl", "html",
                                                                            "janet", "jank", "java", "javascript",
                                                                            "jsonnet", "julia", "just", "kotlin",
                                                                            "latex", "lua", "nim", "nix", "nu", "odin", "perl",
                                                                            "php", "pkl", "powershell", "proto",
                                                                            "purescript", "python", "r", "racket",
                                                                            "rst", "ruby", "rust", "scala", "scheme",
-                                                                           "scss", "solidity", "ssh_config", "tcl", "thrift", "tsx",
-                                                                           "typescript", "typst", "v", "verilog"};
+                                                                           "scss", "solidity", "ssh_config", "svelte", "tcl", "thrift", "tsx",
+                                                                           "typescript", "typst", "v", "verilog", "vue"};
     const std::map<std::string, std::string> kAliases                   = {
         {"adb", "ada"},
         {"ads", "ada"},

@@ -131,9 +131,6 @@ below is behaviour that is wrong or missing today, verified with `ned --format` 
       entry and decline; Ruby's and Crystal's bare `super` (the parent's same-named
       method) isn't followed.
 - [ ] **Imports: what is still unmodelled.**
-  - [ ] **Svelte, Vue and Astro** script imports belong to the injected language,
-        which `importTarget` doesn't follow the way the outline does
-        (`:injected-symbols`).
   - [ ] **JVM moves are half a refactor.** A moved Java/Kotlin/Scala/Groovy class's
         importers are rewritten; its own `package` line and its same-package users,
         which import nothing, are not. Scala reads only a plain `import a.b.C`, not

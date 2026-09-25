@@ -35,6 +35,7 @@ Marks:
 - `·` -- it doesn't
 - `=` (**ind**) -- `:preserve-indent`: indentation is syntax, so a reindent leaves every line as written
 - `i` (**tags**) -- no tags query of its own; the outline is what its embedded languages define (`:injected-symbols`)
+- `i` (**imp**) -- no imports query of its own; go-to-file and move fixups read its embedded scripts' imports (`:injected-imports`)
 - `b` (**cmt**) -- block comments only (`/* */`, `<!-- -->`, `(* *)`); toggle-line-comment wraps each line in one
 
 | language | hl | ind | cont | loc | tags | inj | imp | test | sig | fmt | style | cmt | root | res |
@@ -44,7 +45,7 @@ Marks:
 | asciidoc | ✓ | · | · | · | ✓ | ✓ | ✓ | · | · | · | · | ✓ | · | ✓ |
 | asciidoc-inline | ✓ | · | · | · | · | ✓ | · | · | · | · | · | · | · | · |
 | asm | ✓ | · | · | · | ✓ | ✓ | · | · | · | · | · | ✓ | · | · |
-| astro | ✓ | · | · | · | i | ✓ | · | · | · | · | · | b | ✓ | · |
+| astro | ✓ | · | · | · | i | ✓ | i | · | · | · | · | b | ✓ | ✓ |
 | awk | ✓ | · | · | ✓ | ✓ | · | ✓ | · | · | · | · | ✓ | · | ✓ |
 | bash | ✓ | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | · | ✓ | · | ✓ | · | ✓ |
 | c | ✓ | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | · |
@@ -88,7 +89,7 @@ Marks:
 | haskell | ✓ | = | · | ✓ | ✓ | ✓ | ✓ | ✓ | · | · | · | ✓ | ✓ | ✓ |
 | hcl | ✓ | ✓ | ✓ | · | ✓ | · | ✓ | · | · | · | · | ✓ | ✓ | ✓ |
 | hlsl | ✓ | ✓ | ✓ | ✓ | ✓ | · | ✓ | · | ✓ | ✓ | · | ✓ | · | · |
-| html | ✓ | ✓ | · | · | i | ✓ | · | · | · | · | · | b | · | · |
+| html | ✓ | ✓ | · | · | i | ✓ | i | · | · | · | · | b | · | ✓ |
 | http | ✓ | · | · | · | ✓ | ✓ | · | · | · | · | · | ✓ | · | · |
 | ini | ✓ | · | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | janet | ✓ | ✓ | · | ✓ | ✓ | · | ✓ | ✓ | · | ✓ | · | ✓ | ✓ | ✓ |
@@ -144,7 +145,7 @@ Marks:
 | sql | ✓ | ✓ | · | · | ✓ | · | · | ✓ | · | · | · | ✓ | · | · |
 | ssh_config | ✓ | · | · | · | ✓ | ✓ | ✓ | · | · | · | · | ✓ | · | ✓ |
 | starlark | ✓ | · | · | ✓ | ✓ | ✓ | · | · | ✓ | · | · | ✓ | ✓ | · |
-| svelte | ✓ | · | · | ✓ | i | ✓ | · | · | · | · | · | b | ✓ | · |
+| svelte | ✓ | · | · | ✓ | i | ✓ | i | · | · | · | · | b | ✓ | ✓ |
 | swift | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | · | ✓ | ✓ | ✓ | · | ✓ | ✓ | · |
 | systemd | ✓ | · | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
 | tcl | ✓ | · | · | · | ✓ | · | ✓ | ✓ | · | · | · | ✓ | · | ✓ |
@@ -159,8 +160,8 @@ Marks:
 | vala | ✓ | ✓ | ✓ | ✓ | ✓ | · | · | · | ✓ | ✓ | · | ✓ | ✓ | · |
 | verilog | ✓ | ✓ | ✓ | · | ✓ | · | ✓ | · | · | · | · | ✓ | · | ✓ |
 | vhdl | ✓ | ✓ | ✓ | · | ✓ | ✓ | · | · | · | · | · | ✓ | ✓ | · |
-| vue | ✓ | · | · | · | i | ✓ | · | · | · | · | · | b | ✓ | · |
+| vue | ✓ | · | · | · | i | ✓ | i | · | · | · | · | b | ✓ | ✓ |
 | wgsl | ✓ | · | · | ✓ | ✓ | · | · | · | ✓ | · | · | ✓ | · | · |
 | xml | ✓ | ✓ | · | · | · | · | · | · | · | · | · | b | · | · |
 | yaml | ✓ | ✓ | · | · | ✓ | · | · | · | · | · | · | ✓ | · | · |
-| **124 languages** | 123 | 68 | 47 | 71 | 109 | 44 | 71 | 47 | 40 | 38 | 12 | 115 | 64 | 61 |
+| **124 languages** | 123 | 68 | 47 | 71 | 109 | 44 | 75 | 47 | 40 | 38 | 12 | 115 | 64 | 65 |

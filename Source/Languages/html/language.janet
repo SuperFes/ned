@@ -29,5 +29,8 @@
  # The outline lists what the embedded scripts define; breadcrumbs follow
  # the element nesting.
  :injected-symbols true
+ # An inline module script's imports resolve like a script file's.
+ :injected-imports true
+ :import-resolution {:extensions ["js" "mjs"] :index-basenames ["index"]}
  :sticky-scroll-from-folds true
 }

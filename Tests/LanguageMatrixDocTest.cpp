@@ -93,6 +93,7 @@ const std::vector<Column> kColumns = {
 // clang-format on
 constexpr std::size_t kIndentColumn  = 1;
 constexpr std::size_t kTagsColumn    = 4;
+constexpr std::size_t kImportsColumn = 6;
 constexpr std::size_t kCommentColumn = 11;
 
 std::string Render() {
@@ -120,6 +121,8 @@ std::string Render() {
            "written\n"
            "- `i` (**tags**) -- no tags query of its own; the outline is what its embedded languages define "
            "(`:injected-symbols`)\n"
+           "- `i` (**imp**) -- no imports query of its own; go-to-file and move fixups read its embedded "
+           "scripts' imports (`:injected-imports`)\n"
            "- `b` (**cmt**) -- block comments only (`/* */`, `<!-- -->`, `(* *)`); toggle-line-comment wraps "
            "each line in one\n";
     out << "\n| language |";
@@ -144,7 +147,7 @@ std::string Render() {
             !Pick(own.locals, donor.locals).empty(),
             !Pick(own.tags, donor.tags).empty() || definition.injectedSymbols,
             !Pick(own.injections, donor.injections).empty(),
-            !Pick(own.imports, donor.imports).empty(),
+            !Pick(own.imports, donor.imports).empty() || definition.injectedImports,
             !Pick(own.tests, donor.tests).empty(),
             !Pick(own.signatures, donor.signatures).empty() && !Pick(own.calls, donor.calls).empty(),
             !Pick(own.format, donor.format).empty(),
@@ -157,7 +160,9 @@ std::string Render() {
         for (std::size_t i = 0; i < row.size(); ++i) {
             const bool preserved = i == kIndentColumn && definition.preserveIndent;
             const bool blockOnly = i == kCommentColumn && definition.lineCommentPrefix.empty() && row[i];
-            const bool injected  = i == kTagsColumn && definition.injectedSymbols && Pick(own.tags, donor.tags).empty();
+            const bool injected  = (i == kTagsColumn && definition.injectedSymbols && Pick(own.tags, donor.tags).empty()) ||
+                                   (i == kImportsColumn && definition.injectedImports &&
+                                    Pick(own.imports, donor.imports).empty());
             out << " " << (preserved ? "=" : blockOnly ? "b"
                                          : injected    ? "i"
                                                        : Mark(row[i]))

@@ -199,6 +199,9 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
         else if (key == "injected-symbols") {
             definition.injectedSymbols = ExpectBool(directoryName, value, ":injected-symbols");
         }
+        else if (key == "injected-imports") {
+            definition.injectedImports = ExpectBool(directoryName, value, ":injected-imports");
+        }
         else if (key == "embedded-documents") {
             definition.embeddedDocuments = ExpectBool(directoryName, value, ":embedded-documents");
         }

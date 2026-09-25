@@ -279,7 +279,9 @@ the directory went to the same place. `:odin-collections` reads `name:path` impo
 through the nearest `ols.json`'s collections, then the toolchain's own under
 `ODIN_ROOT`; `:home-prefix` counts a `~/` path from `$HOME` (ssh_config, gitconfig). A
 project's
-`importResolution.<language>.sourceRoots` replaces the roots. The same resolution drives
+`importResolution.<language>.sourceRoots` replaces the roots. A host language with
+`:injected-imports` (Svelte, Vue, Astro, HTML) also reads its embedded scripts'
+imports, resolved with the host's own `:import-resolution`. The same resolution drives
 go-to-file and the fixups when a file is renamed or moved.
 
 ### Formatting

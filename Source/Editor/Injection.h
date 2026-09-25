@@ -87,6 +87,13 @@ void CollectInjectedSymbolMarkers(const grammar::Node& root, std::string_view bu
                                   const grammar::QueryMatcher& injectionQuery, EmbeddedSymbolCache& cache,
                                   std::vector<SymbolMarker>& markers, HighlightWindow window = {});
 
+// The import counterpart: every import the injected regions' own languages
+// read (a component's <script> imports), in host coordinates.
+using EmbeddedImportCache = std::unordered_map<std::string, ImportTargetsFunction>;
+[[nodiscard]] std::vector<ImportTarget> CollectInjectedImportTargets(const grammar::Node& root, std::string_view bufferText,
+                                                                     const grammar::QueryMatcher& injectionQuery,
+                                                                     EmbeddedImportCache&         cache);
+
 [[nodiscard]] std::vector<InjectionRegion> CollectInjectionRegions(const grammar::Node& root, std::string_view bufferText,
                                                                    const grammar::QueryMatcher& injectionQuery);
 

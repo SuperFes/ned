@@ -1149,6 +1149,8 @@ struct GrammarQuerySources {
     // LanguageDefinition::injectedSymbols: the symbol pass adds each injected
     // region's own markers.
     bool injectedSymbols = false;
+    // LanguageDefinition::injectedImports.
+    bool injectedImports = false;
 };
 
 // One HighlightFunction cache per distinct embedded language actually

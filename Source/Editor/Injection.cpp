@@ -235,6 +235,35 @@ void CollectInjectedHighlightSpans(const grammar::Node& root, std::string_view b
     }
 }
 
+std::vector<ImportTarget> CollectInjectedImportTargets(const grammar::Node& root, std::string_view bufferText,
+                                                       const grammar::QueryMatcher& injectionQuery,
+                                                       EmbeddedImportCache&         cache) {
+    std::vector<ImportTarget> targets;
+    for (const RawInjectionMatch& match : CollectRawInjectionMatches(root, bufferText, injectionQuery, {})) {
+        if (match.combined) {
+            continue;
+        }
+        const std::string canonical = CanonicalEmbeddedLanguageName(match.languageTag);
+        auto              it        = cache.find(canonical);
+        if (it == cache.end()) {
+            const std::optional<Mode> subMode = ModeByName(canonical + "-mode");
+            it                                = cache.emplace(canonical, subMode ? subMode->importTargets : ImportTargetsFunction{}).first;
+        }
+        if (!it->second) {
+            continue;
+        }
+        const std::size_t start = match.content.startByte;
+        for (ImportTarget target : it->second(bufferText.substr(start, match.content.endByte - start))) {
+            target.startByte += start;
+            target.endByte += start;
+            target.targetStartByte += start;
+            target.targetEndByte += start;
+            targets.push_back(std::move(target));
+        }
+    }
+    return targets;
+}
+
 void CollectInjectedSymbolMarkers(const grammar::Node& root, std::string_view bufferText,
                                   const grammar::QueryMatcher& injectionQuery, EmbeddedSymbolCache& cache,
                                   std::vector<SymbolMarker>& markers, HighlightWindow window) {

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Editor/Mode.h"
+#include "Editor/ModeOverrides.h"
 
 using ned::editor::BashMode;
 using ned::editor::ClojureMode;
@@ -18,7 +19,7 @@ using ned::editor::TypeScriptMode;
 TEST_CASE("Modes with no import query configured have an empty importTarget", "[ImportTarget]") {
     CHECK_FALSE(static_cast<bool>(ned::editor::FundamentalMode().importTarget));
     CHECK_FALSE(static_cast<bool>(ned::editor::JsonMode().importTarget));
-    CHECK_FALSE(static_cast<bool>(ned::editor::HtmlMode().importTarget));
+    CHECK_FALSE(static_cast<bool>(ned::editor::ModeByName("ini-mode")->importTarget));
     CHECK_FALSE(static_cast<bool>(ned::editor::YamlMode().importTarget));
     CHECK_FALSE(static_cast<bool>(ned::editor::TomlMode().importTarget));
     CHECK_FALSE(static_cast<bool>(ned::editor::MarkdownMode().importTarget));
