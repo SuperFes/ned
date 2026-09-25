@@ -14,6 +14,7 @@
                         "objc/upstream/highlights.janet"]
            :locals ["c/locals.janet"
                     "objc/upstream/locals.janet"]
+           :indents ["c/indents.janet"]
            :signatures ["c/signatures.janet"]
            :calls ["c/calls.janet"]}
  :signature-template "void __ned_sig({}) {}"

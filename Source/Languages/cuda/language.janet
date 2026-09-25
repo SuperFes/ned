@@ -7,6 +7,7 @@
  # discovery doesn't read that, so the base is named here.
  :queries {:highlights ["cpp/highlights.janet"
                         "cuda/upstream/highlights.janet"]
+           :indents ["cpp/indents.janet"]
            :signatures ["cpp/signatures.janet"]
            :calls ["cpp/calls.janet"]}
  :signature-template "void __ned_sig({}) {}"

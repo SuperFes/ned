@@ -159,9 +159,8 @@ and code reading. Highest stakes first.
         `IndentStyle::continuation`, `ned/set-continuation-indent`, two levels for
         Java and Dart), and Enter after an unfinished one lands there too. Not yet
         captured: Crystal, Julia, GDScript, Nim, MATLAB, Pascal, Verilog, Ada,
-        SQL, HCL, fish, Meson, Erlang and ReScript, and Groovy, D, V, Odin, R,
-        Perl, Objective-C, CUDA, GLSL, PowerShell, Solidity and Vala, which have
-        no indents query at all yet. (A line continued with a `:line-continuation`
+        SQL, HCL, fish, Meson, Erlang and ReScript, and R, Perl and PowerShell,
+        which have no indents query at all yet. (A line continued with a `:line-continuation`
         marker, `\` in C's preprocessor, shells, Python, Ruby, awk and
         Dockerfiles, is left as written.) Known misses:
         - A chain after a Scala 3 colon-lambda body (`xs.foldUse(g): _ ?=>` ...

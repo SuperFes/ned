@@ -4,7 +4,8 @@
  :line-comment "//"
  :line-continuation "\\"
  :first-pattern-wins true
- :queries {:signatures ["c/signatures.janet"]
+ :queries {:indents ["c/indents.janet"]
+           :signatures ["c/signatures.janet"]
            :calls ["c/calls.janet"]}
  :signature-template "void __ned_sig({}) {}"
 }

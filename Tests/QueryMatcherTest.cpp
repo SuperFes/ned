@@ -657,6 +657,7 @@ TEST_CASE("query census: ancestor-crossing patterns are pinned per language/kind
         {"cpp/indents", 1},
         {"csharp/locals", 1},
         {"cuda/highlights", 7}, // cpp's, layered under cuda's own delta
+        {"cuda/indents", 1},    // cpp's, named in cuda's language.janet
         {"hlsl/highlights", 7}, // cpp's, named in hlsl's language.janet
         {"hlsl/indents", 1},
         {"java/locals", 1},
@@ -669,7 +670,7 @@ TEST_CASE("query census: ancestor-crossing patterns are pinned per language/kind
         {"yaml/indents", 2},
     };
     CHECK(counts == expected);
-    CHECK(total == 42);
+    CHECK(total == 43);
 }
 
 // Ned's own emission order, pinned. The matcher's capture stream reproduces

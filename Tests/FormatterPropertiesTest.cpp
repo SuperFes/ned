@@ -384,6 +384,15 @@ TEST_CASE("A flattened sample reindents back to its house style", "[FormatterPro
              {"continuation.nix", "nix"},
              {"continuation.swift", "swift"},
              {"continuation.dart", "dart"},
+             {"continuation.cu", "cuda"},
+             {"continuation.m", "objc"},
+             {"continuation.glsl", "glsl"},
+             {"continuation.groovy", "groovy"},
+             {"continuation.d", "d"},
+             {"continuation.v", "v"},
+             {"continuation.odin", "odin"},
+             {"continuation.sol", "solidity"},
+             {"continuation.vala", "vala"},
          }) {
         INFO("sample: " << file);
         const std::string original = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "reindent" / file);
