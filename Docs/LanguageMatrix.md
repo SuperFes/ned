@@ -15,19 +15,27 @@ which fold from their own query and code. See `LanguageCoverage.md` for tiers an
 admission policy.
 
 - **hl** -- highlights query
-- **ind** -- indents query (without one, indent comes from the grammar's delimited bodies alone); `=` -- `:preserve-indent`, a reindent leaves every line as written
+- **ind** -- indents query (without one, indent comes from the grammar's delimited bodies alone)
 - **cont** -- continuation lines -- the indents query captures `@indent.continuation`, so `x = a +` then `b` indents the `b` a continuation step
 - **loc** -- locals query -- scope-aware rename, local-variable highlighting
-- **tags** -- tags query -- symbol gutter, outline, breadcrumbs, class/file sync; `i` -- none of its own, the outline is what its embedded languages define (`:injected-symbols`)
+- **tags** -- tags query -- symbol gutter, outline, breadcrumbs, class/file sync
 - **inj** -- injections query -- embedded languages
 - **imp** -- imports query -- go-to-file through imports, rename-file fixups
 - **test** -- tests query -- test discovery for the test runner
 - **sig** -- signatures + calls queries -- change-signature
 - **fmt** -- format query -- capture-driven formatter rules can apply
 - **style** -- bundled `style.janet` -- formatter rules apply with no user config
-- **cmt** -- line-comment prefix -- toggle-line-comment, comment-aware fill; `b` -- block comment only, which toggle-line-comment wraps each line in
+- **cmt** -- line-comment prefix -- toggle-line-comment, comment-aware fill
 - **root** -- LSP root markers
 - **res** -- import resolution config
+
+Marks:
+
+- `✓` -- the package ships it
+- `·` -- it doesn't
+- `=` (**ind**) -- `:preserve-indent`: indentation is syntax, so a reindent leaves every line as written
+- `i` (**tags**) -- no tags query of its own; the outline is what its embedded languages define (`:injected-symbols`)
+- `b` (**cmt**) -- block comments only (`/* */`, `<!-- -->`, `(* *)`); toggle-line-comment wraps each line in one
 
 | language | hl | ind | cont | loc | tags | inj | imp | test | sig | fmt | style | cmt | root | res |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
