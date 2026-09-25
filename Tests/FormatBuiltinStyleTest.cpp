@@ -412,3 +412,33 @@ TEST_CASE("A project's .editorconfig C# keys adjust C#'s bundled style", "[Forma
     ClearFormatRuleLayer(FormatRuleLayer::File);
     std::filesystem::remove_all(root);
 }
+
+TEST_CASE("Dart, Scala and Solidity's bundled styles keep braces on the header's line", "[FormatBuiltinStyle]") {
+    const BuiltinStyleGuard guard;
+    LoadBuiltinFormatStyles();
+
+    CHECK(NativeFormatted("class C\n{\n  int m()\n  {\n    if(x > 0)\n    {\n      return 1;\n    }\n    else {\n      return 2;\n"
+                          "    }\n  }\n}\n",
+                          "dart") ==
+          "class C {\n  int m() {\n    if (x > 0) {\n      return 1;\n    } else {\n      return 2;\n    }\n  }\n}\n");
+
+    CHECK(NativeFormatted("class C\n{\n  def m(): Int =\n  {\n    1\n  }\n}\n", "scala") ==
+          "class C {\n  def m(): Int = {\n    1\n  }\n}\n");
+
+    CHECK(NativeFormatted("contract C\n{\n    function f() public\n    {\n        if(x > 0)\n        {\n            y = 1;\n"
+                          "        }\n        else\n        {\n            y = 2;\n        }\n    }\n}\n",
+                          "solidity") ==
+          "contract C {\n    function f() public {\n        if (x > 0) {\n            y = 1;\n        } else {\n"
+          "            y = 2;\n        }\n    }\n}\n");
+}
+
+TEST_CASE("D's bundled style is dfmt's Allman braces", "[FormatBuiltinStyle]") {
+    const BuiltinStyleGuard guard;
+    LoadBuiltinFormatStyles();
+
+    CHECK(NativeFormatted("class C {\n    int m() {\n        if(x) {\n            return 1;\n        } else {\n"
+                          "            return 2;\n        }\n    }\n}\n",
+                          "d") ==
+          "class C\n{\n    int m()\n    {\n        if (x)\n        {\n            return 1;\n        }\n        else\n"
+          "        {\n            return 2;\n        }\n    }\n}\n");
+}

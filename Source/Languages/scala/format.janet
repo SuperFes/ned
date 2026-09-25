@@ -1,6 +1,8 @@
 # Format captures (see Docs/FormattingRules.md for each name's pass). A body
 # written with braces is a block; Scala 3's indented bodies have none and
-# are never named here.
+# are never named here. Neither is a braced body written on the line after
+# its header: that parses as an indented_block holding the block, and moving
+# the brace up would change the tree the structure check compares.
 
 (function_definition body: (block) @brace.function)
 (function_definition body: (block . (_) .) @brace.function.simple)
@@ -35,3 +37,4 @@
 (compilation_unit . [(class_definition) (object_definition) (trait_definition) (function_definition)] @def.toplevel.first)
 (template_body (function_definition) @def.method)
 (template_body . (function_definition) @def.method.first)
+

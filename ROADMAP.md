@@ -259,8 +259,11 @@ and code reading. Highest stakes first.
       span); the keyword-bodied languages (Crystal, Julia, Elixir, Nim, Ada, Fortran,
       ...) have no format query at all.
 - [ ] **Bundled formatter styles: PHP (PSR-12), Go (gofmt), Rust (rustfmt), Kotlin
-      (official conventions), C# (.NET conventions) and JavaScript/TypeScript/TSX
-      (Prettier).** A Rust project's `rustfmt.toml` adjusts what rustfmt lets it
+      (official conventions), C# (.NET conventions), JavaScript/TypeScript/TSX
+      (Prettier), Dart (`dart format`), Scala (scalafmt), Solidity (`forge fmt`) and D
+      (dfmt's Allman).** Scala's braced if/else body written on the line after its
+      header parses as an `indented_block`, so moving its brace up would change the
+      tree and is left as written. A Rust project's `rustfmt.toml` adjusts what rustfmt lets it
       (indentation, `max_width`, brace and blank-line options --
       `Editor/RustfmtConfig.h`), and a Prettier config its `useTabs`/`tabWidth`/
       `printWidth` for every file Prettier formats and its quote style for
