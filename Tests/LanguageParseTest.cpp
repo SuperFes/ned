@@ -98,6 +98,17 @@ TEST_CASE("A definition parses every field, and rejects what it does not know", 
     REQUIRE_THROWS_AS(ParseLanguageDefinition("demo", "[\"not\" \"a\" \"struct\"]"), std::runtime_error);
 }
 
+TEST_CASE("A definition names the matrix capabilities that don't apply to it, each with a reason", "[LanguageParse]") {
+    const auto definition = ParseLanguageDefinition("demo", "{:not-applicable {:locals \"no bindings\" :tests \"data\"}}");
+    REQUIRE(definition.notApplicable == std::vector<std::pair<std::string, std::string>>{{"locals", "no bindings"},
+                                                                                         {"tests", "data"}});
+
+    REQUIRE_THROWS_AS(ParseLanguageDefinition("demo", "{:not-applicable {:folds \"x\"}}"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseLanguageDefinition("demo", "{:not-applicable {:locals \"\"}}"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseLanguageDefinition("demo", "{:not-applicable {:locals true}}"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseLanguageDefinition("demo", "{:not-applicable [:locals]}"), std::runtime_error);
+}
+
 TEST_CASE("Query discovery: upstream first, own delta after; explicit entries win; queries-from redirects",
           "[LanguageParse]") {
     const std::set<std::string> files = {

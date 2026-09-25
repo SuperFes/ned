@@ -33,4 +33,9 @@
  :injected-imports true
  :import-resolution {:extensions ["js" "mjs"] :index-basenames ["index"]}
  :sticky-scroll-from-folds true
+ :not-applicable {:continuation "markup; nothing continues across lines"
+                  :locals       "markup; script names belong to the embedded language"
+                  :tests        "tests live in its scripts' own language"
+                  :signatures   "its functions live in embedded scripts, in their own language"
+                  :lsp-root     "no project file of its own; the root falls through to the project's"}
 }

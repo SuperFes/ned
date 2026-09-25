@@ -12,4 +12,13 @@
  # Upstream injections.scm files spell it with an underscore (Neovim's
  # parser-name convention).
  :injection-aliases ["markdown_inline"]
+ :not-applicable {:indents    "an inline sub-language; markdown owns this"
+                  :locals     "an inline sub-language; markdown owns this"
+                  :tags       "an inline sub-language; markdown owns this"
+                  :imports    "an inline sub-language; markdown owns this"
+                  :tests      "an inline sub-language; markdown owns this"
+                  :signatures "an inline sub-language; markdown owns this"
+                  :format     "an inline sub-language; markdown owns this"
+                  :comments   "an inline sub-language; markdown owns this"
+                  :lsp-root   "an inline sub-language; markdown owns this"}
 }

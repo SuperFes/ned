@@ -8,4 +8,5 @@
  # global.json is first since it's a cheap exists() rather than a scan.
  :lsp-root-markers ["global.json" "*.csproj" "*.sln"]
  :signature-template "class __Ned { void __ned_sig({}) {} }"
+ :not-applicable {:injections "nothing in it is written in another language"}
 }

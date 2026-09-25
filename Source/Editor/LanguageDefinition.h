@@ -205,7 +205,16 @@ struct LanguageDefinition {
     // (Editor/Snippet.h) -- installed into Editor/SnippetRegistry.h under
     // this language's key at startup (Editor/BundledSnippets.h).
     std::vector<std::pair<std::string, std::string>> snippets;
+    // (capability, reason) for each Docs/LanguageMatrix.md column that does
+    // not apply to this language -- csv has no bindings to rename. Read only
+    // by the matrix generator; `kNotApplicableCapabilities` names the keys.
+    std::vector<std::pair<std::string, std::string>> notApplicable;
 };
+
+// The capability names `:not-applicable` accepts, one per matrix column.
+inline constexpr std::string_view kNotApplicableCapabilities[] = {
+    "highlights", "indents", "continuation", "locals", "tags", "injections", "imports",
+    "tests", "signatures", "format", "style", "comments", "lsp-root", "import-resolution"};
 
 // The Mode name a definition builds under: "<name>-mode".
 [[nodiscard]] std::string ModeNameFor(const LanguageDefinition& definition);

@@ -6,4 +6,5 @@
                    "identifier.parameter" :parameter}
  :signature-template "void __ned_sig({}) {}"
  :import-resolution {:extensions ["dart"] :package-scheme "package:"}
+ :not-applicable {:injections "nothing in it is written in another language"}
 }

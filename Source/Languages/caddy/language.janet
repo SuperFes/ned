@@ -11,4 +11,9 @@
  :injection-aliases ["caddyfile"]
  :filenames ["Caddyfile" "caddyfile"]
  :line-comment "#"
+ :not-applicable {:indents           "the grammar's delimited bodies are its whole indent structure"
+                  :tests             "no test framework runs tests written in it"
+                  :signatures        "no user-defined functions with parameter lists"
+                  :lsp-root          "no project file of its own; the root falls through to the project's"
+                  :import-resolution "its specifiers are relative paths the default resolution handles"}
 }

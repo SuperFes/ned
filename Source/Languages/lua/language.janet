@@ -21,4 +21,5 @@
    "while ${1:condition} do\n    $0\nend"}
  :signature-template "function __ned_sig({}) end"
  :import-resolution {:extensions ["lua"] :index-basenames ["init"] :source-roots ["lua" "src" "lib"]}
+ :not-applicable {:injections "nothing in it is written in another language"}
 }

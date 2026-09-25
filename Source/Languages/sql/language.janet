@@ -35,4 +35,7 @@
    "WITH ${1:name} AS (\n    $2\n)\n$0"
    "join"
    "${1:INNER} JOIN ${2:table} ON ${3:condition}"}
+ :not-applicable {:injections "nothing in it is written in another language"
+                  :imports    "statements don't name files"
+                  :lsp-root   "no project file of its own; the root falls through to the project's"}
 }

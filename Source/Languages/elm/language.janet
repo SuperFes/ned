@@ -11,4 +11,5 @@
                    "char" :string
                    "source.glsl" :default}
  :import-resolution {:extensions ["elm"] :source-roots ["src"]}
+ :not-applicable {:continuation "indentation is syntax (`:preserve-indent`)"}
 }

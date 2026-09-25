@@ -22,4 +22,6 @@
            :signatures ["c/signatures.janet"]
            :calls ["c/calls.janet"]}
  :signature-template "void __ned_sig({}) {}"
+ :not-applicable {:style             "no canonical style; projects bring their own .clang-format"
+                  :import-resolution "includes resolve through the toolchain's include paths"}
 }

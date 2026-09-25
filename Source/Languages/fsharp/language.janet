@@ -7,4 +7,5 @@
  :line-comment "//"
  :lsp-root-markers ["*.fsproj" "paket.dependencies"]
  :import-resolution {:extensions ["fsx" "fs"]}
+ :not-applicable {:continuation "indentation is syntax (`:preserve-indent`)"}
 }

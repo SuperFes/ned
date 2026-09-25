@@ -63,4 +63,7 @@
    "![${1:alt}](${2:url})$0"
    "code"
    "```${1:language}\n$0\n```"}
+ :not-applicable {:indents    "blocks are markers, not delimiters; list and quote continuation is its own code"
+                  :tests      "no test framework runs tests written in it"
+                  :signatures "no user-defined functions with parameter lists"}
 }

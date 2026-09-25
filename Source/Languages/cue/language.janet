@@ -12,4 +12,6 @@
                         "cue/upstream/highlights.janet"]}
  # The outline stops two levels down; breadcrumbs follow every level.
  :sticky-scroll-from-folds true
+ :not-applicable {:tests      "no test framework runs tests written in it"
+                  :signatures "no user-defined functions with parameter lists"}
 }

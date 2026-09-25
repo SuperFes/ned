@@ -7,4 +7,5 @@
  :signature-template "package p\nfunc __ned_sig({}) {}"
  :braces-on-header-line true
  :import-resolution {:extensions ["go"] :go-modules true :package-directories true}
+ :not-applicable {:injections "nothing in it is written in another language"}
 }

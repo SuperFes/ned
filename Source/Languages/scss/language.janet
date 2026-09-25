@@ -11,4 +11,7 @@
                         "scss/highlights.janet"]
            :indents ["css/indents.janet"]}
  :import-resolution {:extensions ["scss" "sass" "css"] :index-basenames ["_index" "index"] :partial-prefix "_"}
+ :not-applicable {:injections "nothing in it is written in another language"
+                  :tests      "no test framework runs tests written in it"
+                  :lsp-root   "no project file of its own; the root falls through to the project's"}
 }

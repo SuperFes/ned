@@ -16,4 +16,9 @@
    "display: flex;\nalign-items: center;\njustify-content: center;$0"
    "keyframes"
    "@keyframes ${1:name} {\n    from {\n        $2\n    }\n    to {\n        $0\n    }\n}"}
+ :not-applicable {:locals     "custom properties are document-global; nothing is scoped"
+                  :injections "nothing in it is written in another language"
+                  :tests      "no test framework runs tests written in it"
+                  :signatures "no user-defined functions with parameter lists"
+                  :lsp-root   "no project file of its own; the root falls through to the project's"}
 }

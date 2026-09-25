@@ -10,4 +10,6 @@
  :import-resolution {:extensions ["jank" "clj" "cljc"]
                      :module-substitutions [["-" "_"]]
                      :source-roots ["src" "test"]}
+ :not-applicable {:continuation "every form is delimited; a line continues its enclosing form"
+                  :injections   "nothing in it is written in another language"}
 }

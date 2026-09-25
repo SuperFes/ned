@@ -18,4 +18,7 @@
  :injected-imports true
  :import-resolution {:extensions ["ts" "js" "astro" "tsx" "jsx" "mjs"] :index-basenames ["index"] :search-package-dirs true}
  :sticky-scroll-from-folds true
+ :not-applicable {:indents    "the grammar's delimited bodies are its whole indent structure"
+                  :tests      "tests live in its scripts' own language"
+                  :signatures "its functions live in embedded scripts, in their own language"}
 }

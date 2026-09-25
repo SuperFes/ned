@@ -30,4 +30,7 @@
    "if ${1:[ condition ]}; then\n    $2\nelse\n    $0\nfi"
    "fn"
    "${1:name}() {\n    $0\n}"}
+ :not-applicable {:injections "nothing in it is written in another language"
+                  :signatures "functions take positional arguments; there is no parameter list"
+                  :lsp-root   "no project file of its own; the root falls through to the project's"}
 }

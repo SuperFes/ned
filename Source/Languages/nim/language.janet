@@ -5,4 +5,5 @@
  # Nim identifiers can't start with or double an underscore.
  :signature-template "proc nedSig({}) = discard"
  :import-resolution {:extensions ["nim"] :source-roots ["src"]}
+ :not-applicable {:injections "nothing in it is written in another language"}
 }

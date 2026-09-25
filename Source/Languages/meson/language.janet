@@ -3,4 +3,9 @@
 {:name "meson"
  :filenames ["meson.build" "meson.options" "meson_options.txt"]
  :line-comment "#"
+ :not-applicable {:continuation "an operator can't end a line (`a +` then a newline is invalid)"
+                  :locals       "variables are shared across subdir() files"
+                  :tags         "no definitions: targets are assignments"
+                  :injections   "nothing in it is written in another language"
+                  :signatures   "no user-defined functions"}
 }

@@ -13,4 +13,6 @@
  :sticky-scroll-from-folds true
  :import-resolution {:extensions ["jsonnet" "libsonnet"]}
  :signature-template "local __ned_sig({}) = null; null"
+ :not-applicable {:injections "nothing in it is written in another language"
+                  :tests      "no test framework runs tests written in it"}
 }

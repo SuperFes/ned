@@ -69,34 +69,66 @@ const char* Mark(bool present) {
 
 struct Column {
     const char* heading;
+    // The `:not-applicable` capability name (kNotApplicableCapabilities).
+    const char* capability;
     const char* meaning;
 };
 
 // clang-format off
 const std::vector<Column> kColumns = {
-    {"hl",      "highlights query"},
-    {"ind",     "indents query (without one, indent comes from the grammar's delimited bodies alone)"},
-    {"cont",    "continuation lines -- the indents query captures `@indent.continuation`, so `x = a +` "
-                "then `b` indents the `b` a continuation step"},
-    {"loc",     "locals query -- scope-aware rename, local-variable highlighting"},
-    {"tags",    "tags query -- symbol gutter, outline, breadcrumbs, class/file sync"},
-    {"inj",     "injections query -- embedded languages"},
-    {"imp",     "imports query -- go-to-file through imports, rename-file fixups"},
-    {"test",    "tests query -- test discovery for the test runner"},
-    {"sig",     "signatures + calls queries -- change-signature"},
-    {"fmt",     "format query -- capture-driven formatter rules can apply"},
-    {"style",   "bundled `style.janet` -- formatter rules apply with no user config"},
-    {"cmt",     "line-comment prefix -- toggle-line-comment, comment-aware fill"},
-    {"root",    "LSP root markers"},
-    {"res",     "import resolution config"},
+    {"hl",      "highlights",        "highlights query"},
+    {"ind",     "indents",           "indents query (without one, indent comes from the grammar's delimited bodies alone)"},
+    {"cont",    "continuation",      "continuation lines -- the indents query captures `@indent.continuation`, so "
+                                     "`x = a +` then `b` indents the `b` a continuation step"},
+    {"loc",     "locals",            "locals query -- scope-aware rename, local-variable highlighting"},
+    {"tags",    "tags",              "tags query -- symbol gutter, outline, breadcrumbs, class/file sync"},
+    {"inj",     "injections",        "injections query -- embedded languages"},
+    {"imp",     "imports",           "imports query -- go-to-file through imports, rename-file fixups"},
+    {"test",    "tests",             "tests query -- test discovery for the test runner"},
+    {"sig",     "signatures",        "signatures + calls queries -- change-signature"},
+    {"fmt",     "format",            "format query -- capture-driven formatter rules can apply"},
+    {"style",   "style",             "bundled `style.janet` -- formatter rules apply with no user config"},
+    {"cmt",     "comments",          "line-comment prefix -- toggle-line-comment, comment-aware fill"},
+    {"root",    "lsp-root",          "LSP root markers"},
+    {"res",     "import-resolution", "import resolution config"},
 };
 // clang-format on
-constexpr std::size_t kIndentColumn  = 1;
-constexpr std::size_t kTagsColumn    = 4;
-constexpr std::size_t kImportsColumn = 6;
-constexpr std::size_t kCommentColumn = 11;
+constexpr std::size_t kIndentColumn       = 1;
+constexpr std::size_t kContinuationColumn = 2;
+constexpr std::size_t kTagsColumn         = 4;
+constexpr std::size_t kImportsColumn      = 6;
+constexpr std::size_t kFormatColumn       = 9;
+constexpr std::size_t kStyleColumn        = 10;
+constexpr std::size_t kCommentColumn      = 11;
+constexpr std::size_t kResolutionColumn   = 13;
 
-std::string Render() {
+bool DeclaredNotApplicable(const LanguageDefinition& definition, std::size_t column) {
+    return std::any_of(definition.notApplicable.begin(), definition.notApplicable.end(),
+                       [&](const auto& entry) { return entry.first == kColumns[column].capability; });
+}
+
+// A column that only refines another follows it: no indentation means no
+// continuation lines, no imports nothing to resolve, no formatter nothing
+// for a style to configure.
+bool NotApplicable(const LanguageDefinition& definition, std::size_t column) {
+    if (DeclaredNotApplicable(definition, column)) {
+        return true;
+    }
+    switch (column) {
+        case kContinuationColumn:
+            return DeclaredNotApplicable(definition, kIndentColumn);
+        case kResolutionColumn:
+            return DeclaredNotApplicable(definition, kImportsColumn);
+        case kStyleColumn:
+            return DeclaredNotApplicable(definition, kFormatColumn);
+        default:
+            return false;
+    }
+}
+
+// `contradictions` collects "language: capability" for each cell declared
+// not applicable that the package ships anyway.
+std::string Render(std::vector<std::string>& contradictions) {
     std::ostringstream out;
     out << "# Language Matrix\n\n"
            "Which capability each bundled language package ships, as ned resolves it (vendored\n"
@@ -105,7 +137,9 @@ std::string Render() {
            "file is stale. Regenerate with\n\n"
            "    NED_BLESS_LANGUAGE_MATRIX=1 ./build/Tests/ned_tests \"[LanguageMatrixDoc]\"\n\n"
            "A `✓` means the package ships the piece, not that the feature is verified to work\n"
-           "well for that language; known behavioural gaps are tracked in `ROADMAP.md`. Folds,\n"
+           "well for that language. A `·` is an open gap: the capability applies to the language\n"
+           "and the package doesn't ship it yet; the totals row counts shipped over applicable.\n"
+           "What doesn't apply is declared per language (`:not-applicable`, with its reason). Folds,\n"
            "bracket matching and sticky scroll are not listed: they come from the grammar's own\n"
            "delimited bodies, except in Markdown and Org, whose structure is not delimiters and\n"
            "which fold from their own query and code. See `LanguageCoverage.md` for tiers and\n"
@@ -116,7 +150,9 @@ std::string Render() {
     }
     out << "\nMarks:\n\n"
            "- `✓` -- the package ships it\n"
-           "- `·` -- it doesn't\n"
+           "- `·` -- it doesn't, and should: an open gap\n"
+           "- `–` -- doesn't apply to this language (`:not-applicable` in its `language.janet`, with the "
+           "reason)\n"
            "- `=` (**ind**) -- `:preserve-indent`: indentation is syntax, so a reindent leaves every line as "
            "written\n"
            "- `i` (**tags**) -- no tags query of its own; the outline is what its embedded languages define "
@@ -136,6 +172,7 @@ std::string Render() {
     out << "\n";
 
     std::vector<std::size_t> totals(kColumns.size(), 0);
+    std::vector<std::size_t> applicable(kColumns.size(), 0);
     std::size_t              languages = 0;
     for (const LanguageDefinition& definition : BundledLanguages()) {
         const QueryFiles&        own   = definition.queries;
@@ -163,19 +200,25 @@ std::string Render() {
             const bool injected  = (i == kTagsColumn && definition.injectedSymbols && Pick(own.tags, donor.tags).empty()) ||
                                    (i == kImportsColumn && definition.injectedImports &&
                                     Pick(own.imports, donor.imports).empty());
-            out << " " << (preserved ? "=" : blockOnly ? "b"
-                                         : injected    ? "i"
-                                                       : Mark(row[i]))
+            const bool notApplicable = NotApplicable(definition, i);
+            if (notApplicable && row[i]) {
+                contradictions.push_back(definition.name + ": " + kColumns[i].capability);
+            }
+            out << " " << (preserved ? "=" : blockOnly   ? "b"
+                                         : injected      ? "i"
+                                         : notApplicable ? "–"
+                                                         : Mark(row[i]))
                 << " |";
             totals[i] += row[i] ? 1 : 0;
+            applicable[i] += notApplicable ? 0 : 1;
         }
         out << "\n";
         ++languages;
     }
 
     out << "| **" << languages << " languages** |";
-    for (const std::size_t total : totals) {
-        out << " " << total << " |";
+    for (std::size_t i = 0; i < kColumns.size(); ++i) {
+        out << " " << totals[i] << "/" << applicable[i] << " |";
     }
     out << "\n";
     return out.str();
@@ -184,7 +227,14 @@ std::string Render() {
 } // namespace
 
 TEST_CASE("Docs/LanguageMatrix.md matches the bundled language packages", "[LanguageMatrixDoc]") {
-    const std::string rendered = Render();
+    std::vector<std::string> contradictions;
+    const std::string        rendered = Render(contradictions);
+    std::string              shippedAnyway;
+    for (const std::string& contradiction : contradictions) {
+        shippedAnyway += "\n  " + contradiction;
+    }
+    INFO("declared :not-applicable but shipped anyway:" << shippedAnyway);
+    CHECK(contradictions.empty());
     if (std::getenv("NED_BLESS_LANGUAGE_MATRIX") != nullptr) {
         std::ofstream out(MatrixPath(), std::ios::binary | std::ios::trunc);
         REQUIRE(out);

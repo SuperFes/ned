@@ -11,4 +11,6 @@
                      :module-substitutions [["-" "_"]]
                      :source-roots ["src" "test" "src/main/clojure" "src/test/clojure"]}
  :injection-aliases ["clj"]
+ :not-applicable {:continuation "every form is delimited; a line continues its enclosing form"
+                  :injections   "nothing in it is written in another language"}
 }

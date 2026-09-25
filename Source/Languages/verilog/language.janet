@@ -4,4 +4,6 @@
  :injection-aliases ["sv" "systemverilog"]
  :line-comment "//"
  :import-resolution {:extensions ["vh" "svh" "v" "sv"]}
+ :not-applicable {:injections "nothing in it is written in another language"
+                  :lsp-root   "no project file of its own; the root falls through to the project's"}
 }

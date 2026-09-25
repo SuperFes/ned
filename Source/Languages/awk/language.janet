@@ -11,4 +11,7 @@
  :capture-classes {"regexp" :string}
  :first-pattern-wins true
  :import-resolution {:extensions ["awk"]}
+ :not-applicable {:injections "nothing in it is written in another language"
+                  :tests      "no test framework runs tests written in it"
+                  :lsp-root   "no project file of its own; the root falls through to the project's"}
 }

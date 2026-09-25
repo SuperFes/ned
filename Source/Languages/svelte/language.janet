@@ -21,4 +21,7 @@
  :import-resolution {:extensions ["ts" "js" "svelte" "mjs"] :index-basenames ["index"] :search-package-dirs true
                      :root-prefixes [["$lib/" "src/lib"]]}
  :sticky-scroll-from-folds true
+ :not-applicable {:indents    "the grammar's delimited bodies are its whole indent structure"
+                  :tests      "tests live in its scripts' own language"
+                  :signatures "its functions live in embedded scripts, in their own language"}
 }

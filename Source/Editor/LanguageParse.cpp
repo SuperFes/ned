@@ -1,5 +1,6 @@
 #include "LanguageParse.h"
 
+#include <algorithm>
 #include <stdexcept>
 
 #include "JanetData.h"
@@ -370,6 +371,26 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
         }
         else if (key == "snippets") {
             definition.snippets = ExpectStringPairs(directoryName, value, ":snippets");
+        }
+        else if (key == "not-applicable") {
+            if (!value.IsStruct()) {
+                Fail(directoryName, value.line, ":not-applicable is {:capability \"reason\" ...}");
+            }
+            for (std::size_t j = 0; j + 1 < value.pairs.size(); j += 2) {
+                const Value& capability = value.pairs[j];
+                const Value& reason     = value.pairs[j + 1];
+                if (!capability.IsKeyword() ||
+                    std::find(std::begin(kNotApplicableCapabilities), std::end(kNotApplicableCapabilities),
+                              capability.text) == std::end(kNotApplicableCapabilities)) {
+                    Fail(directoryName, capability.line,
+                         ":not-applicable keys are :highlights/:indents/:continuation/:locals/:tags/:injections/"
+                         ":imports/:tests/:signatures/:format/:style/:comments/:lsp-root/:import-resolution");
+                }
+                if (ExpectString(directoryName, reason, ":not-applicable reason").empty()) {
+                    Fail(directoryName, reason.line, ":not-applicable reasons are not empty");
+                }
+                definition.notApplicable.emplace_back(capability.text, reason.text);
+            }
         }
         else {
             Fail(directoryName, keyValue.line, "unknown definition key :" + key);

@@ -4,4 +4,5 @@
  :line-comment "//"
  :signature-template "procedure NedSig({});\nbegin end;"
  :lsp-root-markers ["*.lpi" "*.lpk" "*.dproj" "*.dpr"]
+ :not-applicable {:injections "nothing in it is written in another language"}
 }

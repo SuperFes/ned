@@ -28,4 +28,6 @@
    "import"
    "import ${1:module}$0"}
  :signature-template "def __ned_sig({}): pass"
+ :not-applicable {:continuation "a line continues only inside brackets or after `\\`"
+                  :injections   "nothing in it is written in another language"}
 }

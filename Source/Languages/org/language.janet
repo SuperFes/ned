@@ -58,4 +58,11 @@
  # List hang indent and headline outline markers stay tree/line walks in
  # C++ (Languages/Org.cpp).
  :escapes ["org.indent" "org.symbols"]
+ :not-applicable {:indents    "headline levels are stars, not indentation; list continuation is its own code"
+                  :locals     "no bindings to scope or rename"
+                  :tags       "the outline is its own code"
+                  :tests      "no test framework runs tests written in it"
+                  :signatures "no user-defined functions with parameter lists"
+                  :format     "prose; fill-paragraph is its formatter"
+                  :lsp-root   "no project file of its own; the root falls through to the project's"}
 }

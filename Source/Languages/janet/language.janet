@@ -22,4 +22,6 @@
    "(each ${1:item} ${2:coll}\n  $0)"
    "var"
    "(var ${1:name} ${2:value})$0"}
+ :not-applicable {:continuation "every form is delimited; a line continues its enclosing form"
+                  :injections   "nothing in it is written in another language"}
 }

@@ -12,4 +12,5 @@
  :signature-template "fn __ned_sig({}) {}"
  :braces-on-header-line true
  :import-resolution {:extensions ["v"] :source-roots ["" "modules"] :package-directories true}
+ :not-applicable {:injections "nothing in it is written in another language"}
 }

@@ -20,4 +20,7 @@
    "foreach"
    "foreach(${1:item} IN LISTS ${2:list})\n    $0\nendforeach()"}
  :import-resolution {:extensions ["cmake"] :index-basenames ["CMakeLists.txt"] :source-roots ["cmake" "CMake"]}
+ :not-applicable {:continuation "arguments are delimited by the command's parens"
+                  :injections   "nothing in it is written in another language"
+                  :lsp-root     "no project file of its own; the root falls through to the project's"}
 }
