@@ -99,12 +99,6 @@ whole-document highlight 50.7 ms -> 14.8 ms, keystroke+repaint on a 9 KiB C++ fi
 
 ### Language Intelligence
 
-**Language handling gaps**
-
-What each package ships is the generated `Docs/LanguageMatrix.md`; the query captures
-and `language.janet` keys behind its columns are in `Docs/LanguageAuthoring.md`. What's
-below is behaviour that is wrong or missing today, verified with `ned --format` probes.
-
 **Quick-fix gutter marker**
 
 - [ ] The marker only ever names a **diagnostic-attached** quick fix, because an
