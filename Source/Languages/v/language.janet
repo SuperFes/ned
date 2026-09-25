@@ -11,4 +11,5 @@
  :lsp-root-markers ["v.mod"]
  :signature-template "fn __ned_sig({}) {}"
  :braces-on-header-line true
+ :import-resolution {:extensions ["v"] :source-roots ["" "modules"] :package-directories true}
 }

@@ -270,6 +270,7 @@ add_executable(ned_tests
             ImportResolutionConfigTest.cpp
             ImportTargetTest.cpp
             ImportLanguagesTest.cpp
+            GoModulesTest.cpp
             PhpTest.cpp
             ProjectFileOpsTest.cpp
             ScratchPadTest.cpp

@@ -1,10 +1,12 @@
 #include "ImportResolve.h"
 
+#include <algorithm>
 #include <fstream>
 #include <system_error>
 
 #include <nlohmann/json.hpp>
 
+#include "Editor/GoModules.h"
 #include "Editor/ImportResolutionConfig.h"
 #include "Editor/Lsp/RootResolver.h"
 #include "Editor/NodeModules.h"
@@ -128,6 +130,41 @@ namespace {
         }
     }
 
+    // The file a package directory opens as (ImportResolutionConfig's
+    // packageDirectories); a path that isn't a directory is its own answer.
+    std::optional<std::filesystem::path> PackageFileFor(const std::filesystem::path&  path,
+                                                        const ImportResolutionConfig& config) {
+        std::error_code ec;
+        if (!config.packageDirectories || !std::filesystem::is_directory(path, ec)) {
+            return path;
+        }
+        const std::string directoryName = path.filename().string();
+        for (const std::string& extension : config.extensions) {
+            for (const std::string& stem : {std::string("doc"), directoryName}) {
+                if (const std::filesystem::path file = path / (stem + "." + extension);
+                    std::filesystem::is_regular_file(file, ec)) {
+                    return file;
+                }
+            }
+        }
+        std::optional<std::filesystem::path> first;
+        for (const auto& entry : std::filesystem::directory_iterator(path, ec)) {
+            const std::filesystem::path& file = entry.path();
+            const std::string            stem = file.stem().string();
+            if (!entry.is_regular_file(ec) || stem.ends_with("_test")) {
+                continue;
+            }
+            const std::string extension = file.extension().string();
+            const bool        ours      = std::ranges::any_of(config.extensions, [&](const std::string& candidate) {
+                return extension == "." + candidate;
+            });
+            if (ours && (!first || file < *first)) {
+                first = file;
+            }
+        }
+        return first;
+    }
+
     // Each source root under the importing file's package root, then under
     // the project root -- a monorepo's package keeps its own "src/".
     std::vector<std::filesystem::path> SourceRootDirectories(const ImportResolutionConfig& config,
@@ -221,6 +258,10 @@ link::DetectedLink ImportLinkFor(const ImportTarget& target, const ImportResolut
 std::optional<PrefixedImport> MatchImportPrefix(const std::string& target, const std::filesystem::path& importingFile,
                                                 const Mode& mode) {
     const ImportResolutionConfig config = ImportResolutionConfigFor(mode);
+    if (config.goModules) {
+        GoImportRoot root = GoImportRootFor(target, importingFile.empty() ? ProjectRoot() : importingFile.parent_path());
+        return PrefixedImport{.prefix = std::move(root.prefix), .remainder = std::move(root.remainder), .root = std::move(root.root)};
+    }
     for (const auto& [prefix, directory] : config.rootPrefixes) {
         if (target.rfind(prefix, 0) == 0) {
             const std::filesystem::path packageRoot = PackageRootFor(importingFile, LanguageKeyForMode(mode));
@@ -264,28 +305,39 @@ std::optional<ResolvedImport> ResolveImportLink(const link::DetectedLink&    det
     const SearchParameters      parameters    = ParametersFor(baseDirectory, importingFile, mode);
 
     if (const auto prefixed = MatchImportPrefix(detected.target, importingFile, mode)) {
-        if (prefixed->root.empty() || prefixed->remainder.empty()) {
+        if (prefixed->root.empty()) {
             return std::nullopt;
+        }
+        // A package directory's import may name its root outright (a Go
+        // module's own top-level package).
+        if (prefixed->remainder.empty()) {
+            if (!parameters.config.packageDirectories) {
+                return std::nullopt;
+            }
+            const auto file = PackageFileFor(prefixed->root, parameters.config);
+            return file ? std::optional(ResolvedImport{.path = *file, .base = prefixed->root}) : std::nullopt;
         }
         // Absolute, so nothing but the prefix's own root is tried.
         const auto resolved =
             link::ResolveFileLink((prefixed->root / prefixed->remainder).string(), prefixed->root, {},
                                   parameters.config.extensions, parameters.config.indexBasenames, nullptr,
                                   parameters.config.partialPrefix);
-        if (!resolved) {
+        const auto file = resolved ? PackageFileFor(*resolved, parameters.config) : std::nullopt;
+        if (!file) {
             return std::nullopt;
         }
-        return ResolvedImport{.path = *resolved, .base = prefixed->root};
+        return ResolvedImport{.path = *file, .base = prefixed->root};
     }
 
     std::filesystem::path resolvedBase;
     const auto            resolved =
         link::ResolveFileLink(detected.target, baseDirectory, parameters.includePaths, parameters.config.extensions,
                               parameters.config.indexBasenames, &resolvedBase, parameters.config.partialPrefix);
-    if (!resolved) {
+    const auto file = resolved ? PackageFileFor(*resolved, parameters.config) : std::nullopt;
+    if (!file) {
         return std::nullopt;
     }
-    return ResolvedImport{.path = *resolved, .base = resolvedBase};
+    return ResolvedImport{.path = *file, .base = resolvedBase};
 }
 
 } // namespace ned::editor

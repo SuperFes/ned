@@ -145,15 +145,15 @@ TEST_CASE("The definitions carry the facts the old C++ tables held", "[LanguageP
                                                                            "cmake", "commonlisp", "crystal", "css",
                                                                            "d", "dart", "elm", "erlang", "fennel",
                                                                            "fish", "fortran", "fsharp", "gdscript",
-                                                                           "gleam", "groovy", "haskell", "hcl",
+                                                                           "gleam", "go", "groovy", "haskell", "hcl",
                                                                            "janet", "jank", "java", "javascript",
                                                                            "jsonnet", "julia", "just", "kotlin",
-                                                                           "latex", "lua", "nim", "nix", "nu", "perl",
+                                                                           "latex", "lua", "nim", "nix", "nu", "odin", "perl",
                                                                            "php", "pkl", "powershell", "proto",
                                                                            "purescript", "python", "r", "racket",
                                                                            "rst", "ruby", "rust", "scala", "scheme",
                                                                            "scss", "solidity", "tcl", "thrift", "tsx",
-                                                                           "typescript", "typst", "verilog"};
+                                                                           "typescript", "typst", "v", "verilog"};
     const std::map<std::string, std::string> kAliases                   = {
         {"adb", "ada"},
         {"ads", "ada"},

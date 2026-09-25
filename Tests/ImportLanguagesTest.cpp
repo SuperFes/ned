@@ -3,11 +3,13 @@
 // go-to-file reads at point, and that a line naming no one file reads as
 // nothing. Then the per-language resolution knobs (source roots, module
 // separators, substitutions, index files, partials, root prefixes, Dart
-// packages) against real files, both for go-to-file and a rename's fixups.
+// packages, Go modules) against real files, both for go-to-file and a rename's
+// fixups.
 //
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -112,7 +114,11 @@ const ImportCase kImportCases[] = {
     {"scala", "import a.b.C\n", "C", "a.b.C", true},
     {"groovy", "import a.b.C\n", "C", "a.b.C", true},
     {"groovy", "apply from: \"x.gradle\"\n", "x.gradle", "x.gradle", false},
-    {"clojure", "(require 'my-app.core)\n", "core", "my-app.core", true}};
+    {"clojure", "(require 'my-app.core)\n", "core", "my-app.core", true},
+    {"go", "import \"example.com/m/store\"\n", "store", "example.com/m/store", false},
+    {"go", "import (\n\tf \"fmt\"\n\t\"net/http\"\n)\n", "http", "net/http", false},
+    {"odin", "package main\nimport u \"../shared/util\"\n", "util", "../shared/util", false},
+    {"v", "module main\nimport foo.bar as b\n", "bar", "foo.bar", true}};
 
 struct NoImportCase {
     const char* language;
@@ -409,4 +415,114 @@ TEST_CASE("A directory import keeps naming the directory when its index moves", 
     const std::vector<ned::editor::importfix::MovedFile> moved{
         {project.root / "lib/CMakeLists.txt", project.root / "libs/core/CMakeLists.txt"}};
     CHECK(FixedText(moved, project.root / "CMakeLists.txt") == "add_subdirectory(libs/core)\n");
+}
+
+namespace {
+
+class EnvVarGuard {
+  public:
+    EnvVarGuard(const char* name, const std::string& value) : name_(name) {
+        if (const char* existing = std::getenv(name)) {
+            previous_ = existing;
+        }
+        setenv(name, value.c_str(), 1);
+    }
+    ~EnvVarGuard() {
+        if (previous_) {
+            setenv(name_.c_str(), previous_->c_str(), 1);
+        }
+        else {
+            unsetenv(name_.c_str());
+        }
+    }
+    EnvVarGuard(const EnvVarGuard&)            = delete;
+    EnvVarGuard& operator=(const EnvVarGuard&) = delete;
+
+  private:
+    std::string                name_;
+    std::optional<std::string> previous_;
+};
+
+} // namespace
+
+TEST_CASE("A Go import opens the file that stands for its package directory", "[ImportLanguages]") {
+    const ScratchProject project("go_module");
+    Write(project.root / "go.mod", "module example.com/m\n");
+    Write(project.root / "store/store.go", "package store\n");
+    Write(project.root / "store/doc.go", "// Package store.\npackage store\n");
+    Write(project.root / "api/b.go", "package api\n");
+    Write(project.root / "api/a_test.go", "package api\n");
+    Write(project.root / "api/c.go", "package api\n");
+    Write(project.root / "cmd/tool/main.go", "package main\nimport (\n\t\"example.com/m/store\"\n\t\"example.com/m/api\"\n)\n");
+    const fs::path main = project.root / "cmd/tool/main.go";
+    CHECK(ResolveAt(main, "store") == project.root / "store/doc.go");
+    CHECK(ResolveAt(main, "api") == project.root / "api/b.go");
+
+    fs::remove(project.root / "store/doc.go");
+    CHECK(ResolveAt(main, "store") == project.root / "store/store.go");
+}
+
+TEST_CASE("A Go import resolves through the standard library, module cache and replacements", "[ImportLanguages]") {
+    const ScratchProject project("go_roots");
+    const EnvVarGuard    goRoot("GOROOT", (project.root / "goroot").string());
+    const EnvVarGuard    modCache("GOMODCACHE", (project.root / "modcache").string());
+    Write(project.root / "goroot/src/net/http/doc.go", "package http\n");
+    Write(project.root / "modcache/github.com/!burnt!sushi/toml@v1.3.2/encode.go", "package toml\n");
+    Write(project.root / "modcache/github.com/!burnt!sushi/toml@v1.3.2/decode.go", "package toml\n");
+    Write(project.root / "lib/util/util.go", "package util\n");
+    Write(project.root / "app/go.mod", "module example.com/app\n"
+                                       "require (\n\tgithub.com/BurntSushi/toml v1.3.2\n\texample.com/lib v0.0.0\n)\n"
+                                       "replace example.com/lib => ../lib\n");
+    Write(project.root / "app/main.go", "package main\nimport (\n\t\"net/http\"\n\t\"github.com/BurntSushi/toml\"\n"
+                                        "\t\"example.com/lib/util\"\n\t\"example.com/missing/pkg\"\n)\n");
+    const fs::path main = project.root / "app/main.go";
+    CHECK(ResolveAt(main, "http") == project.root / "goroot/src/net/http/doc.go");
+    CHECK(ResolveAt(main, "toml") == project.root / "modcache/github.com/!burnt!sushi/toml@v1.3.2/decode.go");
+    CHECK(ResolveAt(main, "util") == project.root / "lib/util/util.go");
+    CHECK_FALSE(ResolveAt(main, "missing").has_value());
+}
+
+TEST_CASE("A Go import follows its package directory only when the whole package moves", "[ImportLanguages]") {
+    const ScratchProject project("go_move");
+    Write(project.root / "go.mod", "module example.com/m\n");
+    Write(project.root / "store/a.go", "package store\n");
+    Write(project.root / "store/b.go", "package store\n");
+    Write(project.root / "store/a_test.go", "package store\n");
+    Write(project.root / "main.go", "package main\nimport \"example.com/m/store\"\n");
+    const fs::path main = project.root / "main.go";
+
+    const std::vector<ned::editor::importfix::MovedFile> whole{
+        {project.root / "store/a.go", project.root / "internal/store/a.go"},
+        {project.root / "store/b.go", project.root / "internal/store/b.go"},
+        {project.root / "store/a_test.go", project.root / "internal/store/a_test.go"}};
+    CHECK(FixedText(whole, main) == "package main\nimport \"example.com/m/internal/store\"\n");
+
+    const std::vector<ned::editor::importfix::MovedFile> oneFile{
+        {project.root / "store/a.go", project.root / "internal/store/a.go"}};
+    CHECK(FixedText(oneFile, main) == Read(main));
+
+    // Heard about after the fact: the directory is already gone.
+    fs::create_directories(project.root / "internal");
+    fs::rename(project.root / "store", project.root / "internal/store");
+    CHECK(FixedText(whole, main) == "package main\nimport \"example.com/m/internal/store\"\n");
+}
+
+TEST_CASE("Odin and V imports name package directories too", "[ImportLanguages]") {
+    const ScratchProject project("odin_v_packages");
+    Write(project.root / "shared/util/strings.odin", "package util\n");
+    Write(project.root / "game/main.odin", "package main\nimport \"../shared/util\"\n");
+    CHECK(ResolveAt(project.root / "game/main.odin", "util") == project.root / "shared/util/strings.odin");
+
+    const std::vector<ned::editor::importfix::MovedFile> movedOdin{
+        {project.root / "shared/util/strings.odin", project.root / "lib/util/strings.odin"}};
+    CHECK(FixedText(movedOdin, project.root / "game/main.odin") == "package main\nimport \"../lib/util\"\n");
+
+    Write(project.root / "v.mod", "Module {\n\tname: 'app'\n}\n");
+    Write(project.root / "modules/net/http/client.v", "module http\n");
+    Write(project.root / "cmd/main.v", "module main\nimport net.http\nfn main() {}\n");
+    CHECK(ResolveAt(project.root / "cmd/main.v", "http") == project.root / "modules/net/http/client.v");
+
+    const std::vector<ned::editor::importfix::MovedFile> movedV{
+        {project.root / "modules/net/http/client.v", project.root / "modules/web/http/client.v"}};
+    CHECK(FixedText(movedV, project.root / "cmd/main.v") == "module main\nimport web.http\nfn main() {}\n");
 }

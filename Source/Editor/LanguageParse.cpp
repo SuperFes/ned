@@ -338,11 +338,17 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
                 else if (field.IsKeyword() && field.text == "package-scheme") {
                     config.packageScheme = ExpectString(directoryName, v, ":package-scheme");
                 }
+                else if (field.IsKeyword() && field.text == "go-modules") {
+                    config.goModules = ExpectBool(directoryName, v, ":go-modules");
+                }
+                else if (field.IsKeyword() && field.text == "package-directories") {
+                    config.packageDirectories = ExpectBool(directoryName, v, ":package-directories");
+                }
                 else {
                     Fail(directoryName, field.line,
                          ":import-resolution keys are :extensions/:index-basenames/:search-package-dirs/"
                          ":module-separator/:module-substitutions/:source-roots/:partial-prefix/"
-                         ":root-prefixes/:package-scheme");
+                         ":root-prefixes/:package-scheme/:go-modules/:package-directories");
                 }
             }
             definition.importResolution = std::move(config);

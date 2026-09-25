@@ -103,6 +103,12 @@ namespace {
         return target.lexically_normal().lexically_relative(from.lexically_normal());
     }
 
+    // What the specifier names: the imported file, or for a language whose
+    // imports name package directories, the directory holding it.
+    std::filesystem::path PackageTarget(const RewriteRequest& request) {
+        return request.resolution.packageDirectories ? request.newTarget.parent_path() : request.newTarget;
+    }
+
 } // namespace
 
 std::optional<std::string> DottedModuleFor(const std::filesystem::path& file, const std::filesystem::path& root,
@@ -145,7 +151,7 @@ std::optional<std::string> RewriteSpec(const RewriteRequest& request) {
             if (request.importerDirectory.empty()) {
                 return std::nullopt;
             }
-            const std::filesystem::path relative = RelativeBetween(request.newTarget, request.importerDirectory);
+            const std::filesystem::path relative = RelativeBetween(PackageTarget(request), request.importerDirectory);
             std::vector<std::string>    parts    = Components(relative);
             if (parts.empty()) {
                 return std::nullopt;
@@ -154,7 +160,7 @@ std::optional<std::string> RewriteSpec(const RewriteRequest& request) {
             // path), so the rewrite writes none either -- the same
             // extension widening that resolved the original will resolve
             // this one (Editor/ImportResolutionConfig.h).
-            if (std::filesystem::path(request.spec).extension().empty()) {
+            if (!request.resolution.packageDirectories && std::filesystem::path(request.spec).extension().empty()) {
                 DropExtension(parts);
                 MatchSpecStyle(parts, request.spec, request.resolution);
             }
@@ -183,12 +189,12 @@ std::optional<std::string> RewriteSpec(const RewriteRequest& request) {
             if (request.resolutionRoot.empty()) {
                 return std::nullopt;
             }
-            const std::filesystem::path relative = RelativeBetween(request.newTarget, request.resolutionRoot);
+            const std::filesystem::path relative = RelativeBetween(PackageTarget(request), request.resolutionRoot);
             std::vector<std::string>    parts    = Components(relative);
             if (parts.empty() || parts.front() == "..") {
                 return std::nullopt; // moved out of the root it was counted from
             }
-            if (std::filesystem::path(request.spec).extension().empty()) {
+            if (!request.resolution.packageDirectories && std::filesystem::path(request.spec).extension().empty()) {
                 DropExtension(parts);
                 MatchSpecStyle(parts, request.spec, request.resolution);
             }
@@ -203,7 +209,7 @@ std::optional<std::string> RewriteSpec(const RewriteRequest& request) {
             if (request.resolutionRoot.empty()) {
                 return std::nullopt;
             }
-            return DottedModuleFor(request.newTarget, request.resolutionRoot, request.resolution);
+            return DottedModuleFor(PackageTarget(request), request.resolutionRoot, request.resolution);
         }
 
         case SpecKind::RelativeModule: {
@@ -274,14 +280,17 @@ namespace {
     // What a moved file may be called in the text of an import that names
     // it: its stem; for an index file also its directory ("./widget" for
     // "widget/index.js"); and a snake_case name's kebab-case spelling
-    // (Clojure's "my-app" for "my_app"). A word too many only costs a parse.
-    std::vector<std::string> SearchStemsFor(const std::filesystem::path& path) {
+    // (Clojure's "my-app" for "my_app"); for a language whose imports name
+    // package directories (Go), the directory. A word too many only costs a
+    // parse.
+    std::vector<std::string> SearchStemsFor(const std::filesystem::path& path, ModeCache& modes) {
         static constexpr std::string_view kIndexStems[] = {"index", "__init__", "mod", "init",
                                                            "package", "default", "CMakeLists", "_index"};
         std::vector<std::string>          stems;
         const std::string                 stem = path.stem().string();
         stems.push_back(stem);
-        if (std::find(std::begin(kIndexStems), std::end(kIndexStems), stem) != std::end(kIndexStems)) {
+        if (std::find(std::begin(kIndexStems), std::end(kIndexStems), stem) != std::end(kIndexStems) ||
+            ImportResolutionConfigFor(modes.For(path)).packageDirectories) {
             const std::string parent = path.parent_path().filename().string();
             if (!parent.empty()) {
                 stems.push_back(parent);
@@ -380,6 +389,29 @@ namespace {
         return std::nullopt;
     }
 
+    // Whether a package directory went with its file: every source file in
+    // it moved to one directory. A directory already gone (a move ned only
+    // hears about afterwards) has nothing left behind to check.
+    bool PackageMovedWhole(const std::filesystem::path& file, const std::filesystem::path& newFile,
+                           const std::map<std::filesystem::path, std::filesystem::path>& moves,
+                           const ImportResolutionConfig&                                 resolution) {
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(file.parent_path(), ec)) {
+            const std::string extension = entry.path().extension().string();
+            const bool        source    = std::ranges::any_of(resolution.extensions, [&](const std::string& candidate) {
+                return extension == "." + candidate;
+            });
+            if (!source || !entry.is_regular_file(ec)) {
+                continue;
+            }
+            const auto moved = moves.find(Canonical(entry.path()));
+            if (moved == moves.end() || moved->second.parent_path() != newFile.parent_path()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // Whether moving the file this import is WRITTEN IN invalidates it --
     // true for anything counted from that file's own location, false for
     // anything counted from a root. What decides whether a failed rewrite
@@ -398,11 +430,12 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
         return plan;
     }
 
+    ModeCache                                              modes;
     std::map<std::filesystem::path, std::filesystem::path> moves;
     std::vector<std::string>                               stems;
     for (const MovedFile& move : moved) {
         moves[Canonical(move.from)] = move.to;
-        for (std::string& stem : SearchStemsFor(move.from)) {
+        for (std::string& stem : SearchStemsFor(move.from, modes)) {
             stems.push_back(std::move(stem));
         }
     }
@@ -424,7 +457,6 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
         }
     }
 
-    ModeCache modes;
     for (const std::filesystem::path& candidate : scanList) {
         const auto                  movedIt       = moves.find(Canonical(candidate));
         const bool                  importerMoved = movedIt != moves.end();
@@ -487,8 +519,13 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
             }
 
             const auto                  targetMovedIt = moves.find(Canonical(resolved->path));
-            const bool                  targetMoved   = targetMovedIt != moves.end();
-            const std::filesystem::path newTarget     = targetMoved ? targetMovedIt->second : resolved->path;
+            const std::filesystem::path newTarget =
+                targetMovedIt != moves.end() ? targetMovedIt->second : resolved->path;
+            // A package directory's import follows the directory, not the
+            // one file that stands for it.
+            const bool targetMoved =
+                targetMovedIt != moves.end() &&
+                (!resolution.packageDirectories || PackageMovedWhole(resolved->path, newTarget, moves, resolution));
 
             // A prefixed specifier is counted from its prefix's root however
             // close to it the importing file sits.
@@ -539,9 +576,10 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
 }
 
 std::string CandidatePattern(const std::vector<MovedFile>& moved) {
+    ModeCache             modes;
     std::set<std::string> stems;
     for (const MovedFile& move : moved) {
-        for (std::string& stem : SearchStemsFor(move.from)) {
+        for (std::string& stem : SearchStemsFor(move.from, modes)) {
             if (!stem.empty()) {
                 stems.insert(std::move(stem));
             }

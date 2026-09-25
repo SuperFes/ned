@@ -221,6 +221,7 @@ add_library(ned_lib STATIC
         Editor/NodeModules.cpp
         Editor/ImportResolutionConfig.cpp
         Editor/ImportResolve.cpp
+        Editor/GoModules.cpp
         Editor/Project/FileOps.cpp
         Editor/AutoRevert.cpp
         Editor/AutoMerge.cpp

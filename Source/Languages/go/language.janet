@@ -6,4 +6,5 @@
  :first-pattern-wins true
  :signature-template "package p\nfunc __ned_sig({}) {}"
  :braces-on-header-line true
+ :import-resolution {:extensions ["go"] :go-modules true :package-directories true}
 }
