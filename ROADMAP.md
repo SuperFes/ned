@@ -272,29 +272,6 @@ The rest of what the server-side protocol half left behind, unrelated to watch c
       and re-collects; a local source has no equivalent, and needs none as long as the
       collection is a superset of every prefix the session can reach.
 
-### Parsing Engine: Trait Vocabulary over Per-Language Queries
-
-- [ ] **Table-generator optimizations** (measured 2026-09-18 at the Tier B systems batch,
-    single-core CPU, `ned --compile-language`): ada 149s for only 2,207 parse states
-    (its case-insensitive keyword tokens -- `[pP][aA][cC][kK][aA][gG][eE]` and every
-    other reserved word -- multiply lex-state construction and token-conflict work),
-    nim 70s / 20,305 states, odin 60s / 9,611, kotlin 40s, crystal 30s. Absorbed by the
-    parallel build-time compile (`CMake/LanguageTables.cmake`), so nothing is checked
-    in; profile with `perf record --call-graph dwarf` before touching it -- the known
-    remaining cost is item-set construction (`ParseItem::Order` / `TokenSet::Compare`
-    under `std::map`), and ada suggests the lex side has its own hot spot.
-- [ ] **QueryMatcher supertype-scoped names are membership-only.** `(expression/variable)`
-    (2026-09-18, for haskell's upstream highlights) checks that `variable` is one of
-    `expression`'s declared subtypes at compile time and then matches by the subtype's
-    symbol; whether the node actually sits under a hidden `expression` in the tree is
-    not consulted, so `(pattern/variable)` and `(expression/variable)` match the same
-    nodes. The cursor stack carries the hidden ancestors (tree_cursor.c's field walk
-    already climbs them), so a positional check is a small addition if a query ever
-    needs the distinction.
-- [ ] Admission policy worth knowing before adding any grammar: **never use star count as
-    a health signal.** Use `pushed_at` and `archived`, pin by tag, and record ABI version
-        + external-scanner LOC + corpus presence at admission.
-
 ### Refactoring
 
 **Sidecar metadata: association without binding**
@@ -351,27 +328,6 @@ The rest of what the server-side protocol half left behind, unrelated to watch c
     stays faithfully wrong, which is exactly what the 2026-09-18 phpantom_lsp session
     turned out to be (the server's own `character` values disagreed with its own
     document; ned's conversion and relocation were both correct).
-- [ ] A Lisp binding vector's names are captured by unrolled per-pair-index patterns
-    (`clojure-locals.scm`, `janet-locals.scm`), because the whole-vector form a query
-    would naturally express captures a bare-symbol *value* as a definition and turns a
-    rename of the outer binding it names into a partial one. The unrolling stops at
-    eight pairs, and destructuring (`[{:keys [x y]} m]`) is not captured at all; both
-    degrade to "declines" rather than to a wrong rename. Lifting either needs something
-    the query language cannot say, so it would mean a capture kind `LocalScopes.h`
-    understands positionally -- not worth it until a real file hits the cap
-    (`lisp-shell-locals`).
-- [ ] Fish's `set -l -x count 0` (a scope flag not adjacent to its own target) and
-    `read -l line` are not captured as definitions -- the first because the pattern
-    anchors the name to the flag before it, the second because there is no `set`
-    command node to hang off. Both decline rather than mis-resolve
-    (`lisp-shell-locals`).
-- [ ] A use that textually precedes its own binding in a whole-scope-binding language
-    (Python's function scope, JavaScript `var` hoisting) is detected and *declined*
-    rather than resolved -- `LocalBinding::usedBeforeDefinition`, the one case where
-    the resolver's position rule knowingly gives up. Resolving it properly means
-    knowing per language whether binding is declaration-point or whole-scope, which is
-    a real per-language fact this deliberately did not invent a place to record
-    (`scope-aware-rename`).
 - [ ] A huge buffer (`ITextStorage::IsHuge()`) never gets the scope-aware tier at all.
       Unlike the fold/symbol/test gutters beside it, this one cannot window: a binding's
       occurrence set is only complete if the whole file was parsed, so a windowed answer
@@ -434,20 +390,6 @@ The rest of what the server-side protocol half left behind, unrelated to watch c
       what `project-replace` already is), deliberately not built into this: a rename that
       silently rewrote matches across a repository on a name match alone is a different,
       riskier feature than the one asked for (`class-file-sync`).
-- [ ] Java/C#/PHP/TypeScript tags coverage is now upstream's file plus a repo-local delta
-      (`ned_embed_treesitter_query_concat`). The deltas are small and current; the thing to
-      watch is a grammar bump making one redundant, which shows up as a duplicate marker
-      rather than a wrong one (`class-file-sync`).
-- [ ] **Change signature (the hard one, scoped honestly).** LSP has no request for this --
-      JetBrains does it from its own index, and no server offers an equivalent -- so it is
-      ned's own transform or nothing. Renaming a parameter falls out of the `locals.scm`
-      item above and needs nothing else. Adding, removing or reordering parameters means
-      rewriting call sites, which needs a per-language structural query (a `calls.scm`
-      alongside `tests.scm`, mapping a call expression to its argument list) plus an edit
-      planner that maps old positions to new ones and drops or defaults the rest. First cut
-      should be one language family and the review buffer above making the blast radius
-      visible before anything lands; a signature change that silently rewrote fifty call
-      sites would be the least trustworthy feature in the editor.
 
 ### Mouse Ergonomics
 
@@ -1376,6 +1318,12 @@ these accumulate detail in place.
 - [ ] **Tcl locals.** `global`/`upvar` rebind a proc's name to another scope's, which a
       proc-local rename would get wrong. Justified once the resolver can decline a name
       a `global`/`upvar` touches rather than renaming half of it.
+- [ ] **Locals forms that decline today.** Lisp destructuring (`[{:keys [x y]} m]`,
+      `[[a b] pair]` -- the names aren't direct children of the binding vector), fish's
+      `set -l -x count 0` (flag not adjacent to its target) and `read -l line`, and a
+      use that precedes its binding in a whole-scope language (Python function scope,
+      JavaScript `var` hoisting -- `LocalBinding::usedBeforeDefinition`). All decline
+      rather than mis-rename. Justified when one of them blocks a real rename.
 - [ ] **change-signature for curried and multi-clause languages.** Haskell, OCaml and
       F# apply a function without a parenthesized argument list, and the Lisps have no
       separate list at all; Erlang's and Elixir's multi-clause functions have a pattern
