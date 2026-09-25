@@ -5,4 +5,5 @@
  :lsp-root-markers ["typst.toml"]
  :wrap-lines true
  :first-pattern-wins true
+ :import-resolution {:extensions ["typ"]}
 }

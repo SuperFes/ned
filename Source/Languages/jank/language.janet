@@ -7,5 +7,7 @@
  :line-comment ";"
  :auto-pairs :lisp
  :queries-from "clojure"
- :import-resolution {:extensions ["clj" "cljc" "cljs"]}
+ :import-resolution {:extensions ["jank" "clj" "cljc"]
+                     :module-substitutions [["-" "_"]]
+                     :source-roots ["src" "test"]}
 }

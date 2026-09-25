@@ -4,4 +4,5 @@
  :line-comment "#"
  :lsp-root-markers ["DESCRIPTION" "*.Rproj"]
  :signature-template "__ned_sig <- function({}) NULL"
+ :import-resolution {:extensions ["R" "r"]}
 }

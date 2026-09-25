@@ -1,5 +1,5 @@
 # sample.cmake  (cmake-mode)
-# 80 facts
+# 81 facts
 fold 145..190  "set(SAMPLE_SOURCES\n    main.cpp\n    util.cpp)"
 highlight 0..76  [comment]  "# A representative build fil … , functions."
 highlight 77..99  [function-builtin]  "cmake_minimum_required"
@@ -51,6 +51,7 @@ highlight 634..635  [punctuation]  "{"
 highlight 635..641  [variable]  "source"
 highlight 641..642  [punctuation]  "}"
 highlight 645..655  [control-keyword]  "endforeach"
+import 459..482  [tests]  "add_subdirectory(tests)"
 indent 0..76  [0]  "# A representative build fil … , functions."
 indent 77..113  [0]  "cmake_minimum_required(VERSION 3.24)"
 indent 114..143  [0]  "project(sample LANGUAGES CXX)"

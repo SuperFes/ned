@@ -21,8 +21,11 @@
 
 #include <filesystem>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <vector>
 
+#include "Editor/ImportResolutionConfig.h"
 #include "Editor/Link.h"
 #include "Editor/Mode.h"
 
@@ -46,6 +49,33 @@ struct ResolvedImport {
     std::filesystem::path base;
 };
 
+// The language's import-resolution config with the project's own
+// override laid over it (Editor/ImportResolutionConfig.h).
+[[nodiscard]] ImportResolutionConfig ImportResolutionConfigFor(const Mode& mode);
+
+// A module path ("pkg.mod", "Foo::Bar", "my-app.core") as the relative file
+// path it stands for, before extension widening ("pkg/mod", "Foo/Bar",
+// "my_app/core").
+[[nodiscard]] std::string ModulePathToFilePath(std::string_view module, const ImportResolutionConfig& config);
+
+// The link an import names -- what go-to-file opens and what a rename's
+// fixup resolves -- so the two read every specifier the same way.
+[[nodiscard]] link::DetectedLink ImportLinkFor(const ImportTarget& target, const ImportResolutionConfig& config);
+
+// A target counted from a fixed root rather than from the importing file:
+// Godot's "res://ui/menu.gd", Dart's "package:app/src/x.dart" (the
+// language's :root-prefixes and :package-scheme). Nothing else is searched
+// for one -- not the importing file's directory, not the project root.
+struct PrefixedImport {
+    std::string           prefix;    // "res://", "package:app/"
+    std::string           remainder; // "ui/menu.gd", "src/x.dart"
+    std::filesystem::path root;      // empty when nothing on disk maps the prefix
+};
+
+[[nodiscard]] std::optional<PrefixedImport> MatchImportPrefix(const std::string&           target,
+                                                              const std::filesystem::path& importingFile,
+                                                              const Mode&                  mode);
+
 [[nodiscard]] std::optional<ResolvedImport> ResolveImportLink(const link::DetectedLink&    detected,
                                                               const std::filesystem::path& importingFile,
                                                               const Mode&                  mode);
@@ -53,7 +83,8 @@ struct ResolvedImport {
 // Every directory ResolveImportLink would try, in the order it tries them:
 // the importing file's own (ascended by Python's relative-import level,
 // descended by Rust's file-per-module layout), then the project root, then
-// the mode's include paths, the toolchain's, and any node_modules chain.
+// the language's source roots, the mode's include paths, the toolchain's,
+// and any node_modules chain.
 //
 // Exposed because Editor/ImportFixup.h has to ask the same question with
 // the answer already gone -- an externally detected move takes the file a

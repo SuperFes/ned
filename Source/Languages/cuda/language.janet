@@ -6,7 +6,8 @@
  :line-continuation "\\"
  # The upstream query is a delta whose first line says `inherits: cpp`;
  # discovery doesn't read that, so the base is named here.
- :queries {:highlights ["cpp/highlights.janet"
+ :queries {:imports ["c/imports.janet"]
+           :highlights ["cpp/highlights.janet"
                         "cuda/upstream/highlights.janet"]
            :indents ["cpp/indents.janet"]
            :signatures ["cpp/signatures.janet"]

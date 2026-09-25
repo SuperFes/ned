@@ -15,6 +15,7 @@
 #define NED_EDITOR_IMPORTRESOLUTIONCONFIG_H
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace ned::editor {
@@ -36,6 +37,31 @@ struct ImportResolutionConfig {
     // ResolveFileLink -- a bare package specifier ("import x from 'lodash'")
     // isn't found relative to the importing file or the project root alone.
     bool searchPackageDirs = false;
+    // How a module path (an "@import.module" capture) spells one directory
+    // step: Python's "pkg.mod", Perl's "Foo::Bar".
+    std::string moduleSeparator = ".";
+    // Rewrites applied to each step of a module path to get its on-disk
+    // spelling, as {module spelling, path spelling}: Clojure's
+    // "my-app.core" lives at "my_app/core.clj". Reversed when a moved file's
+    // path is turned back into a module path.
+    std::vector<std::pair<std::string, std::string>> moduleSubstitutions;
+    // Directories a module or path is also looked up under, relative to the
+    // language's package root (the nearest ancestor holding one of its LSP
+    // root markers) and then the project root: Maven's "src/main/java",
+    // Perl's "lib", Elm's "src".
+    std::vector<std::string> sourceRoots;
+    // Prepended to a target's file name as a further candidate: Sass's
+    // `@use "base/vars"` is the partial "base/_vars.scss".
+    std::string partialPrefix;
+    // A target starting with one of these prefixes names a file under the
+    // language's package root (as sourceRoots finds it) plus a directory,
+    // and nowhere else: Godot's "res://", as {prefix, directory}.
+    std::vector<std::pair<std::string, std::string>> rootPrefixes;
+    // Dart's package URI scheme ("package:"): "package:name/path" is path
+    // under package `name`'s library directory, as the nearest
+    // .dart_tool/package_config.json maps it, or as the enclosing
+    // pubspec.yaml names its own package when there is none.
+    std::string packageScheme;
 };
 
 // Bundled defaults, keyed by Editor/Mode.h's LanguageKeyForMode (e.g.

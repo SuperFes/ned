@@ -2690,18 +2690,7 @@ void BufferView::OpenLinkAtPointWithoutLsp() {
                 }
             }
             else {
-                std::string target = imported->target;
-                if (imported->isModulePath) {
-                    std::replace(target.begin(), target.end(), '.', '/');
-                }
-                OpenDetectedLink(editor::link::DetectedLink{
-                    .kind             = editor::link::LinkKind::File,
-                    .target           = std::move(target),
-                    .startByte        = imported->startByte,
-                    .endByte          = imported->endByte,
-                    .relativeLevel    = imported->relativeLevel,
-                    .isModDeclaration = imported->isModDeclaration,
-                });
+                OpenDetectedLink(editor::ImportLinkFor(*imported, editor::ImportResolutionConfigFor(mode_)));
                 return;
             }
         }

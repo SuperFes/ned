@@ -6,4 +6,5 @@
  :line-comment "!"
  :lsp-root-markers ["fpm.toml"]
  :capture-classes {"custom_directive" :keyword}
+ :import-resolution {:extensions ["inc" "f90" "f"]}
 }

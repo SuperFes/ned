@@ -11,4 +11,5 @@
  :first-pattern-wins true
  # The outline stops two levels down; breadcrumbs follow every level.
  :sticky-scroll-from-folds true
+ :import-resolution {:extensions ["pkl"]}
 }

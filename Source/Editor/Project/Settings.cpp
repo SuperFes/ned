@@ -60,6 +60,13 @@ ProjectSettings LoadProjectSettings(const std::filesystem::path& root) {
                         }
                     }
                 }
+                if (entry.contains("sourceRoots") && entry["sourceRoots"].is_array()) {
+                    for (const nlohmann::json& root : entry["sourceRoots"]) {
+                        if (root.is_string()) {
+                            override.sourceRoots.push_back(root.get<std::string>());
+                        }
+                    }
+                }
                 if (entry.contains("searchPackageDirs") && entry["searchPackageDirs"].is_boolean()) {
                     override.searchPackageDirs = entry["searchPackageDirs"].get<bool>();
                 }

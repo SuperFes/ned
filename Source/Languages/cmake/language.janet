@@ -19,4 +19,5 @@
    "if(${1:condition})\n    $0\nendif()"
    "foreach"
    "foreach(${1:item} IN LISTS ${2:list})\n    $0\nendforeach()"}
+ :import-resolution {:extensions ["cmake"] :index-basenames ["CMakeLists.txt"] :source-roots ["cmake" "CMake"]}
 }

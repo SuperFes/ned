@@ -1,6 +1,12 @@
 #include "ImportResolve.h"
 
+#include <fstream>
+#include <system_error>
+
+#include <nlohmann/json.hpp>
+
 #include "Editor/ImportResolutionConfig.h"
+#include "Editor/Lsp/RootResolver.h"
 #include "Editor/NodeModules.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Settings.h"
@@ -50,17 +56,114 @@ namespace {
         ImportResolutionConfig             config;
     };
 
-    SearchParameters ParametersFor(const std::filesystem::path& baseDirectory, const Mode& mode) {
+    std::filesystem::path PackageRootFor(const std::filesystem::path& importingFile, const std::string& languageKey) {
+        return importingFile.empty() ? ProjectRoot() : lsp::ResolveLspRoot(importingFile, languageKey);
+    }
+
+    // The library directory .dart_tool/package_config.json maps `name` to:
+    // each package's rootUri (relative to the .dart_tool directory, or a
+    // file: URI) joined with its packageUri. nullopt when the file has no
+    // such package or can't be read.
+    std::optional<std::filesystem::path> PackageConfigDirectory(const std::filesystem::path& configFile,
+                                                                const std::string&           name) {
+        std::ifstream in(configFile);
+        if (!in) {
+            return std::nullopt;
+        }
+        const nlohmann::json config = nlohmann::json::parse(in, nullptr, false);
+        if (!config.is_object() || !config.contains("packages") || !config["packages"].is_array()) {
+            return std::nullopt;
+        }
+        for (const nlohmann::json& package : config["packages"]) {
+            if (!package.is_object() || package.value("name", "") != name) {
+                continue;
+            }
+            std::string rootUri = package.value("rootUri", "");
+            if (rootUri.rfind("file://", 0) == 0) {
+                rootUri.erase(0, 7);
+            }
+            std::filesystem::path root(rootUri);
+            if (root.is_relative()) {
+                root = configFile.parent_path() / root;
+            }
+            return (root / package.value("packageUri", "")).lexically_normal();
+        }
+        return std::nullopt;
+    }
+
+    // The `name:` a pubspec.yaml gives its own package.
+    std::string PubspecName(const std::filesystem::path& pubspec) {
+        std::ifstream in(pubspec);
+        std::string   line;
+        while (std::getline(in, line)) {
+            if (line.rfind("name:", 0) != 0) {
+                continue;
+            }
+            std::string name = line.substr(5);
+            name             = name.substr(0, name.find('#'));
+            std::erase_if(name, [](char c) { return c == ' ' || c == '\t' || c == '\'' || c == '"' || c == '\r'; });
+            return name;
+        }
+        return {};
+    }
+
+    // Where "package:name/" points from `start`, walking upward: the first
+    // package_config.json decides; below it, a pubspec.yaml naming `name`
+    // is its own package's lib/.
+    std::optional<std::filesystem::path> DartPackageDirectory(const std::filesystem::path& start,
+                                                              const std::string&           name) {
+        std::error_code ec;
+        for (std::filesystem::path dir = start;; dir = dir.parent_path()) {
+            if (const std::filesystem::path config = dir / ".dart_tool" / "package_config.json";
+                std::filesystem::exists(config, ec)) {
+                return PackageConfigDirectory(config, name);
+            }
+            if (const std::filesystem::path pubspec = dir / "pubspec.yaml";
+                std::filesystem::exists(pubspec, ec) && PubspecName(pubspec) == name) {
+                return dir / "lib";
+            }
+            if (dir == dir.parent_path() || dir.empty()) {
+                return std::nullopt;
+            }
+        }
+    }
+
+    // Each source root under the importing file's package root, then under
+    // the project root -- a monorepo's package keeps its own "src/".
+    std::vector<std::filesystem::path> SourceRootDirectories(const ImportResolutionConfig& config,
+                                                             const std::filesystem::path&  importingFile,
+                                                             const std::string&            languageKey) {
+        std::vector<std::filesystem::path> bases{PackageRootFor(importingFile, languageKey)};
+        if (bases.front() != ProjectRoot()) {
+            bases.push_back(ProjectRoot());
+        }
+        std::vector<std::filesystem::path> directories;
+        for (const std::filesystem::path& base : bases) {
+            for (const std::string& root : config.sourceRoots) {
+                directories.push_back(base / root);
+            }
+        }
+        return directories;
+    }
+
+    SearchParameters ParametersFor(const std::filesystem::path& baseDirectory,
+                                   const std::filesystem::path& importingFile, const Mode& mode) {
         const ProjectSettings projectSettings = LoadProjectSettings(ProjectRoot());
+        const std::string     languageKey     = LanguageKeyForMode(mode);
+        SearchParameters      parameters;
+        parameters.config = ResolveImportResolutionConfig(projectSettings, languageKey);
+
+        // Source roots are the language's own layout, so they come before
+        // anything the project or toolchain adds.
+        parameters.includePaths = SourceRootDirectories(parameters.config, importingFile, languageKey);
 
         // toolchain-include-paths follow-up: project-configured includePaths
         // always come first (a user override outranks a guessed default),
         // with the real compiler's own system search paths appended as a
         // last-resort fallback for an angle-form/system include
         // ProjectSettings never mentioned at all.
-        const std::string languageKey = LanguageKeyForMode(mode);
-        SearchParameters  parameters;
-        parameters.includePaths                                 = IncludePathsForMode(projectSettings, mode.name);
+        const std::vector<std::filesystem::path>& projectPaths = IncludePathsForMode(projectSettings, mode.name);
+        parameters.includePaths.insert(parameters.includePaths.end(), projectPaths.begin(), projectPaths.end());
         const std::vector<std::filesystem::path> toolchainPaths = ToolchainIncludePathsForLanguage(languageKey);
         parameters.includePaths.insert(parameters.includePaths.end(), toolchainPaths.begin(), toolchainPaths.end());
 
@@ -69,7 +172,6 @@ namespace {
         // widen what ResolveFileLink can find beyond an exact on-disk match
         // -- a relative JS/TS import written without its real extension, a
         // Python package's __init__.py, a bare "import x from 'lodash'".
-        parameters.config = ResolveImportResolutionConfig(projectSettings, languageKey);
         if (parameters.config.searchPackageDirs) {
             const std::vector<std::filesystem::path> packageDirs = NodeModulesSearchPaths(baseDirectory, ProjectRoot());
             parameters.includePaths.insert(parameters.includePaths.end(), packageDirs.begin(), packageDirs.end());
@@ -79,12 +181,79 @@ namespace {
 
 } // namespace
 
+ImportResolutionConfig ImportResolutionConfigFor(const Mode& mode) {
+    return ResolveImportResolutionConfig(LoadProjectSettings(ProjectRoot()), LanguageKeyForMode(mode));
+}
+
+std::string ModulePathToFilePath(std::string_view module, const ImportResolutionConfig& config) {
+    const std::string_view separator = config.moduleSeparator.empty() ? std::string_view(".") : config.moduleSeparator;
+    std::string            path;
+    std::size_t            start = 0;
+    while (true) {
+        const std::size_t end  = module.find(separator, start);
+        std::string       step = std::string(module.substr(start, end == std::string_view::npos ? end : end - start));
+        for (const auto& [from, to] : config.moduleSubstitutions) {
+            for (std::size_t at = step.find(from); at != std::string::npos; at = step.find(from, at + to.size())) {
+                step.replace(at, from.size(), to);
+            }
+        }
+        path += step;
+        if (end == std::string_view::npos) {
+            break;
+        }
+        path += '/';
+        start = end + separator.size();
+    }
+    return path;
+}
+
+link::DetectedLink ImportLinkFor(const ImportTarget& target, const ImportResolutionConfig& config) {
+    return link::DetectedLink{
+        .kind             = link::LinkKind::File,
+        .target           = target.isModulePath ? ModulePathToFilePath(target.target, config) : target.target,
+        .startByte        = target.startByte,
+        .endByte          = target.endByte,
+        .relativeLevel    = target.relativeLevel,
+        .isModDeclaration = target.isModDeclaration,
+    };
+}
+
+std::optional<PrefixedImport> MatchImportPrefix(const std::string& target, const std::filesystem::path& importingFile,
+                                                const Mode& mode) {
+    const ImportResolutionConfig config = ImportResolutionConfigFor(mode);
+    for (const auto& [prefix, directory] : config.rootPrefixes) {
+        if (target.rfind(prefix, 0) == 0) {
+            const std::filesystem::path packageRoot = PackageRootFor(importingFile, LanguageKeyForMode(mode));
+            return PrefixedImport{.prefix    = prefix,
+                                  .remainder = target.substr(prefix.size()),
+                                  .root      = directory.empty() ? packageRoot : packageRoot / directory};
+        }
+    }
+    const std::string& scheme = config.packageScheme;
+    if (!scheme.empty() && target.rfind(scheme, 0) == 0) {
+        const std::size_t slash = target.find('/', scheme.size());
+        if (slash == std::string::npos || slash == scheme.size()) {
+            return PrefixedImport{.prefix = target, .remainder = {}, .root = {}};
+        }
+        const std::string           name  = target.substr(scheme.size(), slash - scheme.size());
+        const std::filesystem::path start = importingFile.empty() ? ProjectRoot() : importingFile.parent_path();
+        return PrefixedImport{.prefix    = target.substr(0, slash + 1),
+                              .remainder = target.substr(slash + 1),
+                              .root      = DartPackageDirectory(start, name).value_or(std::filesystem::path{})};
+    }
+    return std::nullopt;
+}
+
 std::vector<std::filesystem::path> ImportSearchRoots(const link::DetectedLink&    detected,
                                                      const std::filesystem::path& importingFile, const Mode& mode) {
+    if (const auto prefixed = MatchImportPrefix(detected.target, importingFile, mode)) {
+        return prefixed->root.empty() ? std::vector<std::filesystem::path>{}
+                                      : std::vector<std::filesystem::path>{prefixed->root};
+    }
     const std::filesystem::path baseDirectory = BaseDirectoryFor(detected, importingFile);
 
     std::vector<std::filesystem::path> roots{baseDirectory, ProjectRoot()};
-    const SearchParameters             parameters = ParametersFor(baseDirectory, mode);
+    const SearchParameters             parameters = ParametersFor(baseDirectory, importingFile, mode);
     roots.insert(roots.end(), parameters.includePaths.begin(), parameters.includePaths.end());
     return roots;
 }
@@ -92,12 +261,27 @@ std::vector<std::filesystem::path> ImportSearchRoots(const link::DetectedLink&  
 std::optional<ResolvedImport> ResolveImportLink(const link::DetectedLink&    detected,
                                                 const std::filesystem::path& importingFile, const Mode& mode) {
     const std::filesystem::path baseDirectory = BaseDirectoryFor(detected, importingFile);
-    const SearchParameters      parameters    = ParametersFor(baseDirectory, mode);
+    const SearchParameters      parameters    = ParametersFor(baseDirectory, importingFile, mode);
+
+    if (const auto prefixed = MatchImportPrefix(detected.target, importingFile, mode)) {
+        if (prefixed->root.empty() || prefixed->remainder.empty()) {
+            return std::nullopt;
+        }
+        // Absolute, so nothing but the prefix's own root is tried.
+        const auto resolved =
+            link::ResolveFileLink((prefixed->root / prefixed->remainder).string(), prefixed->root, {},
+                                  parameters.config.extensions, parameters.config.indexBasenames, nullptr,
+                                  parameters.config.partialPrefix);
+        if (!resolved) {
+            return std::nullopt;
+        }
+        return ResolvedImport{.path = *resolved, .base = prefixed->root};
+    }
 
     std::filesystem::path resolvedBase;
     const auto            resolved =
         link::ResolveFileLink(detected.target, baseDirectory, parameters.includePaths, parameters.config.extensions,
-                              parameters.config.indexBasenames, &resolvedBase);
+                              parameters.config.indexBasenames, &resolvedBase, parameters.config.partialPrefix);
     if (!resolved) {
         return std::nullopt;
     }

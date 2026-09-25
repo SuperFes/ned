@@ -8,4 +8,5 @@
  # workspaceFolders, so sibling roots join one connection (LspManager).
  :lsp-root-markers ["pom.xml" "build.gradle" "build.gradle.kts" "settings.gradle" "settings.gradle.kts"]
  :signature-template "class __Ned { void __ned_sig({}) {} }"
+ :import-resolution {:extensions ["java" "kt"] :source-roots ["src/main/java" "src/test/java" "src/main/kotlin" "src/test/kotlin" "src"]}
 }

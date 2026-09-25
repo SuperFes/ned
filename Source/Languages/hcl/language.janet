@@ -5,4 +5,5 @@
  :lsp-root-markers [".terraform" ".terraform.lock.hcl"]
  # The outline stops at top-level blocks; breadcrumbs follow every level.
  :sticky-scroll-from-folds true
+ :import-resolution {:extensions ["tf"] :index-basenames ["main"]}
 }

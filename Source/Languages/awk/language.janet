@@ -10,4 +10,5 @@
  :line-continuation "\\"
  :capture-classes {"regexp" :string}
  :first-pattern-wins true
+ :import-resolution {:extensions ["awk"]}
 }

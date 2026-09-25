@@ -3,7 +3,7 @@
  :line-comment "#"
  :line-continuation "\\"
  :lsp-root-markers ["pyproject.toml" "setup.py" "setup.cfg"]
- :import-resolution {:extensions ["py"] :index-basenames ["__init__"]}
+ :import-resolution {:extensions ["py"] :index-basenames ["__init__"] :source-roots ["src"]}
  :injection-aliases ["py" "python3" "py3"]
  :snippets
  {

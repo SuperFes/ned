@@ -3,4 +3,5 @@
  :extensions [".v" ".vh" ".sv" ".svh"]
  :injection-aliases ["sv" "systemverilog"]
  :line-comment "//"
+ :import-resolution {:extensions ["vh" "svh" "v" "sv"]}
 }

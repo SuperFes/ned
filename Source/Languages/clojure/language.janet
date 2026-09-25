@@ -7,6 +7,8 @@
  :line-comment ";"
  :lsp-root-markers ["deps.edn" "project.clj" "shadow-cljs.edn" "bb.edn" "build.boot"]
  :auto-pairs :lisp
- :import-resolution {:extensions ["clj" "cljc" "cljs"]}
+ :import-resolution {:extensions ["clj" "cljc" "cljs"]
+                     :module-substitutions [["-" "_"]]
+                     :source-roots ["src" "test" "src/main/clojure" "src/test/clojure"]}
  :injection-aliases ["clj"]
 }

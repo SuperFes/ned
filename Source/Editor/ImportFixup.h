@@ -51,6 +51,8 @@
 #include <string>
 #include <vector>
 
+#include "Editor/ImportResolutionConfig.h"
+
 namespace ned::editor::importfix {
 
 // The shape of a specifier's text, which is what decides how it is
@@ -94,6 +96,9 @@ struct RewriteRequest {
     std::filesystem::path resolutionRoot;
     // Where the imported file lives now.
     std::filesystem::path newTarget;
+    // DottedModule/RelativeModule: how the importing language spells a
+    // module path -- its separator, substitutions and package index files.
+    ImportResolutionConfig resolution;
 };
 
 // The recomputed specifier text, or nullopt when the original's style
@@ -103,14 +108,14 @@ struct RewriteRequest {
 // original occupied, so whatever quoted or bracketed it is untouched.
 [[nodiscard]] std::optional<std::string> RewriteSpec(const RewriteRequest& request);
 
-// Path -> "pkg.mod" against a root, dropping the extension, and collapsing
-// a package index file ("pkg/__init__.py" -> "pkg"). nullopt when file does
-// not live under root at all. Exposed because it is the one rule a
-// language's package layout could invalidate, and the cheapest thing to
-// pin in a test.
-[[nodiscard]] std::optional<std::string> DottedModuleFor(const std::filesystem::path& file,
-                                                         const std::filesystem::path& root,
-                                                         const std::string&           indexBasename);
+// Path -> "pkg.mod" against a root, dropping the extension, collapsing a
+// package index file ("pkg/__init__.py" -> "pkg") and spelling it the way
+// `resolution` does ("Foo::Bar", "my-app.core"). nullopt when file does not
+// live under root at all. Exposed because it is the one rule a language's
+// package layout could invalidate, and the cheapest thing to pin in a test.
+[[nodiscard]] std::optional<std::string> DottedModuleFor(const std::filesystem::path&  file,
+                                                         const std::filesystem::path&  root,
+                                                         const ImportResolutionConfig& resolution);
 
 // One file's move: where it was, where it is (or is about to be).
 struct MovedFile {

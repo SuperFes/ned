@@ -3,4 +3,5 @@
  :injection-aliases ["justfile"]
  :filenames ["justfile" "Justfile" "JUSTFILE" ".justfile" ".Justfile" ".JUSTFILE"]
  :line-comment "#"
+ :import-resolution {:extensions ["just"] :index-basenames ["mod"]}
 }

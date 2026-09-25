@@ -340,6 +340,78 @@ Forward statements
     (string_value)))
 
 ==============================
+Use statements with a namespace and configuration
+==============================
+
+@use 'base/vars' as v;
+@use 'theme' as *;
+@use 'library' with ($black: #222, $border-radius: 0.1rem);
+
+---
+
+(stylesheet
+  (use_statement
+    (string_value)
+    (identifier))
+  (use_statement
+    (string_value))
+  (use_statement
+    (string_value)
+    (arguments
+      (argument
+        (variable)
+        (color_value))
+      (argument
+        (variable)
+        (float_value
+          (unit))))))
+
+==============================
+Forward statements with a prefix and visibility
+==============================
+
+@forward 'src/list' as list-* hide list-reset, $horizontal-list-gap;
+@forward 'library' show border, $border-color with ($black: #222 !default);
+
+---
+
+(stylesheet
+  (forward_statement
+    (string_value)
+    (identifier)
+    (identifier)
+    (variable))
+  (forward_statement
+    (string_value)
+    (identifier)
+    (variable)
+    (arguments
+      (argument
+        (variable)
+        (color_value)
+        (default)))))
+
+==============================
+Variable flags
+==============================
+
+$x: 1 !default;
+$y: 2 !global !default;
+
+---
+
+(stylesheet
+  (declaration
+    (property_name)
+    (integer_value)
+    (default))
+  (declaration
+    (property_name)
+    (integer_value)
+    (global)
+    (default)))
+
+==============================
 Include statements
 ==============================
 

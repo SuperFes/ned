@@ -206,6 +206,31 @@ and code reading. Highest stakes first.
       a member call; Julia's keyword parameters (after `;`) read as positional, so a
       call passing one by name is declined; overloaded constructors (Java's `Box(int)`
       beside `Box(int, int)`) trip the same-name arity check and decline.
+- [ ] **Imports: what is still unmodelled.** 68 languages go to a file through their
+      imports and have them rewritten when a file moves (`imp`). A language's
+      `:import-resolution` says how a specifier becomes a path: `:source-roots` under the
+      package root (the nearest LSP root marker) and the project root, `:module-separator`
+      (Perl's `::`), `:module-substitutions` (Clojure's `-` for `_`), `:partial-prefix`
+      (Sass's `_`), `:root-prefixes` (Godot's `res://`) and `:package-scheme` (Dart's
+      `package:`, through `.dart_tool/package_config.json`, else the enclosing pubspec);
+      a project's `importResolution.<language>.sourceRoots` replaces the roots. Left:
+  - [ ] **No imports query.** Go (a package is a directory, found through `go.mod`'s
+        module path), C# and F# namespaces, Swift and Elixir modules, OCaml and ReScript's
+        flat module names, V and Odin's directory packages, Pascal units (a unit name
+        isn't a path, so a move couldn't be written back into one), Ada's GNAT
+        `foo-bar.ads` naming, Starlark's Bazel labels, VHDL libraries. Svelte, Vue and
+        Astro script imports belong to the injected language, which `importTarget`
+        doesn't follow the way the outline does (`:injected-symbols`).
+  - [ ] **JVM moves are half a refactor.** A moved Java/Kotlin/Scala/Groovy class's
+        importers are rewritten; its own `package` line and its same-package users, which
+        import nothing, are not. Scala reads only a plain `import a.b.C`, not selectors or
+        renames, since its path is sibling identifiers rather than one node.
+  - [ ] **Source roots are conventions, not read from the build.** Cabal's
+        `hs-source-dirs`, `elm.json`'s `source-directories`, Maven/Gradle source sets and
+        rebar's include dirs are all approximated by the bundled defaults.
+  - [ ] **Spellings that name no one file.** CMake paths through variables
+        (`${CMAKE_CURRENT_LIST_DIR}/x.cmake`), `~` in ssh_config and gitconfig includes,
+        globs (Caddy, nginx, Apache), Just's bare `mod name`, Nim's `pkg/[a, b]` groups.
 - [ ] **Bundled formatter styles: PHP (PSR-12), Go (gofmt), Rust (rustfmt), Kotlin
       (official conventions), C# (.NET conventions) and JavaScript/TypeScript/TSX
       (Prettier).** A Rust project's `rustfmt.toml` adjusts what rustfmt lets it

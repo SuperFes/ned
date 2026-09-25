@@ -10,4 +10,5 @@
                    "union" :constructor
                    "char" :string
                    "source.glsl" :default}
+ :import-resolution {:extensions ["elm"] :source-roots ["src"]}
 }

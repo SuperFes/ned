@@ -27,6 +27,9 @@ ImportResolutionConfig ResolveImportResolutionConfig(const ProjectSettings& sett
     if (!override_.indexBasenames.empty()) {
         config.indexBasenames = override_.indexBasenames;
     }
+    if (!override_.sourceRoots.empty()) {
+        config.sourceRoots = override_.sourceRoots;
+    }
     if (override_.searchPackageDirs.has_value()) {
         config.searchPackageDirs = *override_.searchPackageDirs;
     }

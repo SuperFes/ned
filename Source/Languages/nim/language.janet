@@ -4,4 +4,5 @@
  :lsp-root-markers ["nim.cfg" "config.nims"]
  # Nim identifiers can't start with or double an underscore.
  :signature-template "proc nedSig({}) = discard"
+ :import-resolution {:extensions ["nim"] :source-roots ["src"]}
 }

@@ -3,4 +3,5 @@
  :injection-aliases ["rkt"]
  :line-comment ";"
  :auto-pairs :lisp
+ :import-resolution {:extensions ["rkt"]}
 }

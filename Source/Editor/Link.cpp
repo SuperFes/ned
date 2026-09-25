@@ -281,7 +281,8 @@ namespace {
     // useful once it's actually resolved on down to "foo/index.js".
     std::optional<std::filesystem::path> TryVariants(const std::filesystem::path&    candidate,
                                                      const std::vector<std::string>& candidateExtensions,
-                                                     const std::vector<std::string>& indexBasenames) {
+                                                     const std::vector<std::string>& indexBasenames,
+                                                     const std::string&              partialPrefix) {
         const bool isDirectory              = std::filesystem::is_directory(candidate);
         const bool preferIndexOverDirectory = !indexBasenames.empty() && isDirectory;
         if (!preferIndexOverDirectory && std::filesystem::exists(candidate)) {
@@ -292,6 +293,15 @@ namespace {
             withExtension += ("." + extension);
             if (std::filesystem::exists(withExtension)) {
                 return withExtension;
+            }
+        }
+        if (!partialPrefix.empty() && candidate.has_filename()) {
+            for (const std::string& extension : candidateExtensions) {
+                const std::filesystem::path partial =
+                    candidate.parent_path() / (partialPrefix + candidate.filename().string() + "." + extension);
+                if (std::filesystem::exists(partial)) {
+                    return partial;
+                }
             }
         }
         // resolver-gaps follow-up: a real package.json "main"/"exports"
@@ -306,6 +316,14 @@ namespace {
             }
         }
         for (const std::string& basename : indexBasenames) {
+            // A basename with its own extension is a whole filename (CMake's
+            // "CMakeLists.txt"), not one to widen.
+            if (basename.find('.') != std::string::npos) {
+                if (const std::filesystem::path indexFile = candidate / basename; std::filesystem::exists(indexFile)) {
+                    return indexFile;
+                }
+                continue;
+            }
             for (const std::string& extension : candidateExtensions) {
                 if (const std::filesystem::path indexFile = candidate / (basename + "." + extension);
                     std::filesystem::exists(indexFile)) {
@@ -322,7 +340,8 @@ std::optional<std::filesystem::path> ResolveFileLink(const std::string& target, 
                                                      const std::vector<std::filesystem::path>& includePaths,
                                                      const std::vector<std::string>&           candidateExtensions,
                                                      const std::vector<std::string>&           indexBasenames,
-                                                     std::filesystem::path*                    resolvedBase) {
+                                                     std::filesystem::path*                    resolvedBase,
+                                                     const std::string&                        partialPrefix) {
     const std::filesystem::path targetPath(target);
     const auto                  found = [&](const std::filesystem::path& base) {
         if (resolvedBase != nullptr) {
@@ -332,19 +351,19 @@ std::optional<std::filesystem::path> ResolveFileLink(const std::string& target, 
 
     if (targetPath.is_absolute()) {
         found({});
-        return TryVariants(targetPath, candidateExtensions, indexBasenames);
+        return TryVariants(targetPath, candidateExtensions, indexBasenames, partialPrefix);
     }
 
-    if (const auto resolved = TryVariants(baseDirectory / targetPath, candidateExtensions, indexBasenames)) {
+    if (const auto resolved = TryVariants(baseDirectory / targetPath, candidateExtensions, indexBasenames, partialPrefix)) {
         found(baseDirectory);
         return resolved;
     }
-    if (const auto resolved = TryVariants(ProjectRoot() / targetPath, candidateExtensions, indexBasenames)) {
+    if (const auto resolved = TryVariants(ProjectRoot() / targetPath, candidateExtensions, indexBasenames, partialPrefix)) {
         found(ProjectRoot());
         return resolved;
     }
     for (const std::filesystem::path& includePath : includePaths) {
-        if (const auto resolved = TryVariants(includePath / targetPath, candidateExtensions, indexBasenames)) {
+        if (const auto resolved = TryVariants(includePath / targetPath, candidateExtensions, indexBasenames, partialPrefix)) {
             found(includePath);
             return resolved;
         }

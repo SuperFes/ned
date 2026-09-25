@@ -5,4 +5,5 @@
  :lsp-root-markers ["cpanfile" "Makefile.PL" "dist.ini"]
  # POD documentation.
  :capture-classes {"text" :doc-comment}
+ :import-resolution {:extensions ["pm" "pl"] :module-separator "::" :source-roots ["lib" "t/lib"]}
 }

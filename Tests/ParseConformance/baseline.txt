@@ -138,7 +138,7 @@ dart/corpus  cases=187 runs=187 passed=185 failed=2 skipped=0
 tcl/corpus  cases=19 runs=19 passed=19 failed=0 skipped=0
 nu/corpus  cases=309 runs=309 passed=309 failed=0 skipped=0
 powershell/corpus  cases=139 runs=139 passed=139 failed=0 skipped=0
-scss/corpus  cases=56 runs=56 passed=56 failed=0 skipped=0
+scss/corpus  cases=59 runs=59 passed=59 failed=0 skipped=0
 vue/corpus  cases=10 runs=10 passed=10 failed=0 skipped=0
 svelte/corpus  cases=45 runs=45 passed=45 failed=0 skipped=0
 astro/corpus  cases=22 runs=22 passed=22 failed=0 skipped=0
@@ -153,4 +153,4 @@ gdscript/corpus  cases=167 runs=167 passed=166 failed=1 skipped=0
 matlab/corpus  cases=157 runs=157 passed=155 failed=2 skipped=0
   FAIL call.txt: Function Call: Line Continuation
   FAIL strings.txt: Strings: Invalid termination
-total  cases=12721 runs=12705 passed=12671 failed=34 skipped=22
+total  cases=12724 runs=12708 passed=12674 failed=34 skipped=22

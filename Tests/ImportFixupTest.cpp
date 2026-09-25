@@ -10,10 +10,19 @@
 
 #include "Editor/ImportFixup.h"
 
+using ned::editor::ImportResolutionConfig;
 using ned::editor::importfix::DottedModuleFor;
 using ned::editor::importfix::RewriteRequest;
 using ned::editor::importfix::RewriteSpec;
 using ned::editor::importfix::SpecKind;
+
+namespace {
+
+ImportResolutionConfig PythonResolution() {
+    return ImportResolutionConfig{.extensions = {"py"}, .indexBasenames = {"__init__"}};
+}
+
+} // namespace
 
 TEST_CASE("A quoted C include keeps its bare, extension-carrying style", "[ImportFixup]") {
     RewriteRequest request;
@@ -106,9 +115,32 @@ TEST_CASE("A dotted module that leaves its root is declined", "[ImportFixup]") {
 }
 
 TEST_CASE("A package index file names its package, not itself", "[ImportFixup]") {
-    REQUIRE(DottedModuleFor("/p/pkg/sub/__init__.py", "/p", "__init__") == "pkg.sub");
-    REQUIRE(DottedModuleFor("/p/pkg/sub/mod.py", "/p", "__init__") == "pkg.sub.mod");
-    REQUIRE_FALSE(DottedModuleFor("/p/__init__.py", "/p", "__init__").has_value());
+    REQUIRE(DottedModuleFor("/p/pkg/sub/__init__.py", "/p", PythonResolution()) == "pkg.sub");
+    REQUIRE(DottedModuleFor("/p/pkg/sub/mod.py", "/p", PythonResolution()) == "pkg.sub.mod");
+    REQUIRE_FALSE(DottedModuleFor("/p/__init__.py", "/p", PythonResolution()).has_value());
+}
+
+TEST_CASE("A module path is spelled with its language's own separator", "[ImportFixup]") {
+    ImportResolutionConfig perl{.extensions = {"pm"}};
+    perl.moduleSeparator = "::";
+    REQUIRE(DottedModuleFor("/p/lib/Foo/Bar/Baz.pm", "/p/lib", perl) == "Foo::Bar::Baz");
+}
+
+TEST_CASE("A module path reverses its language's substitutions", "[ImportFixup]") {
+    ImportResolutionConfig clojure{.extensions = {"clj"}};
+    clojure.moduleSubstitutions = {{"-", "_"}};
+    REQUIRE(DottedModuleFor("/p/src/my_app/core_util.clj", "/p/src", clojure) == "my-app.core-util");
+}
+
+TEST_CASE("A module rewrite keeps the language's own spelling", "[ImportFixup]") {
+    RewriteRequest request;
+    request.kind                       = SpecKind::DottedModule;
+    request.spec                       = "Foo::Bar";
+    request.resolutionRoot             = "/p/lib";
+    request.newTarget                  = "/p/lib/Foo/Moved/Bar.pm";
+    request.resolution.moduleSeparator = "::";
+
+    REQUIRE(RewriteSpec(request) == "Foo::Moved::Bar");
 }
 
 TEST_CASE("A Python relative import recomputes its dot count", "[ImportFixup]") {
@@ -139,6 +171,7 @@ TEST_CASE("A relative import of a package names the package", "[ImportFixup]") {
     request.spec              = "sub";
     request.importerDirectory = "/p/pkg";
     request.newTarget         = "/p/pkg/moved/sub/__init__.py";
+    request.resolution        = PythonResolution();
 
     REQUIRE(RewriteSpec(request) == ".moved.sub");
 }

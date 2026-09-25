@@ -159,7 +159,7 @@
                ":"
                _value
                (:repeat (:seq (:choice "," :blank) _value))
-               (:choice important :blank)
+               (:repeat _flag)
                ";")
   last_declaration (:prec 1
                     (:seq
@@ -167,8 +167,11 @@
                      ":"
                      _value
                      (:repeat (:seq (:choice "," :blank) _value))
-                     (:choice important :blank)))
+                     (:repeat _flag)))
   important "!important"
+  _flag (:choice important default global)
+  default "!default"
+  global "!global"
   _query (:choice
           (:choice
            (:alias identifier keyword_query)
@@ -243,8 +246,30 @@
                 (:pattern "[a-zA-Z]")
                 (:repeat
                  (:choice (:pattern "[^/\\s,;!{}()\\[\\]]") (:pattern "\\/[^\\*\\s,;!{}()\\[\\]]")))))
-  use_statement (:seq "@use" _value ";")
-  forward_statement (:seq "@forward" _value ";")
+  use_statement (:seq
+                 "@use"
+                 _value
+                 (:choice (:seq "as" (:choice identifier "*")) :blank)
+                 (:choice _module_configuration :blank)
+                 ";")
+  forward_statement (:seq
+                     "@forward"
+                     _value
+                     (:choice (:seq "as" identifier (:choice (:token-immediate "*") :blank)) :blank)
+                     (:choice
+                      (:seq (:choice "show" "hide") _forward_member (:repeat (:seq "," _forward_member)))
+                      :blank)
+                     (:choice _module_configuration :blank)
+                     ";")
+  _forward_member (:choice identifier variable)
+  _module_configuration (:seq "with" (:alias _module_arguments arguments))
+  _module_arguments (:seq
+                     "("
+                     (:alias _module_argument argument)
+                     (:repeat (:seq "," (:alias _module_argument argument)))
+                     (:choice "," :blank)
+                     ")")
+  _module_argument (:seq (:field :name variable) ":" (:field :value _value) (:choice default :blank))
   mixin_statement (:seq "@mixin" (:field :name identifier) (:choice parameters :blank) block)
   include_statement (:seq
                      "@include"

@@ -85,6 +85,7 @@ struct ImportResolutionOverride {
     std::vector<std::string> extensions;
     std::vector<std::string> indexBasenames;
     std::optional<bool>      searchPackageDirs; // nullopt = inherit the bundled default's own value
+    std::vector<std::string> sourceRoots;
 };
 
 struct ProjectSettings {

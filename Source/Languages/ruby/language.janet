@@ -6,4 +6,5 @@
  :lsp-root-markers ["Gemfile"]
  :line-continuation "\\"
  :signature-template "def __ned_sig({})\nend"
+ :import-resolution {:extensions ["rb"] :source-roots ["lib"]}
 }

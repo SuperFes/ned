@@ -524,7 +524,21 @@ std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureN
         ImportCaptures CollectImportCaptures(const grammar::QueryMatcher& query, const grammar::Node& root,
                                              std::string_view bufferText) {
             ImportCaptures captures;
-            for (const grammar::QueryCapture& capture : query.Captures(root, bufferText)) {
+            // Matches rather than Captures: a query may trim a target with
+            // #offset! (Fennel's ":a.b" keyword string), which only matches carry.
+            std::vector<grammar::QueryMatchCapture> all;
+            for (const grammar::QueryMatch& match : query.Matches(root, bufferText)) {
+                all.insert(all.end(), match.captures.begin(), match.captures.end());
+            }
+            std::sort(all.begin(), all.end(), [](const auto& a, const auto& b) {
+                return std::tie(a.startByte, b.endByte, a.name) < std::tie(b.startByte, a.endByte, b.name);
+            });
+            all.erase(std::unique(all.begin(), all.end(),
+                                  [](const auto& a, const auto& b) {
+                                      return a.name == b.name && a.startByte == b.startByte && a.endByte == b.endByte;
+                                  }),
+                      all.end());
+            for (const grammar::QueryMatchCapture& capture : all) {
                 if (capture.name == "import.statement") {
                     captures.statements.emplace_back(capture.startByte, capture.endByte);
                 }
@@ -588,14 +602,14 @@ std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureN
             std::size_t targetEnd     = capture.targetEnd;
             int         relativeLevel = 0;
             switch (capture.kind) {
-                case ImportTargetKind::Literal: {
+                case ImportTargetKind::Literal:
+                case ImportTargetKind::Module: {
                     const std::string_view stripped = link::StripDelimiters(raw);
                     targetStart += static_cast<std::size_t>(stripped.data() - raw.data());
                     targetEnd = targetStart + stripped.size();
                     text      = std::string(stripped);
                     break;
                 }
-                case ImportTargetKind::Module:
                 case ImportTargetKind::Namespace:
                 case ImportTargetKind::ModDeclaration:
                     break; // kept as raw captured text
@@ -1657,15 +1671,25 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             }
             const ImportCaptures captures = CollectImportCaptures(*importQuery, tree.RootNode(), bufferText);
 
+            // The tightest statement around point; among the targets one
+            // statement lists (`include a.mk b.mk`), the one point is on.
             const ImportCapture* best      = nullptr;
             std::size_t          bestStart = 0;
             std::size_t          bestEnd   = 0;
+            bool                 bestAtPoint = false;
             for (const ImportCapture& target : captures.targets) {
                 const auto [rangeStart, rangeEnd] = ImportStatementRangeFor(captures, target);
-                if (rangeStart <= point && point <= rangeEnd && (!best || (rangeEnd - rangeStart) < (bestEnd - bestStart))) {
-                    best      = &target;
-                    bestStart = rangeStart;
-                    bestEnd   = rangeEnd;
+                if (rangeStart > point || point > rangeEnd) {
+                    continue;
+                }
+                const bool        atPoint  = target.targetStart <= point && point <= target.targetEnd;
+                const std::size_t size     = rangeEnd - rangeStart;
+                const std::size_t bestSize = bestEnd - bestStart;
+                if (!best || size < bestSize || (size == bestSize && atPoint && !bestAtPoint)) {
+                    best        = &target;
+                    bestStart   = rangeStart;
+                    bestEnd     = rangeEnd;
+                    bestAtPoint = atPoint;
                 }
             }
             if (!best) {

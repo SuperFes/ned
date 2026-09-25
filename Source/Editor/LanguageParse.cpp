@@ -295,9 +295,51 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
                 else if (field.IsKeyword() && field.text == "search-package-dirs") {
                     config.searchPackageDirs = ExpectBool(directoryName, v, ":search-package-dirs");
                 }
+                else if (field.IsKeyword() && field.text == "module-separator") {
+                    config.moduleSeparator = ExpectString(directoryName, v, ":module-separator");
+                    if (config.moduleSeparator.empty()) {
+                        Fail(directoryName, v.line, ":module-separator is empty");
+                    }
+                }
+                else if (field.IsKeyword() && field.text == "module-substitutions") {
+                    if (!v.IsTuple()) {
+                        Fail(directoryName, v.line, ":module-substitutions is a list of [module path] pairs");
+                    }
+                    for (const Value& entry : v.items) {
+                        const std::vector<std::string> pair =
+                            ExpectStrings(directoryName, entry, ":module-substitutions entry");
+                        if (pair.size() != 2 || pair[0].empty()) {
+                            Fail(directoryName, entry.line, ":module-substitutions entry is [module path]");
+                        }
+                        config.moduleSubstitutions.emplace_back(pair[0], pair[1]);
+                    }
+                }
+                else if (field.IsKeyword() && field.text == "source-roots") {
+                    config.sourceRoots = ExpectStrings(directoryName, v, ":source-roots");
+                }
+                else if (field.IsKeyword() && field.text == "partial-prefix") {
+                    config.partialPrefix = ExpectString(directoryName, v, ":partial-prefix");
+                }
+                else if (field.IsKeyword() && field.text == "root-prefixes") {
+                    if (!v.IsTuple()) {
+                        Fail(directoryName, v.line, ":root-prefixes is a list of [prefix directory] pairs");
+                    }
+                    for (const Value& entry : v.items) {
+                        const std::vector<std::string> pair = ExpectStrings(directoryName, entry, ":root-prefixes entry");
+                        if (pair.size() != 2 || pair[0].empty()) {
+                            Fail(directoryName, entry.line, ":root-prefixes entry is [prefix directory]");
+                        }
+                        config.rootPrefixes.emplace_back(pair[0], pair[1]);
+                    }
+                }
+                else if (field.IsKeyword() && field.text == "package-scheme") {
+                    config.packageScheme = ExpectString(directoryName, v, ":package-scheme");
+                }
                 else {
                     Fail(directoryName, field.line,
-                         ":import-resolution keys are :extensions/:index-basenames/:search-package-dirs");
+                         ":import-resolution keys are :extensions/:index-basenames/:search-package-dirs/"
+                         ":module-separator/:module-substitutions/:source-roots/:partial-prefix/"
+                         ":root-prefixes/:package-scheme");
                 }
             }
             definition.importResolution = std::move(config);

@@ -6,4 +6,5 @@
  :preserve-indent true
  :line-comment "//"
  :lsp-root-markers ["*.fsproj" "paket.dependencies"]
+ :import-resolution {:extensions ["fsx" "fs"]}
 }

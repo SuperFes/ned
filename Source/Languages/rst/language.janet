@@ -5,4 +5,5 @@
  :wrap-lines true
  # Section titles are adornment lines, not brackets; structure is depth.
  :imprint false
+ :import-resolution {:extensions ["rst"]}
 }

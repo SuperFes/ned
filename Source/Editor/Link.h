@@ -131,11 +131,14 @@ struct DetectedLink {
 // kind as though it were the first would turn a root-relative
 // "Editor/Mode.h" into "../Editor/Mode.h". Left empty for an absolute
 // target, which is relative to nothing.
+//
+// partialPrefix (defaulted empty): a further candidate per extension with
+// the prefix on the file name -- Sass's "base/vars" is "base/_vars.scss".
 [[nodiscard]] std::optional<std::filesystem::path> ResolveFileLink(
     const std::string& target, const std::filesystem::path& baseDirectory,
     const std::vector<std::filesystem::path>& includePaths = {},
     const std::vector<std::string>& candidateExtensions = {}, const std::vector<std::string>& indexBasenames = {},
-    std::filesystem::path* resolvedBase = nullptr);
+    std::filesystem::path* resolvedBase = nullptr, const std::string& partialPrefix = {});
 
 // Process-wide, mutex-guarded static state (mirrors TabWidth.h's exact
 // pattern) -- unlike FormatOnSave.h's FormatCommand, which defaults unset

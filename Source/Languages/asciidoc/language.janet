@@ -7,4 +7,5 @@
  :wrap-lines true
  # Structure is section depth; delimited blocks are fence lines, not brackets.
  :imprint false
+ :import-resolution {:extensions ["adoc"]}
 }

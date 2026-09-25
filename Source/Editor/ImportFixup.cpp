@@ -46,6 +46,59 @@ namespace {
         return text.size() >= prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
     }
 
+    // `part` with or without its extension: "CMakeLists.txt" is an index
+    // whole, and "CMakeLists" once DropExtension has run.
+    bool IsIndexBasename(const std::string& part, const ImportResolutionConfig& resolution) {
+        return std::any_of(resolution.indexBasenames.begin(), resolution.indexBasenames.end(),
+                           [&part](const std::string& basename) {
+                               return basename == part || std::filesystem::path(basename).stem() == part;
+                           });
+    }
+
+    // One path step spelled the way a module path writes it -- the reverse
+    // of ModulePathToFilePath's substitutions (Editor/ImportResolve.h).
+    std::string ModuleStep(std::string step, const ImportResolutionConfig& resolution) {
+        for (const auto& [module, path] : resolution.moduleSubstitutions) {
+            if (path.empty()) {
+                continue;
+            }
+            for (std::size_t at = step.find(path); at != std::string::npos; at = step.find(path, at + module.size())) {
+                step.replace(at, path.size(), module);
+            }
+        }
+        return step;
+    }
+
+    std::string JoinModule(const std::vector<std::string>& parts, const ImportResolutionConfig& resolution) {
+        std::string joined;
+        for (std::size_t i = 0; i < parts.size(); ++i) {
+            if (i > 0) {
+                joined += resolution.moduleSeparator;
+            }
+            joined += ModuleStep(parts[i], resolution);
+        }
+        return joined;
+    }
+
+    // A path's last step as the specifier it replaces spelled it: a Sass
+    // partial's "_" and a package's index file are left unwritten when the
+    // original left them unwritten ("base/vars", "./widget").
+    void MatchSpecStyle(std::vector<std::string>& parts, const std::string& spec,
+                        const ImportResolutionConfig& resolution) {
+        if (parts.empty()) {
+            return;
+        }
+        const std::string written = std::filesystem::path(spec).filename().string();
+        if (parts.size() > 1 && IsIndexBasename(parts.back(), resolution) && !IsIndexBasename(written, resolution)) {
+            parts.pop_back();
+            return;
+        }
+        const std::string& prefix = resolution.partialPrefix;
+        if (!prefix.empty() && StartsWith(parts.back(), prefix) && !StartsWith(written, prefix)) {
+            parts.back().erase(0, prefix.size());
+        }
+    }
+
     std::filesystem::path RelativeBetween(const std::filesystem::path& target, const std::filesystem::path& from) {
         return target.lexically_normal().lexically_relative(from.lexically_normal());
     }
@@ -53,7 +106,7 @@ namespace {
 } // namespace
 
 std::optional<std::string> DottedModuleFor(const std::filesystem::path& file, const std::filesystem::path& root,
-                                           const std::string& indexBasename) {
+                                           const ImportResolutionConfig& resolution) {
     const std::filesystem::path relative = RelativeBetween(file, root);
     if (relative.empty()) {
         return std::nullopt;
@@ -63,17 +116,13 @@ std::optional<std::string> DottedModuleFor(const std::filesystem::path& file, co
         return std::nullopt; // outside the root a dotted path is counted from
     }
     DropExtension(parts);
-    if (!indexBasename.empty() && parts.back() == indexBasename) {
+    if (IsIndexBasename(parts.back(), resolution)) {
         parts.pop_back(); // "pkg/__init__.py" is the module "pkg", not "pkg.__init__"
     }
     if (parts.empty()) {
         return std::nullopt;
     }
-    std::string dotted;
-    for (const std::string& part : parts) {
-        dotted += dotted.empty() ? part : "." + part;
-    }
-    return dotted;
+    return JoinModule(parts, resolution);
 }
 
 std::optional<std::string> RewriteSpec(const RewriteRequest& request) {
@@ -107,6 +156,7 @@ std::optional<std::string> RewriteSpec(const RewriteRequest& request) {
             // this one (Editor/ImportResolutionConfig.h).
             if (std::filesystem::path(request.spec).extension().empty()) {
                 DropExtension(parts);
+                MatchSpecStyle(parts, request.spec, request.resolution);
             }
             std::string rewritten;
             for (const std::string& part : parts) {
@@ -140,6 +190,7 @@ std::optional<std::string> RewriteSpec(const RewriteRequest& request) {
             }
             if (std::filesystem::path(request.spec).extension().empty()) {
                 DropExtension(parts);
+                MatchSpecStyle(parts, request.spec, request.resolution);
             }
             std::string rewritten;
             for (const std::string& part : parts) {
@@ -152,7 +203,7 @@ std::optional<std::string> RewriteSpec(const RewriteRequest& request) {
             if (request.resolutionRoot.empty()) {
                 return std::nullopt;
             }
-            return DottedModuleFor(request.newTarget, request.resolutionRoot, "__init__");
+            return DottedModuleFor(request.newTarget, request.resolutionRoot, request.resolution);
         }
 
         case SpecKind::RelativeModule: {
@@ -173,14 +224,10 @@ std::optional<std::string> RewriteSpec(const RewriteRequest& request) {
                 parts.erase(parts.begin());
             }
             DropExtension(parts);
-            if (!parts.empty() && parts.back() == "__init__") {
+            if (!parts.empty() && IsIndexBasename(parts.back(), request.resolution)) {
                 parts.pop_back();
             }
-            std::string rewritten(static_cast<std::size_t>(level), '.');
-            for (std::size_t i = 0; i < parts.size(); ++i) {
-                rewritten += (i == 0) ? parts[i] : "." + parts[i];
-            }
-            return rewritten;
+            return std::string(static_cast<std::size_t>(level), '.') + JoinModule(parts, request.resolution);
         }
     }
     return std::nullopt;
@@ -224,18 +271,33 @@ namespace {
         std::map<std::string, Mode> byExtension_;
     };
 
-    // What a moved file is called in the text of an import that names it.
-    // An index file is named by its own directory ("./widget" for
-    // "widget/index.js"), so its parent is the word to look for.
-    std::string SearchStemFor(const std::filesystem::path& path) {
-        const std::string stem = path.stem().string();
-        if (stem == "index" || stem == "__init__" || stem == "mod") {
+    // What a moved file may be called in the text of an import that names
+    // it: its stem; for an index file also its directory ("./widget" for
+    // "widget/index.js"); and a snake_case name's kebab-case spelling
+    // (Clojure's "my-app" for "my_app"). A word too many only costs a parse.
+    std::vector<std::string> SearchStemsFor(const std::filesystem::path& path) {
+        static constexpr std::string_view kIndexStems[] = {"index", "__init__", "mod", "init",
+                                                           "package", "default", "CMakeLists", "_index"};
+        std::vector<std::string>          stems;
+        const std::string                 stem = path.stem().string();
+        stems.push_back(stem);
+        if (std::find(std::begin(kIndexStems), std::end(kIndexStems), stem) != std::end(kIndexStems)) {
             const std::string parent = path.parent_path().filename().string();
             if (!parent.empty()) {
-                return parent;
+                stems.push_back(parent);
             }
         }
-        return stem;
+        if (stem.size() > 1 && stem.front() == '_') {
+            stems.push_back(stem.substr(1)); // a Sass partial, imported without its "_"
+        }
+        for (std::size_t i = 0, count = stems.size(); i < count; ++i) {
+            if (stems[i].find('_') != std::string::npos) {
+                std::string kebab = stems[i];
+                std::replace(kebab.begin(), kebab.end(), '_', '-');
+                stems.push_back(std::move(kebab));
+            }
+        }
+        return stems;
     }
 
     bool MentionsAny(std::string_view text, const std::vector<std::string>& stems) {
@@ -340,7 +402,9 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
     std::vector<std::string>                               stems;
     for (const MovedFile& move : moved) {
         moves[Canonical(move.from)] = move.to;
-        stems.push_back(SearchStemFor(move.from));
+        for (std::string& stem : SearchStemsFor(move.from)) {
+            stems.push_back(std::move(stem));
+        }
     }
 
     // A moved file is always its own candidate, whether or not the caller's
@@ -399,30 +463,24 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
             continue; // a query that cannot run is a file with no imports, not an error to raise
         }
 
-        FileFixup fixup;
-        fixup.file = newCandidate;
-        fixup.text = *text;
+        FileFixup                    fixup;
+        const ImportResolutionConfig resolution = ImportResolutionConfigFor(mode);
+        fixup.file                              = newCandidate;
+        fixup.text                              = *text;
         for (const ImportTarget& target : targets) {
             if (target.targetEndByte > text->size() || target.targetEndByte < target.targetStartByte) {
                 continue;
             }
-            std::string linkTarget = target.target;
-            if (target.isModulePath) {
-                std::replace(linkTarget.begin(), linkTarget.end(), '.', '/');
-            }
-            const link::DetectedLink      detected{.kind             = link::LinkKind::File,
-                                                   .target           = linkTarget,
-                                                   .startByte        = target.startByte,
-                                                   .endByte          = target.endByte,
-                                                   .relativeLevel    = target.relativeLevel,
-                                                   .isModDeclaration = target.isModDeclaration};
+            const link::DetectedLink      detected = ImportLinkFor(target, resolution);
+            const auto                    prefixed = MatchImportPrefix(detected.target, candidate, mode);
             std::optional<ResolvedImport> resolved = ResolveImportLink(detected, candidate, mode);
             if (!resolved) {
                 // Nothing on disk answers this specifier. Either it was
                 // already broken -- not this move's doing, and not this
                 // feature's business -- or the move already happened and
                 // took the answer with it.
-                resolved = MatchMovedTarget(linkTarget, ImportSearchRoots(detected, candidate, mode), moves);
+                resolved = MatchMovedTarget(prefixed ? prefixed->remainder : detected.target,
+                                            ImportSearchRoots(detected, candidate, mode), moves);
             }
             if (!resolved) {
                 continue;
@@ -432,7 +490,10 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
             const bool                  targetMoved   = targetMovedIt != moves.end();
             const std::filesystem::path newTarget     = targetMoved ? targetMovedIt->second : resolved->path;
 
-            const SpecKind kind = SpecKindFor(target, *text, resolved->base, candidate.parent_path());
+            // A prefixed specifier is counted from its prefix's root however
+            // close to it the importing file sits.
+            const SpecKind kind = prefixed ? SpecKind::RootRelativePath
+                                           : SpecKindFor(target, *text, resolved->base, candidate.parent_path());
             if (!targetMoved && !(importerMoved && DependsOnImporterLocation(target, kind))) {
                 continue; // nothing about this import changed
             }
@@ -444,25 +505,28 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
             // A specifier counted from the importing file's own directory
             // follows that file when it moves; one counted from a root does
             // not.
-            const bool                  rootIsImporter = Canonical(resolved->base) == Canonical(candidate.parent_path());
+            const bool rootIsImporter =
+                !prefixed && Canonical(resolved->base) == Canonical(candidate.parent_path());
             const std::filesystem::path resolutionRoot =
                 rootIsImporter ? newCandidate.parent_path() : resolved->base;
 
             const std::optional<std::string> rewritten =
                 RewriteSpec(RewriteRequest{.kind              = kind,
-                                           .spec              = target.target,
+                                           .spec              = prefixed ? prefixed->remainder : target.target,
                                            .importerDirectory = newCandidate.parent_path(),
                                            .resolutionRoot    = resolutionRoot,
-                                           .newTarget         = newTarget});
+                                           .newTarget         = newTarget,
+                                           .resolution        = resolution});
             if (!rewritten) {
                 ++plan.declined;
                 continue;
             }
-            const std::size_t length = target.targetEndByte - target.targetStartByte;
-            if (*rewritten == text->substr(target.targetStartByte, length)) {
+            const std::string newText = prefixed ? prefixed->prefix + *rewritten : *rewritten;
+            const std::size_t length  = target.targetEndByte - target.targetStartByte;
+            if (newText == text->substr(target.targetStartByte, length)) {
                 continue; // already says the right thing
             }
-            fixup.edits.push_back(SpecEdit{target.targetStartByte, target.targetEndByte, *rewritten});
+            fixup.edits.push_back(SpecEdit{target.targetStartByte, target.targetEndByte, newText});
         }
 
         if (!fixup.edits.empty()) {
@@ -477,9 +541,10 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
 std::string CandidatePattern(const std::vector<MovedFile>& moved) {
     std::set<std::string> stems;
     for (const MovedFile& move : moved) {
-        const std::string stem = SearchStemFor(move.from);
-        if (!stem.empty()) {
-            stems.insert(stem);
+        for (std::string& stem : SearchStemsFor(move.from)) {
+            if (!stem.empty()) {
+                stems.insert(std::move(stem));
+            }
         }
     }
     std::string pattern;

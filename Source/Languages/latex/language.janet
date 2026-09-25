@@ -4,4 +4,5 @@
  :line-comment "%"
  :wrap-lines true
  :lsp-root-markers [".latexmkrc" "latexmkrc" "Tectonic.toml"]
+ :import-resolution {:extensions ["tex" "bib"]}
 }
