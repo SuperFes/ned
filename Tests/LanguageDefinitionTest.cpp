@@ -199,6 +199,7 @@ TEST_CASE("The bundled definitions claim exactly the extensions the old table di
         {".pyw", "python"},
         {".sh", "bash"},
         {".bash", "bash"},
+        {".bats", "bash"},
         {".ebuild", "bash"},
         {".eclass", "bash"},
         {".yaml", "yaml"},

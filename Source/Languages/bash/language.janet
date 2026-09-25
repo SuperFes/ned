@@ -10,7 +10,7 @@
  # tests, arrays), so the bundled bash grammar parses them correctly with no
  # dedicated grammar of its own. make.conf (Portage's system-wide build
  # config, plain VAR="value" assignments) is the same story.
- :extensions [".sh" ".bash" ".ebuild" ".eclass"]
+ :extensions [".sh" ".bash" ".bats" ".ebuild" ".eclass"]
  :filenames ["make.conf"]
  :line-comment "#"
  :line-continuation "\\"

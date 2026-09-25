@@ -35,7 +35,7 @@ std::vector<std::string> MarkerNames(const std::vector<TestMarker>& markers) {
 TEST_CASE("Modes with no test query configured have an empty testDiscovery", "[TestRun]") {
     CHECK_FALSE(static_cast<bool>(ned::editor::FundamentalMode().testDiscovery));
     CHECK_FALSE(static_cast<bool>(ned::editor::JsonMode().testDiscovery));
-    CHECK_FALSE(static_cast<bool>(ned::editor::BashMode().testDiscovery));
+    CHECK_FALSE(static_cast<bool>(ned::editor::ModeByName("yaml-mode")->testDiscovery));
 }
 
 TEST_CASE("CMode testDiscovery finds Unity, CMocka, Check, Criterion and greatest tests", "[TestRun]") {
@@ -569,6 +569,14 @@ TEST_CASE("Scripting, functional and systems languages discover their frameworks
                                              "    It \"sums\" { 1 | Should -Be 1 }\n"
                                              "  }\n"
                                              "}\n") == V{"calc", "add", "sums"});
+
+    CHECK(DiscoveredNames("bash-mode", "setup() { x=1; }\n"
+                                       "@test \"adds numbers\" {\n"
+                                       "  run echo 1\n"
+                                       "}\n"
+                                       "@test subtracts {\n"
+                                       "  true\n"
+                                       "}\n") == V{"adds numbers", "subtracts"});
 
     CHECK(DiscoveredNames("racket-mode", "#lang racket\n"
                                          "(define s (test-suite \"calc\"))\n"

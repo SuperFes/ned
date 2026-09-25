@@ -106,3 +106,25 @@ echo hi
     (command_name
       (word))
     (word)))
+
+================================================================================
+bats test
+================================================================================
+
+@test "adds numbers" {
+  run echo 1
+}
+
+--------------------------------------------------------------------------------
+
+(program
+  (bats_test
+    (string
+      (string_content))
+    (compound_statement
+      (command
+        (command_name
+          (word))
+        (word)
+        (number)))))
+

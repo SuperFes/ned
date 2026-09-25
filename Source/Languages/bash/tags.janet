@@ -14,3 +14,7 @@
   (declaration_command
     (variable_assignment
       name: (variable_name) @name) @definition.variable))
+
+#; A bats-core test, named by its description.
+(bats_test
+  name: [(string (string_content) @name) (word) @name]) @definition.function

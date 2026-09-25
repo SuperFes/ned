@@ -78,7 +78,8 @@
                            pipeline
                            list
                            compound_statement
-                           function_definition)
+                           function_definition
+                           bats_test)
   _statement_not_pipeline (:prec 1
                            (:choice
                             redirected_statement
@@ -265,6 +266,10 @@
                         (:field :body
                          (:choice compound_statement subshell test_command if_statement))
                         (:field :redirect (:choice _redirect :blank))))
+  bats_test (:seq
+             "@test"
+             (:field :name (:choice string raw_string word))
+             (:field :body compound_statement))
   compound_statement (:choice
                       (:seq "{" (:choice _terminated_statement :blank) (:token (:prec -1 "}")))
                       (:seq

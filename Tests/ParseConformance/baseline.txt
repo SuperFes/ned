@@ -1,6 +1,6 @@
 # Parse conformance scorecard: bundled corpora vs the production engine.
 # Regenerate: NED_BLESS_PARSE_CONFORMANCE=1 ./build/ned_tests "[ParseConformance]"
-bash/corpus  cases=101 runs=101 passed=101 failed=0 skipped=0
+bash/corpus  cases=102 runs=102 passed=102 failed=0 skipped=0
 c/corpus  cases=85 runs=85 passed=85 failed=0 skipped=0
 csharp/corpus  cases=168 runs=168 passed=168 failed=0 skipped=0
 clojure/corpus  cases=115 runs=115 passed=115 failed=0 skipped=0
@@ -153,4 +153,4 @@ gdscript/corpus  cases=167 runs=167 passed=166 failed=1 skipped=0
 matlab/corpus  cases=157 runs=157 passed=155 failed=2 skipped=0
   FAIL call.txt: Function Call: Line Continuation
   FAIL strings.txt: Strings: Invalid termination
-total  cases=12726 runs=12710 passed=12676 failed=34 skipped=22
+total  cases=12727 runs=12711 passed=12677 failed=34 skipped=22
