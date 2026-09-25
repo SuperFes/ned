@@ -52,10 +52,8 @@ enum class Alignment { Default,
 // must never be passed in here -- each format's own adapter renders those
 // separately from the widths this computes.
 //
-// Width is a codepoint count, not a grapheme-cluster or East-Asian-Wide-
-// aware display width -- a stated v1 simplification matching this
-// codebase's own established "codepoint, not full Unicode width" cut in
-// several other places (e.g. word motion's ASCII-only classification).
+// Width is display columns (Text/DisplayWidth.h), so a column holding CJK
+// or emoji lines up on screen.
 [[nodiscard]] std::vector<std::size_t> ComputeColumnWidths(const std::vector<std::vector<std::string>>& dataRows);
 
 // Pads text to width columns per alignment (Default treated as Left).

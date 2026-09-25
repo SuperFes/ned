@@ -175,10 +175,6 @@ and code reading. Highest stakes first.
       trimming, tables, Enter/Backspace, the outline and folds were fixed against
       `cmark`'s rendering (`Tools/markdown-oracle.py`; the block parser itself
       matches cmark on every GFM spec example). Left:
-  - [ ] **Wide glyphs.** ned counts every codepoint as one column -- the renderer
-        (`CodepointColumns`), table alignment and fill alike -- so CJK and emoji
-        misalign everywhere, not only in Markdown. Needs East Asian Width data
-        (`Tools/gen-unicode-tables.py` already vendors the Unicode sources).
   - [ ] **Setext headings start no section** in tree-sitter-markdown, so text
         under one neither folds with it nor gets it as a breadcrumb; the outline
         does list it.
@@ -1397,6 +1393,16 @@ for closed-issue history.
   class of bug -- see `ModePrewarmTest.cpp` and the dynamic-mode-race entry closed
   earlier) rather than anything about cache invalidation specifically, but not
   root-caused -- logged rather than guessed at.
+
+- **Notcurses and the terminal can disagree about a glyph's width.** Every column
+  ned lays out comes from Notcurses' `ncstrwidth` (`Text/DisplayWidth.h`), which is
+  glibc's `wcwidth` underneath; the terminal draws from its own table and font. They
+  agree on CJK and on most emoji, but not everywhere: an emoji written with VS16
+  (`❤️`) measures 1 while many terminals draw 2, and tmux draws Nerd Font private-use
+  icons 2 wide where Notcurses says 1 (visible live as the activity bar's rows sitting
+  one column off in a tmux capture). Konsole is the terminal that matters; nothing seen
+  there yet. A startup probe (print a glyph, ask the terminal where the cursor went)
+  could calibrate a table of exceptions if one bites.
 
 - **`search-everywhere debounces a background text search and Enter opens the matching
   file at that line` fails occasionally under `ctest -j8`.** Seen once on 2026-09-20

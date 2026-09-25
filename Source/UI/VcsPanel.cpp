@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "Border.h"
+#include "DrawText.h"
 #include "Editor/Key.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Vcs/ConflictedFiles.h"
@@ -233,12 +234,18 @@ namespace {
         return std::nullopt;
     }
 
-    // Filenames are treated as ASCII-ish, same simplification ProjectSidebar's
-    // own ToCodepoints makes.
     std::u32string ToCodepoints(const std::string& text) {
         std::u32string out;
-        for (const char ch : text) {
-            out += static_cast<char32_t>(static_cast<unsigned char>(ch));
+        for (std::size_t at = 0; at < text.size(); at = text::NextCodepointBoundary(text, at)) {
+            out += text::DecodeCodepointUtf8(text, at);
+        }
+        return out;
+    }
+
+    std::string ToUtf8(const std::u32string& codepoints) {
+        std::string out;
+        for (const char32_t cp : codepoints) {
+            out += text::EncodeCodepointUtf8(cp);
         }
         return out;
     }
@@ -691,12 +698,6 @@ void VcsPanel::Paint(Canvas c) {
         Brush          brush;
 
         if (row.kind == Row::Kind::SectionHeader) {
-            // ToCodepoints treats its input as ASCII-ish (one byte, one
-            // codepoint -- see its own doc comment); the disclosure
-            // triangle is a real multi-byte UTF-8 glyph, so it's appended
-            // as an actual char32_t, never routed through ToCodepoints
-            // itself. Confirmed live: doing this via a plain UTF-8-encoded
-            // std::string mojibake'd the triangle into garbage.
             label = std::u32string(1, collapsedSections_.contains(row.section) ? kCollapsedTriangle : kExpandedTriangle);
             label += U' ';
             label += ToCodepoints(SectionLabel(row.section, row.fileCount));
@@ -744,11 +745,7 @@ void VcsPanel::Paint(Canvas c) {
             }
         }
 
-        for (std::size_t i = 0; i < label.size() && static_cast<int>(i) < contentColumns; ++i) {
-            Cell& cell     = c[{.x = static_cast<int>(i), .y = y}];
-            cell.character = text::EncodeCodepointUtf8(label[i]);
-            brush.ApplyTo(cell);
-        }
+        DrawText(c, 0, y, ToUtf8(label), brush, contentColumns);
     }
 
     // Key-legend follow-up: see kFooterLines' own doc comment on why this

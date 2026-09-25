@@ -58,6 +58,7 @@ add_library(ned_lib STATIC
         Text/DiskSpace.cpp
         Text/FilePreservation.cpp
         Text/Grapheme.cpp
+        Text/DisplayWidth.cpp
         Text/UndoTree.cpp
         Text/KillRing.cpp
         Text/Buffer.cpp
@@ -435,6 +436,7 @@ add_library(ned_lib STATIC
         UI/DoubleTapModifier.cpp
         UI/Border.cpp
         UI/Widget.cpp
+        UI/DrawText.cpp
         UI/Compositing.cpp
         UI/Paint.cpp
         UI/PaintParse.cpp

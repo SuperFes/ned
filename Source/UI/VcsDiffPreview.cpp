@@ -5,8 +5,9 @@
 #include <utility>
 
 #include "Border.h"
+#include "DrawText.h"
+#include "Editor/TabWidth.h"
 #include "Paint.h"
-#include "Text/Utf8.h"
 #include "ThemePaints.h"
 
 namespace ned::ui {
@@ -24,16 +25,6 @@ namespace {
             lines.push_back(line);
         }
         return lines;
-    }
-
-    // Filenames/diff text are treated as ASCII-ish here, the same
-    // simplification ProjectSidebar/VcsPanel's own ToCodepoints already make.
-    std::u32string ToCodepoints(const std::string& text) {
-        std::u32string out;
-        for (const char ch : text) {
-            out += static_cast<char32_t>(static_cast<unsigned char>(ch));
-        }
-        return out;
     }
 
 } // namespace
@@ -116,16 +107,16 @@ void VcsDiffPreview::Paint(Canvas c) {
         const Row& row = rows[index];
         const int  y   = contentRow + kHeaderHeight;
 
-        std::u32string label;
-        Brush          brush{.background = theme_.background, .foreground = theme_.defaultForeground};
+        std::string label;
+        Brush       brush{.background = theme_.background, .foreground = theme_.defaultForeground};
 
         if (row.isHeader) {
-            label = ToCodepoints(model_->staged ? "[unstage] " : "[stage] ");
-            label += ToCodepoints(row.text);
+            label = model_->staged ? "[unstage] " : "[stage] ";
+            label += row.text;
             brush.foreground = theme_.borderAccent.foreground;
         }
         else {
-            label = ToCodepoints(row.text);
+            label = row.text;
             if (row.text.starts_with('+')) {
                 brush.foreground = theme_.successForeground;
             }
@@ -137,14 +128,11 @@ void VcsDiffPreview::Paint(Canvas c) {
             }
         }
 
-        for (std::size_t i = 0; i < label.size() && static_cast<int>(i) < contentColumns; ++i) {
-            Cell& cell     = c[{.x = contentLeft + static_cast<int>(i), .y = y}];
-            cell.character = text::EncodeCodepointUtf8(label[i]);
-            // Foreground and traits only -- every brush here varies only its
-            // foreground (added green, removed red, context dim), so the
-            // surface fill is what the row sits on.
-            brush.ApplyTextTo(cell);
-        }
+        // Foreground and traits only -- every brush here varies only its
+        // foreground (added green, removed red, context dim), so the
+        // surface fill is what the row sits on.
+        DrawText(c, contentLeft, y, label, brush, contentLeft + contentColumns,
+                 {.tabWidth = editor::TabWidth(), .textOnly = true});
     }
 }
 

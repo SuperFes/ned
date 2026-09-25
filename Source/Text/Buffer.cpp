@@ -14,6 +14,7 @@
 #include "BinaryDetect.h"
 #include "BufferList.h"
 #include "DiskSpace.h"
+#include "DisplayWidth.h"
 #include "FilePreservation.h"
 #include "Grapheme.h"
 #include "LineEnding.h"
@@ -75,11 +76,13 @@ namespace {
     // vertical-motion test to multiple seconds before it was caught.
     constexpr std::size_t kMaxTabAwareColumnScan = 512;
 
-    // A literal tab advances to the next multiple of tabWidth -- real
-    // terminal tab-stop semantics, not a fixed-width block -- so the same
-    // byte covers a variable number of columns depending on where it starts.
-    std::size_t NextTabStop(std::size_t column, std::size_t tabWidth) {
-        return (column / tabWidth + 1) * tabWidth;
+    // Columns a glyph covers from `column` (Text/DisplayWidth.h): a literal
+    // tab advances to the next multiple of tabWidth -- real terminal
+    // tab-stop semantics, so the same byte covers a variable number of
+    // columns depending on where it starts -- a wide glyph two, a control
+    // character its placeholder's width.
+    std::size_t GlyphColumnsFrom(const Glyph& glyph, std::size_t column, std::size_t tabWidth) {
+        return static_cast<std::size_t>(GlyphColumns(glyph, static_cast<int>(column), static_cast<int>(std::max<std::size_t>(tabWidth, 1))));
     }
 
     // status-gutter unsaved-change-indicator follow-up: merges [start, end)
@@ -1969,14 +1972,6 @@ void Buffer::MoveBackwardSentence() {
 
 std::size_t Buffer::ByteOffsetForRangeAndColumn(std::size_t rangeStart, std::size_t rangeEnd, std::size_t column,
                                                 std::size_t tabWidth) const {
-    if (tabWidth <= 1) {
-        const std::size_t rangeStartCodepoint = Storage_->ByteOffsetToCodepointOffset(rangeStart);
-        const std::size_t rangeLength         = Storage_->ByteOffsetToCodepointOffset(rangeEnd) - rangeStartCodepoint;
-
-        const std::size_t landingCodepoint = rangeStartCodepoint + std::min(column, rangeLength);
-        return Storage_->CodepointOffsetToByteOffset(landingCodepoint);
-    }
-
     // In the common case this is bounded by `column` itself -- the walk
     // stops the moment the accumulated visual column reaches it. But
     // `column` isn't always screen-width-small: MoveToLine can carry over a
@@ -1996,18 +1991,13 @@ std::size_t Buffer::ByteOffsetForRangeAndColumn(std::size_t rangeStart, std::siz
                                                             rangeEndCodepoint);
             return Storage_->CodepointOffsetToByteOffset(landingCodepoint);
         }
-        const auto decoded = Storage_->CodepointAt(offset);
-        if (decoded.codepoint == U'\t') {
-            const std::size_t nextStop = NextTabStop(visualColumn, tabWidth);
-            if (column < nextStop) {
-                return offset; // target column lands inside this tab's own span -- land on the tab itself
-            }
-            visualColumn = nextStop;
+        const Glyph       glyph = GlyphAt(*Storage_, offset, rangeEnd);
+        const std::size_t next  = visualColumn + GlyphColumnsFrom(glyph, visualColumn, tabWidth);
+        if (column < next) {
+            return offset; // target column lands inside a tab or wide glyph -- land on the glyph itself
         }
-        else {
-            ++visualColumn;
-        }
-        offset += decoded.byteLength;
+        visualColumn = next;
+        offset += glyph.byteLength;
         ++steps;
     }
     return offset;
@@ -2024,10 +2014,6 @@ std::size_t Buffer::ByteOffsetForLineAndColumn(std::size_t line, std::size_t col
 
 std::size_t Buffer::VisualColumnForByteOffset(std::size_t lineStart, std::size_t byteOffset,
                                               std::size_t tabWidth) const {
-    if (tabWidth <= 1) {
-        return Storage_->ByteOffsetToCodepointOffset(byteOffset) - Storage_->ByteOffsetToCodepointOffset(lineStart);
-    }
-
     std::size_t offset = lineStart;
     std::size_t column = 0;
     std::size_t steps  = 0;
@@ -2037,9 +2023,9 @@ std::size_t Buffer::VisualColumnForByteOffset(std::size_t lineStart, std::size_t
             // remainder -- see kMaxTabAwareColumnScan's own comment.
             return column + (Storage_->ByteOffsetToCodepointOffset(byteOffset) - Storage_->ByteOffsetToCodepointOffset(offset));
         }
-        const auto decoded = Storage_->CodepointAt(offset);
-        column              = (decoded.codepoint == U'\t') ? NextTabStop(column, tabWidth) : column + 1;
-        offset += decoded.byteLength;
+        const Glyph glyph = GlyphAt(*Storage_, offset, byteOffset);
+        column += GlyphColumnsFrom(glyph, column, tabWidth);
+        offset += glyph.byteLength;
         ++steps;
     }
     return column;

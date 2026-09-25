@@ -7,7 +7,9 @@
 #include <utility>
 
 #include "Border.h"
+#include "DrawText.h"
 #include "KeyTranslation.h"
+#include "Text/DisplayWidth.h"
 #include "Text/Utf8.h"
 
 namespace ned::ui {
@@ -22,12 +24,8 @@ namespace {
         return chord.Special == editor::SpecialKey::Escape || (chord.Control && chord.Codepoint == U'g');
     }
 
-    // UTF-8-row-text follow-up: writes text one codepoint per cell (not one
-    // byte per cell) -- a row's left/main text was originally always plain
-    // ASCII (key chords, command names), so byte-per-cell worked by
-    // accident; a multi-byte glyph (e.g. an arrow marking a candidate list's
-    // scrolled-off boundary) split across cells as garbage bytes otherwise,
-    // confirmed live. Returns the column x ended at.
+    // Writes text a glyph at a time (UI/DrawText.h), stopping one short of
+    // `width`. Returns the column x ended at.
     //
     // Translucency phase 7: writes the glyph, foreground and traits but
     // deliberately *not* the background, so whatever the popup surface's
@@ -36,31 +34,13 @@ namespace {
     // the text -- the surface fill for the body, selectionFill for a
     // selected row.
     int PaintRowText(Canvas& c, int x, int width, int row, const std::string& text, const Brush& brush) {
-        std::size_t pos = 0;
-        while (pos < text.size() && x < width - 1) {
-            const std::size_t next = text::NextCodepointBoundary(text, pos);
-            Cell&             cell = c[{.x = x, .y = row}];
-            cell.character         = text.substr(pos, next - pos);
-            brush.ApplyTextTo(cell);
-            ++x;
-            pos = next;
-        }
-        return x;
+        return x + DrawText(c, x, row, text, brush, width - 1, {.textOnly = true});
     }
 
-    // One column per codepoint, the same crude-but-consistent approximation
-    // PaintRowText's own per-codepoint cell writes already make (no
-    // grapheme-cluster/east-asian-width accounting anywhere in this
-    // widget) -- used to reserve the right column's own width before
-    // painting it.
+    // Columns PaintRowText will consume for `text` -- used to reserve the
+    // right column's own width before painting it.
     int DisplayColumnCount(const std::string& text) {
-        int         count = 0;
-        std::size_t pos   = 0;
-        while (pos < text.size()) {
-            pos = text::NextCodepointBoundary(text, pos);
-            ++count;
-        }
-        return count;
+        return text::StringColumns(text);
     }
 
     // completion-popup-preview follow-up: a plain greedy word-wrap -- no

@@ -40,10 +40,18 @@ TEST_CASE("ComputeColumnWidths tolerates ragged rows", "[Table]") {
     REQUIRE(ComputeColumnWidths(rows) == std::vector<std::size_t>{1, 2, 3});
 }
 
-TEST_CASE("ComputeColumnWidths counts codepoints, not bytes", "[Table]") {
-    // "café" is 4 codepoints but 5 bytes (the é is 2 bytes in UTF-8).
-    const std::vector<std::vector<std::string>> rows{{"caf\xc3\xa9"}};
+TEST_CASE("ComputeColumnWidths counts display columns, not bytes", "[Table]") {
+    // "café" is 4 columns but 5 bytes (the é is 2 bytes in UTF-8), and a
+    // decomposed "e\u0301" is still one column.
+    const std::vector<std::vector<std::string>> rows{{"caf\xc3\xa9"}, {"cafe\u0301"}};
     REQUIRE(ComputeColumnWidths(rows) == std::vector<std::size_t>{4});
+}
+
+TEST_CASE("ComputeColumnWidths counts CJK and emoji as two columns", "[Table]") {
+    const std::vector<std::vector<std::string>> rows{{"漢字", "😀"}, {"abc", "x"}};
+    REQUIRE(ComputeColumnWidths(rows) == std::vector<std::size_t>{4, 2});
+    REQUIRE(PadCell("漢字", 6, Alignment::Left) == "漢字  ");
+    REQUIRE(PadCell("😀", 3, Alignment::Right) == " 😀");
 }
 
 TEST_CASE("PadCell left-aligns by default, padding on the right", "[Table]") {

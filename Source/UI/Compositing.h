@@ -76,7 +76,8 @@ namespace ned::ui {
 [[nodiscard]] Color EnsureContrast(const Color& foreground, const Color& background, double minRatio);
 
 // Whether a cell is carrying real content, i.e. whether a pattern or dither
-// would be destroying something. A space is not content.
+// would be destroying something. A space is not content; an empty character
+// is the right half of a wide glyph, which is.
 [[nodiscard]] bool IsBlankGlyph(std::string_view character);
 
 } // namespace ned::ui

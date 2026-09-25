@@ -49,6 +49,16 @@ TEST_CASE("Emulator places plain text into cells", "[TerminalEmulator]") {
     REQUIRE(cursor->x == 5);
 }
 
+TEST_CASE("Emulator leaves a wide character's right half empty", "[TerminalEmulator]") {
+    Emulator emulator(2, 10);
+    emulator.Feed("a漢b");
+
+    REQUIRE(emulator.CellAt(0, 1).character == "漢");
+    REQUIRE(emulator.CellAt(0, 2).character.empty()); // what ui::Screen reads as the glyph's continuation
+    REQUIRE(emulator.CellAt(0, 3).character == "b");
+    REQUIRE(RowText(emulator, 0) == "a漢b");
+}
+
 TEST_CASE("Emulator maps SGR attributes and colors", "[TerminalEmulator]") {
     Emulator emulator(4, 40);
     emulator.Feed("\x1b[31mr\x1b[0m\x1b[1mb\x1b[0m\x1b[38;2;10;20;30mt\x1b[0m\x1b[4mu\x1b[0m\x1b[7mi\x1b[0m");

@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cctype>
 
+#include "Text/DisplayWidth.h"
+
 namespace ned::editor::table {
 
 namespace {
@@ -17,15 +19,10 @@ namespace {
         return std::string(s.substr(start, end - start));
     }
 
-    // Codepoint count, not a grapheme-cluster/East-Asian-Wide-aware display
-    // width -- see ComputeColumnWidths' own doc comment in Table.h for why.
-    std::size_t CodepointWidth(std::string_view text) {
-        std::size_t count = 0;
-        for (const unsigned char byte : text) {
-            if ((byte & 0xC0) != 0x80)
-                ++count; // not a UTF-8 continuation byte
-        }
-        return count;
+    // Columns the text occupies on screen (Text/DisplayWidth.h): CJK and
+    // most emoji are two, a combining sequence one.
+    std::size_t DisplayWidth(std::string_view text) {
+        return static_cast<std::size_t>(text::StringColumns(text));
     }
 
     bool IsTableLine(std::string_view line) {
@@ -110,14 +107,14 @@ std::vector<std::size_t> ComputeColumnWidths(const std::vector<std::vector<std::
     std::vector<std::size_t> widths(columnCount, 0);
     for (const auto& row : dataRows) {
         for (std::size_t i = 0; i < row.size(); ++i) {
-            widths[i] = std::max(widths[i], CodepointWidth(row[i]));
+            widths[i] = std::max(widths[i], DisplayWidth(row[i]));
         }
     }
     return widths;
 }
 
 std::string PadCell(const std::string& text, std::size_t width, Alignment alignment) {
-    const std::size_t textWidth = CodepointWidth(text);
+    const std::size_t textWidth = DisplayWidth(text);
     if (textWidth >= width)
         return text;
 

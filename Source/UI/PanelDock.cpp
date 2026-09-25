@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "Border.h"
+#include "Text/DisplayWidth.h"
 #include "Text/Utf8.h"
 
 namespace ned::ui {
@@ -55,18 +56,12 @@ namespace {
     // [gap][pad][icon][pad], not [gap]['[']icon[']'].
     constexpr int kButtonWidth = 4; // " " + " x "
 
-    // One codepoint per column, PaintUtf8Row's own convention -- used here
-    // just to measure a tab label's painted width for hit-testing, since a
-    // dynamic titleText (an agent name, say) isn't guaranteed ASCII the way
-    // the fixed "Terminal"/"Debug console" labels are.
+    // A tab label's painted width (as PaintUtf8Row paints it), for
+    // hit-testing -- a dynamic titleText (an agent name, say) isn't
+    // guaranteed ASCII the way the fixed "Terminal"/"Debug console" labels
+    // are.
     int ColumnCount(std::string_view text) {
-        int         columns = 0;
-        std::size_t pos     = 0;
-        while (pos < text.size()) {
-            pos = text::NextCodepointBoundary(text, pos);
-            ++columns;
-        }
-        return columns;
+        return text::StringColumns(text);
     }
 
 } // namespace

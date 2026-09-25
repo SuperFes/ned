@@ -65,19 +65,13 @@ void DrawBorderTitle(Canvas& c, const std::string& title, const Brush& titleBrus
 // the gradient.
 void RecolourBorder(Canvas& c, const Paint& paint);
 
-// chrome-widget-utf8 follow-up: paints text left-to-right starting at
-// (x, y), one whole UTF-8 codepoint per Cell (via Text/Utf8.h's
-// NextCodepointBoundary), stopping after maxColumns cells or when text is
-// exhausted, whichever comes first. Returns the number of columns actually
-// painted -- callers that need to know where the text ended (e.g. placing a
-// caret right after typed text) use this instead of text.size(), which
-// counts bytes, not columns, once text contains anything outside ASCII.
-// Shared by DrawBorderTitle and any widget's own content/input row painting
-// (AcpPanel, DebugConsolePanel) that used to index by raw byte instead.
-// Not grapheme-cluster- or East-Asian-width-aware -- one codepoint per
-// column, same simplification TabBar.cpp's own label painting already made;
-// a wider fix is a separate, bigger scope than the mojibake/corruption bug
-// this exists to close.
+// Paints text left-to-right starting at (x, y) a glyph at a time
+// (UI/DrawText.h), stopping before maxColumns columns are used or when text
+// is exhausted. Returns the number of columns actually painted -- callers
+// that need to know where the text ended (e.g. placing a caret right after
+// typed text) use this instead of text.size(), which counts bytes, not
+// columns, once text contains anything outside ASCII. Shared by
+// DrawBorderTitle and any widget's own content/input row painting.
 int PaintUtf8Row(Canvas& c, int x, int y, std::string_view text, const Brush& brush, int maxColumns);
 
 } // namespace ned::ui

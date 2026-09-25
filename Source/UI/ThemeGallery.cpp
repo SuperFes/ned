@@ -6,6 +6,7 @@
 
 #include "Border.h"
 #include "Compositing.h"
+#include "DrawText.h"
 #include "KeyTranslation.h"
 #include "Paint.h"
 #include "PaintParse.h"
@@ -23,19 +24,9 @@ namespace {
     // TreeView.cpp's own PaintRowText, duplicated rather than shared for the
     // reason its own comment gives -- small enough, and this codebase
     // duplicates a helper this size rather than growing a shared dependency
-    // for it. Writes one codepoint per cell and stops at `xEnd`.
+    // for it. Writes text a glyph at a time and stops at `xEnd`.
     int PaintText(Canvas& c, int x, int xEnd, int row, std::string_view text, const Brush& brush) {
-        std::size_t       pos = 0;
-        const std::string body(text);
-        while (pos < body.size() && x < xEnd) {
-            const std::size_t next = text::NextCodepointBoundary(body, pos);
-            Cell&             cell = c[{.x = x, .y = row}];
-            cell.character         = body.substr(pos, next - pos);
-            brush.ApplyTo(cell);
-            ++x;
-            pos = next;
-        }
-        return x;
+        return x + DrawText(c, x, row, text, brush, xEnd);
     }
 
     // Deliberately varied: letters with ascenders and descenders, digits,

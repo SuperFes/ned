@@ -3,6 +3,7 @@
 #include "Paint.h"
 #include "ThemePaints.h"
 
+#include "Text/DisplayWidth.h"
 #include "Text/Utf8.h"
 
 namespace ned::ui {
@@ -87,8 +88,9 @@ void EchoArea::Paint(Canvas c) {
     bool        error     = false;
     std::size_t i         = 0;
     while (i < message_.size()) {
-        const std::size_t next = text::NextCodepointBoundary(message_, i);
-        if (next - i == 1) {
+        const text::Glyph glyph = text::GlyphAt(message_, i);
+        const std::size_t next  = i + glyph.byteLength;
+        if (glyph.byteLength == 1) {
             const char ch = message_[i];
             if (ch == kEmphasisStart) {
                 emphasize = true;
@@ -131,41 +133,61 @@ void EchoArea::Paint(Canvas c) {
                 continue;
             }
         }
-        if (x >= c.size().width) {
+        // A control character (a newline inside a message, say) shows as
+        // its placeholder, a cell per character; anything else is one glyph.
+        const std::string glyphText = glyph.placeholder ? text::PlaceholderText(glyph.codepoint)
+                                                        : text::GlyphText(message_, i, glyph);
+        const int         columns   = glyph.placeholder ? text::StringColumns(glyphText) : glyph.columns;
+        if (x + columns > c.size().width) {
             break; // rest of the message doesn't fit -- truncated, same as the pre-sentinel version
         }
 
-        const Point at{.x = x, .y = 0};
-        const Color painted = c[at].background_color.Composable() ? c[at].background_color : fallbackBackground;
-        const Color base    = TextColourAt(surface, c, at, theme_.echoArea.foreground);
+        const auto paintCell = [&](int cellX, std::string character) {
+            const Point at{.x = cellX, .y = 0};
+            const Color painted = c[at].background_color.Composable() ? c[at].background_color : fallbackBackground;
+            const Color base    = TextColourAt(surface, c, at, theme_.echoArea.foreground);
 
-        // Written into the cell rather than blended, because these carry
-        // traits (Surface has none of its own -- see ROADMAP) and the
-        // background is already down. Leaving background_color alone is what
-        // keeps the fill underneath intact.
-        Cell& cell     = c[at];
-        cell.character = message_.substr(i, next - i);
-        theme_.echoArea.ApplyTextTo(cell);
-        cell.foreground_color = base;
-        // The inline markup widens the Brush's own traits rather than
-        // replacing them: a theme asking for an italic echo area still gets
-        // one on a row that happens to carry an emphasis sentinel.
-        cell.bold |= emphasize;
-        cell.italic |= ghost;
-        if (dim) {
-            cell.foreground_color = Color::Interpolate(0.5F, base, painted);
+            // Written into the cell rather than blended, because these carry
+            // traits (Surface has none of its own -- see ROADMAP) and the
+            // background is already down. Leaving background_color alone is
+            // what keeps the fill underneath intact.
+            Cell& cell     = c[at];
+            cell.character = std::move(character);
+            theme_.echoArea.ApplyTextTo(cell);
+            cell.foreground_color = base;
+            // The inline markup widens the Brush's own traits rather than
+            // replacing them: a theme asking for an italic echo area still
+            // gets one on a row that happens to carry an emphasis sentinel.
+            cell.bold |= emphasize;
+            cell.italic |= ghost;
+            if (dim) {
+                cell.foreground_color = Color::Interpolate(0.5F, base, painted);
+            }
+            if (ghost) {
+                // Faded further than plain dim (closer to the background)
+                // since ghost text represents a hint, not real
+                // candidate-list content -- it should read as clearly less
+                // present than DimForEchoArea's own text.
+                cell.foreground_color = Color::Interpolate(0.7F, base, painted);
+            }
+            if (error) {
+                cell.foreground_color = theme_.diagnosticError;
+            }
+        };
+        if (glyph.placeholder) {
+            for (std::size_t at = 0; at < glyphText.size();) {
+                const std::size_t end = text::NextCodepointBoundary(glyphText, at);
+                paintCell(x++, glyphText.substr(at, end - at));
+                at = end;
+            }
         }
-        if (ghost) {
-            // Faded further than plain dim (closer to the background) since
-            // ghost text represents a hint, not real candidate-list content
-            // -- it should read as clearly less present than
-            // DimForEchoArea's own text.
-            cell.foreground_color = Color::Interpolate(0.7F, base, painted);
+        else {
+            paintCell(x, glyphText);
+            if (columns == 2) {
+                paintCell(x + 1, ""); // the wide glyph's continuation
+            }
+            x += columns;
         }
-        if (error) {
-            cell.foreground_color = theme_.diagnosticError;
-        }
-        ++x;
         i = next;
     }
 

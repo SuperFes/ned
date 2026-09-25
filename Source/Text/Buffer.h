@@ -878,8 +878,7 @@ class Buffer {
     // on-screen (line, column) position -- e.g. a mouse click -- into a
     // buffer offset. tabWidth is the same "how many columns does a literal
     // tab count as" parameter MoveDownLines/MoveUpLines take, defaulting to 1
-    // (plain codepoint counting, matching this function's original
-    // behavior) -- pass the real configured tab width to land on the visual
+    // -- pass the real configured tab width to land on the visual
     // column a tab-containing line actually renders at, not the codepoint
     // count. The landing walk is bounded by kMaxTabAwareColumnScan
     // (Buffer.cpp) the same way VisualColumnForByteOffset is -- `column`
@@ -894,10 +893,8 @@ class Buffer {
     // MoveToLine-only implementation detail (capturing its own goal column);
     // public since the rectangle-editing follow-up (Editor/Rectangle.h),
     // which needs the same byte-offset-to-column query to compute a
-    // rectangular region's own column bounds from point/mark. tabWidth <= 1
-    // takes an O(1) fast path (plain codepoint counting via the rope's
-    // cached counts, exactly the original pre-tab-aware behavior); tabWidth
-    // > 1 walks codepoint-by-codepoint, bounded by kMaxTabAwareColumnScan
+    // rectangular region's own column bounds from point/mark. Walks glyph by
+    // glyph (Text/DisplayWidth.h: a wide glyph is two columns), bounded by kMaxTabAwareColumnScan
     // (Buffer.cpp) so that capturing the goal column while point sits deep
     // inside a pathologically long single line can't regress into an
     // O(line length) scan -- past that bound it falls back to a plain

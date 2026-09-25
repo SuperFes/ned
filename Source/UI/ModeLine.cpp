@@ -1,5 +1,6 @@
 #include "ModeLine.h"
 
+#include "DrawText.h"
 #include "ProgressBar.h"
 
 #include "Paint.h"
@@ -12,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
+#include <iterator>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -64,21 +66,13 @@ namespace {
         return kSpinnerFrames[static_cast<std::size_t>((elapsed / editor::kBackgroundActivitySpinnerInterval) % kSpinnerFrames.size())];
     }
 
-    // Appends one `columns` entry per codepoint in text (codepoint-granular,
-    // not full grapheme-cluster-aware, matching BufferView's own
-    // one-codepoint-per-cell content rendering) -- replaces what used to be
-    // a byte-per-column loop repeated at every one of this file's dynamic-
-    // text call sites (buffer name, Org clock headline title, background-
-    // activity name/detail, LSP status detail), which split any multi-byte
-    // UTF-8 character in that text across as many blank-looking cells as it
-    // had bytes (found live via EchoArea's identical bug, see ROADMAP.md).
+    // Appends one `columns` entry per cell text occupies (TextCells) -- the
+    // path every dynamic-text call site in this file takes (buffer name, Org
+    // clock headline title, background-activity name/detail, LSP status
+    // detail).
     void AppendUtf8Columns(std::vector<std::string>& columns, std::string_view text) {
-        std::size_t i = 0;
-        while (i < text.size()) {
-            const std::size_t next = text::NextCodepointBoundary(text, i);
-            columns.emplace_back(text.substr(i, next - i));
-            i = next;
-        }
+        std::vector<std::string> cells = TextCells(text);
+        columns.insert(columns.end(), std::make_move_iterator(cells.begin()), std::make_move_iterator(cells.end()));
     }
 
     // minimum-visible-duration follow-up: see lastShownActivities_' own doc
@@ -423,6 +417,9 @@ void ModeLine::Paint(Canvas c) {
         glyph.character        = (static_cast<std::size_t>(x) < columns.size()) ? columns[static_cast<std::size_t>(x)] : " ";
         glyph.foreground_color = TextColourAt(surface, c, at, theme_.modeLineForeground);
         c.Blend(at, glyph);
+        if (glyph.character.empty()) {
+            c[at].character = ""; // a wide glyph's continuation, which Blend reads as "no glyph"
+        }
     }
 
     ApplyTextFade(c, surface);

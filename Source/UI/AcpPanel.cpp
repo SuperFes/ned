@@ -12,6 +12,7 @@
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Tree.h"
 #include "KeyTranslation.h"
+#include "Text/DisplayWidth.h"
 #include "Text/LineDiff.h"
 #include "Text/Utf8.h"
 
@@ -70,18 +71,10 @@ namespace {
         return buffer;
     }
 
-    // Codepoint count, matching WordWrap/PaintUtf8Row's own one-column-per-
-    // codepoint convention -- used for right-aligning a short marker within
-    // a line's remaining width (no double-width CJK/emoji handling anywhere
-    // in this codebase yet).
+    // Display columns, as PaintUtf8Row paints the text (Text/DisplayWidth.h)
+    // -- the unit every column in this file is counted in.
     int ColumnCount(std::string_view text) {
-        int         columns = 0;
-        std::size_t pos     = 0;
-        while (pos < text.size()) {
-            pos = text::NextCodepointBoundary(text, pos);
-            ++columns;
-        }
-        return columns;
+        return text::StringColumns(text);
     }
 
     // ACP chat-feel round 2: right-aligns a short status marker within
@@ -102,9 +95,8 @@ namespace {
     }
 
     // One physical row produced by wrapping a string to `width` columns.
-    // startColumn/columnCount are codepoint offsets into the *original*
-    // string (PaintUtf8Row's own one-column-per-codepoint convention) --
-    // every codepoint lands in exactly one row and none are dropped, so a
+    // startColumn/columnCount are display columns into the *original*
+    // string -- every glyph lands in exactly one row and none are dropped, so a
     // flat cursor column can always be mapped back to (row, columnInRow) by
     // finding which row's [startColumn, startColumn+columnCount] it falls in.
     struct WrappedRow {
@@ -113,7 +105,7 @@ namespace {
         int         columnCount;
     };
 
-    // Greedy word-wrap: breaks before whichever codepoint would push a row
+    // Greedy word-wrap: breaks before whichever glyph would push a row
     // past `width` columns, preferring to break after the most recent space
     // in the current row, falling back to a hard mid-word break only when a
     // single word alone exceeds `width`. Always returns at least one row
@@ -133,7 +125,8 @@ namespace {
 
         std::size_t pos = 0;
         while (pos < text.size()) {
-            if (col >= width) {
+            const text::Glyph glyph = text::GlyphAt(text, pos);
+            if (col > 0 && col + glyph.columns > width) {
                 if (lastSpaceByte != std::string::npos && lastSpaceByte > rowStartByte) {
                     rows.push_back({std::string(text.substr(rowStartByte, lastSpaceByte - rowStartByte)), rowStartCol, lastSpaceCol});
                     rowStartCol += lastSpaceCol;
@@ -148,12 +141,12 @@ namespace {
                 }
                 lastSpaceByte = std::string::npos;
             }
-            const std::size_t next = text::NextCodepointBoundary(text, pos);
+            const std::size_t next = pos + glyph.byteLength;
             if (text[pos] == ' ') { // safe at byte level: UTF-8 continuation/lead bytes are always >= 0x80
                 lastSpaceByte = next;
                 lastSpaceCol  = col + 1;
             }
-            ++col;
+            col += glyph.columns;
             pos = next;
         }
         rows.push_back({std::string(text.substr(rowStartByte)), rowStartCol, col});
@@ -512,10 +505,10 @@ AcpPanel::InlineMarkdownResult AcpPanel::ApplyInlineMarkdown(std::string_view ra
                 continue;
             }
         }
-        const std::size_t next = text::NextCodepointBoundary(raw, pos);
-        out.append(raw.substr(pos, next - pos));
-        ++col;
-        pos = next;
+        const text::Glyph glyph = text::GlyphAt(raw, pos);
+        out.append(raw.substr(pos, glyph.byteLength));
+        col += glyph.columns;
+        pos += glyph.byteLength;
     }
     return result;
 }
@@ -539,15 +532,19 @@ void AcpPanel::PaintStyledRow(Canvas& canvas, int x, int y, std::string_view tex
         PaintUtf8Row(canvas, x, y, text, baseBrush, maxColumns);
         return;
     }
-    // Column -> byte offset table (ColumnCount's own one-codepoint-per-column
-    // convention), built once per row so each span's substr is a direct
-    // lookup rather than a fresh scan from the row's own start.
+    // Column -> byte offset table, built once per row so each span's substr
+    // is a direct lookup rather than a fresh scan from the row's own start.
+    // Every column of a glyph maps to its first byte; spans begin and end on
+    // glyph boundaries, so only those entries are ever cut at.
     std::vector<std::size_t> offsets;
     offsets.reserve(text.size() + 1);
     std::size_t pos = 0;
     while (pos < text.size()) {
-        offsets.push_back(pos);
-        pos = text::NextCodepointBoundary(text, pos);
+        const text::Glyph glyph = text::GlyphAt(text, pos);
+        for (int i = 0; i < std::max(1, text::GlyphColumns(glyph, static_cast<int>(offsets.size()), 1)); ++i) {
+            offsets.push_back(pos);
+        }
+        pos += glyph.byteLength;
     }
     offsets.push_back(text.size());
     const int totalColumns = static_cast<int>(offsets.size()) - 1;
@@ -1086,8 +1083,8 @@ void AcpPanel::Paint(Canvas canvas) {
     }
     // minibuffer-composer-cursor-editing follow-up: the caret sits at the
     // prompt's real cursor position now, not always at the end of the typed
-    // text -- CursorDisplayColumn() (one column per codepoint, matching
-    // PaintUtf8Row's own convention) is what stays in sync with
+    // text -- CursorDisplayColumn() (display columns, as PaintUtf8Row
+    // paints the text) is what stays in sync with
     // InsertChar/DeleteBackward/DeleteForward/Move* below, mapped through
     // the wrap above into (caretRow, caretColInRow) so it still lands on the
     // right glyph once the composer spans multiple rows. A real solid block

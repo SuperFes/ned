@@ -3,18 +3,16 @@
 #include <algorithm>
 #include <cctype>
 
+#include "Text/DisplayWidth.h"
+
 namespace ned::editor {
 
 namespace {
 
-    std::size_t CodepointCount(std::string_view text) {
-        std::size_t count = 0;
-        for (const unsigned char byte : text) {
-            if ((byte & 0xC0) != 0x80) { // not a UTF-8 continuation byte
-                ++count;
-            }
-        }
-        return count;
+    // Columns the text occupies on screen (Text/DisplayWidth.h), so a
+    // paragraph of CJK fills to the same column as one of ASCII.
+    std::size_t DisplayWidth(std::string_view text) {
+        return static_cast<std::size_t>(text::StringColumns(text));
     }
 
     // Mirrors Commands.cpp's own file-local LineContentEnd exactly: the byte
@@ -93,7 +91,7 @@ std::vector<std::string> WrapWords(const std::vector<std::string>& words, std::s
     std::size_t              currentWidth = 0;
 
     for (const std::string& word : words) {
-        const std::size_t wordWidth = CodepointCount(word);
+        const std::size_t wordWidth = DisplayWidth(word);
         if (current.empty()) {
             current      = word;
             currentWidth = wordWidth;
@@ -214,13 +212,13 @@ void FillParagraph(text::Buffer& buffer, std::size_t fillColumn, std::string_vie
     }
 
     const std::string commentLeader = commentMode ? std::string(commentPrefix) + " " : std::string();
-    // Both prefixes are the same codepoint WIDTH by construction -- the
+    // Both prefixes are the same display WIDTH by construction -- the
     // continuation one just spells the marker's own width as plain spaces
     // instead of repeating it, the same "align under, don't repeat" rule a
     // real Markdown/Org formatter (or Emacs' own adaptive-fill-mode) uses.
     const std::string firstLinePrefix    = indent + commentLeader + listMarkerText;
     const std::string continuationPrefix = indent + commentLeader + std::string(listMarkerText.size(), ' ');
-    const std::size_t prefixWidth        = CodepointCount(continuationPrefix);
+    const std::size_t prefixWidth        = DisplayWidth(continuationPrefix);
     const std::size_t wrapWidth          = (fillColumn > prefixWidth) ? fillColumn - prefixWidth : 1;
 
     const std::vector<std::string> wrapped = WrapWords(words, wrapWidth);

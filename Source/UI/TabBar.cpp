@@ -1,5 +1,6 @@
 #include "TabBar.h"
 
+#include "DrawText.h"
 #include "Paint.h"
 #include "ThemePaints.h"
 
@@ -33,23 +34,16 @@ namespace {
     // 1-space padding, an asterisk if modified, a space, then the close
     // icon; one blank widget-background column as a separator before the
     // next tab (added by the caller, not here) keeps adjacent inactive tabs
-    // from visually merging into one block. A u32string, not a std::string
-    // byte-count, so its .size() is exactly the column width the close
-    // icon's multi-byte UTF-8 encoding would otherwise throw off -- same
-    // approach ProjectSidebar's own label-building already uses.
-    std::u32string TabLabel(const text::Buffer& buffer) {
-        std::u32string label = U" ";
-        for (const char ch : buffer.Name()) {
-            // Buffer names are treated as ASCII-ish here, same simplification
-            // ModeLine's/ProjectSidebar's own name rendering already makes.
-            label += static_cast<char32_t>(static_cast<unsigned char>(ch));
-        }
+    // from visually merging into one block. One entry per cell (TextCells),
+    // so its .size() is the tab's column width.
+    std::vector<std::string> TabLabel(const text::Buffer& buffer) {
+        std::string label = " " + buffer.Name();
         if (buffer.Modified()) {
-            label += U'*';
+            label += '*';
         }
-        label += U' ';
-        label += kCloseIcon;
-        return label;
+        label += ' ';
+        label += text::EncodeCodepointUtf8(kCloseIcon);
+        return TextCells(label);
     }
 
 } // namespace
@@ -167,8 +161,8 @@ void TabBar::Paint(Canvas c) {
             traits.italic = true;
         }
 
-        const std::u32string label    = TabLabel(*tab.buffer);
-        const int            tabWidth = static_cast<int>(label.size());
+        const std::vector<std::string> label    = TabLabel(*tab.buffer);
+        const int                      tabWidth = static_cast<int>(label.size());
 
         auto fillColourAt = [&](int index) {
             if (!PaintsColour(surface.fill)) {
@@ -186,13 +180,16 @@ void TabBar::Paint(Canvas c) {
             }
             const Point at{.x = col, .y = 0};
             Cell        cell;
-            cell.character        = text::EncodeCodepointUtf8(label[i]);
+            cell.character        = label[i];
             cell.background_color = fillColourAt(static_cast<int>(i));
             // Traits from the Brush, colour from the Surface -- Surface
             // carries no traits, deliberately (see Paint.h's own note).
             traits.ApplyTextTo(cell);
             cell.foreground_color = TextColourAt(surface, c, at, traits.foreground);
             c.Blend(at, cell);
+            if (label[i].empty()) {
+                c[at].character = ""; // a wide glyph's continuation, which Blend reads as "no glyph"
+            }
         }
 
         // The end cap -- see kTabEndCap -- drawn in the tab's trailing

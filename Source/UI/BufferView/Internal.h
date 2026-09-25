@@ -21,6 +21,7 @@
 #include "UI/BufferView.h"
 #include "UI/BufferView/RenderTypes.h"
 #include "UI/Compositing.h"
+#include "UI/DrawText.h"
 #include "UI/ThemePaints.h"
 
 #include <algorithm>
@@ -662,29 +663,6 @@ inline std::string BuildHierarchyRowLabel(const editor::lsp::Manager::ResolvedHi
     return label;
 }
 
-// Binary-rendering follow-up: a raw control byte (C0 control range, plus
-// DEL) sent straight to a real terminal isn't "print one glyph and
-// advance" -- some of them are actual terminal control codes (cursor
-// moves, and a raw ESC byte can be misread as the start of a whole new
-// escape sequence), which is the exact same class of terminal-diff
-// corruption tab bytes used to cause (see editor::TabWidth's own header
-// comment) before being expanded to literal spaces instead of sent raw.
-// Tab (handled separately, below) and newline (never appears mid-line --
-// lines are split on it by LineToByteOffset) are excluded; everything
-// else in this range renders as a 4-column hex placeholder instead of
-// ever reaching the terminal as its own raw byte.
-inline bool IsUnprintableControl(char32_t cp) {
-    return (cp <= 0x1F && cp != U'\t') || cp == 0x7F;
-}
-
-// U+25C1/U+25B7 WHITE LEFT/RIGHT-POINTING TRIANGLE -- same proven-safe
-// BMP "Geometric Shapes" family as every other chrome glyph in this
-// codebase (ScrollArrowButton's ▲▼, ProjectSidebar's ▸▾), chosen
-// specifically distinct from TabBar's ‹› so a binary placeholder never
-// reads as one of those instead.
-constexpr char32_t kBinaryOpen  = U'◁';
-constexpr char32_t kBinaryClose = U'▷';
-
 // Org-mode fold/unfold follow-up: painted after a folded headline's own
 // content -- real Org's own visual cue ("...") that there's hidden
 // content below, U+2026 HORIZONTAL ELLIPSIS rather than three literal
@@ -754,52 +732,20 @@ inline Color IndentGuideColor(const Theme& theme, int displayColumn, int tabWidt
     return theme.indentGuideDepthPalette[level % theme.indentGuideDepthPalette.size()];
 }
 
-inline char32_t HexDigit(char32_t nibble) {
-    return (nibble < 10) ? (U'0' + nibble) : (U'A' + (nibble - 10));
+// Columns one glyph (Text/DisplayWidth.h) occupies when it starts at
+// visual column `currentColumn`: a tab runs to the next tab stop, a control
+// or zero-width character is its hex placeholder's width, everything else
+// the width the renderer gives it. Every walk below measures through this,
+// so Paint and the cursor, click and scroll arithmetic can't disagree.
+inline int GlyphColumnsAt(const text::Glyph& glyph, int currentColumn) {
+    return text::GlyphColumns(glyph, currentColumn, editor::TabWidth());
 }
 
-// Columns a single codepoint occupies when rendered, starting at
-// `currentColumn` (the visual column, from whatever start byte the caller
-// is measuring against, that this codepoint would land at): a tab advances
-// to the next tab-stop multiple of editor::TabWidth() -- real terminal
-// semantics, a variable-width jump depending on currentColumn, not a flat
-// editor::TabWidth() every time -- 4 (open bracket + 2 hex digits + close
-// bracket) for a binary placeholder, 1 for every ordinary glyph. Shared by
-// Paint()'s render loop and VisualColumn below so the two can never
-// disagree about column math.
-inline int CodepointColumns(char32_t cp, int currentColumn) {
-    if (cp == U'\t') {
-        const int tabWidth = editor::TabWidth();
-        return tabWidth - (currentColumn % tabWidth);
-    }
-    if (IsUnprintableControl(cp)) {
-        return 4;
-    }
-    return 1;
-}
-
-// Links follow-up: sum of CodepointColumns() over text's own codepoints
-// -- the column width a collapsed link's own displayText renders at,
-// starting at `startColumn` (matching CodepointColumns' own tab-stop
-// dependency on where the text begins -- a realistic edge case for a raw
-// tab inside a link's own displayText or an inlay hint's own label, not
-// assumed impossible). Shared by Paint()'s render loop, VisualColumn, and
-// ByteOffsetForColumnInLine below so none of them can disagree about how
-// wide a given displayText actually is on screen. Decodes via a
-// throwaway text::Rope (cheap for the short strings a link's own
-// description/target realistically is) rather than a second, parallel
-// UTF-8 decoder -- Rope::CodepointAt is already this file's single
-// source of truth for "how many bytes/columns does this codepoint take."
+// The column width a string (a collapsed link's display text, an inlay
+// hint's label) renders at, starting at `startColumn` -- which matters only
+// for a tab inside it.
 inline int DisplayColumns(const std::string& text, int startColumn = 0) {
-    const text::Rope decoded(text);
-    int              column = startColumn;
-    std::size_t      offset = 0;
-    while (offset < decoded.ByteLength()) {
-        const auto cp = decoded.CodepointAt(offset);
-        column += CodepointColumns(cp.codepoint, column);
-        offset += cp.byteLength;
-    }
-    return column - startColumn;
+    return text::StringColumns(text, startColumn, editor::TabWidth());
 }
 
 // How many columns one RenderedVirtualText occupies, starting at `column` --
@@ -894,7 +840,7 @@ inline const RenderedVirtualText* VirtualTextStartingAt(const std::vector<Render
 
 // Visual column (0-indexed, not counting the gutter) that byteOffset
 // renders at within the line starting at lineStart -- see
-// CodepointColumns for why this can't be a plain codepoint count.
+// GlyphColumnsAt for why this can't be a plain codepoint count.
 // Returns nullopt once the column would reach maxColumns before
 // byteOffset does, matching the horizontal-scroll cutoff Paint()
 // already applies to the cursor (there's no point computing an exact
@@ -935,9 +881,9 @@ inline std::optional<int> VisualColumn(const text::ITextStorage& content, std::s
             offset = link->endByte;
             continue;
         }
-        const auto decoded = content.CodepointAt(offset);
-        col += CodepointColumns(decoded.codepoint, col);
-        offset += decoded.byteLength;
+        const text::Glyph glyph = text::GlyphAt(content, offset, byteOffset);
+        col += GlyphColumnsAt(glyph, col);
+        offset += glyph.byteLength;
     }
     // A hint anchored exactly at byteOffset still renders *before* the real
     // character there (EmitVirtualText advances col past the hint, then falls
@@ -990,9 +936,9 @@ inline ColumnSkip SkipToColumn(const text::ITextStorage& content, std::size_t st
         if (const RenderedVirtualText* hint = VirtualTextStartingAt(lineVirtualText, result.offset)) {
             result.columns += VirtualTextColumns(*hint, result.columns);
         }
-        const auto decoded = content.CodepointAt(result.offset);
-        result.columns += CodepointColumns(decoded.codepoint, result.columns);
-        result.offset += decoded.byteLength;
+        const text::Glyph glyph = text::GlyphAt(content, result.offset, end);
+        result.columns += GlyphColumnsAt(glyph, result.columns);
+        result.offset += glyph.byteLength;
     }
     return result;
 }
@@ -1056,19 +1002,14 @@ inline std::size_t ByteOffsetForColumnInLine(const text::ITextStorage& content, 
             ++steps;
             continue;
         }
-        const auto decoded = content.CodepointAt(offset);
-        if (decoded.codepoint == U'\t') {
-            const std::size_t nextStop = (visualColumn / static_cast<std::size_t>(tabWidth) + 1) *
-                                          static_cast<std::size_t>(tabWidth);
-            if (targetColumn < nextStop) {
-                return offset; // the click landed inside this tab's own span -- land on the tab itself
-            }
-            visualColumn = nextStop;
+        const text::Glyph glyph = text::GlyphAt(content, offset, lineEnd);
+        const std::size_t next  = visualColumn + static_cast<std::size_t>(
+                                                     text::GlyphColumns(glyph, static_cast<int>(visualColumn), tabWidth));
+        if (targetColumn < next) {
+            return offset; // the click landed inside a tab, wide glyph or placeholder -- land on the glyph itself
         }
-        else {
-            ++visualColumn;
-        }
-        offset += decoded.byteLength;
+        visualColumn = next;
+        offset += glyph.byteLength;
         ++steps;
     }
     return offset;
@@ -1143,10 +1084,10 @@ inline std::vector<WrapSegment> ComputeWrapSegments(const text::ITextStorage& co
             unitWidth = DisplayColumns(link->displayText, col);
         }
         else {
-            const auto decoded = content.CodepointAt(offset);
-            unitEnd            = offset + decoded.byteLength;
-            unitWidth          = CodepointColumns(decoded.codepoint, col);
-            isWhitespace       = IsWrapBreakWhitespace(decoded.codepoint);
+            const text::Glyph glyph = text::GlyphAt(content, offset, lineEnd);
+            unitEnd                 = offset + glyph.byteLength;
+            unitWidth               = GlyphColumnsAt(glyph, col);
+            isWhitespace            = IsWrapBreakWhitespace(glyph.codepoint);
         }
 
         if (col > 0 && col + unitWidth > wrapWidth) {
@@ -1229,12 +1170,12 @@ inline int LeadingIndentColumns(const text::ITextStorage& content, std::size_t l
     int         columns = 0;
     std::size_t offset  = lineStart;
     while (offset < lineEnd) {
-        const auto decoded = content.CodepointAt(offset);
-        if (decoded.codepoint != U' ' && decoded.codepoint != U'\t') {
+        const text::Glyph glyph = text::GlyphAt(content, offset, lineEnd);
+        if (glyph.codepoint != U' ' && glyph.codepoint != U'\t') {
             break;
         }
-        columns += CodepointColumns(decoded.codepoint, columns);
-        offset += decoded.byteLength;
+        columns += GlyphColumnsAt(glyph, columns);
+        offset += glyph.byteLength;
     }
     if (offset < lineEnd) {
         const std::string body = content.Substring(offset, lineEnd - offset);

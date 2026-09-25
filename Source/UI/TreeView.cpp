@@ -5,7 +5,9 @@
 #include <algorithm>
 
 #include "Border.h"
+#include "DrawText.h"
 #include "KeyTranslation.h"
+#include "Text/DisplayWidth.h"
 #include "Text/Utf8.h"
 
 namespace ned::ui {
@@ -20,35 +22,19 @@ namespace {
     // small enough, and this codebase's own precedent elsewhere (e.g.
     // ManagerTest.cpp/ClientTest.cpp's ReadRawFrame) is to duplicate a
     // helper this size rather than add a new shared dependency for it.
-    // Writes one codepoint per cell (not one byte per cell), and returns the
-    // column x ended at.
+    // Writes text a glyph at a time (UI/DrawText.h), and returns the column
+    // x ended at.
     // Translucency phase 7: writes glyph/foreground/traits but not the
     // background, so the popup surface's fill survives underneath -- see
     // ListPopup's own copy for the full reasoning.
     int PaintRowText(Canvas& c, int x, int width, int row, const std::string& text, const Brush& brush) {
-        std::size_t pos = 0;
-        while (pos < text.size() && x < width - 1) {
-            const std::size_t next = text::NextCodepointBoundary(text, pos);
-            Cell&             cell = c[{.x = x, .y = row}];
-            cell.character         = text.substr(pos, next - pos);
-            brush.ApplyTextTo(cell);
-            ++x;
-            pos = next;
-        }
-        return x;
+        return x + DrawText(c, x, row, text, brush, width - 1, {.textOnly = true});
     }
 
-    // Columns PaintRowText will consume for `text` -- one per codepoint,
-    // the same crude approximation it paints with. ListPopup's own
+    // Columns PaintRowText will consume for `text`. ListPopup's own
     // DisplayColumnCount, duplicated for the reason above.
     int DisplayColumnCount(const std::string& text) {
-        int         count = 0;
-        std::size_t pos   = 0;
-        while (pos < text.size()) {
-            pos = text::NextCodepointBoundary(text, pos);
-            ++count;
-        }
-        return count;
+        return text::StringColumns(text);
     }
 
     // The glyph shown in a row's disclosure column, per TreeRow's own doc
@@ -219,9 +205,7 @@ void TreeView::Paint(Canvas c) {
         }
 
         // Indentation (2 columns per depth) + disclosure glyph, then the
-        // label -- one column per codepoint throughout, PaintRowText's own
-        // crude-but-consistent approximation (no grapheme-cluster/east-
-        // asian-width accounting, matching ListPopup).
+        // label, in display columns throughout (PaintRowText).
         const int indent = inset + 1 + static_cast<int>(treeRow.depth) * 2;
         const int rowEnd = width - inset + 1; // PaintRowText stops one short of its bound
         PaintRowText(c, indent, rowEnd, row, DisclosureGlyph(treeRow), glyph);

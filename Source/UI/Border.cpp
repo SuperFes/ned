@@ -1,6 +1,7 @@
 #include "Border.h"
 
 #include "Compositing.h"
+#include "DrawText.h"
 
 #include "Text/Utf8.h"
 
@@ -117,17 +118,7 @@ void DrawBorderTitle(Canvas& c, const std::string& title, const Brush& titleBrus
 }
 
 int PaintUtf8Row(Canvas& c, int x, int y, std::string_view text, const Brush& brush, int maxColumns) {
-    int         column = 0;
-    std::size_t pos    = 0;
-    while (pos < text.size() && column < maxColumns) {
-        const std::size_t next = text::NextCodepointBoundary(text, pos);
-        Cell&             cell = c[{.x = x + column, .y = y}];
-        cell.character         = std::string(text.substr(pos, next - pos));
-        brush.ApplyTo(cell);
-        pos = next;
-        ++column;
-    }
-    return column;
+    return DrawText(c, x, y, text, brush, x + std::max(0, maxColumns));
 }
 
 } // namespace ned::ui

@@ -3,23 +3,16 @@
 #include <string_view>
 #include <utility>
 
+#include "Text/DisplayWidth.h"
 #include "Text/Utf8.h"
 
 namespace ned::editor {
 
 namespace {
 
-    // One column per codepoint, matching PaintUtf8Row's own convention (no
-    // double-width CJK/emoji handling anywhere in this codebase yet -- see
-    // ROADMAP.md).
+    // Columns as PaintUtf8Row paints them (Text/DisplayWidth.h).
     int DisplayColumns(std::string_view text) {
-        int         columns = 0;
-        std::size_t pos     = 0;
-        while (pos < text.size()) {
-            pos = text::NextCodepointBoundary(text, pos);
-            ++columns;
-        }
-        return columns;
+        return text::StringColumns(text);
     }
 
     // ASCII alphanumeric + underscore -- deliberately not Unicode-aware,

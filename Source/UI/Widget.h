@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -203,6 +204,23 @@ struct Cell {
     [[nodiscard]] bool operator==(const Cell&) const = default;
 };
 
+// How Screen::Flush draws one cell. A wide glyph (two columns) sits in its own
+// cell and claims the next, which holds an empty character -- a
+// continuation. Half a glyph can't be drawn, so a wide glyph without its
+// continuation (clipped at an edge, or half covered by another widget) and a
+// continuation without its glyph both draw as a blank.
+enum class CellDraw : std::uint8_t {
+    Glyph,
+    Continuation,
+    Blank,
+};
+
+// Whether a cell's character is a two-column glyph.
+[[nodiscard]] bool IsWideGlyph(const std::string& character);
+
+// CellDraw for every cell of one row, into `draws` (resized to row's size).
+void ResolveRowDraws(std::span<const Cell> row, std::vector<CellDraw>& draws);
+
 // What Screen::Blend should do with a translucent color when the cell it
 // lands on has no known background to composite against -- i.e. when the
 // destination is Color::Default, the terminal's own background, which is
@@ -239,7 +257,8 @@ class Screen {
     Screen(int width, int height) : width_(std::max(0, width)), height_(std::max(0, height)),
                                     cells_(static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_)),
                                     backing_(static_cast<std::size_t>(width_) * static_cast<std::size_t>(height_)),
-                                    previousCells_(cells_.size()), previousBacking_(backing_.size()) {
+                                    previousCells_(cells_.size()), previousBacking_(backing_.size()),
+                                    previousDraws_(cells_.size(), CellDraw::Glyph) {
     }
 
     [[nodiscard]] int Width() const {
@@ -360,6 +379,9 @@ class Screen {
     // never compared against.
     std::vector<Cell> previousCells_;
     std::vector<Cell> previousBacking_;
+    // How each cell of previousCells_ was drawn: a cell that didn't change
+    // can still draw differently when its wide-glyph partner did.
+    std::vector<CellDraw> previousDraws_;
     bool              dirty_ = true;
 };
 

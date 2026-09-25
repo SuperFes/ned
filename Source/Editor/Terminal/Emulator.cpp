@@ -252,10 +252,14 @@ namespace {
     Cell ConvertCell(const VTermScreen* screen, const VTermScreenCell& raw) {
         Cell cell;
         cell.character.clear();
-        for (std::size_t i = 0; i < VTERM_MAX_CHARS_PER_CELL && raw.chars[i] != 0; ++i) {
+        // libvterm marks the right half of a wide character with chars[0] ==
+        // (uint32_t)-1; it stays empty, which is how ui::Screen spells a
+        // wide glyph's continuation.
+        const bool continuation = raw.chars[0] == static_cast<uint32_t>(-1);
+        for (std::size_t i = 0; !continuation && i < VTERM_MAX_CHARS_PER_CELL && raw.chars[i] != 0; ++i) {
             cell.character += text::EncodeCodepointUtf8(static_cast<char32_t>(raw.chars[i]));
         }
-        if (cell.character.empty() && raw.width >= 1) {
+        if (cell.character.empty() && raw.width >= 1 && !continuation) {
             cell.character = " ";
         }
         cell.foreground    = ColorFrom(screen, raw.fg, true);

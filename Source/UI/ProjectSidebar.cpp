@@ -12,6 +12,7 @@
 #include <system_error>
 
 #include "Border.h"
+#include "DrawText.h"
 #include "Editor/Key.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Tree.h"
@@ -99,31 +100,27 @@ namespace {
         return prefix;
     }
 
-    // Filenames are treated as ASCII-ish here, same simplification
-    // ModeLine's own buffer-name rendering already makes -- a genuinely
-    // multi-byte-UTF-8 filename would render byte-by-byte, a known, narrow
-    // limitation, not new to this widget.
-    std::u32string ToCodepoints(const std::string& text) {
-        std::u32string out;
-        for (const char ch : text) {
-            out += static_cast<char32_t>(static_cast<unsigned char>(ch));
+    std::string Utf8(const std::u32string& codepoints) {
+        std::string out;
+        for (const char32_t cp : codepoints) {
+            out += text::EncodeCodepointUtf8(cp);
         }
         return out;
     }
 
-    std::u32string BuildLabel(const std::vector<editor::ProjectTreeEntry>& entries, std::size_t index,
-                              const std::set<std::filesystem::path>& expandedDirs) {
+    std::string BuildLabel(const std::vector<editor::ProjectTreeEntry>& entries, std::size_t index,
+                           const std::set<std::filesystem::path>& expandedDirs) {
         const editor::ProjectTreeEntry& entry = entries[index];
 
-        std::u32string label = TreePrefix(entries, index);
-        label += U' ';
+        std::u32string prefix = TreePrefix(entries, index);
+        prefix += U' ';
         if (entry.isDirectory) {
-            label += expandedDirs.contains(entry.path) ? kExpandedTriangle : kCollapsedTriangle;
-            label += U' ';
+            prefix += expandedDirs.contains(entry.path) ? kExpandedTriangle : kCollapsedTriangle;
+            prefix += U' ';
         }
-        label += ToCodepoints(entry.path.filename().string());
+        std::string label = Utf8(prefix) + entry.path.filename().string();
         if (entry.isDirectory) {
-            label += U'/';
+            label += '/';
         }
         return label;
     }
@@ -487,12 +484,7 @@ void ProjectSidebar::Paint(Canvas c) {
             }
         }
 
-        const std::u32string label = BuildLabel(entries, *index, expandedDirs_);
-        for (std::size_t i = 0; i < label.size() && static_cast<int>(i) < contentColumns; ++i) {
-            Cell& cell     = c[{.x = static_cast<int>(i), .y = row}];
-            cell.character = text::EncodeCodepointUtf8(label[i]);
-            brush.ApplyTo(cell);
-        }
+        DrawText(c, 0, row, BuildLabel(entries, *index, expandedDirs_), brush, contentColumns);
     }
 }
 

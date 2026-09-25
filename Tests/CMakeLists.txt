@@ -11,6 +11,7 @@ add_executable(ned_tests
             PieceTableTest.cpp
             PieceTableStorageTest.cpp
             GraphemeTest.cpp
+            DisplayWidthTest.cpp
             UndoTreeTest.cpp
             KillRingTest.cpp
             RegisterTest.cpp
@@ -176,6 +177,8 @@ add_executable(ned_tests
             HeaderSourceTest.cpp
             PerformanceTest.cpp
             CompositingTest.cpp
+            WideGlyphScreenTest.cpp
+            WideGlyphColumnTest.cpp
             PaintTest.cpp
             PaintParseTest.cpp
             BundledPaintsTest.cpp
@@ -228,6 +231,7 @@ add_executable(ned_tests
             FormatOnSaveTest.cpp
             ClipboardTest.cpp
             ClipboardTestGuard.cpp
+            LocaleTestGuard.cpp
             SigpipeTestGuard.cpp
             TerminalOutputTestGuard.cpp
             TabWidthTest.cpp

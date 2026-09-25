@@ -141,8 +141,8 @@ TEST_CASE("DitherGlyph spans nothing to a full block", "[Compositing]") {
 }
 
 TEST_CASE("IsBlankGlyph treats a space as empty", "[Compositing]") {
-    REQUIRE(IsBlankGlyph(""));
     REQUIRE(IsBlankGlyph(" "));
+    REQUIRE_FALSE(IsBlankGlyph("")); // a wide glyph's right half
     REQUIRE_FALSE(IsBlankGlyph("x"));
 }
 

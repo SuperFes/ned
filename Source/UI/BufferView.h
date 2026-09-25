@@ -85,6 +85,7 @@
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/ConflictHunk.h"
+#include "Text/DisplayWidth.h"
 #include "Text/KillRing.h"
 #include "Theme.h"
 #include "TreeView.h"
@@ -3515,25 +3516,27 @@ class BufferView : public Widget {
     [[nodiscard]] Color OverlayWashAt(std::string_view surfaceName, const Color& fallback, const Canvas& c, int col,
                                       int row) const;
 
-    // Emits the cells one codepoint occupies, advancing col past them: a tab
-    // expands to the next tab stop (real terminal semantics -- variable
-    // width, depending on the tab's own visual column), a C0/DEL byte
-    // becomes a hex placeholder, anything else is one cell. columnOffset is
-    // the row's own col-to-real-visual-column constant (see the call site).
-    void EmitCodepointCells(Canvas& c, int row, int& col, const text::ITextStorage::DecodedCodepoint& decoded,
-                            const Brush& brush, bool secondaryCaretHere, const LineRenderState& lineState,
-                            std::size_t offset, int columnOffset) const;
+    // Emits the cells the glyph at `offset` occupies, advancing col past
+    // them: a tab expands to the next tab stop (real terminal semantics --
+    // variable width, depending on the tab's own visual column), a control or
+    // zero-width character becomes a hex placeholder, anything else is its
+    // own one or two cells. columnOffset is the row's own
+    // col-to-real-visual-column constant (see the call site).
+    void EmitGlyphCells(Canvas& c, int row, int& col, const text::ITextStorage& content, const text::Glyph& glyph,
+                        const Brush& brush, bool secondaryCaretHere, const LineRenderState& lineState, std::size_t offset,
+                        int columnOffset) const;
 
     // Draws the collapsed Org link starting at `offset`, if one does. Returns
     // true when it drew one, meaning the bytes it replaced must not also be
-    // rendered. columnOffset is EmitCodepointCells' own row constant, needed
+    // rendered. columnOffset is EmitGlyphCells' own row constant, needed
     // here too since a raw tab inside the link's own displayText is a
     // realistic edge case, not assumed impossible.
     [[nodiscard]] bool EmitCollapsedLink(Canvas& c, int row, int& col, std::size_t& offset,
                                          const LineRenderState& lineState, int columnOffset) const;
     // Draws the inlay hint anchored at `offset`, if any. Virtual text alongside
     // the real byte, not a replacement, so the caller still renders that byte.
-    void EmitVirtualText(Canvas& c, int row, int& col, std::size_t offset, const LineRenderState& lineState) const;
+    void EmitVirtualText(Canvas& c, int row, int& col, std::size_t offset, const LineRenderState& lineState,
+                         int columnOffset) const;
 
     // Paints the fold ellipsis and any preview of what is hidden, after a line's
     // own content. Belongs on the line's last visual row: it means "content

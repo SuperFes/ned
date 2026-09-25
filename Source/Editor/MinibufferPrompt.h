@@ -51,9 +51,8 @@ class MinibufferPrompt {
     // Byte offset of the cursor within Text() (not StatusText()).
     [[nodiscard]] std::size_t CursorByteOffset() const;
 
-    // The cursor's column (one per codepoint, matching PaintUtf8Row's own
-    // one-column-per-codepoint convention) within StatusText() -- what a
-    // caller draws its caret cell at.
+    // The cursor's display column (as PaintUtf8Row paints the text) within
+    // StatusText() -- what a caller draws its caret cell at.
     [[nodiscard]] int CursorDisplayColumn() const;
 
   private:

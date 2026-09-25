@@ -165,7 +165,7 @@ Color EnsureContrast(const Color& foreground, const Color& background, double mi
 }
 
 bool IsBlankGlyph(std::string_view character) {
-    return character.empty() || character == " ";
+    return character == " ";
 }
 
 } // namespace ned::ui

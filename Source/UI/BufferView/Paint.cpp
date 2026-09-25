@@ -1509,10 +1509,10 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
 // comment) -- what a tab's own next-stop math needs, since "col relative to
 // the gutter" alone silently disagrees with the real column the instant
 // horizontal scroll or a wrap continuation's hang indent is involved.
-void BufferView::EmitCodepointCells(Canvas& c, int row, int& col, const text::ITextStorage::DecodedCodepoint& decoded,
-                                    const Brush& brush, bool secondaryCaretHere, const LineRenderState& lineState,
-                                    std::size_t offset, int columnOffset) const {
-    if (decoded.codepoint == U'\t') {
+void BufferView::EmitGlyphCells(Canvas& c, int row, int& col, const text::ITextStorage& content, const text::Glyph& glyph,
+                                const Brush& brush, bool secondaryCaretHere, const LineRenderState& lineState,
+                                std::size_t offset, int columnOffset) const {
+    if (glyph.codepoint == U'\t') {
         // A real terminal treats a raw tab byte as "jump to the next
         // tab stop" (consuming several columns), not "print one
         // glyph and advance by one" -- sending it through unexpanded
@@ -1562,58 +1562,45 @@ void BufferView::EmitCodepointCells(Canvas& c, int row, int& col, const text::IT
             ++col;
         }
     }
-    else if (IsUnprintableControl(decoded.codepoint)) {
-        // Same reasoning as the tab case above: a raw control byte
-        // (some of them genuine terminal control codes -- a bare ESC
-        // is the sharpest example) must never reach the terminal as
-        // itself. Rendered as a 4-column "◁XX▷" hex placeholder
-        // instead -- entirely safe, printable characters -- with a
-        // dedicated foreground so it reads as "this is escaped data",
-        // not literal text; whatever background isearch/selection
-        // already chose above is kept so an active highlight still
-        // shows through it.
-        Brush binaryBrush             = brush;
-        binaryBrush.foreground        = theme_.binaryForeground;
-        const char32_t glyphs[4]      = {kBinaryOpen, HexDigit((decoded.codepoint >> 4) & 0xF),
-                                         HexDigit(decoded.codepoint & 0xF), kBinaryClose};
-        bool           firstGlyphCell = true;
-        for (const char32_t glyph : glyphs) {
-            if (col >= c.size().width) {
-                break;
-            }
-            Cell& cell     = c[{.x = col, .y = row}];
-            cell.character = text::EncodeCodepointUtf8(glyph);
-            binaryBrush.ApplyTo(cell);
-            if (firstGlyphCell && secondaryCaretHere) {
-                cell.inverted  = true;
-                firstGlyphCell = false;
-            }
-            ++col;
+    else if (glyph.placeholder) {
+        // Same reasoning as the tab case above: a control character (some
+        // of them genuine terminal control codes -- a bare ESC is the
+        // sharpest example) or a zero-width one (a bidi override, a ZWSP)
+        // must never reach the terminal as itself. Rendered as a "◁XX▷"
+        // hex placeholder instead -- entirely safe, printable characters --
+        // with a dedicated foreground so it reads as "this is escaped data",
+        // not literal text; whatever background isearch/selection already
+        // chose above is kept so an active highlight still shows through it.
+        Brush binaryBrush      = brush;
+        binaryBrush.foreground = theme_.binaryForeground;
+        const int start        = col;
+        col += DrawText(c, col, row, text::PlaceholderText(glyph.codepoint), binaryBrush, c.size().width);
+        if (secondaryCaretHere && col > start) {
+            c[{.x = start, .y = row}].inverted = true;
         }
     }
     else {
-        Cell&     cell          = c[{.x = col, .y = row}];
         const int displayColumn = col + columnOffset;
         // offset < lineState.indentEnd here only ever holds for
         // a space cell (see that field's own doc comment: the
         // scan that computes it stops at the first non-space/tab
-        // byte), so decoded.codepoint is guaranteed U' ' whenever
+        // byte), so glyph.codepoint is guaranteed U' ' whenever
         // this substitutes a guide glyph.
         if (editor::IndentGuidesEnabled() && offset < lineState.indentEnd && displayColumn > 0 &&
             displayColumn % editor::TabWidth() == 0) {
-            cell.character        = text::EncodeCodepointUtf8(kIndentGuide);
             Brush guideBrush      = brush;
             guideBrush.foreground = IndentGuideColor(theme_, displayColumn, editor::TabWidth());
-            guideBrush.ApplyTo(cell);
+            DrawGlyph(c, col, row, text::EncodeCodepointUtf8(kIndentGuide), 1, guideBrush);
         }
         else {
-            cell.character = text::EncodeCodepointUtf8(decoded.codepoint);
-            brush.ApplyTo(cell);
+            const std::string glyphText = glyph.byteLength == 1 ? std::string(1, static_cast<char>(glyph.codepoint))
+                                                                : text::GlyphText(content, offset, glyph);
+            DrawGlyph(c, col, row, glyphText, glyph.columns, brush);
         }
         if (secondaryCaretHere) {
-            cell.inverted = true;
+            c[{.x = col, .y = row}].inverted = true;
         }
-        ++col;
+        col += glyph.columns;
     }
 }
 
@@ -1623,8 +1610,8 @@ void BufferView::EmitCodepointCells(Canvas& c, int row, int& col, const text::IT
 // `offset`, not a replacement for it, so the caller goes on to render that
 // byte afterwards. Deliberately not routed through the syntax brush: this is
 // synthetic text rather than anything the grammar saw.
-void BufferView::EmitVirtualText(Canvas& c, int row, int& col, std::size_t offset,
-                                 const LineRenderState& lineState) const {
+void BufferView::EmitVirtualText(Canvas& c, int row, int& col, std::size_t offset, const LineRenderState& lineState,
+                                 int columnOffset) const {
     const RenderedVirtualText* virtualText = VirtualTextStartingAt(lineState.virtualText, offset);
     if (virtualText == nullptr) {
         return;
@@ -1651,31 +1638,35 @@ void BufferView::EmitVirtualText(Canvas& c, int row, int& col, std::size_t offse
     // virtual text, not a real SyntaxClass). Never emits a
     // raw control byte, matching every other glyph-writing loop
     // in this function.
-    std::size_t      labelOffset = 0;
-    const text::Rope label(virtualText->label);
-    while (labelOffset < label.ByteLength() && col < c.size().width) {
-        const auto glyph = label.CodepointAt(labelOffset);
-        if (glyph.codepoint >= 0x20 && glyph.codepoint != 0x7F) {
-            // translucency phase 6 (virtual text): the background comes
-            // from the anchoring byte's own BrushForCell rather than
-            // being theme_.background outright. A hint is virtual text
-            // drawn *inside* a real line, so whatever wash that line is
-            // under -- a selection, an isearch hit, a snippet field, a
-            // conflict tint -- covers the hint's columns too. Assigning
-            // the theme background punched a visible hole through the
-            // selection at exactly the hint's own width.
-            //
-            // Sampled per column, not once: those washes are Surfaces
-            // now, and a gradient one differs across the hint.
-            const Color beneath = BrushForCell(offset, lineState, c, col, row).background;
-            const Brush hintBrush{.background = beneath,
-                                  .foreground = GhostForegroundOver(beneath, InlayHintForeground(virtualText->kind)),
-                                  .italic     = true};
-            Cell&       cell = c[{.x = col, .y = row}];
-            cell.character   = text::EncodeCodepointUtf8(glyph.codepoint);
-            hintBrush.ApplyTo(cell);
-            ++col;
+    std::size_t            labelOffset = 0;
+    const std::string_view label       = virtualText->label;
+    while (labelOffset < label.size() && col < c.size().width) {
+        const text::Glyph glyph = text::GlyphAt(label, labelOffset);
+        // translucency phase 6 (virtual text): the background comes
+        // from the anchoring byte's own BrushForCell rather than
+        // being theme_.background outright. A hint is virtual text
+        // drawn *inside* a real line, so whatever wash that line is
+        // under -- a selection, an isearch hit, a snippet field, a
+        // conflict tint -- covers the hint's columns too. Assigning
+        // the theme background punched a visible hole through the
+        // selection at exactly the hint's own width.
+        //
+        // Sampled per glyph, not once: those washes are Surfaces
+        // now, and a gradient one differs across the hint.
+        const Color beneath = BrushForCell(offset, lineState, c, col, row).background;
+        const Brush hintBrush{.background = beneath,
+                              .foreground = GhostForegroundOver(beneath, InlayHintForeground(virtualText->kind)),
+                              .italic     = true};
+        // Measured the way VirtualTextColumns measures it (a tab to its
+        // stop, a control character as its placeholder), so the columns
+        // drawn are the columns every walk counted.
+        const int drawn = DrawText(c, col, row, label.substr(labelOffset, glyph.byteLength), hintBrush, c.size().width,
+                                   {.tabWidth = editor::TabWidth(), .startColumn = col + columnOffset});
+        if (drawn == 0) {
+            col = c.size().width; // a wide glyph with no room left ends the row
+            break;
         }
+        col += drawn;
         labelOffset += glyph.byteLength;
     }
 }
@@ -1689,53 +1680,18 @@ bool BufferView::EmitCollapsedLink(Canvas& c, int row, int& col, std::size_t& of
     if (const RenderedLink* link = LinkStartingAt(lineState.links, offset)) {
         // Links follow-up: real Org's own "descriptive links" --
         // the raw "[[target][description]]" markup collapses down
-        // to just its own displayText on screen, whole-hog (never
-        // truncated mid-glyph the way an ordinary too-wide line
-        // gets clipped at the viewport edge -- Org links are
-        // short enough in practice that this isn't worth the
-        // extra bookkeeping a partial-clip would need). Tab/
-        // control-byte glyphs within displayText (a realistic
-        // edge case, not assumed impossible) still go through the
-        // same expand-or-hex-placeholder treatment as ordinary
-        // buffer text -- CodepointColumns/DisplayColumns already
-        // account for their wider column cost, so the actual
-        // glyphs written here have to match or the two would
-        // silently disagree about layout.
-        const Brush      linkBrush{.background = theme_.background, .foreground = theme_.linkForeground, .bold = true};
-        std::size_t      textOffset = 0;
-        const text::Rope displayRope(link->displayText);
-        while (textOffset < displayRope.ByteLength() && col < c.size().width) {
-            const auto glyph = displayRope.CodepointAt(textOffset);
-            if (glyph.codepoint == U'\t') {
-                const int tabWidth    = editor::TabWidth();
-                const int visualColumn = col + columnOffset;
-                const int cellsToEmit = tabWidth - (visualColumn % tabWidth);
-                for (int i = 0; i < cellsToEmit && col < c.size().width; ++i) {
-                    Cell& cell     = c[{.x = col, .y = row}];
-                    cell.character = " ";
-                    linkBrush.ApplyTo(cell);
-                    ++col;
-                }
-            }
-            else if (IsUnprintableControl(glyph.codepoint)) {
-                const char32_t glyphs[4] = {kBinaryOpen, HexDigit((glyph.codepoint >> 4) & 0xF),
-                                            HexDigit(glyph.codepoint & 0xF), kBinaryClose};
-                for (const char32_t hexGlyph : glyphs) {
-                    if (col >= c.size().width)
-                        break;
-                    Cell& cell     = c[{.x = col, .y = row}];
-                    cell.character = text::EncodeCodepointUtf8(hexGlyph);
-                    linkBrush.ApplyTo(cell);
-                    ++col;
-                }
-            }
-            else {
-                Cell& cell     = c[{.x = col, .y = row}];
-                cell.character = text::EncodeCodepointUtf8(glyph.codepoint);
-                linkBrush.ApplyTo(cell);
-                ++col;
-            }
-            textOffset += glyph.byteLength;
+        // to just its own displayText on screen, whole-hog. Drawn
+        // through DrawText with the tab stops of the line's real
+        // columns, which is how DisplayColumns measures it, so the
+        // glyphs written here match the width every walk counted.
+        const Brush linkBrush{.background = theme_.background, .foreground = theme_.linkForeground, .bold = true};
+        const int   wanted = DisplayColumns(link->displayText, col + columnOffset);
+        if (DrawText(c, col, row, link->displayText, linkBrush, c.size().width,
+                     {.tabWidth = editor::TabWidth(), .startColumn = col + columnOffset}) < wanted) {
+            col = c.size().width; // clipped: nothing after it belongs on this row
+        }
+        else {
+            col += wanted;
         }
         offset = link->endByte;
         return true;
@@ -1814,14 +1770,8 @@ void BufferView::PaintFoldEllipsis(Canvas& c, int row, int& col, std::size_t lin
             previewBrush.ApplyTo(spaceCell);
             ++col;
         }
-        while (previewOffset < previewEnd && col < c.size().width) {
-            const auto decoded = frame.content.CodepointAt(previewOffset);
-            Cell&      cell    = c[{.x = col, .y = row}];
-            cell.character     = text::EncodeCodepointUtf8(decoded.codepoint);
-            previewBrush.ApplyTo(cell);
-            ++col;
-            previewOffset += decoded.byteLength;
-        }
+        col += DrawText(c, col, row, frame.content.Substring(previewOffset, previewEnd - previewOffset), previewBrush,
+                        c.size().width, {.tabWidth = editor::TabWidth()});
         break;
     }
 }
@@ -2201,9 +2151,12 @@ void BufferView::Paint(Canvas paneCanvas) {
                     continue; // the link stood in for these bytes
                 }
 
-                EmitVirtualText(c, row, col, offset, lineState);
+                EmitVirtualText(c, row, col, offset, lineState, columnOffset);
 
-                const auto decoded = content.CodepointAt(offset);
+                const text::Glyph glyph = text::GlyphAt(content, offset, currentSegment.endByte);
+                if (col + glyph.columns > c.size().width && glyph.columns == 2 && !glyph.placeholder) {
+                    break; // half a wide glyph can't be drawn; the truncation indicator takes the cell
+                }
 
                 // Multi-cursor phase: a secondary caret renders as an
                 // inverted cell (ScrollBar's own thumb technique) -- theme-
@@ -2214,8 +2167,8 @@ void BufferView::Paint(Canvas paneCanvas) {
 
                 Brush brush = BrushForCell(offset, lineState, c, col, row);
 
-                EmitCodepointCells(c, row, col, decoded, brush, secondaryCaretHere, lineState, offset, columnOffset);
-                offset += decoded.byteLength;
+                EmitGlyphCells(c, row, col, content, glyph, brush, secondaryCaretHere, lineState, offset, columnOffset);
+                offset += glyph.byteLength;
             }
 
             // gutter-wrap-indicator follow-up: the continuation cue, in
@@ -2297,7 +2250,7 @@ void BufferView::Paint(Canvas paneCanvas) {
 
             if (offset < currentSegment.endByte && col > 0) {
                 const Brush truncationBrush{.background = theme_.background, .foreground = theme_.truncationIndicatorForeground};
-                Cell&       cell = c[{.x = col - 1, .y = row}];
+                Cell&       cell = c[{.x = std::min(col, c.size().width - 1), .y = row}];
                 cell.character   = text::EncodeCodepointUtf8(kTruncationIndicator);
                 truncationBrush.ApplyTo(cell);
             }

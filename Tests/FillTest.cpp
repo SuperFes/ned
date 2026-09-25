@@ -36,13 +36,12 @@ TEST_CASE("WrapWords on an empty word list returns no lines", "[Fill]") {
     REQUIRE(WrapWords({}, 40).empty());
 }
 
-TEST_CASE("WrapWords widths multi-byte words by codepoint count, not byte count", "[Fill]") {
-    // "café" is 4 codepoints / 5 bytes, "中文" is 2 codepoints / 6 bytes --
-    // a byte-counting width would wrap these far too early.
+TEST_CASE("WrapWords widths words by display columns, not bytes or codepoints", "[Fill]") {
+    // "café" is 4 columns / 5 bytes, "中文" is 4 columns / 6 bytes / 2
+    // codepoints: 4 + 1 + 4 + 1 + 2 fills exactly 12 columns.
     const std::vector<std::string> words = {"caf\xc3\xa9", "\xe4\xb8\xad\xe6\x96\x87", "ok"};
-    const auto                     lines = WrapWords(words, 10);
-    REQUIRE(lines.size() == 1);
-    REQUIRE(lines[0] == "caf\xc3\xa9 \xe4\xb8\xad\xe6\x96\x87 ok");
+    REQUIRE(WrapWords(words, 12) == std::vector<std::string>{"caf\xc3\xa9 \xe4\xb8\xad\xe6\x96\x87 ok"});
+    REQUIRE(WrapWords(words, 11) == std::vector<std::string>{"caf\xc3\xa9 \xe4\xb8\xad\xe6\x96\x87", "ok"});
 }
 
 TEST_CASE("WrapWords never splits a multi-byte codepoint mid-word", "[Fill]") {

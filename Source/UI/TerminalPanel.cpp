@@ -9,6 +9,7 @@
 
 #include "Editor/Clipboard.h"
 #include "KeyTranslation.h"
+#include "Text/DisplayWidth.h"
 #include "Text/Utf8.h"
 #include "UI/EventLoop.h"
 
@@ -27,19 +28,14 @@ namespace {
     // -- a shell's own PS1 title is routinely a full `user@host:/long/path`.
     constexpr int kMaxTitleColumns = 24;
 
-    // One codepoint per column, PaintUtf8Row's own convention (PanelDock's
+    // Display columns, as PaintUtf8Row paints the title (PanelDock's
     // ColumnCount measures tab labels the same way).
     std::string TruncateToColumns(std::string_view text, int columns) {
-        std::size_t pos      = 0;
-        int         consumed = 0;
-        while (pos < text.size() && consumed < columns) {
-            pos = text::NextCodepointBoundary(text, pos);
-            ++consumed;
-        }
-        if (pos >= text.size()) {
+        const std::size_t kept = text::PrefixBytesForColumns(text, columns);
+        if (kept >= text.size()) {
             return std::string(text);
         }
-        return std::string(text.substr(0, pos)) + "\u2026";
+        return std::string(text.substr(0, kept)) + "\u2026";
     }
 
     bool IsWheel(MouseEvent::Button button) {

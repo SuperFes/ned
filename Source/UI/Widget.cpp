@@ -64,6 +64,30 @@ namespace {
 
 } // namespace
 
+bool IsWideGlyph(const std::string& character) {
+    // A cell holds one cluster already, so this is Text/DisplayWidth.h's
+    // measurement without re-segmenting it; ASCII is never wide.
+    return character.size() >= 2 && ncstrwidth(character.c_str(), nullptr, nullptr) == 2;
+}
+
+void ResolveRowDraws(std::span<const Cell> row, std::vector<CellDraw>& draws) {
+    draws.assign(row.size(), CellDraw::Glyph);
+    for (std::size_t x = 0; x < row.size(); ++x) {
+        if (row[x].character.empty()) {
+            draws[x] = CellDraw::Blank; // unless the glyph before it claims it, below
+        }
+        else if (IsWideGlyph(row[x].character)) {
+            if (x + 1 < row.size() && row[x + 1].character.empty()) {
+                draws[x + 1] = CellDraw::Continuation;
+                ++x;
+            }
+            else {
+                draws[x] = CellDraw::Blank;
+            }
+        }
+    }
+}
+
 // The five resolution rules from Docs/Translucency.md, in order. Which one
 // applies is decided by what is *already* in the destination cell -- a
 // background wash and a see-through background cannot coexist in one cell,
@@ -342,12 +366,18 @@ void Screen::Flush(ncplane* plane, ncplane* backingPlane) {
         }
     }
 
+    std::vector<CellDraw> draws;
     for (int y = 0; y < height_; ++y) {
+        const std::size_t rowStart = static_cast<std::size_t>(y) * static_cast<std::size_t>(width_);
+        ResolveRowDraws(std::span<const Cell>(cells_).subspan(rowStart, static_cast<std::size_t>(width_)), draws);
         for (int x = 0; x < width_; ++x) {
-            const std::size_t idx  = static_cast<std::size_t>(y) * static_cast<std::size_t>(width_) + static_cast<std::size_t>(x);
+            const std::size_t idx  = rowStart + static_cast<std::size_t>(x);
             const Cell&       cell = cells_[idx];
-            if (!fullRepaint && cell == previousCells_[idx]) {
-                continue;
+            const CellDraw    draw = draws[static_cast<std::size_t>(x)];
+            const bool        same = cell == previousCells_[idx] && draw == previousDraws_[idx];
+            previousDraws_[idx]    = draw;
+            if (draw == CellDraw::Continuation || (!fullRepaint && same)) {
+                continue; // a continuation is drawn by its wide glyph
             }
 
             // `inverted` swaps which Color goes to which Notcurses channel
@@ -384,7 +414,7 @@ void Screen::Flush(ncplane* plane, ncplane* backingPlane) {
                 styles |= NCSTYLE_STRUCK;
             ncplane_set_styles(plane, styles);
 
-            ncplane_putstr_yx(plane, y, x, cell.character.c_str());
+            ncplane_putstr_yx(plane, y, x, draw == CellDraw::Blank ? " " : cell.character.c_str());
         }
     }
 
