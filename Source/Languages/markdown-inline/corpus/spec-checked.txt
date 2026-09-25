@@ -1,0 +1,106 @@
+Spec examples upstream lists in failing.txt whose trees ned checked against
+the CommonMark spec's own HTML: its expected trees there were sketches
+without delimiter children. Example 538's `[ref]:` line is a shortcut link to
+the inline grammar alone; the block grammar takes definitions first. 588
+and 635 are fixed in ned's grammar.janet (an angle-bracket destination and a
+quoted attribute value outweigh the HTML tags their bytes could also read as;
+an attribute may have no value).
+
+================================================================================
+Example 355 - https://github.github.com/gfm/#example-355
+================================================================================
+`<http://foo.bar.`baz>`
+
+--------------------------------------------------------------------------------
+
+(inline
+  (code_span
+    (code_span_delimiter)
+    (code_span_delimiter)))
+
+================================================================================
+Example 411 - https://github.github.com/gfm/#example-411
+================================================================================
+__foo__bar__baz__
+
+--------------------------------------------------------------------------------
+
+(inline
+  (strong_emphasis
+    (emphasis_delimiter)
+    (emphasis_delimiter)
+    (emphasis_delimiter)
+    (emphasis_delimiter)))
+
+================================================================================
+Example 524 - https://github.github.com/gfm/#example-524
+================================================================================
+[link *foo **bar** `#`*](/uri)
+
+--------------------------------------------------------------------------------
+
+(inline
+  (inline_link
+    (link_text
+      (emphasis
+        (emphasis_delimiter)
+        (strong_emphasis
+          (emphasis_delimiter)
+          (emphasis_delimiter)
+          (emphasis_delimiter)
+          (emphasis_delimiter))
+        (code_span
+          (code_span_delimiter)
+          (code_span_delimiter))
+        (emphasis_delimiter)))
+    (link_destination)))
+
+================================================================================
+Example 538 - https://github.github.com/gfm/#example-538
+================================================================================
+[link *foo **bar** `#`*][ref]
+
+[ref]: /uri
+
+--------------------------------------------------------------------------------
+
+(inline
+  (full_reference_link
+    (link_text
+      (emphasis
+        (emphasis_delimiter)
+        (strong_emphasis
+          (emphasis_delimiter)
+          (emphasis_delimiter)
+          (emphasis_delimiter)
+          (emphasis_delimiter))
+        (code_span
+          (code_span_delimiter)
+          (code_span_delimiter))
+        (emphasis_delimiter)))
+    (link_label))
+  (shortcut_link
+    (link_text)))
+
+================================================================================
+Example 588 - https://github.github.com/gfm/#example-588
+================================================================================
+![foo](<url>)
+
+--------------------------------------------------------------------------------
+
+(inline
+  (image
+    (image_description)
+    (link_destination)))
+
+================================================================================
+Example 635 - https://github.github.com/gfm/#example-635
+================================================================================
+<a foo="bar" bam = 'baz <em>"</em>'
+_boolean zoop:33=zoop:33 />
+
+--------------------------------------------------------------------------------
+
+(inline
+  (html_tag))

@@ -18,15 +18,7 @@ json/corpus  cases=6 runs=6 passed=6 failed=0 skipped=0
 kotlin/corpus  cases=94 runs=94 passed=94 failed=0 skipped=0
 lua/corpus  cases=42 runs=42 passed=42 failed=0 skipped=0
 markdown/corpus  cases=323 runs=322 passed=322 failed=0 skipped=1
-markdown-inline/corpus  cases=363 runs=345 passed=337 failed=8 skipped=18
-  FAIL extension_wikilink.txt: Basic Wiki-link parsing.
-  FAIL extension_wikilink.txt: Wiki-link to a file
-  FAIL extension_wikilink.txt: Wiki-link to a heading in a note
-  FAIL extension_wikilink.txt: Wiki-link version of Example 556
-  FAIL extension_wikilink.txt: Wiki-link with title
-  FAIL spec.txt: Example 324 - https://github.github.com/gfm/#example-324
-  FAIL spec.txt: Example 638 - https://github.github.com/gfm/#example-638
-  FAIL tags.txt: Tags are working
+markdown-inline/corpus  cases=363 runs=351 passed=351 failed=0 skipped=12
 org/corpus  cases=151 runs=151 passed=151 failed=0 skipped=0
 php/corpus  cases=142 runs=140 passed=140 failed=0 skipped=2
 python/corpus  cases=117 runs=117 passed=117 failed=0 skipped=0
@@ -161,4 +153,4 @@ gdscript/corpus  cases=167 runs=167 passed=166 failed=1 skipped=0
 matlab/corpus  cases=157 runs=157 passed=155 failed=2 skipped=0
   FAIL call.txt: Function Call: Line Continuation
   FAIL strings.txt: Strings: Invalid termination
-total  cases=12721 runs=12699 passed=12657 failed=42 skipped=28
+total  cases=12721 runs=12705 passed=12671 failed=34 skipped=22

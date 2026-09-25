@@ -2013,6 +2013,39 @@ TEST_CASE("Markup hosts outline what their embedded scripts and styles define", 
     CHECK(NamedSymbols("markdown", "# Title\n\n```js\nfunction f() {}\n```\n") == V{"Title:module"});
 }
 
+TEST_CASE("A Markdown section runs to the next heading of its level or shallower, setext or ATX", "[Mode]") {
+    const std::string       text = "# One\n\na\n\n## Two\n\nb\n\nThree\n=====\n\nc\n\nFour\n----\n\nd\n\n> # Quoted\n";
+    const ned::editor::Mode mode = BundledMode("markdown");
+
+    std::vector<std::string> sections;
+    for (const ned::editor::SymbolMarker& marker : mode.symbolKind(text)) {
+        sections.push_back(marker.name + ":" + std::string(text.substr(marker.startByte, marker.endByte - marker.startByte)));
+    }
+    // A setext H1 ends the ATX H1 before it; a setext H2 nests under it; a
+    // heading inside a block quote names itself and heads no section.
+    CHECK(sections == std::vector<std::string>{"One:# One\n\na\n\n## Two\n\nb\n\n", "Two:## Two\n\nb\n\n",
+                                               "Three:Three\n=====\n\nc\n\nFour\n----\n\nd\n\n> # Quoted\n",
+                                               "Four:Four\n----\n\nd\n\n> # Quoted\n", "Quoted:# Quoted\n"});
+
+    // Folds hide the same sections, up to their last content.
+    std::vector<std::string> folds;
+    for (const auto& [start, end] : mode.fold(text)) {
+        folds.emplace_back(text.substr(start, end - start));
+    }
+    CHECK(std::ranges::find(folds, "Three\n=====\n\nc\n\nFour\n----\n\nd\n\n> # Quoted") != folds.end());
+    CHECK(std::ranges::find(folds, "# One\n\na\n\n## Two\n\nb") != folds.end());
+}
+
+TEST_CASE("Markdown highlights wiki links, tags and link destinations in angle brackets", "[Mode]") {
+    const ned::editor::Mode mode = BundledMode("markdown");
+    const std::string       text = "See [[Some Note|the note]] and #project, [a](<b c>).\n";
+    CHECK(ClassAt(mode, text, "#project") == ned::editor::SyntaxClass::Label);
+    CHECK(ClassAt(mode, text, "Some Note") != std::nullopt);
+    CHECK(ClassAt(mode, text, "[[") == ned::editor::SyntaxClass::Punctuation);
+    // `<b c>` is the link's destination, not an HTML tag.
+    CHECK(ClassAt(mode, text, "<b c>") == ClassAt(mode, "[a](b).\n", "b)"));
+}
+
 TEST_CASE("Request, patch and environment files outline their entries", "[Mode]") {
     using V = std::vector<std::string>;
     CHECK(NamedSymbols("http", "@host = example.com\n\n### Get users\nGET https://{{host}}/users\nAccept: text/plain\n\n"

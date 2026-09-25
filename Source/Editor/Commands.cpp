@@ -192,6 +192,25 @@ namespace {
         };
     }
 
+    // Numbers the ordered list holding `at` consecutively again after Enter
+    // added an item to it or took one back (Mode::renumberList), keeping point
+    // on the same text.
+    void RenumberListAt(text::Buffer& buffer, const Mode& mode, std::size_t at) {
+        if (!mode.renumberList) {
+            return;
+        }
+        const std::vector<FillEdit> edits = mode.renumberList(buffer.Text(), at);
+        std::size_t                 point = buffer.Point();
+        for (auto edit = edits.rbegin(); edit != edits.rend(); ++edit) {
+            buffer.DeleteRange(edit->start, edit->end - edit->start);
+            buffer.InsertAt(edit->start, edit->text);
+            if (edit->end <= point) {
+                point = point + edit->text.size() - (edit->end - edit->start);
+            }
+        }
+        buffer.SetPoint(point);
+    }
+
     // Backspace straight after an Enter that carried a list or quote marker
     // onto its new line (Mode::continueLine): replaces that marker with what a
     // plain Enter would have indented to, so one key takes the continuation
@@ -224,6 +243,7 @@ namespace {
         buffer.DeleteRange(lineStart, continuation->newLinePrefix.size());
         buffer.InsertAt(lineStart, indent);
         buffer.SetPoint(lineStart + indent.size());
+        RenumberListAt(buffer, *context.mode, lineStart - 1);
         buffer.EndUndoGroup();
         return true;
     }
@@ -1660,6 +1680,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                     }
                     else {
                         buffer.InsertAtPoint("\n" + continuation->newLinePrefix);
+                        RenumberListAt(buffer, *context.mode, buffer.Point());
                     }
                     buffer.EndUndoGroup();
                     return;

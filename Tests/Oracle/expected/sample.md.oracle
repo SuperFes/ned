@@ -1,9 +1,10 @@
 # sample.md  (markdown-mode)
-# 70 facts
-fold 0..242  "# Title\n\nIntro paragraph wit … `\n\n> a quote"
-fold 62..242  "## Tasks\n\n- [ ] open task\n-  … `\n\n> a quote"
+# 71 facts
+fold 0..148  "# Title\n\nIntro paragraph wit … \n\n### Deeper"
+fold 62..148  "## Tasks\n\n- [ ] open task\n-  … \n\n### Deeper"
 fold 104..136  "- plain item\n  continuation line"
-fold 138..242  "### Deeper\n\nSetext One\n===== … `\n\n> a quote"
+fold 150..242  "Setext One\n==========\n\nSetex … `\n\n> a quote"
+fold 173..242  "Setext Two\n----------\n\n```py … `\n\n> a quote"
 fold 196..231  "```python\ndef f():\n    return 1\n```"
 highlight 0..1  [markup-marker]  "#"
 highlight 0..8  [headline-level-1]  "# Title\n"
@@ -65,8 +66,8 @@ indent 184..194  [0]  "----------"
 indent 195..195  [0]
 indent 233..242  [0]  "> a quote"
 indent 243..243  [0]
-symbol 0..243  [Namespace Title]  "# Title\n\nIntro paragraph wit … \n\n> a quote\n"
-symbol 62..243  [Namespace Tasks]  "## Tasks\n\n- [ ] open task\n-  … \n\n> a quote\n"
-symbol 138..243  [Namespace Deeper]  "### Deeper\n\nSetext One\n===== … \n\n> a quote\n"
-symbol 150..172  [Namespace Setext One]  "Setext One\n==========\n"
-symbol 173..195  [Namespace Setext Two]  "Setext Two\n----------\n"
+symbol 0..150  [Namespace Title]  "# Title\n\nIntro paragraph wit … ### Deeper\n\n"
+symbol 62..150  [Namespace Tasks]  "## Tasks\n\n- [ ] open task\n-  … ### Deeper\n\n"
+symbol 138..150  [Namespace Deeper]  "### Deeper\n\n"
+symbol 150..243  [Namespace Setext One]  "Setext One\n==========\n\nSetex … \n\n> a quote\n"
+symbol 173..243  [Namespace Setext Two]  "Setext Two\n----------\n\n```py … \n\n> a quote\n"

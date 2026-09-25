@@ -2259,7 +2259,8 @@ bar>)
 
 (inline
   (shortcut_link
-    (link_text)))
+    (link_text))
+  (html_tag))
 
 ================================================================================
 Example 501 - https://github.github.com/gfm/#example-501

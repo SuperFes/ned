@@ -61,6 +61,17 @@ TEST_CASE("AlignTableAtPoint reports failure off a table", "[Markdown]") {
     REQUIRE_FALSE(AlignTableAtPoint(buffer));
 }
 
+TEST_CASE("AlignTableAtPoint aligns the header's columns and keeps a row's extra cells as written", "[Markdown]") {
+    // GFM ignores cells past the header's; they don't add a column or widen one.
+    Buffer buffer("test", Rope("| N | Age |\n|---|---|\n| Alice | 3 | extra long | x |\n| B |\n"));
+    buffer.SetPoint(2);
+
+    REQUIRE(AlignTableAtPoint(buffer));
+    REQUIRE(buffer.Text() == "| N     | Age |\n|-------|-----|\n| Alice | 3   | extra long | x |\n| B     |     |\n");
+    REQUIRE(AlignTableAtPoint(buffer)); // stable
+    REQUIRE(buffer.Text() == "| N     | Age |\n|-------|-----|\n| Alice | 3   | extra long | x |\n| B     |     |\n");
+}
+
 TEST_CASE("AlignTableAtPoint pads every column to its content's own width", "[Markdown]") {
     Buffer buffer("test", Rope("| N | Age |\n|---|---|\n| Alice | 3 |\n"));
     buffer.SetPoint(2);

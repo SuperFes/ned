@@ -112,13 +112,10 @@ namespace {
                         blockLen - 1);
     }
 
-    // Real column count -- the widest row across the whole grid (header
-    // included), matching what table::ComputeColumnWidths itself derives.
+    // The header's cells are the table's columns: GFM ignores a body row's
+    // cells past them and fills a short row with empty ones.
     std::size_t TableColumnCount(const std::vector<std::vector<std::string>>& rows) {
-        std::size_t count = 0;
-        for (const auto& row : rows)
-            count = std::max(count, row.size());
-        return count;
+        return rows.empty() ? 0 : rows.front().size();
     }
 
     // Pads every row (header included) to columnCount with empty cells, and
@@ -143,7 +140,14 @@ namespace {
     void RewriteTable(text::Buffer& buffer, const Table& original, const std::vector<std::vector<std::string>>& rows,
                       const std::vector<table::Alignment>& columnAlignments, std::size_t targetRow,
                       std::size_t targetCol) {
-        const std::vector<std::size_t> widths = table::ComputeColumnWidths(rows);
+        // A row's cells past the header's are kept, as written, after the
+        // aligned ones; they neither widen a column nor add one.
+        const std::size_t                     columnCount = TableColumnCount(rows);
+        std::vector<std::vector<std::string>> aligned     = rows;
+        for (auto& row : aligned) {
+            row.resize(columnCount);
+        }
+        const std::vector<std::size_t> widths = table::ComputeColumnWidths(aligned);
 
         std::string                           newText;
         std::vector<std::vector<std::size_t>> newCellOffsets(rows.size());
@@ -170,6 +174,11 @@ namespace {
                     col < columnAlignments.size() ? columnAlignments[col] : table::Alignment::Default;
                 const std::string cellText = col < rows[rowIndex].size() ? rows[rowIndex][col] : std::string();
                 newText += table::PadCell(cellText, widths[col], alignment);
+            }
+            for (std::size_t col = widths.size(); col < rows[rowIndex].size(); ++col) {
+                newText += " | ";
+                newCellOffsets[rowIndex].push_back(newText.size());
+                newText += rows[rowIndex][col];
             }
             if (original.edgePipes) {
                 newText += " |";

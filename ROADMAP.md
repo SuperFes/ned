@@ -161,19 +161,16 @@ and code reading. Highest stakes first.
         after a Scala 3 colon-lambda body (`xs.foldUse(g): _ ?=>` ... then
         `.topN(max)`) goes a level in; the body ends by dedent, which the
         multi-line-root rule (a closer on the line above) can't see.
-- [ ] **Markdown, what the 2026-09-24 audit left.** Reindent, fill-paragraph, save
-      trimming, tables, Enter/Backspace, the outline and folds were fixed against
-      `cmark`'s rendering (`Tools/markdown-oracle.py`; the block parser itself
-      matches cmark on every GFM spec example). Left:
-  - [ ] **Setext headings start no section** in tree-sitter-markdown, so text
-        under one neither folds with it nor gets it as a breadcrumb; the outline
-        does list it.
-  - [ ] **Tables:** aligning a row with more cells than the header adds columns
-        to the header (GFM ignores the extras).
-  - [ ] **Lists:** Enter numbers the new item but never renumbers the ones after
-        it; Enter on an item's continuation line hangs rather than starting an item.
-  - [ ] **Inline highlighting:** the inline grammar still fails 36 upstream spec
-        examples (`markdown-inline/corpus/failing.txt`, emphasis edge cases).
+- [ ] **Markdown inline: CommonMark's delimiter-run rules.** The inline grammar
+      (generated with upstream's extensions, so wiki links and `#tags` parse) passes
+      351 of 363 corpus cases; the 12 in `markdown-inline/corpus/failing.txt` fail
+      upstream too. Eleven are emphasis: flanking against punctuation and trailing
+      whitespace (`a**"foo"**`, `**foo bar **`, `*  a *`) and the rule of three
+      (`*foo**bar*`, `**foo*bar*baz**`). The scanner decides each delimiter run as it
+      reads it, from the grammar's last-token hints, where CommonMark matches runs
+      afterwards against a stack of openers -- fixing them means the scanner keeping
+      that stack. The twelfth is a link label of only whitespace read as a shortcut
+      link.
 - [ ] **Locals query limits in Perl, Elixir and Dart** (all ned-authored). Perl: `my $x
       = $x` resolves the right-hand `$x` to the new variable rather than the outer one
       (the resolver binds from the declaration's start), `our`/`local` bind nothing, and

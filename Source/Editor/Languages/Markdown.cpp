@@ -404,6 +404,94 @@ namespace {
         };
     }
 
+    // An ordered item's number: the value its marker spells and where the
+    // digits sit. nullopt for a bullet item.
+    struct ItemNumber {
+        std::size_t   start = 0;
+        std::size_t   end   = 0;
+        unsigned long value = 0;
+    };
+
+    std::optional<ItemNumber> NumberOf(const grammar::Node& item, std::string_view text) {
+        std::optional<ItemNumber> number;
+        item.ForEachChild([&](const grammar::Node& child) {
+            if (number || (child.Type() != "list_marker_dot" && child.Type() != "list_marker_parenthesis")) {
+                return;
+            }
+            std::size_t start = child.StartByte();
+            while (start < child.EndByte() && !std::isdigit(static_cast<unsigned char>(text[start]))) {
+                ++start;
+            }
+            std::size_t end = start;
+            while (end < child.EndByte() && std::isdigit(static_cast<unsigned char>(text[end]))) {
+                ++end;
+            }
+            if (end > start) {
+                number = ItemNumber{start, end, std::stoul(std::string(text.substr(start, end - start)))};
+            }
+        });
+        return number;
+    }
+
+    // The innermost list item or list holding `position`.
+    grammar::Node Enclosing(const grammar::Tree& tree, std::size_t position, std::string_view type) {
+        grammar::Node node = tree.RootNode().NamedDescendantForByteRange(position, position);
+        while (!node.IsNull() && node.Type() != type) {
+            node = node.Parent();
+        }
+        return node;
+    }
+
+    // Every item of an ordered list numbered the same (`1.` throughout, so
+    // reordering never renumbers) is a style of its own, which Enter keeps.
+    bool NumbersEveryItemTheSame(const grammar::Node& list, std::string_view text) {
+        std::optional<unsigned long> shared;
+        int                          items = 0;
+        bool                         same  = true;
+        list.ForEachChild([&](const grammar::Node& item) {
+            if (item.Type() != "list_item") {
+                return;
+            }
+            const std::optional<ItemNumber> number = NumberOf(item, text);
+            ++items;
+            if (!number || (shared && *shared != number->value)) {
+                same = false;
+            }
+            shared = number ? std::optional(number->value) : shared;
+        });
+        return same && items > 1;
+    }
+
+    std::vector<FillEdit> RenumberList(const grammar::Tree& tree, std::string_view text, std::size_t point) {
+        const grammar::Node list = Enclosing(tree, point, "list");
+        if (list.IsNull() || NumbersEveryItemTheSame(list, text)) {
+            return {};
+        }
+        std::vector<ItemNumber> numbers;
+        bool                    ordered = true;
+        list.ForEachChild([&](const grammar::Node& item) {
+            if (item.Type() != "list_item") {
+                return;
+            }
+            const std::optional<ItemNumber> number = NumberOf(item, text);
+            ordered                                = ordered && number;
+            if (number) {
+                numbers.push_back(*number);
+            }
+        });
+        std::vector<FillEdit> edits;
+        if (!ordered || numbers.empty()) {
+            return edits;
+        }
+        for (std::size_t i = 1; i < numbers.size(); ++i) {
+            const unsigned long want = numbers.front().value + i;
+            if (numbers[i].value != want) {
+                edits.push_back(FillEdit{numbers[i].start, numbers[i].end, std::to_string(want)});
+            }
+        }
+        return edits;
+    }
+
     // Enter on a list item's marker line or a quote line carries the
     // structure onto the new line: the same indent and `>` markers, the next
     // marker (the next number for an ordered item, an unchecked box for a
@@ -452,6 +540,26 @@ namespace {
             const grammar::Node marker = tree.RootNode().NamedDescendantForByteRange(lineStart + markerStart, lineStart + markerStart);
             isItem                     = !marker.IsNull() && IsListMarker(marker.Type());
         }
+        // A later line of an item's paragraph starts the item's next item,
+        // the same as its marker line would -- inside a quote too.
+        const grammar::Node item = Enclosing(tree, lineStart + at, "list_item");
+        if (!isItem && !item.IsNull() && item.StartByte() < lineStart) {
+            const std::size_t contentAt = lineStart + at;
+            if (point <= contentAt) {
+                return std::nullopt;
+            }
+            const grammar::Node paragraph   = tree.RootNode().NamedDescendantForByteRange(contentAt, contentAt);
+            bool                inParagraph = false;
+            for (grammar::Node node = paragraph; !node.IsNull() && node.Type() != "list_item"; node = node.Parent()) {
+                inParagraph = inParagraph || node.Type() == "paragraph";
+            }
+            const std::size_t markerLineEnd = std::min(text.find('\n', item.StartByte()), text.size());
+            if (!inParagraph) {
+                return std::nullopt;
+            }
+            const std::optional<LineContinuation> next = ContinueLine(tree, text, markerLineEnd);
+            return next && !next->currentLine ? next : std::nullopt;
+        }
         if (!isItem && lastQuote == std::string_view::npos) {
             return std::nullopt;
         }
@@ -489,7 +597,10 @@ namespace {
         if (isItem) {
             const std::string_view marker = line.substr(markerStart, markerEnd - markerStart);
             if (std::isdigit(static_cast<unsigned char>(marker.front()))) {
-                prefix += std::to_string(std::stoul(std::string(marker.substr(0, marker.size() - 1))) + 1) + marker.back();
+                const unsigned long number = std::stoul(std::string(marker.substr(0, marker.size() - 1)));
+                const grammar::Node list   = Enclosing(tree, lineStart + markerStart, "list");
+                const bool          same   = !list.IsNull() && NumbersEveryItemTheSame(list, text);
+                prefix += std::to_string(same ? number : number + 1) + marker.back();
             }
             else {
                 prefix += marker;
@@ -509,6 +620,121 @@ namespace {
                                                                                          std::size_t point) -> std::optional<LineContinuation> {
             const grammar::Tree& tree = sharedParse->Update(*parser, text);
             return tree.IsNull() ? std::nullopt : ContinueLine(tree, text, std::min(point, text.size()));
+        };
+        mode.renumberList = [parser = context.parser, sharedParse = context.sharedParse](std::string_view text,
+                                                                                         std::size_t      point) -> std::vector<FillEdit> {
+            const grammar::Tree& tree = sharedParse->Update(*parser, text);
+            return tree.IsNull() ? std::vector<FillEdit>{} : RenumberList(tree, text, std::min(point, text.size()));
+        };
+    }
+
+    // A heading's section runs to the next heading of the same or a shallower
+    // level. The grammar can only open a section at an ATX heading -- a
+    // setext heading is one only once its underline is read -- so it leaves
+    // setext headings loose and lets an ATX section run past a shallower
+    // setext one; the extents are computed here from the headings instead.
+    // Only headings outside list items and block quotes head sections.
+    struct Section {
+        std::size_t start;
+        std::size_t end;
+    };
+
+    int HeadingLevel(const grammar::Node& heading) {
+        int level = 0;
+        heading.ForEachChild([&](const grammar::Node& child) {
+            const std::string_view type = child.Type();
+            if (type == "setext_h1_underline") {
+                level = 1;
+            }
+            else if (type == "setext_h2_underline") {
+                level = 2;
+            }
+            else if (type.starts_with("atx_h") && type.ends_with("_marker") && type.size() == 13) {
+                level = type[5] - '0';
+            }
+        });
+        return level;
+    }
+
+    void CollectHeadings(const grammar::Node& node, std::vector<std::pair<grammar::Node, int>>& headings) {
+        node.ForEachChild([&](const grammar::Node& child) {
+            const std::string_view type = child.Type();
+            if (type == "atx_heading" || type == "setext_heading") {
+                if (const int level = HeadingLevel(child); level > 0) {
+                    headings.emplace_back(child, level);
+                }
+            }
+            else if (type == "section") {
+                CollectHeadings(child, headings);
+            }
+        });
+    }
+
+    std::vector<Section> SectionsOf(const grammar::Tree& tree, std::string_view text) {
+        std::vector<std::pair<grammar::Node, int>> headings;
+        CollectHeadings(tree.RootNode(), headings);
+        std::vector<Section> sections;
+        for (std::size_t i = 0; i < headings.size(); ++i) {
+            std::size_t end = text.size();
+            for (std::size_t j = i + 1; j < headings.size(); ++j) {
+                if (headings[j].second <= headings[i].second) {
+                    end = headings[j].first.StartByte();
+                    break;
+                }
+            }
+            sections.push_back(Section{.start = headings[i].first.StartByte(), .end = end});
+        }
+        return sections;
+    }
+
+    void Sections(Mode& mode, const LanguageDefinition&, const ModeBuildContext& context) {
+        const auto parser      = context.parser;
+        const auto sharedParse = context.sharedParse;
+        if (mode.symbolKind) {
+            // The tags query names each heading; its range becomes the section's.
+            mode.symbolKind = [headings = mode.symbolKind, parser, sharedParse](std::string_view text) {
+                std::vector<SymbolMarker> markers = headings(text);
+                const grammar::Tree&      tree    = sharedParse->Update(*parser, text);
+                if (tree.IsNull()) {
+                    return markers;
+                }
+                const std::vector<Section> sections = SectionsOf(tree, text);
+                for (SymbolMarker& marker : markers) {
+                    const auto section = std::ranges::find(sections, marker.startByte, &Section::start);
+                    if (section != sections.end()) {
+                        marker.endByte = section->end;
+                    }
+                }
+                return markers;
+            };
+            // A section can enclose the window from far above it, so the
+            // windowed form filters the whole-document answer.
+            mode.symbolKindInWindow = [whole = mode.symbolKind](std::string_view text, HighlightWindow window) {
+                std::vector<SymbolMarker> markers = whole(text);
+                std::erase_if(markers, [&](const SymbolMarker& marker) {
+                    return marker.endByte <= window.startByte || marker.startByte >= window.endByte;
+                });
+                return markers;
+            };
+        }
+        mode.fold = [blocks = mode.fold, parser, sharedParse](std::string_view text) {
+            std::vector<std::pair<std::size_t, std::size_t>> ranges = blocks ? blocks(text) : std::vector<std::pair<std::size_t, std::size_t>>{};
+            const grammar::Tree&                             tree   = sharedParse->Update(*parser, text);
+            if (!tree.IsNull()) {
+                for (const Section& section : SectionsOf(tree, text)) {
+                    // Like every fold: it ends at its last content, and one
+                    // that fits on its heading's line is none.
+                    std::size_t end = section.end;
+                    while (end > section.start && std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+                        --end;
+                    }
+                    if (text.substr(section.start, end - section.start).find('\n') != std::string_view::npos) {
+                        ranges.emplace_back(section.start, end);
+                    }
+                }
+            }
+            std::sort(ranges.begin(), ranges.end());
+            return ranges;
         };
     }
 
@@ -535,6 +761,7 @@ void RegisterMarkdownEscapes() {
     RegisterModeEscape("markdown.trailing-whitespace", KeptTrailingWhitespace);
     RegisterModeEscape("markdown.fill", Fill);
     RegisterModeEscape("markdown.continue", Continue);
+    RegisterModeEscape("markdown.sections", Sections);
 }
 
 } // namespace ned::editor::languages

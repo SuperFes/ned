@@ -4,6 +4,7 @@
 {:name "markdown_inline"
  :extras []
  :conflicts [[_closing_tag _text_base]
+             [_attribute]
              [_open_tag _text_base]
              [_html_comment _text_base]
              [_processing_instruction _text_base]
@@ -107,15 +108,16 @@
               "]")
   link_destination (:prec-dynamic 10
                     (:choice
-                     (:seq
-                      "<"
-                      (:repeat
-                       (:choice
-                        _text_no_angle
-                        backslash_escape
-                        entity_reference
-                        numeric_character_reference))
-                      ">")
+                     (:prec-dynamic 100
+                      (:seq
+                       "<"
+                       (:repeat
+                        (:choice
+                         _text_no_angle
+                         backslash_escape
+                         entity_reference
+                         numeric_character_reference))
+                       ">"))
                      (:seq
                       (:choice
                        _word
@@ -572,97 +574,102 @@
   _attribute (:seq
               (:repeat1 (:choice _whitespace _soft_line_break))
               _attribute_name
-              (:repeat (:choice _whitespace _soft_line_break))
-              "="
-              (:repeat (:choice _whitespace _soft_line_break))
-              _attribute_value)
+              (:choice
+               (:seq
+                (:repeat (:choice _whitespace _soft_line_break))
+                "="
+                (:repeat (:choice _whitespace _soft_line_break))
+                _attribute_value)
+               :blank))
   _attribute_name (:pattern "[a-zA-Z_:][a-zA-Z0-9_\\.:\\-]*")
   _attribute_value (:choice
                     (:pattern "[^ \\t\\r\\n\"'=<>`]+")
-                    (:seq
-                     "'"
-                     (:repeat
-                      (:choice
-                       _word
-                       _whitespace
-                       _soft_line_break
-                       (:seq
-                        (:choice
-                         "!"
-                         "\""
-                         "#"
-                         "$"
-                         "%"
-                         "&"
-                         "("
-                         ")"
-                         "*"
-                         "+"
-                         ","
-                         "-"
-                         "."
-                         "/"
-                         ":"
-                         ";"
-                         "<"
-                         "="
-                         ">"
-                         "?"
-                         "@"
-                         "["
-                         "\\"
-                         "]"
-                         "^"
-                         "_"
-                         "`"
-                         "{"
-                         "|"
-                         "}"
-                         "~")
-                        (:choice _last_token_punctuation :blank))))
-                     "'")
-                    (:seq
-                     "\""
-                     (:repeat
-                      (:choice
-                       _word
-                       _whitespace
-                       _soft_line_break
-                       (:seq
-                        (:choice
-                         "!"
-                         "#"
-                         "$"
-                         "%"
-                         "&"
-                         "'"
-                         "("
-                         ")"
-                         "*"
-                         "+"
-                         ","
-                         "-"
-                         "."
-                         "/"
-                         ":"
-                         ";"
-                         "<"
-                         "="
-                         ">"
-                         "?"
-                         "@"
-                         "["
-                         "\\"
-                         "]"
-                         "^"
-                         "_"
-                         "`"
-                         "{"
-                         "|"
-                         "}"
-                         "~")
-                        (:choice _last_token_punctuation :blank))))
-                     "\""))
+                    (:prec-dynamic 1000
+                     (:seq
+                      "'"
+                      (:repeat
+                       (:choice
+                        _word
+                        _whitespace
+                        _soft_line_break
+                        (:seq
+                         (:choice
+                          "!"
+                          "\""
+                          "#"
+                          "$"
+                          "%"
+                          "&"
+                          "("
+                          ")"
+                          "*"
+                          "+"
+                          ","
+                          "-"
+                          "."
+                          "/"
+                          ":"
+                          ";"
+                          "<"
+                          "="
+                          ">"
+                          "?"
+                          "@"
+                          "["
+                          "\\"
+                          "]"
+                          "^"
+                          "_"
+                          "`"
+                          "{"
+                          "|"
+                          "}"
+                          "~")
+                         (:choice _last_token_punctuation :blank))))
+                      "'"))
+                    (:prec-dynamic 1000
+                     (:seq
+                      "\""
+                      (:repeat
+                       (:choice
+                        _word
+                        _whitespace
+                        _soft_line_break
+                        (:seq
+                         (:choice
+                          "!"
+                          "#"
+                          "$"
+                          "%"
+                          "&"
+                          "'"
+                          "("
+                          ")"
+                          "*"
+                          "+"
+                          ","
+                          "-"
+                          "."
+                          "/"
+                          ":"
+                          ";"
+                          "<"
+                          "="
+                          ">"
+                          "?"
+                          "@"
+                          "["
+                          "\\"
+                          "]"
+                          "^"
+                          "_"
+                          "`"
+                          "{"
+                          "|"
+                          "}"
+                          "~")
+                         (:choice _last_token_punctuation :blank))))
+                      "\"")))
   _html_comment (:prec-dynamic 100
                  (:seq
                   "<!--"
@@ -1020,7 +1027,7 @@
                   code_span
                   (:alias _html_tag html_tag)
                   _text_base
-                  (:choice)
+                  tag
                   _unclosed_span)))
   _text_base (:choice
               _word
@@ -1067,6 +1074,7 @@
                         _emphasis_open_star
                         _emphasis_open_underscore
                         _unclosed_span)
+  tag (:pattern "#[0-9]*[a-zA-Z_\\-\\/][a-zA-Z_\\-\\/0-9]*")
   _inline_element (:choice
                    _inline_base
                    (:alias _emphasis_star emphasis)
@@ -1081,7 +1089,8 @@
                    full_reference_link
                    collapsed_reference_link
                    inline_link
-                   (:seq (:choice "[" "]") (:choice _last_token_punctuation :blank)))
+                   (:seq (:choice "[" "]") (:choice _last_token_punctuation :blank))
+                   wiki_link)
   _inline (:repeat1 _inline_element)
   _inline_element_no_star (:choice
                            _inline_base
@@ -1096,7 +1105,8 @@
                            full_reference_link
                            collapsed_reference_link
                            inline_link
-                           (:seq (:choice "[" "]") (:choice _last_token_punctuation :blank)))
+                           (:seq (:choice "[" "]") (:choice _last_token_punctuation :blank))
+                           wiki_link)
   _inline_no_star (:repeat1 _inline_element_no_star)
   _inline_element_no_underscore (:choice
                                  _inline_base
@@ -1111,7 +1121,8 @@
                                  full_reference_link
                                  collapsed_reference_link
                                  inline_link
-                                 (:seq (:choice "[" "]") (:choice _last_token_punctuation :blank)))
+                                 (:seq (:choice "[" "]") (:choice _last_token_punctuation :blank))
+                                 wiki_link)
   _inline_no_underscore (:repeat1 _inline_element_no_underscore)
   _inline_element_no_tilde (:choice
                             _inline_base
@@ -1126,7 +1137,8 @@
                             full_reference_link
                             collapsed_reference_link
                             inline_link
-                            (:seq (:choice "[" "]") (:choice _last_token_punctuation :blank)))
+                            (:seq (:choice "[" "]") (:choice _last_token_punctuation :blank))
+                            wiki_link)
   _inline_no_tilde (:repeat1 _inline_element_no_tilde)
   _strikethrough (:prec-dynamic 1
                   (:seq

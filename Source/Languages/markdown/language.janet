@@ -53,7 +53,8 @@
  # Hard line breaks and code-block text are trailing whitespace trimming keeps;
  # fill-paragraph reflows one paragraph node, prefixes and hard breaks kept;
  # Enter carries a list item's or quote's marker onto the new line.
- :escapes ["markdown.indent" "markdown.trailing-whitespace" "markdown.fill" "markdown.continue"]
+ :escapes ["markdown.indent" "markdown.trailing-whitespace" "markdown.fill" "markdown.continue"
+           "markdown.sections"]
  :snippets
  {
    "link"

@@ -86,3 +86,23 @@ TEST_CASE("One Backspace right after Enter takes the carried marker back", "[Mar
     // Not straight after Enter: an ordinary backspace.
     CHECK(Run("- one\n- |", {"backward-delete-char"}) == "- one\n-|");
 }
+
+TEST_CASE("Enter in an ordered list renumbers the items after the new one", "[Markdown][Enter]") {
+    CHECK(Run("1. one|\n2. two\n3. three\n", {"newline"}) == "1. one\n2. |\n3. two\n4. three\n");
+    // A nested list and an item's own lines don't break the count.
+    CHECK(Run("1. one|\n   - sub\n2. two\n   more\n", {"newline"}) == "1. one\n2. |\n   - sub\n3. two\n   more\n");
+    // Taking the item back with Backspace numbers the list as it was.
+    CHECK(Run("1. one|\n2. two\n", {"newline", "backward-delete-char"}) == "1. one\n    |\n2. two\n");
+    // A list numbering every item the same keeps doing so.
+    CHECK(Run("1. one|\n1. two\n", {"newline"}) == "1. one\n1. |\n1. two\n");
+    // A bullet list has nothing to renumber.
+    CHECK(Run("- one|\n- two\n", {"newline"}) == "- one\n- |\n- two\n");
+}
+
+TEST_CASE("Enter at the end of an item's later line starts the next item", "[Markdown][Enter]") {
+    CHECK(Run("1. one\n   more|\n2. two\n", {"newline"}) == "1. one\n   more\n2. |\n3. two\n");
+    CHECK(Run("- [x] done\n  still done|", {"newline"}) == "- [x] done\n  still done\n- [ ] |");
+    CHECK(Run("> - item\n>   more|", {"newline"}) == "> - item\n>   more\n> - |");
+    // Before the line's text it is an ordinary newline.
+    CHECK(Run("- one\n  |more", {"newline"}).find("- |") == std::string::npos);
+}

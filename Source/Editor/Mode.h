@@ -869,6 +869,12 @@ struct LineContinuation {
 };
 using ContinueLineFunction = std::function<std::optional<LineContinuation>(std::string_view bufferText, std::size_t point)>;
 
+// After Enter adds a list item or takes one back: the replacements, ascending
+// and in bufferText's coordinates, that number the ordered list holding
+// `point` consecutively from its first item. None for a list that isn't
+// ordered, is already consecutive, or gives every item the same number.
+using RenumberListFunction = std::function<std::vector<FillEdit>(std::string_view bufferText, std::size_t point)>;
+
 // Whether `after` parses to the same structure as `before`: the same named
 // nodes, at the same depths, in the same order. Depth is part of it because
 // moving a statement out of a block keeps every kind in order and changes
@@ -1009,6 +1015,7 @@ struct Mode {
     KeptTrailingWhitespaceFunction keptTrailingWhitespace;
     FillParagraphFunction          fillParagraph;
     ContinueLineFunction           continueLine;
+    RenumberListFunction           renumberList;
     // Empty function = no parse to compare, so a batch reindent is kept as is.
     SameStructureFunction sameStructure;
     // Debugging wishlist (line-inspect follow-up): empty function (the

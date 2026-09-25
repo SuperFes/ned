@@ -4,3 +4,8 @@
 # that runs this grammar's highlighting -- it is injected into markdown, never
 # a file type of its own.
 (strikethrough) @text.strikethrough
+
+# The wiki-link and tag extensions (Obsidian/Foam notes): `[[Note|title]]`
+# and `#tag`. The link's destination and text take upstream's link captures.
+(wiki_link ["[" "|" "]"] @punctuation.delimiter)
+(tag) @label
