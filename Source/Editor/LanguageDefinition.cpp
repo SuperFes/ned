@@ -35,6 +35,7 @@ namespace {
         mode.lineCommentPrefix = definition.lineCommentPrefix;
         mode.blockCommentOpen  = definition.blockCommentOpen;
         mode.blockCommentClose = definition.blockCommentClose;
+        mode.lineContinuation      = definition.lineContinuation;
         mode.wrapLines             = definition.wrapLines;
         mode.stickyScrollFromFolds = definition.stickyScrollFromFolds;
         mode.signatureTemplate     = definition.signatureTemplate;

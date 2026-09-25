@@ -8,6 +8,7 @@
  :extensions [".sh" ".bash" ".ebuild" ".eclass"]
  :filenames ["make.conf"]
  :line-comment "#"
+ :line-continuation "\\"
  :import-resolution {:extensions ["sh"]}
  :injection-aliases ["sh" "shell" "zsh"]
  :snippets

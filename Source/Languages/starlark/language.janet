@@ -6,5 +6,6 @@
  :filenames ["BUILD" "WORKSPACE" "MODULE.bazel" "BUILD.bazel" "WORKSPACE.bazel"
              "Tiltfile" "Snakefile"]
  :line-comment "#"
+ :line-continuation "\\"
  :lsp-root-markers ["MODULE.bazel" "WORKSPACE" "WORKSPACE.bazel"]
 }

@@ -7,6 +7,7 @@
  :mime-types ["text/x-objective-c"]
  :content-pattern "^\\s*(@interface|@protocol|@implementation|#import)\\b"
  :line-comment "//"
+ :line-continuation "\\"
  # The upstream queries are deltas whose first line says `inherits: c`;
  # discovery doesn't read that, so the base is named here.
  :queries {:highlights ["c/highlights.janet"

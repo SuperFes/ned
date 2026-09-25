@@ -972,6 +972,24 @@ namespace {
         return static_cast<int>(column) + 1;
     }
 
+    // Whether the line before `lineStart` ends in `marker` that isn't itself
+    // escaped: an odd run of it, since a doubled one is a literal.
+    bool ContinuedFromPreviousLine(std::string_view bufferText, std::size_t lineStart, std::string_view marker) {
+        if (marker.empty() || lineStart == 0) {
+            return false;
+        }
+        std::size_t end = lineStart - 1;
+        if (end > 0 && bufferText[end - 1] == '\r') {
+            --end;
+        }
+        std::size_t run = 0;
+        while (end >= marker.size() && bufferText.substr(end - marker.size(), marker.size()) == marker) {
+            ++run;
+            end -= marker.size();
+        }
+        return run % 2 == 1;
+    }
+
 } // namespace
 
 std::optional<int> IndentColumnForLine(const Mode& mode, std::string_view bufferText, std::size_t lineStart,
@@ -1005,6 +1023,22 @@ std::optional<int> IndentColumnForLine(const Mode& mode, std::string_view buffer
         if (const std::pair<std::size_t, std::size_t>* range = RangeContainingLine(single, lineStart)) {
             return BlockCommentContinuationColumn(bufferText, *range, lineStart, lineEnd);
         }
+    }
+    // A continued line is laid out by its author, often under something the
+    // grammar doesn't see (a shell command's arguments, a macro's body), so a
+    // reindent leaves it. A line not yet typed on -- the cursor's, after
+    // Enter -- goes a level past the line that began the statement, or level
+    // with an earlier continuation.
+    if (ContinuedFromPreviousLine(bufferText, lineStart, mode.lineContinuation)) {
+        if (FirstNonBlankByte(bufferText, lineStart, lineEnd) < lineEnd) {
+            return std::nullopt;
+        }
+        const std::size_t previousStart = LineStartFor(bufferText, lineStart - 1);
+        const IndentStyle style         = bufferIndent.AppliedTo(EffectiveIndentStyle(mode.name));
+        const int         previous      = VisualColumnInLine(
+            bufferText, previousStart, FirstNonBlankByte(bufferText, previousStart, lineStart - 1), std::max(1, style.width));
+        return ContinuedFromPreviousLine(bufferText, previousStart, mode.lineContinuation) ? previous
+                                                                                           : previous + style.width;
     }
     return mode.indentColumn(bufferText, lineStart, lineEnd, bufferIndent);
 }

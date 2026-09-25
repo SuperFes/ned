@@ -1,6 +1,7 @@
 {:name "c"
  :extensions [".c" ".h"]
  :line-comment "//"
+ :line-continuation "\\"
 
  # The richer C-family line-inspect node set -- see Languages/CLike.cpp.
  :escapes ["c.line-inspect" "c.test-body"]

@@ -932,6 +932,10 @@ struct Mode {
     // toggle-line-comment wraps each line in when lineCommentPrefix is empty.
     std::string blockCommentOpen;
     std::string blockCommentClose;
+    // What ends a line that the next one continues ("\\" in C's preprocessor,
+    // shells, Python). Reindent leaves a continued line as its author laid it
+    // out; empty means the language has no such marker.
+    std::string lineContinuation;
     // structural-selection-expansion follow-up: empty function (the
     // default) means expand-selection/shrink-selection report there's no
     // structural selection support configured for this mode, same

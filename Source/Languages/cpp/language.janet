@@ -5,6 +5,7 @@
  :mime-types ["text/x-c++"]
  :content-pattern "^\\s*(namespace\\s|class\\s+\\w+|template\\s*<)"
  :line-comment "//"
+ :line-continuation "\\"
 
  # C's own imports query -- both grammars define preproc_include identically.
  :queries {:imports ["c/imports.janet"]}

@@ -1,6 +1,7 @@
 {:name "hlsl"
  :extensions [".hlsl" ".hlsli" ".fx" ".fxh"]
  :line-comment "//"
+ :line-continuation "\\"
  # The grammar extends cpp's and upstream ships no queries, so cpp's are
  # named here. Not :queries-from: cpp's tests, imports, signatures and format
  # queries mean nothing for a shader, and tags.janet stays HLSL's own.

@@ -155,9 +155,17 @@ and code reading. Highest stakes first.
   - [ ] **Continuation lines** stay at their statement's level: Fortran's `&`,
         VHDL's selected signal assignments, a multi-line Nix `if`/`then`/`else`
         (nixfmt indents the branches), Scala's operator-continued enumerators.
-        SQL and Dockerfiles have no indents query, so reindent actively moves
-        theirs to column 0: a select list continued onto the next line, and
-        `RUN ... \` continuation lines.
+        (A line continued with a `:line-continuation` marker, `\` in C's
+        preprocessor, shells, Python, Ruby, awk and Dockerfiles, is left as
+        written instead.)
+  - [ ] **Lines inside a multi-line token** that isn't a string or comment are
+        reindented, which edits the token: a PowerShell `${ ... }` variable name,
+        a Crystal macro body, a Fortran literal continued with `&`. Leaving any
+        line that starts inside a token as written fixes all three, but an
+        injected region (`<script>`'s `raw_text`, a PHP template's `text`) is
+        such a token too, and its indentation is the host's answer composed with
+        the embedded language's (`Editor/InjectedIndent.h`) -- the rule has to
+        skip injection regions first.
   - [ ] **ReScript's braced switch arm.** `rescript format` indents a `| A => {`
         arm's block two levels past the `|` and its `}` one; ned gives the block
         one level and puts the `}` under the `|`, because the arm and the block

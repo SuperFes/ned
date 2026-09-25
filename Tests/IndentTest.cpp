@@ -1822,3 +1822,22 @@ TEST_CASE("The indent closure reads the style it is given on every call", "[Inde
     CHECK(ned::editor::IndentColumnForLine(mode, text, line, end, ned::editor::IndentOverride{.useTabs = false, .width = 2}) == 2);
     CHECK(ned::editor::IndentColumnForLine(mode, text, line, end, {}) == 4);
 }
+
+TEST_CASE("Enter on a continued line goes a level past the statement, then level with the line above", "[Indent]") {
+    const auto mode       = BashMode();
+    const auto blankAfter = [&](const std::string& text) {
+        const std::size_t line = text.size() - 1;
+        return ned::editor::IndentColumnForLine(mode, text, line, line, {});
+    };
+    CHECK(blankAfter("apt-get install \\\n\n") == 2);
+    CHECK(blankAfter("  ./configure \\\n\n") == 4);
+    CHECK(blankAfter("apt-get install \\\n      curl \\\n\n") == 6);
+
+    // A continued line with content is its author's; a doubled backslash is a
+    // literal, so the line after it is an ordinary one.
+    const std::string continued = "echo a \\\n       b\n";
+    const std::size_t line      = continued.find("       b");
+    CHECK_FALSE(ned::editor::IndentColumnForLine(mode, continued, line, continued.size() - 1, {}).has_value());
+    const std::string literal = "echo a \\\\\n       b\n";
+    CHECK(ned::editor::IndentColumnForLine(mode, literal, literal.find("       b"), literal.size() - 1, {}) == 0);
+}

@@ -421,3 +421,30 @@ TEST_CASE("A flattened LaTeX sample reindents back, verbatim and math bodies unt
     REQUIRE(flat != original);
     CHECK(IndentAll(flat, BundledMode("latex")) == original);
 }
+
+TEST_CASE("Reindent leaves a multi-line macro's body as written", "[FormatterProperties]") {
+    // Every line of it is continued from the one before; the code around it
+    // still reindents.
+    const std::string macro = "#define SWAP(a, b) \\\n"
+                              "    do { \\\n"
+                              "        int t = a; \\\n"
+                              "      a = b; \\\n"
+                              "    } while (0)\n";
+    CHECK(IndentAll(macro + "int f(void) {\nreturn 1;\n}\n", BundledMode("c")) ==
+          macro + "int f(void) {\n    return 1;\n}\n");
+    CHECK(IndentAll(macro + "namespace n {\nint x;\n}\n", BundledMode("cpp")) == macro + "namespace n {\nint x;\n}\n");
+}
+
+TEST_CASE("Reindent leaves continued lines as their author laid them out", "[FormatterProperties]") {
+    for (const auto& [language, text] : std::vector<std::pair<std::string, std::string>>{
+             {"bash", "if true; then\n  apt-get install \\\n      curl \\\n   git\nfi\n"},
+             {"python", "x = 1 + \\\n        2\nif x:\n    y = a and \\\n      b\n"},
+             {"ruby", "x = 1 + \\\n      2\nputs x\n"},
+             {"dockerfile", "FROM alpine\nRUN apt-get update \\\n && apt-get install -y \\\n      curl \\\n && rm -rf /tmp/*\n"
+                            "RUN if [ -f x ]; then \\\n        echo yes; \\\n    fi\n"},
+             {"awk", "BEGIN {\n    x = 1 + \\\n          2\n}\n"},
+         }) {
+        INFO("language: " << language);
+        CHECK(IndentAll(text, BundledMode(language)) == text);
+    }
+}

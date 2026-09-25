@@ -146,6 +146,9 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
         else if (key == "line-comment") {
             definition.lineCommentPrefix = ExpectString(directoryName, value, ":line-comment");
         }
+        else if (key == "line-continuation") {
+            definition.lineContinuation = ExpectString(directoryName, value, ":line-continuation");
+        }
         else if (key == "block-comment") {
             const std::vector<std::string> pair = ExpectStrings(directoryName, value, ":block-comment");
             if (pair.size() != 2 || pair[0].empty() || pair[1].empty()) {

@@ -127,6 +127,9 @@ struct LanguageDefinition {
     // What toggle-line-comment wraps a line in when there is no line comment.
     std::string blockCommentOpen;
     std::string blockCommentClose;
+    // `:line-continuation "\\"`: what ends a line the next one continues.
+    // Mode::lineContinuation.
+    std::string lineContinuation;
     AutoPairSet autoPairs = AutoPairSet::Default;
     bool        wrapLines = false;
     // Which colour-literal spellings this language admits beyond the two that

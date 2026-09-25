@@ -1,6 +1,7 @@
 {:name "python"
  :extensions [".py" ".pyw"]
  :line-comment "#"
+ :line-continuation "\\"
  :lsp-root-markers ["pyproject.toml" "setup.py" "setup.cfg"]
  :import-resolution {:extensions ["py"] :index-basenames ["__init__"]}
  :injection-aliases ["py" "python3" "py3"]
