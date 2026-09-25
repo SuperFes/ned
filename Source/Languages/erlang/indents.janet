@@ -11,3 +11,6 @@
 (_ "end" @dedent)
 (try_expr "catch" @dedent)
 [(try_after) (receive_after)] @dedent
+
+# Continuation lines -- see c-indents.scm.
+[(match_expr) (binary_op_expr)] @indent.continuation

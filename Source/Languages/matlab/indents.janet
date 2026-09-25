@@ -22,3 +22,7 @@
 (enumeration "end" @dedent)
 (arguments_statement "end" @dedent)
 (function_definition "end" @dedent)
+
+# Continuation lines (`...`) -- see c-indents.scm; the MATLAB editor's are a
+# level.
+[(assignment) (binary_operator) (boolean_operator) (comparison_operator)] @indent.continuation

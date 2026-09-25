@@ -152,17 +152,19 @@ and code reading. Highest stakes first.
 - [ ] **Reindent: what is still unmodelled.** Every language with an `ind` cell
       reindents a flattened sample back to its house style
       (`Tests/Format/reindent/`). Left:
-  - [ ] **Continuation lines in the rest of the languages.** A statement or
-        expression written across lines (`x = a +` then `b`, a method chain, a
-        ternary) goes a continuation step past its first line wherever the
-        indents query captures `@indent.continuation` (`cont` in the matrix;
+  - [ ] **Continuation lines: what's left.** A statement or expression written
+        across lines (`x = a +` then `b`, a method chain, a ternary) goes a
+        continuation step past its first line wherever the indents query
+        captures `@indent.continuation` (`cont` in the matrix;
         `IndentStyle::continuation`, `ned/set-continuation-indent`, two levels for
-        Java and Dart), and Enter after an unfinished one lands there too. Not yet
-        captured: MATLAB, Pascal, Verilog, Ada, SQL, fish, Meson, Erlang and
-        ReScript. (A line continued with a `:line-continuation` marker, `\` in
-        C's preprocessor, shells, Python, Ruby, awk and Dockerfiles, is left as
-        written; GDScript continues only inside brackets or after one.) Known
-        misses:
+        Java and Dart), and Enter after an unfinished one lands there too. SQL's
+        clauses do the same through their own headed captures; a line continued
+        with a `:line-continuation` marker (`\` in C's preprocessor, shells,
+        Python, Ruby, awk and Dockerfiles) is left as written, and GDScript
+        continues only inside brackets or after one. Left:
+        - Meson: `x = a +` then `b` doesn't parse as an addition.
+        - Objective-C's message arguments don't line up on their colons
+          (`[self doThing:a` then `with:b]`, Xcode's layout); they sit a level in.
         - A chain after a Scala 3 colon-lambda body (`xs.foldUse(g): _ ?=>` ...
           then `.topN(max)`) goes a level in; the body ends by dedent, which the
           multi-line-root rule (a closer on the line above) can't see.

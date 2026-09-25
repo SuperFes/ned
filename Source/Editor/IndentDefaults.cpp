@@ -56,7 +56,6 @@ namespace {
             {"vue",        {.useTabs = false, .width = 2}}, // Prettier default
             {"astro",      {.useTabs = false, .width = 2}}, // Prettier (prettier-plugin-astro) default
             {"bash",       {.useTabs = false, .width = 2}}, // Google Shell Style Guide, the closest thing to a canonical shell convention
-            {"fish",       {.useTabs = false, .width = 2}}, // no canonical style guide of its own; follows the same shell convention as bash
             {"lua",        {.useTabs = false, .width = 2}}, // most common community convention; no widely-adopted canonical formatter
             {"toml",       {.useTabs = false, .width = 2}}, // common convention (Cargo.toml-style)
             {"cmake",      {.useTabs = false, .width = 2}}, // cmake-format's own default
@@ -69,6 +68,7 @@ namespace {
             {"racket",     {.useTabs = false, .width = 2}}, // Lisp community convention
             {"commonlisp", {.useTabs = false, .width = 2}}, // Lisp community convention
             {"fennel",     {.useTabs = false, .width = 2}}, // fnlfmt
+            {"fish",       {.useTabs = false, .width = 4}}, // fish_indent, shipped with fish
 
             // -- genuinely ambiguous: no single canonical convention exists, picked as the most common cross-ecosystem default and flagged as such --
             {"java",       {.useTabs = false, .width = 4, .continuation = 2}}, // most common convention in practice (Google Java Style uses 2; Oracle/IntelliJ-default/Android use 4) -- judgment call; continuation lines are two levels in both

@@ -53,3 +53,6 @@
 (protected_definition "end" @indent.end) @indent
 (_ (task_definition "private" @indent.begin "end" @indent.end)) @indent
 (_ (protected_definition "private" @indent.begin "end" @indent.end)) @indent
+
+# Continuation lines -- see c-indents.scm.
+[(assignment_statement) (simple_return_statement)] @indent.continuation

@@ -1,0 +1,8 @@
+function f()
+x = 1 + ...
+    2;
+if a && ...
+    b
+    y = 1;
+end
+end

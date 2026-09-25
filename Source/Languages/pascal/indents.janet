@@ -22,3 +22,6 @@
 (_ body: [(statement) (assignment) (varDef) (if) (ifElse) (while) (repeat) (for) (foreach) (try) (case) (with) (raise) (goto)] @indent)
 (_ then: [(statement) (assignment) (varDef) (while) (repeat) (for) (foreach) (try) (case) (with) (raise) (goto)] @indent)
 (_ else: [(statement) (assignment) (varDef) (while) (repeat) (for) (foreach) (try) (case) (with) (raise) (goto)] @indent)
+
+# Continuation lines -- see c-indents.scm.
+[(assignment) (exprBinary)] @indent.continuation

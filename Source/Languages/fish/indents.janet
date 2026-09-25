@@ -9,3 +9,7 @@
 # tree-sitter-fish's own node-types.json plus a real parse dump.
 (else_if_clause) @dedent
 (else_clause) @dedent
+
+# A pipeline written across lines (`grep a file |` then `sort`) -- see
+# c-indents.scm.
+(pipe) @indent.continuation

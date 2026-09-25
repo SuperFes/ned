@@ -1013,7 +1013,7 @@ TEST_CASE("FishMode indentColumn indents an if-body and aligns end with its own 
     buffer.InsertAtPoint("if test 1\necho a\nend\n");
 
     const auto [bodyStart, bodyEnd] = LineRange(buffer, 1); // "echo a"
-    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 2); // fish's own built-in default is width 2 (IndentDefaults.h)
+    REQUIRE(mode.indentColumn(buffer.Text(), bodyStart, bodyEnd, {}) == 4); // fish_indent's width, fish's built-in default (IndentDefaults.h)
     const auto [closeStart, closeEnd] = LineRange(buffer, 2); // "end"
     REQUIRE(mode.indentColumn(buffer.Text(), closeStart, closeEnd, {}) == 0);
 }

@@ -8,3 +8,6 @@
 (function_body_declaration "endfunction" @dedent)
 (task_declaration) @indent.headed
 (task_body_declaration "endtask" @dedent)
+
+# Continuation lines -- see c-indents.scm.
+[(net_assignment) (blocking_assignment) (nonblocking_assignment)] @indent.continuation
