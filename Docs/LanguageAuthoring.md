@@ -243,6 +243,16 @@ preprocessor, shells, Python, Ruby, awk and Dockerfiles), which most grammars sk
 whitespace, is left as written. `@aligned.colons` lines an Objective-C message's
 selector parts up on their colons.
 
+### Locals
+
+`locals.janet` marks scopes, definitions and references. A definition's
+`.pattern` suffix binds every name inside a pattern (`local.pattern.name` picks the
+node type); `local.assignment` binds only where no outer binding is visible;
+`local.namespace` keeps same-spelled names apart (Perl's sigils);
+`local.case-insensitive` folds case (PowerShell); `local.pun` marks an occurrence that
+is also a label or key spelled the same (`{ x }`, `~x`) with the text a rename writes
+there, `{old}` and `{new}` filled in (`"{old}: {new}"` in JavaScript).
+
 ### change-signature
 
 `signatures.janet` and `calls.janet` pair up: `@signature.definition`/`@signature.name`/

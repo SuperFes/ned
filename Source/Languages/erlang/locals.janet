@@ -11,20 +11,15 @@
   (fun_clause)
 ] @local.scope
 
-((expr_args args: (var) @local.definition.parameter)
- (:not-eq? @local.definition.parameter "_"))
+#; Every variable anywhere in a pattern binds: `{A, [B | T]}` binds all three.
+((expr_args args: (_) @local.definition.parameter.pattern)
+ (:set! local.pattern.name "var"))
 
-((match_expr lhs: (var) @local.definition.var)
- (:not-eq? @local.definition.var "_")
+((match_expr lhs: (_) @local.definition.var.pattern)
+ (:set! local.pattern.name "var")
  (:set! local.assignment "true"))
-((match_expr lhs: (_ (var) @local.definition.var))
- (:not-eq? @local.definition.var "_")
- (:set! local.assignment "true"))
-((cr_clause pat: (var) @local.definition.var)
- (:not-eq? @local.definition.var "_")
- (:set! local.assignment "true"))
-((cr_clause pat: (_ (var) @local.definition.var))
- (:not-eq? @local.definition.var "_")
+((cr_clause pat: (_) @local.definition.var.pattern)
+ (:set! local.pattern.name "var")
  (:set! local.assignment "true"))
 
 ((var) @local.reference

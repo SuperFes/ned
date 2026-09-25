@@ -52,6 +52,20 @@
 (for_expression
   name: (value_pattern) @local.definition.var)
 
+#; A punned label is both the label and the variable: `~x` and `?x` as a
+#; parameter or an argument, `{ x }` in a record pattern or expression. A
+#; rename writes `~x:renamed` and `{ x = renamed }`.
+((parameter (value_pattern) @local.definition.parameter) @_parameter
+ (:match? @_parameter "^[~?][a-z_]")
+ (:not-match? @_parameter ":")
+ (:set! local.pun "{old}:{new}"))
+((labeled_argument . (label_name) @local.reference .)
+ (:set! local.pun "{old}:{new}"))
+((field_pattern . (field_path . (field_name) @local.definition.var .) .)
+ (:set! local.pun "{old} = {new}"))
+((field_expression . (field_path . (field_name) @local.reference .) .)
+ (:set! local.pun "{old} = {new}"))
+
 #; A use is a value path's own name, never one reached through a module.
 (value_path
   .

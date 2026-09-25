@@ -45,6 +45,7 @@
 #define NED_EDITOR_LOCALSCOPES_H
 
 #include <cstddef>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -88,6 +89,9 @@ struct LocalBinding {
     // resolves to them. This is the complete edit list for a rename; there
     // is nothing else in the file to change.
     std::vector<Range> occurrences;
+    // The occurrences a rename writes from a template rather than as the bare
+    // new name (LocalCapture::pun), keyed by range.
+    std::map<Range, std::string> puns;
     // Set when a same-named use inside this binding's own scope resolved
     // outward to an enclosing binding purely because it textually precedes
     // this definition -- see this header's own doc comment. The occurrence
@@ -104,6 +108,10 @@ struct LocalBinding {
 // of a token, matching how point behaves after moving to a word's end.
 [[nodiscard]] std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captures, std::string_view bufferText,
                                                            std::size_t point);
+
+// What a rename to newName writes over `occurrence`: newName, or for a pun
+// its template with "{old}" and "{new}" filled in.
+[[nodiscard]] std::string RenameReplacement(const LocalBinding& binding, Range occurrence, std::string_view newName);
 
 // A token the locals query says is a local: a definition, or a reference
 // that resolves to one. `qualifier` is the definition's (see

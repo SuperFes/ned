@@ -46,6 +46,13 @@
   .
   (identifier) @local.definition.parameter)
 
+#; A function-typed parameter (`int cb(int x)`): its name binds, its own
+#; parameter list only describes the type.
+(formal_parameter
+  (identifier) @local.definition.parameter
+  .
+  (formal_parameter_list) @local.skip)
+
 (catch_parameters
   (identifier) @local.definition.parameter)
 

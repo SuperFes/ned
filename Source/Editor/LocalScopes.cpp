@@ -8,6 +8,18 @@ namespace ned::editor::locals {
 
 namespace {
 
+    std::string Folded(std::string_view text) {
+        std::string folded(text);
+        for (char& c : folded) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return folded;
+    }
+
+    bool SameName(std::string_view a, std::string_view b, bool caseInsensitive) {
+        return caseInsensitive ? Folded(a) == Folded(b) : a == b;
+    }
+
     bool Contains(Range outer, Range inner) {
         return outer.first <= inner.first && inner.second <= outer.second;
     }
@@ -46,6 +58,8 @@ namespace {
         // said later (LocalCapture::visibleFrom).
         std::size_t visibleFrom           = 0;
         bool        explicitlyVisibleFrom = false;
+        std::string pun;
+        bool        caseInsensitive = false;
     };
 
     // Index into a scope vector, or nullopt for file level. Used instead of
@@ -75,7 +89,8 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
                                          capture.nameSpace, isDefinition && capture.filePrivate,
                                          isDefinition && capture.assignment,
                                          isDefinition && capture.visibleFrom ? std::max(*capture.visibleFrom, range.first) : range.first,
-                                         isDefinition && capture.visibleFrom.has_value()});
+                                         isDefinition && capture.visibleFrom.has_value(), capture.pun,
+                                         capture.caseInsensitive});
     }
     // One entry per distinct range; a scope any capture marks
     // non-inheriting stays so.
@@ -157,7 +172,9 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
         if (occurrence.range.second - occurrence.range.first != name.size()) {
             continue;
         }
-        if (bufferText.compare(occurrence.range.first, name.size(), name) != 0 || occurrence.nameSpace != token->nameSpace) {
+        if (!SameName(bufferText.substr(occurrence.range.first, name.size()), name,
+                      token->caseInsensitive && occurrence.caseInsensitive) ||
+            occurrence.nameSpace != token->nameSpace) {
             continue;
         }
         const ScopeRef innermost = innermostScopeOf(occurrence.range);
@@ -293,6 +310,9 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
             continue;
         }
         binding.occurrences.push_back(candidate.occurrence->range);
+        if (!candidate.occurrence->pun.empty()) {
+            binding.puns[candidate.occurrence->range] = candidate.occurrence->pun;
+        }
         if (candidate.isDefinition && candidate.scope == *owner &&
             (!seenDefinition || candidate.occurrence->range.first < binding.definition.first)) {
             binding.definition = candidate.occurrence->range;
@@ -399,7 +419,7 @@ std::vector<LocalNode> LocalNodes(std::span<const LocalCapture> captures, std::s
         }
         std::string name = token->nameSpace;
         name.push_back('\0');
-        name.append(text);
+        name.append(token->caseInsensitive ? Folded(text) : std::string(text));
         // An assignment to a name an enclosing frame already binds writes
         // that binding (LocalCapture::assignment).
         const auto visibleBinding = [&](std::size_t skipInnermost) -> const Binding* {
@@ -446,6 +466,28 @@ std::vector<LocalNode> LocalNodes(std::span<const LocalCapture> captures, std::s
     }
     std::sort(out.begin(), out.end(), [](const LocalNode& a, const LocalNode& b) { return a.range < b.range; });
     return out;
+}
+
+std::string RenameReplacement(const LocalBinding& binding, Range occurrence, std::string_view newName) {
+    const auto pun = binding.puns.find(occurrence);
+    if (pun == binding.puns.end()) {
+        return std::string(newName);
+    }
+    std::string text;
+    for (std::size_t i = 0; i < pun->second.size();) {
+        if (pun->second.compare(i, 5, "{old}") == 0) {
+            text += binding.name;
+            i += 5;
+        }
+        else if (pun->second.compare(i, 5, "{new}") == 0) {
+            text += newName;
+            i += 5;
+        }
+        else {
+            text += pun->second[i++];
+        }
+    }
+    return text;
 }
 
 } // namespace ned::editor::locals

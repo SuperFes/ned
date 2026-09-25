@@ -542,7 +542,10 @@ void BufferView::ApplyLocalRename(const std::string& newName) {
         hits.reserve(binding->occurrences.size());
         for (const std::pair<std::size_t, std::size_t>& occurrence : binding->occurrences) {
             hits.push_back(editor::rename::RenameHit{occurrence.first, occurrence.second,
-                                                     editor::rename::HitKind::Reference});
+                                                     editor::rename::HitKind::Reference,
+                                                     binding->puns.contains(occurrence)
+                                                         ? editor::locals::RenameReplacement(*binding, occurrence, newName)
+                                                         : std::string()});
         }
         editor::rename::FileRenameHits file;
         file.file = *buffer.Path();
@@ -561,14 +564,15 @@ void BufferView::ApplyLocalRename(const std::string& newName) {
     // is reached; point is adjusted per range for the same reason.
     buffer.BeginUndoGroup();
     for (auto it = binding->occurrences.rbegin(); it != binding->occurrences.rend(); ++it) {
+        const std::string replacement = editor::locals::RenameReplacement(*binding, *it, newName);
         buffer.DeleteRange(it->first, it->second - it->first); // (offset, LENGTH)
         buffer.SetPoint(it->first);
-        buffer.InsertAtPoint(newName);
+        buffer.InsertAtPoint(replacement);
         if (point >= it->second) {
-            newPoint = newPoint - oldLength + newName.size();
+            newPoint = newPoint - oldLength + replacement.size();
         }
         else if (point > it->first) {
-            newPoint = it->first + newName.size(); // point was inside the old name
+            newPoint = it->first + replacement.size(); // point was inside the old name
         }
     }
     buffer.SetPoint(std::min(newPoint, buffer.Content().ByteLength()));

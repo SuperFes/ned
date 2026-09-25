@@ -1293,6 +1293,34 @@ TEST_CASE("erlang-mode binds a variable once per clause, a pattern matching it a
     CHECK(Resolve("erlang-mode", source, "Xs", 0)->occurrences.size() == 2);
 }
 
+TEST_CASE("erlang-mode binds every variable of a nested pattern", "[Mode][LocalScopes]") {
+    const std::string source = "f({Key, [Head | Tail]}) ->\n"
+                               "    {ok, {Inner, [Deep]}} = g(Key),\n"
+                               "    Head + Deep + Inner + length(Tail).\n";
+    for (const std::string name : {"Head", "Tail", "Inner", "Deep"}) {
+        INFO(name);
+        const auto binding = Resolve("erlang-mode", source, name, 0);
+        REQUIRE(binding.has_value());
+        CHECK(binding->occurrences.size() == 2);
+    }
+}
+
+TEST_CASE("dart-mode binds a function-typed parameter but not its signature's names", "[Mode][LocalScopes]") {
+    const std::string source   = "void apply(int callback(int value), int seed) {\n"
+                                 "  var value = seed;\n"
+                                 "  callback(value);\n"
+                                 "}\n";
+    const auto        callback = Resolve("dart-mode", source, "callback", 1);
+    REQUIRE(callback.has_value());
+    CHECK(callback->definition.first == source.find("callback"));
+    CHECK(callback->occurrences.size() == 2);
+
+    const auto value = Resolve("dart-mode", source, "value", 2);
+    REQUIRE(value.has_value());
+    CHECK(value->definition.first == source.find("value = seed"));
+    CHECK(value->occurrences.size() == 2);
+}
+
 TEST_CASE("scheme-mode resolves define parameters and a plain let's outer reads", "[Mode][LocalScopes]") {
     const std::string source = "(define (scale vec factor)\n"
                                "  (let ((factor (* factor 2)) (size (length vec)))\n"
@@ -1373,4 +1401,68 @@ TEST_CASE("racket-mode binds every define parameter and reads a plain let's valu
     // let* binds one by one: `(* width size)` reads the width just bound.
     CHECK(Resolve("racket-mode", source, "width", 0)->occurrences.size() == 2);
     CHECK(Resolve("racket-mode", source, "vec", 1)->occurrences.size() == 2);
+}
+
+namespace {
+
+// `source` after renaming the nth occurrence of `name`'s binding to newName,
+// the way rename-symbol writes it.
+std::string Renamed(const std::string& modeName, const std::string& source, std::string_view name, std::size_t nth,
+                    std::string_view newName) {
+    const auto binding = Resolve(modeName, source, name, nth);
+    REQUIRE(binding.has_value());
+    std::string text = source;
+    for (auto it = binding->occurrences.rbegin(); it != binding->occurrences.rend(); ++it) {
+        text.replace(it->first, it->second - it->first, ned::editor::locals::RenameReplacement(*binding, *it, newName));
+    }
+    return text;
+}
+
+} // namespace
+
+TEST_CASE("A punned shorthand is renamed as its long form", "[Mode][LocalScopes]") {
+    const std::string js        = "function f(obj) {\n"
+                                  "  const { first, second = 2 } = obj;\n"
+                                  "  return { first, total: first + second };\n"
+                                  "}\n";
+    const std::string jsRenamed = "function f(obj) {\n"
+                                  "  const { first: head, second = 2 } = obj;\n"
+                                  "  return { first: head, total: head + second };\n"
+                                  "}\n";
+    CHECK(Renamed("javascript-mode", js, "first", 0, "head") == jsRenamed);
+    CHECK(Renamed("typescript-mode", js, "first", 0, "head") == jsRenamed);
+    CHECK(Renamed("javascript-mode", js, "second", 0, "rest") ==
+          "function f(obj) {\n  const { first, second: rest = 2 } = obj;\n  return { first, total: first + rest };\n}\n");
+
+    CHECK(Renamed("rust-mode", "fn f() -> S {\n    let S { y } = g();\n    S { y }\n}\n", "y", 0, "w") ==
+          "fn f() -> S {\n    let S { y: w } = g();\n    S { y: w }\n}\n");
+
+    CHECK(Renamed("ocaml-mode", "let f ~x = g ~x { x }\n", "x", 0, "n") == "let f ~x:n = g ~x:n { x = n }\n");
+    CHECK(Renamed("ocaml-mode", "let h { a; b = c } = a + c\n", "a", 0, "z") == "let h { a = z; b = c } = z + c\n");
+}
+
+TEST_CASE("powershell-mode names are case-insensitive and a braced variable is its name", "[Mode][LocalScopes]") {
+    const std::string source = "function f($Acc) {\n"
+                               "  $acc + ${ACC} + $script:acc\n"
+                               "}\n";
+    CHECK(Renamed("powershell-mode", source, "Acc", 0, "total") ==
+          "function f($total) {\n  $total + ${total} + $script:acc\n}\n");
+}
+
+TEST_CASE("fsharp-mode binds a class's constructor arguments and a member's parameters", "[Mode][LocalScopes]") {
+    const std::string source = "type C(seed: int) =\n"
+                               "    let total = seed + 1\n"
+                               "    member this.Add(x: int, y) =\n"
+                               "        let z = x + y\n"
+                               "        z + total + this.Base\n";
+    CHECK(Renamed("fsharp-mode", source, "seed", 0, "start") ==
+          "type C(start: int) =\n    let total = start + 1\n    member this.Add(x: int, y) =\n"
+          "        let z = x + y\n        z + total + this.Base\n");
+    const auto x = Resolve("fsharp-mode", source, "x", 1);
+    REQUIRE(x.has_value());
+    CHECK(x->occurrences.size() == 2);
+    const auto self = Resolve("fsharp-mode", source, "this", 0);
+    REQUIRE(self.has_value());
+    CHECK(self->occurrences.size() == 2);
+    CHECK_FALSE(self->scopeIsFile);
 }

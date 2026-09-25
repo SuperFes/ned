@@ -56,8 +56,14 @@
 #; Destructuring, object and array, including renamed and rest bindings.
 #; `{ first }` binds `first`; `{ second: alias }` binds `alias`, never
 #; `second` -- that half is the property being read, not a new name.
-(object_pattern
+#; A shorthand is both the variable and the property it reads or writes, so a
+#; rename writes `{ first: renamed }` rather than changing the property.
+((object_pattern
   (shorthand_property_identifier_pattern) @local.definition.var)
+ (:set! local.pun "{old}: {new}"))
+((object_assignment_pattern
+  left: (shorthand_property_identifier_pattern) @local.definition.var)
+ (:set! local.pun "{old}: {new}"))
 (pair_pattern
   value: (identifier) @local.definition.var)
 (array_pattern
@@ -71,3 +77,7 @@
 
 #; References
 (identifier) @local.reference
+
+#; `{ first }` in an object literal reads the variable first.
+((shorthand_property_identifier) @local.reference
+ (:set! local.pun "{old}: {new}"))

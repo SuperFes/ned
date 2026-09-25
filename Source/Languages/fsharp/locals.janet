@@ -35,6 +35,15 @@
 
 (argument_patterns) @local.definition.parameter.pattern
 
+#; A class: its primary constructor's arguments and class-level lets are
+#; visible to every member; a member binds its self identifier and its
+#; arguments.
+(anon_type_defn) @local.scope
+(member_defn) @local.scope
+(primary_constr_args) @local.definition.parameter.pattern
+(property_or_ident instance: (identifier) @local.definition.parameter)
+(method_or_prop_defn args: (_) @local.definition.parameter.pattern)
+
 (value_declaration_left) @local.definition.var.pattern
 
 (rule

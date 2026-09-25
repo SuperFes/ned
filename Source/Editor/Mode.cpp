@@ -2479,6 +2479,8 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     const auto nameSpace   = match.setDirectives.find("local.namespace");
                     const auto filePrivate = match.setDirectives.find("local.file-private");
                     const auto assignment  = match.setDirectives.find("local.assignment");
+                    const auto pun         = match.setDirectives.find("local.pun");
+                    const auto folded      = match.setDirectives.find("local.case-insensitive");
                     captures.push_back(LocalCapture{
                         .startByte          = capture.startByte,
                         .endByte            = capture.endByte,
@@ -2491,7 +2493,9 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         .filePrivate        = *kind == LocalCaptureKind::Definition && filePrivate != match.setDirectives.end() &&
                                               filePrivate->second == "true",
                         .assignment         = *kind == LocalCaptureKind::Definition && assignment != match.setDirectives.end() &&
-                                              assignment->second == "true"});
+                                              assignment->second == "true",
+                        .pun                = pun != match.setDirectives.end() ? pun->second : std::string(),
+                        .caseInsensitive    = folded != match.setDirectives.end() && folded->second == "true"});
                 }
             }
 

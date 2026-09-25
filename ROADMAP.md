@@ -112,15 +112,6 @@ below is behaviour that is wrong or missing today, verified with `ned --format` 
 - [ ] **Scala 3 chain after a colon-lambda body.** `xs.foldUse(g): _ ?=>` ... then
       `.topN(max)` reindents a level in: the body ends by dedent, which the
       multi-line-root rule (a closer on the line above) can't see.
-- [ ] **Locals: names a rename misses.** Perl's `our`/`local` bind nothing and a
-      lexical `my sub` isn't tracked. Elixir: a zero-arity call written without parens
-      reads as a variable when a same-named one is bound. Dart: a function-typed
-      parameter (`int cb(int x)`) isn't captured. OCaml and F#: a punned label or field
-      (`f ~x`, `{ x }`) is both the variable and the label; F# class members and their
-      parameters aren't modelled. PowerShell names are case-insensitive and the
-      resolver isn't (`$Acc` and `$acc` are two bindings); `$script:`/`$global:` and
-      braced `${x}` are left out. Erlang binds only a top-level or one-level-nested
-      pattern variable (`{A, [B]}`'s `B` is a use).
 - [ ] **change-signature: known misses.** A class's base is the first type it lists,
       so a C#/Kotlin/Swift class listing an interface first sends `base`/`super` to the
       interface; a C# extension method called statically with its trailing defaults
@@ -1406,6 +1397,9 @@ these accumulate detail in place.
       and two spaces). Needs a tab width separate from `IndentStyle::width`, which today
       doubles as both. Justified when such a file has to be edited without being
       rewritten.
+- [ ] **Perl's lexical `my sub`.** It parses exactly like a package `sub`, so a rename
+      treats it as file-level and declines. Justified if lexical subs turn up in code
+      people rename; it needs the grammar to keep the `my`.
 - [ ] **Tcl locals.** `global`/`upvar` rebind a proc's name to another scope's, which a
       proc-local rename would get wrong. Justified once the resolver can decline a name
       a `global`/`upvar` touches rather than renaming half of it.

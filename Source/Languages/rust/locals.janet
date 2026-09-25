@@ -70,6 +70,12 @@
   (field_pattern
     (identifier) @local.definition.var))
  (:match? @local.definition.var "^[_a-z]"))
+#; `S { y }` binds y and reads field y; a rename writes `S { y: renamed }`.
+((struct_pattern
+  (field_pattern
+    .
+    (shorthand_field_identifier) @local.definition.var))
+ (:set! local.pun "{old}: {new}"))
 ((slice_pattern
   (identifier) @local.definition.var)
  (:match? @local.definition.var "^[_a-z]"))
@@ -99,3 +105,7 @@
 #; References
 ((identifier) @local.reference
   (:not-has-parent? @local.reference "scoped_identifier"))
+
+#; `S { x }` reads the variable x into field x.
+((shorthand_field_initializer (identifier) @local.reference)
+ (:set! local.pun "{old}: {new}"))

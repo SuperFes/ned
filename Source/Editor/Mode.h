@@ -682,6 +682,14 @@ struct LocalCapture {
     // (`let x = x + 1` reads the enclosing x), or it is a binding pair's
     // name, visible after its value. Unset, it is visible from its start.
     std::optional<std::size_t> visibleFrom;
+    // Set by `local.pun`: this occurrence is both the variable and a label
+    // or key spelled the same (`{ x }`, `~x`), so a rename writes the
+    // template -- "{old}" the label, "{new}" the new name -- instead of
+    // replacing the one token.
+    std::string pun;
+    // Set by `local.case-insensitive`: the language doesn't distinguish
+    // `$Acc` from `$acc` (PowerShell).
+    bool caseInsensitive = false;
 };
 
 // Maps a locals.scm capture name (without the leading '@', e.g.
