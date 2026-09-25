@@ -112,15 +112,6 @@ below is behaviour that is wrong or missing today, verified with `ned --format` 
 - [ ] **Scala 3 chain after a colon-lambda body.** `xs.foldUse(g): _ ?=>` ... then
       `.topN(max)` reindents a level in: the body ends by dedent, which the
       multi-line-root rule (a closer on the line above) can't see.
-- [ ] **change-signature: known misses.** A class's base is the first type it lists,
-      so a C#/Kotlin/Swift class listing an interface first sends `base`/`super` to the
-      interface; a C# extension method called statically with its trailing defaults
-      omitted is read as a member call; Julia's keyword parameters (after `;`) read as
-      positional, so a call passing one by name is declined; overloaded constructors
-      (Java's `Box(int)` beside `Box(int, int)`) trip the same-name arity check and
-      decline; Pascal's and Ada's grouped parameters (`A, B : Integer`) are one nameless
-      entry and decline; Ruby's and Crystal's bare `super` (the parent's same-named
-      method) isn't followed.
 - [ ] **Imports: what is still unmodelled.**
   - [ ] **JVM moves are half a refactor.** A moved Java/Kotlin/Scala/Groovy class's
         importers are rewritten; its own `package` line and its same-package users,
@@ -1408,6 +1399,13 @@ these accumulate detail in place.
       separate list at all; Erlang's and Elixir's multi-clause functions have a pattern
       per clause head that each change would rewrite separately. Justified when someone
       asks for change-signature in one of them.
+- [ ] **change-signature's remaining misses.** A Kotlin class with no primary
+      constructor may list an interface before its superclass (no parens tell them
+      apart), and `super(...)` is then sent to the first; a C# extension method called
+      statically with its trailing defaults omitted reads as a member call; Ruby's and
+      Crystal's bare `super` forwards the child's own arguments, which a reorder of the
+      parent's would need spelled out. Justified when one of them turns up in a real
+      refactor.
 - [ ] **Imports for module systems that aren't paths.** C# and F# namespaces, Swift and
       Elixir modules, OCaml and ReScript's flat module names, Pascal units (a unit name
       can't be written back after a move), Ada's GNAT `foo-bar.ads` naming, Starlark's

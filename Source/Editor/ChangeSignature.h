@@ -138,9 +138,12 @@ struct ArgumentRewrite {
 // that's what makes them valid C++ in the first place) -- arity is the one
 // thing it CAN check safely. A same-name signature found with a DIFFERENT
 // arity than the one being changed is therefore never treated as another
-// place to rewrite; it is counted in `arityMismatches`, and a caller
-// declines the WHOLE operation outright whenever that count is nonzero,
-// same "never guess" posture as BuildPositionMapping's own variadic check.
+// place to rewrite; it is counted in `arityMismatches`, and the calls are
+// told apart by how many positional arguments each overload accepts
+// (defaults and variadics widening the range): a call only another overload
+// accepts is left out, and one both accept is counted in `ambiguousCalls`,
+// which a caller declines the WHOLE operation on -- the same "never guess"
+// posture as BuildPositionMapping's own variadic check.
 // A same-name, SAME-arity signature -- found in the invocation's own file,
 // a header prototype, an out-of-line definition, wherever the search
 // reaches -- is added to `signatureSites` unconditionally; a real same-arity
@@ -191,13 +194,17 @@ struct DiscoveryResult {
     // targetArity -- see this section's own header comment. Nonzero means
     // "decline the whole operation," never "rewrite anyway."
     std::size_t arityMismatches = 0;
+    // Calls the target and another overload could both be (see above).
+    std::size_t ambiguousCalls = 0;
+    // Calls left out because only another overload accepts them.
+    std::size_t otherOverloadCalls = 0;
     // Candidates readText declined to read (see SourceLookup) -- reported
     // the same "say what was covered" way MultibufferMaxExcerpts's own note
     // and ImportFixup.h's FixupPlan::scanned are.
     std::size_t filesSkipped = 0;
 };
 
-[[nodiscard]] DiscoveryResult DiscoverSignatureAndCallSites(std::string_view name, std::size_t targetArity,
+[[nodiscard]] DiscoveryResult DiscoverSignatureAndCallSites(std::string_view name, const SignatureMarker& target,
                                                             const std::vector<std::filesystem::path>& candidates,
                                                             const SourceLookup& readText, const FileScanner& scanner);
 

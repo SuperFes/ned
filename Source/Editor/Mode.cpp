@@ -2036,16 +2036,17 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         if (child.IsExtra()) {
                             return;
                         }
+                        // A marker may be a bare token (Julia's `;`).
+                        if (keywordMarkers.contains({child.StartByte(), child.EndByte()})) {
+                            keywordOnly = true;
+                            return;
+                        }
                         if (!child.IsNamed()) {
                             defaultFollows = child.Type() == "=" && !marker.parameters.empty();
                             return;
                         }
                         if (groups.contains({child.StartByte(), child.EndByte()})) {
                             child.ForEachChild(visit);
-                            return;
-                        }
-                        if (keywordMarkers.contains({child.StartByte(), child.EndByte()})) {
-                            keywordOnly = true;
                             return;
                         }
                         if (skipped.contains({child.StartByte(), child.EndByte()})) {

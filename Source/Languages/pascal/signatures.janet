@@ -20,7 +20,9 @@
   type: (_)
   defaultValue: (defaultValue . (_) . (_) @parameter.default)) @parameter
 
-(declArg
-  name: (identifier)
-  .
-  name: (identifier)) @parameter
+#; Names sharing a type (`A, B: Integer`) are a parameter each.
+((declArg name: (identifier) . name: (identifier)) @parameter.group)
+((declArg [(kVar) (kConst) (kOut) (kConstref) (type) (defaultValue)] @parameter.skip) @_grouped
+ (:match? @_grouped ","))
+((declArg name: (identifier) @parameter.name @parameter) @_grouped
+ (:match? @_grouped ","))

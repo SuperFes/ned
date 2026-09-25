@@ -17,4 +17,11 @@
   .
   type: (_)) @parameter
 
+#; Names sharing a type (`a, b int`) are a parameter each; the type is theirs.
+((parameter_declaration
+   type: (_) @parameter.skip) @parameter.group
+ (:match? @parameter.group ","))
+((parameter_declaration
+   name: (identifier) @parameter.name @parameter) @_grouped
+ (:match? @_grouped ","))
 (variadic_parameter_declaration) @parameter.variadic

@@ -125,14 +125,15 @@ bool BufferView::BuildChangeSignatureReview(const std::filesystem::path& targetF
     }
 
     const editor::changesig::DiscoveryResult discovery = editor::changesig::DiscoverSignatureAndCallSites(
-        name, targetSignature.parameters.size(), candidates,
+        name, targetSignature, candidates,
         [this](const std::filesystem::path& path) { return ReviewSourceTextForRename(path); },
         ScanFileForChangeSignature);
 
-    if (discovery.arityMismatches != 0) {
-        statusMessage_ = "Change signature: " + std::to_string(discovery.arityMismatches) + " other definition" +
-                         (discovery.arityMismatches == 1 ? "" : "s") + " named \"" + std::string(name) +
-                         "\" with a different parameter count found -- can't tell which call sites are which.";
+    if (discovery.ambiguousCalls != 0) {
+        statusMessage_ = "Change signature: " + std::to_string(discovery.ambiguousCalls) + " call" +
+                         (discovery.ambiguousCalls == 1 ? "" : "s") + " of \"" + std::string(name) +
+                         "\" could be another overload's (" + std::to_string(discovery.arityMismatches) +
+                         " with a different parameter count) -- can't tell which call sites are which.";
         return false;
     }
 

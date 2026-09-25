@@ -288,7 +288,7 @@ TEST_CASE("C change-signature reorders a function's parameters and its calls", "
     CHECK(ChangeSignature("c", source, "area", "int w, int *h, int d").starts_with("declined: "));
 }
 
-TEST_CASE("Go change-signature reorders and drops, and declines grouped names", "[ChangeSignature]") {
+TEST_CASE("Go change-signature reorders and drops, grouped names included", "[ChangeSignature]") {
     const std::string source = "package main\n"
                                "func Scale(v int, factor int) int { return v * factor }\n"
                                "func main() { Scale(2, 3); m.Scale(4, 5); Scale(xs...) }\n";
@@ -301,8 +301,9 @@ TEST_CASE("Go change-signature reorders and drops, and declines grouped names", 
           "func Scale(v int) int { return v * factor }\n"
           "func main() { Scale(2); m.Scale(4); Scale/*declined*/(xs...) }\n");
 
-    const std::string grouped = "package main\nfunc Pair(a, b int) {}\nfunc main() { Pair(1, 2) }\n";
-    CHECK(ChangeSignature("go", grouped, "Pair", "b int, a int").starts_with("declined: "));
+    const std::string grouped = "package main\nfunc Pair(a, b int, s string) {}\nfunc main() { Pair(1, 2, x) }\n";
+    CHECK(ChangeSignature("go", grouped, "Pair", "s string, b, a int") ==
+          "package main\nfunc Pair(s string, b, a int) {}\nfunc main() { Pair(x, 2, 1) }\n");
 }
 
 TEST_CASE("Rust change-signature keeps self out of method calls but not path calls", "[ChangeSignature]") {
@@ -775,6 +776,18 @@ TEST_CASE("Julia change-signature leaves a definition's own signature alone as a
           "scale/*declined*/(1, factor=3)\n");
 }
 
+TEST_CASE("Julia change-signature passes keyword parameters through by name", "[ChangeSignature]") {
+    const std::string source = "function fetch(url, retries=3; timeout=10, verify=true)\n"
+                               "end\n"
+                               "fetch(u, 5; timeout=2, verify=false)\n"
+                               "fetch(u, 5, timeout=2)\n";
+    CHECK(ChangeSignature("julia", source, "fetch", "retries, url; timeout=10, headers=nothing") ==
+          "function fetch(retries, url; timeout=10, headers=nothing)\n"
+          "end\n"
+          "fetch(5, u, timeout=2)\n"
+          "fetch(5, u, timeout=2)\n");
+}
+
 TEST_CASE("V change-signature reorders and drops", "[ChangeSignature]") {
     const std::string source = "fn scale(v int, factor int) int { return v * factor }\n"
                                "fn main() { scale(1, 3) obj.scale(4, 5) scale(...xs) }\n";
@@ -997,9 +1010,11 @@ TEST_CASE("Fortran, MATLAB, Pascal and Ada change-signature reorder their calls"
           "end Total;\n");
 }
 
-TEST_CASE("Pascal and Ada decline a parameter group sharing one type", "[ChangeSignature]") {
-    CHECK(ChangeSignature("pascal", "function F(A, B: Integer): Integer;\nbegin end;\n", "F", "B: Integer; A: Integer")
-              .starts_with("declined"));
-    CHECK(ChangeSignature("ada", "procedure P (A, B : Integer) is begin null; end P;\n", "P", "B : Integer; A : Integer")
-              .starts_with("declined"));
+TEST_CASE("Pascal and Ada reorder names that share one type", "[ChangeSignature]") {
+    CHECK(ChangeSignature("pascal", "function F(A, B: Integer; C: Real): Integer;\nbegin end;\nbegin X := F(1, 2, 3.0) end.\n",
+                          "F", "C: Real; B, A: Integer") ==
+          "function F(C: Real; B, A: Integer): Integer;\nbegin end;\nbegin X := F(3.0, 2, 1) end.\n");
+    CHECK(ChangeSignature("ada", "procedure P (A, B : Integer; C : Float) is begin null; end P;\nprocedure Q is begin P (1, 2, 3.0); end Q;\n",
+                          "P", "C : Float; B, A : Integer") ==
+          "procedure P (C : Float; B, A : Integer) is begin null; end P;\nprocedure Q is begin P (3.0, 2, 1); end Q;\n");
 }

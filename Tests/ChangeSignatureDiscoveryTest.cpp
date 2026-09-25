@@ -9,6 +9,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -16,6 +17,7 @@
 #include <vector>
 
 #include "Editor/ChangeSignature.h"
+#include "Editor/ModeOverrides.h"
 
 using ned::editor::CallMarker;
 using ned::editor::SignatureMarker;
@@ -42,8 +44,10 @@ struct Project {
     }
 
     [[nodiscard]] DiscoveryResult Discover(std::string_view name, std::size_t targetArity) const {
+        SignatureMarker target{};
+        target.parameters.resize(targetArity);
         return DiscoverSignatureAndCallSites(
-            name, targetArity, Paths(),
+            name, target, Paths(),
             [this](const std::filesystem::path& path) -> std::optional<std::string> {
                 const auto found = text.find(path);
                 return found != text.end() ? std::optional<std::string>(found->second) : std::nullopt;
@@ -106,7 +110,7 @@ TEST_CASE("DiscoverSignatureAndCallSites matches a constructor by the name its c
     fixed.calleeEndByte    = fixed.calleeStartByte + std::string_view("Widget").size();
 
     const DiscoveryResult result = DiscoverSignatureAndCallSites(
-        "Widget", 1, {"w.php"}, [&](const std::filesystem::path&) { return std::optional<std::string>(text); },
+        "Widget", ctor, {"w.php"}, [&](const std::filesystem::path&) { return std::optional<std::string>(text); },
         [&](const std::filesystem::path&, std::string_view) { return FileScanResult{.signatures = {ctor}, .calls = {fixed}}; });
     CHECK(result.signatureSites.size() == 1);
     CHECK(result.callSites.size() == 1);
@@ -154,8 +158,10 @@ TEST_CASE("DiscoverSignatureAndCallSites counts a candidate readText declines to
     Project project;
     project.text["huge.cpp"] = "add(1, 2);"; // present in Paths(), but never in `text` for the reader below
 
+    SignatureMarker add{};
+    add.parameters.resize(2);
     const DiscoveryResult result = DiscoverSignatureAndCallSites(
-        "add", 2, {"huge.cpp"}, [](const std::filesystem::path&) -> std::optional<std::string> { return std::nullopt; },
+        "add", add, {"huge.cpp"}, [](const std::filesystem::path&) -> std::optional<std::string> { return std::nullopt; },
         [](const std::filesystem::path&, std::string_view) -> FileScanResult { return {}; });
     CHECK(result.filesSkipped == 1);
     CHECK(result.callSites.empty());
@@ -164,4 +170,47 @@ TEST_CASE("DiscoverSignatureAndCallSites counts a candidate readText declines to
 TEST_CASE("CandidatePattern word-bounds a plain name and escapes nothing alphanumeric", "[ChangeSignature]") {
     CHECK(CandidatePattern("add") == "\\badd\\b");
     CHECK(CandidatePattern("") == "");
+}
+
+namespace {
+
+// Discovery over one real file, scanned by its language's own queries, for
+// the first signature named `name`.
+DiscoveryResult DiscoverIn(const std::string& modeName, const std::string& text, std::string_view name) {
+    const std::optional<ned::editor::Mode> mode = ned::editor::ModeByName(modeName);
+    REQUIRE(mode.has_value());
+    const std::vector<SignatureMarker> signatures = mode->signatures(text);
+    const auto                         target     = std::find_if(signatures.begin(), signatures.end(), [&](const SignatureMarker& signature) {
+        return text.substr(signature.callNameStartByte, signature.callNameEndByte - signature.callNameStartByte) == name;
+    });
+    REQUIRE(target != signatures.end());
+    return DiscoverSignatureAndCallSites(
+        name, *target, {"file"}, [&](const std::filesystem::path&) { return std::optional<std::string>(text); },
+        [&](const std::filesystem::path&, std::string_view scanned) {
+            return FileScanResult{.signatures = mode->signatures(scanned), .calls = mode->calls(scanned)};
+        });
+}
+
+} // namespace
+
+TEST_CASE("Overloads are told apart by how many arguments each accepts", "[ChangeSignature]") {
+    const std::string     java  = "class Box {\n"
+                                  "    Box(int w) {}\n"
+                                  "    Box(int w, int h) {}\n"
+                                  "    static void use() { new Box(1); new Box(1, 2); }\n"
+                                  "}\n";
+    const DiscoveryResult boxes = DiscoverIn("java-mode", java, "Box");
+    CHECK(boxes.arityMismatches == 1);
+    CHECK(boxes.ambiguousCalls == 0);
+    CHECK(boxes.otherOverloadCalls == 1);
+    REQUIRE(boxes.callSites.size() == 1);
+    CHECK(boxes.callSites[0].call.arguments.size() == 1);
+
+    // A default widens what an overload accepts: g(1, 2) could be either.
+    const std::string     kotlin = "fun g(a: Int, b: Int = 0) {}\n"
+                                   "fun g(a: Int, b: Int, c: Int = 0) {}\n"
+                                   "fun use() { g(1); g(1, 2); g(1, 2, 3) }\n";
+    const DiscoveryResult gs     = DiscoverIn("kotlin-mode", kotlin, "g");
+    CHECK(gs.ambiguousCalls == 1);
+    CHECK(gs.otherOverloadCalls == 1);
 }

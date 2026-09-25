@@ -28,7 +28,11 @@
   (identifier) @parameter.name
   (expression) @parameter.default) @parameter
 
-(parameter_specification
-  (identifier)
-  .
-  (identifier)) @parameter
+#; Names sharing a subtype (`A, B : Integer`) are a parameter each.
+((parameter_specification (identifier) . "," . (identifier)) @parameter.group)
+((parameter_specification [(non_empty_mode) (expression)] @parameter.skip) @_grouped
+ (:match? @_grouped ","))
+((parameter_specification subtype_mark: (_) @parameter.skip) @_grouped
+ (:match? @_grouped ","))
+((parameter_specification (identifier) @parameter.name @parameter . [","  ":"]) @_grouped
+ (:match? @_grouped ","))

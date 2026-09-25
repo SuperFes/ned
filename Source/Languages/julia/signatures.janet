@@ -34,3 +34,9 @@
   (call_expression
     (argument_list
       (splat_expression) @parameter.variadic)))
+
+#; Everything after the `;` is a keyword parameter, passed only by name.
+(signature
+  (call_expression
+    (argument_list
+      ";" @parameter.keyword.marker)))

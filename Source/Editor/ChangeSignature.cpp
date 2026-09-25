@@ -249,10 +249,66 @@ ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector
     return {.declined = false, .argumentListText = std::move(result)};
 }
 
-DiscoveryResult DiscoverSignatureAndCallSites(std::string_view name, std::size_t targetArity,
+namespace {
+
+    // How many positional arguments a signature accepts; no upper bound for
+    // a variadic one. A receiver may or may not be passed positionally.
+    struct ArityRange {
+        std::size_t                min = 0;
+        std::optional<std::size_t> max = 0;
+    };
+
+    ArityRange PositionalArity(const SignatureMarker& signature) {
+        ArityRange range;
+        for (const SignatureParameter& parameter : signature.parameters) {
+            if (parameter.isKeyword) {
+                continue;
+            }
+            if (parameter.isVariadic) {
+                range.max.reset();
+                continue;
+            }
+            if (range.max) {
+                ++*range.max;
+            }
+            if (!parameter.hasDefaultValue && parameter.receiver == ParameterReceiver::None) {
+                ++range.min;
+            }
+        }
+        return range;
+    }
+
+    bool Accepts(const ArityRange& range, std::size_t count) {
+        return count >= range.min && (!range.max || count <= *range.max);
+    }
+
+    // A call's positional arguments; nullopt when a spread makes the count
+    // unknowable. A call without parens (Ruby's `f 1, 2`) has every argument
+    // marked non-positional, so each unnamed one counts.
+    std::optional<std::size_t> PositionalCount(const CallMarker& call, std::string_view text) {
+        const bool  parenthesized = call.argumentsStartByte < text.size() && text[call.argumentsStartByte] == '(';
+        std::size_t count         = 0;
+        for (const CallArgument& argument : call.arguments) {
+            const bool named = argument.nameEndByte > argument.nameStartByte;
+            if (named) {
+                continue;
+            }
+            if (!argument.positional && parenthesized) {
+                return std::nullopt;
+            }
+            ++count;
+        }
+        return count;
+    }
+
+} // namespace
+
+DiscoveryResult DiscoverSignatureAndCallSites(std::string_view name, const SignatureMarker& target,
                                               const std::vector<std::filesystem::path>& candidates,
                                               const SourceLookup& readText, const FileScanner& scanner) {
-    DiscoveryResult result;
+    const std::size_t       targetArity = target.parameters.size();
+    std::vector<ArityRange> overloads;
+    DiscoveryResult         result;
     for (const std::filesystem::path& candidate : candidates) {
         const std::optional<std::string> text = readText(candidate);
         if (!text) {
@@ -267,6 +323,7 @@ DiscoveryResult DiscoverSignatureAndCallSites(std::string_view name, std::size_t
             }
             if (signature.parameters.size() != targetArity) {
                 ++result.arityMismatches;
+                overloads.push_back(PositionalArity(signature));
                 continue;
             }
             result.signatureSites.push_back(SignatureSite{.file = candidate, .text = *text, .signature = signature});
@@ -278,6 +335,24 @@ DiscoveryResult DiscoverSignatureAndCallSites(std::string_view name, std::size_t
             }
             result.callSites.push_back(CallSite{.file = candidate, .text = *text, .call = call});
         }
+    }
+
+    if (!overloads.empty()) {
+        const ArityRange own = PositionalArity(target);
+        std::erase_if(result.callSites, [&](const CallSite& site) {
+            const std::optional<std::size_t> count  = PositionalCount(site.call, site.text);
+            const bool                       ours   = !count || Accepts(own, *count);
+            const bool                       theirs = !count || std::any_of(overloads.begin(), overloads.end(),
+                                                                            [&](const ArityRange& range) { return Accepts(range, *count); });
+            if (ours && theirs) {
+                ++result.ambiguousCalls;
+            }
+            if (theirs && !ours) {
+                ++result.otherOverloadCalls;
+                return true;
+            }
+            return false;
+        });
     }
     return result;
 }
