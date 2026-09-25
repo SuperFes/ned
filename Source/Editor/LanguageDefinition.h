@@ -103,6 +103,11 @@ struct LanguageDefinition {
     // rather than Neovim's later-pattern-wins: of two equally specific
     // captures of one range, the earlier pattern's is kept.
     bool firstPatternWins = false;
+    // An opening brace has to stay on its header's line: the language ends a
+    // statement at a newline after `)` (Go's, Odin's and V's semicolon
+    // insertion), so a formatter moving `{` down or breaking before `else`
+    // would change what the program says.
+    bool bracesOnHeaderLine = false;
     // Sticky scroll follows every fold block instead of the tags query's
     // definitions -- YAML's outline lists two levels of keys, its
     // breadcrumbs should follow the nesting all the way down.

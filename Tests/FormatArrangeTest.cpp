@@ -8,6 +8,7 @@
 #include "Editor/FormatEdit.h"
 #include "Editor/FormatRules.h"
 #include "Editor/Mode.h"
+#include "Editor/ModeOverrides.h"
 #include "Text/Buffer.h"
 
 using ned::editor::ApplyFormatTextEdits;
@@ -217,4 +218,104 @@ TEST_CASE("ArrangeRuleFor(name, language) resolves the language-scoped key first
 
     REQUIRE(ArrangeRuleFor("arrange.import", "cpp").enabled == false);
     REQUIRE(ArrangeRuleFor("arrange.import", "javascript").enabled == true); // falls through
+}
+
+TEST_CASE("CUDA, HLSL, Objective-C and GLSL share the C family's format captures", "[FormatRules]") {
+    const std::string source = "int f(int x) {\n"
+                               "    if (x) { return 1; }\n"
+                               "    return 0;\n"
+                               "}\n";
+    for (const char* language : {"cuda-mode", "hlsl-mode", "objc-mode", "glsl-mode"}) {
+        INFO(language);
+        const std::optional<ned::editor::Mode> mode = ned::editor::ModeByName(language);
+        REQUIRE(mode.has_value());
+        REQUIRE(static_cast<bool>(mode->formatCaptures));
+        const auto captures = mode->formatCaptures(source);
+        const auto function = CapturesNamed(captures, "brace.function");
+        REQUIRE(function.size() == 1);
+        CHECK(function[0].startByte == source.find('{'));
+        CHECK(CapturesNamed(captures, "brace.control").size() == 1);
+        CHECK(CapturesNamed(captures, "control.parens").size() == 1);
+    }
+}
+
+namespace {
+
+struct FormatSample {
+    const char* mode;
+    const char* source;
+    std::size_t braceFunction;
+    std::size_t braceControl;
+    std::size_t braceClass;
+    std::size_t controlParens;
+    std::size_t controlKeyword;
+    std::size_t simple;
+};
+
+// Each case's source has a function holding if/else and a loop, beside a
+// class holding a one-statement method; every control body is one statement.
+const FormatSample kFormatSamples[] = {
+    {"d-mode",
+     "class C { int m() { return 1; } }\n"
+     "int f(int x) {\n  if (x) { return 1; } else { return 2; }\n  while (x) { x--; }\n}\n",
+     2, 3, 1, 2, 1, 4},
+    {"dart-mode",
+     "class C { int m() { return 1; } }\n"
+     "int f(int x) {\n  if (x > 0) { return 1; } else { return 2; }\n  while (x > 0) { x--; }\n}\n",
+     2, 3, 1, 2, 1, 4},
+    {"scala-mode",
+     "class C { def m(): Int = { 1 } }\n"
+     "def f(x: Int): Int = {\n  if (x > 0) { 1 } else { 2 }\n  while (x > 0) { g() }\n}\n",
+     2, 3, 1, 2, 1, 4},
+    {"groovy-mode",
+     "class C { int m() { return 1 } }\n"
+     "int f(int x) {\n  if (x > 0) { return 1 } else { return 2 }\n  while (x > 0) { x-- }\n}\n",
+     2, 3, 1, 2, 1, 4},
+    {"solidity-mode",
+     "contract C {\n  function f(uint x) public returns (uint) {\n"
+     "    if (x > 0) { return 1; } else { return 2; }\n    while (x > 0) { x--; }\n  }\n}\n",
+     1, 3, 1, 2, 1, 3},
+    {"vala-mode",
+     "class C { int m() { return 1; } }\n"
+     "int f(int x) {\n  if (x > 0) { return 1; } else { return 2; }\n  while (x > 0) { x--; }\n}\n",
+     2, 3, 1, 2, 1, 4},
+    {"v-mode", "fn f(x int) int {\n  if x > 0 { return 1 } else { return 2 }\n  for i in 0 .. 3 { g() }\n}\n", 1, 3, 0, 0,
+     0, 3},
+    {"odin-mode",
+     "package p\nf :: proc(x: int) -> int {\n  if x > 0 { return 1 } else { return 2 }\n  for i in 0..<3 { g() }\n}\n", 1,
+     3, 0, 0, 0, 3},
+};
+
+} // namespace
+
+TEST_CASE("Each brace language's format captures name real brace and paren pairs", "[FormatRules]") {
+    for (const FormatSample& sample : kFormatSamples) {
+        const std::string source = sample.source;
+        INFO(sample.mode << ":\n"
+                         << source);
+        const std::optional<ned::editor::Mode> mode = ned::editor::ModeByName(sample.mode);
+        REQUIRE(mode.has_value());
+        REQUIRE(static_cast<bool>(mode->formatCaptures));
+        const auto  captures = mode->formatCaptures(source);
+        std::size_t simple   = 0;
+        for (const FormatCapture& capture : captures) {
+            INFO(capture.name << " [" << capture.startByte << "," << capture.endByte << ")");
+            const std::string_view text(source.data() + capture.startByte, capture.endByte - capture.startByte);
+            if (capture.name.starts_with("brace.")) {
+                CHECK(text.substr(0, capture.openLength) == "{");
+                CHECK(text.substr(text.size() - capture.closeLength) == "}");
+                simple += capture.isSimple ? 1 : 0;
+            }
+            else if (capture.name == "control.parens") {
+                CHECK(text.front() == '(');
+                CHECK(text.back() == ')');
+            }
+        }
+        CHECK(CapturesNamed(captures, "brace.function").size() == sample.braceFunction);
+        CHECK(CapturesNamed(captures, "brace.control").size() == sample.braceControl);
+        CHECK(CapturesNamed(captures, "brace.class").size() == sample.braceClass);
+        CHECK(CapturesNamed(captures, "control.parens").size() == sample.controlParens);
+        CHECK(CapturesNamed(captures, "control.keyword").size() == sample.controlKeyword);
+        CHECK(simple == sample.simple);
+    }
 }

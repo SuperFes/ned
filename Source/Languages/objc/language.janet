@@ -11,7 +11,8 @@
  :line-continuation "\\"
  # The upstream queries are deltas whose first line says `inherits: c`;
  # discovery doesn't read that, so the base is named here.
- :queries {:imports ["c/imports.janet"]
+ :queries {:format ["c/format.janet"]
+           :imports ["c/imports.janet"]
            :highlights ["c/highlights.janet"
                         "objc/upstream/highlights.janet"]
            :locals ["c/locals.janet"

@@ -248,6 +248,16 @@ and code reading. Highest stakes first.
       no query. Discovery only finds tests -- running one still needs
       `ned/set-test-filter-command`, and only the output formats `Editor/TestRun/`
       parses produce per-test results.
+- [ ] **Format queries: what is still unmodelled.** 31 languages name their braces,
+      control parens, `else`/`catch` keywords and top-level/method definitions for the
+      capture-driven formatter rules (`fmt`); Go, Odin and V keep a brace on its header's
+      line (`:braces-on-header-line`), so a placement rule moving it is refused. Left:
+      Swift, whose if/else bodies are bare `statements` between braces the whole `if`
+      node owns, so each pair needs anchoring rather than a body capture; Dart's
+      functions and methods, whose signature and body are sibling nodes, get no
+      `def.toplevel`/`def.method` (a blank-line rule needs the whole definition's
+      span); the keyword-bodied languages (Crystal, Julia, Elixir, Nim, Ada, Fortran,
+      ...) have no format query at all.
 - [ ] **Bundled formatter styles: PHP (PSR-12), Go (gofmt), Rust (rustfmt), Kotlin
       (official conventions), C# (.NET conventions) and JavaScript/TypeScript/TSX
       (Prettier).** A Rust project's `rustfmt.toml` adjusts what rustfmt lets it

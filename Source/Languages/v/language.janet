@@ -10,4 +10,5 @@
  :line-comment "//"
  :lsp-root-markers ["v.mod"]
  :signature-template "fn __ned_sig({}) {}"
+ :braces-on-header-line true
 }

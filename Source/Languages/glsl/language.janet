@@ -4,7 +4,8 @@
  :line-comment "//"
  :line-continuation "\\"
  :first-pattern-wins true
- :queries {:locals ["c/locals.janet"]
+ :queries {:format ["c/format.janet"]
+           :locals ["c/locals.janet"]
            :imports ["c/imports.janet"]
            :indents ["c/indents.janet"]
            :signatures ["c/signatures.janet"]

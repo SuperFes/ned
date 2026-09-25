@@ -45,6 +45,11 @@ void ApplyFormatTextEdits(text::Buffer& buffer, std::vector<FormatTextEdit> edit
 // underlying hazard, reached from two different rule kinds.
 bool IsWordByte(char c);
 
+// The language's `:braces-on-header-line` (LanguageDefinition.h): moving an
+// opening brace off its header's line, or breaking before `else`, would
+// change the program.
+[[nodiscard]] bool BracesOnHeaderLine(std::string_view languageKey);
+
 // wrap-kind follow-up: lifted out of FormatBracePlacement.h once a second
 // consumer (FormatWrap.h) needed the exact same two helpers, the same
 // "extract once a real second use shows up" precedent IsWordByte/

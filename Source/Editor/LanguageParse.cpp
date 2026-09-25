@@ -190,6 +190,9 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
         else if (key == "sticky-scroll-from-folds") {
             definition.stickyScrollFromFolds = ExpectBool(directoryName, value, ":sticky-scroll-from-folds");
         }
+        else if (key == "braces-on-header-line") {
+            definition.bracesOnHeaderLine = ExpectBool(directoryName, value, ":braces-on-header-line");
+        }
         else if (key == "first-pattern-wins") {
             definition.firstPatternWins = ExpectBool(directoryName, value, ":first-pattern-wins");
         }

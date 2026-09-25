@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "Editor/LanguageRegistry.h"
+
 namespace ned::editor {
 
 void ApplyFormatTextEdits(text::Buffer& buffer, std::vector<FormatTextEdit> edits) {
@@ -34,6 +36,11 @@ std::string ApplyFormatTextEditsToText(std::string_view text, std::vector<Format
 
 bool IsWordByte(char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+}
+
+bool BracesOnHeaderLine(std::string_view languageKey) {
+    const std::optional<LanguageDefinition> definition = FindLanguageDefinition(languageKey);
+    return definition.has_value() && definition->bracesOnHeaderLine;
 }
 
 bool IsFormatWhitespace(char c) {

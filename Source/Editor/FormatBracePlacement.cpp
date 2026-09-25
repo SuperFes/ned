@@ -85,7 +85,7 @@ namespace {
     // safe/unsafe split is real, not speculative.
     bool PlacementUnsafeForLanguage(BracePlacement placement, std::string_view languageKey,
                                     std::string_view captureName, std::string_view openText) {
-        if (languageKey == "go") {
+        if (BracesOnHeaderLine(languageKey)) {
             return placement != BracePlacement::SameLine;
         }
         if (languageKey == "bash" && captureName == "brace.control") {

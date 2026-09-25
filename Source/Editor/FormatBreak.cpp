@@ -16,7 +16,7 @@ namespace {
     // refuses Go for. go/format.janet declares no control.keyword capture at
     // all, so this is the second line of defence rather than the only one.
     bool BreakUnsafeForLanguage(std::string_view languageKey, bool wantBreak) {
-        return wantBreak && languageKey == "go";
+        return wantBreak && BracesOnHeaderLine(languageKey);
     }
 
     bool IsBreakWhitespace(char c) {

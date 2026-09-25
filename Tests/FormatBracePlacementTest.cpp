@@ -9,6 +9,7 @@
 #include "Editor/FormatRules.h"
 #include "Editor/LanguageDefinition.h"
 #include "Editor/Mode.h"
+#include "Editor/ModeOverrides.h"
 #include "Text/Buffer.h"
 
 using ned::editor::ApplyFormatTextEdits;
@@ -2609,4 +2610,27 @@ TEST_CASE("A same-line brace is never joined onto a header's line comment", "[Fo
         ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(testCase.source, testCase.language, captures));
         CHECK(buffer.Text().find("// note {") == std::string::npos);
     }
+}
+
+TEST_CASE("End to end: a NextLine :placement applies to dart-mode and is refused where braces stay on the header line",
+          "[FormatBracePlacement]") {
+    const FormatRulesGuard guard;
+    SetBracePlacement("brace.function", BracePlacement::NextLine);
+
+    const auto format = [](const char* modeName, const char* language, const char* path, const std::string& source) {
+        const std::optional<Mode> mode = ned::editor::ModeByName(modeName);
+        REQUIRE(mode.has_value());
+        Buffer buffer(path);
+        buffer.InsertAtPoint(source);
+        ApplyFormatTextEdits(buffer, ComputeBracePlacementEdits(buffer.Text(), language, mode->formatCaptures(buffer.Text())));
+        return buffer.Text();
+    };
+    CHECK(format("dart-mode", "dart", "test.dart", "int f() {\n  return 1;\n}\n") == "int f()\n{\n  return 1;\n}\n");
+
+    const std::string v = "fn f() int {\n\treturn 1\n}\n";
+    CHECK(format("v-mode", "v", "test.v", v) == v);
+    const std::string odin = "package p\nf :: proc() -> int {\n\treturn 1\n}\n";
+    CHECK(format("odin-mode", "odin", "test.odin", odin) == odin);
+
+    SetBracePlacement("brace.function", std::nullopt);
 }

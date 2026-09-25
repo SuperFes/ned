@@ -3,4 +3,5 @@
  :line-comment "//"
  :lsp-root-markers ["ols.json"]
  :signature-template "__ned_sig :: proc({}) {}"
+ :braces-on-header-line true
 }
