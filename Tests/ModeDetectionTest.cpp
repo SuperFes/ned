@@ -51,6 +51,20 @@ TEST_CASE("A .v file is Verilog unless it reads as V", "[ModeDetection]") {
     CHECK(ModeForPath(WriteSample("point.v", "struct Point {\n\tx int\n}\n")).name == "v-mode");
 }
 
+TEST_CASE("A .m file is Objective-C unless it reads as MATLAB", "[ModeDetection]") {
+    using ned::editor::ModeForPath;
+    CHECK(ModeForPath(WriteSample("greeter.m", "#import <Foundation/Foundation.h>\n@implementation Greeter\n"
+                                               "- (void)greet {\n    if (x) {\n        return;\n    }\n}\n@end\n"))
+              .name == "objc-mode");
+    CHECK(ModeForPath(WriteSample("plain.m", "int function(int x);\nint main(void) {\n    return function(1);\n}\n")).name ==
+          "objc-mode");
+    CHECK(ModeForPath(WriteSample("f.m", "function y = f(x)\n    y = x;\nend\n")).name == "matlab-mode");
+    CHECK(ModeForPath(WriteSample("pair.m", "function [a, b] = pair()\na = 1; b = 2;\n")).name == "matlab-mode");
+    CHECK(ModeForPath(WriteSample("script.m", "% plot a line\nx = 1:10;\nplot(x);\n")).name == "matlab-mode");
+    CHECK(ModeForPath(WriteSample("loop.m", "for i = 1:3\n    disp(i);\nend\n")).name == "matlab-mode");
+    CHECK(ModeForPath(WriteSample("Shape.m", "classdef Shape < handle\nend\n")).name == "matlab-mode");
+}
+
 TEST_CASE("Vim modelines name a language and indentation", "[ModeDetection]") {
     using ned::editor::ParseModeline;
     const auto plain = ParseModeline("// vim: ft=verilog ts=8 sw=4 et\nmodule m;\n");

@@ -1,7 +1,10 @@
-# .m is Objective-C's here; MATLAB files need a manual mode switch until a
-# content sniff exists.
+# .m belongs to Objective-C unless the file uses forms Objective-C never has:
+# a `function`/`classdef` declaration, a `%` comment line, a bare `end`.
+# A MATLAB script with none of them still opens as Objective-C.
 {:name "matlab"
  :extensions [".mlx"]
  :injection-aliases ["octave"]
+ :shared-extensions [".m"]
+ :content-pattern "^\\s*(function\\s+[\\w\\[]|classdef\\b|%)|^\\s*(end|endfunction|endif|endfor|endwhile)\\s*;?\\s*$"
  :line-comment "%"
 }

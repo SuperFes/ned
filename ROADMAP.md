@@ -152,9 +152,6 @@ and code reading. Highest stakes first.
 - [ ] **Reindent: what is still unmodelled.** Every language with an `ind` cell
       reindents a flattened sample back to its house style
       (`Tests/Format/reindent/`). Left:
-  - [ ] **MATLAB is unreachable by extension.** `.m` is Objective-C's and MATLAB
-        claims only `.mlx`, so a MATLAB file needs `set-mode`; `.m` wants the same
-        content sniff `.v` has (Verilog vs V).
   - [ ] **Continuation lines** stay at their statement's level: Fortran's `&`,
         VHDL's selected signal assignments, a multi-line Nix `if`/`then`/`else`
         (nixfmt indents the branches), Scala's operator-continued enumerators.
