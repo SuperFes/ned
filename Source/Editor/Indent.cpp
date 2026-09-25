@@ -657,11 +657,34 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
         }
         const std::size_t                            previousStart = LineStartFor(bufferText, previousEnd);
         const std::optional<IndentCaptures::NodeKey> closer        = dedentStartingAt(FirstNonBlankByte(bufferText, previousStart, previousEnd + 1));
-        if (!closer) {
+        if (closer) {
+            const std::optional<grammar::Node> closed = closedBy(*closer);
+            return closed && !closed->IsNull() && closed->StartRow() == node.StartRow();
+        }
+        // Or the line above ends, by dedent, a body the chain's first line
+        // opened (Scala 3's `xs.map: x =>` ... then `.filter`).
+        const grammar::Node last = resolveWalkStart(previousEnd);
+        if (last.IsNull()) {
             return false;
         }
-        const std::optional<grammar::Node> closed = closedBy(*closer);
-        return closed && !closed->IsNull() && closed->StartRow() == node.StartRow();
+        std::vector<grammar::Node> bodies;
+        last.AncestorChain(bodies);
+        bodies.insert(bodies.begin(), last);
+        return std::any_of(bodies.begin(), bodies.end(), [&](const grammar::Node& body) {
+            if (!isIndentCaptured(body) || body.EndByte() > position || body.StartRow() <= node.StartRow()) {
+                return false;
+            }
+            // Ended by dedent: its last token closes nothing.
+            const std::size_t bodyLast = bufferText.find_last_not_of(" \t\r\n", body.EndByte() - 1);
+            if (bodyLast == std::string_view::npos ||
+                std::any_of(dedentRanges.begin(), dedentRanges.end(), [&](const std::pair<std::size_t, std::size_t>& range) {
+                    return bodyLast >= range.first && bodyLast < range.second;
+                })) {
+                return false;
+            }
+            const grammar::Node opener = body.Parent();
+            return !opener.IsNull() && opener.StartRow() == node.StartRow() && node.StartByte() <= opener.StartByte();
+        });
     };
 
     const auto computeForWalkStart = [&](const grammar::Node& walkStart, std::size_t position) -> IndentComputation {

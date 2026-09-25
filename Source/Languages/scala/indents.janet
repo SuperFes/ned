@@ -30,6 +30,9 @@
 # braces, which the imprint already indents).
 (for_expression "for" . (enumerators) @indent)
 (colon_argument [(indented_block) (indented_cases)] @indent)
+# A colon lambda's body is its own level, not a continuation of the chain
+# it sits in.
+(colon_argument [(indented_block) (indented_cases)] @align.barrier)
 
 # Continuation lines -- see c-indents.scm. A definition's value on the
 # next line is an indented_block, headed above.

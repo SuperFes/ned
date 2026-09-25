@@ -105,9 +105,6 @@ What each package ships is the generated `Docs/LanguageMatrix.md`; the query cap
 and `language.janet` keys behind its columns are in `Docs/LanguageAuthoring.md`. What's
 below is behaviour that is wrong or missing today, verified with `ned --format` probes.
 
-- [ ] **Scala 3 chain after a colon-lambda body.** `xs.foldUse(g): _ ?=>` ... then
-      `.topN(max)` reindents a level in: the body ends by dedent, which the
-      multi-line-root rule (a closer on the line above) can't see.
 - [ ] **Imports: what is still unmodelled.**
   - [ ] **JVM moves are half a refactor.** A moved Java/Kotlin/Scala/Groovy class's
         importers are rewritten; its own `package` line and its same-package users,

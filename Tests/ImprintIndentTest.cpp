@@ -478,3 +478,19 @@ TEST_CASE("Enter after an Earthfile target with no body yet opens one", "[Indent
     // A target with a body is indented by its block alone.
     CHECK(ColumnOf(mode, "VERSION 0.8\nbuild:\n    RUN a\n    RUN b\n", 3) == w);
 }
+
+TEST_CASE("A chain goes on at its own level after a Scala 3 colon lambda's body", "[Indent][Imprint]") {
+    const LanguageDefinition* scala = ned::editor::BundledLanguage("scala");
+    REQUIRE(scala != nullptr);
+    const Mode        mode = ned::editor::ModeFromDefinition(*scala);
+    const int         w    = Width(mode);
+    const std::string text = "object A:\n"
+                             "  def f(xs: List[Int]) =\n"
+                             "    xs.foldUse(g): _ ?=>\n"
+                             "      body\n"
+                             "    .topN(max)\n";
+    CHECK(ColumnOf(mode, text, 3) == 3 * w);
+    CHECK(ColumnOf(mode, text, 4).value_or(-1) == 2 * w);
+    // A plain chain still continues a step in.
+    CHECK(ColumnOf(mode, "object A:\n  def f =\n    xs\n      .map(g)\n", 3) == 3 * w);
+}
