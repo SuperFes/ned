@@ -2426,6 +2426,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     const auto parentScope = match.setDirectives.find("definition." + qualifier + ".scope");
                     const auto nameSpace   = match.setDirectives.find("local.namespace");
                     const auto filePrivate = match.setDirectives.find("local.file-private");
+                    const auto assignment  = match.setDirectives.find("local.assignment");
                     captures.push_back(LocalCapture{
                         .startByte          = capture.startByte,
                         .endByte            = capture.endByte,
@@ -2436,7 +2437,9 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                                               parentScope->second == "parent",
                         .nameSpace          = nameSpace != match.setDirectives.end() ? nameSpace->second : std::string(),
                         .filePrivate        = *kind == LocalCaptureKind::Definition && filePrivate != match.setDirectives.end() &&
-                                              filePrivate->second == "true"});
+                                              filePrivate->second == "true",
+                        .assignment         = *kind == LocalCaptureKind::Definition && assignment != match.setDirectives.end() &&
+                                              assignment->second == "true"});
                 }
             }
 

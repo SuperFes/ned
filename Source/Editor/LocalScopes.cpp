@@ -41,6 +41,7 @@ namespace {
         bool        bindsInParentScope = false;
         std::string nameSpace;
         bool        filePrivate = false;
+        bool        assignment  = false;
         // Where a definition becomes visible: its start, unless the query
         // said later (LocalCapture::visibleFrom).
         std::size_t visibleFrom           = 0;
@@ -56,8 +57,8 @@ namespace {
 
 std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captures, std::string_view bufferText,
                                              std::size_t point) {
-    std::vector<Range>      scopes;
-    std::vector<Occurrence> occurrences;
+    std::vector<std::pair<Range, bool>> scopeCaptures; // range, inherits
+    std::vector<Occurrence>             occurrences;
     for (const LocalCapture& capture : captures) {
         if (capture.startByte > capture.endByte || capture.endByte > bufferText.size()) {
             continue; // a stale capture list against shorter text -- never trusted, never fatal
@@ -65,18 +66,30 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
         const Range range{capture.startByte, capture.endByte};
         if (capture.kind == LocalCaptureKind::Scope) {
             if (!CoversWholeBuffer(range, bufferText.size())) {
-                scopes.push_back(range);
+                scopeCaptures.emplace_back(range, capture.inherits);
             }
             continue;
         }
         const bool isDefinition = capture.kind == LocalCaptureKind::Definition;
         occurrences.push_back(Occurrence{range, isDefinition, capture.qualifier, isDefinition && capture.bindsInParentScope,
                                          capture.nameSpace, isDefinition && capture.filePrivate,
+                                         isDefinition && capture.assignment,
                                          isDefinition && capture.visibleFrom ? std::max(*capture.visibleFrom, range.first) : range.first,
                                          isDefinition && capture.visibleFrom.has_value()});
     }
-    std::sort(scopes.begin(), scopes.end());
-    scopes.erase(std::unique(scopes.begin(), scopes.end()), scopes.end());
+    // One entry per distinct range; a scope any capture marks
+    // non-inheriting stays so.
+    std::sort(scopeCaptures.begin(), scopeCaptures.end());
+    std::vector<Range> scopes;
+    std::vector<bool>  scopeInherits;
+    for (const auto& [range, inherits] : scopeCaptures) {
+        if (!scopes.empty() && scopes.back() == range) {
+            scopeInherits.back() = scopeInherits.back() && inherits;
+            continue;
+        }
+        scopes.push_back(range);
+        scopeInherits.push_back(inherits);
+    }
 
     // The token under point: the smallest definition/reference capture
     // covering it. Smallest so a query that captures both an inner
@@ -135,6 +148,9 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
     struct Candidate {
         const Occurrence* occurrence;
         ScopeRef          scope;
+        // The occurrence's own isDefinition, unless it is an assignment to
+        // a binding already visible from an enclosing scope.
+        bool isDefinition;
     };
     std::vector<Candidate> sameName;
     for (const Occurrence& occurrence : occurrences) {
@@ -145,7 +161,63 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
             continue;
         }
         const ScopeRef innermost = innermostScopeOf(occurrence.range);
-        sameName.push_back(Candidate{&occurrence, occurrence.bindsInParentScope ? parentScopeOf(innermost) : innermost});
+        sameName.push_back(Candidate{&occurrence, occurrence.bindsInParentScope ? parentScopeOf(innermost) : innermost,
+                                     occurrence.isDefinition});
+    }
+    std::sort(sameName.begin(), sameName.end(), [](const Candidate& a, const Candidate& b) {
+        return a.occurrence->range < b.occurrence->range;
+    });
+
+    // Every scope enclosing `use`, innermost first, cut after the first one
+    // that doesn't inherit -- nothing outside it is visible inside.
+    // `reachesFile` says whether file level is visible too.
+    const auto visibleChain = [&scopes, &scopeInherits](Range use, bool& reachesFile) {
+        std::vector<std::size_t> chain;
+        for (std::size_t i = 0; i < scopes.size(); ++i) {
+            if (Contains(scopes[i], use)) {
+                chain.push_back(i);
+            }
+        }
+        std::sort(chain.begin(), chain.end(), [&scopes](std::size_t a, std::size_t b) {
+            return (scopes[a].second - scopes[a].first) < (scopes[b].second - scopes[b].first);
+        });
+        reachesFile = true;
+        for (std::size_t i = 0; i < chain.size(); ++i) {
+            if (!scopeInherits[chain[i]]) {
+                chain.resize(i + 1);
+                reachesFile = false;
+                break;
+            }
+        }
+        return chain;
+    };
+
+    // An assignment to a name an enclosing scope already binds is a write
+    // to that binding, not a new one. In document order, so an earlier
+    // demotion is already settled when a later assignment asks.
+    for (Candidate& candidate : sameName) {
+        if (!candidate.isDefinition || !candidate.occurrence->assignment || !candidate.scope) {
+            continue;
+        }
+        const Range              use         = candidate.occurrence->range;
+        bool                     reachesFile = false;
+        std::vector<std::size_t> chain       = visibleChain(use, reachesFile);
+        std::erase_if(chain, [&](std::size_t index) {
+            return index == *candidate.scope || Contains(scopes[index], scopes[*candidate.scope]) == false;
+        });
+        const auto boundBefore = [&](ScopeRef scope) {
+            return std::any_of(sameName.begin(), sameName.end(), [&](const Candidate& other) {
+                return other.isDefinition && other.scope == scope && other.occurrence->visibleFrom <= use.first &&
+                       &other != &candidate;
+            });
+        };
+        const bool outerBinds = std::any_of(chain.begin(), chain.end(), [&](std::size_t index) {
+                                    return boundBefore(ScopeRef(index));
+                                }) ||
+                                (reachesFile && boundBefore(ScopeRef{}));
+        if (outerBinds) {
+            candidate.isDefinition = false;
+        }
     }
 
     // Which binding a use resolves to: the innermost enclosing scope that
@@ -164,19 +236,12 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
     // point the query stated (`let x = x + 1`) is a fact of the language,
     // not a guess, so neither pass looks past it.
     const auto ownerFor = [&](Range use, bool respectPosition) -> std::optional<ScopeRef> {
-        std::vector<std::size_t> chain;
-        for (std::size_t i = 0; i < scopes.size(); ++i) {
-            if (Contains(scopes[i], use)) {
-                chain.push_back(i);
-            }
-        }
-        std::sort(chain.begin(), chain.end(), [&scopes](std::size_t a, std::size_t b) {
-            return (scopes[a].second - scopes[a].first) < (scopes[b].second - scopes[b].first);
-        });
+        bool                           reachesFile = false;
+        const std::vector<std::size_t> chain       = visibleChain(use, reachesFile);
         const auto boundIn = [&](ScopeRef scope) {
             return std::any_of(sameName.begin(), sameName.end(), [&](const Candidate& candidate) {
                 const Occurrence& definition = *candidate.occurrence;
-                if (!definition.isDefinition || candidate.scope != scope) {
+                if (!candidate.isDefinition || candidate.scope != scope) {
                     return false;
                 }
                 if (definition.explicitlyVisibleFrom && use.first < definition.visibleFrom) {
@@ -190,7 +255,7 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
                 return ScopeRef(index);
             }
         }
-        if (boundIn(ScopeRef{})) {
+        if (reachesFile && boundIn(ScopeRef{})) {
             return ScopeRef{};
         }
         return std::nullopt;
@@ -199,7 +264,7 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
         // A definition's own site is that definition, however late it
         // becomes visible.
         for (const Candidate& candidate : sameName) {
-            if (candidate.occurrence->isDefinition && candidate.occurrence->range == use) {
+            if (candidate.isDefinition && candidate.occurrence->range == use) {
                 return candidate.scope;
             }
         }
@@ -228,7 +293,7 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
             continue;
         }
         binding.occurrences.push_back(candidate.occurrence->range);
-        if (candidate.occurrence->isDefinition && candidate.scope == *owner &&
+        if (candidate.isDefinition && candidate.scope == *owner &&
             (!seenDefinition || candidate.occurrence->range.first < binding.definition.first)) {
             binding.definition = candidate.occurrence->range;
             binding.qualifier   = candidate.occurrence->qualifier;
@@ -335,6 +400,29 @@ std::vector<LocalNode> LocalNodes(std::span<const LocalCapture> captures, std::s
         std::string name = token->nameSpace;
         name.push_back('\0');
         name.append(text);
+        // An assignment to a name an enclosing frame already binds writes
+        // that binding (LocalCapture::assignment).
+        const auto visibleBinding = [&](std::size_t skipInnermost) -> const Binding* {
+            for (auto frame = stack.rbegin() + static_cast<std::ptrdiff_t>(skipInnermost); frame != stack.rend(); ++frame) {
+                if (const auto found = frame->names.find(name);
+                    found != frame->names.end() && found->second.visibleFrom <= range.first) {
+                    return &found->second;
+                }
+                if (!frame->inherits) {
+                    break;
+                }
+            }
+            return nullptr;
+        };
+        if (token->kind == LocalCaptureKind::Definition && token->assignment && stack.size() > 1 &&
+            stack.back().inherits && stack.back().names.find(name) == stack.back().names.end()) {
+            if (const Binding* outer = visibleBinding(1)) {
+                if (out.empty() || out.back().range != range) {
+                    out.push_back(LocalNode{range, std::string(outer->qualifier)});
+                }
+                continue;
+            }
+        }
         if (token->kind == LocalCaptureKind::Definition) {
             Frame& owner = token->bindsInParentScope && stack.size() > 1 ? stack[stack.size() - 2] : stack.back();
             owner.names.try_emplace(std::move(name), Binding{token->qualifier, token->visibleFrom.value_or(range.first)});

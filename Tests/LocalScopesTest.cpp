@@ -475,3 +475,39 @@ TEST_CASE("LocalNodes looks past a definition not yet visible", "[LocalScopes]")
                                                 inner, Token(text, "a", 2, Reference)};
     CHECK(DescribeLocalNodes(text, captures) == std::vector<std::string>{"a@2:outer", "a@6:inner", "a@10:outer"});
 }
+
+TEST_CASE("An assignment to a name an enclosing scope binds writes that binding", "[LocalScopes]") {
+    // def { total = 0; each { total = total + 1; fresh = 1 } }
+    const std::string text   = "def { total = 0; each { total = total + 1; fresh = 1; fresh } }\n";
+    LocalCapture      method = ScopeFrom(text, "def");
+    method.inherits          = false;
+    std::vector<LocalCapture> captures{method, BraceScope(text, 1)};
+    for (int n : {0, 1}) {
+        LocalCapture assignment = Definition(text, "total", n, "var");
+        assignment.assignment   = true;
+        captures.push_back(assignment);
+    }
+    captures.push_back(Reference(text, "total", 2));
+    LocalCapture fresh = Definition(text, "fresh", 0, "var");
+    fresh.assignment   = true;
+    captures.push_back(fresh);
+    captures.push_back(Reference(text, "fresh", 1));
+
+    const auto total = ResolveBindingAt(captures, text, Nth(text, "total", 1));
+    REQUIRE(total.has_value());
+    CHECK(total->occurrences.size() == 3);
+    CHECK(total->definition.first == Nth(text, "total", 0));
+
+    // Nothing outside the block binds `fresh`, so the block's assignment does.
+    const auto freshBinding = ResolveBindingAt(captures, text, Nth(text, "fresh", 1));
+    REQUIRE(freshBinding.has_value());
+    CHECK(freshBinding->scope == Range{BraceScope(text, 1).startByte, BraceScope(text, 1).endByte});
+}
+
+TEST_CASE("A scope that doesn't inherit hides everything bound outside it", "[LocalScopes]") {
+    const std::string text   = "x = 1\ndef { x }\n";
+    LocalCapture      method = ScopeFrom(text, "def");
+    method.inherits          = false;
+    const std::vector<LocalCapture> captures{method, Definition(text, "x", 0, "var"), Reference(text, "x", 1)};
+    CHECK_FALSE(ResolveBindingAt(captures, text, Nth(text, "x", 1)).has_value());
+}

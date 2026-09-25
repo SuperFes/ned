@@ -1127,3 +1127,150 @@ TEST_CASE("julia-mode binds parameters and assignments, not keyword arguments", 
     REQUIRE(a.has_value());
     CHECK(a->occurrences.size() == 2);
 }
+
+TEST_CASE("cuda-mode and glsl-mode share the C family's locals", "[Mode][LocalScopes]") {
+    const std::string cuda = "__global__ void add(float* out, int count) {\n"
+                             "  int idx = threadIdx.x;\n"
+                             "  if (idx < count) out[idx] = idx;\n"
+                             "}\n";
+    const auto        i    = Resolve("cuda-mode", cuda, "idx", 2);
+    REQUIRE(i.has_value());
+    CHECK(i->occurrences.size() == 4);
+    CHECK(Resolve("cuda-mode", cuda, "n", 1)->qualifier == "parameter");
+
+    const std::string glsl = "float shade(float k) {\n"
+                             "  float v = k * 2.0;\n"
+                             "  return v;\n"
+                             "}\n";
+    const auto        v    = Resolve("glsl-mode", glsl, "v", 1);
+    REQUIRE(v.has_value());
+    CHECK(v->occurrences.size() == 2);
+}
+
+TEST_CASE("gdscript-mode scopes a var to its block and skips members", "[Mode][LocalScopes]") {
+    const std::string source = "var member = 1\n"
+                               "func f(a, b := 2):\n"
+                               "\tvar x = a\n"
+                               "\tfor idx in range(3):\n"
+                               "\t\tx += idx\n"
+                               "\tif x:\n"
+                               "\t\tvar y = x\n"
+                               "\treturn x + member + self.x\n";
+    const auto        x      = Resolve("gdscript-mode", source, "x", 0);
+    REQUIRE(x.has_value());
+    CHECK(x->qualifier == "var");
+    CHECK(x->occurrences.size() == 5); // not `self.x`
+
+    const auto a = Resolve("gdscript-mode", source, "a", 1);
+    REQUIRE(a.has_value());
+    CHECK(a->qualifier == "parameter");
+    CHECK(a->occurrences.size() == 2);
+
+    const auto member = Resolve("gdscript-mode", source, "member", 1);
+    REQUIRE(member.has_value());
+    CHECK(member->scopeIsFile);
+}
+
+TEST_CASE("crystal-mode binds by assignment and shares locals with a block", "[Mode][LocalScopes]") {
+    const std::string source = "total = 0\n"
+                               "def sum(items, start = 0)\n"
+                               "  total = start\n"
+                               "  items.each do |item|\n"
+                               "    total += item\n"
+                               "  end\n"
+                               "  total\n"
+                               "end\n";
+    const auto        total  = Resolve("crystal-mode", source, "total", 1);
+    REQUIRE(total.has_value());
+    CHECK_FALSE(total->scopeIsFile);
+    CHECK(total->occurrences.size() == 3); // the method's own, not the file's
+
+    const auto item = Resolve("crystal-mode", source, "item", 1);
+    REQUIRE(item.has_value());
+    CHECK(item->qualifier == "parameter");
+    CHECK(item->occurrences.size() == 2);
+}
+
+TEST_CASE("d-mode resolves parameters, foreach variables and skips members", "[Mode][LocalScopes]") {
+    const std::string source = "int f(int alpha, int b = 2) {\n"
+                               "  auto x = alpha;\n"
+                               "  foreach (idx; 0 .. 3) { x += idx; }\n"
+                               "  int y = x;\n"
+                               "  return y + s.x + g(x: 1);\n"
+                               "}\n";
+    const auto        x      = Resolve("d-mode", source, "x", 0);
+    REQUIRE(x.has_value());
+    CHECK(x->occurrences.size() == 3); // not `s.x` or the named argument
+    CHECK(Resolve("d-mode", source, "idx", 1)->occurrences.size() == 2);
+    CHECK(Resolve("d-mode", source, "alpha", 1)->qualifier == "parameter");
+}
+
+TEST_CASE("nim-mode resolves var, let, parameters and loop variables", "[Mode][LocalScopes]") {
+    const std::string source = "proc f(alpha: int, b = 2): int =\n"
+                               "  var x = alpha\n"
+                               "  let y = x\n"
+                               "  for idx in 0..3:\n"
+                               "    x += idx\n"
+                               "  result = x + y + obj.x\n";
+    const auto        x      = Resolve("nim-mode", source, "x", 0);
+    REQUIRE(x.has_value());
+    CHECK(x->occurrences.size() == 4); // not `obj.x`
+    CHECK(Resolve("nim-mode", source, "idx", 1)->occurrences.size() == 2);
+    CHECK(Resolve("nim-mode", source, "alpha", 1)->qualifier == "parameter");
+}
+
+TEST_CASE("v-mode declares with := only", "[Mode][LocalScopes]") {
+    const std::string source = "fn f(alpha int, b int) int {\n"
+                               "  mut x := alpha\n"
+                               "  for idx in 0 .. 3 { x += idx }\n"
+                               "  y := x\n"
+                               "  return y + s.x\n"
+                               "}\n";
+    const auto        x      = Resolve("v-mode", source, "x", 0);
+    REQUIRE(x.has_value());
+    CHECK(x->occurrences.size() == 3); // not `s.x`
+    CHECK(Resolve("v-mode", source, "idx", 1)->occurrences.size() == 2);
+    CHECK(Resolve("v-mode", source, "alpha", 1)->qualifier == "parameter");
+}
+
+TEST_CASE("wgsl-mode resolves let, var, parameters and skips accessors", "[Mode][LocalScopes]") {
+    const std::string source = "fn f(a: i32) -> i32 {\n"
+                               "  var x = a;\n"
+                               "  let y = x;\n"
+                               "  for (var idx = 0; idx < 3; idx++) { x += idx; }\n"
+                               "  return y + s.x;\n"
+                               "}\n";
+    const auto        x      = Resolve("wgsl-mode", source, "x", 0);
+    REQUIRE(x.has_value());
+    CHECK(x->occurrences.size() == 3); // not `s.x`
+    CHECK(Resolve("wgsl-mode", source, "idx", 1)->occurrences.size() == 4);
+    CHECK(Resolve("wgsl-mode", source, "y", 1)->occurrences.size() == 2);
+}
+
+TEST_CASE("awk-mode binds only a function's parameters", "[Mode][LocalScopes]") {
+    const std::string source = "function f(a, b,    tmp) { tmp = a; return tmp + b + g }\n"
+                               "{ tmp = 1 }\n";
+    const auto        tmp    = Resolve("awk-mode", source, "tmp", 1);
+    REQUIRE(tmp.has_value());
+    CHECK(tmp->qualifier == "parameter");
+    CHECK(tmp->occurrences.size() == 3); // not the global in the main rule
+    CHECK_FALSE(Resolve("awk-mode", source, "g", 0).has_value());
+}
+
+TEST_CASE("ruby-mode's block assignment writes the method's local", "[Mode][LocalScopes]") {
+    const std::string source = "def sum(items)\n"
+                               "  total = 0\n"
+                               "  items.each do |item|\n"
+                               "    total = total + item\n"
+                               "    scratch = item\n"
+                               "  end\n"
+                               "  total\n"
+                               "end\n";
+    const auto        total  = Resolve("ruby-mode", source, "total", 1);
+    REQUIRE(total.has_value());
+    CHECK(total->occurrences.size() == 4);
+
+    const auto scratch = Resolve("ruby-mode", source, "scratch", 0);
+    REQUIRE(scratch.has_value());
+    CHECK(scratch->occurrences.size() == 1);
+}

@@ -672,6 +672,11 @@ struct LocalCapture {
     // level, it is still invisible to other files (Perl's file-level `my`,
     // Lua's chunk-level `local`), so it is as safe to rename as any local.
     bool filePrivate = false;
+    // A Definition whose pattern set `local.assignment` true: an assignment
+    // that introduces a local only where no enclosing binding of the name is
+    // visible, and otherwise writes to that one -- Ruby's and Crystal's
+    // `x = ...` inside a block.
+    bool assignment = false;
     // A Definition not yet visible before this byte: it sits in a
     // `@local.declaration` ahead of that declaration's `@local.initializer`
     // (`let x = x + 1` reads the enclosing x), or it is a binding pair's
