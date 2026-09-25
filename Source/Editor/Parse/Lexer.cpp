@@ -75,6 +75,7 @@ Lexer::Lexer() {
         .isAtIncludedRangeStart = &Lexer::IsAtIncludedRangeStartCallback,
         .eof                    = &Lexer::EofCallback,
         .log                    = &Lexer::LogCallback,
+        .lookbehind             = &Lexer::LookbehindCallback,
     };
     currentPosition    = LengthZero();
     tokenStartPosition = LengthZero();
@@ -318,6 +319,21 @@ bool Lexer::IsAtIncludedRangeStartCallback(const abi::LexerData* data) {
 
 bool Lexer::EofCallback(const abi::LexerData* data) {
     return reinterpret_cast<const Lexer*>(data)->AtEof();
+}
+
+std::int32_t Lexer::LookbehindCallback(const abi::LexerData* data) {
+    const auto*         self     = reinterpret_cast<const Lexer*>(data);
+    const std::uint32_t position = self->currentPosition.bytes;
+    if (position == 0 || position > self->text.size() || IsAtIncludedRangeStartCallback(data))
+        return '\n';
+    // Back over up to three continuation bytes to the codepoint's lead.
+    std::uint32_t start = position - 1;
+    while (start > 0 && position - start < 4 && (static_cast<std::uint8_t>(self->text[start]) & 0xC0) == 0x80)
+        start--;
+    std::uint32_t size      = 0;
+    const auto*   bytes     = reinterpret_cast<const std::uint8_t*>(self->text.data()) + start;
+    std::int32_t  codepoint = DecodeUtf8(bytes, position - start, &size);
+    return start + size == position ? codepoint : kDecodeError;
 }
 
 void Lexer::LogCallback(const abi::LexerData* data, const char* format, ...) {

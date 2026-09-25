@@ -63,6 +63,10 @@ struct LexerData {
     bool (*isAtIncludedRangeStart)(const LexerData*);
     bool (*eof)(const LexerData*);
     void (*log)(const LexerData*, const char*, ...);
+    // ned's addition to the tree-sitter lexer: the codepoint just before the
+    // current position, or '\n' at the start of an included range (where
+    // an embedded document's line begins) and of the text.
+    std::int32_t (*lookbehind)(const LexerData*);
 };
 
 enum ParseActionType : std::uint8_t {

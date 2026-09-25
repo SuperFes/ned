@@ -67,6 +67,7 @@ struct Lexer {
     static bool          IsAtIncludedRangeStartCallback(const abi::LexerData* data);
     static bool          EofCallback(const abi::LexerData* data);
     static void          LogCallback(const abi::LexerData* data, const char* format, ...);
+    static std::int32_t  LookbehindCallback(const abi::LexerData* data);
 };
 
 } // namespace ned::editor::parse
