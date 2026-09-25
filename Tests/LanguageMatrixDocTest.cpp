@@ -80,7 +80,8 @@ const std::vector<Column> kColumns = {
     {"cont",    "continuation lines -- the indents query captures `@indent.continuation`, so `x = a +` "
                 "then `b` indents the `b` a continuation step"},
     {"loc",     "locals query -- scope-aware rename, local-variable highlighting"},
-    {"tags",    "tags query -- symbol gutter, outline, breadcrumbs, class/file sync"},
+    {"tags",    "tags query -- symbol gutter, outline, breadcrumbs, class/file sync; "
+                "`i` -- none of its own, the outline is what its embedded languages define (`:injected-symbols`)"},
     {"inj",     "injections query -- embedded languages"},
     {"imp",     "imports query -- go-to-file through imports, rename-file fixups"},
     {"test",    "tests query -- test discovery for the test runner"},
@@ -94,6 +95,7 @@ const std::vector<Column> kColumns = {
 };
 // clang-format on
 constexpr std::size_t kIndentColumn  = 1;
+constexpr std::size_t kTagsColumn    = 4;
 constexpr std::size_t kCommentColumn = 11;
 
 std::string Render() {
@@ -134,7 +136,7 @@ std::string Render() {
             !Pick(own.indents, donor.indents).empty(),
             CapturesContinuations(Pick(own.indents, donor.indents)),
             !Pick(own.locals, donor.locals).empty(),
-            !Pick(own.tags, donor.tags).empty(),
+            !Pick(own.tags, donor.tags).empty() || definition.injectedSymbols,
             !Pick(own.injections, donor.injections).empty(),
             !Pick(own.imports, donor.imports).empty(),
             !Pick(own.tests, donor.tests).empty(),
@@ -149,7 +151,9 @@ std::string Render() {
         for (std::size_t i = 0; i < row.size(); ++i) {
             const bool preserved = i == kIndentColumn && definition.preserveIndent;
             const bool blockOnly = i == kCommentColumn && definition.lineCommentPrefix.empty() && row[i];
+            const bool injected  = i == kTagsColumn && definition.injectedSymbols && Pick(own.tags, donor.tags).empty();
             out << " " << (preserved ? "=" : blockOnly ? "b"
+                                         : injected    ? "i"
                                                        : Mark(row[i]))
                 << " |";
             totals[i] += row[i] ? 1 : 0;

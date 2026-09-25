@@ -4,3 +4,8 @@ f() {
   make &&
     make install
 }
+a |
+  b |
+  c
+d &&
+  e

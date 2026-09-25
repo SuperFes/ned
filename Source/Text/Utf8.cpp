@@ -69,7 +69,7 @@ char32_t DecodeCodepointUtf8(std::string_view utf8Text, std::size_t offset) {
         cp = (cp << 6) | (b & 0x3F);
     }
 
-    return cp;
+    return IsScalarValueEncoding(cp, len) ? cp : 0xFFFD;
 }
 
 std::size_t NextCodepointBoundary(std::string_view utf8Text, std::size_t offset) {

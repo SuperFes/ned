@@ -63,6 +63,24 @@ TEST_CASE("Rope multi-byte UTF-8 counts bytes vs codepoints correctly", "[Rope]"
     REQUIRE(rope.PreviousCodepointBoundary(3) == 1);
 }
 
+TEST_CASE("Rope decodes a sequence encoding no scalar value one byte at a time", "[Rope]") {
+    // Overlong NUL, a UTF-16 surrogate (CESU-8), one past U+10FFFF.
+    for (const std::string bad : {std::string("\xC0\x80"), std::string("\xED\xA0\x80"), std::string("\xF4\x90\x80\x80")}) {
+        const Rope rope("a" + bad + "\xE2\x82\xAC");
+        INFO("bytes: " << bad.size());
+        for (std::size_t offset = 1; offset <= bad.size(); ++offset) {
+            CHECK(rope.CodepointAt(offset).codepoint == 0xFFFD);
+            CHECK(rope.CodepointAt(offset).byteLength == 1);
+            CHECK(rope.NextCodepointBoundary(offset) == offset + 1);
+            // Backward stepping takes the same one-byte steps forward does.
+            CHECK(rope.PreviousCodepointBoundary(offset + 1) == offset);
+        }
+        const std::size_t euro = 1 + bad.size();
+        CHECK(rope.CodepointAt(euro).codepoint == 0x20AC);
+        CHECK(rope.PreviousCodepointBoundary(euro + 3) == euro);
+    }
+}
+
 TEST_CASE("Rope line counting", "[Rope]") {
     const Rope rope("a\nb\nc");
 

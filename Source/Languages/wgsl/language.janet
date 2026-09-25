@@ -5,6 +5,8 @@
 #
 # The bevy dialect is plain WGSL plus its own preprocessor directives
 # (#import, #ifdef), so it parses stock shaders as well as Bevy's own.
+# grammar.janet adds what v0.1.4 predates in the spec: `const`, `alias` and
+# `const_assert`.
 
 {:name "wgsl"
  :extensions [".wgsl"]

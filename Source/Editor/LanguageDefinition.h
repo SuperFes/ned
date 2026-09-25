@@ -142,6 +142,10 @@ struct LanguageDefinition {
     // block is highlighted as its language but not sent to that language's
     // server; HTML's <script>/<style> are.
     bool embeddedDocuments = false;
+    // The symbol pass also runs each injected region's own language's tags
+    // query (Svelte's <script>). Off by default: a Markdown notes file's
+    // outline is its headings, not the functions in its code blocks.
+    bool injectedSymbols = false;
     // (key sequence in ParseKeySequence's syntax, command name).
     std::vector<std::pair<std::string, std::string>> keymap;
     // Per-language capture -> SyntaxClass defaults, consulted ahead of the

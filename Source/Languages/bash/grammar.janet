@@ -94,7 +94,6 @@
                             while_statement
                             if_statement
                             case_statement
-                            list
                             compound_statement
                             function_definition
                             subshell))

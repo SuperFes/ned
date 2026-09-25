@@ -1441,6 +1441,21 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
         symbolKind         = [buildMarkers](std::string_view bufferText) { return buildMarkers(bufferText, HighlightWindow{}); };
         symbolKindInWindow = buildMarkers;
     }
+    if (queries.injectedSymbols && injectionQuery) {
+        const auto embeddedSymbolCache = std::make_shared<EmbeddedSymbolCache>();
+        symbolKindInWindow             = [own = std::move(symbolKindInWindow), parser, sharedParse, injectionQuery,
+                                          embeddedSymbolCache](std::string_view bufferText, HighlightWindow window) {
+            std::vector<SymbolMarker> markers = own ? own(bufferText, window) : std::vector<SymbolMarker>{};
+            const grammar::Tree&      tree    = sharedParse->Update(*parser, bufferText);
+            if (!tree.IsNull()) {
+                CollectInjectedSymbolMarkers(tree.RootNode(), bufferText, *injectionQuery, *embeddedSymbolCache, markers, window);
+            }
+            std::stable_sort(markers.begin(), markers.end(),
+                             [](const SymbolMarker& a, const SymbolMarker& b) { return a.startByte < b.startByte; });
+            return markers;
+        };
+        symbolKind = [inWindow = symbolKindInWindow](std::string_view bufferText) { return inWindow(bufferText, HighlightWindow{}); };
+    }
 
     // structural-selection-expansion follow-up: a third closure sharing the
     // same parser/sharedParse as highlight/fold above, so an expand-selection

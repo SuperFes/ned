@@ -6,6 +6,7 @@
 {:name "cue"
  :extensions [".cue"]
  :line-comment "//"
+ :lsp-root-markers ["cue.mod"]
  :first-pattern-wins true
  :queries {:highlights ["cue/highlights.janet"
                         "cue/upstream/highlights.janet"]}

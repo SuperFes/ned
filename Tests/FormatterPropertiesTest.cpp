@@ -386,6 +386,7 @@ TEST_CASE("A flattened sample reindents back to its house style", "[FormatterPro
              {"continuation.dart", "dart"},
              {"continuation.cu", "cuda"},
              {"continuation.m", "objc"},
+             {"messages.m", "objc"},
              {"continuation.glsl", "glsl"},
              {"continuation.groovy", "groovy"},
              {"continuation.d", "d"},
@@ -406,6 +407,7 @@ TEST_CASE("A flattened sample reindents back to its house style", "[FormatterPro
              {"continuation.fish", "fish"},
              {"continuation.erl", "erlang"},
              {"continuation.res", "rescript"},
+             {"switch.res", "rescript"},
          }) {
         INFO("sample: " << file);
         const std::string original = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "reindent" / file);
@@ -480,6 +482,15 @@ TEST_CASE("Reindent leaves a multi-line macro's body as written", "[FormatterPro
     CHECK(IndentAll(macro + "int f(void) {\nreturn 1;\n}\n", BundledMode("c")) ==
           macro + "int f(void) {\n    return 1;\n}\n");
     CHECK(IndentAll(macro + "namespace n {\nint x;\n}\n", BundledMode("cpp")) == macro + "namespace n {\nint x;\n}\n");
+}
+
+TEST_CASE("Reindent leaves a line inside a literal multi-line token as written", "[FormatterProperties]") {
+    // Neither is a string or comment to the highlights query, so the indents
+    // query says so (@indent.ignore).
+    const std::string powershell = "function f {\n    ${a\n  b} = 2\n}\n";
+    CHECK(IndentAll(powershell, BundledMode("powershell")) == powershell);
+    const std::string crystal = "macro m\n  def {{name}}\n      1\n  end\nend\n";
+    CHECK(IndentAll(crystal, BundledMode("crystal")) == crystal);
 }
 
 TEST_CASE("Reindent leaves continued lines as their author laid them out", "[FormatterProperties]") {

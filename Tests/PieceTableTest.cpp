@@ -170,6 +170,22 @@ TEST_CASE("PieceTable multi-byte UTF-8 counts bytes vs codepoints correctly", "[
     std::filesystem::remove(path);
 }
 
+TEST_CASE("PieceTable decodes a sequence encoding no scalar value one byte at a time", "[PieceTable]") {
+    const std::string           text  = "a\xC0\x80\xED\xA0\x80\xE2\x82\xAC";
+    const std::filesystem::path path  = WriteTempFile("ned_piecetable_overlong.txt", text);
+    const PieceTable            table = PieceTable::FromFile(path);
+
+    for (std::size_t offset = 1; offset < 6; ++offset) {
+        CHECK(table.CodepointAt(offset).codepoint == 0xFFFD);
+        CHECK(table.CodepointAt(offset).byteLength == 1);
+        CHECK(table.PreviousCodepointBoundary(offset + 1) == offset);
+    }
+    CHECK(table.CodepointAt(6).codepoint == 0x20AC);
+    CHECK(table.PreviousCodepointBoundary(9) == 6);
+
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("PieceTable line counting", "[PieceTable]") {
     const std::filesystem::path path  = WriteTempFile("ned_piecetable_lines.txt", "a\nb\nc");
     const PieceTable            table = PieceTable::FromFile(path);

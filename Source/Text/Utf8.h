@@ -14,12 +14,24 @@ namespace ned::text {
 
 [[nodiscard]] std::string EncodeCodepointUtf8(char32_t codepoint);
 
+// Whether `length` well-formed bytes decoding to `codepoint` are its shortest
+// encoding of a Unicode scalar value -- not overlong (`C0 80`), not a UTF-16
+// surrogate (`ED A0 80`), not past U+10FFFF. Every decoder here reads a
+// sequence failing this as its lead byte alone, the same as any other
+// malformed byte.
+[[nodiscard]] constexpr bool IsScalarValueEncoding(char32_t codepoint, std::size_t length) {
+    const bool overlong = (length == 2 && codepoint < 0x80) || (length == 3 && codepoint < 0x800) ||
+                          (length == 4 && codepoint < 0x10000);
+    return !overlong && codepoint <= 0x10FFFF && (codepoint < 0xD800 || codepoint > 0xDFFF);
+}
+
 // Decodes the codepoint starting at offset, which must already be a
 // codepoint boundary (e.g. one returned by NextCodepointBoundary) -- unlike
 // this file's other helpers, this doesn't scan to find a boundary, it reads
 // one starting exactly there. Same malformed-input tolerance as
-// Rope::CodepointAt/ITextStorage::CodepointAt (a truncated/invalid lead byte
-// decodes as U+FFFD rather than reading past utf8Text's end); offset >=
+// Rope::CodepointAt/ITextStorage::CodepointAt (a truncated/invalid lead byte,
+// or a sequence IsScalarValueEncoding rejects, decodes as U+FFFD rather than
+// reading past utf8Text's end); offset >=
 // utf8Text.size() also returns U+FFFD.
 [[nodiscard]] char32_t DecodeCodepointUtf8(std::string_view utf8Text, std::size_t offset);
 

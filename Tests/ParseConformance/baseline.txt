@@ -1,6 +1,6 @@
 # Parse conformance scorecard: bundled corpora vs the production engine.
 # Regenerate: NED_BLESS_PARSE_CONFORMANCE=1 ./build/ned_tests "[ParseConformance]"
-bash/corpus  cases=100 runs=100 passed=100 failed=0 skipped=0
+bash/corpus  cases=101 runs=101 passed=101 failed=0 skipped=0
 c/corpus  cases=85 runs=85 passed=85 failed=0 skipped=0
 csharp/corpus  cases=168 runs=168 passed=168 failed=0 skipped=0
 clojure/corpus  cases=115 runs=115 passed=115 failed=0 skipped=0
@@ -63,7 +63,7 @@ apacheconf/corpus  cases=10 runs=10 passed=10 failed=0 skipped=0
 awk/corpus  cases=117 runs=117 passed=117 failed=0 skipped=0
 cue/corpus  cases=37 runs=37 passed=37 failed=0 skipped=0
 pkl/corpus  cases=662 runs=662 passed=662 failed=0 skipped=0
-wgsl/corpus  cases=10 runs=10 passed=10 failed=0 skipped=0
+wgsl/corpus  cases=11 runs=11 passed=11 failed=0 skipped=0
 jsonnet/corpus  cases=28 runs=28 passed=28 failed=0 skipped=0
 caddy/corpus  cases=45 runs=45 passed=45 failed=0 skipped=0
 gitconfig/corpus  cases=14 runs=14 passed=14 failed=0 skipped=0
@@ -72,7 +72,7 @@ kdl/corpus  cases=211 runs=211 passed=211 failed=0 skipped=0
 starlark/corpus  cases=90 runs=90 passed=90 failed=0 skipped=0
 just/corpus  cases=64 runs=64 passed=64 failed=0 skipped=0
 editorconfig/corpus  cases=29 runs=29 passed=29 failed=0 skipped=0
-ron/corpus  cases=13 runs=13 passed=13 failed=0 skipped=0
+ron/corpus  cases=14 runs=14 passed=14 failed=0 skipped=0
 earthfile/corpus  cases=96 runs=96 passed=96 failed=0 skipped=0
 dotenv/corpus  cases=11 runs=11 passed=11 failed=0 skipped=0
 latex/corpus  cases=104 runs=104 passed=101 failed=3 skipped=0
@@ -161,4 +161,4 @@ gdscript/corpus  cases=167 runs=167 passed=166 failed=1 skipped=0
 matlab/corpus  cases=157 runs=157 passed=155 failed=2 skipped=0
   FAIL call.txt: Function Call: Line Continuation
   FAIL strings.txt: Strings: Invalid termination
-total  cases=12718 runs=12696 passed=12654 failed=42 skipped=28
+total  cases=12721 runs=12699 passed=12657 failed=42 skipped=28

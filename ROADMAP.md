@@ -139,11 +139,6 @@ and code reading. Highest stakes first.
         byte for byte and ignores a stated latin1. A charset stated in `.editorconfig`
         for files opened before `init.janet` disables `.editorconfig` has already
         decoded them.
-  - [ ] **Overlong and surrogate sequences read as codepoints.** A byte that isn't
-        UTF-8 paints as its value (`◁\xE9▷`, `Text/DisplayWidth.h`), but the decoders
-        accept an overlong `C0 80` or a CESU-8 surrogate as the codepoint it spells,
-        so they show as `◁00▷`/`◁D800▷`, and cursor motion steps over them whole.
-        Rejecting them belongs in `Rope`/`PieceTable::CodepointAt`, not the painter.
   - [ ] **Mixed tabs and spaces, if it has to exist:** Emacs's `indent-tabs-mode` with
         an indent width below the tab width (GNU C: 2-column levels, 8-column tabs, so a
         level-3 line is one tab and two spaces). The worst of both worlds, and supported
@@ -160,34 +155,12 @@ and code reading. Highest stakes first.
         Java and Dart), and Enter after an unfinished one lands there too. SQL's
         clauses do the same through their own headed captures; a line continued
         with a `:line-continuation` marker (`\` in C's preprocessor, shells,
-        Python, Ruby, awk and Dockerfiles) is left as written, and GDScript
-        continues only inside brackets or after one. Left:
-        - Meson: `x = a +` then `b` doesn't parse as an addition.
-        - Objective-C's message arguments don't line up on their colons
-          (`[self doThing:a` then `with:b]`, Xcode's layout); they sit a level in.
-        - A chain after a Scala 3 colon-lambda body (`xs.foldUse(g): _ ?=>` ...
-          then `.topN(max)`) goes a level in; the body ends by dedent, which the
-          multi-line-root rule (a closer on the line above) can't see.
-        - A Ruby chain continued after a heredoc body lines up with the
-          heredoc's own indentation.
-  - [ ] **Bash: a pipeline of three or more commands continued across lines,
-        then an `&&` list on the next line** (`a |` / `b |` / `c` / `d &&` /
-        `e`) parses `c d` as one command -- the newline after `c` ends nothing.
-        Two-stage pipelines and either construct alone parse right. Not yet
-        compared against upstream tree-sitter-bash.
-  - [ ] **Lines inside a multi-line token** that isn't a string or comment are
-        reindented, which edits the token: a PowerShell `${ ... }` variable name,
-        a Crystal macro body, a Fortran literal continued with `&`. Leaving any
-        line that starts inside a token as written fixes all three, but an
-        injected region (`<script>`'s `raw_text`, a PHP template's `text`) is
-        such a token too, and its indentation is the host's answer composed with
-        the embedded language's (`Editor/InjectedIndent.h`) -- the rule has to
-        skip injection regions first.
-  - [ ] **ReScript's braced switch arm.** `rescript format` indents a `| A => {`
-        arm's block two levels past the `|` and its `}` one; ned gives the block
-        one level and puts the `}` under the `|`, because the arm and the block
-        open on the same row and the walk counts a row once. Needs a capture that
-        stacks on a same-row container, closer included.
+        Python, Ruby, awk and Dockerfiles) is left as written, GDScript continues
+        only inside brackets or after one, and an Objective-C message lines its
+        selector parts up on their colons (`@aligned.colons`). Left: a chain
+        after a Scala 3 colon-lambda body (`xs.foldUse(g): _ ?=>` ... then
+        `.topN(max)`) goes a level in; the body ends by dedent, which the
+        multi-line-root rule (a closer on the line above) can't see.
 - [ ] **Markdown, what the 2026-09-24 audit left.** Reindent, fill-paragraph, save
       trimming, tables, Enter/Backspace, the outline and folds were fixed against
       `cmark`'s rendering (`Tools/markdown-oracle.py`; the block parser itself
@@ -209,14 +182,6 @@ and code reading. Highest stakes first.
       reads as a variable when a same-named one is bound. Dart: a bare field name
       inside a method binds nothing (members aren't locals), and a function-typed
       parameter (`int cb(int x)`) isn't captured.
-- [ ] **Outline (`tags`) gaps.** A tags query only sees its own language's tree, so
-      Svelte/Vue/Astro list nothing from their `<script>` blocks (nor Markdown/Org
-      from code blocks); following injections would mean running each injected
-      language's tags query over its regions, as highlighting already does. HTML
-      and XML have none by choice -- their element tree is the file again. Two
-      grammars stop short of what their files hold: WGSL's (tree-sitter-wgsl-bevy)
-      predates the spec's `const` and `alias` declarations, which parse as errors
-      and so name nothing, and RON's has no `#![enable(...)]` extension header.
 - [ ] **change-signature for the remaining languages.** 32 have `signatures` + `calls`
       queries (`sig` column): each describes its own parameters, receivers (`self`,
       `cls`, Lua's colon calls, Nim's dot calls, C#'s extension `this`), keyword-only
@@ -1495,6 +1460,12 @@ else works without it.
 Ideas worth remembering but not worth scoping yet — too undecided for "Open Items",
 not disliked enough for "Won't do". Promote or delete on revisit rather than letting
 these accumulate detail in place.
+
+- [ ] **Code-block definitions in a Markdown/Org outline.** HTML, Svelte, Vue and
+      Astro list what their `<script>`/`<style>` blocks define (`:injected-symbols`);
+      Markdown doesn't, so a notes file's outline stays its headings, and Org's
+      outline is its own code. Flip the flag for Markdown (and teach Org's walk the
+      same) only if someone wants literate-programming files outlined by their code.
 
 - [ ] **A true O(1) `Parent()` call** (`parse::NodeParent`) — every call is still a full
       root-to-self descent; a caller climbing a known chain now has parent-aware sibling

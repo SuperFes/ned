@@ -5,6 +5,7 @@
 {:name "clojure"
  :extensions [".clj" ".cljs" ".cljc" ".edn" ".bb"]
  :line-comment ";"
+ :lsp-root-markers ["deps.edn" "project.clj" "shadow-cljs.edn" "bb.edn" "build.boot"]
  :auto-pairs :lisp
  :import-resolution {:extensions ["clj" "cljc" "cljs"]}
  :injection-aliases ["clj"]

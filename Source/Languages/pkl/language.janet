@@ -7,6 +7,7 @@
 {:name "pkl"
  :extensions [".pkl" ".pcf"]
  :line-comment "//"
+ :lsp-root-markers ["PklProject"]
  :first-pattern-wins true
  # The outline stops two levels down; breadcrumbs follow every level.
  :sticky-scroll-from-folds true

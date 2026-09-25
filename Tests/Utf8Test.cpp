@@ -117,4 +117,10 @@ TEST_CASE("DecodeCodepointUtf8 is U+FFFD-tolerant of malformed/truncated input",
     REQUIRE(DecodeCodepointUtf8("\xFF", 0) == 0xFFFD);     // invalid lead byte
     REQUIRE(DecodeCodepointUtf8("\xE4\xB8", 0) == 0xFFFD); // truncated 3-byte sequence
     REQUIRE(DecodeCodepointUtf8("\xC3\x20", 0) == 0xFFFD); // lead byte, non-continuation follower
+    REQUIRE(DecodeCodepointUtf8("\xC0\x80", 0) == 0xFFFD); // overlong NUL
+    REQUIRE(DecodeCodepointUtf8("\xE0\x80\xAF", 0) == 0xFFFD);     // overlong '/'
+    REQUIRE(DecodeCodepointUtf8("\xED\xA0\x80", 0) == 0xFFFD);     // UTF-16 surrogate U+D800
+    REQUIRE(DecodeCodepointUtf8("\xF4\x90\x80\x80", 0) == 0xFFFD); // past U+10FFFF
+    REQUIRE(DecodeCodepointUtf8("\xF4\x8F\xBF\xBF", 0) == 0x10FFFF);
+    REQUIRE(DecodeCodepointUtf8("\xEF\xBF\xBD", 0) == 0xFFFD); // a real U+FFFD still decodes
 }

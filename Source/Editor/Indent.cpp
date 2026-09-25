@@ -148,6 +148,37 @@ namespace {
                                   width);
     }
 
+    // "aligned.colons": the line at `position` starts a selector part --
+    // a keyword child followed by its ":" -- and puts that colon under the
+    // first one on the message's own line. nullopt (one ordinary level) when
+    // the line starts anything else, the first colon isn't on the opener's
+    // line, or the keyword is too long to fit right of the opener.
+    std::optional<int> ResolveColonColumn(const grammar::Node& container, std::string_view bufferText, std::size_t position, int width) {
+        const std::size_t          openerLineEnd = std::min(bufferText.find('\n', container.StartByte()), bufferText.size());
+        std::optional<std::size_t> firstColon;
+        std::optional<std::size_t> lineColon;
+        bool                       keywordAtPosition = false;
+        container.ForEachChild([&](const grammar::Node& child) {
+            if (child.IsExtra()) {
+                return;
+            }
+            const bool colon = !child.IsNamed() && child.Type() == ":";
+            if (colon && !firstColon) {
+                firstColon = child.StartByte();
+            }
+            if (colon && keywordAtPosition && !lineColon) {
+                lineColon = child.StartByte();
+            }
+            keywordAtPosition = child.StartByte() == position && child.IsNamed();
+        });
+        if (!firstColon || *firstColon >= openerLineEnd || !lineColon) {
+            return std::nullopt;
+        }
+        const int keyword = VisualColumnInLine(bufferText, position, *lineColon, width);
+        const int column  = VisualColumnInLine(bufferText, LineStartFor(bufferText, container.StartByte()), *firstColon, width) - keyword;
+        return column > ContainerOwnColumn(container, bufferText, width) ? std::optional(column) : std::nullopt;
+    }
+
     // A special form with `specials` distinguished arguments before its body
     // (Racket's `for/fold` accumulators and clauses, Common Lisp's
     // `multiple-value-bind` variables and values), Emacs's lisp-indent-specform:
@@ -272,6 +303,10 @@ namespace {
                     captures.aligned.insert(key);
                     captures.alignedArgs.insert(key);
                 }
+                else if (capture.name == "aligned.colons") {
+                    captures.aligned.insert(key);
+                    captures.alignedColons.insert(key);
+                }
                 else if (capture.name == "indent.body") {
                     captures.body.insert(key);
                     if (const auto specials = match.setDirectives.find("indent.specials"); specials != match.setDirectives.end()) {
@@ -283,6 +318,13 @@ namespace {
                 }
                 else if (capture.name == "indent.suppress") {
                     captures.suppressed.insert(key);
+                }
+                else if (capture.name == "indent.stacked") {
+                    captures.indent.insert_or_assign(key, capture.startByte);
+                    captures.stacked.insert(key);
+                }
+                else if (capture.name == "indent.ignore") {
+                    captures.ignored.emplace_back(capture.startByte, capture.endByte);
                 }
                 else if (capture.name == "dedent") {
                     captures.dedents.push_back(IndentCaptures::Dedent{capture.startByte, capture.endByte, capture.type});
@@ -392,7 +434,7 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
 std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, std::string_view bufferText,
                                                     const IndentCaptures& captures, std::size_t lineStart,
                                                     std::size_t lineEnd, const IndentStyle& style) {
-    if (tree.IsNull()) {
+    if (tree.IsNull() || RangeContainingLine(captures.ignored, lineStart) != nullptr) {
         return std::nullopt;
     }
 
@@ -729,7 +771,9 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
                 return IndentComputation{IndentComputation::Kind::Column, column + IndentColumnForLevel(level, style)};
             }
             if (isAlignedCaptured(node) && !opensAtPosition && !crossedBarrier) {
-                if (const std::optional<int> column = captures.alignedArgs.contains(keyOf(node))
+                if (const std::optional<int> column = captures.alignedColons.contains(keyOf(node))
+                                                          ? ResolveColonColumn(node, bufferText, position, style.width)
+                                                      : captures.alignedArgs.contains(keyOf(node))
                                                           ? ResolveArgumentColumn(node, bufferText, style.width)
                                                           : ResolveAlignedColumn(node, bufferText, style.width)) {
                     return IndentComputation{IndentComputation::Kind::Column, *column + IndentColumnForLevel(level, style)};
@@ -739,7 +783,8 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
                 // other captured container.
             }
             if ((isIndentCaptured(node) || isAlignedCaptured(node) || isBodyIndentCaptured(node)) &&
-                (node.StartRow() != lastRow || opensBeforeLastRow(node)) && interiorContains(node, position) &&
+                (node.StartRow() != lastRow || opensBeforeLastRow(node) || (captures.stacked.contains(keyOf(node)) && !opensAtPosition)) &&
+                interiorContains(node, position) &&
                 !(insideOwnLineBody && (captures.continuation.contains(keyOf(node)) || isAlignedCaptured(node))) &&
                 !continuesAfterMultiLineRoot(node, position)) {
                 level += ContinuationWeight(captures, keyOf(node), style);

@@ -1952,11 +1952,11 @@ TEST_CASE("Stylesheets outline their rules, at-rules and variables", "[Mode]") {
 
 TEST_CASE("WGSL tags name functions, structs and module-scope declarations", "[Mode]") {
     using V = std::vector<std::string>;
-    CHECK(NamedSymbols("wgsl", "type Vec = vec3<f32>;\nstruct Light { pos: vec3<f32>, color: vec3<f32> }\n"
-                               "override scale: f32 = 1.0;\n@group(0) @binding(0) var<uniform> light: Light;\n"
+    CHECK(NamedSymbols("wgsl", "alias Vec = vec3<f32>;\nstruct Light { pos: vec3<f32>, color: vec3<f32> }\n"
+                               "const PI: f32 = 3.14;\noverride scale: f32 = 1.0;\n@group(0) @binding(0) var<uniform> light: Light;\n"
                                "@vertex\nfn vs_main(@location(0) p: vec3<f32>) -> @builtin(position) vec4<f32> {\n"
                                "  let x = 1.0;\n  return vec4<f32>(p, 1.0);\n}\n") ==
-          V{"Vec:type", "Light:struct", "pos:field", "color:field", "scale:constant", "light:variable", "vs_main:function"});
+          V{"Vec:type", "Light:struct", "pos:field", "color:field", "PI:constant", "scale:constant", "light:variable", "vs_main:function"});
 }
 
 TEST_CASE("Configuration languages outline their top-level bindings two levels deep", "[Mode]") {
@@ -1973,11 +1973,44 @@ TEST_CASE("Configuration languages outline their top-level bindings two levels d
             "greet:function", "database:namespace", "user:field"});
     CHECK(NamedSymbols("ron", "Config(\n    name: \"x\",\n    window: (width: 800, height: 600),\n    items: [1, 2],\n)\n") ==
           V{"name:field", "window:namespace", "width:field", "height:field", "items:field"});
+    const std::string ron = "#![enable(implicit_some)]\nConfig(\n    name: \"x\",\n)\n";
+    CHECK(NamedSymbols("ron", ron) == V{"name:field"});
+    CHECK(ClassAt(BundledMode("ron"), ron, "implicit_some") == ned::editor::SyntaxClass::Attribute);
     CHECK(NamedSymbols("cue", "package app\n\n#Server: {\n  host: string\n}\nserver: #Server & {\n  host: \"a\"\n}\n"
                               "db: {\n  user: \"root\"\n}\nname: \"x\"\nlet X = 1\n") ==
           V{"app:module", "#Server:type", "host:field", "server:field", "db:namespace", "user:field", "name:field", "X:variable"});
     CHECK(NamedSymbols("json5", "// c\n{\n  name: \"x\",\n  'quoted': 1,\n  nested: { deep: 1, \"q\": 2 },\n}\n") ==
           V{"name:field", "quoted:field", "nested:namespace", "deep:field", "q:field"});
+}
+
+TEST_CASE("Markup hosts outline what their embedded scripts and styles define", "[Mode]") {
+    using V               = std::vector<std::string>;
+    const std::string vue = "<template>\n  <div class=\"a\">{{ x }}</div>\n</template>\n<script>\nfunction helper() {}\n"
+                            "export default { name: 'x' }\n</script>\n<style>\n.a { color: red; }\n</style>\n";
+    CHECK(NamedSymbols("vue", vue) == V{"helper:function", ".a:class"});
+    CHECK(NamedSymbols("svelte", "<script lang=\"ts\">\n  interface Props { n: number }\n  function inc() {}\n</script>\n"
+                                 "<button on:click={inc}>+</button>\n") == V{"Props:interface", "inc:function"});
+    CHECK(NamedSymbols("html", "<p>x</p>\n<script>\nclass Widget {}\n</script>\n") == V{"Widget:class"});
+
+    // Positions are the host buffer's, so the name sits where the marker says.
+    const ned::editor::Mode vueMode = BundledMode("vue");
+    for (const ned::editor::SymbolMarker& marker : vueMode.symbolKind(vue)) {
+        CHECK(vue.substr(marker.nameStartByte, marker.name.size()) == marker.name);
+        CHECK(marker.startByte <= marker.nameStartByte);
+        CHECK(marker.nameStartByte < marker.endByte);
+    }
+
+    // Windowed, a region outside the window names nothing.
+    const std::size_t        style = vue.find("<style>");
+    std::vector<std::string> inStyle;
+    for (const ned::editor::SymbolMarker& marker :
+         vueMode.symbolKindInWindow(vue, ned::editor::HighlightWindow{.startByte = style, .endByte = vue.size()})) {
+        inStyle.push_back(marker.name);
+    }
+    CHECK(inStyle == V{".a"});
+
+    // Markdown's outline stays its headings.
+    CHECK(NamedSymbols("markdown", "# Title\n\n```js\nfunction f() {}\n```\n") == V{"Title:module"});
 }
 
 TEST_CASE("Request, patch and environment files outline their entries", "[Mode]") {

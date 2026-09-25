@@ -7,6 +7,7 @@
  :extensions [".jsonnet" ".libsonnet"]
  :injection-aliases ["libsonnet"]
  :line-comment "//"
+ :lsp-root-markers ["jsonnetfile.json"]
  :capture-classes {"define" :variable}
  # The outline stops two levels down; breadcrumbs follow every level.
  :sticky-scroll-from-folds true

@@ -5,3 +5,7 @@
 # so one written across lines (`Get-Item |` then `Where-Object`) is exactly
 # a continuation.
 [(pipeline) (assignment_expression)] @indent.continuation
+
+# A `${...}` variable name is spelled with whatever its braces hold, line
+# breaks and indentation included.
+(braced_variable) @indent.ignore

@@ -1,3 +1,8 @@
+# grammar.janet departs from upstream tree-sitter-bash in one place: a
+# pipeline's stages exclude `list`, so `a | b | c` then `d && e` is a pipeline
+# and a list (upstream nests the list inside the pipeline and reads `c d` as
+# one command).
+
 {:name "bash"
  # .ebuild/.eclass are Gentoo Portage's build-script format -- both are
  # genuinely bash (sourced by portage's own bash-based build system: EAPI,

@@ -22,6 +22,7 @@
                  (:seq global_variable_declaration ";")
                  (:seq global_constant_declaration ";")
                  (:seq type_alias_declaration ";")
+                 (:seq const_assert_statement ";")
                  struct_declaration
                  function_declaration))
   global_variable_declaration (:seq
@@ -29,6 +30,11 @@
                                variable_declaration
                                (:choice (:seq "=" const_expression) :blank))
   global_constant_declaration (:choice
+                               (:seq
+                                "const"
+                                (:choice identifier variable_identifier_declaration)
+                                "="
+                                _expression)
                                (:seq
                                 "let"
                                 (:choice identifier variable_identifier_declaration)
@@ -51,7 +57,8 @@
                        :blank)
                       ")")
                      const_literal)
-  type_alias_declaration (:seq "type" identifier "=" type_declaration)
+  type_alias_declaration (:seq (:choice "alias" "type") identifier "=" type_declaration)
+  const_assert_statement (:seq "const_assert" _expression)
   const_expression (:prec-left 0
                     (:choice
                      (:seq
@@ -122,6 +129,7 @@
                discard_statement
                (:seq return_statement ";")
                (:seq variable_statement ";")
+               (:seq const_assert_statement ";")
                increment_statement
                decrement_statement))
   compound_statement (:seq "{" (:repeat _statement) "}")
@@ -182,7 +190,7 @@
                       variable_declaration
                       (:seq variable_declaration "=" _expression)
                       (:seq
-                       "let"
+                       (:choice "let" "const")
                        (:choice identifier variable_identifier_declaration)
                        "="
                        _expression))

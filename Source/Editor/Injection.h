@@ -77,6 +77,16 @@ void CollectInjectedHighlightSpans(const grammar::Node& root, std::string_view b
 // EmbeddedLanguageCache is a highlighting-only concept, not a language-identity
 // one), so this never fails to report a region just because no bundled Mode
 // exists for its language.
+// The symbol-pass counterpart of CollectInjectedHighlightSpans: each injected
+// region intersecting `window` is run through its own language's windowed
+// symbol function, and the markers it names are appended to markers in host
+// coordinates. A combined injection (F#'s `///` lines as one XML document)
+// names nothing -- its pieces are not a program of their own.
+using EmbeddedSymbolCache = std::unordered_map<std::string, std::optional<SymbolKindWindowFunction>>;
+void CollectInjectedSymbolMarkers(const grammar::Node& root, std::string_view bufferText,
+                                  const grammar::QueryMatcher& injectionQuery, EmbeddedSymbolCache& cache,
+                                  std::vector<SymbolMarker>& markers, HighlightWindow window = {});
+
 [[nodiscard]] std::vector<InjectionRegion> CollectInjectionRegions(const grammar::Node& root, std::string_view bufferText,
                                                                    const grammar::QueryMatcher& injectionQuery);
 

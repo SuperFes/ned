@@ -9,7 +9,18 @@
  :inline []
  :supertypes []
  :rules
- {source_file (:seq _value)
+ {source_file (:seq (:repeat extension_attribute) _value)
+  extension_attribute (:seq
+                       "#"
+                       "!"
+                       "["
+                       "enable"
+                       "("
+                       identifier
+                       (:repeat (:seq "," identifier))
+                       (:choice "," :blank)
+                       ")"
+                       "]")
   _value (:choice array map struct tuple _literal enum_variant)
   enum_variant identifier
   array (:seq

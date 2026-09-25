@@ -1,5 +1,5 @@
 # sample.html  (html-mode)
-# 85 facts
+# 87 facts
 embedded 43..75  [css]  "\n      body { color: red; }\n    "
 embedded 152..216  [javascript]  "\n      const total = (xs) => …  b, 0);\n    "
 highlight 0..15  [constant]  "<!DOCTYPE html>"
@@ -85,3 +85,5 @@ indent 212..225  [4]  "    </script>"
 indent 226..235  [2]  "  </body>"
 indent 236..243  [0]  "</html>"
 indent 244..244  [0]
+symbol 50..70  [TypeLike body]  "body { color: red; }"
+symbol 165..210  [Callable total]  "total = (xs) => xs.reduce((a, b) => a + b, 0)"

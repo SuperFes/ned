@@ -1120,6 +1120,9 @@ struct GrammarQuerySources {
     std::string_view format;
     // LanguageDefinition::firstPatternWins, for the highlights query.
     bool highlightsFirstPatternWins = false;
+    // LanguageDefinition::injectedSymbols: the symbol pass adds each injected
+    // region's own markers.
+    bool injectedSymbols = false;
 };
 
 // One HighlightFunction cache per distinct embedded language actually

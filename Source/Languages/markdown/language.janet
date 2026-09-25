@@ -4,6 +4,7 @@
 
 {:name "markdown"
  :extensions [".md" ".markdown"]
+ :lsp-root-markers [".marksman.toml"]
  :injection-aliases ["md"]
  :block-comment ["<!--" "-->"]
  :wrap-lines true

@@ -286,6 +286,7 @@ Mode ModeFromDefinition(const LanguageDefinition& definition, const grammar::Lan
     try {
         GrammarQuerySources sources        = compiled.Views();
         sources.highlightsFirstPatternWins = definition.firstPatternWins;
+        sources.injectedSymbols            = definition.injectedSymbols;
         Mode mode                          = GrammarModeFromLanguage(ModeNameFor(definition), language, sources, &context);
         return Finish(std::move(mode), definition, context);
     }

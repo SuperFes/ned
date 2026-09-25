@@ -12,3 +12,9 @@ def f
   return a &&
     b
 end
+def g
+  x = <<EOS
+text
+EOS
+    .strip
+end

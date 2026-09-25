@@ -137,7 +137,9 @@ TEST_CASE("The definitions carry the facts the old C++ tables held", "[LanguageP
                                                                            // 2026-09-18 pump: build-manifest markers for a future D2 entry
                                                                            "starlark", "latex", "swift", "nim", "odin", "crystal", "d", "fortran", "ada", "v",
                                                                            "scala", "haskell", "elixir", "erlang", "elm", "purescript", "rescript", "gleam", "fsharp", "ocaml",
-                                                                           "ocaml-interface", "groovy", "perl", "julia", "dart", "solidity", "gdscript"};
+                                                                           "ocaml-interface", "groovy", "perl", "julia", "dart", "solidity", "gdscript",
+                                                                           "ruby", "nix", "r", "hcl", "clojure", "cuda", "objc", "svelte", "vue", "astro", "vhdl",
+                                                                           "proto", "jsonnet", "cue", "pkl", "janet", "commonlisp", "typst", "toml", "markdown"};
     const std::set<std::string>              kImportResolutionLanguages = {"php", "javascript", "typescript", "tsx", "python", "bash",
                                                                            "clojure", "jank", "css", "janet", "rust"};
     const std::map<std::string, std::string> kAliases                   = {

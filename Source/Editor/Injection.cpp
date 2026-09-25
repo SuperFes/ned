@@ -235,6 +235,49 @@ void CollectInjectedHighlightSpans(const grammar::Node& root, std::string_view b
     }
 }
 
+void CollectInjectedSymbolMarkers(const grammar::Node& root, std::string_view bufferText,
+                                  const grammar::QueryMatcher& injectionQuery, EmbeddedSymbolCache& cache,
+                                  std::vector<SymbolMarker>& markers, HighlightWindow window) {
+    for (const RawInjectionMatch& match : CollectRawInjectionMatches(root, bufferText, injectionQuery, window)) {
+        if (match.combined || match.content.endByte <= window.startByte || match.content.startByte >= window.endByte) {
+            continue;
+        }
+        const std::string canonical = CanonicalEmbeddedLanguageName(match.languageTag);
+        auto              it        = cache.find(canonical);
+        if (it == cache.end()) {
+            std::optional<SymbolKindWindowFunction> resolved;
+            if (const std::optional<Mode> subMode = ModeByName(canonical + "-mode")) {
+                if (subMode->symbolKindInWindow) {
+                    resolved = subMode->symbolKindInWindow;
+                }
+                else if (subMode->symbolKind) {
+                    resolved = [whole = subMode->symbolKind](std::string_view text, HighlightWindow within) {
+                        std::vector<SymbolMarker> all = whole(text);
+                        std::erase_if(all, [&](const SymbolMarker& marker) {
+                            return marker.endByte <= within.startByte || marker.startByte >= within.endByte;
+                        });
+                        return all;
+                    };
+                }
+            }
+            it = cache.emplace(canonical, std::move(resolved)).first;
+        }
+        if (!it->second) {
+            continue;
+        }
+        const std::size_t     start = match.content.startByte;
+        const std::size_t     end   = match.content.endByte;
+        const HighlightWindow local{.startByte = window.startByte > start ? window.startByte - start : 0,
+                                    .endByte   = window.endByte >= end ? end - start : window.endByte - start};
+        for (SymbolMarker marker : (*it->second)(bufferText.substr(start, end - start), local)) {
+            marker.startByte += start;
+            marker.endByte += start;
+            marker.nameStartByte += start;
+            markers.push_back(std::move(marker));
+        }
+    }
+}
+
 std::vector<InjectionRegion> CollectInjectionRegions(const grammar::Node& root, std::string_view bufferText,
                                                      const grammar::QueryMatcher& injectionQuery) {
     std::vector<InjectionRegion> regions;

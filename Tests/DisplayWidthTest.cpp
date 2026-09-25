@@ -115,12 +115,17 @@ TEST_CASE("A byte that isn't UTF-8 is a glyph of its own, shown as its value", "
 TEST_CASE("Each byte of a broken sequence is its own glyph, in strings and storage alike", "[DisplayWidth]") {
     // A truncated three-byte lead, stray continuations, and a lead with no
     // room left before the end.
-    for (const std::string text : {std::string("\xe6\x97x"), std::string("\x80\x80"), std::string("a\xf0")}) {
+    // Then well-formed shapes that encode no scalar value: overlong NUL, a
+    // UTF-16 surrogate, and one past U+10FFFF.
+    for (const std::string text : {std::string("\xe6\x97x"), std::string("\x80\x80"), std::string("a\xf0"),
+                                   std::string("\xc0\x80"), std::string("\xed\xa0\x80"),
+                                   std::string("\xf4\x90\x80\x80")}) {
         const RopeStorage rope{Rope(text)};
         for (std::size_t offset = 0; offset < text.size();) {
             const Glyph fromString  = GlyphAt(std::string_view(text), offset);
             const Glyph fromStorage = GlyphAt(rope, offset, rope.ByteLength());
             CHECK(fromString.byteLength == 1);
+            CHECK(fromString.rawByte == (static_cast<unsigned char>(text[offset]) >= 0x80));
             CHECK(fromString.byteLength == fromStorage.byteLength);
             CHECK(fromString.rawByte == fromStorage.rawByte);
             CHECK(fromString.codepoint == fromStorage.codepoint);

@@ -5,5 +5,5 @@
  :injection-aliases ["fs" "f#"]
  :preserve-indent true
  :line-comment "//"
- :lsp-root-markers [".fsproj" "paket.dependencies"]
+ :lsp-root-markers ["*.fsproj" "paket.dependencies"]
 }

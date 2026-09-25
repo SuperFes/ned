@@ -7,6 +7,7 @@
  :mime-types ["text/x-objective-c"]
  :content-pattern "^\\s*(@interface|@protocol|@implementation|#import)\\b"
  :line-comment "//"
+ :lsp-root-markers ["compile_commands.json" ".clangd" "CMakeLists.txt"]
  :line-continuation "\\"
  # The upstream queries are deltas whose first line says `inherits: c`;
  # discovery doesn't read that, so the base is named here.
@@ -14,7 +15,8 @@
                         "objc/upstream/highlights.janet"]
            :locals ["c/locals.janet"
                     "objc/upstream/locals.janet"]
-           :indents ["c/indents.janet"]
+           :indents ["c/indents.janet"
+                     "objc/indents.janet"]
            :signatures ["c/signatures.janet"]
            :calls ["c/calls.janet"]}
  :signature-template "void __ned_sig({}) {}"

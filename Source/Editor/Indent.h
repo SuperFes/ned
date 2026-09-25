@@ -147,6 +147,10 @@ struct IndentCaptures {
     // "aligned.args": aligned under a Lisp call's first argument rather than
     // whatever follows the opener (the head).
     std::unordered_set<NodeKey, NodeKeyHash>              alignedArgs;
+    // "aligned.colons": an Objective-C message whose continuation lines each
+    // start a selector part, lined up on their colons (`doThing:a` then
+    // `   with:b`), Xcode's and clang-format's layout.
+    std::unordered_set<NodeKey, NodeKeyHash>              alignedColons;
     std::unordered_set<NodeKey, NodeKeyHash>              body;       // "indent.body"
     // An "indent.body" form's distinguished arguments before its body, from
     // `(#set! indent.specials "N")`.
@@ -174,6 +178,16 @@ struct IndentCaptures {
     // "indent.suppress": an imprint container that doesn't indent, or a node
     // that isn't a continuation after all.
     std::unordered_set<NodeKey, NodeKeyHash>              suppressed;
+    // "indent.stacked": an `@indent` container that counts even when the row
+    // it opens on was already counted -- a ReScript switch arm whose body is
+    // a block opened on the arm's own line indents the block's contents two
+    // levels and its `}` one.
+    std::unordered_set<NodeKey, NodeKeyHash> stacked;
+    // "indent.ignore": a multi-line token whose text is literal but that the
+    // highlights query doesn't call a string or comment (PowerShell's
+    // `${...}` variable name, Crystal's macro text). A line starting inside
+    // one is left as written.
+    std::vector<std::pair<std::size_t, std::size_t>>      ignored;
     std::vector<Dedent>                                   dedents;    // "dedent"
     // Also set from a query: an "indent.end" token captured in the same match
     // as an "indent"/"indent.headed" container caps it there (OCaml's

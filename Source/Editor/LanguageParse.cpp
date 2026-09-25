@@ -193,6 +193,9 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
         else if (key == "first-pattern-wins") {
             definition.firstPatternWins = ExpectBool(directoryName, value, ":first-pattern-wins");
         }
+        else if (key == "injected-symbols") {
+            definition.injectedSymbols = ExpectBool(directoryName, value, ":injected-symbols");
+        }
         else if (key == "embedded-documents") {
             definition.embeddedDocuments = ExpectBool(directoryName, value, ":embedded-documents");
         }

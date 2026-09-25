@@ -26,4 +26,8 @@
    "<link rel=\"stylesheet\" href=\"${1:style.css}\">$0"
    "script"
    "<script src=\"${1:script.js}\"></script>$0"}
+ # The outline lists what the embedded scripts define; breadcrumbs follow
+ # the element nesting.
+ :injected-symbols true
+ :sticky-scroll-from-folds true
 }

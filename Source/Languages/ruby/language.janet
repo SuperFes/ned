@@ -3,6 +3,7 @@
  :injection-aliases ["rb"]
  :filenames ["Rakefile" "Gemfile" "Guardfile"]
  :line-comment "#"
+ :lsp-root-markers ["Gemfile"]
  :line-continuation "\\"
  :signature-template "def __ned_sig({})\nend"
 }

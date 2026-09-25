@@ -60,6 +60,37 @@ TEST_CASE("RootMarkers returns compiled-in defaults for bundled languages", "[Ls
     REQUIRE(std::find(kotlin.begin(), kotlin.end(), "build.gradle.kts") != kotlin.end());
 }
 
+TEST_CASE("Bundled root markers find each language's own project file", "[Lsp]") {
+    RootStateGuard guard;
+    SetProjectRoot(std::filesystem::temp_directory_path()); // deliberately NOT the expected answer here
+
+    const std::filesystem::path repo        = std::filesystem::temp_directory_path() / "ned-lsp-root-resolver-bundled";
+    const auto                  projectWith = [&](const std::string& name, const std::string& marker) {
+        const std::filesystem::path project = repo / name;
+        std::filesystem::create_directories(project / "src");
+        std::ofstream(project / marker) << "";
+        return project;
+    };
+
+    // .NET names the project file after the project; a literal ".fsproj" never matched.
+    const std::filesystem::path fsharp = projectWith("fsharp", "App.fsproj");
+    CHECK(ResolveLspRoot(fsharp / "src" / "Program.fs", "fsharp") == fsharp);
+
+    const std::filesystem::path ruby = projectWith("ruby", "Gemfile");
+    CHECK(ResolveLspRoot(ruby / "src" / "app.rb", "ruby") == ruby);
+
+    const std::filesystem::path nix = projectWith("nix", "flake.nix");
+    CHECK(ResolveLspRoot(nix / "src" / "default.nix", "nix") == nix);
+
+    // CUE's module marker is a directory.
+    const std::filesystem::path cue = repo / "cue";
+    std::filesystem::create_directories(cue / "cue.mod");
+    std::filesystem::create_directories(cue / "src");
+    CHECK(ResolveLspRoot(cue / "src" / "x.cue", "cue") == cue);
+
+    std::filesystem::remove_all(repo);
+}
+
 TEST_CASE("SetLspRootMarkers overrides the default, and an empty list reverts to it", "[Lsp]") {
     SetLspRootMarkers("cpp", {"WORKSPACE"});
     REQUIRE(RootMarkers("cpp") == std::vector<std::string>{"WORKSPACE"});

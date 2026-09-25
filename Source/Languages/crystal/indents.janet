@@ -13,3 +13,7 @@
 # level (RuboCop's variable-aligned `end`), not a continuation step in.
 [(assign (case)) (assign (if)) (assign (unless)) (assign (while)) (assign (until))
  (assign (begin))] @indent.suppress
+
+# A macro body is template text the macro pastes as written; only the
+# `{{ }}`/`{% %}` pieces inside it are Crystal the parser reads.
+(macro_content) @indent.ignore

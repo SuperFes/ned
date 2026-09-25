@@ -233,3 +233,55 @@ struct FragmentInput {
     (import_path
       (identifier)
       (identifier))))
+
+================================================================================
+Current-spec module-scope declarations
+================================================================================
+
+alias Vec = vec3<f32>;
+const PI: f32 = 3.14;
+const TAU = PI * 2.0;
+const_assert TAU > 6.0;
+
+fn f() {
+  const x = 1;
+  const_assert x == 1;
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_alias_declaration
+    (identifier)
+    (type_declaration
+      (type_declaration)))
+  (global_constant_declaration
+    (variable_identifier_declaration
+      (identifier)
+      (type_declaration))
+    (const_literal
+      (float_literal)))
+  (global_constant_declaration
+    (identifier)
+    (binary_expression
+      (identifier)
+      (const_literal
+        (float_literal))))
+  (const_assert_statement
+    (binary_expression
+      (identifier)
+      (const_literal
+        (float_literal))))
+  (function_declaration
+    (identifier)
+    (compound_statement
+      (variable_statement
+        (identifier)
+        (const_literal
+          (int_literal)))
+      (const_assert_statement
+        (binary_expression
+          (identifier)
+          (const_literal
+            (int_literal)))))))
+

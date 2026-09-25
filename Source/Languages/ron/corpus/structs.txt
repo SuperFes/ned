@@ -271,3 +271,27 @@ Some(Comment(token: "// "))
         (struct_entry
           (identifier)
           (string))))))
+
+================================================================================
+Extension header
+================================================================================
+
+#![enable(implicit_some)]
+#![enable(unwrap_newtypes, unwrap_variant_newtypes,)]
+Config(name: "x")
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (extension_attribute
+    (identifier))
+  (extension_attribute
+    (identifier)
+    (identifier))
+  (struct
+    (struct_name
+      (identifier))
+    (struct_entry
+      (identifier)
+      (string))))
+

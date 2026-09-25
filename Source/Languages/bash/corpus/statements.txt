@@ -1889,3 +1889,48 @@ while (echo $BASHPID; true); do echo $BASHPID; break; done
       (command
         (command_name
           (word))))))
+
+===============================
+Pipelines bind tighter than && and ||
+===============================
+
+a | b | c
+d && e
+f | g && h | i
+
+---
+
+(program
+  (pipeline
+    (command
+      (command_name
+        (word)))
+    (command
+      (command_name
+        (word)))
+    (command
+      (command_name
+        (word))))
+  (list
+    (command
+      (command_name
+        (word)))
+    (command
+      (command_name
+        (word))))
+  (list
+    (pipeline
+      (command
+        (command_name
+          (word)))
+      (command
+        (command_name
+          (word))))
+    (pipeline
+      (command
+        (command_name
+          (word)))
+      (command
+        (command_name
+          (word))))))
+

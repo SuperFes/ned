@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "MappedFile.h"
+#include "Utf8.h"
 
 namespace ned::text {
 
@@ -556,6 +557,9 @@ PieceTable::DecodedCodepoint PieceTable::CodepointAt(std::size_t byteOffset) con
         }
         cp = (cp << 6) | (b & 0x3F);
     }
+    if (!IsScalarValueEncoding(cp, len)) {
+        return {0xFFFD, 1};
+    }
 
     return {cp, len};
 }
@@ -573,7 +577,10 @@ std::size_t PieceTable::PreviousCodepointBoundary(std::size_t byteOffset) const 
         ++steps;
     }
 
-    return offset;
+    // The lead found is the previous codepoint only if it decodes through to
+    // byteOffset; otherwise the byte before byteOffset is a malformed one of
+    // its own, which forward stepping also takes alone.
+    return offset + CodepointAt(offset).byteLength >= byteOffset ? offset : byteOffset - 1;
 }
 
 std::size_t PieceTable::NextCodepointBoundary(std::size_t byteOffset) const {
