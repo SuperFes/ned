@@ -67,3 +67,16 @@
 (for_statement "endfor" @dedent)
 (foreach_statement "endforeach") @indent
 (foreach_statement "endforeach" @dedent)
+
+# Continuation lines -- see c-indents.scm. PSR-12's continuation is one level.
+[(conditional_expression) (assignment_expression) (augmented_assignment_expression)
+ (reference_assignment_expression) (return_statement) (echo_statement) (member_call_expression)
+ (member_access_expression) (nullsafe_member_call_expression) (nullsafe_member_access_expression)
+ (scoped_call_expression)] @indent.continuation
+# A broken `if (`/`while (` condition keeps its operators at its own level.
+(binary_expression) @indent.continuation
+(parenthesized_expression (binary_expression) @indent.suppress)
+
+# Statement bodies: an Allman `{` on its own line (`$f = function ()` then
+# `{`) opens a block, not a continuation of the expression above it.
+[(compound_statement) (declaration_list)] @align.barrier

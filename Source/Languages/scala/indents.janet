@@ -30,3 +30,14 @@
 # braces, which the imprint already indents).
 (for_expression "for" . (enumerators) @indent)
 (colon_argument [(indented_block) (indented_cases)] @indent)
+
+# Continuation lines -- see c-indents.scm. A definition's value on the
+# next line is an indented_block, headed above.
+# An infix expression that is an indented body of its own keeps its
+# operators at the body's level (scalafmt's indentOperator.exemptScope
+# oldTopLevel); no call_expression, whose colon arguments are indented
+# blocks already.
+[(field_expression) (assignment_expression)] @indent.continuation
+(infix_expression) @indent.continuation
+[(indented_block (infix_expression) @indent.suppress)
+ (infix_expression (infix_expression) @indent.suppress)]

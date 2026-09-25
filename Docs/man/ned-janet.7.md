@@ -340,6 +340,10 @@ configuration is Janet code, and these are the bindings it calls.
 
 :   Enable/disable inline colour swatches -- a cell painted in the colour named by every colour literal in view (#ff00aa, rgb(...), hsl(...), and in a stylesheet also #f0a and tomato; default true). Found by ned itself, so it works with no language server running; a server that answers textDocument/documentColor adds whatever else it knows about. Turning this off also stops that request. pick-color (C-c #) adjusts the literal under point interactively (R/G/B, H/S/L, alpha) or inserts a new one where point is; color-at-point rewrites one in another notation.
 
+`ned/set-continuation-indent`
+
+:   Set how many indent levels a continuation line (the `b` of `x = a +` then `b`) sits past the line it continues: (mode-name-or-empty levels). Default 1, 2 for Java and Dart; 0 keeps continuation lines at their statement's level. An empty mode-name sets the process-wide default.
+
 `ned/set-coverage-file`
 
 :   Set the path load-coverage-report (C-c T c) reads: an lcov .info file, the common export target for lcov itself, `llvm-cov export -format=lcov`, and `gcovr --lcov` -- (ned/set-coverage-file "coverage.info"). Parses into the per-line covered/uncovered/partial-branch gutter marks, and (when a VCS diff is available) flags an uncovered line that's also newly added/modified with its own "untested new code" mark. An empty string clears the configured path.

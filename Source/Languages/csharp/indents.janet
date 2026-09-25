@@ -28,3 +28,11 @@
 (switch_body) @align.barrier
 (accessor_list) @align.barrier
 
+
+# Continuation lines -- see c-indents.scm.
+# Not a declarator or an assignment: `var x = new A` then an initializer's
+# `{` on its own line sits at the statement's level.
+[(conditional_expression) (return_statement) (member_access_expression) (invocation_expression)
+ (conditional_access_expression)] @indent.continuation
+(binary_expression) @indent.continuation
+(parenthesized_expression (binary_expression) @indent.suppress)

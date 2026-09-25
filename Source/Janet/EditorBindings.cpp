@@ -225,7 +225,21 @@ namespace {
     // specialization yet (see the org-capture-register-template binding's
     // own comment on the same gap).
     void NedSetIndentStyle(std::string modeName, bool useTabs, std::int64_t width) {
-        const editor::IndentStyle style{.useTabs = useTabs, .width = static_cast<int>(width)};
+        editor::IndentStyle style = modeName.empty() ? editor::DefaultIndentStyle() : editor::EffectiveIndentStyle(modeName);
+        style.useTabs             = useTabs;
+        style.width               = static_cast<int>(width);
+        if (modeName.empty()) {
+            editor::SetIndentStyle(style);
+        }
+        else {
+            editor::SetIndentStyleForMode(modeName, style);
+        }
+    }
+
+    // Same mode-name convention as NedSetIndentStyle; the rest of the style is kept.
+    void NedSetContinuationIndent(std::string modeName, std::int64_t levels) {
+        editor::IndentStyle style = modeName.empty() ? editor::DefaultIndentStyle() : editor::EffectiveIndentStyle(modeName);
+        style.continuation        = static_cast<int>(levels);
         if (modeName.empty()) {
             editor::SetIndentStyle(style);
         }
@@ -1707,6 +1721,11 @@ void InstallEditorBindings(Environment& env) {
         "Set the indent style smart-indentation (indent-for-tab-command/newline/indent-region/indent-buffer) writes: "
         "(mode-name-or-empty use-tabs? width). An empty mode-name sets the process-wide default (spaces, width 4); "
         "a Mode name (e.g. \"python-mode\") sets a per-mode override, checked first.");
+    env.Register<&NedSetContinuationIndent>(
+        "ned", "set-continuation-indent",
+        "Set how many indent levels a continuation line (the `b` of `x = a +` then `b`) sits past the line it "
+        "continues: (mode-name-or-empty levels). Default 1, 2 for Java and Dart; 0 keeps continuation lines at their "
+        "statement's level. An empty mode-name sets the process-wide default.");
     env.Register<&NedSetIndentInjectedRegions>(
         "ned", "set-indent-injected-regions",
         "Indent a region written in an injected language by that language's own rules (default true) -- the HTML in "

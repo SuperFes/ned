@@ -365,6 +365,25 @@ TEST_CASE("A flattened sample reindents back to its house style", "[FormatterPro
              {"sample.res", "rescript"},
              {"sample.proto", "proto"},
              {"sample.sql", "sql"},
+             {"continuation.c", "c"},
+             {"continuation.cpp", "cpp"},
+             {"continuation.java", "java"},
+             {"continuation.js", "javascript"},
+             {"continuation.ts", "typescript"},
+             {"continuation.tsx", "tsx"},
+             {"continuation.go", "go"},
+             {"continuation.rs", "rust"},
+             {"continuation.php", "php"},
+             {"continuation.kt", "kotlin"},
+             {"continuation.cs", "csharp"},
+             {"continuation.lua", "lua"},
+             {"continuation.rb", "ruby"},
+             {"continuation.sh", "bash"},
+             {"continuation.f90", "fortran"},
+             {"continuation.vhd", "vhdl"},
+             {"continuation.nix", "nix"},
+             {"continuation.swift", "swift"},
+             {"continuation.dart", "dart"},
          }) {
         INFO("sample: " << file);
         const std::string original = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "reindent" / file);
@@ -387,7 +406,7 @@ TEST_CASE("A flattened sample reindents back to its house style", "[FormatterPro
 TEST_CASE("A re-widened Scala sample reindents back to its house style", "[FormatterProperties]") {
     // Scala 3 reads indentation, so the sample is widened (which keeps its
     // parse) rather than flattened. Braces and Scala 3's indented syntax both.
-    for (const std::string file : {"sample.scala", "sample3.scala"}) {
+    for (const std::string file : {"sample.scala", "sample3.scala", "continuation.scala"}) {
         INFO("sample: " << file);
         const std::string original = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "reindent" / file);
         std::string       wide;

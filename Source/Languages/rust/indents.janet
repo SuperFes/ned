@@ -34,3 +34,7 @@
 (enum_variant_list) @align.barrier
 (match_block) @align.barrier
 
+
+# Continuation lines -- see c-indents.scm.
+[(binary_expression) (field_expression) (assignment_expression) (compound_assignment_expr)
+ (let_declaration) (return_expression) (call_expression)] @indent.continuation

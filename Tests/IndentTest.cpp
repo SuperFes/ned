@@ -1841,3 +1841,39 @@ TEST_CASE("Enter on a continued line goes a level past the statement, then level
     const std::string literal = "echo a \\\\\n       b\n";
     CHECK(ned::editor::IndentColumnForLine(mode, literal, literal.find("       b"), literal.size() - 1, {}) == 0);
 }
+
+TEST_CASE("Enter after an unfinished expression goes a continuation step past its statement", "[Indent]") {
+    const auto modeFor = [](const char* name) {
+        const std::optional<Mode> mode = ned::editor::ModeByName(name);
+        REQUIRE(mode.has_value());
+        return *mode;
+    };
+    CHECK(BlankLineColumn(modeFor("c-mode"), "int f() {\n    int x = 1 +\n\n}\n", 2).value_or(-1) == 8);
+    CHECK(BlankLineColumn(modeFor("rust-mode"), "fn f() {\n    let x = a\n        .b()\n\n}\n", 3).value_or(-1) == 8);
+    CHECK(BlankLineColumn(modeFor("go-mode"), "func f() {\n\tx := a &&\n\n}\n", 2).value_or(-1) == 8);
+    CHECK(BlankLineColumn(modeFor("javascript-mode"), "const x = cond\n  ? a\n\n", 2).value_or(-1) == 2);
+    // Java's continuation is two levels.
+    CHECK(BlankLineColumn(modeFor("java-mode"), "class A {\n    int x = 1 +\n\n}\n", 2).value_or(-1) == 12);
+    // A finished statement ends the continuation.
+    CHECK(BlankLineColumn(modeFor("c-mode"), "int f() {\n    int x = 1 +\n        2;\n\n}\n", 3).value_or(-1) == 4);
+}
+
+TEST_CASE("A mode's continuation setting sets how far a continuation line goes", "[Indent]") {
+    const std::optional<Mode> c = ned::editor::ModeByName("c-mode");
+    REQUIRE(c.has_value());
+    const std::string text = "int f() {\n    int x = 1 +\n    2;\n}\n";
+    const std::size_t line = text.find("    2;");
+    const std::size_t end  = text.find('\n', line);
+
+    struct Restore {
+        ~Restore() {
+            ned::editor::ClearIndentStyleForMode("c-mode");
+        }
+    } restore;
+    ned::editor::IndentStyle style = EffectiveIndentStyle("c-mode");
+    for (const auto& [levels, column] : {std::pair{0, 4}, std::pair{1, 8}, std::pair{2, 12}}) {
+        style.continuation = levels;
+        ned::editor::SetIndentStyleForMode("c-mode", style);
+        CHECK(ned::editor::IndentColumnForLine(*c, text, line, end, {}) == column);
+    }
+}

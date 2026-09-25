@@ -152,12 +152,31 @@ and code reading. Highest stakes first.
 - [ ] **Reindent: what is still unmodelled.** Every language with an `ind` cell
       reindents a flattened sample back to its house style
       (`Tests/Format/reindent/`). Left:
-  - [ ] **Continuation lines** stay at their statement's level: Fortran's `&`,
-        VHDL's selected signal assignments, a multi-line Nix `if`/`then`/`else`
-        (nixfmt indents the branches), Scala's operator-continued enumerators.
-        (A line continued with a `:line-continuation` marker, `\` in C's
-        preprocessor, shells, Python, Ruby, awk and Dockerfiles, is left as
-        written instead.)
+  - [ ] **Continuation lines in the rest of the languages.** A statement or
+        expression written across lines (`x = a +` then `b`, a method chain, a
+        ternary) goes a continuation step past its first line wherever the
+        indents query captures `@indent.continuation` (`cont` in the matrix;
+        `IndentStyle::continuation`, `ned/set-continuation-indent`, two levels for
+        Java and Dart), and Enter after an unfinished one lands there too. Not yet
+        captured: Crystal, Julia, GDScript, Nim, MATLAB, Pascal, Verilog, Ada,
+        SQL, HCL, fish, Meson, Erlang and ReScript, and Groovy, D, V, Odin, R,
+        Perl, Objective-C, CUDA, GLSL, PowerShell, Solidity and Vala, which have
+        no indents query at all yet. (A line continued with a `:line-continuation`
+        marker, `\` in C's preprocessor, shells, Python, Ruby, awk and
+        Dockerfiles, is left as written.) Known misses:
+        - C#'s Allman lambda: a `{` on its own line inside an argument list
+          counts both the list and the block, so the body is a level too deep
+          (the brace-placement format rule puts the `{` there).
+        - A chain after a Scala 3 colon-lambda body (`xs.foldUse(g): _ ?=>` ...
+          then `.topN(max)`) goes a level in; the body ends by dedent, which the
+          multi-line-root rule (a closer on the line above) can't see.
+        - A Ruby chain continued after a heredoc body lines up with the
+          heredoc's own indentation.
+  - [ ] **Bash: a pipeline of three or more commands continued across lines,
+        then an `&&` list on the next line** (`a |` / `b |` / `c` / `d &&` /
+        `e`) parses `c d` as one command -- the newline after `c` ends nothing.
+        Two-stage pipelines and either construct alone parse right. Not yet
+        compared against upstream tree-sitter-bash.
   - [ ] **Lines inside a multi-line token** that isn't a string or comment are
         reindented, which edits the token: a PowerShell `${ ... }` variable name,
         a Crystal macro body, a Fortran literal continued with `&`. Leaving any

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <functional>
 #include <map>
 #include <unordered_set>
 #include <utility>
@@ -224,6 +225,19 @@ namespace {
     // just whichever one starts the target line -- the end-of-buffer rescue
     // in the walk needs to recognize "the last real byte before this new
     // blank line is itself a closing delimiter" in general.
+    bool DedentBefore(const IndentCaptures::Dedent& a, const IndentCaptures::Dedent& b) {
+        return a.startByte < b.startByte;
+    }
+
+    // Levels a counted container adds: one, or a continuation's own count.
+    int ContinuationWeight(const IndentCaptures& captures, const IndentCaptures::NodeKey& key, const IndentStyle& style) {
+        if (!captures.continuation.contains(key)) {
+            return 1;
+        }
+        const auto levels = captures.continuationLevels.find(key);
+        return levels != captures.continuationLevels.end() ? levels->second : style.continuation;
+    }
+
     IndentCaptures IndentCapturesFromMatches(const std::vector<grammar::QueryMatch>& matches, std::string_view bufferText) {
         IndentCaptures captures;
         for (const grammar::QueryMatch& match : matches) {
@@ -232,7 +246,7 @@ namespace {
                 if (capture.name == "indent") {
                     captures.indent.emplace(key, capture.startByte);
                 }
-                else if (capture.name == "indent.headed") {
+                else if (capture.name == "indent.headed" || capture.name == "indent.continuation") {
                     // The node's own first line is its header (OCaml's
                     // "f a" before continuation arguments): the interior
                     // starts on the next line. A zero-width one (a match arm
@@ -244,6 +258,12 @@ namespace {
                         : newline == std::string_view::npos  ? bufferText.size()
                                                              : newline + 1;
                     captures.indent.emplace(key, interior);
+                    if (capture.name == "indent.continuation") {
+                        captures.continuation.insert(key);
+                        if (const auto levels = match.setDirectives.find("indent.levels"); levels != match.setDirectives.end()) {
+                            captures.continuationLevels.insert_or_assign(key, std::max(0, std::atoi(levels->second.c_str())));
+                        }
+                    }
                 }
                 else if (capture.name == "aligned") {
                     captures.aligned.insert(key);
@@ -278,7 +298,7 @@ namespace {
             });
             if (end != match.captures.end()) {
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
-                    if (capture.name == "indent" || capture.name == "indent.headed") {
+                    if (capture.name == "indent" || capture.name == "indent.headed" || capture.name == "indent.continuation") {
                         captures.interiorEnd.emplace(IndentCaptures::NodeKey{capture.startByte, capture.endByte, capture.type},
                                                      end->startByte);
                     }
@@ -295,11 +315,20 @@ namespace {
                 const std::size_t newline  = bufferText.find('\n', begin->startByte);
                 const std::size_t interior = newline == std::string_view::npos ? bufferText.size() : newline + 1;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
-                    if (capture.name == "indent" || capture.name == "indent.headed") {
+                    if (capture.name == "indent" || capture.name == "indent.headed" || capture.name == "indent.continuation") {
                         captures.indent.insert_or_assign(IndentCaptures::NodeKey{capture.startByte, capture.endByte, capture.type},
                                                          interior);
                     }
                 }
+            }
+        }
+        // `(parenthesized_expression (binary_expression) @indent.suppress)`:
+        // a continuation the query takes back where the parent says so --
+        // rooted at the parent, so no ancestor-reading predicate is needed.
+        for (const IndentCaptures::NodeKey& key : captures.suppressed) {
+            if (captures.continuation.erase(key) > 0) {
+                captures.continuationLevels.erase(key);
+                captures.indent.erase(key);
             }
         }
         return captures;
@@ -312,7 +341,10 @@ IndentCaptures IndentCapturesFromQuery(const grammar::Tree& tree, std::string_vi
     if (tree.IsNull()) {
         return {};
     }
-    return IndentCapturesFromMatches(indentQuery.Matches(tree.RootNode(), bufferText), bufferText);
+    IndentCaptures captures       = IndentCapturesFromMatches(indentQuery.Matches(tree.RootNode(), bufferText), bufferText);
+    captures.continuationDeclared = indentQuery.DeclaresCapture("indent.continuation");
+    std::sort(captures.dedents.begin(), captures.dedents.end(), DedentBefore);
+    return captures;
 }
 
 void AddImprintCaptures(IndentCaptures& captures, const grammar::Tree& tree, std::string_view languageKey,
@@ -389,6 +421,23 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
             dedentKey = IndentCaptures::NodeKey{dedent.startByte, dedent.endByte, dedent.type};
         }
     }
+
+    // The closer starting at `position`, if any. The captures are built once
+    // per text and sorted there (SortDedents); a hand-built set may not be.
+    std::vector<IndentCaptures::Dedent> sortedCopy;
+    if (!std::is_sorted(captures.dedents.begin(), captures.dedents.end(), DedentBefore)) {
+        sortedCopy = captures.dedents;
+        std::sort(sortedCopy.begin(), sortedCopy.end(), DedentBefore);
+    }
+    const std::vector<IndentCaptures::Dedent>& sortedDedents    = sortedCopy.empty() ? captures.dedents : sortedCopy;
+    const auto                                 dedentStartingAt = [&sortedDedents](std::size_t position) -> std::optional<IndentCaptures::NodeKey> {
+        const auto found = std::lower_bound(sortedDedents.begin(), sortedDedents.end(), position,
+                                            [](const IndentCaptures::Dedent& dedent, std::size_t at) { return dedent.startByte < at; });
+        if (found == sortedDedents.end() || found->startByte != position) {
+            return std::nullopt;
+        }
+        return IndentCaptures::NodeKey{found->startByte, found->endByte, found->type};
+    };
 
     const auto isIndentCaptured = [&captures, &keyOf](const grammar::Node& node) { return captures.indent.contains(keyOf(node)); };
     // Whether `position` sits inside an "indent"-captured node's interior --
@@ -514,6 +563,65 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
     // wrongly suppress a captured ancestor as if it were "the same visual
     // line already counted" -- it never was; only walkStart's OWN row ever
     // gets to seed that exclusion.
+    // A closer's line aligns with its opener's: the dedent branch below, and
+    // the walk's hand-off for a container opened on such a line.
+    std::function<std::optional<IndentComputation>(const IndentCaptures::NodeKey&)> computeForDedent;
+
+    // The container a closer closes: its parent.
+    const auto closedBy = [&](const IndentCaptures::NodeKey& key) -> std::optional<grammar::Node> {
+        // The dedent-captured node itself may be anonymous (a literal "}")
+        // or named (HTML/XML's "end_tag" -- a whole "</div>" node, not a
+        // single token) -- DescendantForByteRange (unnamed-inclusive) at
+        // the closer's start finds whatever is truly SMALLEST at that position,
+        // which for a named capture can be one of ITS OWN anonymous
+        // children (e.g. end_tag's own leading "</" token) rather than the
+        // captured node itself. Walk up from there by identity (keyOf, not
+        // a byte-range/IsNamed() guess alone -- see IndentCaptures' own doc
+        // comment) until the node that identity-matches the actual capture
+        // is found -- correct regardless of which shape the query captured.
+        // By the capture's own range, not the point: a zero-width token just
+        // before it (Fortran's statement terminator) would otherwise stop the
+        // descent at the parent.
+        grammar::Node dedentNode = tree.RootNode().DescendantForByteRange(key.startByte, key.endByte);
+        if (!dedentNode.IsNull() && !(keyOf(dedentNode) == key)) {
+            std::vector<grammar::Node> chain;
+            dedentNode.AncestorChain(chain);
+            const auto found = std::find_if(chain.begin(), chain.end(),
+                                            [&](const grammar::Node& ancestor) { return keyOf(ancestor) == key; });
+            dedentNode       = found != chain.end() ? *found : grammar::Node(parse::NodeNull());
+        }
+        if (dedentNode.IsNull()) {
+            return std::nullopt;
+        }
+        return dedentNode.Parent();
+    };
+
+    // A chain whose root is itself a block written across lines (`VStack {`
+    // ... `}` then `.padding()`, `foo(|a| {` ... `})` then `.bar()`) goes on
+    // at the root's level: swift-format and rustfmt only indent a link when
+    // the line before it doesn't close something the chain's first line
+    // opened.
+    const auto continuesAfterMultiLineRoot = [&](const grammar::Node& node, std::size_t position) {
+        if (!captures.continuation.contains(keyOf(node))) {
+            return false;
+        }
+        const std::size_t rowStart = LineStartFor(bufferText, position);
+        if (rowStart == 0) {
+            return false;
+        }
+        const std::size_t previousEnd = bufferText.find_last_not_of(" \t\r\n", rowStart - 1);
+        if (previousEnd == std::string_view::npos) {
+            return false;
+        }
+        const std::size_t                            previousStart = LineStartFor(bufferText, previousEnd);
+        const std::optional<IndentCaptures::NodeKey> closer        = dedentStartingAt(FirstNonBlankByte(bufferText, previousStart, previousEnd + 1));
+        if (!closer) {
+            return false;
+        }
+        const std::optional<grammar::Node> closed = closedBy(*closer);
+        return closed && !closed->IsNull() && closed->StartRow() == node.StartRow();
+    };
+
     const auto computeForWalkStart = [&](const grammar::Node& walkStart, std::size_t position) -> IndentComputation {
         // An @indent.headed container's interior starts on a later line, so
         // it never counts for its own first row and needs no seed; seeding
@@ -559,14 +667,45 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
         // to the enclosing statement's own level rather than the call's
         // alignment column.
         bool crossedBarrier = false;
+        // Set once the walk is inside a statement body whose opener starts
+        // its own line (an Allman `{` after `$f = function ()`): that body is
+        // a block of its own, not a continuation of the expression above it.
+        bool insideOwnLineBody = false;
         // AncestorChain follow-up: one root-to-self descent for the whole
         // climb, instead of walkStart.Parent() re-descending from the root
         // on every step.
         std::vector<grammar::Node> chain;
         walkStart.AncestorChain(chain);
         chain.insert(chain.begin(), walkStart);
+        // A container opened on a line that begins with a closer (`} else {`,
+        // `}, function () {`) sits one level past that line, whose own
+        // indent is its closer's -- the opener's line -- and not the sum of
+        // whatever else encloses it (a `let x = if a {` continuation would
+        // otherwise count again for the else branch).
+        const auto handOffFromCloserRow = [&](const grammar::Node& node) -> std::optional<IndentComputation> {
+            if (lastRow == kNoRow || node.StartRow() >= lastRow) {
+                return std::nullopt;
+            }
+            const std::optional<IndentCaptures::NodeKey> closer = dedentStartingAt(lastRowContentStart);
+            if (!closer) {
+                return std::nullopt;
+            }
+            const std::optional<IndentComputation> row = computeForDedent(*closer);
+            if (!row) {
+                return std::nullopt;
+            }
+            return row->kind == IndentComputation::Kind::Level
+                       ? IndentComputation{IndentComputation::Kind::Level, row->value + level}
+                       : IndentComputation{IndentComputation::Kind::Column, row->value + IndentColumnForLevel(level, style)};
+        };
         for (const grammar::Node& node : chain) {
             const bool opensAtPosition = node.StartByte() == position;
+            if ((isIndentCaptured(node) || isAlignedCaptured(node) || isBodyIndentCaptured(node) || isColumnAnchored(node)) &&
+                !opensAtPosition && interiorContains(node, position)) {
+                if (const std::optional<IndentComputation> handedOff = handOffFromCloserRow(node)) {
+                    return *handedOff;
+                }
+            }
             if (isBodyIndentCaptured(node) && !opensAtPosition) {
                 // Unlike @aligned, a special form's body indent never falls
                 // back -- it's always 2 columns past the form's own column,
@@ -599,62 +738,48 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
                 // other captured container.
             }
             if ((isIndentCaptured(node) || isAlignedCaptured(node) || isBodyIndentCaptured(node)) &&
-                (node.StartRow() != lastRow || opensBeforeLastRow(node)) && interiorContains(node, position)) {
-                ++level;
+                (node.StartRow() != lastRow || opensBeforeLastRow(node)) && interiorContains(node, position) &&
+                !(insideOwnLineBody && captures.continuation.contains(keyOf(node))) &&
+                !continuesAfterMultiLineRoot(node, position)) {
+                level += ContinuationWeight(captures, keyOf(node), style);
                 lastRow             = node.StartRow();
                 lastInteriorStart   = interiorStartOf(node);
                 lastRowContentStart = rowContentStartOf(node);
             }
             if (isBarrierCaptured(node)) {
                 crossedBarrier = true;
+                insideOwnLineBody = insideOwnLineBody || node.StartByte() == rowContentStartOf(node);
             }
         }
         return IndentComputation{IndentComputation::Kind::Level, level};
     };
 
-    std::optional<IndentComputation> result;
-    if (dedentKey.has_value()) {
-        // The dedent-captured node itself may be anonymous (a literal "}")
-        // or named (HTML/XML's "end_tag" -- a whole "</div>" node, not a
-        // single token) -- DescendantForByteRange (unnamed-inclusive) at
-        // contentStart finds whatever is truly SMALLEST at that position,
-        // which for a named capture can be one of ITS OWN anonymous
-        // children (e.g. end_tag's own leading "</" token) rather than the
-        // captured node itself. Walk up from there by identity (keyOf, not
-        // a byte-range/IsNamed() guess alone -- see IndentCaptures' own doc
-        // comment) until the node that identity-matches the actual capture
-        // is found -- correct regardless of which shape the query captured.
-        // By the capture's own range, not the point: a zero-width token just
-        // before it (Fortran's statement terminator) would otherwise stop the
-        // descent at the parent.
-        grammar::Node dedentNode = tree.RootNode().DescendantForByteRange(dedentKey->startByte, dedentKey->endByte);
-        if (!dedentNode.IsNull() && !(keyOf(dedentNode) == *dedentKey)) {
-            // AncestorChain follow-up: one descent for the whole climb
-            // instead of one re-descent from the root per Parent() step.
-            std::vector<grammar::Node> chain;
-            dedentNode.AncestorChain(chain);
-            const auto found = std::find_if(chain.begin(), chain.end(),
-                                            [&](const grammar::Node& ancestor) { return keyOf(ancestor) == *dedentKey; });
-            dedentNode       = found != chain.end() ? *found : grammar::Node(parse::NodeNull());
-        }
-        if (dedentNode.IsNull()) {
+    computeForDedent = [&](const IndentCaptures::NodeKey& key) -> std::optional<IndentComputation> {
+        const std::optional<grammar::Node> closed = closedBy(key);
+        if (!closed) {
             return std::nullopt;
         }
-        const grammar::Node alignNode = dedentNode.Parent();
+        const grammar::Node alignNode = *closed;
         if (alignNode.IsNull()) {
-            result = IndentComputation{IndentComputation::Kind::Level, 0};
+            return IndentComputation{IndentComputation::Kind::Level, 0};
         }
-        else {
-            // Compute indent AS IF for alignNode's own opening line -- this
-            // is what makes a closing delimiter align with its opener's own
-            // line rather than one level deeper, whether or not alignNode
-            // is itself @indent-captured (a bracket/brace container is;
-            // Python's if_statement -- elif/else/except/finally's own
-            // alignNode -- is not, and still resolves correctly via the
-            // same self-exclusion rule rather than assuming captured-ness).
-            const grammar::Node walkStart = resolveWalkStart(alignNode.StartByte());
-            result                           = walkStart.IsNull() ? std::optional<IndentComputation>(IndentComputation{IndentComputation::Kind::Level, 0})
-                                                                  : computeForWalkStart(walkStart, alignNode.StartByte());
+        // Compute indent AS IF for alignNode's own opening line -- this
+        // is what makes a closing delimiter align with its opener's own
+        // line rather than one level deeper, whether or not alignNode
+        // is itself @indent-captured (a bracket/brace container is;
+        // Python's if_statement -- elif/else/except/finally's own
+        // alignNode -- is not, and still resolves correctly via the
+        // same self-exclusion rule rather than assuming captured-ness).
+        const grammar::Node walkStart = resolveWalkStart(alignNode.StartByte());
+        return walkStart.IsNull() ? IndentComputation{IndentComputation::Kind::Level, 0}
+                                  : computeForWalkStart(walkStart, alignNode.StartByte());
+    };
+
+    std::optional<IndentComputation> result;
+    if (dedentKey.has_value()) {
+        result = computeForDedent(*dedentKey);
+        if (!result) {
+            return std::nullopt;
         }
     }
     else {
@@ -699,9 +824,10 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
                 std::vector<grammar::Node> chain;
                 header.AncestorChain(chain);
                 chain.insert(chain.begin(), header);
+                // A continuation that ends there is finished, not empty.
                 opens = std::any_of(chain.begin(), chain.end(), [&](const grammar::Node& node) {
-                    return node.EndByte() == anchor + 1 && isIndentCaptured(node) && !interiorContains(node, anchor) &&
-                           interiorContains(node, lineStart);
+                    return node.EndByte() == anchor + 1 && isIndentCaptured(node) && !captures.continuation.contains(keyOf(node)) &&
+                           !interiorContains(node, anchor) && interiorContains(node, lineStart);
                 });
             }
             if (!opens) {
@@ -716,6 +842,76 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
             contentStart == lineEnd ? openedEmptyBody() : std::nullopt;
         if (openedBody) {
             result = openedBody;
+        }
+
+        // Enter after an unfinished statement (`x = a +`, a chain still
+        // without its `;`): the parse has no node for it yet -- an ERROR
+        // ending at the last token above, or a zero-width token the parser
+        // supplied right after it -- so the line continues the construct:
+        // a continuation step past the line it begins on. A supplied closer
+        // of a body (a `}` the file hasn't got yet) opens that body instead,
+        // which the walk already answers.
+        const auto continuesUnfinished = [&]() -> std::optional<IndentComputation> {
+            if (!captures.continuationDeclared || lineStart == 0) {
+                return std::nullopt;
+            }
+            const std::size_t anchor = bufferText.find_last_not_of(" \t\n\r", lineStart - 1);
+            if (anchor == std::string_view::npos) {
+                return std::nullopt;
+            }
+            grammar::Node leaf = tree.RootNode().DescendantForByteRange(anchor, anchor + 1);
+            if (leaf.IsNull() || leaf.IsExtra()) {
+                return std::nullopt;
+            }
+            // A zero-width token the parser supplied ends the construct it
+            // completes, placed right after the anchor or at the next real
+            // token -- so only an ancestor ending in that gap can hold one.
+            const std::size_t          next = std::min(bufferText.find_first_not_of(" \t\n\r", anchor + 1), bufferText.size());
+            std::vector<grammar::Node> chain;
+            leaf.AncestorChain(chain);
+            chain.insert(chain.begin(), leaf);
+            std::optional<grammar::Node> construct;
+            for (const grammar::Node& node : chain) {
+                if (node.Type() == "ERROR" && node.EndByte() == anchor + 1) {
+                    construct = node;
+                    break;
+                }
+                if (node.EndByte() <= anchor || node.EndByte() > next || node.ChildCount() == 0) {
+                    continue;
+                }
+                const grammar::Node last = node.Child(node.ChildCount() - 1);
+                if (last.StartByte() == last.EndByte() && last.StartByte() > anchor) {
+                    if (!isIndentCaptured(node) || captures.continuation.contains(keyOf(node))) {
+                        construct = node;
+                    }
+                    break;
+                }
+            }
+            if (!construct) {
+                return std::nullopt;
+            }
+            const std::size_t constructLine = LineStartFor(bufferText, construct->StartByte());
+            const std::size_t firstByte =
+                FirstNonBlankByte(bufferText, constructLine, std::min(bufferText.find('\n', constructLine), bufferText.size()));
+            std::optional<IndentComputation> base;
+            if (const std::optional<IndentCaptures::NodeKey> closer = dedentStartingAt(firstByte)) {
+                base = computeForDedent(*closer);
+            }
+            else if (const grammar::Node walkStart = resolveWalkStart(firstByte); !walkStart.IsNull()) {
+                base = computeForWalkStart(walkStart, firstByte);
+            }
+            if (!base) {
+                return std::nullopt;
+            }
+            return base->kind == IndentComputation::Kind::Level
+                       ? IndentComputation{IndentComputation::Kind::Level, base->value + style.continuation}
+                       : IndentComputation{IndentComputation::Kind::Column,
+                                           base->value + IndentColumnForLevel(style.continuation, style)};
+        };
+        const std::optional<IndentComputation> continued =
+            (contentStart == lineEnd && !openedBody) ? continuesUnfinished() : std::nullopt;
+        if (continued) {
+            result = continued;
         }
 
         // smart-blank-line-on-newline follow-up: a freshly inserted,
@@ -740,7 +936,7 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
         // ahead never needs the rescue at all -- its primary resolution
         // already lands inside the block, since the block's own range
         // naturally spans the gap up to that later content.
-        if (!openedBody && lineStart == lineEnd && contentStart == bufferText.size() && contentStart > 0 &&
+        if (!openedBody && !continued && lineStart == lineEnd && contentStart == bufferText.size() && contentStart > 0 &&
             result->kind == IndentComputation::Kind::Level && result->value == 0) {
             // Skip back over ALL trailing whitespace (not just one byte) --
             // an earlier blank line or two between the new one and the last
@@ -877,6 +1073,8 @@ IndentFunction BuildIndentFunction(std::shared_ptr<grammar::Parser> parser, std:
                                                 bufferText)
                     : IndentCaptures{};
             AddImprintCaptures(captures, tree, languageKey, bufferText);
+            captures.continuationDeclared = indentQuery && indentQuery->DeclaresCapture("indent.continuation");
+            std::sort(captures.dedents.begin(), captures.dedents.end(), DedentBefore);
             capturesCache->result    = std::move(captures);
             capturesCache->lastText.assign(bufferText);
             capturesCache->hasResult = true;

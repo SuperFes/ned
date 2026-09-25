@@ -56,3 +56,11 @@
 # behavior. See Editor/Indent.h.
 (compound_statement) @align.barrier
 (field_declaration_list) @align.barrier
+
+# Continuation lines -- see c-indents.scm.
+[(conditional_expression) (assignment_expression) (init_declarator)
+ (return_statement) (field_expression) (comma_expression) (co_return_statement)
+ (co_yield_statement) (throw_statement) (call_expression)] @indent.continuation
+# A broken `if (`/`while (` condition keeps its operators at its own level.
+(binary_expression) @indent.continuation
+(parenthesized_expression (binary_expression) @indent.suppress)

@@ -30,3 +30,14 @@
 (module_body) @align.barrier
 (switch_block) @align.barrier
 
+
+# Continuation lines -- see c-indents.scm. Java's convention (IntelliJ's
+# default, Oracle's and Google's styles alike) is two levels for every
+# wrapped line, a call's or declaration's own arguments on a line of their
+# own included (IndentStyle::continuation).
+[(ternary_expression) (assignment_expression) (variable_declarator)
+ (return_statement) (throw_statement) (method_invocation) (field_access)
+ (argument_list) (formal_parameters)] @indent.continuation
+# A broken `if (`/`while (` condition keeps its operators at its own level.
+(binary_expression) @indent.continuation
+(parenthesized_expression (binary_expression) @indent.suppress)

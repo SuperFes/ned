@@ -26,3 +26,10 @@
 
 (jsx_element (jsx_closing_element) @dedent)
 (jsx_self_closing_element "/>" @dedent)
+
+# Continuation lines -- see c-indents.scm.
+[(ternary_expression) (assignment_expression) (augmented_assignment_expression)
+ (variable_declarator) (return_statement) (member_expression) (call_expression)] @indent.continuation
+# A broken `if (`/`while (` condition keeps its operators at its own level.
+(binary_expression) @indent.continuation
+(parenthesized_expression (binary_expression) @indent.suppress)

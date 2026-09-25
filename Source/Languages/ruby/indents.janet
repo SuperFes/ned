@@ -54,3 +54,7 @@
 (singleton_method "end" @dedent)
 (do "end") @indent
 (do "end" @dedent)
+
+# Continuation lines -- see c-indents.scm. Standard Ruby's layout: one level,
+# not RuboCop's default alignment under the first call's dot.
+[(binary) (call) (assignment) (operator_assignment) (conditional) (return)] @indent.continuation

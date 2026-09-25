@@ -45,3 +45,14 @@
 # intentional behavior. See Editor/Indent.h.
 (compound_statement) @align.barrier
 (field_declaration_list) @align.barrier
+
+# An expression or statement written across lines (`x = a +` then `b`,
+# `return a` then `&& b`) sits a continuation step past the line it starts
+# on (IndentStyle::continuation). A bracket opened on that first line
+# already indents what follows and counts once with it, and a closer lines
+# up with its opener's line as usual.
+[(conditional_expression) (assignment_expression) (init_declarator)
+ (return_statement) (field_expression) (comma_expression) (call_expression)] @indent.continuation
+# A broken `if (`/`while (` condition keeps its operators at its own level.
+(binary_expression) @indent.continuation
+(parenthesized_expression (binary_expression) @indent.suppress)

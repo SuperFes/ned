@@ -25,3 +25,8 @@
 # `contains` returns to the unit's own level; the procedures after it go one in.
 (_ (internal_procedures) @indent.end) @indent.headed
 (internal_procedures) @indent.headed
+
+# Continuation lines (`&`) -- see c-indents.scm.
+[(variable_declaration) (assignment_statement) (pointer_association_statement) (math_expression)
+ (logical_expression) (relational_expression) (concatenation_expression) (print_statement)
+ (write_statement) (subroutine_call)] @indent.continuation

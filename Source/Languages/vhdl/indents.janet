@@ -20,3 +20,9 @@
 [(generic_clause) (port_clause)] @indent.headed
 (generic_clause ")" @dedent)
 (port_clause ")" @dedent)
+
+# Continuation lines -- see c-indents.scm. A selected or conditional
+# assignment's later choices sit a level in.
+[(concurrent_selected_signal_assignment) (concurrent_conditional_signal_assignment)
+ (concurrent_simple_signal_assignment) (simple_waveform_assignment) (simple_variable_assignment)
+ (conditional_signal_assignment) (selected_waveform_assignment) (selected_variable_assignment)] @indent.continuation

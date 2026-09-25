@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -55,6 +56,13 @@ std::vector<std::string> Pick(const std::vector<std::string>& own, const std::ve
     return own.empty() ? donor : own;
 }
 
+// Whether any of a language's indents query files captures continuations.
+bool CapturesContinuations(const std::vector<std::string>& indentFiles) {
+    return std::any_of(indentFiles.begin(), indentFiles.end(), [](const std::string& file) {
+        return ReadFile(LanguagesRoot() / file).find("@indent.continuation") != std::string::npos;
+    });
+}
+
 const char* Mark(bool present) {
     return present ? "✓" : "·";
 }
@@ -69,6 +77,8 @@ const std::vector<Column> kColumns = {
     {"hl",      "highlights query"},
     {"ind",     "indents query (without one, indent comes from the grammar's delimited bodies alone); "
                 "`=` -- `:preserve-indent`, a reindent leaves every line as written"},
+    {"cont",    "continuation lines -- the indents query captures `@indent.continuation`, so `x = a +` "
+                "then `b` indents the `b` a continuation step"},
     {"loc",     "locals query -- scope-aware rename, local-variable highlighting"},
     {"tags",    "tags query -- symbol gutter, outline, breadcrumbs, class/file sync"},
     {"inj",     "injections query -- embedded languages"},
@@ -84,7 +94,7 @@ const std::vector<Column> kColumns = {
 };
 // clang-format on
 constexpr std::size_t kIndentColumn  = 1;
-constexpr std::size_t kCommentColumn = 10;
+constexpr std::size_t kCommentColumn = 11;
 
 std::string Render() {
     std::ostringstream out;
@@ -122,6 +132,7 @@ std::string Render() {
         const std::vector<bool>  row   = {
             !Pick(own.highlights, donor.highlights).empty(),
             !Pick(own.indents, donor.indents).empty(),
+            CapturesContinuations(Pick(own.indents, donor.indents)),
             !Pick(own.locals, donor.locals).empty(),
             !Pick(own.tags, donor.tags).empty(),
             !Pick(own.injections, donor.injections).empty(),

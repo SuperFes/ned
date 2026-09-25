@@ -1604,6 +1604,10 @@ bool QueryMatcher::UsesLocalConditions() const {
     return impl_->usesLocalConditions;
 }
 
+bool QueryMatcher::DeclaresCapture(std::string_view name) const {
+    return std::find(impl_->captureNames.begin(), impl_->captureNames.end(), name) != impl_->captureNames.end();
+}
+
 std::size_t QueryMatcher::AncestorCrossingPatternCount() const {
     return static_cast<std::size_t>(
         std::count_if(impl_->patterns.begin(), impl_->patterns.end(),

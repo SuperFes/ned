@@ -193,6 +193,10 @@ class QueryMatcher {
     // localCondition) -- a caller with no use for them can skip the locals.
     [[nodiscard]] bool UsesLocalConditions() const;
 
+    // Whether some pattern captures `name` -- what a query says it can
+    // express, whether or not a given tree matches it.
+    [[nodiscard]] bool DeclaresCapture(std::string_view name) const;
+
   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

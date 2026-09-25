@@ -48,3 +48,7 @@
 (type_case) @dedent
 (communication_case) @dedent
 
+
+# Continuation lines -- see c-indents.scm.
+[(binary_expression) (selector_expression) (assignment_statement) (short_var_declaration)
+ (return_statement) (var_spec) (const_spec) (call_expression)] @indent.continuation

@@ -38,3 +38,11 @@
 (control_structure_body "{") @align.barrier
 (secondary_constructor "{") @align.barrier
 
+
+# Continuation lines -- see c-indents.scm.
+[(additive_expression) (multiplicative_expression) (comparison_expression) (equality_expression)
+ (conjunction_expression) (disjunction_expression) (elvis_expression) (range_expression)
+ (check_expression) (navigation_expression) (call_expression) (assignment)
+ (jump_expression)] @indent.continuation
+# From its `=` on: an annotation on the line above isn't a continuation.
+(property_declaration "=" @indent.begin) @indent.continuation

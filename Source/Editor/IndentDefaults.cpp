@@ -31,7 +31,7 @@ namespace {
             {"scala",      {.useTabs = false, .width = 2}}, // scalafmt default, Scala style guide
             {"elixir",     {.useTabs = false, .width = 2}}, // mix format
             {"erlang",     {.useTabs = false, .width = 4}}, // erlfmt
-            {"dart",       {.useTabs = false, .width = 2}}, // dart format (not configurable)
+            {"dart",       {.useTabs = false, .width = 2, .continuation = 2}}, // dart format (not configurable); continuation lines +4
             {"julia",      {.useTabs = false, .width = 4}}, // Julia style guide
             {"crystal",    {.useTabs = false, .width = 2}}, // crystal tool format
             {"ada",        {.useTabs = false, .width = 3}}, // GNAT coding style, gnatpp's default
@@ -71,7 +71,7 @@ namespace {
             {"fennel",     {.useTabs = false, .width = 2}}, // fnlfmt
 
             // -- genuinely ambiguous: no single canonical convention exists, picked as the most common cross-ecosystem default and flagged as such --
-            {"java",       {.useTabs = false, .width = 4}}, // most common convention in practice (Google Java Style uses 2; Oracle/IntelliJ-default/Android use 4) -- judgment call
+            {"java",       {.useTabs = false, .width = 4, .continuation = 2}}, // most common convention in practice (Google Java Style uses 2; Oracle/IntelliJ-default/Android use 4) -- judgment call; continuation lines are two levels in both
             {"c",          {.useTabs = false, .width = 4}}, // no single canonical convention (LLVM/Google clang-format style is 2 -- confirmed via `clang-format --style=llvm --dump-config`); 4 is the more common cross-ecosystem convention and matches this repo's own .clang-format -- judgment call, most likely setting to override
             {"cpp",        {.useTabs = false, .width = 4}}, // same reasoning as c -- judgment call
             {"sql",        {.useTabs = false, .width = 4}}, // common convention -- judgment call

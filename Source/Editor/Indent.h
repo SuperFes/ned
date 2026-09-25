@@ -151,14 +151,29 @@ struct IndentCaptures {
     // An "indent.body" form's distinguished arguments before its body, from
     // `(#set! indent.specials "N")`.
     std::unordered_map<NodeKey, int, NodeKeyHash>         bodySpecials;
-    std::unordered_set<NodeKey, NodeKeyHash>              barrier;    // "align.barrier"
+    // "align.barrier": a statement body. An outer "aligned" container's
+    // column doesn't reach through it, and one whose opener starts its own
+    // line ends every "indent.continuation" outside it.
+    std::unordered_set<NodeKey, NodeKeyHash> barrier;
+    // "indent.continuation": an "indent.headed" container for an expression
+    // or statement written across lines (`x = a +` then `b`), worth
+    // IndentStyle::continuation levels rather than one.
+    std::unordered_set<NodeKey, NodeKeyHash> continuation;
+    // `(:set! indent.levels "N")` on one: N levels regardless of the style
+    // (Dart's cascades, one level where its other continuations are two).
+    std::unordered_map<NodeKey, int, NodeKeyHash> continuationLevels;
+    // The query can capture "indent.continuation" at all: a blank line after
+    // an unfinished statement (see IndentLevelForLine) continues it.
+    bool continuationDeclared = false;
     // An indentation body that begins mid-line (Editor/ImprintIndent.h's
     // anchorsAtOwnColumn): its interior aligns to the container's own visual
     // column, the same short-circuit "aligned" performs for a container whose
     // opener has content after it. Imprint-only -- a query says this by
     // capturing "@aligned", which needs a real opener to align past.
     std::unordered_set<NodeKey, NodeKeyHash>              columnAnchored;
-    std::unordered_set<NodeKey, NodeKeyHash>              suppressed; // "indent.suppress" -- only ever consulted by AddImprintCaptures
+    // "indent.suppress": an imprint container that doesn't indent, or a node
+    // that isn't a continuation after all.
+    std::unordered_set<NodeKey, NodeKeyHash>              suppressed;
     std::vector<Dedent>                                   dedents;    // "dedent"
     // Also set from a query: an "indent.end" token captured in the same match
     // as an "indent"/"indent.headed" container caps it there (OCaml's

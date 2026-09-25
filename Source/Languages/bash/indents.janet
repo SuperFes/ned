@@ -15,3 +15,7 @@
 # elif_clause/else_clause exactly.
 (elif_clause) @dedent
 (else_clause) @dedent
+
+# A pipeline or `&&`/`||` list written across lines (without a `\`) --
+# see c-indents.scm; shfmt indents its later commands a level.
+[(pipeline) (list)] @indent.continuation

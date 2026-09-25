@@ -14,3 +14,7 @@
 # independently of each other.
 (repeat_statement "until") @indent
 (repeat_statement "until" @dedent)
+
+# Continuation lines -- see c-indents.scm.
+[(binary_expression) (dot_index_expression) (method_index_expression) (function_call)
+ (assignment_statement) (variable_declaration) (return_statement)] @indent.continuation

@@ -29,7 +29,8 @@ namespace {
     }
 
     IndentStyle Clamped(IndentStyle style) {
-        style.width = std::max(1, style.width); // non-positive would hang/underflow IndentString's expansion loop
+        style.width        = std::max(1, style.width); // non-positive would hang/underflow IndentString's expansion loop
+        style.continuation = std::max(0, style.continuation);
         return style;
     }
 

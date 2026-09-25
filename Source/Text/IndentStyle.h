@@ -15,6 +15,9 @@ struct IndentStyle {
     bool useTabs = false; // default: spaces
     int  width   = 4;     // columns per indent level; also the spaces-per-tab-stop
                           // used when useTabs collapses a full-width run to a literal tab
+    // Levels a continuation line (`x = a +` then `b`) sits past the line it
+    // continues; 0 leaves it at that line's level.
+    int continuation = 1;
 
     [[nodiscard]] bool operator==(const IndentStyle& other) const = default;
 };

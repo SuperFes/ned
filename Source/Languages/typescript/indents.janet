@@ -18,3 +18,10 @@
 # Checked against the compiled node-types.json rather than grammar.json: the
 # two disagree here, and only one of them is what the parser answers to.
 (parenthesized_expression) @aligned
+
+# Continuation lines -- see c-indents.scm.
+[(ternary_expression) (assignment_expression) (augmented_assignment_expression)
+ (variable_declarator) (return_statement) (member_expression) (call_expression)] @indent.continuation
+# A broken `if (`/`while (` condition keeps its operators at its own level.
+(binary_expression) @indent.continuation
+(parenthesized_expression (binary_expression) @indent.suppress)
