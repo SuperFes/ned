@@ -19,8 +19,8 @@
 // a `path` sidecar (the hash is one-way, so the original path is recorded
 // where cleanup and future tooling can read it back), `v-<UTC
 // timestamp>-<seq>.bak` versions, and the `autosave` snapshot. Retention is
-// ned's own job (no daemon): PruneBackups runs at startup and, rate-limited,
-// on the same timer tick.
+// ned's own job (no daemon): MaybePruneBackups runs on the auto-save timer
+// thread, on its first tick and then at most hourly.
 //
 
 #ifndef NED_EDITOR_BACKUP_H
@@ -29,6 +29,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -120,13 +121,16 @@ void AutoSaveFileBuffers(text::BufferList& bufferList);
 // an `autosave` whose mtime is past the age limit (an orphan -- its editor
 // never came back for it); removes a directory left holding only its `path`
 // sidecar. nowSeconds is injectable for tests only (FilePlaceStore's
-// convention), defaulting to the current time. Swallows all errors.
-void PruneBackups(std::optional<std::int64_t> nowSeconds = std::nullopt);
+// convention), defaulting to the current time. Swallows all errors. The walk
+// is proportional to the number of files ever backed up, so it belongs off
+// the UI thread; stop is checked between directories so a caller's shutdown
+// never waits on more than one of them.
+void PruneBackups(std::optional<std::int64_t> nowSeconds = std::nullopt, std::stop_token stop = {});
 
 // PruneBackups, rate-limited to at most once per hour of process lifetime --
-// the form the timer tick calls, so cleanup stays opportunistic without
-// re-walking the whole backup tree every 5 seconds.
-void MaybePruneBackups(std::optional<std::int64_t> nowSeconds = std::nullopt);
+// the form the timer thread calls (its first tick included), so cleanup stays
+// opportunistic without re-walking the whole backup tree every 5 seconds.
+void MaybePruneBackups(std::optional<std::int64_t> nowSeconds = std::nullopt, std::stop_token stop = {});
 
 // Process-wide settings (mutex-guarded static state, mirroring
 // ScratchPad.h/TabWidth.h's exact pattern), each configured from Janet:

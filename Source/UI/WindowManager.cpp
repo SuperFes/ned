@@ -1272,12 +1272,10 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
                 // backup-and-recovery follow-up: crash-recovery snapshots
                 // for regular file buffers ride the same tick (skips
                 // unmodified/unchanged buffers via a generation memo, so
-                // idle ticks cost nothing), plus the rate-limited backup
-                // pruning (at most once per hour).
+                // idle ticks cost nothing).
                 editor::AutoSaveFileBuffers(bufferList_);
-                editor::MaybePruneBackups();
-                // diagnostics-log follow-up: same rate-limited-once-per-hour
-                // posture as MaybePruneBackups above.
+                // diagnostics-log follow-up: rate-limited to once per hour,
+                // like MaybePruneBackups below.
                 editor::MaybePruneLogFiles();
                 // external-modification-safety follow-up: piggybacked on
                 // this same tick -- revert/merge any open buffer whose file
@@ -1330,6 +1328,11 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
                     acpManager_->ExpireStaleRequests();
                 }
             });
+
+            // After the Post so a long walk never delays the tick's own work;
+            // the first tick's run is the startup prune, after init.janet's
+            // retention knobs have loaded.
+            editor::MaybePruneBackups(std::nullopt, stopToken);
         }
     });
 }

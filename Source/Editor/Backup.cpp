@@ -10,6 +10,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
+#include <utility>
 
 #include "ScratchPad.h"
 #include "Session.h"
@@ -40,6 +41,14 @@ namespace {
     }
 
     std::mutex& BackupMutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    // Serializes the backup tree's writers against pruning, which runs on the
+    // timer thread: without it a prune could see a just-created directory
+    // holding only its sidecar and remove it before the version lands.
+    std::mutex& BackupTreeMutex() {
         static std::mutex mutex;
         return mutex;
     }
@@ -230,6 +239,7 @@ namespace {
 
     void PruneOneDirectory(const std::filesystem::path& directory, std::int64_t nowSeconds, int maxAgeDays,
                            int maxVersions) {
+        const std::lock_guard<std::mutex> treeLock(BackupTreeMutex());
         struct Version {
             std::filesystem::path path;
             std::int64_t          timestampSeconds;
@@ -372,7 +382,8 @@ void BackupFileBeforeSave(const std::filesystem::path& file, std::optional<std::
             return;
         }
 
-        const std::filesystem::path directory = EnsureBackupDirectory(file);
+        const std::lock_guard<std::mutex> treeLock(BackupTreeMutex());
+        const std::filesystem::path       directory = EnsureBackupDirectory(file);
         std::filesystem::copy_file(file, NextVersionPath(directory, NowOr(nowSeconds)),
                                    std::filesystem::copy_options::overwrite_existing);
     }
@@ -382,6 +393,7 @@ void BackupFileBeforeSave(const std::filesystem::path& file, std::optional<std::
 }
 
 void WriteAutoSave(const std::filesystem::path& file, std::string_view content) {
+    const std::lock_guard<std::mutex> treeLock(BackupTreeMutex());
     AtomicWrite(EnsureBackupDirectory(file) / kAutoSaveName, content);
 }
 
@@ -438,13 +450,16 @@ void AutoSaveFileBuffers(text::BufferList& bufferList) {
     }
 }
 
-void PruneBackups(std::optional<std::int64_t> nowSeconds) {
+void PruneBackups(std::optional<std::int64_t> nowSeconds, std::stop_token stop) {
     const std::int64_t now         = NowOr(nowSeconds);
     const int          maxAgeDays  = BackupMaxAgeDays();
     const int          maxVersions = BackupMaxVersions();
 
     try {
         for (const auto& entry : std::filesystem::directory_iterator(BackupsDirectory())) {
+            if (stop.stop_requested()) {
+                return;
+            }
             if (!entry.is_directory()) {
                 continue;
             }
@@ -461,7 +476,7 @@ void PruneBackups(std::optional<std::int64_t> nowSeconds) {
     }
 }
 
-void MaybePruneBackups(std::optional<std::int64_t> nowSeconds) {
+void MaybePruneBackups(std::optional<std::int64_t> nowSeconds, std::stop_token stop) {
     const std::int64_t now = NowOr(nowSeconds);
     {
         const std::lock_guard<std::mutex> lock(BackupMutex());
@@ -471,7 +486,7 @@ void MaybePruneBackups(std::optional<std::int64_t> nowSeconds) {
         }
         lastPrune = now;
     }
-    PruneBackups(now);
+    PruneBackups(now, std::move(stop));
 }
 
 void SetFileAutoSaveEnabled(bool enabled) {

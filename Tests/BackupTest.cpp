@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <vector>
 
@@ -518,6 +519,23 @@ TEST_CASE("PruneBackups with non-positive limits disables that dimension", "[Bac
     PruneBackups(1755700000 + 100ll * 24 * 60 * 60); // far future -- everything would age out
 
     REQUIRE(ListBackupVersions(file).size() == 3);
+}
+
+TEST_CASE("PruneBackups stops before touching anything once stop is requested", "[Backup]") {
+    const BackupSandbox         sandbox("ned_backup_test_prune_stopped");
+    const std::filesystem::path file = sandbox.WriteWorkFile("notes.txt", "content");
+
+    const std::int64_t now = 1755700000;
+    BackupFileBeforeSave(file, now - 100ll * 24 * 60 * 60); // stale enough to be pruned
+
+    std::stop_source stop;
+    stop.request_stop();
+    PruneBackups(now, stop.get_token());
+
+    REQUIRE(ListBackupVersions(file).size() == 1);
+
+    PruneBackups(now, std::stop_source().get_token());
+    REQUIRE(ListBackupVersions(file).empty());
 }
 
 TEST_CASE("MaybePruneBackups runs at most once per hour", "[Backup]") {
