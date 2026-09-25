@@ -36,3 +36,7 @@
  (conditional_access_expression)] @indent.continuation
 (binary_expression) @indent.continuation
 (parenthesized_expression (binary_expression) @indent.suppress)
+
+# A case's statements sit a level past its label (.NET's
+# csharp_indent_case_contents and _when_block, both true by default).
+(switch_section) @indent.headed

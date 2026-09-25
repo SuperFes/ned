@@ -164,9 +164,6 @@ and code reading. Highest stakes first.
         no indents query at all yet. (A line continued with a `:line-continuation`
         marker, `\` in C's preprocessor, shells, Python, Ruby, awk and
         Dockerfiles, is left as written.) Known misses:
-        - C#'s Allman lambda: a `{` on its own line inside an argument list
-          counts both the list and the block, so the body is a level too deep
-          (the brace-placement format rule puts the `{` there).
         - A chain after a Scala 3 colon-lambda body (`xs.foldUse(g): _ ?=>` ...
           then `.topN(max)`) goes a level in; the body ends by dedent, which the
           multi-line-root rule (a closer on the line above) can't see.

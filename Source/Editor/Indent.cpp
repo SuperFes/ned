@@ -668,8 +668,9 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
         // alignment column.
         bool crossedBarrier = false;
         // Set once the walk is inside a statement body whose opener starts
-        // its own line (an Allman `{` after `$f = function ()`): that body is
-        // a block of its own, not a continuation of the expression above it.
+        // its own line (an Allman `{` after `$f = function ()`, or after a
+        // C# lambda's `=>` inside `Run(`): that body is a block of its own,
+        // not a continuation of the expression or argument list above it.
         bool insideOwnLineBody = false;
         // AncestorChain follow-up: one root-to-self descent for the whole
         // climb, instead of walkStart.Parent() re-descending from the root
@@ -739,7 +740,7 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
             }
             if ((isIndentCaptured(node) || isAlignedCaptured(node) || isBodyIndentCaptured(node)) &&
                 (node.StartRow() != lastRow || opensBeforeLastRow(node)) && interiorContains(node, position) &&
-                !(insideOwnLineBody && captures.continuation.contains(keyOf(node))) &&
+                !(insideOwnLineBody && (captures.continuation.contains(keyOf(node)) || isAlignedCaptured(node))) &&
                 !continuesAfterMultiLineRoot(node, position)) {
                 level += ContinuationWeight(captures, keyOf(node), style);
                 lastRow             = node.StartRow();

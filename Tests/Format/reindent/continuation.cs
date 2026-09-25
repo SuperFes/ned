@@ -24,3 +24,29 @@ class B
         };
     }
 }
+class L
+{
+    void F()
+    {
+        Run(i =>
+        {
+            return i > 0;
+        });
+        items.Where(i =>
+        {
+            Inner(b, () =>
+            {
+                x();
+            });
+            return i > 0;
+        });
+        switch (x)
+        {
+            case 1:
+                {
+                    y();
+                }
+                break;
+        }
+    }
+}
