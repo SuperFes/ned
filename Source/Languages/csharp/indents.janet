@@ -40,3 +40,12 @@
 # A case's statements sit a level past its label (.NET's
 # csharp_indent_case_contents and _when_block, both true by default).
 (switch_section) @indent.headed
+
+# An unbraced control-statement body on its own line sits one level in
+# (see c/indents.janet).
+(if_statement consequence: (_) @indent.branch (:not-match? @indent.branch "^\\{"))
+(if_statement alternative: (_) @indent.branch (:not-match? @indent.branch "^\\{"))
+(while_statement body: (_) @indent.branch (:not-match? @indent.branch "^\\{"))
+(for_statement body: (_) @indent.branch (:not-match? @indent.branch "^\\{"))
+(foreach_statement body: (_) @indent.branch (:not-match? @indent.branch "^\\{"))
+(do_statement body: (_) @indent.branch (:not-match? @indent.branch "^\\{"))

@@ -319,6 +319,19 @@ namespace {
                 else if (capture.name == "indent.suppress") {
                     captures.suppressed.insert(key);
                 }
+                else if (capture.name == "indent.branch") {
+                    // A control statement's unbraced body (`if (x)` then
+                    // `foo();`) is one level in when it starts its own line.
+                    // One sharing its header's line (`if (x) foo();`, the
+                    // `if` of `else if`) adds nothing, or an else-if chain
+                    // would stack a level per link.
+                    const std::size_t lineStart = bufferText.rfind('\n', capture.startByte == 0 ? 0 : capture.startByte - 1);
+                    const std::size_t from      = lineStart == std::string_view::npos || capture.startByte == 0 ? 0 : lineStart + 1;
+                    if (bufferText.substr(from, capture.startByte - from).find_first_not_of(" \t") == std::string_view::npos) {
+                        captures.indent.emplace(key, capture.startByte);
+                        captures.branch.insert(key);
+                    }
+                }
                 else if (capture.name == "indent.stacked") {
                     captures.indent.insert_or_assign(key, capture.startByte);
                     captures.stacked.insert(key);
@@ -398,7 +411,10 @@ void AddImprintCaptures(IndentCaptures& captures, const grammar::Tree& tree, std
         imprint::CollectIndentCaptures(tree.RootNode(), languageKey, bufferText);
     for (const imprint::ImprintContainer& container : fromImprint.containers) {
         const IndentCaptures::NodeKey key{container.startByte, container.endByte, container.type};
-        if (!captures.suppressed.contains(key)) {
+        // A branch body owns its node outright: a `for (...)` body's header
+        // parens are the imprint's container on that same node, and their
+        // interior end would stop the branch short of the body.
+        if (!captures.suppressed.contains(key) && !captures.branch.contains(key)) {
             // emplace, not assignment: a node the query also captured keeps
             // the query's own interior start.
             captures.indent.emplace(key, container.interiorStart);
@@ -696,7 +712,8 @@ std::optional<IndentComputation> IndentLevelForLine(const grammar::Tree& tree, s
         const bool  headed        = found != captures.indent.end() && bufferText.find('\n', walkStart.StartByte()) < found->second;
         const bool  selfOpensHere = (isIndentCaptured(walkStart) || isAlignedCaptured(walkStart) ||
                                      isBodyIndentCaptured(walkStart)) &&
-                                    walkStart.StartByte() == position && !headed;
+                                    walkStart.StartByte() == position && !headed &&
+                                    !captures.branch.contains(keyOf(walkStart));
         std::size_t lastRow       = selfOpensHere ? walkStart.StartRow() : kNoRow;
         // Two containers on one row count once only when both open on it
         // (`foo(bar(`, `{"a": [`). One whose interior already holds the row's

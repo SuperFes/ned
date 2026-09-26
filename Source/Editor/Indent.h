@@ -183,6 +183,10 @@ struct IndentCaptures {
     // a block opened on the arm's own line indents the block's contents two
     // levels and its `}` one.
     std::unordered_set<NodeKey, NodeKeyHash> stacked;
+    // "indent.branch": a control statement's unbraced body that starts its
+    // own line -- an "indent" container whose own first line counts too, even
+    // when it opens exactly where the walk starts (`return x;`).
+    std::unordered_set<NodeKey, NodeKeyHash> branch;
     // "indent.ignore": a multi-line token whose text is literal but that the
     // highlights query doesn't call a string or comment (PowerShell's
     // `${...}` variable name, Crystal's macro text). A line starting inside

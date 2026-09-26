@@ -64,3 +64,12 @@
 # A broken `if (`/`while (` condition keeps its operators at its own level.
 (binary_expression) @indent.continuation
 (parenthesized_expression (binary_expression) @indent.suppress)
+
+# An unbraced control-statement body on its own line sits one level in
+# (see c/indents.janet).
+(if_statement consequence: (_) @indent.branch (:not-match? @indent.branch "^\\{"))
+(else_clause (_) @indent.branch (:not-match? @indent.branch "^\\{"))
+(while_statement body: (_) @indent.branch (:not-match? @indent.branch "^\\{"))
+(for_statement body: (_) @indent.branch (:not-match? @indent.branch "^\\{"))
+(for_range_loop body: (_) @indent.branch (:not-match? @indent.branch "^\\{"))
+(do_statement body: (_) @indent.branch (:not-match? @indent.branch "^\\{"))

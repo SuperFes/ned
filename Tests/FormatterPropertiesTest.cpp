@@ -424,6 +424,12 @@ TEST_CASE("A flattened sample reindents back to its house style", "[FormatterPro
              {"continuation.jsonnet", "jsonnet"},
              {"continuation.cue", "cue"},
              {"continuation.pkl", "pkl"},
+             {"braceless.c", "c"},
+             {"braceless.js", "javascript"},
+             {"braceless.java", "java"},
+             {"braceless.cs", "csharp"},
+             {"braceless.php", "php"},
+             {"braceless.awk", "awk"},
          }) {
         INFO("sample: " << file);
         const std::string original = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "reindent" / file);

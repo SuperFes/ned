@@ -80,3 +80,17 @@
 # Statement bodies: an Allman `{` on its own line (`$f = function ()` then
 # `{`) opens a block, not a continuation of the expression above it.
 [(compound_statement) (declaration_list)] @align.barrier
+
+# An unbraced control-statement body on its own line sits one level in (see
+# c/indents.janet); a `:` body is the alternative syntax above.
+(if_statement body: (_) @indent.branch (:not-match? @indent.branch "^[{:]"))
+(else_if_clause body: (_) @indent.branch (:not-match? @indent.branch "^[{:]"))
+(else_clause body: (_) @indent.branch (:not-match? @indent.branch "^[{:]"))
+(while_statement body: (_) @indent.branch (:not-match? @indent.branch "^[{:]"))
+# The colon form's `for (...):` body is a bare statement list, told apart
+# only by its closing `endfor`.
+((for_statement body: (_) @indent.branch) @_for
+ (:not-match? @indent.branch "^[{:]")
+ (:not-match? @_for "[Ee][Nn][Dd][Ff][Oo][Rr]\\s*;?\\s*$"))
+(foreach_statement body: (_) @indent.branch (:not-match? @indent.branch "^[{:]"))
+(do_statement body: (_) @indent.branch (:not-match? @indent.branch "^[{:]"))

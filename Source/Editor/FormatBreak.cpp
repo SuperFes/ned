@@ -93,6 +93,12 @@ namespace {
         if (start == 0 || !HasContentBefore(text, start)) {
             return; // no closer's column to inherit -- see the header comment
         }
+        // Already on its own line: its indent is the reindent's to decide.
+        // The line above is not always the closer this column is taken from
+        // (`else` after an unbraced body).
+        if (GapCrossesLine(text, start, at)) {
+            return;
+        }
         EmitIfChanged(edits, text, start, at, "\n" + std::string(LineIndentAt(text, start - 1)));
     }
 

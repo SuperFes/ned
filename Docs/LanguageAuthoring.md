@@ -243,6 +243,11 @@ preprocessor, shells, Python, Ruby, awk and Dockerfiles), which most grammars sk
 whitespace, is left as written. `@aligned.colons` lines an Objective-C message's
 selector parts up on their colons.
 
+An unbraced control-statement body (`if (x)` then `foo();`) is captured
+`@indent.branch`, with `(:not-match? @indent.branch "^\\{")` keeping a braced one
+out: it sits one level in when it starts its own line, and adds nothing when it shares
+its header's line (`if (x) foo();`, or the `if` of `else if`).
+
 ### Locals
 
 `locals.janet` marks scopes, definitions and references. A definition's

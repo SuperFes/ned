@@ -56,3 +56,12 @@
 # A broken `if (`/`while (` condition keeps its operators at its own level.
 (binary_expression) @indent.continuation
 (parenthesized_expression (binary_expression) @indent.suppress)
+
+# An unbraced control-statement body on its own line sits one level in
+# (`if (x)` then `foo();`). A `{` body is a block the imprint already
+# indents, and an Allman `{` stays at its header's level.
+(if_statement consequence: (_) @indent.branch (:not-match? @indent.branch "^\\{"))
+(else_clause (_) @indent.branch (:not-match? @indent.branch "^\\{"))
+(while_statement body: (_) @indent.branch (:not-match? @indent.branch "^\\{"))
+(for_statement body: (_) @indent.branch (:not-match? @indent.branch "^\\{"))
+(do_statement body: (_) @indent.branch (:not-match? @indent.branch "^\\{"))

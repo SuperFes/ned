@@ -1904,3 +1904,12 @@ TEST_CASE("A mode's continuation setting sets how far a continuation line goes",
         CHECK(ned::editor::IndentColumnForLine(*c, text, line, end, {}) == column);
     }
 }
+
+TEST_CASE("An unbraced control body sits one level in, and Enter after its header lands there", "[Indent]") {
+    const auto c = ned::editor::CMode();
+    CHECK(BlankLineColumn(c, "void f() {\n    if (x)\n\n}\n", 2) == 8);
+    CHECK(BlankLineColumn(c, "void f() {\n    while (x)\n\n}\n", 2) == 8);
+    CHECK(BlankLineColumn(c, "void f() {\n    if (x)\n        a();\n    else\n\n}\n", 4) == 8);
+    CHECK(BlankLineColumn(c, "void f() {\n    if (x)\n        a();\n\n}\n", 3) == 4);
+    CHECK(BlankLineColumn(c, "void f() {\n    if (x) a();\n\n}\n", 2) == 4);
+}

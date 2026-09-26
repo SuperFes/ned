@@ -73,6 +73,17 @@ TEST_CASE("break-before puts a continuation keyword on its own line at the close
           "<?php\nfunction f() {\n    if ($x) {\n    }\n    else {\n    }\n}\n");
 }
 
+TEST_CASE("break-before leaves a keyword already on its own line to the reindent", "[FormatBreak]") {
+    const BreakRulesGuard guard;
+    SetBreakBefore("control.keyword", true);
+
+    // The line above an `else` after an unbraced body is that body, not the
+    // `if`'s closer, so its indent is not the column to inherit.
+    const Mode        mode   = PhpMode();
+    const std::string source = "<?php\nif ($x)\n    a();\nelse\n    b();\n";
+    CHECK(Formatted(mode, source) == source);
+}
+
 TEST_CASE("break-before false joins the keyword onto the preceding body's closer", "[FormatBreak]") {
     const BreakRulesGuard guard;
     SetBreakBefore("control.keyword", false);
