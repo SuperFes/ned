@@ -3236,7 +3236,7 @@ TEST_CASE("Manager tracks $/progress begin/report/end as LSP background activity
     client->DispatchFrame(begin.dump());
     auto active = ned::editor::ActiveBackgroundActivities();
     REQUIRE(active.size() == 1);
-    REQUIRE(active[0].name == "LSP");
+    REQUIRE(active[0].name == ned::editor::lsp::LspActivityName("test-lang"));
     REQUIRE(active[0].detail == "indexing");
 
     const Json report = {{"jsonrpc", "2.0"},
@@ -3255,6 +3255,46 @@ TEST_CASE("Manager tracks $/progress begin/report/end as LSP background activity
     REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
 
     client->DispatchFrame(end.dump()); // duplicate end -- must clamp, not go negative
+    REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
+}
+
+TEST_CASE("Manager keeps $/progress detail per connection", "[Lsp]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(bufferList, eventLoop);
+
+    Client*    cClient    = nullptr;
+    Client*    rustClient = nullptr;
+    FakeServer cServer    = FakeServer::Create(manager, "c", eventLoop, cClient);
+    FakeServer rustServer = FakeServer::Create(manager, "rust", eventLoop, rustClient);
+
+    const auto progress = [](const std::string& token, Json value) {
+        return Json{{"jsonrpc", "2.0"}, {"method", "$/progress"}, {"params", {{"token", token}, {"value", std::move(value)}}}}.dump();
+    };
+    cClient->DispatchFrame(progress("c-index", {{"kind", "begin"}, {"title", "indexing"}, {"percentage", 10}}));
+    rustClient->DispatchFrame(progress("rust-check", {{"kind", "begin"}, {"title", "checking"}}));
+
+    auto active = ned::editor::ActiveBackgroundActivities();
+    REQUIRE(active.size() == 2);
+    REQUIRE(active[0].name == ned::editor::lsp::LspActivityName("c"));
+    REQUIRE(active[0].detail == "indexing (10%)");
+    REQUIRE(active[0].fraction == 0.1);
+    REQUIRE(active[1].name == ned::editor::lsp::LspActivityName("rust"));
+    REQUIRE(active[1].detail == "checking");
+    REQUIRE_FALSE(active[1].fraction.has_value());
+
+    // A request in flight keeps c's entry alive after its progress ends;
+    // the finished progress must not caption it, and rust's is untouched.
+    cClient->SendRequest("textDocument/hover", Json::object(), [](std::optional<Json>, std::optional<Json>) {});
+    cClient->DispatchFrame(progress("c-index", {{"kind", "end"}}));
+    active = ned::editor::ActiveBackgroundActivities();
+    REQUIRE(active.size() == 2);
+    REQUIRE(active[0].detail.empty());
+    REQUIRE_FALSE(active[0].fraction.has_value());
+    REQUIRE(active[1].detail == "checking");
+
+    rustClient->DispatchFrame(progress("rust-check", {{"kind", "end"}}));
+    cClient->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", 1}, {"result", nullptr}}.dump());
     REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
 }
 

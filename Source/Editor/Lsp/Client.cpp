@@ -9,10 +9,6 @@ namespace ned::editor::lsp {
 
 namespace {
 
-    // background-activity-spinner follow-up: the registry API takes a
-    // std::string; build it from the shared string_view constant once.
-    const std::string kLspActivity{kLspActivityName};
-
     protocol::FramedConnection<Transport>::Options MakeConnectionOptions() {
         return {LogCategory::Lsp, "server"};
     }
@@ -21,7 +17,7 @@ namespace {
 
 Client::~Client() {
     for (std::size_t i = 0; i < pending_.size(); ++i) {
-        EndBackgroundActivity(kLspActivity); // see the header's destructor comment
+        EndBackgroundActivity(activityName_); // see the header's destructor comment
     }
 }
 
@@ -68,7 +64,7 @@ void Client::DispatchFrame(const std::string& frameText) {
         }
         ResponseCallback callback = std::move(it->second.callback);
         pending_.erase(it);
-        EndBackgroundActivity(kLspActivity); // pairs with SendRequest's Begin
+        EndBackgroundActivity(activityName_); // pairs with SendRequest's Begin
         if (callback) {
             if (message.contains("error")) {
                 callback(std::nullopt, message["error"]);
@@ -124,7 +120,7 @@ void Client::SendRequest(const std::string& method, Json params, ResponseCallbac
 
     const int id = nextRequestId_++;
     pending_[id] = PendingRequest{std::move(callback), std::chrono::steady_clock::now()};
-    BeginBackgroundActivity(kLspActivity); // ended when the response dispatches, or by ~Client for a request never answered
+    BeginBackgroundActivity(activityName_); // ended when the response dispatches, or by ~Client for a request never answered
     const Json message = {
         {"jsonrpc", "2.0"},
         {"id", id},
@@ -151,7 +147,7 @@ void Client::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
         }
     }
     for (auto& [id, callback] : expired) {
-        EndBackgroundActivity(kLspActivity); // pairs with SendRequest's Begin
+        EndBackgroundActivity(activityName_); // pairs with SendRequest's Begin
         LogMessage(LogCategory::Lsp, LogSeverity::Warning, "request " + std::to_string(id) + " timed out waiting for a response");
         if (callback) {
             callback(std::nullopt, Json{{"code", -32001}, {"message", "ned: request timed out waiting for a response"}});
@@ -182,6 +178,14 @@ void Client::SendNotification(const std::string& method, Json params) {
             thunk(); // replays each queued SendRequest/SendNotification in the order it was originally called
         }
     }
+}
+
+void Client::SetActivityName(std::string name) {
+    for (std::size_t i = 0; i < pending_.size(); ++i) {
+        EndBackgroundActivity(activityName_);
+        BeginBackgroundActivity(name);
+    }
+    activityName_ = std::move(name);
 }
 
 void Client::SetNotificationHandler(std::string method, NotificationHandler handler) {

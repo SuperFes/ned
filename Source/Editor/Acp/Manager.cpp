@@ -68,8 +68,7 @@ namespace {
 
     // Mode-line spinner name for a prompt in flight -- see Manager::
     // PromptInFlight's doc comment. String, not string_view, to match
-    // BackgroundActivity's own std::string parameters (Client.cpp's
-    // kLspActivity does the same conversion for the same reason).
+    // BackgroundActivity's own std::string parameters.
     const std::string kAcpActivity{"ACP"};
 
     // Sibling-temp-file + rename, the same atomic-write shape

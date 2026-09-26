@@ -388,6 +388,34 @@ TEST_CASE("Client::ExpireStaleRequests ends the LSP background-activity spinner 
     REQUIRE(ned::editor::ActiveBackgroundActivities().size() == before);
 }
 
+TEST_CASE("Client::SetActivityName moves in-flight requests to the new activity name", "[Lsp]") {
+    auto fixture = ClientFixture::Create();
+    REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
+
+    fixture.client.SendRequest("textDocument/hover", Json::object(), [](std::optional<Json>, std::optional<Json>) {});
+    fixture.client.SetActivityName(ned::editor::lsp::LspActivityName("c"));
+    auto active = ned::editor::ActiveBackgroundActivities();
+    REQUIRE(active.size() == 1);
+    REQUIRE(active[0].name == ned::editor::lsp::LspActivityName("c"));
+
+    fixture.client.SendRequest("textDocument/hover", Json::object(), [](std::optional<Json>, std::optional<Json>) {});
+    fixture.client.DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", 1}, {"result", nullptr}}.dump());
+    active = ned::editor::ActiveBackgroundActivities();
+    REQUIRE(active.size() == 1); // one request still pending, under the new name
+    fixture.client.DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", 2}, {"result", nullptr}}.dump());
+    REQUIRE(ned::editor::ActiveBackgroundActivities().empty());
+}
+
+TEST_CASE("LspActivityConnectionKey recovers the key LspActivityName encoded", "[Lsp]") {
+    REQUIRE(ned::editor::lsp::LspActivityConnectionKey(ned::editor::lsp::LspActivityName("cpp")) == "cpp");
+    REQUIRE(ned::editor::lsp::LspActivityConnectionKey(ned::editor::lsp::LspActivityName("/root\x1f"
+                                                                                         "cpp")) == "/root\x1f"
+                                                                                                    "cpp");
+    REQUIRE_FALSE(ned::editor::lsp::LspActivityConnectionKey("LSP").has_value());
+    REQUIRE_FALSE(ned::editor::lsp::LspActivityConnectionKey("LSPX").has_value());
+    REQUIRE_FALSE(ned::editor::lsp::LspActivityConnectionKey("ACP").has_value());
+}
+
 // error-visibility follow-up. The real background-read-loop -> EOF ->
 // eventLoop.Post(...)-marshaled onDisconnected_ call path can't be
 // exercised headlessly here, for the same reason DispatchFrame's own doc

@@ -1,7 +1,7 @@
 //
 // A one-row Emacs-style mode line: buffer name and line:column position,
-// recomputed fresh every paint() call. The one exception is the LSP
-// activity/status entry's minimum-visible-duration hold (see Paint's own
+// recomputed fresh every paint() call. The one exception is the background
+// activity entries' minimum-visible-duration hold (see Paint's own
 // comment) -- everything else needs no external synchronization.
 //
 
@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -74,22 +75,26 @@ class ModeLine : public Widget {
     editor::lsp::Manager*                    lspManager_ = nullptr;
     std::function<std::optional<std::string>()> languageAtPointProvider_;
 
-    // minimum-visible-duration follow-up: the last non-empty
-    // ActiveBackgroundActivities() snapshot, held and re-shown for
-    // kMinimumVisibleDuration after the real activity list goes empty. A
-    // sub-frame-length round trip (a fast hover/completion response, in
-    // particular) could otherwise begin and end within a single Paint()
-    // call, blinking the "LSP" spinner+detail on and off quickly enough to
+    // minimum-visible-duration follow-up: every activity seen recently,
+    // each held and re-shown for kMinimumVisibleDuration after it leaves
+    // the real list. A sub-frame-length round trip (a fast hover/completion
+    // response, in particular) could otherwise begin and end within a
+    // single Paint() call, blinking its spinner on and off quickly enough to
     // read as a rendering glitch rather than a real, if brief, event -- a
-    // real, reported live-use complaint, not a hypothetical. Deliberately
+    // real, reported live-use complaint, not a hypothetical. Held per entry
+    // because each language server has its own spinner: one server's quick
+    // request must not flicker while another keeps indexing. Deliberately
     // local to this widget's own rendering rather than a change to
     // BackgroundActivity itself, which keeps its existing immediate-
     // empty-on-End semantics for every other consumer (a shared, heavily
     // depended-on process-wide primitive with its own test suite -- adding
     // hold-over there leaked a real 300ms grace window across unrelated,
     // fast-running unit tests sharing that one static registry).
-    std::vector<editor::BackgroundActivity> lastShownActivities_;
-    std::chrono::steady_clock::time_point   lastShownActivitiesAt_{};
+    struct HeldActivity {
+        editor::BackgroundActivity            activity;
+        std::chrono::steady_clock::time_point lastSeen;
+    };
+    std::map<std::string, HeldActivity> heldActivities_;
 };
 
 } // namespace ned::ui

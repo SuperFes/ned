@@ -397,10 +397,6 @@ namespace {
         }
     }
 
-    // background-activity-spinner follow-up: same std::string materialization
-    // of the shared constant Client.cpp's own copy makes.
-    const std::string kLspActivity{kLspActivityName};
-
     Json DiagnosticToLsp(const text::Buffer::Diagnostic& diagnostic, const text::ITextStorage& content) {
         const Position start = BytePositionToLsp(content, diagnostic.startByte);
         const Position end   = BytePositionToLsp(content, diagnostic.endByte);
@@ -690,6 +686,7 @@ Client* Manager::ExistingClientForLanguage(const std::string& language) const {
 
 void Manager::WireNotificationHandlers(Client& client, const std::string& serverKey, const std::string& connectionKey,
                                           const Json& workspaceConfiguration) {
+    client.SetActivityName(LspActivityName(connectionKey));
     client.SetNotificationHandler("textDocument/publishDiagnostics", [this, serverKey, connectionKey](const Json& params) {
         HandlePublishDiagnostics(params, serverKey, connectionKey);
     });
@@ -1703,19 +1700,20 @@ void Manager::ClientDisconnected(const std::string& serverKey, const std::string
     // for its live progress sessions -- End them here or the spinner runs
     // forever (the request-count half of the same problem is ~Client's
     // own responsibility; see its destructor comment).
-    const std::string keyPrefix = connectionKeyCopy + '\x1f';
+    const std::string activityName = LspActivityName(connectionKeyCopy);
+    const std::string keyPrefix    = connectionKeyCopy + '\x1f';
     for (auto it = activeProgress_.begin(); it != activeProgress_.end();) {
         if (it->first.rfind(keyPrefix, 0) == 0) {
             it = activeProgress_.erase(it);
-            EndBackgroundActivity(kLspActivity);
+            EndBackgroundActivity(activityName);
         }
         else {
             ++it;
         }
     }
-    if (activeProgress_.empty()) {
-        SetBackgroundActivityDetail(kLspActivity, std::string()); // same stale-detail rule HandleProgress' own end branch applies
-    }
+    // Same stale-detail rule HandleProgress' own end branch applies.
+    SetBackgroundActivityDetail(activityName, std::string());
+    SetBackgroundActivityProgress(activityName, std::nullopt);
 }
 
 void Manager::LogError(std::string_view language, std::string_view message) {
@@ -3883,16 +3881,18 @@ void Manager::HandleProgress(const std::string& connectionKey, const Json& param
     if (!params.contains("token") || !params.contains("value") || !params["value"].is_object()) {
         return;
     }
-    const std::string key   = connectionKey + '\x1f' + params["token"].dump();
-    const Json&       value = params["value"];
-    const std::string kind  = value.value("kind", std::string());
+    const std::string prefix       = connectionKey + '\x1f';
+    const std::string key          = prefix + params["token"].dump();
+    const std::string activityName = LspActivityName(connectionKey);
+    const Json&       value        = params["value"];
+    const std::string kind         = value.value("kind", std::string());
 
     if (kind == "begin") {
         if (activeProgress_.contains(key)) {
             return; // duplicate begin for a live token -- ignore rather than double-count
         }
         activeProgress_[key] = value.value("title", std::string());
-        BeginBackgroundActivity(kLspActivity);
+        BeginBackgroundActivity(activityName);
     }
 
     const auto it = activeProgress_.find(key);
@@ -3902,15 +3902,17 @@ void Manager::HandleProgress(const std::string& connectionKey, const Json& param
 
     if (kind == "end") {
         activeProgress_.erase(it);
-        EndBackgroundActivity(kLspActivity);
-        if (activeProgress_.empty()) {
+        EndBackgroundActivity(activityName);
+        const bool connectionHasProgress = std::ranges::any_of(
+            activeProgress_, [&prefix](const auto& entry) { return entry.first.starts_with(prefix); });
+        if (!connectionHasProgress) {
             // No live progress session left to describe -- drop the stale
             // detail rather than letting it caption a plain request spinner.
             // A no-op if nothing is active at all (the entry is already gone).
-            SetBackgroundActivityDetail(kLspActivity, std::string());
+            SetBackgroundActivityDetail(activityName, std::string());
             // And the bar with it: a leftover fraction would keep drawing a
             // determinate bar for work that has finished.
-            SetBackgroundActivityProgress(kLspActivity, std::nullopt);
+            SetBackgroundActivityProgress(activityName, std::nullopt);
         }
         return;
     }
@@ -3925,14 +3927,14 @@ void Manager::HandleProgress(const std::string& connectionKey, const Json& param
         // The text stays, since it names *what* is progressing, which a bar
         // can't say. Servers are not trusted to stay inside 0..100 --
         // SetBackgroundActivityProgress clamps.
-        SetBackgroundActivityProgress(kLspActivity, static_cast<double>(percentage) / 100.0);
+        SetBackgroundActivityProgress(activityName, static_cast<double>(percentage) / 100.0);
         const std::string percent = std::to_string(percentage) + "%";
         detail += detail.empty() ? percent : " (" + percent + ")";
     }
     else if (const std::string message = value.value("message", std::string()); !message.empty()) {
         detail += detail.empty() ? message : ": " + message;
     }
-    SetBackgroundActivityDetail(kLspActivity, std::move(detail));
+    SetBackgroundActivityDetail(activityName, std::move(detail));
 }
 
 void Manager::RequestHover(text::Buffer& buffer, std::size_t byteOffset, HoverCallback callback, const std::string& serverKey) {
