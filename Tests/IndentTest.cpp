@@ -442,6 +442,20 @@ TEST_CASE("PythonMode indentColumn aligns an else clause with its owning if, not
     REQUIRE(*bodyColumn == 8);
 }
 
+TEST_CASE("Starlark aligns elif and else with their owning if, as Python does", "[Indent]") {
+    const std::optional<Mode> mode = ned::editor::ModeByName("starlark-mode");
+    REQUIRE(mode.has_value());
+    const std::string text = "def f(x):\n    if x:\n        return 1\n    elif y:\n        pass\n    else:\n        return 2\n";
+    for (const std::size_t line : {3, 5}) {
+        std::size_t lineStart = 0;
+        for (std::size_t i = 0; i < line; ++i) {
+            lineStart = text.find('\n', lineStart) + 1;
+        }
+        const std::size_t lineEnd = text.find('\n', lineStart);
+        CHECK(mode->indentColumn(text, lineStart, lineEnd, {}) == std::optional<int>{4});
+    }
+}
+
 TEST_CASE("PythonMode indentColumn end-of-block dedent needs no explicit dedent capture", "[Indent]") {
     const auto mode = PythonMode();
     Buffer     buffer("test.py");

@@ -9,5 +9,6 @@
  :line-continuation "\\"
  :lsp-root-markers ["MODULE.bazel" "WORKSPACE" "WORKSPACE.bazel"]
  :signature-template "def __ned_sig({}):\n    pass"
- :not-applicable {:continuation "a line continues only inside brackets or after `\\`"}
+ :not-applicable {:indents      "the grammar's block bodies are its whole indent structure; elif/else already align with their if"
+                  :continuation "a line continues only inside brackets or after `\\`"}
 }

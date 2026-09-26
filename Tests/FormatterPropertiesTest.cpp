@@ -418,6 +418,12 @@ TEST_CASE("A flattened sample reindents back to its house style", "[FormatterPro
              {"continuation.erl", "erlang"},
              {"continuation.res", "rescript"},
              {"switch.res", "rescript"},
+             {"continuation.awk", "awk"},
+             {"continuation.wgsl", "wgsl"},
+             {"continuation.gleam", "gleam"},
+             {"continuation.jsonnet", "jsonnet"},
+             {"continuation.cue", "cue"},
+             {"continuation.pkl", "pkl"},
          }) {
         INFO("sample: " << file);
         const std::string original = ReadFile(fs::path(NED_REPO_ROOT) / "Tests" / "Format" / "reindent" / file);

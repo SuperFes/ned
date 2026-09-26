@@ -179,7 +179,7 @@ std::string Render(std::vector<std::string>& contradictions) {
         const QueryFiles&        donor = EffectiveQueries(definition);
         const std::vector<bool>  row   = {
             !Pick(own.highlights, donor.highlights).empty(),
-            !Pick(own.indents, donor.indents).empty(),
+            !Pick(own.indents, donor.indents).empty() || definition.preserveIndent,
             CapturesContinuations(Pick(own.indents, donor.indents)),
             !Pick(own.locals, donor.locals).empty(),
             !Pick(own.tags, donor.tags).empty() || definition.injectedSymbols,
