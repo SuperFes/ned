@@ -98,6 +98,12 @@ struct DetectedLink {
 // separate string-content node, still includes its own quotes/brackets).
 [[nodiscard]] std::string_view StripDelimiters(std::string_view token);
 
+// The local path a URI reference names ("docs/a.md#usage" -> "docs/a.md"),
+// as a prefix of reference; nullopt when it names no local file: a scheme
+// ("https:", "mailto:"), a network path ("//host/x"), or only a fragment or
+// query ("#usage").
+[[nodiscard]] std::optional<std::string_view> LocalPathOfReference(std::string_view reference);
+
 // Resolves target to a real, existing file: tried as an absolute path, then
 // relative to baseDirectory (typically the active buffer's own containing
 // directory), then relative to editor::ProjectRoot(), then relative to each of

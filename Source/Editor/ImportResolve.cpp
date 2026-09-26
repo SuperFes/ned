@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Editor/CueModules.h"
 #include "Editor/GoModules.h"
 #include "Editor/ImportResolutionConfig.h"
 #include "Editor/Lsp/RootResolver.h"
@@ -273,6 +274,10 @@ std::optional<PrefixedImport> MatchImportPrefix(const std::string& target, const
                                   .remainder = target.substr(collection->size() + 1),
                                   .root      = OdinCollectionRoot(*collection, start, OdinRoot())};
         }
+    }
+    if (config.cueModules) {
+        CueImportRoot root = CueImportRootFor(target, importingFile.empty() ? ProjectRoot() : importingFile.parent_path());
+        return PrefixedImport{.prefix = std::move(root.prefix), .remainder = std::move(root.remainder), .root = std::move(root.root)};
     }
     if (config.goModules) {
         GoImportRoot root = GoImportRootFor(target, importingFile.empty() ? ProjectRoot() : importingFile.parent_path());

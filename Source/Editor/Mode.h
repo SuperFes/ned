@@ -1216,8 +1216,9 @@ struct GrammarQuerySources {
     // LanguageDefinition::injectedSymbols: the symbol pass adds each injected
     // region's own markers.
     bool injectedSymbols = false;
-    // LanguageDefinition::injectedImports.
-    bool injectedImports = false;
+    // LanguageDefinition::injectedImports and injectedImportLanguages.
+    bool                     injectedImports = false;
+    std::vector<std::string> injectedImportLanguages;
     // LanguageDefinition::injectedLocals.
     bool injectedLocals = false;
 };

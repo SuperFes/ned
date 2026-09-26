@@ -6,6 +6,7 @@
 {:name "cue"
  :extensions [".cue"]
  :line-comment "//"
+ :import-resolution {:extensions ["cue"] :cue-modules true :package-directories true}
  :lsp-root-markers ["cue.mod"]
  :first-pattern-wins true
  :queries {:highlights ["cue/highlights.janet"

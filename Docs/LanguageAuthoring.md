@@ -320,7 +320,11 @@ and the project root, `:module-separator` (Perl's `::`), `:module-substitutions`
 `.dart_tool/package_config.json`, else the enclosing pubspec). `:go-modules` reads Go
 import paths through the nearest `go.mod`: its own module, then its `replace`
 directives and requirements (in the module cache), then the standard library under
-`GOROOT`. `:package-directories` says an import names a directory (Go, V, Odin):
+`GOROOT`. `:cue-modules` reads CUE's through the nearest `cue.mod/module.cue`: its own
+module, then `cue.mod`'s `gen/`, `pkg/` and `usr/`. `:index-basenames` names the file
+a directory import opens (`index`, widened by `:extensions`); one with a dot of its own,
+or any when there are no extensions, is a whole filename (`CMakeLists.txt`,
+`meson.build`, `Earthfile`). `:package-directories` says an import names a directory (Go, V, Odin):
 go-to-file opens `doc.<ext>`, else the file named after the directory, else its first
 non-`_test` source file, and a move rewrites the import only when every source file in
 the directory went to the same place. `:odin-collections` reads `name:path` imports
@@ -329,7 +333,11 @@ through the nearest `ols.json`'s collections, then the toolchain's own under
 project's
 `importResolution.<language>.sourceRoots` replaces the roots. A host language with
 `:injected-imports` (Svelte, Vue, Astro, HTML) also reads its embedded scripts'
-imports, resolved with the host's own `:import-resolution`. `@import.package` marks
+imports, resolved with the host's own `:import-resolution`; a list of languages
+(Markdown's `["markdown_inline"]`) reads only those, so a code sample's imports aren't
+the document's. `@import.link` marks a URI reference (a Markdown link, an XML `href`):
+a URL or a bare `#fragment` names no file, and a fragment or query after the path stays
+as written. `@import.package` marks
 a file's own package declaration (Java, Kotlin, Groovy, Scala): when a move takes the
 file to another directory under the same source root, its package is rewritten, and
 `:import-statement` (`"import {};"`) is how the imports it and its old package's other

@@ -236,14 +236,20 @@ void CollectInjectedHighlightSpans(const grammar::Node& root, std::string_view b
 }
 
 std::vector<ImportTarget> CollectInjectedImportTargets(const grammar::Node& root, std::string_view bufferText,
-                                                       const grammar::QueryMatcher& injectionQuery,
-                                                       EmbeddedImportCache&         cache) {
+                                                       const grammar::QueryMatcher&    injectionQuery,
+                                                       EmbeddedImportCache&            cache,
+                                                       const std::vector<std::string>& languages) {
     std::vector<ImportTarget> targets;
     for (const RawInjectionMatch& match : CollectRawInjectionMatches(root, bufferText, injectionQuery, {})) {
         if (match.combined) {
             continue;
         }
         const std::string canonical = CanonicalEmbeddedLanguageName(match.languageTag);
+        if (!languages.empty() && std::none_of(languages.begin(), languages.end(), [&](const std::string& language) {
+                return CanonicalEmbeddedLanguageName(language) == canonical;
+            })) {
+            continue;
+        }
         auto              it        = cache.find(canonical);
         if (it == cache.end()) {
             const std::optional<Mode> subMode = ModeByName(canonical + "-mode");

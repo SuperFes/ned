@@ -8,6 +8,7 @@
 using ned::editor::link::ClassifyTarget;
 using ned::editor::link::DetectLinkAtPoint;
 using ned::editor::link::LinkKind;
+using ned::editor::link::LocalPathOfReference;
 using ned::editor::link::OpenUrl;
 using ned::editor::link::ResolveFileLink;
 using ned::editor::link::SetUrlOpenCommand;
@@ -213,6 +214,18 @@ TEST_CASE("StripDelimiters strips one matching layer of quotes/angle-brackets", 
     CHECK(StripDelimiters("<vector>") == "vector");
     CHECK(StripDelimiters("foo.h") == "foo.h"); // no delimiters -- unchanged
     CHECK(StripDelimiters("\"unbalanced") == "\"unbalanced");
+}
+
+TEST_CASE("LocalPathOfReference keeps a URI reference's local path", "[Link]") {
+    CHECK(LocalPathOfReference("docs/a.md") == "docs/a.md");
+    CHECK(LocalPathOfReference("docs/a.md#usage") == "docs/a.md");
+    CHECK(LocalPathOfReference("a.html?x=1#y") == "a.html");
+    CHECK(LocalPathOfReference("C:/notes/a.md") == "C:/notes/a.md");
+    CHECK_FALSE(LocalPathOfReference("https://x.org/a.md").has_value());
+    CHECK_FALSE(LocalPathOfReference("mailto:a@b.org").has_value());
+    CHECK_FALSE(LocalPathOfReference("//cdn.x.org/a.js").has_value());
+    CHECK_FALSE(LocalPathOfReference("#usage").has_value());
+    CHECK_FALSE(LocalPathOfReference("").has_value());
 }
 
 TEST_CASE("ResolveFileLink with empty extension/index lists behaves exactly as before", "[Link]") {

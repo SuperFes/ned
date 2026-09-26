@@ -79,3 +79,21 @@ Directive -- Multiple floating point args
         (float)
         (float)))
 
+==========
+Directive -- NASM preprocessor include
+==========
+%include "macros.inc"
+mov %rax, %rbx
+---
+
+(program
+  (meta
+    (meta_ident)
+    (string))
+  (instruction
+    (word)
+    (ident
+      (reg))
+    (ident
+      (reg))))
+

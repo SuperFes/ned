@@ -5,6 +5,7 @@
  :grammar "clojure"
  :extensions [".jank"]
  :line-comment ";"
+ :lsp-root-markers ["project.clj" "deps.edn"]
  :signature-template "(defn __ned_sig [{}])"
  :auto-pairs :lisp
  :queries-from "clojure"

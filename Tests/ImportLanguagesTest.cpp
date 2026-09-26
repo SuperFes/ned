@@ -3,7 +3,7 @@
 // go-to-file reads at point, and that a line naming no one file reads as
 // nothing. Then the per-language resolution knobs (source roots, module
 // separators, substitutions, index files, partials, root prefixes, Dart
-// packages, Go modules) against real files, both for go-to-file and a rename's
+// packages, Go and CUE modules, URI references) against real files, both for go-to-file and a rename's
 // fixups.
 //
 
@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include "Editor/CueModules.h"
 #include "Editor/ImportFixup.h"
 #include "Editor/ImportResolve.h"
 #include "Editor/ModeOverrides.h"
@@ -119,7 +120,24 @@ const ImportCase kImportCases[] = {
     {"go", "import \"example.com/m/store\"\n", "store", "example.com/m/store", false},
     {"go", "import (\n\tf \"fmt\"\n\t\"net/http\"\n)\n", "http", "net/http", false},
     {"odin", "package main\nimport u \"../shared/util\"\n", "util", "../shared/util", false},
-    {"v", "module main\nimport foo.bar as b\n", "bar", "foo.bar", true}};
+    {"v", "module main\nimport foo.bar as b\n", "bar", "foo.bar", true},
+    {"asm", ".include \"defs.s\"\n", "defs", "defs.s", false},
+    {"asm", "%include \"macros.inc\"\n", "macros", "macros.inc", false},
+    {"asm", "incbin \"logo.bin\"\n", "logo", "logo.bin", false},
+    {"markdown", "[ref]: other/c.md\n", "c.md", "other/c.md", false},
+    {"markdown", "See [a](docs/a.md#usage).\n", "a.md", "docs/a.md", false},
+    {"markdown", "An ![image](<img/a b.png> \"t\").\n", "a b", "img/a b.png", false},
+    {"org", "#+INCLUDE: \"chap1.org\" :minlevel 2\n", "chap1", "chap1.org", false},
+    {"org", "#+setupfile: ./setup.org\n", "setup", "./setup.org", false},
+    {"xml", "<!DOCTYPE doc SYSTEM \"doc.dtd\">\n<doc/>\n", "doc.dtd", "doc.dtd", false},
+    {"xml", "<?xml-stylesheet type=\"text/xsl\" href=\"s.xsl\"?>\n<doc/>\n", "s.xsl", "s.xsl", false},
+    {"xml", "<doc><xi:include href=\"part.xml\"/></doc>\n", "part", "part.xml", false},
+    {"meson", "subdir('src')\n", "src", "src", false},
+    {"http", "POST https://x.org/y\nContent-Type: application/json\n\n< ./body.json\n", "body", "./body.json", false},
+    {"earthfile", "VERSION 0.8\nIMPORT ./lib AS lib\n", "lib ", "./lib", false},
+    {"earthfile", "VERSION 0.8\nbuild:\n    FROM ./base+img\n", "base", "./base", false},
+    {"earthfile", "VERSION 0.8\nbuild:\n    DO ./udc+FUNC\n", "udc", "./udc", false},
+    {"cue", "package p\n\nimport \"example.com/m/sub\"\n", "sub", "example.com/m/sub", false}};
 
 struct NoImportCase {
     const char* language;
@@ -135,7 +153,14 @@ const NoImportCase kNoImportCases[] = {
     {"ruby", "puts \"x.rb\"\n", "x.rb"},
     {"awk", "@namespace \"ns\"\n", "ns"},
     {"fsharp", "#r \"y.dll\"\n", "y.dll"},
-    {"cmake", "message(\"lib\")\n", "lib"}};
+    {"cmake", "message(\"lib\")\n", "lib"},
+    {"markdown", "See [u](https://x.org/a.md).\n", "x.org"},
+    {"markdown", "See [s](#usage).\n", "usage"},
+    {"markdown", "```python\nimport os\n```\n", "os"},
+    {"org", "#+TITLE: notes.org\n", "notes"},
+    {"org", "#+SETUPFILE: https://x.org/theme.setup\n", "theme"},
+    {"xml", "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0//EN\" \"http://www.w3.org/x.dtd\">\n<html/>\n", "x.dtd"},
+    {"meson", "project('p', 'c')\n", "p'"}};
 
 } // namespace
 
@@ -409,6 +434,62 @@ TEST_CASE("A Sass partial resolves and keeps its unwritten underscore", "[Import
     const std::vector<ned::editor::importfix::MovedFile> moved{
         {project.root / "base/_vars.scss", project.root / "abstracts/_vars.scss"}};
     CHECK(FixedText(moved, project.root / "main.scss") == "@use 'abstracts/vars' as v;\n@use 'theme';\n");
+}
+
+TEST_CASE("A whole-filename index resolves a directory: meson's subdir() and an Earthfile's references",
+          "[ImportLanguages]") {
+    const ScratchProject project("meson_earthfile");
+    Write(project.root / "src/meson.build", "executable('x', 'x.c')\n");
+    Write(project.root / "meson.build", "project('p', 'c')\nsubdir('src')\n");
+    CHECK(ResolveAt(project.root / "meson.build", "src") == project.root / "src/meson.build");
+    const std::vector<ned::editor::importfix::MovedFile> movedMeson{
+        {project.root / "src/meson.build", project.root / "tools/x/meson.build"}};
+    CHECK(FixedText(movedMeson, project.root / "meson.build") == "project('p', 'c')\nsubdir('tools/x')\n");
+
+    Write(project.root / "base/Earthfile", "VERSION 0.8\nimg:\n    FROM alpine\n");
+    Write(project.root / "app/Earthfile", "VERSION 0.8\nbuild:\n    FROM ../base+img\n");
+    CHECK(ResolveAt(project.root / "app/Earthfile", "base") == project.root / "base/Earthfile");
+    const std::vector<ned::editor::importfix::MovedFile> movedEarthfile{
+        {project.root / "base/Earthfile", project.root / "images/base/Earthfile"}};
+    CHECK(FixedText(movedEarthfile, project.root / "app/Earthfile") ==
+          "VERSION 0.8\nbuild:\n    FROM ../images/base+img\n");
+}
+
+TEST_CASE("A markdown link resolves without its fragment, and keeps it when its file moves", "[ImportLanguages]") {
+    const ScratchProject project("markdown_links");
+    Write(project.root / "docs/a.md", "# A\n\n## Usage\n");
+    Write(project.root / "README.md", "See [a](docs/a.md#usage) and [b][b].\n\n[b]: docs/a.md\n");
+    const fs::path readme = project.root / "README.md";
+    CHECK(ResolveAt(readme, "a.md#") == project.root / "docs/a.md");
+    CHECK(ResolveAt(readme, "docs/a.md\n") == project.root / "docs/a.md");
+
+    const std::vector<ned::editor::importfix::MovedFile> moved{{project.root / "docs/a.md", project.root / "guide/a.md"}};
+    CHECK(FixedText(moved, readme) == "See [a](guide/a.md#usage) and [b][b].\n\n[b]: guide/a.md\n");
+}
+
+TEST_CASE("A cue.mod module path drops its major version", "[ImportLanguages]") {
+    CHECK(ned::editor::ParseCueModulePath("module: \"example.com/m@v0\"\nlanguage: {\n\tversion: \"v0.9.0\"\n}\n") ==
+          "example.com/m");
+    CHECK(ned::editor::ParseCueModulePath("// comment\n  module: \"example.com/m\"\n") == "example.com/m");
+    CHECK(ned::editor::ParseCueModulePath("language: {}\n").empty());
+}
+
+TEST_CASE("A CUE import resolves through its module and cue.mod's vendored packages", "[ImportLanguages]") {
+    const ScratchProject project("cue_modules");
+    Write(project.root / "cue.mod/module.cue", "module: \"example.com/m@v0\"\n");
+    Write(project.root / "sub/sub.cue", "package sub\n");
+    Write(project.root / "cue.mod/pkg/github.com/o/r/r.cue", "package r\n");
+    Write(project.root / "main.cue",
+          "package main\n\nimport (\n\t\"example.com/m/sub\"\n\t\"github.com/o/r\"\n\t\"strings\"\n)\n");
+    const fs::path main = project.root / "main.cue";
+    CHECK(ResolveAt(main, "sub\"") == project.root / "sub/sub.cue");
+    CHECK(ResolveAt(main, "o/r") == project.root / "cue.mod/pkg/github.com/o/r/r.cue");
+    CHECK_FALSE(ResolveAt(main, "strings").has_value());
+
+    const std::vector<ned::editor::importfix::MovedFile> moved{
+        {project.root / "sub/sub.cue", project.root / "lib/sub/sub.cue"}};
+    CHECK(FixedText(moved, main) ==
+          "package main\n\nimport (\n\t\"example.com/m/lib/sub\"\n\t\"github.com/o/r\"\n\t\"strings\"\n)\n");
 }
 
 TEST_CASE("A directory import keeps naming the directory when its index moves", "[ImportLanguages]") {

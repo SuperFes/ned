@@ -22,7 +22,6 @@ TEST_CASE("Modes with no import query configured have an empty importTarget", "[
     CHECK_FALSE(static_cast<bool>(ned::editor::ModeByName("ini-mode")->importTarget));
     CHECK_FALSE(static_cast<bool>(ned::editor::YamlMode().importTarget));
     CHECK_FALSE(static_cast<bool>(ned::editor::TomlMode().importTarget));
-    CHECK_FALSE(static_cast<bool>(ned::editor::MarkdownMode().importTarget));
 }
 
 TEST_CASE("CppMode importTarget resolves a quoted #include and strips the quotes", "[ImportTarget]") {

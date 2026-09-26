@@ -3,9 +3,10 @@
 {:name "http"
  :extensions [".http" ".rest"]
  :line-comment "#"
- :not-applicable {:indents    "requests are flat; bodies indent as their own language"
-                  :tests      "no test framework runs tests written in it"
-                  :signatures "no user-defined functions with parameter lists"
-                  :format     "a request is sent as written"
-                  :lsp-root   "no project file of its own; the root falls through to the project's"}
+ :not-applicable {:indents           "requests are flat; bodies indent as their own language"
+                  :tests             "no test framework runs tests written in it"
+                  :signatures        "no user-defined functions with parameter lists"
+                  :format            "a request is sent as written"
+                  :lsp-root          "no project file of its own; the root falls through to the project's"
+                  :import-resolution "its specifiers are relative paths the default resolution handles"}
 }

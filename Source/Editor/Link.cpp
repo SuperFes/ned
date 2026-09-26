@@ -154,6 +154,24 @@ std::string_view StripDelimiters(std::string_view token) {
     return token;
 }
 
+std::optional<std::string_view> LocalPathOfReference(std::string_view reference) {
+    // A one-letter scheme is a drive letter ("C:/x"), not a URI.
+    const std::size_t schemeEnd = reference.find_first_not_of(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+.-");
+    if (schemeEnd != std::string_view::npos && schemeEnd >= 2 && reference[schemeEnd] == ':' &&
+        std::isalpha(static_cast<unsigned char>(reference.front())) != 0) {
+        return std::nullopt;
+    }
+    if (reference.starts_with("//")) {
+        return std::nullopt;
+    }
+    const std::string_view path = reference.substr(0, reference.find_first_of("#?"));
+    if (path.empty()) {
+        return std::nullopt;
+    }
+    return path;
+}
+
 std::optional<DetectedLink> DetectLinkAtPoint(std::string_view bufferText, std::size_t point) {
     const auto [lineStart, lineEnd] = LineBoundsAtPoint(bufferText, point);
     const std::string_view line     = bufferText.substr(lineStart, lineEnd - lineStart);
@@ -317,8 +335,9 @@ namespace {
         }
         for (const std::string& basename : indexBasenames) {
             // A basename with its own extension is a whole filename (CMake's
-            // "CMakeLists.txt"), not one to widen.
-            if (basename.find('.') != std::string::npos) {
+            // "CMakeLists.txt"), not one to widen, and so is any basename
+            // when there are no extensions to widen it with ("Earthfile").
+            if (basename.find('.') != std::string::npos || candidateExtensions.empty()) {
                 if (const std::filesystem::path indexFile = candidate / basename; std::filesystem::exists(indexFile)) {
                     return indexFile;
                 }

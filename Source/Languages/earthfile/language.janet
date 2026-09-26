@@ -2,6 +2,7 @@
  :extensions [".earth"]
  :filenames ["Earthfile"]
  :line-comment "#"
+ :import-resolution {:index-basenames ["Earthfile"]}
  # A RUN's `$name` is read through its injected shell.
  :injected-locals true
  :not-applicable {:continuation "lines continue with `\\` (`:line-continuation`)"

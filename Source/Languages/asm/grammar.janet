@@ -14,7 +14,7 @@
            :blank)
   _item (:choice meta label const instruction)
   meta (:seq
-        (:field :kind meta_ident)
+        (:field :kind (:choice meta_ident (:alias _preproc_ident meta_ident)))
         (:choice
          (:choice
           ident
@@ -68,6 +68,9 @@
   address (:pattern "\\$[a-zA-Z0-9_]+")
   reg (:choice _reg word address)
   meta_ident (:pattern "\\.[a-z_]+")
+  # NASM's preprocessor directives: only ever the first token of a line, so
+  # AT&T's %-registers in operands never meet it.
+  _preproc_ident (:pattern "%[a-z]+")
   _ident (:pattern "[a-zA-Z_0-9.]+")
   ident (:choice _ident meta_ident reg)
   line_comment (:choice (:seq "#" (:token-immediate (:pattern ".*"))) (:pattern "(\\/\\/|;).*"))

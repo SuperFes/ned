@@ -278,7 +278,8 @@ namespace {
     };
 
     // What a moved file may be called in the text of an import that names
-    // it: its stem; for an index file also its directory ("./widget" for
+    // it: its stem; for an index file (or one its language's index basenames
+    // name, meson.build) also its directory ("./widget" for
     // "widget/index.js"); and a snake_case name's kebab-case spelling
     // (Clojure's "my-app" for "my_app"); for a language whose imports name
     // package directories (Go), the directory. A word too many only costs a
@@ -289,8 +290,9 @@ namespace {
         std::vector<std::string>          stems;
         const std::string                 stem = path.stem().string();
         stems.push_back(stem);
+        const ImportResolutionConfig resolution = ImportResolutionConfigFor(modes.For(path));
         if (std::find(std::begin(kIndexStems), std::end(kIndexStems), stem) != std::end(kIndexStems) ||
-            ImportResolutionConfigFor(modes.For(path)).packageDirectories) {
+            IsIndexBasename(path.filename().string(), resolution) || resolution.packageDirectories) {
             const std::string parent = path.parent_path().filename().string();
             if (!parent.empty()) {
                 stems.push_back(parent);

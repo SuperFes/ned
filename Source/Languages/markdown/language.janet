@@ -63,8 +63,11 @@
    "![${1:alt}](${2:url})$0"
    "code"
    "```${1:language}\n$0\n```"}
- :not-applicable {:indents    "blocks are markers, not delimiters; list and quote continuation is its own code"
-                  :tests      "no test framework runs tests written in it"
-                  :signatures "no user-defined functions with parameter lists"
-                  :format     "markup: no functions, control flow or definitions for the formatter's rules to place"}
+ # Links; a fenced code block's imports aren't the document's.
+ :injected-imports ["markdown_inline"]
+ :not-applicable {:indents           "blocks are markers, not delimiters; list and quote continuation is its own code"
+                  :tests             "no test framework runs tests written in it"
+                  :signatures        "no user-defined functions with parameter lists"
+                  :format            "markup: no functions, control flow or definitions for the formatter's rules to place"
+                  :import-resolution "its links are relative paths the default resolution handles"}
 }

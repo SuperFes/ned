@@ -207,7 +207,15 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
             definition.injectedSymbols = ExpectBool(directoryName, value, ":injected-symbols");
         }
         else if (key == "injected-imports") {
-            definition.injectedImports = ExpectBool(directoryName, value, ":injected-imports");
+            // true, or the injected languages to read ("markdown_inline"), so a
+            // document's code samples aren't counted as its imports.
+            if (value.IsTuple()) {
+                definition.injectedImports         = true;
+                definition.injectedImportLanguages = ExpectStrings(directoryName, value, ":injected-imports");
+            }
+            else {
+                definition.injectedImports = ExpectBool(directoryName, value, ":injected-imports");
+            }
         }
         else if (key == "injected-locals") {
             definition.injectedLocals = ExpectBool(directoryName, value, ":injected-locals");
@@ -363,6 +371,9 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
                 else if (field.IsKeyword() && field.text == "go-modules") {
                     config.goModules = ExpectBool(directoryName, v, ":go-modules");
                 }
+                else if (field.IsKeyword() && field.text == "cue-modules") {
+                    config.cueModules = ExpectBool(directoryName, v, ":cue-modules");
+                }
                 else if (field.IsKeyword() && field.text == "package-directories") {
                     config.packageDirectories = ExpectBool(directoryName, v, ":package-directories");
                 }
@@ -370,7 +381,7 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
                     Fail(directoryName, field.line,
                          ":import-resolution keys are :extensions/:index-basenames/:search-package-dirs/"
                          ":module-separator/:module-substitutions/:source-roots/:partial-prefix/"
-                         ":root-prefixes/:package-scheme/:home-prefix/:go-modules/:odin-collections/:package-directories/:import-statement");
+                         ":root-prefixes/:package-scheme/:home-prefix/:go-modules/:cue-modules/:odin-collections/:package-directories/:import-statement");
                 }
             }
             definition.importResolution = std::move(config);

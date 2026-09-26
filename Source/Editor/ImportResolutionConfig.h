@@ -69,6 +69,9 @@ struct ImportResolutionConfig {
     // nearest go.mod's module, a required module or the standard library,
     // and nowhere else.
     bool goModules = false;
+    // CUE's import paths (Editor/CueModules.h): under the nearest
+    // cue.mod/module.cue's module, else cue.mod's gen/, pkg/ or usr/.
+    bool cueModules = false;
     // How an import is written, `{}` standing for the module path
     // ("import {};"): what a move inserts where a file newly needs one.
     std::string importStatement;

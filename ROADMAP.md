@@ -1340,11 +1340,15 @@ these accumulate detail in place.
       reordered with its siblings. Justified when one of them turns up in a real
       refactor.
 - [ ] **Imports for module systems that aren't paths.** C# and F# namespaces, Swift and
-      Elixir modules, OCaml and ReScript's flat module names, Pascal units (a unit name
+      Elixir modules, Vala namespaces, OCaml and ReScript's flat module names, Pascal units (a unit name
       can't be written back after a move), Ada's GNAT `foo-bar.ads` naming, Starlark's
       Bazel labels, VHDL libraries. Each needs a project-wide index from module name to
       file rather than a specifier-to-path rule. Justified by a language whose users
       rename files often enough to want the fixup.
+- [ ] **Org links as imports.** `[[file:a.org]]` and `[[./a.org][desc]]` open with
+      open-link-at-point but aren't imports (the grammar has no link node, only
+      `#+INCLUDE`/`#+SETUPFILE` are read), so moving a note doesn't fix the links to it.
+      Justified when Org notes that link each other get reorganised.
 - [ ] **Scala selector and rename imports.** `import a.b.{C, D}` and `import a.b.{C => D}`
       aren't read: the path is sibling identifiers rather than one node, so each
       selector would need its own composed target. Justified when Scala go-to-file or

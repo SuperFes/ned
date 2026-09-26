@@ -97,7 +97,7 @@ objc/corpus  cases=75 runs=75 passed=75 failed=0 skipped=0
 ada/corpus  cases=129 runs=129 passed=129 failed=0 skipped=0
 pascal/corpus  cases=88 runs=88 passed=88 failed=0 skipped=0
 vala/corpus  cases=6 runs=6 passed=6 failed=0 skipped=0
-asm/corpus  cases=32 runs=32 passed=32 failed=0 skipped=0
+asm/corpus  cases=33 runs=33 passed=33 failed=0 skipped=0
 v/corpus  cases=336 runs=336 passed=336 failed=0 skipped=0
 scala/corpus  cases=273 runs=272 passed=272 failed=0 skipped=1
 haskell/corpus  cases=725 runs=725 passed=724 failed=1 skipped=0
@@ -153,4 +153,4 @@ gdscript/corpus  cases=167 runs=167 passed=166 failed=1 skipped=0
 matlab/corpus  cases=157 runs=157 passed=155 failed=2 skipped=0
   FAIL call.txt: Function Call: Line Continuation
   FAIL strings.txt: Strings: Invalid termination
-total  cases=12727 runs=12722 passed=12688 failed=34 skipped=11
+total  cases=12728 runs=12723 passed=12689 failed=34 skipped=11

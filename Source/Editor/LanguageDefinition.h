@@ -159,6 +159,8 @@ struct LanguageDefinition {
     // (a component's <script>), resolved with this language's
     // :import-resolution.
     bool injectedImports = false;
+    // Only these injected languages' imports; empty reads every one.
+    std::vector<std::string> injectedImportLanguages;
     // Rename reads each injected region's own locals (a component's
     // <script>). A name bound at the region's top level binds at file level:
     // the markup may use it too.

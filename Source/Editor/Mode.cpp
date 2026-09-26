@@ -503,7 +503,7 @@ std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureN
         // (the one enclosing point) and Mode::importTargets (every one in the
         // document). No per-language branching lives here or in either closure
         // -- a query does its language's own work by choosing which of these
-        // five capture names to tag a node with.
+        // capture names to tag a node with.
         enum class ImportTargetKind { Literal,
                                       Module,
                                       Relative,
@@ -548,6 +548,17 @@ std::optional<SyntaxClass> MappedSyntaxClassForCapture(std::string_view captureN
                 }
                 else if (capture.name == "import.module") {
                     captures.targets.push_back({capture.startByte, capture.endByte, ImportTargetKind::Module});
+                }
+                else if (capture.name == "import.link") {
+                    // A URI reference (Markdown's [x](a.md#usage)): only a local
+                    // path is a target, and its fragment stays as written.
+                    const std::string_view raw =
+                        bufferText.substr(capture.startByte, capture.endByte - capture.startByte);
+                    const std::string_view stripped = link::StripDelimiters(raw);
+                    if (const std::optional<std::string_view> path = link::LocalPathOfReference(stripped)) {
+                        const std::size_t start = capture.startByte + static_cast<std::size_t>(stripped.data() - raw.data());
+                        captures.targets.push_back({start, start + path->size(), ImportTargetKind::Literal});
+                    }
                 }
                 else if (capture.name == "import.relative") {
                     // resolver-gaps follow-up: Python's own leading-dot relative
@@ -1870,12 +1881,13 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
     if (queries.injectedImports && injectionQuery) {
         const auto embeddedImportCache = std::make_shared<EmbeddedImportCache>();
         importTargets                  = [own = std::move(importTargets), parser, sharedParse, injectionQuery,
-                                          embeddedImportCache](std::string_view bufferText) {
+                                          embeddedImportCache, languages = queries.injectedImportLanguages](
+                                             std::string_view bufferText) {
             std::vector<ImportTarget> targets = own ? own(bufferText) : std::vector<ImportTarget>{};
             const grammar::Tree&      tree    = sharedParse->Update(*parser, bufferText);
             if (!tree.IsNull()) {
                 std::vector<ImportTarget> injected =
-                    CollectInjectedImportTargets(tree.RootNode(), bufferText, *injectionQuery, *embeddedImportCache);
+                    CollectInjectedImportTargets(tree.RootNode(), bufferText, *injectionQuery, *embeddedImportCache, languages);
                 targets.insert(targets.end(), std::make_move_iterator(injected.begin()),
                                std::make_move_iterator(injected.end()));
             }

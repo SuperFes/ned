@@ -4,6 +4,7 @@
 {:name "org"
  :extensions [".org"]
  :line-comment "#"
+ :import-resolution {:home-prefix true}
  :wrap-lines true
  # Structure is headline depth; a link's [[...]] is not a delimited body.
  :imprint false
