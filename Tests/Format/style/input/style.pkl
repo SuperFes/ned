@@ -1,0 +1,14 @@
+class A
+{
+  x: Int
+
+
+
+  y: Int
+}
+
+
+
+class B {
+  z: Int
+}

@@ -1,0 +1,7 @@
+example.com {
+	respond "hi"
+}
+
+www.example.com {
+	redir https://example.com
+}

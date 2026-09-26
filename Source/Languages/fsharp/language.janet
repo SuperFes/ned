@@ -8,5 +8,6 @@
  :signature-template "let ned_sig {} = ()\n"
  :lsp-root-markers ["*.fsproj" "paket.dependencies"]
  :import-resolution {:extensions ["fsx" "fs"]}
- :not-applicable {:continuation "indentation is syntax (`:preserve-indent`)"}
+ :not-applicable {:continuation "indentation is syntax (`:preserve-indent`)"
+                  :style        "Fantomas keeps blank lines as written and adds one only around multi-line declarations, which no fixed rule expresses"}
 }

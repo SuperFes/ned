@@ -472,7 +472,11 @@ TEST_CASE("Each bundled style formats its off-style sample to the language's own
              {"style.ps1", "powershell"}, {"style.py", "python"},    {"style.R", "r"},
              {"style.rb", "ruby"},       {"style.res", "rescript"},  {"style.scss", "scss"},
              {"style.sh", "bash"},       {"style.swift", "swift"},   {"style.tf", "hcl"},
-             {"style.vala", "vala"},
+             {"style.vala", "vala"},     {"style.Caddyfile", "caddy"}, {"style.erl", "erlang"},
+             {"style.fnl", "fennel"},    {"style.janet", "janet"},   {"style.jsonnet", "jsonnet"},
+             {"style.just", "just"},     {"style.ml", "ocaml"},      {"style.mli", "ocaml-interface"},
+             {"style.pkl", "pkl"},       {"style.purs", "purescript"}, {"style.rkt", "racket"},
+             {"style.bzl", "starlark"},
          }) {
         INFO("sample: " << file);
         CHECK(NativeFormatted(read(root / "input" / file), language) == read(root / "expected" / file));
