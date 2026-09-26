@@ -6,6 +6,6 @@
  :lsp-root-markers ["dune-project" "opam" ".ocamlformat"]
  :not-applicable {:injections   "nothing in it is written in another language"
                   :tests        "interfaces declare; tests live in implementations"
-                  :signatures   "declarations only; its implementation's change-signature owns the call sites"
+                  :signatures   "declarations only: its implementation's change-signature rewrites a `val`'s type"
                   :continuation "ocamlformat lines a wrapped infix chain up under its first operand; keyword bodies indent through @indent.headed"}
 }

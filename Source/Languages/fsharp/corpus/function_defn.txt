@@ -161,12 +161,13 @@ let inline double<^a when ^a:(member Double: unit -> ^a)> (x: ^a) = x.Double()
                   (type_argument
                     (identifier)))))))
         (argument_patterns
-          (typed_pattern
-            (identifier_pattern
-              (long_identifier_or_op
-                (identifier)))
-            (type_argument
-              (identifier)))))
+          (paren_pattern
+            (typed_pattern
+              (identifier_pattern
+                (long_identifier_or_op
+                  (identifier)))
+              (type_argument
+                (identifier))))))
       (application_expression
         (long_identifier_or_op
           (long_identifier
@@ -204,12 +205,13 @@ let inline double<'a when 'a:(member Double: unit -> 'a)> (x: 'a) = x.Double()
                   (type_argument
                     (identifier)))))))
         (argument_patterns
-          (typed_pattern
-            (identifier_pattern
-              (long_identifier_or_op
-                (identifier)))
-            (type_argument
-              (identifier)))))
+          (paren_pattern
+            (typed_pattern
+              (identifier_pattern
+                (long_identifier_or_op
+                  (identifier)))
+              (type_argument
+                (identifier))))))
       (application_expression
         (long_identifier_or_op
           (long_identifier

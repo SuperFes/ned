@@ -116,6 +116,8 @@ struct LanguageDefinition {
     std::string signatureTemplate;
     // Mode::listSeparator; empty keeps its default.
     std::string listSeparator;
+    // Mode::signatureClauses.
+    bool signatureClauses = false;
     // File-name matching: extensions carry their leading dot (".cpp"), the
     // form std::filesystem::path::extension() hands back; filenames match
     // the whole basename and are checked first (Emacs' auto-mode-alist).

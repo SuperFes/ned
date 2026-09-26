@@ -535,9 +535,18 @@ struct SignatureParameter {
 // identifier, unqualified -- a Class::method's own scope qualifier is not
 // captured, since ChangeSignature only ever needs the simple name to match
 // call-site candidates and same-named overloads by.
+// Type: a signature spelling only the parameters' types (Erlang's `-spec`,
+// @signature.type); CurriedType: an arrow type whose components run on past
+// the parameters to the result (Haskell's `f :: a -> b -> c`,
+// @signature.type.curried). Their `parameters` are those components.
+enum class SignatureKind : std::uint8_t { Definition,
+                                          Type,
+                                          CurriedType };
+
 struct SignatureMarker {
     std::size_t                     startByte;
     std::size_t                     endByte;
+    SignatureKind                   kind = SignatureKind::Definition;
     std::size_t                     nameStartByte;
     std::size_t                     nameEndByte;
     // The parameter_list node's own range, parens included -- always
@@ -635,6 +644,16 @@ struct CallMarker {
     bool                      delimited = true;
     std::vector<CallArgument> arguments;
     CallReceiver              receiver = CallReceiver::None;
+    // A call that passing fewer arguments applies partially (`map (f 1) xs`)
+    // rather than leaving defaults out: @call.arguments.chain, @call.curried.
+    bool curried = false;
+    // A reference naming the function by its arity rather than calling it
+    // (Erlang's `-export([f/2])`, @call.arity): the arity's own digits, and
+    // no arguments. A functionValue (`fun f/2`, Elixir's `&f/2`,
+    // @call.arity.value) passes the function on to be called elsewhere.
+    std::size_t arityStartByte = 0;
+    std::size_t arityEndByte   = 0;
+    bool        functionValue  = false;
 };
 
 // Given a buffer's full text, returns every call expression in it, in tree
@@ -1105,6 +1124,10 @@ struct Mode {
     // " " for CMake's `f(a b)`. A list after the callee (`(f a b)`, `f 1 2`)
     // is always space-separated.
     std::string listSeparator = ", ";
+    // A function written as several clauses, each matching its own patterns
+    // (Erlang, Haskell): change-signature reorders every other clause's own
+    // parameters rather than writing the retyped text into it.
+    bool signatureClauses = false;
     // Which colour-literal spellings this mode's buffers admit -- the
     // swatch scan and `color-at-point` both read it. Defaults to the
     // universally unambiguous set; a stylesheet's definition widens it.

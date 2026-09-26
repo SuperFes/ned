@@ -284,7 +284,24 @@ CMake's `function(f a b)`; `@call.arguments.rest`: a Lisp's `(f a b)`, Tcl's and
 that reads as a call and isn't one (Scheme's definition header), and `@argument.skip` a
 child that sits between arguments (PowerShell's separators). `[...]` and `{...}`
 delimit a list as parens do, and `:list-separator` (`" "`: CMake) joins a delimited
-call's arguments. C and C++ read their declarators directly instead.
+call's arguments. A rest list ends at the first token after its items (OCaml's
+`let f x : t = ...`). C and C++ read their declarators directly instead.
+
+A parameter with no `.name` is a pattern, matched by its text. `:signature-clauses
+true` says a function is written as several clauses (Erlang, Elixir, Haskell,
+PureScript): the one retyped takes the new text, and every other clause keeps its own
+patterns, reordered. A type signature is `@signature.type` when it lists only the
+parameters' types (Erlang's `-spec`, Elixir's `@spec`) and `@signature.type.curried`
+when its arrows run on to the result (`f :: a -> b -> c`); it is reordered the same
+way, and declines a new parameter. An arrow type the grammar nests a pair at a time is
+read with `@signature.parameters.chain`, and a type that doesn't spell its parameters
+out (a synonym) is `@signature.parameters.opaque`, which declines the change. A curried
+call (`f a b` as `(apply (apply f a) b)`) is `@call.arguments.chain` on the innermost
+application; `@call.curried` marks a flat one, and either way a call with fewer
+arguments applies the function partially and is declined. `@call.arity` names the
+function by its arity (Erlang's export list), rewritten to the new one;
+`@call.arity.value` passes it on as a value (`fun f/2`, Elixir's `&f/2`), declined
+unless the order stands, since whatever calls it passes the old one.
 
 ### Imports
 

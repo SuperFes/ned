@@ -12,8 +12,13 @@ namespace {
         return text.substr(start, end - start);
     }
 
+    // A parameter without a name (a pattern: `0`, `(x:xs)`, an abstract
+    // declarator) is known by its text.
     std::string_view Name(std::string_view text, const SignatureParameter& parameter) {
-        return Slice(text, parameter.nameStartByte, parameter.nameEndByte);
+        if (parameter.nameStartByte != parameter.nameEndByte) {
+            return Slice(text, parameter.nameStartByte, parameter.nameEndByte);
+        }
+        return Slice(text, parameter.startByte, parameter.endByte);
     }
 
     std::string_view CallName(std::string_view text, const SignatureMarker& marker) {
@@ -90,9 +95,6 @@ MappingResult BuildPositionMapping(std::string_view oldText, const std::vector<S
     std::unordered_map<std::string_view, std::size_t> oldIndexByName;
     std::unordered_map<std::string_view, bool>         oldNameIsAmbiguous;
     for (std::size_t i = 0; i < oldPositional.size(); ++i) {
-        if (oldPositional[i].nameStartByte == oldPositional[i].nameEndByte) {
-            continue; // nameless (an abstract declarator) -- can never be Kept, simply dropped
-        }
         const std::string_view name = Name(oldText, oldPositional[i]);
         if (oldIndexByName.contains(name)) {
             oldNameIsAmbiguous[name] = true;
@@ -113,9 +115,6 @@ MappingResult BuildPositionMapping(std::string_view oldText, const std::vector<S
     std::unordered_map<std::string_view, bool> newNameSeen;
     result.origins.reserve(newParams.size());
     for (const SignatureParameter& parameter : newParams) {
-        if (parameter.nameStartByte == parameter.nameEndByte) {
-            return {.declined = true, .declineReason = "new parameter list has an unnamed parameter"};
-        }
         const std::string_view name = Name(newText, parameter);
         if (newNameSeen.contains(name)) {
             return {.declined = true, .declineReason = "new parameter list uses the name \"" + std::string(name) + "\" more than once"};
@@ -164,7 +163,7 @@ MappingResult BuildPositionMapping(std::string_view oldText, const std::vector<S
 
 ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector<CallArgument>& oldArgs,
                                     std::string_view newDefaultText, const MappingResult& mapping, CallReceiver receiver,
-                                    std::string_view separator) {
+                                    std::string_view separator, bool curried) {
     // Positional arguments are realigned; a named one for a keyword
     // parameter follows them as written, or goes with its parameter.
     std::vector<CallArgument>     positional;
@@ -212,6 +211,9 @@ ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector
     if (positional.size() > mapping.oldArity - implicit) {
         return {.declined = true, .declineReason = "call site supplies more arguments than the old signature has parameters"};
     }
+    if (curried && positional.size() < mapping.oldArity - implicit) {
+        return {.declined = true, .declineReason = "call site applies the function partially"};
+    }
     std::string result;
     const auto  append = [&result, separator](std::string_view piece) {
         if (!result.empty()) {
@@ -248,6 +250,70 @@ ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector
         append(piece);
     }
     return {.declined = false, .argumentListText = std::move(result)};
+}
+
+SiteRewrite PermuteSignature(std::string_view siteText, const SignatureMarker& site, const MappingResult& mapping) {
+    const std::vector<SignatureParameter>& components = site.parameters;
+    const bool                             curried    = site.kind == SignatureKind::CurriedType;
+    for (const SignatureParameter& component : components) {
+        if (component.isKeyword || component.isVariadic) {
+            return {.declined = true, .declineReason = "another clause or type signature has a keyword parameter"};
+        }
+    }
+    if (!mapping.keptKeywords.empty() || !mapping.droppedKeywords.empty()) {
+        return {.declined = true, .declineReason = "another clause or type signature can't carry keyword parameters"};
+    }
+    if (curried ? components.size() <= mapping.oldArity : components.size() != mapping.oldArity) {
+        return {.declined      = true,
+                .declineReason = "a type signature doesn't spell out the parameters (a type synonym, or one shared by several functions)"};
+    }
+    std::vector<std::size_t> order;
+    for (const ParamOrigin& origin : mapping.origins) {
+        if (origin.kind == ParamOriginKind::New) {
+            return {.declined      = true,
+                    .declineReason = "a new parameter has no pattern for the function's other clauses or type for its type signature"};
+        }
+        order.push_back(origin.oldIndex);
+    }
+    for (std::size_t i = mapping.oldArity; i < components.size(); ++i) {
+        order.push_back(i);
+    }
+
+    SiteRewrite rewrite;
+    if (order.empty()) {
+        // Dropping every parameter takes the space before a list that
+        // follows the name with it.
+        rewrite.startByte = site.parametersLead ? site.parametersInteriorStartByte
+                                                : (components.empty() ? site.parametersInteriorStartByte : components.front().startByte);
+        rewrite.endByte   = components.empty() ? site.parametersInteriorEndByte : components.back().endByte;
+        return rewrite;
+    }
+    rewrite.startByte = components.front().startByte;
+    rewrite.endByte   = components.back().endByte;
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        if (i > 0) {
+            rewrite.text += Slice(siteText, components[i - 1].endByte, components[i].startByte);
+        }
+        rewrite.text += Slice(siteText, components[order[i]].startByte, components[order[i]].endByte);
+    }
+    return rewrite;
+}
+
+ArgumentRewrite RewriteArityReference(std::string_view callText, const CallMarker& reference, const MappingResult& mapping) {
+    const std::string_view arity = Slice(callText, reference.arityStartByte, reference.arityEndByte);
+    if (arity != std::to_string(mapping.oldArity)) {
+        return {.declined = true, .declineReason = "a reference names the function by an arity a default gives it"};
+    }
+    if (reference.functionValue) {
+        bool unchanged = mapping.origins.size() == mapping.oldArity;
+        for (std::size_t i = 0; unchanged && i < mapping.origins.size(); ++i) {
+            unchanged = mapping.origins[i].kind == ParamOriginKind::Kept && mapping.origins[i].oldIndex == i;
+        }
+        if (!unchanged) {
+            return {.declined = true, .declineReason = "a reference passes the function on, to be called in the old order"};
+        }
+    }
+    return {.declined = false, .argumentListText = std::to_string(mapping.origins.size())};
 }
 
 std::string ListReplacement(std::string_view text, bool lead) {
@@ -325,7 +391,7 @@ DiscoveryResult DiscoverSignatureAndCallSites(std::string_view name, const Signa
             if (signature.callNameStartByte == signature.callNameEndByte || CallName(*text, signature) != name) {
                 continue;
             }
-            if (signature.parameters.size() != targetArity) {
+            if (signature.kind != SignatureKind::CurriedType && signature.parameters.size() != targetArity) {
                 ++result.arityMismatches;
                 overloads.push_back(PositionalArity(signature));
                 continue;
@@ -341,9 +407,25 @@ DiscoveryResult DiscoverSignatureAndCallSites(std::string_view name, const Signa
         }
     }
 
+    const ArityRange own = PositionalArity(target);
+    std::erase_if(result.callSites, [&](const CallSite& site) {
+        if (site.call.arityEndByte == site.call.arityStartByte) {
+            return false;
+        }
+        std::size_t arity = 0;
+        for (const char c : Slice(site.text, site.call.arityStartByte, site.call.arityEndByte)) {
+            if (std::isdigit(static_cast<unsigned char>(c)) == 0) {
+                return true;
+            }
+            arity = arity * 10 + static_cast<std::size_t>(c - '0');
+        }
+        return !Accepts(own, arity);
+    });
     if (!overloads.empty()) {
-        const ArityRange own = PositionalArity(target);
         std::erase_if(result.callSites, [&](const CallSite& site) {
+            if (site.call.arityEndByte != site.call.arityStartByte) {
+                return false;
+            }
             const std::optional<std::size_t> count  = PositionalCount(site.call);
             const bool                       ours   = !count || Accepts(own, *count);
             const bool                       theirs = !count || std::any_of(overloads.begin(), overloads.end(),

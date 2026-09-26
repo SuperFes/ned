@@ -16,7 +16,8 @@
 // SearchDirectory candidate scan, ModeForPath, building the review -- is
 // Source/UI/BufferView/ChangeSignature.cpp's job, not this file's.
 //
-// Matching is by PARAMETER NAME alone, never position: a name in both the
+// Matching is by PARAMETER NAME alone (a nameless pattern parameter's whole
+// text standing in for it), never position: a name in both the
 // old and new list is `Kept` (its call-site argument is copied verbatim from
 // wherever it sits in the OLD list, regardless of where it now sits in the
 // new one -- that's what makes a pure reorder a no-op on every call site's
@@ -116,10 +117,37 @@ struct ArgumentRewrite {
 // receiver parameter the object supplies is in neither the old nor the new
 // argument list. A call passing more arguments than the old signature takes
 // is declined too -- whatever the extra ones mean, dropping them isn't it.
-// `separator` joins the arguments (Mode::listSeparator).
+// `separator` joins the arguments (Mode::listSeparator). A `curried` call
+// (CallMarker::curried) passing fewer arguments is a partial application,
+// declined whatever the change: its arity is part of what it means.
 [[nodiscard]] ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector<CallArgument>& oldArgs,
                                                   std::string_view newDefaultText, const MappingResult& mapping,
-                                                  CallReceiver receiver = CallReceiver::None, std::string_view separator = ", ");
+                                                  CallReceiver receiver = CallReceiver::None, std::string_view separator = ", ",
+                                                  bool curried = false);
+
+// Another clause's patterns or a type signature's component types, reordered
+// the way `mapping` reorders the retyped list: [startByte, endByte) of
+// `siteText` becomes `text`, each parameter's own text moving with the
+// separators left where they were. A curried type's components past the
+// parameters (its result) stay last. Declined when the mapping adds a
+// parameter -- nothing says what another clause should match it with or
+// what type it has -- or the site doesn't spell every parameter out.
+struct SiteRewrite {
+    bool        declined = false;
+    std::string declineReason; // set only when declined
+    std::size_t startByte = 0;
+    std::size_t endByte   = 0;
+    std::string text;
+};
+
+[[nodiscard]] SiteRewrite PermuteSignature(std::string_view siteText, const SignatureMarker& site, const MappingResult& mapping);
+
+// A reference by arity (CallMarker::arityStartByte, Erlang's export list):
+// the new arity, or declined when it names a shorter arity a default
+// parameter gives the function, or passes the function on as a value
+// (`fun f/2`) whose eventual caller keeps the old order.
+[[nodiscard]] ArgumentRewrite RewriteArityReference(std::string_view callText, const CallMarker& reference,
+                                                    const MappingResult& mapping);
 
 // What replaces a list's interior: `text`, after the space a list that
 // follows its name (SignatureMarker::parametersLead, CallMarker::argumentsLead)
@@ -150,6 +178,10 @@ struct ArgumentRewrite {
 // accepts is left out, and one both accept is counted in `ambiguousCalls`,
 // which a caller declines the WHOLE operation on -- the same "never guess"
 // posture as BuildPositionMapping's own variadic check.
+// A type signature (SignatureKind::Type/CurriedType) is matched the same
+// way, except that a curried one's components run on past the parameters
+// and so aren't counted. A reference by arity (Erlang's `f/2`) is kept only
+// when the function accepts that arity.
 // A same-name, SAME-arity signature -- found in the invocation's own file,
 // a header prototype, an out-of-line definition, wherever the search
 // reaches -- is added to `signatureSites` unconditionally; a real same-arity

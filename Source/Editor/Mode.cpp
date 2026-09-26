@@ -993,8 +993,9 @@ bool DelimitedByParens(std::string_view text, std::size_t start, std::size_t end
 
 // A list that follows a name inside its parent, with no delimiters of its
 // own: `(define (f a b) ...)`, `(f a b)`, Tcl's `f 1 2`. Its items are the
-// parent's named children after `after`; rewriting it ends at the parent's
-// closing bracket, or after its last item when it has none.
+// parent's named children after `after`, up to any other token (OCaml's
+// `let f x : t = ...`); rewriting it ends at the parent's closing bracket,
+// or after its last item when it has none.
 struct RestList {
     std::vector<grammar::Node> children;
     std::size_t                interiorEnd = 0;
@@ -1012,9 +1013,8 @@ RestList RestListAfter(const grammar::Node& parent, std::size_t after) {
             const std::string_view type = child.Type();
             if (i + 1 == parent.ChildCount() && (type == ")" || type == "]" || type == "}")) {
                 list.interiorEnd = child.StartByte();
-                return list;
             }
-            continue;
+            return list;
         }
         list.children.push_back(child);
         list.interiorEnd = child.EndByte();
@@ -1051,6 +1051,81 @@ std::optional<FlatList> FlatListAfter(const grammar::Tree& tree, std::size_t ope
         list.children.push_back(child);
     }
     return std::nullopt;
+}
+
+// An arrow type the grammar nests a pair at a time, `a -> b -> c` as
+// `(function a (function b c))`, read as one list: a node continues in its
+// last item when that has its own type. Items are the named children, less
+// the ones in `skipped` (PureScript's `->` operator node).
+std::vector<grammar::Node> ChainItems(grammar::Node node, const std::set<std::pair<std::size_t, std::size_t>>& skipped) {
+    const std::string          type(node.Type());
+    std::vector<grammar::Node> items;
+    while (true) {
+        std::vector<grammar::Node> own;
+        for (std::size_t i = 0; i < node.ChildCount(); ++i) {
+            const grammar::Node child = node.Child(i);
+            if (child.IsNamed() && !child.IsExtra() && !skipped.contains({child.StartByte(), child.EndByte()})) {
+                own.push_back(child);
+            }
+        }
+        if (own.empty() || own.back().Type() != type) {
+            items.insert(items.end(), own.begin(), own.end());
+            return items;
+        }
+        node = own.back();
+        own.pop_back();
+        items.insert(items.end(), own.begin(), own.end());
+    }
+}
+
+// A curried call's arguments, innermost application's first: each
+// application's named children after its head.
+std::vector<grammar::Node> CurriedArguments(grammar::Node node) {
+    std::vector<std::vector<grammar::Node>> levels;
+    while (true) {
+        std::vector<grammar::Node> named;
+        for (std::size_t i = 0; i < node.ChildCount(); ++i) {
+            const grammar::Node child = node.Child(i);
+            if (child.IsNamed() && !child.IsExtra()) {
+                named.push_back(child);
+            }
+        }
+        if (named.empty()) {
+            break;
+        }
+        levels.emplace_back(named.begin() + 1, named.end());
+        if (named.front().Type() != node.Type()) {
+            break;
+        }
+        node = named.front();
+    }
+    std::vector<grammar::Node> arguments;
+    for (auto level = levels.rbegin(); level != levels.rend(); ++level) {
+        arguments.insert(arguments.end(), level->begin(), level->end());
+    }
+    return arguments;
+}
+
+// The outermost application a curried call's innermost one sits at the head
+// of: `(apply (apply f a) b)` from `(apply f a)`.
+grammar::Node OutermostApplication(grammar::Node node) {
+    while (true) {
+        const grammar::Node parent = node.Parent();
+        if (parent.IsNull() || parent.Type() != node.Type()) {
+            return node;
+        }
+        grammar::Node head(parse::NodeNull());
+        for (std::size_t i = 0; i < parent.ChildCount() && head.IsNull(); ++i) {
+            const grammar::Node child = parent.Child(i);
+            if (child.IsNamed() && !child.IsExtra()) {
+                head = child;
+            }
+        }
+        if (head.StartByte() != node.StartByte() || head.EndByte() != node.EndByte()) {
+            return node;
+        }
+        node = parent;
+    }
 }
 
 std::vector<SignatureParameter> ParametersFromList(const grammar::Node& parameterList) {
@@ -2035,9 +2110,23 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 std::optional<std::pair<std::size_t, std::size_t>> openParen;
                 std::optional<std::pair<std::size_t, std::size_t>> restParent;
                 std::string_view                                   restType;
+                std::optional<std::pair<std::size_t, std::size_t>> chain;
+                std::string_view                                   chainType;
+                bool                                               opaque = false;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (capture.name == "signature.parameters.open") {
                         openParen.emplace(capture.startByte, capture.endByte);
+                    }
+                    else if (capture.name == "signature.parameters.chain" || capture.name == "signature.parameters.opaque") {
+                        chain.emplace(capture.startByte, capture.endByte);
+                        chainType = capture.type;
+                        opaque    = capture.name == "signature.parameters.opaque";
+                    }
+                    else if (capture.name == "signature.type" || capture.name == "signature.type.curried") {
+                        marker.startByte = capture.startByte;
+                        marker.endByte   = capture.endByte;
+                        marker.kind      = capture.name == "signature.type" ? SignatureKind::Type : SignatureKind::CurriedType;
+                        haveDefinition   = true;
                     }
                     else if (capture.name == "signature.parameters.rest") {
                         restParent.emplace(capture.startByte, capture.endByte);
@@ -2077,16 +2166,38 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     haveParameters  = true;
                 }
                 std::optional<std::size_t> restInteriorEnd;
+                std::size_t                restInteriorStart = marker.nameEndByte;
                 if (restParent && haveName) {
                     const grammar::Node parent = CapturedNode(tree, restParent->first, restParent->second, restType);
                     if (parent.IsNull()) {
                         continue;
                     }
                     RestList list   = RestListAfter(parent, marker.nameEndByte);
+                    // A list node of its own after the name starts after
+                    // whatever precedes it (F#'s `let f<'T> x`).
+                    if (parent.StartByte() >= marker.nameEndByte) {
+                        const grammar::Node previous = parent.PrevNamedSibling();
+                        if (!previous.IsNull() && previous.EndByte() > restInteriorStart) {
+                            restInteriorStart = previous.EndByte();
+                        }
+                    }
                     flatParameters  = FlatList{.children = std::move(list.children), .closeEnd = parent.EndByte()};
                     restInteriorEnd = list.interiorEnd;
                     parametersStart = parent.StartByte();
                     parametersEnd   = parent.EndByte();
+                    haveParameters  = true;
+                }
+                if (chain) {
+                    const grammar::Node top = CapturedNode(tree, chain->first, chain->second, chainType);
+                    if (top.IsNull()) {
+                        continue;
+                    }
+                    // A type that doesn't spell its parameters out (a synonym)
+                    // is one component.
+                    flatParameters  = FlatList{.children = opaque ? std::vector<grammar::Node>{top} : ChainItems(top, skipped),
+                                               .closeEnd = top.EndByte()};
+                    parametersStart = top.StartByte();
+                    parametersEnd   = top.EndByte();
                     haveParameters  = true;
                 }
                 if (!haveDefinition || !haveName || !haveParameters) {
@@ -2112,9 +2223,15 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 if (restInteriorEnd) {
                     marker.parametersStartByte         = parametersStart;
                     marker.parametersEndByte           = parametersEnd;
-                    marker.parametersInteriorStartByte = marker.nameEndByte;
+                    marker.parametersInteriorStartByte = restInteriorStart;
                     marker.parametersInteriorEndByte   = *restInteriorEnd;
                     marker.parametersLead              = true;
+                }
+                else if (chain) {
+                    marker.parametersStartByte         = parametersStart;
+                    marker.parametersEndByte           = parametersEnd;
+                    marker.parametersInteriorStartByte = parametersStart;
+                    marker.parametersInteriorEndByte   = parametersEnd;
                 }
                 else {
                     if (!DelimitedByParens(bufferText, parametersStart, parametersEnd)) {
@@ -2202,9 +2319,25 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                            (other.startByte != marker.startByte || other.endByte != marker.endByte);
                 });
             });
-            std::sort(markers.begin(), markers.end(),
-                      [](const SignatureMarker& a, const SignatureMarker& b) { return a.startByte < b.startByte; });
-            return markers;
+            // A signature two patterns describe once (a type's catch-all for
+            // types that don't spell their parameters) keeps the one that
+            // reads the most parameters.
+            std::stable_sort(markers.begin(), markers.end(), [](const SignatureMarker& a, const SignatureMarker& b) {
+                return std::tie(a.startByte, a.endByte, a.nameStartByte, b.kind) < std::tie(b.startByte, b.endByte, b.nameStartByte, a.kind);
+            });
+            std::vector<SignatureMarker> kept;
+            for (SignatureMarker& marker : markers) {
+                if (!kept.empty() && kept.back().kind == marker.kind &&
+                    kept.back().startByte == marker.startByte && kept.back().endByte == marker.endByte &&
+                    kept.back().nameStartByte == marker.nameStartByte) {
+                    if (marker.parameters.size() > kept.back().parameters.size()) {
+                        kept.back() = std::move(marker);
+                    }
+                    continue;
+                }
+                kept.push_back(std::move(marker));
+            }
+            return kept;
         };
     }
 
@@ -2317,9 +2450,24 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 std::optional<std::pair<std::size_t, std::size_t>> openParen;
                 std::optional<std::pair<std::size_t, std::size_t>> restParent;
                 std::string_view                                   restType;
+                std::optional<std::pair<std::size_t, std::size_t>> chain;
+                std::string_view                                   chainType;
+                std::optional<std::pair<std::size_t, std::size_t>> arity;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (capture.name == "call.arguments.open") {
                         openParen.emplace(capture.startByte, capture.endByte);
+                    }
+                    else if (capture.name == "call.arguments.chain") {
+                        chain.emplace(capture.startByte, capture.endByte);
+                        chainType      = capture.type;
+                        marker.curried = true;
+                    }
+                    else if (capture.name == "call.curried") {
+                        marker.curried = true;
+                    }
+                    else if (capture.name == "call.arity" || capture.name == "call.arity.value") {
+                        arity.emplace(capture.startByte, capture.endByte);
+                        marker.functionValue = capture.name == "call.arity.value";
                     }
                     else if (capture.name == "call.arguments.rest") {
                         restParent.emplace(capture.startByte, capture.endByte);
@@ -2385,8 +2533,32 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     marker.calleeEndByte   = named->second;
                     haveCallee             = true;
                 }
+                if (arity && haveDefinition && haveCallee) {
+                    marker.arityStartByte = arity->first;
+                    marker.arityEndByte   = arity->second;
+                    markers.push_back(std::move(marker));
+                    continue;
+                }
+                // A curried call: every application up the chain adds its
+                // arguments after the callee.
+                if (chain && haveCallee) {
+                    const grammar::Node innermost = CapturedNode(tree, chain->first, chain->second, chainType);
+                    if (innermost.IsNull()) {
+                        continue;
+                    }
+                    const grammar::Node outermost = OutermostApplication(innermost);
+                    marker.startByte              = outermost.StartByte();
+                    marker.endByte                = outermost.EndByte();
+                    argumentNodes                 = CurriedArguments(outermost);
+                    argumentsStart                = marker.startByte;
+                    argumentsEnd                  = marker.endByte;
+                    haveArguments                 = true;
+                }
                 std::optional<std::size_t> restInteriorEnd;
-                if (restParent && haveCallee) {
+                if (chain && haveCallee) {
+                    restInteriorEnd = marker.endByte;
+                }
+                else if (restParent && haveCallee) {
                     const grammar::Node parent = CapturedNode(tree, restParent->first, restParent->second, restType);
                     if (parent.IsNull()) {
                         continue;

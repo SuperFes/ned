@@ -145,18 +145,22 @@ bool BufferView::BuildChangeSignatureReview(const std::filesystem::path& targetF
     // should ever rest on. The loop below skips re-adding it if discovery
     // found the identical range, which is the common case.
     std::unordered_map<std::filesystem::path, editor::rename::FileRenameHits> byFile;
-    auto addSignatureHit = [&byFile](const std::filesystem::path& file, const std::string& text,
-                                     const editor::SignatureMarker& signature, const std::string& replacement) {
+    auto                                                                      addHit = [&byFile](const std::filesystem::path& file, const std::string& text, std::size_t start, std::size_t end,
+                                                                                                 std::string replacement) {
         auto [it, inserted] = byFile.try_emplace(file);
         if (inserted) {
             it->second.file = file;
             it->second.text = text;
         }
-        it->second.hits.push_back(editor::rename::RenameHit{.startByte   = signature.parametersInteriorStartByte,
-                                                             .endByte     = signature.parametersInteriorEndByte,
-                                                             .kind        = editor::rename::HitKind::Reference,
-                                                             .replacement = editor::changesig::ListReplacement(
-                                                                 replacement, signature.parametersLead)});
+        it->second.hits.push_back(editor::rename::RenameHit{.startByte   = start,
+                                                            .endByte     = end,
+                                                            .kind        = editor::rename::HitKind::Reference,
+                                                            .replacement = std::move(replacement)});
+    };
+    auto addSignatureHit = [&addHit](const std::filesystem::path& file, const std::string& text,
+                                     const editor::SignatureMarker& signature, const std::string& replacement) {
+        addHit(file, text, signature.parametersInteriorStartByte, signature.parametersInteriorEndByte,
+               editor::changesig::ListReplacement(replacement, signature.parametersLead));
     };
     addSignatureHit(targetFile, targetText, targetSignature, newSignatureText);
     for (const editor::changesig::SignatureSite& site : discovery.signatureSites) {
@@ -164,30 +168,45 @@ bool BufferView::BuildChangeSignatureReview(const std::filesystem::path& targetF
             site.signature.parametersEndByte == targetSignature.parametersEndByte) {
             continue; // already added explicitly above
         }
+        // A type signature, or another clause of a function written as
+        // several, keeps its own text and is reordered.
+        if (site.signature.kind != editor::SignatureKind::Definition || editor::ModeForPath(site.file).signatureClauses) {
+            const editor::changesig::SiteRewrite rewrite = editor::changesig::PermuteSignature(site.text, site.signature, mapping);
+            if (rewrite.declined) {
+                statusMessage_ = "Change signature: " + rewrite.declineReason + ".";
+                return false;
+            }
+            addHit(site.file, site.text, rewrite.startByte, rewrite.endByte, rewrite.text);
+            continue;
+        }
         addSignatureHit(site.file, site.text, site.signature, newSignatureText);
     }
 
     std::string declineReason;
     std::size_t declinedCallSites = 0;
     for (const editor::changesig::CallSite& site : discovery.callSites) {
+        if (site.call.arityEndByte != site.call.arityStartByte) {
+            const editor::changesig::ArgumentRewrite rewrite =
+                editor::changesig::RewriteArityReference(site.text, site.call, mapping);
+            if (rewrite.declined) {
+                ++declinedCallSites;
+                declineReason = rewrite.declineReason;
+                continue;
+            }
+            addHit(site.file, site.text, site.call.arityStartByte, site.call.arityEndByte, rewrite.argumentListText);
+            continue;
+        }
         const editor::changesig::ArgumentRewrite rewrite =
             editor::changesig::RewriteArgumentList(site.text, site.call.arguments, syntheticText, mapping, site.call.receiver,
-                                                   site.call.argumentsLead ? " " : editor::ModeForPath(site.file).listSeparator);
+                                                   site.call.argumentsLead ? " " : editor::ModeForPath(site.file).listSeparator,
+                                                   site.call.curried);
         if (rewrite.declined) {
             ++declinedCallSites;
             declineReason = rewrite.declineReason;
             continue;
         }
-        auto [it, inserted] = byFile.try_emplace(site.file);
-        if (inserted) {
-            it->second.file = site.file;
-            it->second.text = site.text;
-        }
-        it->second.hits.push_back(editor::rename::RenameHit{.startByte   = site.call.argumentsInteriorStartByte,
-                                                             .endByte     = site.call.argumentsInteriorEndByte,
-                                                             .kind        = editor::rename::HitKind::Reference,
-                                                             .replacement = editor::changesig::ListReplacement(
-                                                                 rewrite.argumentListText, site.call.argumentsLead)});
+        addHit(site.file, site.text, site.call.argumentsInteriorStartByte, site.call.argumentsInteriorEndByte,
+               editor::changesig::ListReplacement(rewrite.argumentListText, site.call.argumentsLead));
     }
 
     std::vector<editor::rename::FileRenameHits> files;
@@ -227,8 +246,9 @@ namespace {
     // range wins on overlap, the same "innermost" rule ResolveLocalBindingAt
     // applies, defensive against a future grammar that nests function-like
     // definitions (a lambda) even though cpp/signatures.janet doesn't today.
-    const editor::SignatureMarker* InnermostSignatureAt(const std::vector<editor::SignatureMarker>& markers,
-                                                         std::size_t                                 point) {
+    // On a type signature (`f :: a -> b`), the first definition it types.
+    const editor::SignatureMarker* InnermostSignatureAt(std::string_view text, const std::vector<editor::SignatureMarker>& markers,
+                                                        std::size_t point) {
         const editor::SignatureMarker* best = nullptr;
         for (const editor::SignatureMarker& marker : markers) {
             if (marker.startByte <= point && point <= marker.endByte &&
@@ -236,7 +256,17 @@ namespace {
                 best = &marker;
             }
         }
-        return best;
+        if (best == nullptr || best->kind == editor::SignatureKind::Definition) {
+            return best;
+        }
+        const std::string_view name = text.substr(best->nameStartByte, best->nameEndByte - best->nameStartByte);
+        for (const editor::SignatureMarker& marker : markers) {
+            if (marker.kind == editor::SignatureKind::Definition &&
+                text.substr(marker.nameStartByte, marker.nameEndByte - marker.nameStartByte) == name) {
+                return &marker;
+            }
+        }
+        return nullptr;
     }
 
 } // namespace
@@ -264,7 +294,7 @@ void BufferView::RequestChangeSignatureAtPoint() {
 
     const std::string text = buffer.Content().Substring(0, buffer.Content().ByteLength());
     const auto        markers = mode_.signatures(text);
-    const editor::SignatureMarker* marker = InnermostSignatureAt(markers, buffer.Point());
+    const editor::SignatureMarker* marker  = InnermostSignatureAt(text, markers, buffer.Point());
     if (marker == nullptr) {
         statusMessage_ = "No function signature at point.";
         return;

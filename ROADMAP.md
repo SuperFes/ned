@@ -1178,6 +1178,12 @@ just fixing-and-forgetting or letting it fade from memory between sessions. Fixe
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
 
+- **F# grammar: application and infix share a precedence, and EOF needs a newline.**
+  `1 + f a` parses as `(1 + f) a` (`_low_prec_app` and `infix_expression` are both
+  `prec-left 16`; raising application conflicts with `tuple_expression` and
+  `ce_expression`), which fsharp/calls.janet works around. `let f x y = ()` with no
+  trailing newline doesn't parse as a function at all; the change-signature template
+  carries its own newline.
 - **Markdown emphasis on a pathological paragraph.** Each `*`/`_` run that can open reads
   ahead (up to 4096 codepoints) to see whether anything closes it, so a single paragraph
   of thousands of openers that never close costs that read-ahead for every one: 15,000 of
@@ -1324,17 +1330,15 @@ these accumulate detail in place.
       use that precedes its binding in a whole-scope language (Python function scope,
       JavaScript `var` hoisting -- `LocalBinding::usedBeforeDefinition`). All decline
       rather than mis-rename. Justified when one of them blocks a real rename.
-- [ ] **change-signature for curried and multi-clause languages.** Haskell, OCaml and
-      F# apply a function without a parenthesized argument list, and the Lisps have no
-      separate list at all; Erlang's and Elixir's multi-clause functions have a pattern
-      per clause head that each change would rewrite separately. Justified when someone
-      asks for change-signature in one of them.
 - [ ] **change-signature's remaining misses.** A Kotlin class with no primary
       constructor may list an interface before its superclass (no parens tell them
       apart), and `super(...)` is then sent to the first; a C# extension method called
       statically with its trailing defaults omitted reads as a member call; Ruby's and
       Crystal's bare `super` forwards the child's own arguments, which a reorder of the
-      parent's would need spelled out. Justified when one of them turns up in a real
+      parent's would need spelled out. A function passed on unapplied (`foldr f 0 xs`,
+      `map f` in any language) isn't found, and neither is one applied infix
+      (`` x `f` y ``) or in an operator section; a Haskell equation written infix isn't
+      reordered with its siblings. Justified when one of them turns up in a real
       refactor.
 - [ ] **Imports for module systems that aren't paths.** C# and F# namespaces, Swift and
       Elixir modules, OCaml and ReScript's flat module names, Pascal units (a unit name

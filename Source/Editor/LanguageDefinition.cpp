@@ -39,6 +39,7 @@ namespace {
         mode.wrapLines             = definition.wrapLines;
         mode.stickyScrollFromFolds = definition.stickyScrollFromFolds;
         mode.signatureTemplate     = definition.signatureTemplate;
+        mode.signatureClauses      = definition.signatureClauses;
         if (!definition.listSeparator.empty()) {
             mode.listSeparator = definition.listSeparator;
         }

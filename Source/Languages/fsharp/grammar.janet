@@ -169,7 +169,7 @@
                    list_pattern
                    record_pattern
                    array_pattern
-                   (:seq "(" _pattern ")"))
+                   paren_pattern)
   _list_pattern_content (:field :block
                          (:seq
                           _indent

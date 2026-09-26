@@ -2218,9 +2218,10 @@ type C() =
               (identifier))
             (property_accessor
               (argument_patterns
-                (identifier_pattern
-                  (long_identifier_or_op
-                    (identifier))))
+                (paren_pattern
+                  (identifier_pattern
+                    (long_identifier_or_op
+                      (identifier)))))
               (mutate_expression
                 (long_identifier_or_op
                   (identifier))
@@ -2259,9 +2260,10 @@ type C() =
                 (unit)))
             (property_accessor
               (argument_patterns
-                (identifier_pattern
-                  (long_identifier_or_op
-                    (identifier))))
+                (paren_pattern
+                  (identifier_pattern
+                    (long_identifier_or_op
+                      (identifier)))))
               (mutate_expression
                 (long_identifier_or_op
                   (identifier))
@@ -2298,9 +2300,10 @@ type C() =
                 (unit)))
             (property_accessor
               (argument_patterns
-                (identifier_pattern
-                  (long_identifier_or_op
-                    (identifier))))
+                (paren_pattern
+                  (identifier_pattern
+                    (long_identifier_or_op
+                      (identifier)))))
               (mutate_expression
                 (long_identifier_or_op
                   (identifier))

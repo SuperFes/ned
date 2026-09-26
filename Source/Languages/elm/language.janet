@@ -2,6 +2,7 @@
  :extensions [".elm"]
  :preserve-indent true
  :line-comment "--"
+ :signature-template "nedSig {} = ()"
  :lsp-root-markers ["elm.json"]
  # Upstream names its captures after TextMate scopes.
  :capture-classes {"local.function" :variable

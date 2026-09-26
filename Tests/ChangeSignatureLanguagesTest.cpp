@@ -27,9 +27,11 @@ std::string_view Slice(std::string_view text, std::size_t start, std::size_t end
 
 // What change-signature does to one file: the definition named `function`
 // (its first one) takes `newParameters`, and so does every same-named,
-// same-arity signature; every call to it is rewritten. A declined operation
-// comes back as "declined: <reason>", and a call site left alone is marked
-// in place with "/*declined*/" so a test sees which one.
+// same-arity signature -- a type signature, or another clause of a function
+// written as several, reordered instead; every call to it is rewritten. A
+// declined operation comes back as "declined: <reason>", and a call site
+// left alone is marked in place with "/*declined*/" so a test sees which
+// one.
 std::string ChangeSignature(std::string_view language, const std::string& source, std::string_view function,
                             const std::string& newParameters) {
     const std::optional<ned::editor::Mode> mode = ned::editor::ModeByName(std::string(language) + "-mode");
@@ -41,7 +43,8 @@ std::string ChangeSignature(std::string_view language, const std::string& source
 
     const std::vector<SignatureMarker> signatures = mode->signatures(source);
     const auto                         target     = std::find_if(signatures.begin(), signatures.end(), [&](const SignatureMarker& signature) {
-        return Slice(source, signature.nameStartByte, signature.nameEndByte) == function;
+        return signature.kind == ned::editor::SignatureKind::Definition &&
+               Slice(source, signature.nameStartByte, signature.nameEndByte) == function;
     });
     REQUIRE(target != signatures.end());
     const std::string_view callName = Slice(source, target->callNameStartByte, target->callNameEndByte);
@@ -60,21 +63,44 @@ std::string ChangeSignature(std::string_view language, const std::string& source
         std::size_t start, end;
         std::string text;
     };
-    std::vector<Edit> edits;
-    for (const SignatureMarker& signature : signatures) {
-        if (Slice(source, signature.callNameStartByte, signature.callNameEndByte) == callName &&
-            signature.parameters.size() == target->parameters.size()) {
-            edits.push_back({signature.parametersInteriorStartByte, signature.parametersInteriorEndByte,
-                             changesig::ListReplacement(newParameters, signature.parametersLead)});
-        }
+    const changesig::DiscoveryResult discovery = changesig::DiscoverSignatureAndCallSites(
+        callName, *target, {"file"}, [&](const std::filesystem::path&) { return std::optional<std::string>(source); },
+        [&](const std::filesystem::path&, std::string_view text) {
+            return changesig::FileScanResult{.signatures = mode->signatures(text), .calls = mode->calls(text)};
+        });
+    if (discovery.ambiguousCalls != 0) {
+        return "declined: ambiguous calls";
     }
-    for (const CallMarker& call : mode->calls(source)) {
-        if (Slice(source, call.calleeStartByte, call.calleeEndByte) != callName) {
+    std::vector<Edit> edits;
+    for (const changesig::SignatureSite& site : discovery.signatureSites) {
+        const SignatureMarker& signature = site.signature;
+        const bool             isTarget  = signature.startByte == target->startByte && signature.kind == target->kind;
+        if (!isTarget && (signature.kind != ned::editor::SignatureKind::Definition || mode->signatureClauses)) {
+            const changesig::SiteRewrite rewrite = changesig::PermuteSignature(source, signature, mapping);
+            if (rewrite.declined) {
+                return "declined: " + rewrite.declineReason;
+            }
+            edits.push_back({rewrite.startByte, rewrite.endByte, rewrite.text});
+            continue;
+        }
+        edits.push_back({signature.parametersInteriorStartByte, signature.parametersInteriorEndByte,
+                         changesig::ListReplacement(newParameters, signature.parametersLead)});
+    }
+    for (const changesig::CallSite& site : discovery.callSites) {
+        const CallMarker& call = site.call;
+        if (call.arityEndByte != call.arityStartByte) {
+            const changesig::ArgumentRewrite rewrite = changesig::RewriteArityReference(source, call, mapping);
+            if (rewrite.declined) {
+                edits.push_back({call.arityStartByte, call.arityStartByte, "/*declined*/"});
+            }
+            else {
+                edits.push_back({call.arityStartByte, call.arityEndByte, rewrite.argumentListText});
+            }
             continue;
         }
         const changesig::ArgumentRewrite rewrite =
             changesig::RewriteArgumentList(source, call.arguments, synthetic, mapping, call.receiver,
-                                           call.argumentsLead ? " " : mode->listSeparator);
+                                           call.argumentsLead ? " " : mode->listSeparator, call.curried);
         if (rewrite.declined) {
             const std::size_t at = call.argumentsLead ? call.argumentsInteriorStartByte : call.argumentsStartByte;
             edits.push_back({at, at, "/*declined*/"});
@@ -1229,4 +1255,201 @@ TEST_CASE("CMake, Tcl, Nu, just and PowerShell change-signature rewrite command-
           "Scale/*declined*/ -v 1 -factor 3\n");
     CHECK(ChangeSignature("powershell", "class C {\n  [int] M($a, $b) { return $a }\n}\n$c.M(1, 2)\n", "M", "$b, $a") ==
           "class C {\n  [int] M($b, $a) { return $a }\n}\n$c.M(2, 1)\n");
+}
+
+TEST_CASE("Erlang change-signature reorders every clause, the spec and references by arity", "[ChangeSignature]") {
+    const std::string source = "-module(geo).\n"
+                               "-export([scale/2, scale/3]).\n"
+                               "-spec scale(number(), integer()) -> number().\n"
+                               "scale(0, _) -> 0;\n"
+                               "scale(X, N) -> X * N.\n"
+                               "scale(X, N, M) -> X * N * M.\n"
+                               "main() -> scale(2, 3) + geo:scale(1, 2) + scale(1, 2, 3), lists:map(fun scale/2, []).\n";
+    CHECK(ChangeSignature("erlang", source, "scale", "_, 0") ==
+          "-module(geo).\n"
+          "-export([scale/2, scale/3]).\n"
+          "-spec scale(integer(), number()) -> number().\n"
+          "scale(_, 0) -> 0;\n"
+          "scale(N, X) -> X * N.\n"
+          "scale(X, N, M) -> X * N * M.\n"
+          "main() -> scale(3, 2) + geo:scale(2, 1) + scale(1, 2, 3), lists:map(fun scale//*declined*/2, []).\n");
+    CHECK(ChangeSignature("erlang", source, "scale", "0") ==
+          "-module(geo).\n"
+          "-export([scale/1, scale/3]).\n"
+          "-spec scale(number()) -> number().\n"
+          "scale(0) -> 0;\n"
+          "scale(X) -> X * N.\n"
+          "scale(X, N, M) -> X * N * M.\n"
+          "main() -> scale(2) + geo:scale(1) + scale(1, 2, 3), lists:map(fun scale//*declined*/2, []).\n");
+    CHECK(ChangeSignature("erlang", source, "scale", "0, _, Z") == "declined: new parameter \"Z\" needs a default value");
+}
+
+TEST_CASE("Elixir change-signature reorders every clause and the spec, and follows pipes and captures", "[ChangeSignature]") {
+    const std::string source = "defmodule Geo do\n"
+                               "  @spec scale(number, integer) :: number\n"
+                               "  def scale(0, _), do: 0\n"
+                               "  def scale(x, n) when n > 0 do\n"
+                               "    x * n\n"
+                               "  end\n"
+                               "  def main, do: scale(2, 3) + Geo.scale(1, 2) + (4 |> scale(5)) + Enum.sum(Enum.map([1], &scale/2))\n"
+                               "end\n";
+    CHECK(ChangeSignature("elixir", source, "scale", "_, 0") ==
+          "defmodule Geo do\n"
+          "  @spec scale(integer, number) :: number\n"
+          "  def scale(_, 0), do: 0\n"
+          "  def scale(n, x) when n > 0 do\n"
+          "    x * n\n"
+          "  end\n"
+          "  def main, do: scale(3, 2) + Geo.scale(2, 1) + (4 |> scale/*declined*/(5)) + Enum.sum(Enum.map([1], &scale//*declined*/2))\n"
+          "end\n");
+
+    const std::string single = "defmodule Geo do\n"
+                               "  def area(w, h), do: w * h\n"
+                               "  def main, do: area(2, 3) + (2 |> area(3))\n"
+                               "end\n";
+    CHECK(ChangeSignature("elixir", single, "area", "w, h, unit \\\\ :m") ==
+          "defmodule Geo do\n"
+          "  def area(w, h, unit \\\\ :m), do: w * h\n"
+          "  def main, do: area(2, 3, :m) + (2 |> area(3, :m))\n"
+          "end\n");
+    CHECK(ChangeSignature("elixir", single, "area", "w") ==
+          "defmodule Geo do\n"
+          "  def area(w), do: w * h\n"
+          "  def main, do: area(2) + (2 |> area())\n"
+          "end\n");
+    CHECK(ChangeSignature("elixir", source, "scale", "0, _, z \\\\ 1") ==
+          "declined: a new parameter has no pattern for the function's other clauses or type for its type signature");
+}
+
+TEST_CASE("Haskell change-signature reorders every equation, the type signature and curried calls", "[ChangeSignature]") {
+    const std::string source = "module Geo where\n"
+                               "import qualified Geo as G\n"
+                               "scale :: Num a => a -> Int -> a\n"
+                               "scale 0 _ = 0\n"
+                               "scale x n = x * fromIntegral n\n"
+                               "main = print (scale 2 3) >> print (G.scale (f 1) 2) >> print (map (scale 1) [2])\n";
+    CHECK(ChangeSignature("haskell", source, "scale", "_ 0") ==
+          "module Geo where\n"
+          "import qualified Geo as G\n"
+          "scale :: Num a => Int -> a -> a\n"
+          "scale _ 0 = 0\n"
+          "scale n x = x * fromIntegral n\n"
+          "main = print (scale 3 2) >> print (G.scale 2 (f 1)) >> print (map (scale/*declined*/ 1) [2])\n");
+    CHECK(ChangeSignature("haskell", source, "scale", "0") ==
+          "module Geo where\n"
+          "import qualified Geo as G\n"
+          "scale :: Num a => a -> a\n"
+          "scale 0 = 0\n"
+          "scale x = x * fromIntegral n\n"
+          "main = print (scale 2) >> print (G.scale (f 1)) >> print (map (scale/*declined*/ 1) [2])\n");
+
+    const std::string synonym = "area :: Area\n"
+                                "area w h = w * h\n";
+    CHECK(ChangeSignature("haskell", synonym, "area", "h w") ==
+          "declined: a type signature doesn't spell out the parameters (a type synonym, or one shared by several functions)");
+    const std::string shared = "area, box :: Int -> Int -> Int\n"
+                               "area w h = w * h\n";
+    CHECK(ChangeSignature("haskell", shared, "area", "h w") ==
+          "declined: a type signature doesn't spell out the parameters (a type synonym, or one shared by several functions)");
+}
+
+TEST_CASE("PureScript change-signature reorders every equation, the type signature and its calls", "[ChangeSignature]") {
+    const std::string source = "module Geo where\n"
+                               "scale :: forall a. Semiring a => a -> Int -> a\n"
+                               "scale x 0 = x\n"
+                               "scale x n = x * n\n"
+                               "main = G.scale 1 2 + scale (f 1) 3 + map (scale 1) [2]\n";
+    CHECK(ChangeSignature("purescript", source, "scale", "0 x") ==
+          "module Geo where\n"
+          "scale :: forall a. Semiring a => Int -> a -> a\n"
+          "scale 0 x = x\n"
+          "scale n x = x * n\n"
+          "main = G.scale 2 1 + scale 3 (f 1) + map (scale/*declined*/ 1) [2]\n");
+    const std::string plain = "area :: Int -> Int -> Int\n"
+                              "area w h = w * h\n"
+                              "main = area 2 3\n";
+    CHECK(ChangeSignature("purescript", plain, "area", "h w") ==
+          "area :: Int -> Int -> Int\n"
+          "area h w = w * h\n"
+          "main = area 3 2\n");
+    CHECK(ChangeSignature("purescript", plain, "area", "w") ==
+          "area :: Int -> Int\n"
+          "area w = w * h\n"
+          "main = area 2\n");
+}
+
+TEST_CASE("Elm change-signature reorders the definition, its type annotation and calls", "[ChangeSignature]") {
+    const std::string source = "module Geo exposing (..)\n"
+                               "\n"
+                               "scale : Float -> Int -> Float\n"
+                               "scale x n =\n"
+                               "    x * toFloat n\n"
+                               "\n"
+                               "main =\n"
+                               "    Geo.scale 2 3 + scale (f 1) 4 + (5 |> scale 1)\n";
+    CHECK(ChangeSignature("elm", source, "scale", "n x") ==
+          "module Geo exposing (..)\n"
+          "\n"
+          "scale : Int -> Float -> Float\n"
+          "scale n x =\n"
+          "    x * toFloat n\n"
+          "\n"
+          "main =\n"
+          "    Geo.scale 3 2 + scale 4 (f 1) + (5 |> scale/*declined*/ 1)\n");
+    CHECK(ChangeSignature("elm", source, "scale", "x") ==
+          "module Geo exposing (..)\n"
+          "\n"
+          "scale : Float -> Float\n"
+          "scale x =\n"
+          "    x * toFloat n\n"
+          "\n"
+          "main =\n"
+          "    Geo.scale 2 + scale (f 1) + (5 |> scale/*declined*/ 1)\n");
+}
+
+TEST_CASE("OCaml change-signature reorders positional parameters and keeps labelled ones by label", "[ChangeSignature]") {
+    const std::string source = "let scale ~unit x (n : int) : int = x * n\n"
+                               "let main () =\n"
+                               "  ignore (M.scale ~unit:1 2 3 + scale (f 1) 4 ~unit + (5 |> scale ~unit 1))\n";
+    CHECK(ChangeSignature("ocaml", source, "scale", "~unit (n : int) x") ==
+          "let scale ~unit (n : int) x : int = x * n\n"
+          "let main () =\n"
+          "  ignore (M.scale 3 2 ~unit:1 + scale 4 (f 1) ~unit + (5 |> scale/*declined*/ ~unit 1))\n");
+    CHECK(ChangeSignature("ocaml", source, "scale", "x (n : int) ?(round = false)") ==
+          "let scale x (n : int) ?(round = false) : int = x * n\n"
+          "let main () =\n"
+          "  ignore (M.scale 2 3 + scale (f 1) 4 + (5 |> scale/*declined*/ ~unit 1))\n");
+}
+
+TEST_CASE("An OCaml interface's val is reordered with its implementation", "[ChangeSignature]") {
+    const std::optional<ned::editor::Mode> implementation = ned::editor::ModeByName("ocaml-mode");
+    const std::optional<ned::editor::Mode> interface      = ned::editor::ModeByName("ocaml-interface-mode");
+    REQUIRE(implementation.has_value());
+    REQUIRE(interface.has_value());
+    const std::string              source  = "let scale x n = x * n\n";
+    const std::string              retyped = "let ned_sig n x = ()";
+    const changesig::MappingResult mapping = changesig::BuildPositionMapping(
+        source, implementation->signatures(source).front().parameters, retyped, implementation->signatures(retyped).front().parameters);
+    REQUIRE_FALSE(mapping.declined);
+
+    const std::string                  mli     = "val scale : float -> int -> float\nval area : t\n";
+    const std::vector<SignatureMarker> markers = interface->signatures(mli);
+    REQUIRE(markers.size() == 2);
+    CHECK(markers[0].kind == ned::editor::SignatureKind::CurriedType);
+    const changesig::SiteRewrite rewrite = changesig::PermuteSignature(mli, markers[0], mapping);
+    REQUIRE_FALSE(rewrite.declined);
+    CHECK(mli.substr(0, rewrite.startByte) + rewrite.text + mli.substr(rewrite.endByte) ==
+          "val scale : int -> float -> float\nval area : t\n");
+    CHECK(changesig::PermuteSignature(mli, markers[1], mapping).declined);
+}
+
+TEST_CASE("F# change-signature reorders patterns and curried calls", "[ChangeSignature]") {
+    const std::string source = "let scale<'T> x (n: int) (a, b) = x * n\n"
+                               "let main () = M.scale 1 2 (3, 4) + scale (f 1) 5 (6, 7) |> List.map (scale 1 2)\n";
+    CHECK(ChangeSignature("fsharp", source, "scale", "(a, b) (n: int) x") ==
+          "let scale<'T> (a, b) (n: int) x = x * n\n"
+          "let main () = M.scale (3, 4) 2 1 + scale (6, 7) 5 (f 1) |> List.map (scale/*declined*/ 1 2)\n");
+    CHECK(ChangeSignature("fsharp", source, "scale", "(n: int)") ==
+          "let scale<'T> (n: int) = x * n\n"
+          "let main () = M.scale 2 + scale 5 |> List.map (scale/*declined*/ 1 2)\n");
 }

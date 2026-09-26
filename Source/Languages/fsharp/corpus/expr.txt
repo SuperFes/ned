@@ -1457,13 +1457,14 @@ let exampleNamespace =
       (paren_expression
         (fun_expression
           (argument_patterns
-            (repeat_pattern
-              (identifier_pattern
-                (long_identifier_or_op
-                  (identifier)))
-              (identifier_pattern
-                (long_identifier_or_op
-                  (identifier)))))
+            (paren_pattern
+              (repeat_pattern
+                (identifier_pattern
+                  (long_identifier_or_op
+                    (identifier)))
+                (identifier_pattern
+                  (long_identifier_or_op
+                    (identifier))))))
           (if_expression
             (infix_expression
               (long_identifier_or_op
@@ -2991,14 +2992,15 @@ let f (x: #MyType) = ()
       (function_declaration_left
         (identifier)
         (argument_patterns
-          (typed_pattern
-            (identifier_pattern
-              (long_identifier_or_op
-                (identifier)))
-            (flexible_type
-              (simple_type
-                (long_identifier
-                  (identifier)))))))
+          (paren_pattern
+            (typed_pattern
+              (identifier_pattern
+                (long_identifier_or_op
+                  (identifier)))
+              (flexible_type
+                (simple_type
+                  (long_identifier
+                    (identifier))))))))
       (const
         (unit)))))
 
@@ -3143,23 +3145,25 @@ let f (a: seq<'T>) (b: 'T) =
       (function_declaration_left
         (identifier)
         (argument_patterns
-          (typed_pattern
-            (identifier_pattern
-              (long_identifier_or_op
-                (identifier)))
-            (generic_type
-              (long_identifier
-                (identifier))
-              (type_attributes
-                (type_attribute
-                  (type_argument
-                    (identifier))))))
-          (typed_pattern
-            (identifier_pattern
-              (long_identifier_or_op
-                (identifier)))
-            (type_argument
-              (identifier)))))
+          (paren_pattern
+            (typed_pattern
+              (identifier_pattern
+                (long_identifier_or_op
+                  (identifier)))
+              (generic_type
+                (long_identifier
+                  (identifier))
+                (type_attributes
+                  (type_attribute
+                    (type_argument
+                      (identifier)))))))
+          (paren_pattern
+            (typed_pattern
+              (identifier_pattern
+                (long_identifier_or_op
+                  (identifier)))
+              (type_argument
+                (identifier))))))
       (const
         (unit)))))
 

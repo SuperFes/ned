@@ -3,6 +3,8 @@
  :injection-aliases ["purs"]
  :preserve-indent true
  :line-comment "--"
+ :signature-template "nedSig {} = unit"
+ :signature-clauses true
  :lsp-root-markers ["spago.yaml" "spago.dhall"]
  :import-resolution {:extensions ["purs"] :source-roots ["src" "test"]}
  :not-applicable {:continuation "indentation is syntax (`:preserve-indent`)"}
