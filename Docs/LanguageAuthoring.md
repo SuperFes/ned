@@ -265,7 +265,9 @@ there, `{old}` and `{new}` filled in (`"{old}: {new}"` in JavaScript).
 language describes its own parameters (`@parameter` with `.name`, `.default`,
 `.variadic`, `.keyword`, `.group`, `.skip`), receivers (`@parameter.receiver` for
 `self`, `cls`, Lua's colon calls, Nim's dot calls, C#'s extension `this`), and
-named/spread arguments (`@argument.named` with `@argument.name`, `@argument.spread`);
+named/spread arguments (`@argument.named` with `@argument.name`, `@argument.spread`),
+and a child of a flat argument list that holds several (`@argument.group`: Perl's
+`list_expression`, VHDL's association list);
 `:signature-template` parses the retyped list. A list written flat, as the definition's
 or call's own children, is named by its opening paren (`@signature.parameters.open`,
 `@call.arguments.open`: Swift, Solidity, Vala, Odin), and a Swift parameter's label

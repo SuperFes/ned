@@ -7,6 +7,7 @@
 {:name "pkl"
  :extensions [".pkl" ".pcf"]
  :line-comment "//"
+ :signature-template "function __ned_sig({}) = 0"
  :lsp-root-markers ["PklProject"]
  :first-pattern-wins true
  # The outline stops two levels down; breadcrumbs follow every level.

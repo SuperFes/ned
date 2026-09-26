@@ -1018,3 +1018,134 @@ TEST_CASE("Pascal and Ada reorder names that share one type", "[ChangeSignature]
                           "P", "C : Float; B, A : Integer") ==
           "procedure P (C : Float; B, A : Integer) is begin null; end P;\nprocedure Q is begin P (3.0, 2, 1); end Q;\n");
 }
+
+TEST_CASE("awk, SCSS and ReScript change-signature reorder, drop and default", "[ChangeSignature]") {
+    CHECK(ChangeSignature("awk", "function scale(v, factor) { return v * factor }\n"
+                                 "function zero() { return 0 }\n"
+                                 "BEGIN { x = scale(1, 2); y = scale(3) }\n",
+                          "scale", "factor, v") ==
+          "function scale(factor, v) { return v * factor }\n"
+          "function zero() { return 0 }\n"
+          "BEGIN { x = scale(2, 1); y = scale/*declined*/(3) }\n");
+    CHECK(ChangeSignature("awk", "function zero() { return 0 }\nBEGIN { y = zero() }\n", "zero", "n") ==
+          "declined: new parameter \"n\" needs a default value");
+    // A list holding one bare name shares its range with that name.
+    CHECK(ChangeSignature("awk", "function one(x) { return x }\nBEGIN { y = one(5) }\n", "one", "x") ==
+          "function one(x) { return x }\nBEGIN { y = one(5) }\n");
+
+    CHECK(ChangeSignature("scss", "@mixin pad($x, $y: 2px) { padding: $y $x; }\n"
+                                  "a { @include pad(1px, 3px); }\n"
+                                  "b { @include pad(1px, $y: 4px); }\n",
+                          "pad", "$y, $x, $z: 0") ==
+          "@mixin pad($y, $x, $z: 0) { padding: $y $x; }\n"
+          "a { @include pad(3px, 1px, 0); }\n"
+          "b { @include pad/*declined*/(1px, $y: 4px); }\n");
+
+    CHECK(ChangeSignature("rescript", "let scale = (v, factor, ~round=false) => v * factor\n"
+                                      "let a = scale(1, 2, ~round=true)\n"
+                                      "let b = M.scale(3, 4)\n",
+                          "scale", "factor, v, ~round=false") ==
+          "let scale = (factor, v, ~round=false) => v * factor\n"
+          "let a = scale(2, 1, ~round=true)\n"
+          "let b = M.scale(4, 3)\n");
+}
+
+TEST_CASE("Pkl, SQL and Typst change-signature reorder their calls", "[ChangeSignature]") {
+    CHECK(ChangeSignature("pkl", "function scale(v: Int, factor) = v * factor\n"
+                                 "class C {\n  function m(x) = x\n}\n"
+                                 "a = scale(1, 2)\nb = lib.scale(3, 4)\n",
+                          "scale", "factor, v: Int") ==
+          "function scale(factor, v: Int) = v * factor\n"
+          "class C {\n  function m(x) = x\n}\n"
+          "a = scale(2, 1)\nb = lib.scale(4, 3)\n");
+
+    CHECK(ChangeSignature("sql", "CREATE FUNCTION scale(v int, factor int) RETURNS int AS $$ SELECT v * factor $$ LANGUAGE sql;\n"
+                                 "SELECT scale(1, 2), lower(x) FROM t;\n",
+                          "scale", "factor int, v int") ==
+          "CREATE FUNCTION scale(factor int, v int) RETURNS int AS $$ SELECT v * factor $$ LANGUAGE sql;\n"
+          "SELECT scale(2, 1), lower(x) FROM t;\n");
+
+    CHECK(ChangeSignature("typst", "#let scale(v, factor, round: false) = v * factor\n"
+                                   "#let x = scale(1, 2, round: true)\n"
+                                   "#scale(3, 4)\n",
+                          "scale", "factor, v, round: false") ==
+          "#let scale(factor, v, round: false) = v * factor\n"
+          "#let x = scale(2, 1, round: true)\n"
+          "#scale(4, 3)\n");
+}
+
+TEST_CASE("Perl change-signature rewrites a signature, its calls and its method calls", "[ChangeSignature]") {
+    CHECK(ChangeSignature("perl", "sub scale($v, $factor = 2) { $v * $factor }\n"
+                                  "my $a = scale(1, 3);\n"
+                                  "my $b = scale(4);\n"
+                                  "scale 5, 6;\n",
+                          "scale", "$factor, $v, $round = 0") ==
+          "sub scale($factor, $v, $round = 0) { $v * $factor }\n"
+          "my $a = scale(3, 1, 0);\n"
+          "my $b = scale/*declined*/(4);\n"
+          "scale /*declined*/5, 6;\n");
+
+    CHECK(ChangeSignature("perl", "sub area($self, $w, $h) { $w * $h }\n"
+                                  "$box->area(2, 3);\n",
+                          "area", "$self, $h, $w") ==
+          "sub area($self, $h, $w) { $w * $h }\n"
+          "$box->area(3, 2);\n");
+}
+
+TEST_CASE("Verilog and VHDL change-signature reorder their calls", "[ChangeSignature]") {
+    CHECK(ChangeSignature("verilog", "module m;\n"
+                                     "  function int scale(int v, int factor = 2);\n"
+                                     "    return v * factor;\n"
+                                     "  endfunction\n"
+                                     "  initial begin\n"
+                                     "    y = scale(1, 3);\n"
+                                     "    z = scale(.v(1), .factor(2));\n"
+                                     "  end\n"
+                                     "endmodule\n",
+                          "scale", "int factor = 2, int v") ==
+          "module m;\n"
+          "  function int scale(int factor = 2, int v);\n"
+          "    return v * factor;\n"
+          "  endfunction\n"
+          "  initial begin\n"
+          "    y = scale(3, 1);\n"
+          "    z = scale/*declined*/(.v(1), .factor(2));\n"
+          "  end\n"
+          "endmodule\n");
+
+    CHECK(ChangeSignature("vhdl", "package p is\n"
+                                  "  function scale(v : integer; factor : integer := 2) return integer;\n"
+                                  "end package;\n"
+                                  "package body p is\n"
+                                  "  function scale(v : integer; factor : integer := 2) return integer is\n"
+                                  "  begin\n"
+                                  "    return v * factor;\n"
+                                  "  end function;\n"
+                                  "end package body;\n"
+                                  "architecture r of e is\n"
+                                  "begin\n"
+                                  "  y <= scale(1, 3);\n"
+                                  "  z <= scale(v => 1, factor => 2);\n"
+                                  "end architecture;\n",
+                          "scale", "factor : integer := 2; v : integer") ==
+          "package p is\n"
+          "  function scale(factor : integer := 2; v : integer) return integer;\n"
+          "end package;\n"
+          "package body p is\n"
+          "  function scale(factor : integer := 2; v : integer) return integer is\n"
+          "  begin\n"
+          "    return v * factor;\n"
+          "  end function;\n"
+          "end package body;\n"
+          "architecture r of e is\n"
+          "begin\n"
+          "  y <= scale(3, 1);\n"
+          "  z <= scale/*declined*/(v => 1, factor => 2);\n"
+          "end architecture;\n");
+
+    CHECK(ChangeSignature("vhdl", "package p is\n  procedure fill(a, b : integer; c : bit);\nend package;\n"
+                                  "architecture r of e is\nbegin\n  process begin\n    fill(1, 2, '0');\n  end process;\nend architecture;\n",
+                          "fill", "c : bit; b, a : integer") ==
+          "package p is\n  procedure fill(c : bit; b, a : integer);\nend package;\n"
+          "architecture r of e is\nbegin\n  process begin\n    fill('0', 2, 1);\n  end process;\nend architecture;\n");
+}

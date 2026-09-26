@@ -5,6 +5,7 @@
  # (Editor/ColorLiteral.h).
  :color-literals [:short-hex :named]
  :line-comment "//"
+ :signature-template "@mixin __ned_sig({}) {}"
  # The upstream query is a delta over CSS's (nvim's `inherits: css`).
  :queries {:highlights ["css/upstream/highlights.janet"
                         "scss/upstream/highlights.janet"

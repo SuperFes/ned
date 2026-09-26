@@ -7,6 +7,7 @@
  :extensions [".awk" ".gawk" ".mawk"]
  :injection-aliases ["gawk"]
  :line-comment "#"
+ :signature-template "function __ned_sig({}) {}"
  :line-continuation "\\"
  :capture-classes {"regexp" :string}
  :first-pattern-wins true

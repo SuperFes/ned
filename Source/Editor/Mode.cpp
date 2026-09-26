@@ -951,6 +951,21 @@ grammar::Node UnwrapDeclaratorName(grammar::Node node) {
 // are all properties of ONE already-captured node, not something a query
 // predicate can express. A child that is neither a parameter_declaration
 // family node nor the bare "..." token (a comma, a paren) is skipped.
+// The captured node itself: the deepest named node over its range, climbed to
+// the ancestor of its type when a child shares the range (awk's `param_list`
+// holding one bare name).
+grammar::Node CapturedNode(const grammar::Tree& tree, std::size_t start, std::size_t end, std::string_view type) {
+    grammar::Node node = tree.RootNode().NamedDescendantForByteRange(start, end);
+    while (!node.IsNull() && node.Type() != type) {
+        const grammar::Node parent = node.Parent();
+        if (parent.IsNull() || parent.StartByte() != start || parent.EndByte() != end) {
+            break;
+        }
+        node = parent;
+    }
+    return node;
+}
+
 // A parameter or argument list node is rewritten between its parens: its
 // own first and last bytes, or the bytes just outside it when the grammar
 // puts the parens beside the node (Crystal's param_list).
@@ -1969,6 +1984,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 bool            haveCallName    = false;
                 std::size_t     parametersStart = 0;
                 std::size_t     parametersEnd   = 0;
+                std::string_view parametersType;
                 bool            haveParameters  = false;
                 std::optional<std::pair<std::size_t, std::size_t>> openParen;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
@@ -1993,6 +2009,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     else if (capture.name == "signature.parameters") {
                         parametersStart = capture.startByte;
                         parametersEnd   = capture.endByte;
+                        parametersType  = capture.type;
                         haveParameters  = true;
                     }
                 }
@@ -2018,7 +2035,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 const bool          flat = flatParameters.has_value();
                 const grammar::Node parameterList =
                     flat ? grammar::Node(parse::NodeNull())
-                         : tree.RootNode().NamedDescendantForByteRange(parametersStart, parametersEnd);
+                         : CapturedNode(tree, parametersStart, parametersEnd, parametersType);
                 if (!flat && (parameterList.IsNull() || parameterList.StartByte() != parametersStart ||
                               parameterList.EndByte() != parametersEnd)) {
                     continue; // re-derivation failed -- report no parameters rather than guess
@@ -2132,6 +2149,9 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             // Arguments bound by name or spread (@argument.named/.spread), with
             // a named one's name (@argument.name) where the query gives it.
             std::map<std::pair<std::size_t, std::size_t>, std::pair<std::size_t, std::size_t>> nonPositional;
+            // A child of a flat argument list standing for several arguments
+            // (Perl's `list_expression`), read through.
+            std::set<std::pair<std::size_t, std::size_t>> argumentGroups;
             // Classes (@call.class), with the class each extends (@call.base)
             // or its own name (@call.class.name), for a call spelled through
             // one of them: `parent::__construct()`, Java's `this(...)`.
@@ -2151,6 +2171,9 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (capture.name == "argument.named" || capture.name == "argument.spread") {
                         argument.emplace(capture.startByte, capture.endByte);
+                    }
+                    else if (capture.name == "argument.group") {
+                        argumentGroups.emplace(capture.startByte, capture.endByte);
                     }
                     else if (capture.name == "argument.name") {
                         name = {capture.startByte, capture.endByte};
@@ -2199,6 +2222,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 ClassCallee                                        calleeFromClass = ClassCallee::None;
                 std::size_t argumentsStart = 0;
                 std::size_t argumentsEnd   = 0;
+                std::string_view argumentsType;
                 bool        haveArguments  = false;
                 std::optional<std::pair<std::size_t, std::size_t>> openParen;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
@@ -2224,6 +2248,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     else if (capture.name == "call.arguments") {
                         argumentsStart = capture.startByte;
                         argumentsEnd   = capture.endByte;
+                        argumentsType  = capture.type;
                         haveArguments  = true;
                     }
                     else if (capture.name == "call.receiver") {
@@ -2247,7 +2272,16 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     if (!list) {
                         continue;
                     }
-                    argumentNodes  = std::move(list->children);
+                    for (const grammar::Node& child : list->children) {
+                        if (argumentGroups.contains({child.StartByte(), child.EndByte()})) {
+                            for (std::size_t i = 0; i < child.ChildCount(); ++i) {
+                                argumentNodes.push_back(child.Child(i));
+                            }
+                        }
+                        else {
+                            argumentNodes.push_back(child);
+                        }
+                    }
                     argumentsStart = openParen->first;
                     argumentsEnd   = list->closeEnd;
                     haveArguments  = true;
@@ -2269,8 +2303,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 }
 
                 if (!flat) {
-                    const grammar::Node argumentList =
-                        tree.RootNode().NamedDescendantForByteRange(argumentsStart, argumentsEnd);
+                    const grammar::Node argumentList = CapturedNode(tree, argumentsStart, argumentsEnd, argumentsType);
                     if (argumentList.IsNull() || argumentList.StartByte() != argumentsStart ||
                         argumentList.EndByte() != argumentsEnd) {
                         continue;

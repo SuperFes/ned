@@ -2,6 +2,7 @@
  :extensions [".typ"]
  :injection-aliases ["typ"]
  :line-comment "//"
+ :signature-template "#let __ned_sig({}) = none"
  :lsp-root-markers ["typst.toml"]
  :wrap-lines true
  :first-pattern-wins true

@@ -21,6 +21,7 @@
  :extensions [".sql"]
  :injection-aliases ["psql" "mysql" "sqlite" "postgresql" "postgres"]
  :line-comment "--"
+ :signature-template "CREATE FUNCTION __ned_sig({}) RETURNS int AS $$ SELECT 1 $$ LANGUAGE sql;"
  :snippets
  {
    "select"
