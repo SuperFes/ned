@@ -677,3 +677,165 @@ TEST_CASE("Compiled and markup-adjacent languages discover their frameworks' tes
     CHECK(DiscoveredNames("tcl-mode", "test add-1.1 {adds} -body { expr 1 } -result 1\n"
                                       "proc helper {} {}\n") == V{"add-1.1"});
 }
+
+TEST_CASE("Build files, shells and config languages discover their tests", "[TestRun]") {
+    using V = std::vector<std::string>;
+    CHECK(DiscoveredNames("cmake-mode", "add_test(NAME adds COMMAND calc 1 1)\n"
+                                        "ADD_TEST(legacy calc)\n"
+                                        "add_executable(calc calc.c)\n") == V{"adds", "legacy"});
+
+    CHECK(DiscoveredNames("meson-mode", "test('adds', calc_exe)\n"
+                                        "benchmark('speed', calc_exe, args : ['x'])\n"
+                                        "executable('calc', 'calc.c')\n") == V{"adds", "speed"});
+
+    CHECK(DiscoveredNames("starlark-mode", "cc_test(\n"
+                                           "    name = \"calc_test\",\n"
+                                           "    srcs = [\"calc_test.cc\"],\n"
+                                           ")\n"
+                                           "test_suite(name = \"all\")\n"
+                                           "cc_library(name = \"calc\")\n") == V{"calc_test", "all"});
+
+    CHECK(DiscoveredNames("hcl-mode", "run \"creates_bucket\" {\n"
+                                      "  command = plan\n"
+                                      "}\n"
+                                      "resource \"aws_s3_bucket\" \"b\" {}\n") == V{"creates_bucket"});
+
+    CHECK(DiscoveredNames("pkl-mode", "amends \"pkl:test\"\n"
+                                      "facts {\n"
+                                      "  [\"adds\"] { 1 + 1 == 2 }\n"
+                                      "}\n"
+                                      "examples {\n"
+                                      "  [\"renders\"] { 1 }\n"
+                                      "}\n"
+                                      "other {\n"
+                                      "  [\"skipped\"] { 1 }\n"
+                                      "}\n") == V{"adds", "renders"});
+
+    CHECK(DiscoveredNames("nu-mode", "#[test]\n"
+                                     "def \"test adds\" [] { assert equal 1 1 }\n"
+                                     "#[test]\n"
+                                     "export def subs [] { }\n"
+                                     "def helper [] { }\n") == V{"test adds", "subs"});
+
+    CHECK(DiscoveredNames("fish-mode", "@test \"adds\" (math 1 + 1) = 2\n"
+                                       "@test 'quoted' -n x\n"
+                                       "echo \"not a test\"\n") == V{"adds", "quoted"});
+}
+
+TEST_CASE("Game, systems and hardware languages discover their frameworks' tests", "[TestRun]") {
+    using V = std::vector<std::string>;
+    CHECK(DiscoveredNames("gdscript-mode", "extends GutTest\n"
+                                           "\n"
+                                           "func test_adds():\n"
+                                           "\tassert_eq(1, 1)\n"
+                                           "\n"
+                                           "func helper():\n"
+                                           "\tpass\n"
+                                           "\n"
+                                           "func test_typed() -> void:\n"
+                                           "\tpass\n") == V{"test_adds", "test_typed"});
+
+    CHECK(DiscoveredNames("cuda-mode", "__global__ void kernel() {}\n"
+                                       "TEST(Kernel, Launches) {\n"
+                                       "  kernel<<<1, 1>>>();\n"
+                                       "}\n") == V{"Launches"});
+
+    CHECK(DiscoveredNames("fortran-mode", "module test_calc\n"
+                                          "contains\n"
+                                          "  subroutine collect(testsuite)\n"
+                                          "    testsuite = [ &\n"
+                                          "      new_unittest(\"adds\", test_adds), &\n"
+                                          "      new_unittest(\"fails\", test_fails, should_fail=.true.) &\n"
+                                          "    ]\n"
+                                          "  end subroutine collect\n"
+                                          "  @test\n"
+                                          "  subroutine test_sub()\n"
+                                          "  end subroutine test_sub\n"
+                                          "  subroutine helper()\n"
+                                          "  end subroutine helper\n"
+                                          "end module test_calc\n") == V{"adds", "fails", "test_sub"});
+
+    CHECK(DiscoveredNames("pascal-mode", "unit CalcTests;\n"
+                                         "interface\n"
+                                         "type\n"
+                                         "  TCalcTest = class(TTestCase)\n"
+                                         "  private\n"
+                                         "    procedure Helper;\n"
+                                         "  published\n"
+                                         "    procedure TestAdd;\n"
+                                         "  end;\n"
+                                         "  TForm1 = class(TForm)\n"
+                                         "  published\n"
+                                         "    procedure Button1Click;\n"
+                                         "  end;\n"
+                                         "  [TestFixture]\n"
+                                         "  TX = class\n"
+                                         "  public\n"
+                                         "    [Test]\n"
+                                         "    procedure Adds;\n"
+                                         "    procedure Plain;\n"
+                                         "  end;\n"
+                                         "implementation\n"
+                                         "end.\n") == V{"TestAdd", "Adds"});
+
+    CHECK(DiscoveredNames("vala-mode", "void main (string[] args) {\n"
+                                       "    Test.init (ref args);\n"
+                                       "    Test.add_func (\"/calc/adds\", () => { assert (1 + 1 == 2); });\n"
+                                       "    GLib.Test.add_func (\"/calc/subs\", test_sub);\n"
+                                       "    add_test (\"muls\", test_mul);\n"
+                                       "    print (\"/not/a/test\");\n"
+                                       "    Test.run ();\n"
+                                       "}\n") == V{"/calc/adds", "/calc/subs", "muls"});
+
+    CHECK(DiscoveredNames("ada-mode", "package body Calc_Tests is\n"
+                                      "   procedure Register_Tests (T : in out Test_Case) is\n"
+                                      "   begin\n"
+                                      "      Register_Routine (T, Test_Add'Access, \"Adds\");\n"
+                                      "      Registration.register_routine (T, Test_Sub'Access, \"Subtracts\");\n"
+                                      "      Put_Line (T, X, \"not a test\");\n"
+                                      "   end Register_Tests;\n"
+                                      "end Calc_Tests;\n") == V{"Adds", "Subtracts"});
+
+    CHECK(DiscoveredNames("d-mode", "@(\"adds numbers\")\n"
+                                    "unittest {\n"
+                                    "    assert(1 + 1 == 2);\n"
+                                    "}\n"
+                                    "@Name(\"subs\") unittest {}\n"
+                                    "unittest {}\n") == V{"adds numbers", "subs"});
+
+    CHECK(DiscoveredNames("rescript-mode", "test(\"adds\", () => {\n"
+                                           "  intEqual(1 + 1, 2)\n"
+                                           "})\n"
+                                           "describe(\"calc\", () => {\n"
+                                           "  it(\"subs\", () => ())\n"
+                                           "  testAsync(\"later\", cb => cb())\n"
+                                           "})\n"
+                                           "log(\"not a test\")\n") == V{"adds", "calc", "subs", "later"});
+
+    CHECK(DiscoveredNames("verilog-mode", "class smoke_test extends uvm_test;\n"
+                                          "endclass\n"
+                                          "class long_test extends base_test;\n"
+                                          "endclass\n"
+                                          "class driver extends uvm_driver;\n"
+                                          "endclass\n"
+                                          "module calc_unit_test;\n"
+                                          "  `SVUNIT_TESTS_BEGIN\n"
+                                          "  `SVTEST(adds)\n"
+                                          "  `SVTEST_END\n"
+                                          "  `SVUNIT_TESTS_END\n"
+                                          "endmodule\n") == V{"smoke_test", "long_test", "adds"});
+
+    CHECK(DiscoveredNames("vhdl-mode", "architecture tb of tb_calc is\n"
+                                       "begin\n"
+                                       "  main : process\n"
+                                       "  begin\n"
+                                       "    while test_suite loop\n"
+                                       "      if run(\"adds\") then\n"
+                                       "        check_equal(1 + 1, 2);\n"
+                                       "      elsif run(\"subs\") then\n"
+                                       "        check_equal(2 - 1, 1);\n"
+                                       "      end if;\n"
+                                       "    end loop;\n"
+                                       "  end process;\n"
+                                       "end architecture;\n") == V{"adds", "subs"});
+}

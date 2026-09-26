@@ -6,7 +6,10 @@
  :line-continuation "\\"
  # The upstream query is a delta whose first line says `inherits: cpp`;
  # discovery doesn't read that, so the base is named here.
+ # c.test-body widens an unexpanded TEST_CASE macro over its sibling body.
+ :escapes ["c.test-body"]
  :queries {:format ["cpp/format.janet"]
+           :tests ["cpp/tests.janet"]
            :locals ["cpp/locals.janet"]
            :imports ["c/imports.janet"]
            :highlights ["cpp/highlights.janet"

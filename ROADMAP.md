@@ -1360,11 +1360,11 @@ these accumulate detail in place.
       560, the one case left in `markdown-inline/corpus/failing.txt`). Excluding it means
       a non-blank variant of `_inline_no_link` for shortcut and reference links. Justified
       if a blank bracket pair styled as a link turns up in a real document.
-- [ ] **Tests with no name to run by.** D's `unittest` blocks are unnamed and no runner
-      filters on a name; MATLAB's script-based `%%` sections run by a name MATLAB derives
-      from the title in an undocumented way; judge's (Janet) top-level `test` forms run
-      only by position. Justified if a D runner with per-test filtering becomes common,
-      MATLAB documents the mapping, or someone wants run-at-point by `file:line`.
+- [ ] **Tests with no name to run by.** A D `unittest` with no `@("name")` UDA,
+      MATLAB's script-based `%%` sections (run by a name MATLAB derives from the title in
+      an undocumented way), and judge's (Janet) top-level `test` forms, which run only by
+      position. Justified if MATLAB documents the mapping or someone wants run-at-point by
+      `file:line`.
 - [ ] **Native formatter parity with the canonical formatters.** The bundled styles
       (PSR-12, gofmt, rustfmt, Kotlin, .NET, Prettier, `dart format`, scalafmt,
       `forge fmt`, dfmt) stop short of gofmt's field/comment alignment and
