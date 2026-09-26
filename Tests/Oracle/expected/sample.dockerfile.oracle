@@ -1,5 +1,5 @@
 # sample.dockerfile  (dockerfile-mode)
-# 50 facts
+# 53 facts
 highlight 0..72  [comment]  "# A representative multi-sta … V, ARG, CMD."
 highlight 73..76  [keyword]  "ARG"
 highlight 90..94  [keyword]  "FROM"
@@ -8,8 +8,11 @@ highlight 107..109  [keyword]  "AS"
 highlight 118..125  [keyword]  "WORKDIR"
 highlight 131..135  [keyword]  "COPY"
 highlight 153..156  [keyword]  "RUN"
+highlight 157..159  [function]  "go"
 highlight 173..177  [keyword]  "COPY"
 highlight 182..185  [keyword]  "RUN"
+highlight 186..188  [function]  "go"
+highlight 195..197  [constant]  "-o"
 highlight 224..228  [keyword]  "FROM"
 highlight 235..236  [operator]  ":"
 highlight 241..246  [keyword]  "LABEL"

@@ -20,7 +20,8 @@
            "typescript/upstream/tags.janet"
            "typescript/tags.janet"]
            :format ["javascript/format.janet"
-                    "typescript/format.janet"]}
+                    "typescript/format.janet"]
+           :injections ["javascript/injections.janet"]}
  :lsp-root-markers ["package.json" "tsconfig.json"]
  :import-resolution {:extensions ["ts" "tsx" "js" "jsx" "mjs" "cjs"] :index-basenames ["index"] :search-package-dirs true}
  :injection-aliases ["ts"]

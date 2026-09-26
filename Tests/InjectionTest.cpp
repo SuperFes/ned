@@ -3,12 +3,15 @@
 #include <string>
 #include <vector>
 
-#include "Editor/Injection.h"
-#include "Editor/Mode.h"
+#include "Editor/BundledLanguages.h"
 #include "Editor/Grammar/Languages.h"
 #include "Editor/Grammar/Parser.h"
 #include "Editor/Grammar/QueryMatcher.h"
 #include "Editor/Grammar/Tree.h"
+#include "Editor/Injection.h"
+#include "Editor/LanguageDefinition.h"
+#include "Editor/LanguageFiles.h"
+#include "Editor/Mode.h"
 
 using namespace ned::editor;
 using namespace ned::editor::grammar;
@@ -22,6 +25,26 @@ bool HasSpanContaining(const std::vector<HighlightSpan>& spans, std::size_t offs
         }
     }
     return false;
+}
+
+// (language, injected text) for each region a bundled language's own
+// injections query finds in `text`.
+std::vector<std::pair<std::string, std::string>> BundledInjections(std::string_view   languageName,
+                                                                   const std::string& text) {
+    const LanguageDefinition* definition = BundledLanguage(languageName);
+    REQUIRE(definition != nullptr);
+    REQUIRE_FALSE(definition->queries.injections.empty());
+    const Language language =
+        *LanguageByName(definition->grammar.empty() ? definition->name : definition->grammar);
+    Parser       parser(language);
+    Tree         tree = parser.Parse(text);
+    QueryMatcher query(language, CompileQueryFiles(definition->queries.injections).text);
+
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const InjectionRegion& region : CollectInjectionRegions(tree.RootNode(), text, query)) {
+        out.emplace_back(region.language, text.substr(region.startByte, region.endByte - region.startByte));
+    }
+    return out;
 }
 
 } // namespace
@@ -153,4 +176,52 @@ TEST_CASE("CollectInjectionRegions reports a region even for a language with no 
     const std::vector<InjectionRegion> regions = CollectInjectionRegions(tree.RootNode(), text, injectionQuery);
     REQUIRE(regions.size() == 1);
     REQUIRE(regions[0].language == "notarealthing");
+}
+
+TEST_CASE("Bundled hosts inject the languages their embedded text is written in", "[Injection]") {
+    using R = std::vector<std::pair<std::string, std::string>>;
+
+    CHECK(BundledInjections("javascript", "const a = html`<p>${x}</p>`;\n"
+                                          "const b = styled.div`color: red;`;\n"
+                                          "const c = styled(Button)`margin: 0;`;\n"
+                                          "const d = sql`SELECT 1`;\n"
+                                          "const e = keyframes`from { opacity: 0; }`;\n"
+                                          "const f = plain`not injected`;\n") ==
+          R{{"html", "<p>${x}</p>"},
+            {"css", "color: red;"},
+            {"css", "margin: 0;"},
+            {"sql", "SELECT 1"},
+            {"css", "from { opacity: 0; }"}});
+    CHECK(BundledInjections("typescript", "const q = sql`SELECT 1`;\n") == R{{"sql", "SELECT 1"}});
+    CHECK(BundledInjections("tsx", "const q = css`color: red;`;\n") == R{{"css", "color: red;"}});
+
+    CHECK(BundledInjections("ruby", "q = <<~SQL\n  SELECT 1\nSQL\nx = <<-EOS\n  hi\nEOS\n") ==
+          R{{"sql", "\n  SELECT 1\n"}, {"eos", "\n  hi\n"}});
+
+    CHECK(BundledInjections("dockerfile", "FROM alpine\nRUN apk add curl && \\\n    echo hi\nRUN [\"echo\", \"x\"]\n") ==
+          R{{"bash", "apk add curl && \\\n    echo hi"}});
+
+    CHECK(BundledInjections("make", "all:\n\techo hi\nX = 1\n") == R{{"bash", "echo hi"}});
+
+    CHECK(BundledInjections("nix", "{\n"
+                                   "  buildPhase = ''\n    make\n  '';\n"
+                                   "  x = pkgs.writeShellScript \"hi\" ''echo hi'';\n"
+                                   "  y = writeShellApplication { name = \"y\"; text = ''ls''; };\n"
+                                   "  description = ''not a script'';\n"
+                                   "}\n") ==
+          R{{"bash", "\n    make\n  "}, {"bash", "echo hi"}, {"bash", "ls"}});
+
+    CHECK(BundledInjections("markdown-inline", "Some <b>bold</b> and $x^2$.") ==
+          R{{"html", "<b>"}, {"html", "</b>"}, {"latex", "$x^2$"}});
+
+    const R rst = BundledInjections("rst", ".. code-block:: python\n\n   print(1)\n\n.. math::\n\n   x^2\n");
+    REQUIRE(rst.size() == 2);
+    CHECK(rst[0].first == "python");
+    CHECK(rst[0].second.find("print(1)") != std::string::npos);
+    CHECK(rst[1].first == "latex");
+
+    const R latex = BundledInjections("latex", "\\begin{minted}{python}\nprint(1)\n\\end{minted}\n");
+    REQUIRE(latex.size() == 1);
+    CHECK(latex[0].first == "python");
+    CHECK(latex[0].second.find("print(1)") != std::string::npos);
 }
