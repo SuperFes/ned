@@ -2,6 +2,8 @@
  :extensions [".earth"]
  :filenames ["Earthfile"]
  :line-comment "#"
+ # A RUN's `$name` is read through its injected shell.
+ :injected-locals true
  :not-applicable {:continuation "lines continue with `\\` (`:line-continuation`)"
                   :tests        "no test framework runs tests written in it"
                   :signatures   "FUNCTION arguments pass by name (`--arg=value`); order carries nothing"

@@ -60,6 +60,7 @@ namespace {
         bool        explicitlyVisibleFrom = false;
         std::string pun;
         bool        caseInsensitive = false;
+        bool        uncertain       = false;
     };
 
     // Index into a scope vector, or nullopt for file level. Used instead of
@@ -69,15 +70,21 @@ namespace {
 
 } // namespace
 
-std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captures, std::string_view bufferText,
-                                             std::size_t point) {
+// The binding of the token at point, read in `nameSpace` when given.
+static std::optional<LocalBinding> ResolveTokenAt(std::span<const LocalCapture> captures, std::string_view bufferText,
+                                                  std::size_t point, const std::string* nameSpace) {
     std::vector<std::pair<Range, bool>> scopeCaptures; // range, inherits
     std::vector<Occurrence>             occurrences;
+    std::vector<Range>                  opaqueRegions;
     for (const LocalCapture& capture : captures) {
         if (capture.startByte > capture.endByte || capture.endByte > bufferText.size()) {
             continue; // a stale capture list against shorter text -- never trusted, never fatal
         }
         const Range range{capture.startByte, capture.endByte};
+        if (capture.opaque) {
+            opaqueRegions.push_back(range);
+            continue;
+        }
         if (capture.kind == LocalCaptureKind::Scope) {
             if (!CoversWholeBuffer(range, bufferText.size())) {
                 scopeCaptures.emplace_back(range, capture.inherits);
@@ -90,7 +97,7 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
                                          isDefinition && capture.assignment,
                                          isDefinition && capture.visibleFrom ? std::max(*capture.visibleFrom, range.first) : range.first,
                                          isDefinition && capture.visibleFrom.has_value(), capture.pun,
-                                         capture.caseInsensitive});
+                                         capture.caseInsensitive, !isDefinition && capture.uncertain});
     }
     // One entry per distinct range; a scope any capture marks
     // non-inheriting stays so.
@@ -111,7 +118,8 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
     // identifier and something wrapping it resolves to the identifier.
     const Occurrence* token = nullptr;
     for (const Occurrence& occurrence : occurrences) {
-        if (occurrence.range.first > point || point > occurrence.range.second) {
+        if (occurrence.range.first > point || point > occurrence.range.second ||
+            (nameSpace != nullptr && occurrence.nameSpace != *nameSpace)) {
             continue;
         }
         if (token == nullptr || (occurrence.range.second - occurrence.range.first) <
@@ -310,6 +318,7 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
             continue;
         }
         binding.occurrences.push_back(candidate.occurrence->range);
+        binding.uncertain = binding.uncertain || candidate.occurrence->uncertain;
         if (!candidate.occurrence->pun.empty()) {
             binding.puns[candidate.occurrence->range] = candidate.occurrence->pun;
         }
@@ -325,6 +334,22 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
         return std::nullopt; // ownerFor found one; not reachable, but never assumed
     }
     binding.scopeIsFile = binding.scopeIsFile && !definitionIsPrivate;
+    // A region the query can't read into may spell the name too.
+    const auto isWordByte = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; };
+    for (const Range& region : opaqueRegions) {
+        if (binding.scope && !Contains(*binding.scope, region)) {
+            continue;
+        }
+        const std::string_view text = bufferText.substr(region.first, region.second - region.first);
+        for (std::size_t at = text.find(name); at != std::string_view::npos; at = text.find(name, at + 1)) {
+            const bool before = at > 0 && isWordByte(text[at - 1]);
+            const bool after  = at + name.size() < text.size() && isWordByte(text[at + name.size()]);
+            if (!before && !after) {
+                binding.uncertain = true;
+                break;
+            }
+        }
+    }
     std::sort(binding.occurrences.begin(), binding.occurrences.end());
     binding.occurrences.erase(std::unique(binding.occurrences.begin(), binding.occurrences.end()),
                               binding.occurrences.end());
@@ -353,6 +378,37 @@ std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captu
         }
     }
     return binding;
+}
+
+std::optional<LocalBinding> ResolveBindingAt(std::span<const LocalCapture> captures, std::string_view bufferText,
+                                             std::size_t point) {
+    // A token read in several namespaces (SQL's `r.id` qualifier, a table or
+    // an alias) is whichever of them binds it.
+    std::vector<std::string> nameSpaces;
+    std::size_t              smallest = SIZE_MAX;
+    for (const LocalCapture& capture : captures) {
+        if (capture.kind == LocalCaptureKind::Scope || capture.startByte > point || point > capture.endByte ||
+            capture.endByte > bufferText.size()) {
+            continue;
+        }
+        const std::size_t size = capture.endByte - capture.startByte;
+        if (size < smallest) {
+            smallest = size;
+            nameSpaces.clear();
+        }
+        if (size == smallest && std::find(nameSpaces.begin(), nameSpaces.end(), capture.nameSpace) == nameSpaces.end()) {
+            nameSpaces.push_back(capture.nameSpace);
+        }
+    }
+    if (nameSpaces.size() <= 1) {
+        return ResolveTokenAt(captures, bufferText, point, nullptr);
+    }
+    for (const std::string& nameSpace : nameSpaces) {
+        if (std::optional<LocalBinding> binding = ResolveTokenAt(captures, bufferText, point, &nameSpace)) {
+            return binding;
+        }
+    }
+    return std::nullopt;
 }
 
 std::vector<LocalNode> LocalNodes(std::span<const LocalCapture> captures, std::string_view bufferText) {

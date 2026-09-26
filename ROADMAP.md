@@ -1321,15 +1321,14 @@ these accumulate detail in place.
 - [ ] **Perl's lexical `my sub`.** It parses exactly like a package `sub`, so a rename
       treats it as file-level and declines. Justified if lexical subs turn up in code
       people rename; it needs the grammar to keep the `my`.
-- [ ] **Tcl locals.** `global`/`upvar` rebind a proc's name to another scope's, which a
-      proc-local rename would get wrong. Justified once the resolver can decline a name
-      a `global`/`upvar` touches rather than renaming half of it.
 - [ ] **Locals forms that decline today.** Lisp destructuring (`[{:keys [x y]} m]`,
       `[[a b] pair]` -- the names aren't direct children of the binding vector), fish's
       `set -l -x count 0` (flag not adjacent to its target) and `read -l line`, and a
       use that precedes its binding in a whole-scope language (Python function scope,
       JavaScript `var` hoisting -- `LocalBinding::usedBeforeDefinition`). All decline
-      rather than mis-rename. Justified when one of them blocks a real rename.
+      rather than mis-rename. Markdown's reference links have no locals at all: a
+      label keeps its brackets in the grammar's node and is usually several words.
+      Justified when one of them blocks a real rename.
 - [ ] **change-signature's remaining misses.** A Kotlin class with no primary
       constructor may list an interface before its superclass (no parens tell them
       apart), and `super(...)` is then sent to the first; a C# extension method called

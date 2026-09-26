@@ -264,6 +264,39 @@ std::vector<ImportTarget> CollectInjectedImportTargets(const grammar::Node& root
     return targets;
 }
 
+std::vector<LocalCapture> CollectInjectedLocalCaptures(const grammar::Node& root, std::string_view bufferText,
+                                                       const grammar::QueryMatcher& injectionQuery, EmbeddedLocalsCache& cache) {
+    std::vector<LocalCapture> captures;
+    for (const RawInjectionMatch& match : CollectRawInjectionMatches(root, bufferText, injectionQuery, {})) {
+        if (match.combined) {
+            continue;
+        }
+        const std::string canonical = CanonicalEmbeddedLanguageName(match.languageTag);
+        auto              it        = cache.find(canonical);
+        if (it == cache.end()) {
+            const std::optional<Mode> subMode = ModeByName(canonical + "-mode");
+            it                                = cache.emplace(canonical, subMode ? subMode->localScopes : LocalScopeFunction{}).first;
+        }
+        if (!it->second) {
+            continue;
+        }
+        const std::size_t      start = match.content.startByte;
+        const std::string_view code  = bufferText.substr(start, match.content.endByte - start);
+        for (LocalCapture capture : it->second(code)) {
+            if (capture.kind == LocalCaptureKind::Scope && capture.startByte == 0 && capture.endByte >= code.size()) {
+                continue;
+            }
+            capture.startByte += start;
+            capture.endByte += start;
+            if (capture.visibleFrom) {
+                *capture.visibleFrom += start;
+            }
+            captures.push_back(std::move(capture));
+        }
+    }
+    return captures;
+}
+
 void CollectInjectedSymbolMarkers(const grammar::Node& root, std::string_view bufferText,
                                   const grammar::QueryMatcher& injectionQuery, EmbeddedSymbolCache& cache,
                                   std::vector<SymbolMarker>& markers, HighlightWindow window) {

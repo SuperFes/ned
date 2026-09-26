@@ -5,6 +5,7 @@
  :line-comment "#"
  :line-continuation "\\"
  :not-applicable {:indents    "instructions are flat; continued lines keep their indent (`:line-continuation`)"
+                  :locals     "nothing binds only here: an ARG is set from outside (`--build-arg`) and an ENV is the image's environment"
                   :imports    "FROM names images, not files"
                   :tests      "no test framework runs tests written in it"
                   :signatures "no user-defined functions with parameter lists"

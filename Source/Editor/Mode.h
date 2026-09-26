@@ -728,6 +728,14 @@ struct LocalCapture {
     // Set by `local.case-insensitive`: the language doesn't distinguish
     // `$Acc` from `$acc` (PowerShell).
     bool caseInsensitive = false;
+    // Set by `local.uncertain` on a reference: a word that may or may not
+    // name the variable (Tcl's `puts total` prints a string; `incr total`
+    // writes a variable), so a binding it would belong to can't be renamed
+    // with confidence (LocalBinding::uncertain). On a reference spanning a
+    // region the query can't read into (`local.opaque`: an HTTP request's
+    // raw body), any whole-word spelling of a name inside it is.
+    bool uncertain = false;
+    bool opaque    = false;
 };
 
 // Maps a locals.scm capture name (without the leading '@', e.g.
@@ -1210,6 +1218,8 @@ struct GrammarQuerySources {
     bool injectedSymbols = false;
     // LanguageDefinition::injectedImports.
     bool injectedImports = false;
+    // LanguageDefinition::injectedLocals.
+    bool injectedLocals = false;
 };
 
 // One HighlightFunction cache per distinct embedded language actually

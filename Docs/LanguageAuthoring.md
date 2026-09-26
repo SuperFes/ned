@@ -256,7 +256,14 @@ node type); `local.assignment` binds only where no outer binding is visible;
 `local.namespace` keeps same-spelled names apart (Perl's sigils);
 `local.case-insensitive` folds case (PowerShell); `local.pun` marks an occurrence that
 is also a label or key spelled the same (`{ x }`, `~x`) with the text a rename writes
-there, `{old}` and `{new}` filled in (`"{old}: {new}"` in JavaScript).
+there, `{old}` and `{new}` filled in (`"{old}: {new}"` in JavaScript). A token read in
+two namespaces (SQL's `r.id` qualifier, a table or an alias) resolves in whichever
+binds it. `local.uncertain` marks a reference that may not name the variable at all
+(Tcl's and CMake's bare words), and `local.opaque` a region the query can't read into
+(an HTTP request's body) where any whole-word spelling of the name counts as one; a
+binding either touches declines rather than guess. `:injected-locals` in
+`language.janet` adds each injected region's own locals (a component's `<script>`); a
+name bound at a region's top level stays file-level, since the markup may use it.
 
 ### change-signature
 

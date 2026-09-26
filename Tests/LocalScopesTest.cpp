@@ -511,3 +511,31 @@ TEST_CASE("A scope that doesn't inherit hides everything bound outside it", "[Lo
     const std::vector<LocalCapture> captures{method, Definition(text, "x", 0, "var"), Reference(text, "x", 1)};
     CHECK_FALSE(ResolveBindingAt(captures, text, Nth(text, "x", 1)).has_value());
 }
+
+TEST_CASE("ResolveBindingAt marks a binding an uncertain word would join", "[LocalScopes]") {
+    const std::string text  = "f { x = 1; show x; use(x) }";
+    LocalCapture      maybe = Reference(text, "x", 1);
+    maybe.uncertain         = true;
+    const std::vector<LocalCapture>   captures{BraceScope(text), Definition(text, "x"), maybe, Reference(text, "x", 2)};
+    const std::optional<LocalBinding> binding = ResolveBindingAt(captures, text, Nth(text, "x", 2));
+    REQUIRE(binding.has_value());
+    CHECK(binding->uncertain);
+    CHECK(binding->occurrences.size() == 3);
+
+    const std::vector<LocalCapture> certain{BraceScope(text), Definition(text, "x"), Reference(text, "x", 2)};
+    CHECK_FALSE(ResolveBindingAt(certain, text, Nth(text, "x", 2))->uncertain);
+}
+
+TEST_CASE("ResolveBindingAt reads a token captured in two namespaces in whichever binds it", "[LocalScopes]") {
+    const std::string text  = "q { t a; a.id }";
+    LocalCapture      alias = Definition(text, "a");
+    alias.nameSpace         = "alias";
+    LocalCapture asTable    = Reference(text, "a", 1);
+    asTable.nameSpace       = "relation";
+    LocalCapture asAlias    = Reference(text, "a", 1);
+    asAlias.nameSpace       = "alias";
+    const std::vector<LocalCapture>   captures{BraceScope(text), alias, asTable, asAlias};
+    const std::optional<LocalBinding> binding = ResolveBindingAt(captures, text, Nth(text, "a", 1));
+    REQUIRE(binding.has_value());
+    CHECK(binding->occurrences.size() == 2);
+}

@@ -2824,6 +2824,8 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     const auto assignment  = match.setDirectives.find("local.assignment");
                     const auto pun         = match.setDirectives.find("local.pun");
                     const auto folded      = match.setDirectives.find("local.case-insensitive");
+                    const auto uncertain   = match.setDirectives.find("local.uncertain");
+                    const auto opaque      = match.setDirectives.find("local.opaque");
                     captures.push_back(LocalCapture{
                         .startByte          = capture.startByte,
                         .endByte            = capture.endByte,
@@ -2838,7 +2840,11 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         .assignment         = *kind == LocalCaptureKind::Definition && assignment != match.setDirectives.end() &&
                                               assignment->second == "true",
                         .pun                = pun != match.setDirectives.end() ? pun->second : std::string(),
-                        .caseInsensitive    = folded != match.setDirectives.end() && folded->second == "true"});
+                        .caseInsensitive    = folded != match.setDirectives.end() && folded->second == "true",
+                        .uncertain          = *kind == LocalCaptureKind::Reference && uncertain != match.setDirectives.end() &&
+                                              uncertain->second == "true",
+                        .opaque             = *kind == LocalCaptureKind::Reference && opaque != match.setDirectives.end() &&
+                                              opaque->second == "true"});
                 }
             }
 
@@ -2905,6 +2911,20 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             return captures;
         };
         *localsForHighlight = localScopes;
+    }
+    if (queries.injectedLocals && injectionQuery) {
+        const auto embeddedLocalsCache = std::make_shared<EmbeddedLocalsCache>();
+        localScopes                    = [own = std::move(localScopes), parser, sharedParse, injectionQuery,
+                                          embeddedLocalsCache](std::string_view bufferText) {
+            std::vector<LocalCapture> captures = own ? own(bufferText) : std::vector<LocalCapture>{};
+            const grammar::Tree&      tree     = sharedParse->Update(*parser, bufferText);
+            if (!tree.IsNull()) {
+                std::vector<LocalCapture> injected =
+                    CollectInjectedLocalCaptures(tree.RootNode(), bufferText, *injectionQuery, *embeddedLocalsCache);
+                captures.insert(captures.end(), std::make_move_iterator(injected.begin()), std::make_move_iterator(injected.end()));
+            }
+            return captures;
+        };
     }
 
     // configurable-formatter-rules follow-up: a tenth closure sharing the

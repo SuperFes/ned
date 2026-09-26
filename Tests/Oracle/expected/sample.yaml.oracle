@@ -1,5 +1,5 @@
 # sample.yaml  (yaml-mode)
-# 85 facts
+# 86 facts
 fold 0..94  "root:\n  name: ned\n  versions …  empty: null"
 fold 18..53  "  versions:\n    - 0.5.0\n    - 0.6.0"
 fold 54..94  "  nested:\n    flag: true\n    empty: null"
@@ -77,6 +77,7 @@ indent 186..192  [2]  "  one,"
 indent 193..198  [2]  "  two"
 indent 199..200  [0]  "]"
 indent 201..201  [0]
+local 0..201  [Scope]  "root:\n  name: ned\n  versions … ne,\n  two\n]\n"
 symbol 0..94  [Namespace root]  "root:\n  name: ned\n  versions …  empty: null"
 symbol 8..17  [Data name]  "name: ned"
 symbol 20..53  [Data versions]  "versions:\n    - 0.5.0\n    - 0.6.0"

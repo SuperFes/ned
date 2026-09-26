@@ -94,6 +94,15 @@ using EmbeddedImportCache = std::unordered_map<std::string, ImportTargetsFunctio
                                                                      const grammar::QueryMatcher& injectionQuery,
                                                                      EmbeddedImportCache&         cache);
 
+// The locals counterpart: each injected region's own local captures, in host
+// coordinates. A scope spanning its whole region is dropped, as a whole-buffer
+// one is (LocalScopes.cpp): what the region binds at its top level, the host
+// may use elsewhere.
+using EmbeddedLocalsCache = std::unordered_map<std::string, LocalScopeFunction>;
+[[nodiscard]] std::vector<LocalCapture> CollectInjectedLocalCaptures(const grammar::Node& root, std::string_view bufferText,
+                                                                     const grammar::QueryMatcher& injectionQuery,
+                                                                     EmbeddedLocalsCache&         cache);
+
 [[nodiscard]] std::vector<InjectionRegion> CollectInjectionRegions(const grammar::Node& root, std::string_view bufferText,
                                                                    const grammar::QueryMatcher& injectionQuery);
 

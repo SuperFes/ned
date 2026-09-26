@@ -18,6 +18,9 @@
  # Their <script> imports resolve and follow moves like the script's own
  # language's would (SvelteKit's $lib and Vite's @/ are the conventional aliases).
  :injected-imports true
+ # Rename reads their locals too; a name the script binds at its top level
+ # declines, since the markup may use it.
+ :injected-locals true
  :import-resolution {:extensions ["ts" "js" "svelte" "mjs"] :index-basenames ["index"] :search-package-dirs true
                      :root-prefixes [["$lib/" "src/lib"]]}
  :sticky-scroll-from-folds true

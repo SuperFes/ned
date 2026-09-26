@@ -671,10 +671,12 @@ TEST_CASE("query census: ancestor-crossing patterns are pinned per language/kind
         {"odin/highlights", 2}, // upstream :not-has-parent? on constants and types
         {"python/locals", 1},
         {"rust/locals", 1},
+        {"typst/locals", 1},   // a heading's section content is no block scope
+        {"verilog/locals", 2}, // a block is a scope only inside a function or task
         {"yaml/indents", 2},
     };
     CHECK(counts == expected);
-    CHECK(total == 46);
+    CHECK(total == 49);
 }
 
 // Ned's own emission order, pinned. The matcher's capture stream reproduces

@@ -42,8 +42,9 @@ void BufferView::RequestRenameSymbolAtPoint() {
         // is a language server's question, not this buffer's. Same for a
         // binding whose own scope contains a use the resolver could not
         // attribute (see LocalBinding::usedBeforeDefinition): renaming would
-        // leave that use behind.
-        if (!binding->scopeIsFile && !binding->usedBeforeDefinition) {
+        // leave that use behind -- or one that may not be a use at all
+        // (LocalBinding::uncertain).
+        if (!binding->scopeIsFile && !binding->usedBeforeDefinition && !binding->uncertain) {
             pendingLocalRename_ = binding;
             inputMode_          = InputMode::RenameLocalNewName;
             prompt_.emplace("New name: ");

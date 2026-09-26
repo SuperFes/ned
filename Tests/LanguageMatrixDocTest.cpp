@@ -56,6 +56,21 @@ std::vector<std::string> Pick(const std::vector<std::string>& own, const std::ve
     return own.empty() ? donor : own;
 }
 
+// Whether any of the files holds a pattern rather than only comments (an
+// upstream delta whose one line is `; inherits: html`).
+bool HasPatterns(const std::vector<std::string>& files) {
+    return std::any_of(files.begin(), files.end(), [](const std::string& file) {
+        std::istringstream lines(ReadFile(LanguagesRoot() / file));
+        for (std::string line; std::getline(lines, line);) {
+            const std::size_t first = line.find_first_not_of(" \t");
+            if (first != std::string::npos && line[first] != '#' && line[first] != ';') {
+                return true;
+            }
+        }
+        return false;
+    });
+}
+
 // Whether any of a language's indents query files captures continuations.
 bool CapturesContinuations(const std::vector<std::string>& indentFiles) {
     return std::any_of(indentFiles.begin(), indentFiles.end(), [](const std::string& file) {
@@ -95,6 +110,7 @@ const std::vector<Column> kColumns = {
 // clang-format on
 constexpr std::size_t kIndentColumn       = 1;
 constexpr std::size_t kContinuationColumn = 2;
+constexpr std::size_t kLocalsColumn       = 3;
 constexpr std::size_t kTagsColumn         = 4;
 constexpr std::size_t kImportsColumn      = 6;
 constexpr std::size_t kFormatColumn       = 9;
@@ -155,6 +171,8 @@ std::string Render(std::vector<std::string>& contradictions) {
            "reason)\n"
            "- `=` (**ind**) -- `:preserve-indent`: indentation is syntax, so a reindent leaves every line as "
            "written\n"
+           "- `i` (**loc**) -- no locals query of its own; rename reads its embedded scripts' locals, and a "
+           "name bound at a script's top level declines (`:injected-locals`)\n"
            "- `i` (**tags**) -- no tags query of its own; the outline is what its embedded languages define "
            "(`:injected-symbols`)\n"
            "- `i` (**imp**) -- no imports query of its own; go-to-file and move fixups read its embedded "
@@ -181,7 +199,7 @@ std::string Render(std::vector<std::string>& contradictions) {
             !Pick(own.highlights, donor.highlights).empty(),
             !Pick(own.indents, donor.indents).empty() || definition.preserveIndent,
             CapturesContinuations(Pick(own.indents, donor.indents)),
-            !Pick(own.locals, donor.locals).empty(),
+            HasPatterns(Pick(own.locals, donor.locals)) || definition.injectedLocals,
             !Pick(own.tags, donor.tags).empty() || definition.injectedSymbols,
             !Pick(own.injections, donor.injections).empty(),
             !Pick(own.imports, donor.imports).empty() || definition.injectedImports,
@@ -197,9 +215,10 @@ std::string Render(std::vector<std::string>& contradictions) {
         for (std::size_t i = 0; i < row.size(); ++i) {
             const bool preserved = i == kIndentColumn && definition.preserveIndent;
             const bool blockOnly = i == kCommentColumn && definition.lineCommentPrefix.empty() && row[i];
-            const bool injected  = (i == kTagsColumn && definition.injectedSymbols && Pick(own.tags, donor.tags).empty()) ||
-                                   (i == kImportsColumn && definition.injectedImports &&
-                                    Pick(own.imports, donor.imports).empty());
+            const bool injected      = (i == kLocalsColumn && definition.injectedLocals && !HasPatterns(Pick(own.locals, donor.locals))) ||
+                                       (i == kTagsColumn && definition.injectedSymbols && Pick(own.tags, donor.tags).empty()) ||
+                                       (i == kImportsColumn && definition.injectedImports &&
+                                        Pick(own.imports, donor.imports).empty());
             const bool notApplicable = NotApplicable(definition, i);
             if (notApplicable && row[i]) {
                 contradictions.push_back(definition.name + ": " + kColumns[i].capability);

@@ -491,11 +491,11 @@ TEST_CASE("janet-mode reports a module-level def as not local", "[Mode][LocalSco
 }
 
 TEST_CASE("a mode with no locals query leaves the capability unset", "[Mode][LocalScopes]") {
-    // A deliberate list rather than a backlog. json/yaml/
-    // toml/xml have no binding construct at all; html and css have one whose
-    // scoping is DOM containment rather than lexical, which this model
-    // cannot express without producing a rename that misses descendant uses.
-    for (const char* name : {"json-mode", "yaml-mode", "toml-mode", "xml-mode", "html-mode", "css-mode"}) {
+    // A deliberate list rather than a backlog. json/toml/xml have no binding
+    // construct at all; html and css have one whose scoping is DOM
+    // containment rather than lexical, which this model cannot express
+    // without producing a rename that misses descendant uses.
+    for (const char* name : {"json-mode", "toml-mode", "xml-mode", "html-mode", "css-mode"}) {
         const std::optional<Mode> mode = ModeByName(name);
         REQUIRE(mode.has_value());
         REQUIRE_FALSE(static_cast<bool>(mode->localScopes));
@@ -1465,4 +1465,297 @@ TEST_CASE("fsharp-mode binds a class's constructor arguments and a member's para
     REQUIRE(self.has_value());
     CHECK(self->occurrences.size() == 2);
     CHECK_FALSE(self->scopeIsFile);
+}
+
+TEST_CASE("A component's script locals rename, and its top-level names decline", "[Mode][LocalScopes]") {
+    const std::string                 vue  = "<template>\n"
+                                             "  <p>{{ count }}</p>\n"
+                                             "</template>\n"
+                                             "<script setup lang=\"ts\">\n"
+                                             "const count = 1\n"
+                                             "function bump(step: number) {\n"
+                                             "  const next = count + step\n"
+                                             "  return next\n"
+                                             "}\n"
+                                             "</script>\n";
+    const std::optional<LocalBinding> step = Resolve("vue-mode", vue, "step", 0);
+    REQUIRE(step.has_value());
+    CHECK_FALSE(step->scopeIsFile);
+    CHECK(OccurrenceTexts(*step, vue) == std::vector<std::string>{"step", "step"});
+    const std::optional<LocalBinding> next = Resolve("vue-mode", vue, "next", 0);
+    REQUIRE(next.has_value());
+    CHECK(next->occurrences.size() == 2);
+    // The template reads `count` too, so the script's own binding is file-level.
+    const std::optional<LocalBinding> count = Resolve("vue-mode", vue, "count", 1);
+    CHECK((!count.has_value() || count->scopeIsFile));
+
+    const std::string                 svelte = "<script>\n"
+                                               "  let n = 0;\n"
+                                               "  function add(a) { return a + n; }\n"
+                                               "</script>\n"
+                                               "<p>{n}</p>\n";
+    const std::optional<LocalBinding> a      = Resolve("svelte-mode", svelte, "a)", 0);
+    REQUIRE(a.has_value());
+    CHECK_FALSE(a->scopeIsFile);
+    CHECK(a->occurrences.size() == 2);
+
+    const std::string                 astro = "---\n"
+                                              "const title = 'x'\n"
+                                              "function shout(word: string) { return word.toUpperCase() }\n"
+                                              "---\n"
+                                              "<h1>{title}</h1>\n";
+    const std::optional<LocalBinding> word  = Resolve("astro-mode", astro, "word", 0);
+    REQUIRE(word.has_value());
+    CHECK_FALSE(word->scopeIsFile);
+    CHECK(word->occurrences.size() == 2);
+}
+
+TEST_CASE("yaml-mode binds an alias to its document's anchor", "[Mode][LocalScopes]") {
+    const std::string                 source = "base: &defaults\n"
+                                               "  a: 1\n"
+                                               "prod:\n"
+                                               "  <<: *defaults\n"
+                                               "---\n"
+                                               "x: &defaults 2\n"
+                                               "y: *defaults\n";
+    const std::optional<LocalBinding> first  = Resolve("yaml-mode", source, "defaults", 1);
+    REQUIRE(first.has_value());
+    CHECK_FALSE(first->scopeIsFile);
+    REQUIRE(first->occurrences.size() == 2);
+    CHECK(first->occurrences[1].first == source.find("*defaults") + 1);
+    const std::optional<LocalBinding> second = Resolve("yaml-mode", source, "defaults", 3);
+    REQUIRE(second.has_value());
+    CHECK(second->occurrences.front().first == source.rfind("&defaults") + 1);
+
+    const std::string                 single = "a: &x 1\nb: *x\n";
+    const std::optional<LocalBinding> x      = Resolve("yaml-mode", single, "x", 1);
+    REQUIRE(x.has_value());
+    CHECK_FALSE(x->scopeIsFile);
+    CHECK(x->occurrences.size() == 2);
+}
+
+TEST_CASE("scss-mode binds block and parameter variables, and leaves module members file-level", "[Mode][LocalScopes]") {
+    const std::string                 source = "$gap: 4px;\n"
+                                               "@mixin pad($size, $extra: 0) {\n"
+                                               "  $total: $size + $extra;\n"
+                                               "  @if $size > 1 { $total: $total * 2; }\n"
+                                               "  padding: $total;\n"
+                                               "}\n"
+                                               ".a {\n"
+                                               "  $gap: 1px !global;\n"
+                                               "  @include pad($size: $gap);\n"
+                                               "  @each $item in a, b { width: $item; }\n"
+                                               "}\n";
+    const std::optional<LocalBinding> size   = Resolve("scss-mode", source, "$size", 0);
+    REQUIRE(size.has_value());
+    CHECK_FALSE(size->scopeIsFile);
+    CHECK(size->occurrences.size() == 3); // not the keyword argument's name
+    const std::optional<LocalBinding> total = Resolve("scss-mode", source, "$total", 0);
+    REQUIRE(total.has_value());
+    CHECK(total->occurrences.size() == 4); // the @if assignment writes the same variable
+    const std::optional<LocalBinding> item = Resolve("scss-mode", source, "$item", 1);
+    REQUIRE(item.has_value());
+    CHECK(item->occurrences.size() == 2);
+    const std::optional<LocalBinding> gap = Resolve("scss-mode", source, "$gap", 2);
+    CHECK((!gap.has_value() || gap->scopeIsFile));
+}
+
+TEST_CASE("sql-mode binds CTE names and table aliases within their statement", "[Mode][LocalScopes]") {
+    const std::string                 source = "WITH recent AS (SELECT id FROM orders o WHERE o.day > 1)\n"
+                                               "SELECT r.id, c.name, recent.id FROM recent r JOIN customers AS c ON c.id = r.id;\n"
+                                               "SELECT r.a FROM t r;\n";
+    const std::optional<LocalBinding> recent = Resolve("sql-mode", source, "recent", 0);
+    REQUIRE(recent.has_value());
+    CHECK_FALSE(recent->scopeIsFile);
+    CHECK(recent->occurrences.size() == 3);
+    const std::optional<LocalBinding> r = Resolve("sql-mode", source, "r.id", 0);
+    REQUIRE(r.has_value());
+    CHECK(OccurrenceTexts(*r, source) == std::vector<std::string>{"r", "r", "r"});
+    CHECK(r->occurrences.back().first < source.find("SELECT r.a"));
+    const std::optional<LocalBinding> o = Resolve("sql-mode", source, "o.day", 0);
+    REQUIRE(o.has_value());
+    CHECK(o->occurrences.size() == 2);
+}
+
+TEST_CASE("tcl-mode binds a proc's locals, and declines what a bare word or global makes doubtful", "[Mode][LocalScopes]") {
+    const std::string                 source = "set top 1\n"
+                                               "proc scale {x {n 2} args} {\n"
+                                               "    global top\n"
+                                               "    set total [expr {$x * $n}]\n"
+                                               "    foreach item $args { incr total $item }\n"
+                                               "    set top $total\n"
+                                               "    return $total\n"
+                                               "}\n"
+                                               "proc show {label} {\n"
+                                               "    puts label\n"
+                                               "    puts $label\n"
+                                               "}\n";
+    const std::optional<LocalBinding> total  = Resolve("tcl-mode", source, "total", 0);
+    REQUIRE(total.has_value());
+    CHECK_FALSE(total->scopeIsFile);
+    CHECK_FALSE(total->uncertain);
+    CHECK(total->occurrences.size() == 4); // incr's bare word included
+    const std::optional<LocalBinding> n = Resolve("tcl-mode", source, "n}]", 0);
+    REQUIRE(n.has_value());
+    CHECK(n->occurrences.size() == 2);
+    const std::optional<LocalBinding> top = Resolve("tcl-mode", source, "top $total", 0);
+    CHECK((!top.has_value() || top->scopeIsFile));
+    const std::optional<LocalBinding> label = Resolve("tcl-mode", source, "label\n", 1);
+    REQUIRE(label.has_value());
+    CHECK(label->uncertain); // `puts label` prints the word, or names it -- can't tell
+}
+
+TEST_CASE("cmake-mode binds a function's locals, and declines what a bare word makes doubtful", "[Mode][LocalScopes]") {
+    const std::string                 source = "set(top 1)\n"
+                                               "function(scale x n)\n"
+                                               "  set(total \"${x}\")\n"
+                                               "  foreach(item IN LISTS ARGN)\n"
+                                               "    math(EXPR count \"${n} + ${item}\")\n"
+                                               "  endforeach()\n"
+                                               "  message(\"${total} ${count}\")\n"
+                                               "  if(count)\n"
+                                               "  endif()\n"
+                                               "  set(top ${total})\n"
+                                               "  set(out ${total} PARENT_SCOPE)\n"
+                                               "endfunction()\n";
+    const std::optional<LocalBinding> total  = Resolve("cmake-mode", source, "total", 0);
+    REQUIRE(total.has_value());
+    CHECK_FALSE(total->scopeIsFile);
+    CHECK_FALSE(total->uncertain);
+    CHECK(total->occurrences.size() == 4);
+    const std::optional<LocalBinding> n = Resolve("cmake-mode", source, "n}", 0);
+    REQUIRE(n.has_value());
+    CHECK(n->occurrences.size() == 2);
+    const std::optional<LocalBinding> item = Resolve("cmake-mode", source, "item}", 0);
+    REQUIRE(item.has_value());
+    CHECK_FALSE(item->uncertain);
+    // The file sets `top`, and `out` is the caller's.
+    const std::optional<LocalBinding> top = Resolve("cmake-mode", source, "top", 1);
+    CHECK((!top.has_value() || top->scopeIsFile));
+    const std::optional<LocalBinding> out = Resolve("cmake-mode", source, "out", 0);
+    CHECK((!out.has_value() || out->scopeIsFile));
+}
+
+TEST_CASE("typst-mode binds block lets, parameters and loop variables", "[Mode][LocalScopes]") {
+    const std::string                 source = "#let title = \"x\"\n"
+                                               "#let scale(x, n: 2) = {\n"
+                                               "  let total = x * n\n"
+                                               "  for item in (1, 2) { total += item }\n"
+                                               "  total\n"
+                                               "}\n"
+                                               "#scale(1, n: 3) #title\n"
+                                               "#let d = (total: 1)\n"
+                                               "#d.total\n";
+    const std::optional<LocalBinding> total  = Resolve("typst-mode", source, "total", 0);
+    REQUIRE(total.has_value());
+    CHECK_FALSE(total->scopeIsFile);
+    CHECK(total->occurrences.size() == 3); // not the dictionary key or the field
+    const std::optional<LocalBinding> n = Resolve("typst-mode", source, "n:", 0);
+    REQUIRE(n.has_value());
+    CHECK(n->occurrences.size() == 2); // not the call's named argument
+    const std::optional<LocalBinding> x = Resolve("typst-mode", source, "x *", 0);
+    REQUIRE(x.has_value());
+    CHECK(x->occurrences.size() == 2);
+    const std::optional<LocalBinding> item = Resolve("typst-mode", source, "item", 0);
+    REQUIRE(item.has_value());
+    CHECK(item->occurrences.size() == 2);
+    const std::optional<LocalBinding> title = Resolve("typst-mode", source, "title", 1);
+    CHECK((!title.has_value() || title->scopeIsFile));
+}
+
+TEST_CASE("earthfile-mode binds a target's LET through its RUN shell, and leaves ARG to its callers", "[Mode][LocalScopes]") {
+    const std::string                 source = "VERSION 0.8\n"
+                                               "build:\n"
+                                               "    ARG NAME=x\n"
+                                               "    LET count=1\n"
+                                               "    SET count=2\n"
+                                               "    RUN echo $count ${NAME}\n"
+                                               "    SAVE ARTIFACT out-$count\n"
+                                               "other:\n"
+                                               "    LET count=5\n";
+    const std::optional<LocalBinding> count  = Resolve("earthfile-mode", source, "count", 0);
+    REQUIRE(count.has_value());
+    CHECK_FALSE(count->scopeIsFile);
+    CHECK(count->occurrences.size() == 4);
+    CHECK(count->occurrences.back().first < source.find("other:"));
+    const std::optional<LocalBinding> name = Resolve("earthfile-mode", source, "NAME", 0);
+    CHECK((!name.has_value() || name->scopeIsFile));
+}
+
+TEST_CASE("http-mode binds file variables, and declines a name a body spells", "[Mode][LocalScopes]") {
+    const std::string                 source = "@host = example.com\n"
+                                               "@token = abc\n"
+                                               "\n"
+                                               "### login\n"
+                                               "POST https://{{host}}/login\n"
+                                               "Authorization: Bearer {{token}}\n"
+                                               "\n"
+                                               "user={{token}}\n";
+    const std::optional<LocalBinding> host   = Resolve("http-mode", source, "host", 0);
+    REQUIRE(host.has_value());
+    CHECK_FALSE(host->scopeIsFile);
+    CHECK_FALSE(host->uncertain);
+    CHECK(host->occurrences.size() == 2);
+    const std::optional<LocalBinding> token = Resolve("http-mode", source, "token", 0);
+    REQUIRE(token.has_value());
+    CHECK(token->uncertain); // the body's {{token}} is text to the grammar
+}
+
+TEST_CASE("verilog-mode binds a function's own variables and a loop's, and nothing a hierarchy can reach", "[Mode][LocalScopes]") {
+    const std::string                 source = "module counter(input clk, output reg [3:0] q);\n"
+                                               "  reg [3:0] total;\n"
+                                               "  function automatic int twice(input int n);\n"
+                                               "    int total;\n"
+                                               "    total = n * 2 + s.total;\n"
+                                               "    return total;\n"
+                                               "  endfunction\n"
+                                               "  always @(posedge clk) begin\n"
+                                               "    for (int i = 0; i < 4; i++) q <= q + twice(i);\n"
+                                               "    total <= q;\n"
+                                               "  end\n"
+                                               "endmodule\n";
+    const std::optional<LocalBinding> total  = Resolve("verilog-mode", source, "total", 1);
+    REQUIRE(total.has_value());
+    CHECK_FALSE(total->scopeIsFile);
+    CHECK(total->occurrences.size() == 3); // not the member, not the module's own
+    const std::optional<LocalBinding> i = Resolve("verilog-mode", source, "i =", 0);
+    REQUIRE(i.has_value());
+    CHECK(i->occurrences.size() == 4);
+    const std::optional<LocalBinding> moduleTotal = Resolve("verilog-mode", source, "total", 5);
+    CHECK((!moduleTotal.has_value() || moduleTotal->scopeIsFile));
+    const std::optional<LocalBinding> n = Resolve("verilog-mode", source, "n *", 0);
+    CHECK((!n.has_value() || n->scopeIsFile));
+}
+
+TEST_CASE("vhdl-mode binds process and subprogram variables and loop parameters", "[Mode][LocalScopes]") {
+    const std::string                 source = "architecture rtl of counter is\n"
+                                               "  signal total : integer;\n"
+                                               "  function twice(n : integer) return integer is\n"
+                                               "    variable acc : integer;\n"
+                                               "  begin\n"
+                                               "    acc := n * 2;\n"
+                                               "    return ACC;\n"
+                                               "  end function;\n"
+                                               "begin\n"
+                                               "  process (clk)\n"
+                                               "    variable count : integer := 0;\n"
+                                               "  begin\n"
+                                               "    for i in 0 to 3 loop\n"
+                                               "      count := count + twice(n => i) + r.count;\n"
+                                               "    end loop;\n"
+                                               "    total <= count;\n"
+                                               "  end process;\n"
+                                               "end architecture;\n";
+    const std::optional<LocalBinding> acc    = Resolve("vhdl-mode", source, "acc", 0);
+    REQUIRE(acc.has_value());
+    CHECK_FALSE(acc->scopeIsFile);
+    CHECK(acc->occurrences.size() == 3); // ACC is acc
+    const std::optional<LocalBinding> count = Resolve("vhdl-mode", source, "count :", 0);
+    REQUIRE(count.has_value());
+    CHECK(count->occurrences.size() == 4); // not the record field
+    const std::optional<LocalBinding> i = Resolve("vhdl-mode", source, "i in", 0);
+    REQUIRE(i.has_value());
+    CHECK(i->occurrences.size() == 2);
+    const std::optional<LocalBinding> total = Resolve("vhdl-mode", source, "total <=", 0);
+    CHECK((!total.has_value() || total->scopeIsFile));
 }

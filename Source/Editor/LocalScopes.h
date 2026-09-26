@@ -98,6 +98,10 @@ struct LocalBinding {
     // list is then possibly incomplete for a whole-scope-binding language,
     // and a caller renaming anyway would leave that use behind.
     bool usedBeforeDefinition = false;
+    // Set when an occurrence may not name this variable at all
+    // (LocalCapture::uncertain): renaming it, or leaving it, could each be
+    // wrong.
+    bool uncertain = false;
 };
 
 // Resolves the name at `point` against `captures` (one language's locals.scm

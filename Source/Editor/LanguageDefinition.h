@@ -159,6 +159,10 @@ struct LanguageDefinition {
     // (a component's <script>), resolved with this language's
     // :import-resolution.
     bool injectedImports = false;
+    // Rename reads each injected region's own locals (a component's
+    // <script>). A name bound at the region's top level binds at file level:
+    // the markup may use it too.
+    bool injectedLocals = false;
     // (key sequence in ParseKeySequence's syntax, command name).
     std::vector<std::pair<std::string, std::string>> keymap;
     // Per-language capture -> SyntaxClass defaults, consulted ahead of the
