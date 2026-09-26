@@ -2,8 +2,11 @@
 
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "Editor/EditorConfig.h"
 #include "Editor/Format.h"
@@ -441,4 +444,37 @@ TEST_CASE("D's bundled style is dfmt's Allman braces", "[FormatBuiltinStyle]") {
                           "d") ==
           "class C\n{\n    int m()\n    {\n        if (x)\n        {\n            return 1;\n        }\n        else\n"
           "        {\n            return 2;\n        }\n    }\n}\n");
+}
+
+TEST_CASE("Each bundled style formats its off-style sample to the language's own formatter or guide",
+          "[FormatBuiltinStyle]") {
+    const BuiltinStyleGuard guard;
+    LoadBuiltinFormatStyles();
+
+    // Tests/Format/style/input/<file>, formatted, is expected/<file>. Each
+    // expected file was checked against the formatter or guide its
+    // style.janet cites.
+    const std::filesystem::path root = std::filesystem::path(NED_REPO_ROOT) / "Tests" / "Format" / "style";
+    const auto read = [](const std::filesystem::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        REQUIRE(in);
+        std::ostringstream content;
+        content << in.rdbuf();
+        return content.str();
+    };
+    for (const auto& [file, language] : std::vector<std::pair<std::string, std::string>>{
+             {"style.awk", "awk"},       {"style.clj", "clojure"},   {"style.cmake", "cmake"},
+             {"style.cr", "crystal"},    {"style.css", "css"},       {"style.elm", "elm"},
+             {"style.ex", "elixir"},     {"style.fish", "fish"},     {"style.gd", "gdscript"},
+             {"style.gleam", "gleam"},   {"style.groovy", "groovy"}, {"style.hs", "haskell"},
+             {"style.jank", "jank"},     {"style.lisp", "commonlisp"}, {"style.lua", "lua"},
+             {"style.pas", "pascal"},    {"style.pl", "perl"},       {"style.proto", "proto"},
+             {"style.ps1", "powershell"}, {"style.py", "python"},    {"style.R", "r"},
+             {"style.rb", "ruby"},       {"style.res", "rescript"},  {"style.scss", "scss"},
+             {"style.sh", "bash"},       {"style.swift", "swift"},   {"style.tf", "hcl"},
+             {"style.vala", "vala"},
+         }) {
+        INFO("sample: " << file);
+        CHECK(NativeFormatted(read(root / "input" / file), language) == read(root / "expected" / file));
+    }
 }

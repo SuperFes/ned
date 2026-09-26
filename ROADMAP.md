@@ -1372,7 +1372,9 @@ these accumulate detail in place.
       redundant-paren removal, rustfmt's and Prettier's width-driven wrapping, rustfmt's
       `where`-clause layout, a Prettier config written as JavaScript or a shared package
       or with `overrides`, C#'s finer brace categories (accessors, lambdas,
-      initializers), Vala's space before a call's parenthesis, and a Scala braced body
+      initializers), Vala's space before a call's parenthesis, perltidy's paren
+      tightness (it spaces inside parens by what they hold), clang-format's one-blank-line
+      cap between a proto message's members, and a Scala braced body
       on the line after its header (an
       `indented_block`, so moving its brace would change the tree). The language
       server's formatting or `ned/set-format-command` is what makes a file canonical.

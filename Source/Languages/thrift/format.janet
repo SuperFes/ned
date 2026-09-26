@@ -1,0 +1,10 @@
+(struct_definition "{" @brace.class.open "}" @brace.class.close)
+(union_definition "{" @brace.class.open "}" @brace.class.close)
+(exception_definition "{" @brace.class.open "}" @brace.class.close)
+(enum_definition "{" @brace.class.open "}" @brace.class.close)
+(service_definition "{" @brace.interface.open "}" @brace.interface.close)
+
+(document [(struct_definition) (union_definition) (exception_definition) (enum_definition)
+           (service_definition)] @def.toplevel)
+(document . [(struct_definition) (union_definition) (exception_definition) (enum_definition)
+             (service_definition)] @def.toplevel.first)

@@ -82,7 +82,7 @@ std::vector<FormatTextEdit> ComputeBlankLineEdits(std::string_view text, std::st
         const int         blankCount = CountBlankLinesBefore(text, lineStart, blankRegionStart);
 
         int desired = blankCount;
-        if (rule.minBefore && !capture.isFirst) {
+        if (rule.minBefore && !capture.isFirst && !capture.isAttached) {
             desired = std::max(desired, *rule.minBefore);
         }
         if (rule.maxBefore) {

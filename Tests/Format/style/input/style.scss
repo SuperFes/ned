@@ -1,0 +1,20 @@
+@mixin m($x)
+{
+  color: $x;
+}
+
+
+
+a {
+  @if $x
+  {
+    color: red;
+  }
+  @else if $y {
+    color: green;
+  }
+  @else
+  {
+    color: blue;
+  }
+}

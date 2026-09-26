@@ -37,5 +37,6 @@
                   :locals       "markup; script names belong to the embedded language"
                   :tests        "tests live in its scripts' own language"
                   :signatures   "its functions live in embedded scripts, in their own language"
-                  :lsp-root     "no project file of its own; the root falls through to the project's"}
+                  :lsp-root     "no project file of its own; the root falls through to the project's"
+                  :format       "markup: no functions, control flow or definitions for the formatter's rules to place"}
 }

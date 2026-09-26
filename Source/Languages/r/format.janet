@@ -1,0 +1,17 @@
+(function_definition body: (braced_expression) @brace.function)
+(function_definition body: (braced_expression . (_) .) @brace.function.simple)
+
+(if_statement consequence: (braced_expression) @brace.control)
+(if_statement alternative: (braced_expression) @brace.control)
+(while_statement body: (braced_expression) @brace.control)
+(for_statement body: (braced_expression) @brace.control)
+(repeat_statement body: (braced_expression) @brace.control)
+(if_statement consequence: (braced_expression . (_) .) @brace.control.simple)
+(if_statement alternative: (braced_expression . (_) .) @brace.control.simple)
+(while_statement body: (braced_expression . (_) .) @brace.control.simple)
+(for_statement body: (braced_expression . (_) .) @brace.control.simple)
+(repeat_statement body: (braced_expression . (_) .) @brace.control.simple)
+
+(if_statement open: _ @control.parens.open close: _ @control.parens.close)
+(while_statement open: _ @control.parens.open close: _ @control.parens.close)
+(for_statement open: _ @control.parens.open close: _ @control.parens.close)

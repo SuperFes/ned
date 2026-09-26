@@ -307,8 +307,10 @@ go-to-file and the fixups when a file is renamed or moved.
 
 `format.janet` names a language's braces, control parens, `else`/`catch` keywords and
 top-level/method definitions for the capture-driven formatter rules
-(`Docs/FormattingRules.md`); `:braces-on-header-line` (Go, Odin, V) refuses a placement
-rule that would move a brace off its header's line. A bundled `style.janet` gives the
+(`Docs/FormattingRules.md`); `:braces-on-header-line` (Go, Odin, V, Nu, Tcl) refuses a
+placement rule that would move a brace or `else` off its header's line. A definition that
+continues the one above it -- a further equation, or the body under its own signature --
+carries a `.attached` marker so a minimum blank-lines rule doesn't split them. A bundled `style.janet` gives the
 rules defaults with no user config, following the language's official style guide or
 canonical formatter.
 

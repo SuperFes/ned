@@ -666,6 +666,16 @@ an unconditional cap applied everywhere, so three blank lines hand-typed directl
 class header are still trimmed down to whatever `:max-before` says, even for that class's
 own first method.
 
+**The "continues the definition above" exception.** Where a grammar makes each equation or
+clause of one function its own node (Haskell, PureScript, Erlang), or puts a type signature
+in a sibling node of the definition it types (Haskell, Elm, an Erlang `-spec`), a
+`"<name>.attached"` marker (`FormatCapture::isAttached`) names the definition that
+continues the one above it, and `:min-before` skips it the same way it skips a first one --
+otherwise a minimum would split `f 0 = 1` from `f x = x`, or `f : Int -> Int` from `f x = x`.
+The marker's pattern compares the two names:
+`(declarations (function name: (_) @_prev) . (function name: (_) @_name) @def.toplevel.attached (:eq? @_prev @_name))`.
+`:max-before` still applies to it.
+
 **Python is the pilot; all seven languages now name `def.toplevel`/`def.method`.**
 `def.toplevel` (a `function_definition`/`class_definition`/`decorated_definition` that is
 a direct child of the module) and `def.method` (the same, but a direct child of a class's

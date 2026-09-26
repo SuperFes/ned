@@ -38,5 +38,6 @@
  :not-applicable {:injections   "nothing in it is written in another language"
                   :imports      "statements don't name files"
                   :lsp-root     "no project file of its own; the root falls through to the project's"
-                  :continuation "a wrapped clause is the clause body, which @indent.headed already indents"}
+                  :continuation "a wrapped clause is the clause body, which @indent.headed already indents"
+                  :style        "no canonical formatter or official style rule for the braces and blank lines ned's rules cover"}
 }

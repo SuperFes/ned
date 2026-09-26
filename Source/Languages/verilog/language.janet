@@ -5,5 +5,6 @@
  :line-comment "//"
  :import-resolution {:extensions ["vh" "svh" "v" "sv"]}
  :not-applicable {:injections "nothing in it is written in another language"
-                  :lsp-root   "no project file of its own; the root falls through to the project's"}
+                  :lsp-root   "no project file of its own; the root falls through to the project's"
+                  :style      "no canonical formatter or official style rule for the braces and blank lines ned's rules cover"}
 }

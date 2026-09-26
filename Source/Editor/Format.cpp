@@ -77,9 +77,17 @@ bool ApplyNativeFormat(text::Buffer& buffer, const Mode* mode) {
     }
     if (mode != nullptr && mode->formatCaptures) {
         const std::string languageKey = LanguageKeyForMode(*mode);
+        bool              passChanged = false;
         for (const FormatPass& pass : NativeFormatPasses()) {
-            changed = RunCapturePass(buffer, *mode, languageKey, pass.compute) || changed;
+            passChanged = RunCapturePass(buffer, *mode, languageKey, pass.compute) || passChanged;
         }
+        // A body's indent can depend on where its brace sat: `{` alone on the
+        // line after `x <- function()` is a continuation line, and so was
+        // everything under it until the brace moved up.
+        if (passChanged && mode->indentColumn) {
+            IndentBuffer(buffer, *mode);
+        }
+        changed = passChanged || changed;
     }
     changed = ApplyHygienePass(buffer, mode) || changed;
     buffer.EndUndoGroup();

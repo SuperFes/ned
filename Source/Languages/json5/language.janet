@@ -9,5 +9,6 @@
                   :imports    "nothing in it names another file"
                   :tests      "no test framework runs tests written in it"
                   :signatures "no user-defined functions with parameter lists"
-                  :lsp-root   "no project file of its own; the root falls through to the project's"}
+                  :lsp-root   "no project file of its own; the root falls through to the project's"
+                  :format     "data: no functions, control flow or definitions for the formatter's rules to place"}
 }

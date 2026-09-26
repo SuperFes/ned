@@ -1,0 +1,20 @@
+(procedure body: (braced_word) @brace.function)
+(procedure body: (braced_word . (_) .) @brace.function.simple)
+
+(if consequence: (braced_word) @brace.control)
+(elseif consequence: (braced_word) @brace.control)
+(else consequence: (braced_word) @brace.control)
+(while (braced_word) @brace.control .)
+(foreach (braced_word) @brace.control .)
+(if consequence: (braced_word . (_) .) @brace.control.simple)
+(elseif consequence: (braced_word . (_) .) @brace.control.simple)
+(else consequence: (braced_word . (_) .) @brace.control.simple)
+(while (braced_word . (_) .) @brace.control.simple .)
+(foreach (braced_word . (_) .) @brace.control.simple .)
+
+(namespace (word_list (braced_word) @brace.namespace .))
+
+(source_file [(procedure) (namespace)] @def.toplevel)
+(source_file . [(procedure) (namespace)] @def.toplevel.first)
+(namespace (word_list (braced_word (procedure) @def.method)))
+(namespace (word_list (braced_word . (procedure) @def.method.first)))

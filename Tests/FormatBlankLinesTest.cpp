@@ -1186,3 +1186,25 @@ TEST_CASE("Keyword-bodied languages name their top-level and member definitions"
         CHECK(FirstLines(testCase.source, CapturesNamed(captures, "def.method")) == testCase.methods);
     }
 }
+
+TEST_CASE("A min-blank-lines rule keeps a definition with its signature and its further clauses",
+          "[FormatBlankLines]") {
+    const FormatRulesGuard guard;
+    SetBlankMinBefore("def.toplevel", 1);
+
+    const auto format = [](const std::string& language, const std::string& source) {
+        const std::optional<Mode> mode = ned::editor::ModeByName(language + "-mode");
+        REQUIRE(mode.has_value());
+        Buffer buffer("t");
+        buffer.InsertAtPoint(source);
+        ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), language, mode->formatCaptures(buffer.Text())));
+        return buffer.Text();
+    };
+
+    CHECK(format("haskell", "module M where\nf :: Int -> Int\nf 0 = 1\nf x = x\ng :: Int\ng = 2\nh = 3\n") ==
+          "module M where\nf :: Int -> Int\nf 0 = 1\nf x = x\n\ng :: Int\ng = 2\n\nh = 3\n");
+    CHECK(format("erlang", "-module(m).\n-spec f(integer()) -> integer().\nf(0) -> 1;\nf(X) -> X.\ng() -> ok.\n") ==
+          "-module(m).\n\n-spec f(integer()) -> integer().\nf(0) -> 1;\nf(X) -> X.\n\ng() -> ok.\n");
+    CHECK(format("elm", "module M exposing (..)\nf : Int -> Int\nf x = x\ng = 2\n") ==
+          "module M exposing (..)\n\nf : Int -> Int\nf x = x\n\ng = 2\n");
+}

@@ -20,5 +20,6 @@
  :sticky-scroll-from-folds true
  :not-applicable {:indents    "the grammar's delimited bodies are its whole indent structure"
                   :tests      "tests live in its scripts' own language"
-                  :signatures "its functions live in embedded scripts, in their own language"}
+                  :signatures "its functions live in embedded scripts, in their own language"
+                  :format     "a markup host: its scripts and styles format as their own languages, and its markup has nothing the rules place"}
 }

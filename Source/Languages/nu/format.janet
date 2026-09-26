@@ -1,0 +1,23 @@
+(decl_def body: (block) @brace.function)
+(decl_def body: (block . (_) .) @brace.function.simple)
+
+(ctrl_if then_branch: (block) @brace.control)
+(ctrl_if else_block: [(block) (val_closure)] @brace.control)
+(ctrl_while body: (block) @brace.control)
+(ctrl_for body: (block) @brace.control)
+(ctrl_loop body: (block) @brace.control)
+(ctrl_try try_branch: (block) @brace.control)
+(ctrl_try catch_branch: [(block) (val_closure)] @brace.control)
+(ctrl_if then_branch: (block . (_) .) @brace.control.simple)
+(ctrl_while body: (block . (_) .) @brace.control.simple)
+(ctrl_for body: (block . (_) .) @brace.control.simple)
+(ctrl_loop body: (block . (_) .) @brace.control.simple)
+(ctrl_try try_branch: (block . (_) .) @brace.control.simple)
+(ctrl_match "{" @brace.control.open "}" @brace.control.close)
+
+(decl_module body: (block) @brace.namespace)
+
+(nu_script [(decl_def) (decl_module)] @def.toplevel)
+(nu_script . [(decl_def) (decl_module)] @def.toplevel.first)
+(decl_module body: (block (decl_def) @def.method))
+(decl_module body: (block . (decl_def) @def.method.first))

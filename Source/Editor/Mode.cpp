@@ -2632,6 +2632,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             // child of its immediate container" (blank-lines-kind follow-up: a
             // .-anchored query, e.g. "(block . (function_definition) @def.method.first)").
             std::vector<std::tuple<std::string, std::size_t, std::size_t>> firstMarkers;
+            std::vector<std::tuple<std::string, std::size_t, std::size_t>> attachedMarkers;
             for (const grammar::QueryMatch& match : formatQuery->Matches(tree.RootNode(), bufferText)) {
                 std::optional<std::size_t> openStart;
                 std::optional<std::size_t> openEnd;
@@ -2649,6 +2650,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     constexpr std::string_view kCloseSuffix     = ".close";
                     constexpr std::string_view kSimpleSuffix    = ".simple";
                     constexpr std::string_view kFirstSuffix     = ".first";
+                    constexpr std::string_view kAttachedSuffix  = ".attached";
                     constexpr std::string_view kItemSuffix      = ".item";
                     constexpr std::string_view kSeparatorSuffix = ".separator";
                     const std::string_view     name(capture.name);
@@ -2669,6 +2671,10 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     else if (name.ends_with(kFirstSuffix)) {
                         firstMarkers.emplace_back(capture.name.substr(0, capture.name.size() - kFirstSuffix.size()),
                                                   capture.startByte, capture.endByte);
+                    }
+                    else if (name.ends_with(kAttachedSuffix)) {
+                        attachedMarkers.emplace_back(capture.name.substr(0, capture.name.size() - kAttachedSuffix.size()),
+                                                     capture.startByte, capture.endByte);
                     }
                     else if (name.ends_with(kItemSuffix)) {
                         itemSpans.emplace_back(capture.startByte, capture.endByte);
@@ -2714,6 +2720,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 for (const auto& [name, start, end] : firstMarkers) {
                     if (capture.name == name && capture.startByte == start) {
                         capture.isFirst = true;
+                        break;
+                    }
+                }
+                for (const auto& [name, start, end] : attachedMarkers) {
+                    if (capture.name == name && capture.startByte == start) {
+                        capture.isAttached = true;
                         break;
                     }
                 }

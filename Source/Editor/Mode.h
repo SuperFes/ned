@@ -746,6 +746,11 @@ struct FormatCapture {
     // (matching JetBrains' own separate "before first method" toggle,
     // which most style guides leave off).
     bool isFirst = false;
+    // A "<name>.attached" marker: this definition continues the one above it
+    // -- a further equation or clause of the same function, or the body
+    // under its own type signature -- so a min-blank-lines rule must not
+    // separate the two.
+    bool isAttached = false;
     // keyword-delimiter-captures follow-up (Lua): the open/close
     // delimiter's OWN byte length. Every capture before this one satisfied
     // "my own first/last byte IS the delimiter" for free -- a brace, a

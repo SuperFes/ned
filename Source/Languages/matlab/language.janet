@@ -8,5 +8,6 @@
  :content-pattern "^\\s*(function\\s+[\\w\\[]|classdef\\b|%)|^\\s*(end|endfunction|endif|endfor|endwhile)\\s*;?\\s*$"
  :line-comment "%"
  :signature-template "function ned_sig({})\nend"
- :not-applicable {:imports "files are found by name on the MATLAB path; nothing names a file"}
+ :not-applicable {:imports "files are found by name on the MATLAB path; nothing names a file"
+                  :style   "no canonical formatter or official style rule for the braces and blank lines ned's rules cover"}
 }

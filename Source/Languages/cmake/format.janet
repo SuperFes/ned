@@ -1,0 +1,11 @@
+(if_command "(" @control.parens.open ")" @control.parens.close)
+(elseif_command "(" @control.parens.open ")" @control.parens.close)
+(else_command "(" @control.parens.open ")" @control.parens.close)
+(endif_command "(" @control.parens.open ")" @control.parens.close)
+(while_command "(" @control.parens.open ")" @control.parens.close)
+(endwhile_command "(" @control.parens.open ")" @control.parens.close)
+(foreach_command "(" @control.parens.open ")" @control.parens.close)
+(endforeach_command "(" @control.parens.open ")" @control.parens.close)
+
+(source_file [(function_def) (macro_def)] @def.toplevel)
+(source_file . [(function_def) (macro_def)] @def.toplevel.first)

@@ -7,5 +7,6 @@
  :import-resolution {:extensions ["tex" "bib"]}
  :not-applicable {:continuation "markup; nothing continues across lines"
                   :tests        "no test framework runs tests written in it"
-                  :signatures   "macro arguments are positional `#1`; there is no parameter list to rewrite"}
+                  :signatures   "macro arguments are positional `#1`; there is no parameter list to rewrite"
+                  :format       "markup: no functions, control flow or definitions for the formatter's rules to place"}
 }

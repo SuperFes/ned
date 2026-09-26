@@ -9,5 +9,6 @@
                   :injections "nothing in it is written in another language"
                   :imports    "nothing in it names another file"
                   :tests      "no test framework runs tests written in it"
-                  :signatures "no user-defined functions with parameter lists"}
+                  :signatures "no user-defined functions with parameter lists"
+                  :format     "data: no functions, control flow or definitions for the formatter's rules to place"}
 }

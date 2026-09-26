@@ -7,5 +7,6 @@
                   :locals       "variables are shared across subdir() files"
                   :tags         "no definitions: targets are assignments"
                   :injections   "nothing in it is written in another language"
-                  :signatures   "no user-defined functions"}
+                  :signatures   "no user-defined functions"
+                  :format       "no definitions or delimited bodies for the formatter's rules to place"}
 }
