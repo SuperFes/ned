@@ -1077,9 +1077,9 @@ class Manager {
     // previously ClientDisconnected erasing the client left those three
     // cases indistinguishable (see this subsystem's own ROADMAP.md entry).
     // Deliberately says nothing about in-flight-request activity -- that's
-    // reported separately via the shared BackgroundActivity "LSP" entry
-    // (see kLspActivityName); ModeLine draws that on top of, and with
-    // priority over, whatever this reports.
+    // reported separately via each connection's BackgroundActivity entry
+    // (see LspActivityName); ModeLine draws that connection's spinner in
+    // place of whatever this reports.
     enum class Status {
         NotConfigured, // nothing registered for this language, or a client was never attempted
         Running,       // a client is currently spawned and connected
@@ -1914,7 +1914,7 @@ class Manager {
     void FilterToOwnedRanges(text::Buffer* buffer, const std::string& language, std::vector<text::Buffer::Diagnostic>& diagnostics) const;
 
     // workDoneProgress-support follow-up. Handles a "$/progress"
-    // notification: begin/end drive the shared "LSP" BackgroundActivity
+    // notification: begin/end drive the connection's own BackgroundActivity
     // count, begin/report refresh its detail text ("indexing (45%)") -- how
     // server-side busy state (clangd's background indexing, mainly) reaches
     // the mode-line spinner with something more informative than a pulse.

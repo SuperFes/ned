@@ -14,6 +14,8 @@
 #include <cstdint>
 #include <iomanip>
 #include <iterator>
+#include <map>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -75,9 +77,93 @@ namespace {
         columns.insert(columns.end(), std::make_move_iterator(cells.begin()), std::make_move_iterator(cells.end()));
     }
 
-    // minimum-visible-duration follow-up: see lastShownActivities_' own doc
+    // minimum-visible-duration follow-up: see heldActivities_' own doc
     // comment in ModeLine.h.
     constexpr std::chrono::milliseconds kMinimumVisibleDuration{300};
+
+    // The bar and detail text trailing an activity's spinner. Compact keeps
+    // only the spinner, for when the mode line is short of room.
+    void AppendActivityProgress(std::vector<std::string>& columns, const editor::BackgroundActivity& activity, bool compact) {
+        if (compact) {
+            return;
+        }
+        if (activity.fraction) {
+            // Determinate work gets a bar next to its spinner: the
+            // spinner says something is happening, the bar says how much
+            // of it is left, and only the second one is knowable here.
+            columns.emplace_back(" ");
+            for (const std::string& glyph : ProgressGlyphs(*activity.fraction, kInlineProgressCells, kInlineProgressTrack)) {
+                columns.emplace_back(glyph);
+            }
+        }
+        if (!activity.detail.empty()) {
+            columns.emplace_back(" ");
+            AppendUtf8Columns(columns, activity.detail);
+        }
+    }
+
+    struct LspEntry {
+        std::string                       label;
+        std::string_view                  glyph;
+        std::string                       detail;             // status detail, for an idle entry
+        const editor::BackgroundActivity* activity = nullptr; // set while the server is busy
+        bool                              foreign  = false;   // busy, but not serving this buffer
+    };
+
+    // How hard to squeeze the LSP entries when they don't fit, mildest
+    // first: foreign servers lose their bar/detail, then collapse into one
+    // "+N" spinner, then this buffer's own servers lose theirs too.
+    enum class LspCompaction {
+        None,
+        ForeignBare,
+        ForeignCollapsed,
+        AllBare,
+    };
+
+    void AppendLspEntriesAt(std::vector<std::string>& columns, const std::vector<LspEntry>& entries, LspCompaction level) {
+        const auto foreignCount = static_cast<std::size_t>(std::ranges::count_if(entries, &LspEntry::foreign));
+        const bool collapse     = level >= LspCompaction::ForeignCollapsed && foreignCount > 1;
+        for (const LspEntry& entry : entries) {
+            if (entry.foreign && collapse) {
+                continue;
+            }
+            const bool compact = level >= (entry.foreign ? LspCompaction::ForeignBare : LspCompaction::AllBare);
+            columns.emplace_back(" ");
+            columns.emplace_back(" ");
+            AppendUtf8Columns(columns, entry.label);
+            columns.emplace_back(" ");
+            columns.emplace_back(entry.glyph);
+            if (entry.activity) {
+                AppendActivityProgress(columns, *entry.activity, compact);
+            }
+            else if (!entry.detail.empty() && !compact) {
+                columns.emplace_back(" ");
+                AppendUtf8Columns(columns, entry.detail);
+            }
+        }
+        if (collapse) {
+            const auto firstForeign = std::ranges::find_if(entries, &LspEntry::foreign);
+            columns.emplace_back(" ");
+            columns.emplace_back(" ");
+            AppendUtf8Columns(columns, "+" + std::to_string(foreignCount));
+            columns.emplace_back(" ");
+            columns.emplace_back(firstForeign->glyph);
+        }
+    }
+
+    // Appends at the mildest compaction that fits in width; the harshest
+    // one when none does, leaving the paint loop to truncate as usual.
+    void AppendLspEntries(std::vector<std::string>& columns, const std::vector<LspEntry>& entries, std::size_t width) {
+        const std::size_t base = columns.size();
+        for (const LspCompaction level : {LspCompaction::None, LspCompaction::ForeignBare, LspCompaction::ForeignCollapsed}) {
+            AppendLspEntriesAt(columns, entries, level);
+            if (columns.size() <= width) {
+                return;
+            }
+            columns.resize(base);
+        }
+        AppendLspEntriesAt(columns, entries, LspCompaction::AllBare);
+    }
 
 } // namespace
 
@@ -249,114 +335,85 @@ void ModeLine::Paint(Canvas c) {
         }
     }
 
-    // minimum-visible-duration follow-up: fall back to the last non-empty
-    // snapshot for a little while after the real list goes empty -- see
-    // lastShownActivities_'s own doc comment in ModeLine.h.
-    std::vector<editor::BackgroundActivity> activities = editor::ActiveBackgroundActivities();
-    const auto                              now        = std::chrono::steady_clock::now();
-    if (!activities.empty()) {
-        lastShownActivities_   = activities;
-        lastShownActivitiesAt_ = now;
+    // minimum-visible-duration follow-up: each entry stays on screen for a
+    // little while after it ends -- see heldActivities_' own doc comment in
+    // ModeLine.h.
+    const auto now = std::chrono::steady_clock::now();
+    for (const editor::BackgroundActivity& activity : editor::ActiveBackgroundActivities()) {
+        heldActivities_[activity.name] = HeldActivity{.activity = activity, .lastSeen = now};
     }
-    else if (!lastShownActivities_.empty() && now - lastShownActivitiesAt_ < kMinimumVisibleDuration) {
-        activities = lastShownActivities_;
+    std::erase_if(heldActivities_, [now](const auto& entry) { return now - entry.second.lastSeen >= kMinimumVisibleDuration; });
+
+    std::vector<editor::BackgroundActivity>                  activities;
+    std::map<std::string, const editor::BackgroundActivity*> lspBusy; // by connection key
+    for (const auto& [name, held] : heldActivities_) {
+        activities.push_back(held.activity);
     }
-    else {
-        lastShownActivities_.clear();
-    }
-    bool lspActivityShown = false;
-    if (!activities.empty()) {
-        const std::string_view frame = CurrentSpinnerFrame();
-        for (const editor::BackgroundActivity& activity : activities) {
-            columns.emplace_back(" ");
-            columns.emplace_back(" ");
-            AppendUtf8Columns(columns, activity.name);
-            columns.emplace_back(" ");
-            columns.emplace_back(frame);
-            if (activity.fraction) {
-                // Determinate work gets a bar next to its spinner: the
-                // spinner says something is happening, the bar says how much
-                // of it is left, and only the second one is knowable here.
-                columns.emplace_back(" ");
-                for (const std::string& glyph : ProgressGlyphs(*activity.fraction, kInlineProgressCells, kInlineProgressTrack)) {
-                    columns.emplace_back(glyph);
-                }
-            }
-            if (!activity.detail.empty()) {
-                columns.emplace_back(" ");
-                AppendUtf8Columns(columns, activity.detail);
-            }
-            lspActivityShown = lspActivityShown || activity.name == editor::lsp::kLspActivityName;
+    const std::string_view frame = CurrentSpinnerFrame();
+    for (const editor::BackgroundActivity& activity : activities) {
+        if (const auto connectionKey = editor::lsp::LspActivityConnectionKey(activity.name)) {
+            lspBusy.emplace(std::string(*connectionKey), &activity);
+            continue;
         }
+        columns.emplace_back(" ");
+        columns.emplace_back(" ");
+        AppendUtf8Columns(columns, activity.name);
+        columns.emplace_back(" ");
+        columns.emplace_back(frame);
+        AppendActivityProgress(columns, activity, /*compact=*/false);
     }
-    // mode-line-lsp-status-round-2 follow-up: beyond "running, idle" (a
-    // plain filled dot, deliberately static so it reads as visually distinct
-    // from actually-in-flight work at a glance), also surface a spawn
-    // failure and a disconnected/crashed server -- previously both silently
-    // indistinguishable from "no LSP configured at all." Only drawn when the
-    // request-driven block above didn't already draw an "LSP" entry (busy
-    // takes priority over any of these, same entry, no duplicate); "not
-    // configured" draws nothing, unchanged from before this follow-up.
-    if (!lspActivityShown && lspManager_) {
+
+    // One entry per language server: the buffer's own servers first (a
+    // status glyph when idle, that server's spinner when busy), then any
+    // other server with work in flight, so background indexing stays
+    // visible from an unrelated buffer.
+    std::vector<LspEntry> lspEntries;
+    if (lspManager_) {
         using Status = editor::lsp::Manager::Status;
-        // mode-line-lsp-status-round-3 follow-up: same "detail text after a
-        // space" shape reused by both the single-glyph and multi-glyph
-        // branches below.
         // LSP multi-root follow-up: every status latch is keyed by connection,
         // so a plain server key is resolved against this buffer's own root
         // first -- two same-language servers against different roots each
         // report their own state instead of shadowing each other's.
-        const auto glyphAndDetailFor = [this, &buffer](const std::string& serverKey, std::string_view& glyph, std::string& detail) {
+        const auto entryFor = [this, &buffer, &lspBusy, frame](const std::string& serverKey, std::string label) -> std::optional<LspEntry> {
             const std::string key = lspManager_->ConnectionKeyForBuffer(buffer, serverKey);
+            LspEntry          entry{.label = std::move(label)};
+            if (const auto busy = lspBusy.find(key); busy != lspBusy.end()) {
+                entry.glyph    = frame;
+                entry.activity = busy->second;
+                lspBusy.erase(busy);
+                return entry;
+            }
             switch (lspManager_->StatusForLanguage(key)) {
                 case Status::Running:
-                    glyph = "●";
-                    break;
+                    entry.glyph = "●";
+                    return entry;
                 case Status::SpawnFailed:
-                    glyph  = "✕";
-                    detail = lspManager_->SpawnFailureDetail(key);
-                    break;
+                    entry.glyph  = "✕";
+                    entry.detail = lspManager_->SpawnFailureDetail(key);
+                    return entry;
                 case Status::Disconnected:
-                    glyph  = "○";
-                    detail = lspManager_->DisconnectReason(key);
-                    break;
+                    entry.glyph  = "○";
+                    entry.detail = lspManager_->DisconnectReason(key);
+                    return entry;
                 case Status::NotConfigured:
                     break;
             }
+            return std::nullopt;
         };
 
         // embedded-language-documents follow-up: every server key currently
         // synced for this buffer (host language, kProseLanguageKey if that's
-        // synced too, any embedded keys) -- iterated only when there's more
-        // than one, so the ordinary single-language case renders byte-for-
-        // byte identically to before this feature existed.
+        // synced too, any embedded keys). A single server keeps the plain
+        // "LSP" label; several are each named by key, host language first,
+        // then the rest sorted for a stable order.
         const std::vector<std::string> activeKeys = lspManager_->ActiveServerKeysForBuffer(buffer);
-
+        const std::string              hostKey    = editor::LanguageKeyForMode(mode_);
         if (activeKeys.size() <= 1) {
-            const std::string languageKey = editor::LanguageKeyForMode(mode_);
-            std::string_view  glyph;
-            std::string       detail;
-            glyphAndDetailFor(languageKey, glyph, detail);
-            if (!glyph.empty()) {
-                columns.emplace_back(" ");
-                columns.emplace_back(" ");
-                columns.emplace_back("L");
-                columns.emplace_back("S");
-                columns.emplace_back("P");
-                columns.emplace_back(" ");
-                columns.emplace_back(glyph);
-                if (!detail.empty()) {
-                    columns.emplace_back(" ");
-                    AppendUtf8Columns(columns, detail);
-                }
+            if (auto entry = entryFor(hostKey, std::string(editor::lsp::kLspActivityName))) {
+                lspEntries.push_back(std::move(*entry));
             }
         }
         else {
-            // More than one server is active for this buffer -- one
-            // "<key> <glyph>[ <detail>]" segment per key, host language
-            // first, then every other key (kProseLanguageKey, embedded
-            // languages) sorted for a stable order.
-            const std::string        hostKey = editor::LanguageKeyForMode(mode_);
             std::vector<std::string> remainder;
             for (const std::string& key : activeKeys) {
                 if (key != hostKey) {
@@ -369,26 +426,22 @@ void ModeLine::Paint(Canvas c) {
                 ordered.push_back(hostKey);
             }
             ordered.insert(ordered.end(), remainder.begin(), remainder.end());
-
             for (const std::string& key : ordered) {
-                std::string_view glyph;
-                std::string      detail;
-                glyphAndDetailFor(key, glyph, detail);
-                if (glyph.empty()) {
-                    continue;
-                }
-                columns.emplace_back(" ");
-                columns.emplace_back(" ");
-                AppendUtf8Columns(columns, key);
-                columns.emplace_back(" ");
-                columns.emplace_back(glyph);
-                if (!detail.empty()) {
-                    columns.emplace_back(" ");
-                    AppendUtf8Columns(columns, detail);
+                if (auto entry = entryFor(key, key)) {
+                    lspEntries.push_back(std::move(*entry));
                 }
             }
         }
     }
+    for (const auto& [connectionKey, activity] : lspBusy) {
+        // A connection key is "<root>\x1f<serverKey>" or a bare server key.
+        const std::size_t separator = connectionKey.rfind('\x1f');
+        lspEntries.push_back(LspEntry{.label    = separator == std::string::npos ? connectionKey : connectionKey.substr(separator + 1),
+                                      .glyph    = frame,
+                                      .activity = activity,
+                                      .foreign  = true});
+    }
+    AppendLspEntries(columns, lspEntries, static_cast<std::size_t>(std::max(0, c.size().width)));
 
     // Chrome-redesign follow-up: the focused pane's gradient pulls toward
     // the theme accent so which split has the keyboard is visible at a

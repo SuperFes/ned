@@ -7,6 +7,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 
 #include <unistd.h>
 
@@ -25,6 +26,18 @@
 #include "UI/Theme.h"
 
 namespace {
+
+// Columns up to and including the last non-blank cell.
+int UsedColumns(ned::ui::Screen& screen, int row, int width) {
+    int used = 0;
+    for (int col = 0; col < width; ++col) {
+        const std::string& character = screen.PixelAt(col, row).character;
+        if (!character.empty() && character != " ") {
+            used = col + 1;
+        }
+    }
+    return used;
+}
 
 std::string RowText(ned::ui::Screen& screen, int row, int width) {
     std::string out;
@@ -390,11 +403,11 @@ TEST_CASE("ModeLine shows an active background activity with its spinner and det
 
     ned::editor::EndBackgroundActivity("LSP");
     modeLine.Paint(canvas);
-    // minimum-visible-duration follow-up: ModeLine holds the last non-empty
-    // activity snapshot for a short grace window after BackgroundActivity
-    // itself reports empty, so a just-ended activity doesn't blink off
-    // within a single Paint() call -- see ModeLine.h's own doc comment on
-    // lastShownActivities_. Deliberately local to ModeLine's rendering, not
+    // minimum-visible-duration follow-up: ModeLine holds each activity for a
+    // short grace window after BackgroundActivity itself stops reporting it,
+    // so a just-ended activity doesn't blink off within a single Paint()
+    // call -- see ModeLine.h's own doc comment on heldActivities_.
+    // Deliberately local to ModeLine's rendering, not
     // BackgroundActivity itself (which keeps reporting empty immediately,
     // unchanged -- see BackgroundActivityTest.cpp), so this still reads
     // "LSP" right after End.
@@ -428,18 +441,21 @@ TEST_CASE("ModeLine shows a static idle indicator for a running LSP client with 
     modeLine.Paint(canvas);
     REQUIRE(RowText(screen, 0, 60).find("LSP") != std::string::npos); // running, even though nothing's in flight
 
-    // A real in-flight activity takes over the same "LSP" entry rather than
-    // producing a duplicate.
-    ned::editor::BeginBackgroundActivity("LSP");
+    // The server's own in-flight activity takes over its entry, spinner in
+    // place of the dot, rather than producing a duplicate.
+    const std::string activity = ned::editor::lsp::LspActivityName("c");
+    ned::editor::BeginBackgroundActivity(activity);
     modeLine.Paint(canvas);
     const std::string busyRow = RowText(screen, 0, 60);
     REQUIRE(std::count(busyRow.begin(), busyRow.end(), 'P') == 1);
-    ned::editor::EndBackgroundActivity("LSP");
+    REQUIRE(busyRow.find("●") == std::string::npos);
+    ned::editor::EndBackgroundActivity(activity);
 
-    // Back to the idle indicator once the request resolves -- still running,
-    // not hidden.
+    // Back to the idle indicator once the request resolves (and the hold
+    // lapses) -- still running, not hidden.
+    std::this_thread::sleep_for(std::chrono::milliseconds(350));
     modeLine.Paint(canvas);
-    REQUIRE(RowText(screen, 0, 60).find("LSP") != std::string::npos);
+    REQUIRE(RowText(screen, 0, 60).find("LSP ●") != std::string::npos);
 }
 
 TEST_CASE("ModeLine shows no LSP indicator when SetLspManager was never called, or no client runs for this buffer's language",
@@ -650,4 +666,168 @@ TEST_CASE("ModeLine shows no clock indicator in org-mode when nothing is clocked
 
     modeLine.Paint(canvas);
     REQUIRE(RowText(screen, 0, 60).find("⏱") == std::string::npos);
+}
+
+TEST_CASE("ModeLine gives each busy server its own spinner beside the idle ones", "[ModeLine][EmbeddedDocuments]") {
+    ned::text::BufferList     bufferList;
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(bufferList, eventLoop);
+    FakeServer                htmlServer = FakeServer::Create(manager, "html", eventLoop);
+    FakeServer                jsServer   = FakeServer::Create(manager, "javascript", eventLoop);
+
+    ned::text::Buffer& buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-modeline-busy-server-test.html");
+    manager.SyncBuffer(buffer, "html");
+    manager.SyncEmbeddedDocuments(buffer, {ned::editor::lsp::Manager::EmbeddedDocumentSync{
+                                              .language = "javascript", .documentText = "x", .ownedRanges = {{0, 1}}}});
+
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::HtmlMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+    modeLine.SetLspManager(&manager);
+
+    ned::ui::Screen screen = MakeScreen(200, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 199, .y_min = 0, .y_max = 0});
+
+    const std::string activity = ned::editor::lsp::LspActivityName(manager.ConnectionKeyForBuffer(buffer, "html"));
+    ned::editor::BeginBackgroundActivity(activity);
+    ned::editor::SetBackgroundActivityDetail(activity, "indexing");
+    modeLine.Paint(canvas);
+    ned::editor::EndBackgroundActivity(activity);
+
+    const std::string row = RowText(screen, 0, 200);
+    REQUIRE(row.find("javascript ●") != std::string::npos);
+    REQUIRE(row.find("html ●") == std::string::npos);
+    REQUIRE(row.find("  html ") != std::string::npos);
+    REQUIRE(row.find("indexing") > row.find("  html "));
+    REQUIRE(row.find("LSP") == std::string::npos); // no aggregate entry
+}
+
+TEST_CASE("ModeLine shows busy servers that don't serve this buffer, labelled by server key", "[ModeLine]") {
+    ned::text::BufferList     bufferList;
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(bufferList, eventLoop);
+    RegisterFakeRunningClient(manager, "c", eventLoop);
+
+    ned::text::Buffer     buffer("main.c", ned::text::Rope("int main() {}"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::CMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+    modeLine.SetLspManager(&manager);
+
+    ned::ui::Screen screen = MakeScreen(120, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 119, .y_min = 0, .y_max = 0});
+
+    // A server rooted elsewhere is labelled by its server key, not its root.
+    const std::string activity = ned::editor::lsp::LspActivityName("/elsewhere\x1f"
+                                                                   "python");
+    ned::editor::BeginBackgroundActivity(activity);
+    modeLine.Paint(canvas);
+    ned::editor::EndBackgroundActivity(activity);
+
+    const std::string row = RowText(screen, 0, 120);
+    REQUIRE(row.find("LSP ●") != std::string::npos);
+    REQUIRE(row.find("  python ") > row.find("LSP ●"));
+    REQUIRE(row.find("elsewhere") == std::string::npos);
+}
+
+TEST_CASE("ModeLine holds each server's spinner on its own, not until every server is idle", "[ModeLine]") {
+    ned::text::BufferList     bufferList;
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(bufferList, eventLoop);
+    RegisterFakeRunningClient(manager, "c", eventLoop);
+
+    ned::text::Buffer     buffer("main.c", ned::text::Rope("int main() {}"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::CMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+    modeLine.SetLspManager(&manager);
+
+    ned::ui::Screen screen = MakeScreen(120, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 119, .y_min = 0, .y_max = 0});
+
+    const std::string cActivity      = ned::editor::lsp::LspActivityName("c");
+    const std::string pythonActivity = ned::editor::lsp::LspActivityName("python");
+    ned::editor::BeginBackgroundActivity(cActivity);
+    ned::editor::BeginBackgroundActivity(pythonActivity);
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 120).find("●") == std::string::npos);
+
+    // c's quick request ends while python keeps working: c's spinner is held
+    // briefly rather than blinking straight back to the dot...
+    ned::editor::EndBackgroundActivity(cActivity);
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 120).find("●") == std::string::npos);
+
+    // ...then returns to it on its own, with python still busy.
+    std::this_thread::sleep_for(std::chrono::milliseconds(350));
+    modeLine.Paint(canvas);
+    const std::string row = RowText(screen, 0, 120);
+    REQUIRE(row.find("LSP ●") != std::string::npos);
+    REQUIRE(row.find("python") != std::string::npos);
+
+    ned::editor::EndBackgroundActivity(pythonActivity);
+}
+
+TEST_CASE("ModeLine squeezes busy servers progressively when the row runs out of room", "[ModeLine]") {
+    ned::text::BufferList     bufferList;
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(bufferList, eventLoop);
+    RegisterFakeRunningClient(manager, "c", eventLoop);
+
+    ned::text::Buffer     buffer("main.c", ned::text::Rope("int main() {}"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::CMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+    modeLine.SetLspManager(&manager);
+
+    constexpr int kWide   = 240;
+    const auto    paintAt = [&](int width) {
+        ned::ui::Screen screen = MakeScreen(width, 1);
+        ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = width - 1, .y_min = 0, .y_max = 0});
+        modeLine.Paint(canvas);
+        return std::pair{RowText(screen, 0, width), UsedColumns(screen, 0, width)};
+    };
+
+    const int idleWidth = paintAt(kWide).second; // ends with this buffer's own "LSP ●"
+
+    // Two foreign servers, 20-column keys, 30-column details: each is
+    // "  <key> ⠋ <detail>" in full (55 columns) and "  <key> ⠋" bare (24).
+    const std::string first  = ned::editor::lsp::LspActivityName(std::string(20, 'a'));
+    const std::string second = ned::editor::lsp::LspActivityName(std::string(20, 'b'));
+    const std::string detail(30, 'q');
+    for (const std::string& activity : {first, second}) {
+        ned::editor::BeginBackgroundActivity(activity);
+        ned::editor::SetBackgroundActivityDetail(activity, detail);
+    }
+
+    // Room for everything: details shown.
+    REQUIRE(paintAt(kWide).first.find(detail) != std::string::npos);
+
+    // Room for bare foreign entries only: both keys, no details.
+    const std::string bareRow = paintAt(idleWidth + 2 * 24 + 5).first;
+    REQUIRE(bareRow.find(std::string(20, 'a')) != std::string::npos);
+    REQUIRE(bareRow.find(std::string(20, 'b')) != std::string::npos);
+    REQUIRE(bareRow.find('q') == std::string::npos);
+
+    // Not even that: collapsed into one "+2" spinner.
+    const std::string collapsedRow = paintAt(idleWidth + 2 * 24 - 1).first;
+    REQUIRE(collapsedRow.find("+2") != std::string::npos);
+    REQUIRE(collapsedRow.find(std::string(20, 'a')) == std::string::npos);
+
+    // This buffer's own server busy with a long detail as well: its detail
+    // gives way so the "+2" still shows.
+    const std::string own = ned::editor::lsp::LspActivityName("c");
+    ned::editor::BeginBackgroundActivity(own);
+    ned::editor::SetBackgroundActivityDetail(own, detail);
+    const std::string ownRow = paintAt(idleWidth + 6).first;
+    REQUIRE(ownRow.find("+2") != std::string::npos);
+    REQUIRE(ownRow.find('q') == std::string::npos);
+
+    for (const std::string& activity : {first, second, own}) {
+        ned::editor::EndBackgroundActivity(activity);
+    }
 }

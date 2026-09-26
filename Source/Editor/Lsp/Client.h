@@ -32,6 +32,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -47,12 +48,26 @@ namespace ned::editor::lsp {
 
 using Json = nlohmann::json;
 
-// background-activity-spinner follow-up. The BackgroundActivity registry
-// name every LSP subsystem reports under -- one aggregate spinner, not
-// per-language entries. Shared between Client's own request tracking and
-// Manager's $/progress handling, which is why it lives here (Manager.h
-// already includes this header, not the other way around).
+// BackgroundActivity registry naming. Each connection reports under its own
+// entry, "LSP\x1f<connectionKey>", so the mode line can give every server
+// its own spinner; a Client never wired to a connection (tests) reports
+// under the bare kLspActivityName. Shared between Client's own request
+// tracking and Manager's $/progress handling, which is why it lives here
+// (Manager.h already includes this header, not the other way around).
 inline constexpr std::string_view kLspActivityName = "LSP";
+
+[[nodiscard]] inline std::string LspActivityName(std::string_view connectionKey) {
+    return std::string(kLspActivityName) + '\x1f' + std::string(connectionKey);
+}
+
+// The connection key LspActivityName encoded, or nullopt for any other name.
+[[nodiscard]] inline std::optional<std::string_view> LspActivityConnectionKey(std::string_view activityName) {
+    if (activityName.size() <= kLspActivityName.size() || !activityName.starts_with(kLspActivityName) ||
+        activityName[kLspActivityName.size()] != '\x1f') {
+        return std::nullopt;
+    }
+    return activityName.substr(kLspActivityName.size() + 1);
+}
 
 // subprocess-hang-protection follow-up. A server that simply never answers a
 // request (as opposed to a stalled/malformed connection, which
@@ -203,6 +218,10 @@ class Client {
     // anyway.
     void PrepareForGracefulShutdown();
 
+    // The BackgroundActivity name in-flight requests count under (see
+    // LspActivityName). Requests already pending move to the new name.
+    void SetActivityName(std::string name);
+
   private:
     // Declared first (destructs last, per this file's own header comment on
     // the reverse-declaration-order rule) purely for readability -- nothing
@@ -222,6 +241,7 @@ class Client {
     std::unordered_map<std::string, NotificationHandler> notificationHandlers_;
     std::unordered_map<std::string, RequestHandler>      requestHandlers_;
     std::function<void(std::string reason)>              onDisconnected_; // see SetOnDisconnected
+    std::string                                          activityName_{kLspActivityName};
 
     // handshake-ordering follow-up: see SendRequest/SendNotification and the
     // two constructors' own doc comments. handshakeComplete_ defaults to
