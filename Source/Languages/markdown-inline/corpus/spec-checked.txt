@@ -4,7 +4,8 @@ without delimiter children. Example 538's `[ref]:` line is a shortcut link to
 the inline grammar alone; the block grammar takes definitions first. 588
 and 635 are fixed in ned's grammar.janet (an angle-bracket destination and a
 quoted attribute value outweigh the HTML tags their bytes could also read as;
-an attribute may have no value).
+an attribute may have no value), and 560 in its scanner (a label that is only
+blanks is no link).
 
 ================================================================================
 Example 355 - https://github.github.com/gfm/#example-355
@@ -104,3 +105,17 @@ _boolean zoop:33=zoop:33 />
 
 (inline
   (html_tag))
+
+
+================================================================================
+Example 560 - https://github.github.com/gfm/#example-560
+================================================================================
+[
+ ]
+
+[
+ ]: /uri
+
+--------------------------------------------------------------------------------
+
+(inline)

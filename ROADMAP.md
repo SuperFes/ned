@@ -1190,17 +1190,6 @@ for closed-issue history.
   them in one 45KB paragraph parse in 0.65s, against 0.09s before. Ordinary text resolves
   within a few characters and is faster than before. Worth a closer-free memo in the
   scanner state if a real generated document ever hits it.
-- **UBSan: `TypstScanner.cpp` loads invalid `enum container` values (2494, 2501, 2557).**
-  Three `runtime error: load of value 8, which is not a valid value for type 'enum
-  container'` reports every sanitizer run of `Ned parse engine matches the bundled
-  corpora`. The scanner keeps its container stack in a `vec_u32` and casts entries back
-  to the enum (`scanner_container_at`), so a value the enum has no name for is loaded as
-  one; upstream tree-sitter-typst's scanner has the same shape. Tests pass -- the value
-  falls through to `default:` in both switches that read it. Verified pre-existing on
-  2026-09-22 (reproduced on a clean tree with the EOF-completion work stashed), so it is
-  not fallout from that change. Fix is to store and compare the raw `uint32_t`, or widen
-  the enum to cover what is pushed.
-
 - **`BufferView's highlight cache updates after an edit changes the buffer's content`
   is intermittently flaky under `--order rand`.** Found 2026-09-15 while stress-testing
   the new Wrap rule kind's own `--order rand` reruns -- confirmed unrelated to that work
@@ -1363,11 +1352,6 @@ these accumulate detail in place.
       (`${CMAKE_CURRENT_LIST_DIR}/x.cmake`), globs (Caddy, nginx, Apache), Just's bare
       `mod name`, Nim's `pkg/[a, b]` groups. Justified when go-to-file on one of them is
       missed in practice.
-- [ ] **A whitespace-only link label.** `[ ]` (and `[\n ]`) parses as a shortcut link,
-      where CommonMark requires a label to hold a non-whitespace character (GFM example
-      560, the one case left in `markdown-inline/corpus/failing.txt`). Excluding it means
-      a non-blank variant of `_inline_no_link` for shortcut and reference links. Justified
-      if a blank bracket pair styled as a link turns up in a real document.
 - [ ] **Tests with no name to run by.** A D `unittest` with no `@("name")` UDA,
       MATLAB's script-based `%%` sections (run by a name MATLAB derives from the title in
       an undocumented way), and judge's (Janet) top-level `test` forms, which run only by

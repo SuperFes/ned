@@ -3476,11 +3476,11 @@ auto main(int argc, char** argv) -> int {
     }
     if (argc > 0 && !cli.lspBroker && !cli.lspBrokerStop && !cli.foreground && cli.mcpStdioRelaySocketPath.empty() && !cli.format) {
         if (ned::editor::InvokedAsNedLangc(argv[0]))
-        cli.compileLanguage = true;
+            cli.compileLanguage = true;
         else if (ned::editor::InvokedAsNedImportLanguage(argv[0]))
-        cli.importLanguage = true;
+            cli.importLanguage = true;
         else if (ned::editor::InvokedAsNedTestLanguage(argv[0]))
-        cli.testLanguage = true;
+            cli.testLanguage = true;
     }
 
     // `ned --lsp-broker`: runs the headless LSP broker daemon itself (see

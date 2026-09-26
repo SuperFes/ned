@@ -2319,7 +2319,10 @@ enum token_type {
 	TOKEN_RECOVERY,
 };
 
-enum container {
+// A fixed underlying type, because a section is stored as CONTAINER_SECTION
+// plus its level: without one, only the values up to the next power of two
+// are valid for the type.
+enum container : uint32_t {
 	CONTAINER_CONTENT,
 	CONTAINER_STRONG,
 	CONTAINER_EMPH,

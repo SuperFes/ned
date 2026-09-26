@@ -88,7 +88,10 @@
              _latex_span_start
              _latex_span_close
              _unclosed_span
-             _emphasis_text]
+             _emphasis_text
+             # After a `[` whose text is blank up to its `]`: CommonMark's link
+             # labels need a non-blank character, so the bracket is only text.
+             _blank_label]
  :inline []
  :supertypes []
  :rules
@@ -1087,7 +1090,7 @@
                    full_reference_link
                    collapsed_reference_link
                    inline_link
-                   (:seq (:choice "[" "]") (:choice _last_token_punctuation :blank))
+                   (:seq (:choice "[" "]") (:choice _blank_label _last_token_punctuation :blank))
                    wiki_link)
   _inline (:repeat1 _inline_element)
   _inline_element_no_star (:choice
@@ -1102,7 +1105,7 @@
                            full_reference_link
                            collapsed_reference_link
                            inline_link
-                           (:seq (:choice "[" "]") (:choice _last_token_punctuation :blank))
+                           (:seq (:choice "[" "]") (:choice _blank_label _last_token_punctuation :blank))
                            wiki_link)
   _inline_no_star (:repeat1 _inline_element_no_star)
   _inline_element_no_underscore (:choice
@@ -1117,7 +1120,7 @@
                                  full_reference_link
                                  collapsed_reference_link
                                  inline_link
-                                 (:seq (:choice "[" "]") (:choice _last_token_punctuation :blank))
+                                 (:seq (:choice "[" "]") (:choice _blank_label _last_token_punctuation :blank))
                                  wiki_link)
   _inline_no_underscore (:repeat1 _inline_element_no_underscore)
   _inline_element_no_tilde (:choice
@@ -1131,7 +1134,7 @@
                             full_reference_link
                             collapsed_reference_link
                             inline_link
-                            (:seq (:choice "[" "]") (:choice _last_token_punctuation :blank))
+                            (:seq (:choice "[" "]") (:choice _blank_label _last_token_punctuation :blank))
                             wiki_link)
   _inline_no_tilde (:repeat1 _inline_element_no_tilde)
   _strikethrough (:prec-dynamic 1

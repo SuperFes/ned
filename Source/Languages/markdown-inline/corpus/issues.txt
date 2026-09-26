@@ -104,3 +104,24 @@ normal text (or even nothing) `[index][]`
   (code_span
     (code_span_delimiter)
     (code_span_delimiter)))
+
+
+================================================================================
+Blank link labels are text; padded and blank-text reference links stay links
+================================================================================
+[ ] and [ foo ] and [ ][bar] and [*x*]
+
+--------------------------------------------------------------------------------
+
+(inline
+  (shortcut_link
+    (link_text))
+  (full_reference_link
+    (link_text)
+    (link_label))
+  (shortcut_link
+    (link_text
+      (emphasis
+        (emphasis_delimiter)
+        (emphasis_delimiter)))))
+

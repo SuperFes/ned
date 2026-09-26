@@ -42,7 +42,8 @@ typedef enum {
     LATEX_SPAN_START,
     LATEX_SPAN_CLOSE,
     UNCLOSED_SPAN,
-    EMPHASIS_TEXT
+    EMPHASIS_TEXT,
+    BLANK_LABEL
 } TokenType;
 
 // Determines if a character is punctuation as defined by the markdown spec.
@@ -574,11 +575,39 @@ static bool parse_emphasis(Scanner* s, Lexer* lexer, const bool* valid_symbols, 
     lexer->markEnd(lexer);
     return emit_planned(s, lexer, valid_symbols, open_token, close_token);
 }
+// Whether the text after a `[` is only spaces, tabs and line endings up to
+// its `]`, which then can't be a link label. A `[` right after that `]` is
+// left alone: `[ ][foo]`'s blank text is a full reference link's.
+static bool blank_label_ahead(Lexer* lexer) {
+    lexer->markEnd(lexer);
+    while (lexer->lookahead == ' ' || lexer->lookahead == '\t' || lexer->lookahead == '\n' ||
+           lexer->lookahead == '\r') {
+        lexer->advance(lexer, false);
+    }
+    if (lexer->lookahead != ']') {
+        return false;
+    }
+    lexer->advance(lexer, false);
+    return lexer->lookahead != '[';
+}
+
 static bool scan(Scanner* s, Lexer* lexer, const bool* valid_symbols) {
     // A normal tree-sitter rule decided that the current branch is invalid and
     // now "requests" an error to stop the branch
     if (valid_symbols[TRIGGER_ERROR]) {
         return error(lexer);
+    }
+
+    // Only a blank or a `]` can start a blank label, and no token below
+    // starts with either, so a failed look ahead has nothing else to find.
+    const bool mayBeBlankLabel = lexer->lookahead == ' ' || lexer->lookahead == '\t' || lexer->lookahead == '\n' ||
+                                 lexer->lookahead == '\r' || lexer->lookahead == ']';
+    if (valid_symbols[BLANK_LABEL] && mayBeBlankLabel) {
+        if (!blank_label_ahead(lexer)) {
+            return false;
+        }
+        lexer->resultSymbol = BLANK_LABEL;
+        return true;
     }
 
     // Decide which tokens to consider based on the first non-whitespace

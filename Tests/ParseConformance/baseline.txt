@@ -18,7 +18,7 @@ json/corpus  cases=6 runs=6 passed=6 failed=0 skipped=0
 kotlin/corpus  cases=94 runs=94 passed=94 failed=0 skipped=0
 lua/corpus  cases=42 runs=42 passed=42 failed=0 skipped=0
 markdown/corpus  cases=323 runs=322 passed=322 failed=0 skipped=1
-markdown-inline/corpus  cases=363 runs=362 passed=362 failed=0 skipped=1
+markdown-inline/corpus  cases=364 runs=364 passed=364 failed=0 skipped=0
 org/corpus  cases=151 runs=151 passed=151 failed=0 skipped=0
 php/corpus  cases=142 runs=140 passed=140 failed=0 skipped=2
 python/corpus  cases=117 runs=117 passed=117 failed=0 skipped=0
@@ -153,4 +153,4 @@ gdscript/corpus  cases=167 runs=167 passed=166 failed=1 skipped=0
 matlab/corpus  cases=157 runs=157 passed=155 failed=2 skipped=0
   FAIL call.txt: Function Call: Line Continuation
   FAIL strings.txt: Strings: Invalid termination
-total  cases=12729 runs=12724 passed=12690 failed=34 skipped=11
+total  cases=12730 runs=12726 passed=12692 failed=34 skipped=10
