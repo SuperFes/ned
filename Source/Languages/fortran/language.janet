@@ -8,5 +8,6 @@
  :capture-classes {"custom_directive" :keyword}
  :import-resolution {:extensions ["inc" "f90" "f"]}
  :signature-template "subroutine ned_sig({})\nend subroutine"
- :not-applicable {:injections "nothing in it is written in another language"}
+ :not-applicable {:injections "nothing in it is written in another language"
+                  :style      "no canonical formatter or official style rule for the braces and blank lines ned's rules cover"}
 }

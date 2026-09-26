@@ -36,6 +36,32 @@ namespace {
         return count;
     }
 
+    // A comment block directly above a definition (no blank line between)
+    // belongs to it: the blank lines a rule asks for go above the comment,
+    // not between the comment and what it documents. Returns the start of
+    // the topmost such comment line, or `lineStart` when there is none.
+    std::size_t AttachedCommentStart(std::string_view text, std::size_t lineStart,
+                                     const std::vector<FormatCapture>& captures) {
+        std::size_t anchor = lineStart;
+        while (anchor > 0) {
+            const std::size_t      prevLineStart = LineStartOf(text, anchor - 1);
+            const std::string_view prevLine      = text.substr(prevLineStart, (anchor - 1) - prevLineStart);
+            const auto             firstNonBlank = std::find_if_not(prevLine.begin(), prevLine.end(), IsBlankLineChar);
+            if (firstNonBlank == prevLine.end()) {
+                break;
+            }
+            const std::size_t contentStart = prevLineStart + static_cast<std::size_t>(firstNonBlank - prevLine.begin());
+            const bool        isComment    = std::ranges::any_of(captures, [contentStart](const FormatCapture& capture) {
+                return capture.name == "comment" && capture.startByte <= contentStart && contentStart < capture.endByte;
+            });
+            if (!isComment) {
+                break;
+            }
+            anchor = prevLineStart;
+        }
+        return anchor;
+    }
+
 } // namespace
 
 std::vector<FormatTextEdit> ComputeBlankLineEdits(std::string_view text, std::string_view languageKey,
@@ -51,7 +77,7 @@ std::vector<FormatTextEdit> ComputeBlankLineEdits(std::string_view text, std::st
             continue; // unconfigured -- no built-in default, nothing forced
         }
 
-        const std::size_t lineStart = LineStartOf(text, capture.startByte);
+        const std::size_t lineStart = AttachedCommentStart(text, LineStartOf(text, capture.startByte), captures);
         std::size_t       blankRegionStart{};
         const int         blankCount = CountBlankLinesBefore(text, lineStart, blankRegionStart);
 
@@ -69,8 +95,7 @@ std::vector<FormatTextEdit> ComputeBlankLineEdits(std::string_view text, std::st
         }
 
         std::string desiredGap(static_cast<std::size_t>(desired), '\n');
-        desiredGap += text.substr(lineStart, capture.startByte - lineStart); // this line's own leading indent
-        edits.push_back(FormatTextEdit{blankRegionStart, capture.startByte, std::move(desiredGap)});
+        edits.push_back(FormatTextEdit{blankRegionStart, lineStart, std::move(desiredGap)});
     }
 
     std::sort(edits.begin(), edits.end(), [](const FormatTextEdit& a, const FormatTextEdit& b) { return a.start < b.start; });

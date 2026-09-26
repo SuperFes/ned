@@ -104,6 +104,23 @@ TEST_CASE("minBefore is skipped when the capture is first in its container", "[F
     REQUIRE(ComputeBlankLineEdits(source, "python", {defA}).empty());
 }
 
+TEST_CASE("A comment directly above a definition keeps the blank lines above it", "[FormatBlankLines]") {
+    const FormatRulesGuard guard;
+    SetBlankMinBefore("def.toplevel", 2);
+
+    const std::string   source  = "x = 1\n# about b\n# more\ndef b():\n    pass\n";
+    const std::size_t   comment = source.find("# about");
+    const FormatCapture about{"comment", comment, source.find('\n', comment), false, false};
+    const FormatCapture more{"comment", source.find("# more"), source.find('\n', source.find("# more")), false, false};
+    const FormatCapture defB{"def.toplevel", source.find("def b"), source.size() - 1, false, false};
+
+    Buffer buffer("test.py");
+    buffer.InsertAtPoint(source);
+    ApplyFormatTextEdits(buffer, ComputeBlankLineEdits(buffer.Text(), "python", {about, more, defB}));
+
+    REQUIRE(buffer.Text() == "x = 1\n\n\n# about b\n# more\ndef b():\n    pass\n");
+}
+
 TEST_CASE("maxBefore trims excess blank lines", "[FormatBlankLines]") {
     const FormatRulesGuard guard;
     SetBlankMaxBefore("def.toplevel", 1);
