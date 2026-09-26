@@ -3,6 +3,7 @@
  :injection-aliases ["justfile"]
  :filenames ["justfile" "Justfile" "JUSTFILE" ".justfile" ".Justfile" ".JUSTFILE"]
  :line-comment "#"
+ :signature-template "__ned_sig {}:"
  :import-resolution {:extensions ["just"] :index-basenames ["mod"]}
  :not-applicable {:indents  "the grammar's delimited bodies are its whole indent structure"
                   :tests    "no test framework runs tests written in it"

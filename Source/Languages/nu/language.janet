@@ -2,6 +2,7 @@
  :extensions [".nu"]
  :injection-aliases ["nushell"]
  :line-comment "#"
+ :signature-template "def __ned_sig [{}] {}"
  :braces-on-header-line true
  :capture-classes {"special" :variable-builtin}
  :import-resolution {:extensions ["nu"] :index-basenames ["mod"]}

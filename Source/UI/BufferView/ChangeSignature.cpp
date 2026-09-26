@@ -152,10 +152,11 @@ bool BufferView::BuildChangeSignatureReview(const std::filesystem::path& targetF
             it->second.file = file;
             it->second.text = text;
         }
-        it->second.hits.push_back(editor::rename::RenameHit{.startByte   = signature.parametersStartByte + 1,
-                                                             .endByte     = signature.parametersEndByte - 1,
+        it->second.hits.push_back(editor::rename::RenameHit{.startByte   = signature.parametersInteriorStartByte,
+                                                             .endByte     = signature.parametersInteriorEndByte,
                                                              .kind        = editor::rename::HitKind::Reference,
-                                                             .replacement = replacement});
+                                                             .replacement = editor::changesig::ListReplacement(
+                                                                 replacement, signature.parametersLead)});
     };
     addSignatureHit(targetFile, targetText, targetSignature, newSignatureText);
     for (const editor::changesig::SignatureSite& site : discovery.signatureSites) {
@@ -170,7 +171,8 @@ bool BufferView::BuildChangeSignatureReview(const std::filesystem::path& targetF
     std::size_t declinedCallSites = 0;
     for (const editor::changesig::CallSite& site : discovery.callSites) {
         const editor::changesig::ArgumentRewrite rewrite =
-            editor::changesig::RewriteArgumentList(site.text, site.call.arguments, syntheticText, mapping, site.call.receiver);
+            editor::changesig::RewriteArgumentList(site.text, site.call.arguments, syntheticText, mapping, site.call.receiver,
+                                                   site.call.argumentsLead ? " " : editor::ModeForPath(site.file).listSeparator);
         if (rewrite.declined) {
             ++declinedCallSites;
             declineReason = rewrite.declineReason;
@@ -181,10 +183,11 @@ bool BufferView::BuildChangeSignatureReview(const std::filesystem::path& targetF
             it->second.file = site.file;
             it->second.text = site.text;
         }
-        it->second.hits.push_back(editor::rename::RenameHit{.startByte   = site.call.argumentsStartByte + 1,
-                                                             .endByte     = site.call.argumentsEndByte - 1,
+        it->second.hits.push_back(editor::rename::RenameHit{.startByte   = site.call.argumentsInteriorStartByte,
+                                                             .endByte     = site.call.argumentsInteriorEndByte,
                                                              .kind        = editor::rename::HitKind::Reference,
-                                                             .replacement = rewrite.argumentListText});
+                                                             .replacement = editor::changesig::ListReplacement(
+                                                                 rewrite.argumentListText, site.call.argumentsLead)});
     }
 
     std::vector<editor::rename::FileRenameHits> files;
@@ -273,13 +276,16 @@ void BufferView::RequestChangeSignatureAtPoint() {
         }
     }
 
-    const std::string prefill(
-        std::string_view(text).substr(marker->parametersStartByte + 1, marker->parametersEndByte - marker->parametersStartByte - 2));
+    std::string_view prefill = std::string_view(text).substr(
+        marker->parametersInteriorStartByte, marker->parametersInteriorEndByte - marker->parametersInteriorStartByte);
+    if (marker->parametersLead) {
+        prefill.remove_prefix(std::min(prefill.find_first_not_of(" \t"), prefill.size()));
+    }
 
     pendingChangeSignature_ = PendingChangeSignature{.file = *buffer.Path(), .text = text, .signature = *marker};
     inputMode_              = InputMode::ChangeSignatureNewSignature;
     prompt_.emplace("New signature: ");
-    prompt_->SetText(prefill);
+    prompt_->SetText(std::string(prefill));
     statusMessage_ = prompt_->StatusText();
 }
 

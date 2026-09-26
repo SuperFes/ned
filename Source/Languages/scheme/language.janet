@@ -2,6 +2,7 @@
  :extensions [".scm" ".ss" ".sld" ".sls"]
  :injection-aliases ["scm"]
  :line-comment ";"
+ :signature-template "(define (__ned_sig {}) 0)"
  :auto-pairs :lisp
  :import-resolution {:extensions ["scm" "ss" "sld"]}
  :not-applicable {:continuation "every form is delimited; a line continues its enclosing form"

@@ -64,7 +64,8 @@ std::string ChangeSignature(std::string_view language, const std::string& source
     for (const SignatureMarker& signature : signatures) {
         if (Slice(source, signature.callNameStartByte, signature.callNameEndByte) == callName &&
             signature.parameters.size() == target->parameters.size()) {
-            edits.push_back({signature.parametersStartByte + 1, signature.parametersEndByte - 1, newParameters});
+            edits.push_back({signature.parametersInteriorStartByte, signature.parametersInteriorEndByte,
+                             changesig::ListReplacement(newParameters, signature.parametersLead)});
         }
     }
     for (const CallMarker& call : mode->calls(source)) {
@@ -72,12 +73,15 @@ std::string ChangeSignature(std::string_view language, const std::string& source
             continue;
         }
         const changesig::ArgumentRewrite rewrite =
-            changesig::RewriteArgumentList(source, call.arguments, synthetic, mapping, call.receiver);
+            changesig::RewriteArgumentList(source, call.arguments, synthetic, mapping, call.receiver,
+                                           call.argumentsLead ? " " : mode->listSeparator);
         if (rewrite.declined) {
-            edits.push_back({call.argumentsStartByte, call.argumentsStartByte, "/*declined*/"});
+            const std::size_t at = call.argumentsLead ? call.argumentsInteriorStartByte : call.argumentsStartByte;
+            edits.push_back({at, at, "/*declined*/"});
         }
         else {
-            edits.push_back({call.argumentsStartByte + 1, call.argumentsEndByte - 1, rewrite.argumentListText});
+            edits.push_back({call.argumentsInteriorStartByte, call.argumentsInteriorEndByte,
+                             changesig::ListReplacement(rewrite.argumentListText, call.argumentsLead)});
         }
     }
     std::sort(edits.begin(), edits.end(), [](const Edit& a, const Edit& b) { return a.start > b.start; });
@@ -1148,4 +1152,81 @@ TEST_CASE("Verilog and VHDL change-signature reorder their calls", "[ChangeSigna
                           "fill", "c : bit; b, a : integer") ==
           "package p is\n  procedure fill(c : bit; b, a : integer);\nend package;\n"
           "architecture r of e is\nbegin\n  process begin\n    fill('0', 2, 1);\n  end process;\nend architecture;\n");
+}
+
+TEST_CASE("Lisp change-signature rewrites a call's arguments after its head", "[ChangeSignature]") {
+    CHECK(ChangeSignature("clojure", "(defn scale \"doc\" [v factor] (* v factor))\n"
+                                     "(scale 1 2)\n"
+                                     "(util/scale 3 4)\n"
+                                     "(scale)\n",
+                          "scale", "factor v") ==
+          "(defn scale \"doc\" [factor v] (* v factor))\n"
+          "(scale 2 1)\n"
+          "(util/scale 4 3)\n"
+          "(scale/*declined*/)\n");
+    CHECK(ChangeSignature("jank", "(defn scale [v factor] v)\n(scale 1 2)\n", "scale", "factor v") ==
+          "(defn scale [factor v] v)\n(scale 2 1)\n");
+    CHECK(ChangeSignature("clojure", "(defn f [a & more] a)\n", "f", "more a") ==
+          "declined: a variadic parameter can't be reordered, dropped or defaulted");
+
+    CHECK(ChangeSignature("janet", "(defn scale [v factor] (* v factor))\n(scale 1 2)\n", "scale", "factor v") ==
+          "(defn scale [factor v] (* v factor))\n(scale 2 1)\n");
+
+    CHECK(ChangeSignature("fennel", "(fn scale [v factor] (* v factor))\n(scale 1 2)\n(print (scale 3 4))\n", "scale",
+                          "factor v") ==
+          "(fn scale [factor v] (* v factor))\n(scale 2 1)\n(print (scale 4 3))\n");
+
+    CHECK(ChangeSignature("racket", "(define (scale v factor) (* v factor))\n(scale 1 2)\n(define (zero) 0)\n", "scale",
+                          "factor v") ==
+          "(define (scale factor v) (* v factor))\n(scale 2 1)\n(define (zero) 0)\n");
+    CHECK(ChangeSignature("racket", "(define (zero) 0)\n(display (zero))\n", "zero", "[n 1]") ==
+          "(define (zero [n 1]) 0)\n(display (zero 1))\n");
+    CHECK(ChangeSignature("scheme", "(define (scale v factor) (* v factor))\n(display (scale 1 2))\n", "scale", "factor v") ==
+          "(define (scale factor v) (* v factor))\n(display (scale 2 1))\n");
+
+    CHECK(ChangeSignature("commonlisp", "(defun scale (v factor &optional (round nil)) (* v factor))\n"
+                                        "(scale 1 2 t)\n"
+                                        "(scale 1 2)\n",
+                          "scale", "factor v &optional (round nil)") ==
+          "(defun scale (factor v &optional (round nil)) (* v factor))\n"
+          "(scale 2 1 t)\n"
+          "(scale/*declined*/ 1 2)\n");
+}
+
+TEST_CASE("CMake, Tcl, Nu, just and PowerShell change-signature rewrite command-style calls", "[ChangeSignature]") {
+    CHECK(ChangeSignature("cmake", "function(scale v factor)\nendfunction()\nscale(1 2)\nfunction(zero)\nendfunction()\nzero()\n",
+                          "scale", "factor v") ==
+          "function(scale factor v)\nendfunction()\nscale(2 1)\nfunction(zero)\nendfunction()\nzero()\n");
+
+    CHECK(ChangeSignature("tcl", "proc scale {v {factor 2}} { return $v }\n"
+                                 "scale 1 3\n"
+                                 "set x [scale 4]\n",
+                          "scale", "{factor 2} v {round 0}") ==
+          "proc scale {{factor 2} v {round 0}} { return $v }\n"
+          "scale 3 1 0\n"
+          "set x [scale/*declined*/ 4]\n");
+
+    CHECK(ChangeSignature("nu", "def scale [v: int, factor = 2, --round] { $v }\n"
+                                "scale 1 3 --round\n"
+                                "let x = (scale 4 5)\n",
+                          "scale", "factor = 2, v: int, --round") ==
+          "def scale [factor = 2, v: int, --round] { $v }\n"
+          "scale 3 1 --round\n"
+          "let x = (scale 5 4)\n");
+
+    CHECK(ChangeSignature("just", "build target mode=\"dev\":\n  echo {{target}}\n"
+                                  "test: (build \"a\" \"b\")\n",
+                          "build", "mode=\"dev\" target") ==
+          "build mode=\"dev\" target:\n  echo {{target}}\n"
+          "test: (build \"b\" \"a\")\n");
+
+    CHECK(ChangeSignature("powershell", "function Scale($v, $factor = 2) { $v }\n"
+                                        "Scale 1 3\n"
+                                        "Scale -v 1 -factor 3\n",
+                          "Scale", "$factor = 2, $v") ==
+          "function Scale($factor = 2, $v) { $v }\n"
+          "Scale 3 1\n"
+          "Scale/*declined*/ -v 1 -factor 3\n");
+    CHECK(ChangeSignature("powershell", "class C {\n  [int] M($a, $b) { return $a }\n}\n$c.M(1, 2)\n", "M", "$b, $a") ==
+          "class C {\n  [int] M($b, $a) { return $a }\n}\n$c.M(2, 1)\n");
 }

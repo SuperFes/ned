@@ -1,6 +1,7 @@
 {:name "tcl"
  :extensions [".tcl" ".tk" ".exp"]
  :line-comment "#"
+ :signature-template "proc __ned_sig {{}} {}"
  :braces-on-header-line true
  :import-resolution {:extensions ["tcl"]}
  :not-applicable {:indents    "the grammar's delimited bodies are its whole indent structure"

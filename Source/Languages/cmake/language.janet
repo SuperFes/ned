@@ -2,6 +2,8 @@
  :extensions [".cmake"]
  :filenames ["CMakeLists.txt"]
  :line-comment "#"
+ :signature-template "function(__ned_sig {})\nendfunction()"
+ :list-separator " "
 
  # Deliberately no :lsp-root-markers: "CMakeLists.txt" as its own marker
  # would match trivially at a nested CMakeLists.txt's own directory,

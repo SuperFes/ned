@@ -39,6 +39,9 @@ namespace {
         mode.wrapLines             = definition.wrapLines;
         mode.stickyScrollFromFolds = definition.stickyScrollFromFolds;
         mode.signatureTemplate     = definition.signatureTemplate;
+        if (!definition.listSeparator.empty()) {
+            mode.listSeparator = definition.listSeparator;
+        }
         mode.colorLiterals     = definition.colorLiterals;
         mode.autoPairs         = definition.autoPairs == AutoPairSet::Lisp ? LispAutoPairs() : DefaultAutoPairs();
         for (const auto& [sequence, command] : definition.keymap) {

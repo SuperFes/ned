@@ -2,6 +2,7 @@
  :extensions [".lisp" ".cl" ".asd" ".lsp"]
  :injection-aliases ["lisp" "common-lisp"]
  :line-comment ";"
+ :signature-template "(defun __ned_sig ({}))"
  :lsp-root-markers ["*.asd"]
  :auto-pairs :lisp
  :import-resolution {:extensions ["lisp" "cl"]}

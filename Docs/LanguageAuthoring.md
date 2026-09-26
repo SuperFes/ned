@@ -277,7 +277,14 @@ called: by its class (`new Box(...)`, Swift's `Box(...)`, Solidity's `is Vault(.
 `super().__init__`, `this(...)`, `: base(...)` -- `@call.class` with `@call.base`/
 `@call.class.name`, and a call marked `@call.callee.base`/`.class`). A pipe fills the
 first parameter (Gleam's `|>`, `@call.receiver.first`), so moving that parameter
-declines the piped call. C and C++ read their declarators directly instead.
+declines the piped call. A list that follows its name inside its parent's own
+delimiters, or with none at all, is named by that parent (`@signature.parameters.rest`: Scheme's `(define (f a b) ...)`,
+CMake's `function(f a b)`; `@call.arguments.rest`: a Lisp's `(f a b)`, Tcl's and Nu's
+`f 1 2`) and rewritten from the name on, space-separated; `@call.exclude` marks a node
+that reads as a call and isn't one (Scheme's definition header), and `@argument.skip` a
+child that sits between arguments (PowerShell's separators). `[...]` and `{...}`
+delimit a list as parens do, and `:list-separator` (`" "`: CMake) joins a delimited
+call's arguments. C and C++ read their declarators directly instead.
 
 ### Imports
 

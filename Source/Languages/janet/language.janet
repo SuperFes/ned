@@ -3,6 +3,7 @@
 
  # `#`, not the Lisp `;` -- in Janet `;` is the splice operator.
  :line-comment "#"
+ :signature-template "(defn __ned_sig [{}])"
  :lsp-root-markers ["project.janet"]
 
  # '(...) is the reader's quote macro, not a paired delimiter.

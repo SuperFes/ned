@@ -2,6 +2,7 @@
  :extensions [".rkt" ".rktl" ".rktd"]
  :injection-aliases ["rkt"]
  :line-comment ";"
+ :signature-template "(define (__ned_sig {}) 0)"
  :auto-pairs :lisp
  :import-resolution {:extensions ["rkt"]}
  :queries {:locals ["racket/locals.janet"]}

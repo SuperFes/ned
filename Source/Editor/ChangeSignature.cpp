@@ -163,7 +163,8 @@ MappingResult BuildPositionMapping(std::string_view oldText, const std::vector<S
 }
 
 ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector<CallArgument>& oldArgs,
-                                    std::string_view newDefaultText, const MappingResult& mapping, CallReceiver receiver) {
+                                    std::string_view newDefaultText, const MappingResult& mapping, CallReceiver receiver,
+                                    std::string_view separator) {
     // Positional arguments are realigned; a named one for a keyword
     // parameter follows them as written, or goes with its parameter.
     std::vector<CallArgument>     positional;
@@ -212,9 +213,9 @@ ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector
         return {.declined = true, .declineReason = "call site supplies more arguments than the old signature has parameters"};
     }
     std::string result;
-    const auto  append = [&result](std::string_view piece) {
+    const auto  append = [&result, separator](std::string_view piece) {
         if (!result.empty()) {
-            result += ", ";
+            result += separator;
         }
         result += piece;
     };
@@ -247,6 +248,10 @@ ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector
         append(piece);
     }
     return {.declined = false, .argumentListText = std::move(result)};
+}
+
+std::string ListReplacement(std::string_view text, bool lead) {
+    return (lead && !text.empty() ? " " : "") + std::string(text);
 }
 
 namespace {
@@ -285,15 +290,14 @@ namespace {
     // A call's positional arguments; nullopt when a spread makes the count
     // unknowable. A call without parens (Ruby's `f 1, 2`) has every argument
     // marked non-positional, so each unnamed one counts.
-    std::optional<std::size_t> PositionalCount(const CallMarker& call, std::string_view text) {
-        const bool  parenthesized = call.argumentsStartByte < text.size() && text[call.argumentsStartByte] == '(';
-        std::size_t count         = 0;
+    std::optional<std::size_t> PositionalCount(const CallMarker& call) {
+        std::size_t count = 0;
         for (const CallArgument& argument : call.arguments) {
             const bool named = argument.nameEndByte > argument.nameStartByte;
             if (named) {
                 continue;
             }
-            if (!argument.positional && parenthesized) {
+            if (!argument.positional && call.delimited) {
                 return std::nullopt;
             }
             ++count;
@@ -340,7 +344,7 @@ DiscoveryResult DiscoverSignatureAndCallSites(std::string_view name, const Signa
     if (!overloads.empty()) {
         const ArityRange own = PositionalArity(target);
         std::erase_if(result.callSites, [&](const CallSite& site) {
-            const std::optional<std::size_t> count  = PositionalCount(site.call, site.text);
+            const std::optional<std::size_t> count  = PositionalCount(site.call);
             const bool                       ours   = !count || Accepts(own, *count);
             const bool                       theirs = !count || std::any_of(overloads.begin(), overloads.end(),
                                                                             [&](const ArityRange& range) { return Accepts(range, *count); });

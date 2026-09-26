@@ -549,6 +549,14 @@ struct SignatureMarker {
     // the first/last parameter's own range.
     std::size_t                     parametersStartByte;
     std::size_t                     parametersEndByte;
+    // What change-signature replaces: between the list's delimiters, or,
+    // for a list that follows the name inside its parent's own
+    // (`(define (f a b) ...)`, @signature.parameters.rest), from the name's
+    // end to that parent's closer -- a non-empty replacement there needs a
+    // space before it (parametersLead).
+    std::size_t                     parametersInteriorStartByte = 0;
+    std::size_t                     parametersInteriorEndByte   = 0;
+    bool                            parametersLead              = false;
     std::vector<SignatureParameter> parameters;
     // The name call sites spell when it isn't the definition's own
     // (@signature.callee): a constructor `__construct` is called as
@@ -617,6 +625,14 @@ struct CallMarker {
     // that is right even when `arguments` is empty.
     std::size_t               argumentsStartByte;
     std::size_t               argumentsEndByte;
+    // Same as SignatureMarker's: between the delimiters, or after the callee
+    // (`(f a b)`, `f 1 2`: @call.arguments.rest) with a space before it.
+    std::size_t               argumentsInteriorStartByte = 0;
+    std::size_t               argumentsInteriorEndByte   = 0;
+    bool                      argumentsLead              = false;
+    // Whether the list can be rewritten at all: false for Ruby's `f 1, 2`,
+    // whose arguments are then all non-positional.
+    bool                      delimited = true;
     std::vector<CallArgument> arguments;
     CallReceiver              receiver = CallReceiver::None;
 };
@@ -1085,6 +1101,10 @@ struct Mode {
     // them in and running `signatures` over the result (C++:
     // "void __ned_sig({}) {}"). Empty: change-signature isn't offered.
     std::string signatureTemplate;
+    // What change-signature joins a delimited argument list with: ", ", or
+    // " " for CMake's `f(a b)`. A list after the callee (`(f a b)`, `f 1 2`)
+    // is always space-separated.
+    std::string listSeparator = ", ";
     // Which colour-literal spellings this mode's buffers admit -- the
     // swatch scan and `color-at-point` both read it. Defaults to the
     // universally unambiguous set; a stylesheet's definition widens it.

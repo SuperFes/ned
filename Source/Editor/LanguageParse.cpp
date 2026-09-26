@@ -188,6 +188,9 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
         else if (key == "signature-template") {
             definition.signatureTemplate = ExpectString(directoryName, value, ":signature-template");
         }
+        else if (key == "list-separator") {
+            definition.listSeparator = ExpectString(directoryName, value, ":list-separator");
+        }
         else if (key == "sticky-scroll-from-folds") {
             definition.stickyScrollFromFolds = ExpectBool(directoryName, value, ":sticky-scroll-from-folds");
         }

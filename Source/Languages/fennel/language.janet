@@ -2,6 +2,7 @@
  :extensions [".fnl"]
  :injection-aliases ["fnl"]
  :line-comment ";"
+ :signature-template "(fn __ned_sig [{}])"
  :auto-pairs :lisp
  :import-resolution {:extensions ["fnl"] :index-basenames ["init"] :source-roots ["fnl" "src"]}
  :not-applicable {:continuation "every form is delimited; a line continues its enclosing form"

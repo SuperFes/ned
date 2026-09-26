@@ -969,11 +969,57 @@ grammar::Node CapturedNode(const grammar::Tree& tree, std::size_t start, std::si
 // A parameter or argument list node is rewritten between its parens: its
 // own first and last bytes, or the bytes just outside it when the grammar
 // puts the parens beside the node (Crystal's param_list).
+char ClosingBracketFor(char open) {
+    switch (open) {
+        case '(':
+            return ')';
+        case '[':
+            return ']';
+        case '{':
+            return '}';
+        default:
+            return '\0';
+    }
+}
+
+// Clojure's `[a b]` and Tcl's `{a b}` delimit a list as parens do.
 bool DelimitedByParens(std::string_view text, std::size_t start, std::size_t end) {
-    if (end > start && text[start] == '(' && text[end - 1] == ')') {
+    if (end > start && ClosingBracketFor(text[start]) != '\0' && text[end - 1] == ClosingBracketFor(text[start])) {
         return true;
     }
-    return start > 0 && end < text.size() && text[start - 1] == '(' && text[end] == ')';
+    return start > 0 && end < text.size() && ClosingBracketFor(text[start - 1]) != '\0' &&
+           text[end] == ClosingBracketFor(text[start - 1]);
+}
+
+// A list that follows a name inside its parent, with no delimiters of its
+// own: `(define (f a b) ...)`, `(f a b)`, Tcl's `f 1 2`. Its items are the
+// parent's named children after `after`; rewriting it ends at the parent's
+// closing bracket, or after its last item when it has none.
+struct RestList {
+    std::vector<grammar::Node> children;
+    std::size_t                interiorEnd = 0;
+};
+
+RestList RestListAfter(const grammar::Node& parent, std::size_t after) {
+    RestList list;
+    list.interiorEnd = after;
+    for (std::size_t i = 0; i < parent.ChildCount(); ++i) {
+        const grammar::Node child = parent.Child(i);
+        if (child.StartByte() < after || child.IsExtra()) {
+            continue;
+        }
+        if (!child.IsNamed()) {
+            const std::string_view type = child.Type();
+            if (i + 1 == parent.ChildCount() && (type == ")" || type == "]" || type == "}")) {
+                list.interiorEnd = child.StartByte();
+                return list;
+            }
+            continue;
+        }
+        list.children.push_back(child);
+        list.interiorEnd = child.EndByte();
+    }
+    return list;
 }
 
 // A parameter or argument list the grammar writes flat, as its
@@ -1987,9 +2033,15 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 std::string_view parametersType;
                 bool            haveParameters  = false;
                 std::optional<std::pair<std::size_t, std::size_t>> openParen;
+                std::optional<std::pair<std::size_t, std::size_t>> restParent;
+                std::string_view                                   restType;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (capture.name == "signature.parameters.open") {
                         openParen.emplace(capture.startByte, capture.endByte);
+                    }
+                    else if (capture.name == "signature.parameters.rest") {
+                        restParent.emplace(capture.startByte, capture.endByte);
+                        restType = capture.type;
                     }
                     else if (capture.name == "signature.callee") {
                         marker.callNameStartByte = capture.startByte;
@@ -2024,6 +2076,19 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     parametersEnd   = flatParameters->closeEnd;
                     haveParameters  = true;
                 }
+                std::optional<std::size_t> restInteriorEnd;
+                if (restParent && haveName) {
+                    const grammar::Node parent = CapturedNode(tree, restParent->first, restParent->second, restType);
+                    if (parent.IsNull()) {
+                        continue;
+                    }
+                    RestList list   = RestListAfter(parent, marker.nameEndByte);
+                    flatParameters  = FlatList{.children = std::move(list.children), .closeEnd = parent.EndByte()};
+                    restInteriorEnd = list.interiorEnd;
+                    parametersStart = parent.StartByte();
+                    parametersEnd   = parent.EndByte();
+                    haveParameters  = true;
+                }
                 if (!haveDefinition || !haveName || !haveParameters) {
                     continue; // a pattern that matched without its full capture trio
                 }
@@ -2044,11 +2109,24 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 // written without them (Ruby's `def f a, b`) can't be. A grammar
                 // that puts the parens beside the list node (Crystal) is widened
                 // over them.
-                if (!DelimitedByParens(bufferText, parametersStart, parametersEnd)) {
-                    continue;
+                if (restInteriorEnd) {
+                    marker.parametersStartByte         = parametersStart;
+                    marker.parametersEndByte           = parametersEnd;
+                    marker.parametersInteriorStartByte = marker.nameEndByte;
+                    marker.parametersInteriorEndByte   = *restInteriorEnd;
+                    marker.parametersLead              = true;
                 }
-                marker.parametersStartByte = bufferText[parametersStart] == '(' ? parametersStart : parametersStart - 1;
-                marker.parametersEndByte   = bufferText[parametersStart] == '(' ? parametersEnd : parametersEnd + 1;
+                else {
+                    if (!DelimitedByParens(bufferText, parametersStart, parametersEnd)) {
+                        continue;
+                    }
+                    const bool own                     = ClosingBracketFor(bufferText[parametersStart]) != '\0' &&
+                                                         bufferText[parametersEnd - 1] == ClosingBracketFor(bufferText[parametersStart]);
+                    marker.parametersStartByte         = own ? parametersStart : parametersStart - 1;
+                    marker.parametersEndByte           = own ? parametersEnd : parametersEnd + 1;
+                    marker.parametersInteriorStartByte = marker.parametersStartByte + 1;
+                    marker.parametersInteriorEndByte   = marker.parametersEndByte - 1;
+                }
                 if (described.empty() && !flat) {
                     marker.parameters = ParametersFromList(parameterList);
                 }
@@ -2152,6 +2230,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             // A child of a flat argument list standing for several arguments
             // (Perl's `list_expression`), read through.
             std::set<std::pair<std::size_t, std::size_t>> argumentGroups;
+            // A node that reads as a call and isn't one (Scheme's
+            // `(define (f a b) ...)` header).
+            std::set<std::pair<std::size_t, std::size_t>> excludedCalls;
+            // Between arguments and none of them (PowerShell's
+            // command_argument_sep).
+            std::set<std::pair<std::size_t, std::size_t>> skippedArguments;
             // Classes (@call.class), with the class each extends (@call.base)
             // or its own name (@call.class.name), for a call spelled through
             // one of them: `parent::__construct()`, Java's `this(...)`.
@@ -2174,6 +2258,12 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     }
                     else if (capture.name == "argument.group") {
                         argumentGroups.emplace(capture.startByte, capture.endByte);
+                    }
+                    else if (capture.name == "call.exclude") {
+                        excludedCalls.emplace(capture.startByte, capture.endByte);
+                    }
+                    else if (capture.name == "argument.skip") {
+                        skippedArguments.emplace(capture.startByte, capture.endByte);
                     }
                     else if (capture.name == "argument.name") {
                         name = {capture.startByte, capture.endByte};
@@ -2225,9 +2315,15 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 std::string_view argumentsType;
                 bool        haveArguments  = false;
                 std::optional<std::pair<std::size_t, std::size_t>> openParen;
+                std::optional<std::pair<std::size_t, std::size_t>> restParent;
+                std::string_view                                   restType;
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (capture.name == "call.arguments.open") {
                         openParen.emplace(capture.startByte, capture.endByte);
+                    }
+                    else if (capture.name == "call.arguments.rest") {
+                        restParent.emplace(capture.startByte, capture.endByte);
+                        restType = capture.type;
                     }
                     else if (capture.name == "call.definition") {
                         marker.startByte = capture.startByte;
@@ -2272,16 +2368,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     if (!list) {
                         continue;
                     }
-                    for (const grammar::Node& child : list->children) {
-                        if (argumentGroups.contains({child.StartByte(), child.EndByte()})) {
-                            for (std::size_t i = 0; i < child.ChildCount(); ++i) {
-                                argumentNodes.push_back(child.Child(i));
-                            }
-                        }
-                        else {
-                            argumentNodes.push_back(child);
-                        }
-                    }
+                    argumentNodes = std::move(list->children);
                     argumentsStart = openParen->first;
                     argumentsEnd   = list->closeEnd;
                     haveArguments  = true;
@@ -2298,11 +2385,25 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                     marker.calleeEndByte   = named->second;
                     haveCallee             = true;
                 }
-                if (!haveDefinition || !haveCallee || !haveArguments) {
+                std::optional<std::size_t> restInteriorEnd;
+                if (restParent && haveCallee) {
+                    const grammar::Node parent = CapturedNode(tree, restParent->first, restParent->second, restType);
+                    if (parent.IsNull()) {
+                        continue;
+                    }
+                    RestList list   = RestListAfter(parent, marker.calleeEndByte);
+                    argumentNodes   = std::move(list.children);
+                    restInteriorEnd = list.interiorEnd;
+                    argumentsStart  = parent.StartByte();
+                    argumentsEnd    = parent.EndByte();
+                    haveArguments   = true;
+                }
+                if (!haveDefinition || !haveCallee || !haveArguments ||
+                    excludedCalls.contains({marker.startByte, marker.endByte})) {
                     continue;
                 }
 
-                if (!flat) {
+                if (!flat && !restInteriorEnd) {
                     const grammar::Node argumentList = CapturedNode(tree, argumentsStart, argumentsEnd, argumentsType);
                     if (argumentList.IsNull() || argumentList.StartByte() != argumentsStart ||
                         argumentList.EndByte() != argumentsEnd) {
@@ -2312,12 +2413,36 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                         argumentNodes.push_back(argumentList.Child(i));
                     }
                 }
-                const bool outside        = !(argumentsEnd > argumentsStart && bufferText[argumentsStart] == '(') &&
-                                            DelimitedByParens(bufferText, argumentsStart, argumentsEnd);
-                marker.argumentsStartByte = outside ? argumentsStart - 1 : argumentsStart;
-                marker.argumentsEndByte   = outside ? argumentsEnd + 1 : argumentsEnd;
+                if (restInteriorEnd) {
+                    marker.argumentsStartByte         = argumentsStart;
+                    marker.argumentsEndByte           = argumentsEnd;
+                    marker.argumentsInteriorStartByte = marker.calleeEndByte;
+                    marker.argumentsInteriorEndByte   = *restInteriorEnd;
+                    marker.argumentsLead              = true;
+                }
+                else {
+                    const bool own = argumentsEnd > argumentsStart && ClosingBracketFor(bufferText[argumentsStart]) != '\0' &&
+                                     bufferText[argumentsEnd - 1] == ClosingBracketFor(bufferText[argumentsStart]);
+                    const bool outside                = !own && DelimitedByParens(bufferText, argumentsStart, argumentsEnd);
+                    marker.argumentsStartByte         = outside ? argumentsStart - 1 : argumentsStart;
+                    marker.argumentsEndByte           = outside ? argumentsEnd + 1 : argumentsEnd;
+                    marker.argumentsInteriorStartByte = marker.argumentsStartByte + 1;
+                    marker.argumentsInteriorEndByte   = marker.argumentsEndByte - 1;
+                }
+                std::vector<grammar::Node> expanded;
                 for (const grammar::Node& child : argumentNodes) {
-                    if (!child.IsNamed() || child.IsExtra() || bufferText.substr(child.StartByte(), child.EndByte() - child.StartByte()) == ",") {
+                    if (argumentGroups.contains({child.StartByte(), child.EndByte()})) {
+                        for (std::size_t i = 0; i < child.ChildCount(); ++i) {
+                            expanded.push_back(child.Child(i));
+                        }
+                    }
+                    else {
+                        expanded.push_back(child);
+                    }
+                }
+                for (const grammar::Node& child : expanded) {
+                    if (!child.IsNamed() || child.IsExtra() || bufferText.substr(child.StartByte(), child.EndByte() - child.StartByte()) == "," ||
+                        skippedArguments.contains({child.StartByte(), child.EndByte()})) {
                         continue;
                     }
                     const auto named = nonPositional.find({child.StartByte(), child.EndByte()});
@@ -2329,10 +2454,11 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 }
                 // Without parens (Ruby's `f 1, 2`) the list can't be rewritten
                 // in place; a bare `f` has nothing to rewrite at all.
-                if (!DelimitedByParens(bufferText, argumentsStart, argumentsEnd)) {
+                if (!restInteriorEnd && !DelimitedByParens(bufferText, argumentsStart, argumentsEnd)) {
                     if (marker.arguments.empty()) {
                         continue;
                     }
+                    marker.delimited = false;
                     for (CallArgument& argument : marker.arguments) {
                         argument.positional = false;
                     }

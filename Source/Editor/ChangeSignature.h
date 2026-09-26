@@ -116,9 +116,15 @@ struct ArgumentRewrite {
 // receiver parameter the object supplies is in neither the old nor the new
 // argument list. A call passing more arguments than the old signature takes
 // is declined too -- whatever the extra ones mean, dropping them isn't it.
+// `separator` joins the arguments (Mode::listSeparator).
 [[nodiscard]] ArgumentRewrite RewriteArgumentList(std::string_view callText, const std::vector<CallArgument>& oldArgs,
                                                   std::string_view newDefaultText, const MappingResult& mapping,
-                                                  CallReceiver receiver = CallReceiver::None);
+                                                  CallReceiver receiver = CallReceiver::None, std::string_view separator = ", ");
+
+// What replaces a list's interior: `text`, after the space a list that
+// follows its name (SignatureMarker::parametersLead, CallMarker::argumentsLead)
+// needs when it isn't empty.
+[[nodiscard]] std::string ListReplacement(std::string_view text, bool lead);
 
 // Project-wide discovery follow-up: finding every OTHER place -- a call
 // site, or the function's own signature in a different file (a header
