@@ -1339,12 +1339,13 @@ these accumulate detail in place.
       (`` x `f` y ``) or in an operator section; a Haskell equation written infix isn't
       reordered with its siblings. Justified when one of them turns up in a real
       refactor.
-- [ ] **Imports for module systems that aren't paths.** C# and F# namespaces, Swift and
-      Elixir modules, Vala namespaces, OCaml and ReScript's flat module names, Pascal units (a unit name
-      can't be written back after a move), Ada's GNAT `foo-bar.ads` naming, Starlark's
-      Bazel labels, VHDL libraries. Each needs a project-wide index from module name to
-      file rather than a specifier-to-path rule. Justified by a language whose users
-      rename files often enough to want the fixup.
+- [ ] **Imports that name no file.** C#, F# and Vala `using`/`open` name a namespace that
+      any number of files add to, and an Elixir multi-alias (`alias A.{B, C}`) splits its
+      path across a dot and a tuple. An Ada rename declines when the `with` clause's case is
+      neither the file's nor each step capitalized (`Ada_IO` for `ada_io.ads`), and a Bazel
+      label into another repository (`@rules_cc//...`) resolves nowhere, since only Bazel's
+      output base holds it. Justified when go-to-file or a move fixup is missed through one
+      in practice.
 - [ ] **Org links as imports.** `[[file:a.org]]` and `[[./a.org][desc]]` open with
       open-link-at-point but aren't imports (the grammar has no link node, only
       `#+INCLUDE`/`#+SETUPFILE` are read), so moving a note doesn't fix the links to it.

@@ -137,7 +137,23 @@ const ImportCase kImportCases[] = {
     {"earthfile", "VERSION 0.8\nIMPORT ./lib AS lib\n", "lib ", "./lib", false},
     {"earthfile", "VERSION 0.8\nbuild:\n    FROM ./base+img\n", "base", "./base", false},
     {"earthfile", "VERSION 0.8\nbuild:\n    DO ./udc+FUNC\n", "udc", "./udc", false},
-    {"cue", "package p\n\nimport \"example.com/m/sub\"\n", "sub", "example.com/m/sub", false}};
+    {"cue", "package p\n\nimport \"example.com/m/sub\"\n", "sub", "example.com/m/sub", false},
+    {"ada", "with Foo.Bar, Baz;\n", "Bar", "Foo.Bar", true},
+    {"ada", "with Foo.Bar, Baz;\n", "Baz", "Baz", true},
+    {"elixir", "alias MyApp.Accounts.User\n", "User", "MyApp.Accounts.User", true},
+    {"elixir", "import Ecto.Query, only: [from: 2]\n", "Query", "Ecto.Query", true},
+    {"ocaml", "open Mylib.Bar\n", "Bar", "Mylib.Bar", true},
+    {"ocaml", "module M = Foo\n", "Foo", "Foo", true},
+    {"ocaml-interface", "open Foo\n", "Foo", "Foo", true},
+    {"ocaml-interface", "include module type of Baz\n", "Baz", "Baz", true},
+    {"pascal", "unit a;\ninterface\nuses SysUtils, System.Classes;\nimplementation\nend.\n", "Classes", "System.Classes", true},
+    {"pascal", "program p;\nuses a in 'src/a.pas';\nbegin\nend.\n", "src", "src/a.pas", false},
+    {"rescript", "open Belt.Array\n", "Array", "Belt.Array", true},
+    {"rescript", "module M = Foo\n", "Foo", "Foo", true},
+    {"starlark", "load(\"//pkg:defs.bzl\", \"x\")\n", "defs", "//pkg:defs.bzl", false},
+    {"swift", "@testable import MyLib\n", "MyLib", "MyLib", true},
+    {"vhdl", "use work.my_pkg.all;\n", "my_pkg", "my_pkg", true},
+    {"vhdl", "architecture a of t is\nbegin\n  u: entity work.child port map (a => b);\nend;\n", "child", "child", true}};
 
 struct NoImportCase {
     const char* language;
@@ -160,7 +176,11 @@ const NoImportCase kNoImportCases[] = {
     {"org", "#+TITLE: notes.org\n", "notes"},
     {"org", "#+SETUPFILE: https://x.org/theme.setup\n", "theme"},
     {"xml", "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0//EN\" \"http://www.w3.org/x.dtd\">\n<html/>\n", "x.dtd"},
-    {"meson", "project('p', 'c')\n", "p'"}};
+    {"meson", "project('p', 'c')\n", "p'"},
+    {"elixir", "alias MyApp.{Repo, Web}\n", "Repo"},
+    {"ocaml", "module N = struct end\n", "struct"},
+    {"starlark", "cc_library(name = \"x\")\n", "x"},
+    {"vhdl", "library ieee;\n", "ieee"}};
 
 } // namespace
 
@@ -701,4 +721,120 @@ TEST_CASE("A JVM class moving package rewrites its package and the imports it an
     const std::vector<ned::editor::importfix::MovedFile> kotlin{
         {project.root / "src/main/kotlin/x/Tool.kt", project.root / "src/main/kotlin/y/Tool.kt"}};
     CHECK(FixedText(kotlin, project.root / "src/main/kotlin/x/Tool.kt") == "package com.acme.tools\n\nclass Tool\n");
+}
+
+TEST_CASE("A module path joins its steps and cases them the way its language files them", "[ImportLanguages]") {
+    ned::editor::ImportResolutionConfig ada;
+    ada.moduleJoin = "-";
+    CHECK(ned::editor::ModulePathToFilePath("Foo.Bar_Baz", ada) == "Foo-Bar_Baz");
+
+    ned::editor::ImportResolutionConfig elixir;
+    elixir.snakeCaseSteps = true;
+    CHECK(ned::editor::ModulePathToFilePath("MyApp.HTTPClient", elixir) == "my_app/http_client");
+    CHECK(ned::editor::ModulePathToFilePath("Web.V2Api", elixir) == "web/v2_api");
+}
+
+TEST_CASE("A flat module name resolves to its file wherever it sits", "[ImportLanguages]") {
+    const ScratchProject project("flat_modules");
+    Write(project.root / "dune-project", "(lang dune 3.0)\n");
+    Write(project.root / "lib/util/bar.ml", "let x = 1\n");
+    Write(project.root / "bin/main.ml", "open Mylib.Bar\nopen List\n");
+    CHECK(ResolveAt(project.root / "bin/main.ml", "Bar") == project.root / "lib/util/bar.ml");
+    CHECK_FALSE(ResolveAt(project.root / "bin/main.ml", "List").has_value());
+
+    Write(project.root / "src/foo-bar.ads", "package Foo.Bar is\nend Foo.Bar;\n");
+    Write(project.root / "src/foo-bar.adb", "package body Foo.Bar is\nend Foo.Bar;\n");
+    Write(project.root / "app/main.adb", "with Foo.Bar;\nprocedure Main is\nbegin\n  null;\nend Main;\n");
+    CHECK(ResolveAt(project.root / "app/main.adb", "Bar") == project.root / "src/foo-bar.ads");
+
+    Write(project.root / "units/myunit.pas", "unit MyUnit;\ninterface\nimplementation\nend.\n");
+    Write(project.root / "prog.pas", "program p;\nuses MyUnit;\nbegin\nend.\n");
+    CHECK(ResolveAt(project.root / "prog.pas", "MyUnit") == project.root / "units/myunit.pas");
+
+    Write(project.root / "rtl/my_pkg.vhd", "package my_pkg is\nend package;\n");
+    Write(project.root / "top.vhd", "use work.my_pkg.all;\n");
+    CHECK(ResolveAt(project.root / "top.vhd", "my_pkg") == project.root / "rtl/my_pkg.vhd");
+}
+
+TEST_CASE("A flat module name is respelled in its own case when its file is renamed", "[ImportLanguages]") {
+    using ned::editor::importfix::RewriteFlatModule;
+    ned::editor::ImportResolutionConfig ocaml;
+    CHECK(RewriteFlatModule("Mylib.Bar", "bar", "baz", ocaml).spec == "Mylib.Baz");
+    CHECK(RewriteFlatModule("Bar.x", "bar", "bar", ocaml).spec == "Bar.x");
+    CHECK_FALSE(RewriteFlatModule("Mylib.Bar", "qux", "baz", ocaml).names);
+
+    ned::editor::ImportResolutionConfig ada;
+    ada.moduleJoin = "-";
+    CHECK(RewriteFlatModule("Foo.Bar", "foo-bar", "foo-qux", ada).spec == "Foo.Qux");
+    CHECK(RewriteFlatModule("Foo.Bar", "foo-bar", "top-foo-bar", ada).spec == "Top.Foo.Bar");
+    const auto mixed = RewriteFlatModule("Foo.BAR", "foo-bar", "foo-qux", ada);
+    CHECK(mixed.names);
+    CHECK_FALSE(mixed.spec.has_value());
+
+    ned::editor::ImportResolutionConfig pascal;
+    pascal.moduleJoin = ".";
+    CHECK(RewriteFlatModule("System.Classes", "System.Classes", "System.Types", pascal).spec == "System.Types");
+}
+
+TEST_CASE("A flat module's importers follow a rename but not a move", "[ImportLanguages]") {
+    const ScratchProject project("flat_fixup");
+    Write(project.root / "dune-project", "(lang dune 3.0)\n");
+    Write(project.root / "lib/bar.ml", "let x = 1\n");
+    Write(project.root / "bin/main.ml", "open Mylib.Bar\n");
+    const fs::path main = project.root / "bin/main.ml";
+    CHECK(FixedText({{project.root / "lib/bar.ml", project.root / "lib/baz.ml"}}, main) == "open Mylib.Baz\n");
+    CHECK(FixedText({{project.root / "lib/bar.ml", project.root / "lib/sub/bar.ml"}}, main) == "open Mylib.Bar\n");
+
+    Write(project.root / "units/myunit.pas", "unit MyUnit;\ninterface\nimplementation\nend.\n");
+    Write(project.root / "prog.pas", "program p;\nuses MYUNIT;\nbegin\nend.\n");
+    const auto reader = [](const fs::path& path) -> std::optional<std::string> { return Read(path); };
+    const auto plan   = ned::editor::importfix::PlanImportFixups(
+        {{project.root / "units/myunit.pas", project.root / "units/other.pas"}}, {project.root / "prog.pas"}, reader);
+    CHECK(plan.files.empty());
+    CHECK(plan.declined == 1);
+}
+
+TEST_CASE("A declared module name resolves by convention and ignores moves", "[ImportLanguages]") {
+    const ScratchProject project("declared_names");
+    Write(project.root / "mix.exs", "");
+    Write(project.root / "lib/my_app/http_client.ex", "defmodule MyApp.HTTPClient do\nend\n");
+    Write(project.root / "lib/my_app.ex", "defmodule MyApp do\n  alias MyApp.HTTPClient\nend\n");
+    const fs::path app = project.root / "lib/my_app.ex";
+    CHECK(ResolveAt(app, "HTTPClient\n") == project.root / "lib/my_app/http_client.ex");
+    CHECK(FixedText({{project.root / "lib/my_app/http_client.ex", project.root / "lib/my_app/net/client.ex"}}, app) ==
+          Read(app));
+}
+
+TEST_CASE("A Bazel label resolves from its workspace or package and follows its file", "[ImportLanguages]") {
+    const ScratchProject project("bazel_labels");
+    Write(project.root / "MODULE.bazel", "module(name = \"m\")\n");
+    Write(project.root / "pkg/sub/BUILD.bazel", "");
+    Write(project.root / "pkg/sub/defs.bzl", "x = 1\n");
+    Write(project.root / "other/BUILD", "");
+    Write(project.root / "app/BUILD", "");
+    Write(project.root / "app/local.bzl", "y = 1\n");
+    Write(project.root / "app/rules.bzl",
+          "load(\"//pkg/sub:defs.bzl\", \"x\")\nload(\":local.bzl\", \"y\")\nload(\"@rules_cc//cc:defs.bzl\", \"c\")\n");
+    const fs::path rules = project.root / "app/rules.bzl";
+    CHECK(ResolveAt(rules, "sub:") == project.root / "pkg/sub/defs.bzl");
+    CHECK(ResolveAt(rules, "local") == project.root / "app/local.bzl");
+    CHECK_FALSE(ResolveAt(rules, "rules_cc").has_value());
+
+    CHECK(FixedText({{project.root / "pkg/sub/defs.bzl", project.root / "other/defs.bzl"}}, rules) ==
+          "load(\"//other:defs.bzl\", \"x\")\nload(\":local.bzl\", \"y\")\nload(\"@rules_cc//cc:defs.bzl\", \"c\")\n");
+    CHECK(FixedText({{project.root / "app/local.bzl", project.root / "app/lib/local.bzl"}}, rules) ==
+          "load(\"//pkg/sub:defs.bzl\", \"x\")\nload(\":lib/local.bzl\", \"y\")\nload(\"@rules_cc//cc:defs.bzl\", \"c\")\n");
+    CHECK(FixedText({{project.root / "app/local.bzl", project.root / "other/local.bzl"}}, rules) ==
+          "load(\"//pkg/sub:defs.bzl\", \"x\")\nload(\"//other:local.bzl\", \"y\")\nload(\"@rules_cc//cc:defs.bzl\", \"c\")\n");
+}
+
+TEST_CASE("A Swift import opens its SwiftPM target's directory", "[ImportLanguages]") {
+    const ScratchProject project("swift_targets");
+    Write(project.root / "Package.swift", "// swift-tools-version:5.9\n");
+    Write(project.root / "Sources/MyLib/MyLib.swift", "public struct MyLib {}\n");
+    Write(project.root / "Sources/MyLib/Other.swift", "struct Other {}\n");
+    Write(project.root / "Tests/MyLibTests/MyLibTests.swift", "import XCTest\n@testable import MyLib\n");
+    const fs::path test = project.root / "Tests/MyLibTests/MyLibTests.swift";
+    CHECK(ResolveAt(test, "MyLib\n") == project.root / "Sources/MyLib/MyLib.swift");
+    CHECK_FALSE(ResolveAt(test, "XCTest").has_value());
 }

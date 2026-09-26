@@ -40,6 +40,13 @@ struct ImportResolutionConfig {
     // How a module path (an "@import.module" capture) spells one directory
     // step: Python's "pkg.mod", Perl's "Foo::Bar".
     std::string moduleSeparator = ".";
+    // What joins a module path's steps on disk: a directory step by default,
+    // Ada's "-" (GNAT's "foo-bar.ads" for Foo.Bar), Pascal's "." (a dotted
+    // unit is one "System.Classes.pas").
+    std::string moduleJoin = "/";
+    // Elixir's Mix layout: each step of "MyApp.HTTPClient" is written
+    // snake_case on disk, "my_app/http_client".
+    bool snakeCaseSteps = false;
     // Rewrites applied to each step of a module path to get its on-disk
     // spelling, as {module spelling, path spelling}: Clojure's
     // "my-app.core" lives at "my_app/core.clj". Reversed when a moved file's
@@ -72,6 +79,18 @@ struct ImportResolutionConfig {
     // CUE's import paths (Editor/CueModules.h): under the nearest
     // cue.mod/module.cue's module, else cue.mod's gen/, pkg/ or usr/.
     bool cueModules = false;
+    // A module name is one file's name wherever in the project that file
+    // sits (OCaml, ReScript, Pascal units, Ada, VHDL): a module path that
+    // no search root answers is looked up by file name, case-insensitively,
+    // under the package root and then the project root.
+    bool flatModules = false;
+    // A module declares its own name rather than taking it from its path
+    // (Elixir, VHDL), so the path is only where it is conventionally found
+    // and moving the file changes no import that names it.
+    bool declaredNames = false;
+    // Bazel labels (Editor/BazelLabels.h): "//pkg:file.bzl" under the
+    // workspace root, ":file.bzl" in the loading file's own package.
+    bool bazelLabels = false;
     // How an import is written, `{}` standing for the module path
     // ("import {};"): what a move inserts where a file newly needs one.
     std::string importStatement;

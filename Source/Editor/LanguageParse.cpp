@@ -374,14 +374,34 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
                 else if (field.IsKeyword() && field.text == "cue-modules") {
                     config.cueModules = ExpectBool(directoryName, v, ":cue-modules");
                 }
+                else if (field.IsKeyword() && field.text == "module-join") {
+                    config.moduleJoin = ExpectString(directoryName, v, ":module-join");
+                    if (config.moduleJoin.empty()) {
+                        Fail(directoryName, v.line, ":module-join is empty");
+                    }
+                }
+                else if (field.IsKeyword() && field.text == "snake-case-steps") {
+                    config.snakeCaseSteps = ExpectBool(directoryName, v, ":snake-case-steps");
+                }
+                else if (field.IsKeyword() && field.text == "flat-modules") {
+                    config.flatModules = ExpectBool(directoryName, v, ":flat-modules");
+                }
+                else if (field.IsKeyword() && field.text == "declared-names") {
+                    config.declaredNames = ExpectBool(directoryName, v, ":declared-names");
+                }
+                else if (field.IsKeyword() && field.text == "bazel-labels") {
+                    config.bazelLabels = ExpectBool(directoryName, v, ":bazel-labels");
+                }
                 else if (field.IsKeyword() && field.text == "package-directories") {
                     config.packageDirectories = ExpectBool(directoryName, v, ":package-directories");
                 }
                 else {
                     Fail(directoryName, field.line,
                          ":import-resolution keys are :extensions/:index-basenames/:search-package-dirs/"
-                         ":module-separator/:module-substitutions/:source-roots/:partial-prefix/"
-                         ":root-prefixes/:package-scheme/:home-prefix/:go-modules/:cue-modules/:odin-collections/:package-directories/:import-statement");
+                         ":module-separator/:module-join/:snake-case-steps/:module-substitutions/:source-roots/"
+                         ":partial-prefix/:root-prefixes/:package-scheme/:home-prefix/:go-modules/:cue-modules/"
+                         ":odin-collections/:bazel-labels/:flat-modules/:declared-names/:package-directories/"
+                         ":import-statement");
                 }
             }
             definition.importResolution = std::move(config);

@@ -430,9 +430,11 @@
   declUses (:seq
             kUses
             (:choice
-             (:seq (:choice (:repeat1 (:prec 0 (:seq moduleName ","))) :blank) moduleName)
+             (:seq (:choice (:repeat1 (:prec 0 (:seq _usesItem ","))) :blank) _usesItem)
              :blank)
             ";")
+  # A program's `uses X in 'path/x.pas'` names the unit's file outright.
+  _usesItem (:seq moduleName (:choice (:seq kIn literalString) :blank))
   declExports (:seq
                kExports
                (:choice

@@ -325,3 +325,36 @@ end.
     (kEnd)
     (kEndDot)))
 
+
+===
+Program - uses with a file
+===
+
+program p;
+
+uses
+  a in 'src/a.pas', b;
+
+begin
+end.
+
+---
+
+(root
+  (program
+    (kProgram)
+    (moduleName
+      (identifier))
+    (declUses
+      (kUses)
+      (moduleName
+        (identifier))
+      (kIn)
+      (literalString)
+      (moduleName
+        (identifier)))
+    (block
+      (kBegin)
+      (kEnd))
+    (kEndDot)))
+

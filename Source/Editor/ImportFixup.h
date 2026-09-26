@@ -49,6 +49,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Editor/ImportResolutionConfig.h"
@@ -116,6 +117,22 @@ struct RewriteRequest {
 [[nodiscard]] std::optional<std::string> DottedModuleFor(const std::filesystem::path&  file,
                                                          const std::filesystem::path&  root,
                                                          const ImportResolutionConfig& resolution);
+
+// A flat module path (ImportResolutionConfig's flatModules) after the file
+// named oldStem is renamed newStem. Each step of a module path that isn't
+// joined into one file name is a candidate on its own ("Mylib.Bar" names
+// bar.ml); the one naming oldStem, compared case-insensitively, is respelled
+// in the case the original used: verbatim, or with each step's first letter
+// capitalized (OCaml's "Foo_bar" for foo_bar.ml, Ada's "Foo.Bar" for
+// foo-bar.ads). `names` is false when no step names oldStem; `spec` is
+// nullopt when one does but its case follows neither rule.
+struct FlatRewrite {
+    bool                       names = false;
+    std::optional<std::string> spec;
+};
+
+[[nodiscard]] FlatRewrite RewriteFlatModule(std::string_view spec, std::string_view oldStem, std::string_view newStem,
+                                            const ImportResolutionConfig& resolution);
 
 // One file's move: where it was, where it is (or is about to be).
 struct MovedFile {

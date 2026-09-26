@@ -95,7 +95,7 @@ d/corpus  cases=218 runs=218 passed=218 failed=0 skipped=0
 fortran/corpus  cases=137 runs=137 passed=137 failed=0 skipped=0
 objc/corpus  cases=75 runs=75 passed=75 failed=0 skipped=0
 ada/corpus  cases=129 runs=129 passed=129 failed=0 skipped=0
-pascal/corpus  cases=88 runs=88 passed=88 failed=0 skipped=0
+pascal/corpus  cases=89 runs=89 passed=89 failed=0 skipped=0
 vala/corpus  cases=6 runs=6 passed=6 failed=0 skipped=0
 asm/corpus  cases=33 runs=33 passed=33 failed=0 skipped=0
 v/corpus  cases=336 runs=336 passed=336 failed=0 skipped=0
@@ -153,4 +153,4 @@ gdscript/corpus  cases=167 runs=167 passed=166 failed=1 skipped=0
 matlab/corpus  cases=157 runs=157 passed=155 failed=2 skipped=0
   FAIL call.txt: Function Call: Line Continuation
   FAIL strings.txt: Strings: Invalid termination
-total  cases=12728 runs=12723 passed=12689 failed=34 skipped=11
+total  cases=12729 runs=12724 passed=12690 failed=34 skipped=11

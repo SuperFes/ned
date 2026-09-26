@@ -4,6 +4,7 @@
  :block-comment ["(*" "*)"]
  :queries {:indents ["ocaml/indents.janet"]}
  :lsp-root-markers ["dune-project" "opam" ".ocamlformat"]
+ :import-resolution {:extensions ["mli" "ml"] :flat-modules true}
  :not-applicable {:injections   "nothing in it is written in another language"
                   :tests        "interfaces declare; tests live in implementations"
                   :signatures   "declarations only: its implementation's change-signature rewrites a `val`'s type"

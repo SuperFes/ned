@@ -329,9 +329,19 @@ go-to-file opens `doc.<ext>`, else the file named after the directory, else its 
 non-`_test` source file, and a move rewrites the import only when every source file in
 the directory went to the same place. `:odin-collections` reads `name:path` imports
 through the nearest `ols.json`'s collections, then the toolchain's own under
-`ODIN_ROOT`; `:home-prefix` counts a `~/` path from `$HOME` (ssh_config, gitconfig). A
-project's
-`importResolution.<language>.sourceRoots` replaces the roots. A host language with
+`ODIN_ROOT`; `:home-prefix` counts a `~/` path from `$HOME` (ssh_config, gitconfig).
+`:module-join` is what joins a module path's steps on disk (Ada's `-` for GNAT's
+`foo-bar.ads`, Pascal's `.`), and `:snake-case-steps` writes each step snake_case
+(Elixir's `MyApp.HTTPClient` in `my_app/http_client.ex`). `:flat-modules` finds a module
+name that no root answers as a file of that name anywhere under the package root, then
+the project root, ignoring case (OCaml, ReScript, Pascal, Ada, VHDL); a rename rewrites
+the name in the case it was written in (verbatim, or each step capitalized) and declines
+otherwise, and a move rewrites nothing. `:declared-names` says a module names itself
+rather than taking its path's name (Elixir, VHDL), so no move rewrites it.
+`:bazel-labels` reads `//pkg:file.bzl` under the workspace root and `:file.bzl` in the
+loading file's package (the nearest `BUILD`), and a move rewrites the label for the
+target's new package. A project's `importResolution.<language>.sourceRoots` replaces the
+roots. A host language with
 `:injected-imports` (Svelte, Vue, Astro, HTML) also reads its embedded scripts'
 imports, resolved with the host's own `:import-resolution`; a list of languages
 (Markdown's `["markdown_inline"]`) reads only those, so a code sample's imports aren't

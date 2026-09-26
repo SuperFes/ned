@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "Editor/BazelLabels.h"
 #include "Editor/ImportResolve.h"
 #include "Editor/Link.h"
 #include "Editor/Mode.h"
@@ -109,7 +110,76 @@ namespace {
         return request.resolution.packageDirectories ? request.newTarget.parent_path() : request.newTarget;
     }
 
+    std::vector<std::string> Split(std::string_view text, std::string_view separator) {
+        std::vector<std::string> parts;
+        for (std::size_t start = 0;;) {
+            const std::size_t end = text.find(separator, start);
+            parts.emplace_back(text.substr(start, end == std::string_view::npos ? end : end - start));
+            if (end == std::string_view::npos) {
+                return parts;
+            }
+            start = end + separator.size();
+        }
+    }
+
+    std::string Lowered(std::string_view text) {
+        std::string lowered(text);
+        std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return lowered;
+    }
+
+    std::string Capitalized(std::string text) {
+        if (!text.empty()) {
+            text.front() = static_cast<char>(std::toupper(static_cast<unsigned char>(text.front())));
+        }
+        return text;
+    }
+
 } // namespace
+
+FlatRewrite RewriteFlatModule(std::string_view spec, std::string_view oldStem, std::string_view newStem,
+                              const ImportResolutionConfig& resolution) {
+    const std::string_view         separator   = resolution.moduleSeparator.empty() ? std::string_view(".") : resolution.moduleSeparator;
+    const bool                     stepPerFile = resolution.moduleJoin == "/";
+    const std::vector<std::string> steps       = Split(spec, separator);
+    const std::size_t              unitSize    = stepPerFile ? 1 : steps.size();
+    for (std::size_t first = 0; first + unitSize <= steps.size(); first += unitSize) {
+        const std::vector<std::string> unit(steps.begin() + static_cast<std::ptrdiff_t>(first),
+                                            steps.begin() + static_cast<std::ptrdiff_t>(first + unitSize));
+        std::string                    unitText;
+        for (const std::string& step : unit) {
+            unitText += unitText.empty() ? step : std::string(separator) + step;
+        }
+        if (Lowered(ModulePathToFilePath(unitText, resolution)) != Lowered(oldStem)) {
+            continue;
+        }
+        if (Lowered(oldStem) == Lowered(newStem)) {
+            return {.names = true, .spec = std::string(spec)}; // moved, not renamed: a flat name doesn't care where
+        }
+        const std::vector<std::string> oldSteps = stepPerFile ? std::vector{std::string(oldStem)} : Split(oldStem, resolution.moduleJoin);
+        std::vector<std::string>       newSteps = stepPerFile ? std::vector{std::string(newStem)} : Split(newStem, resolution.moduleJoin);
+        if (unit != oldSteps) {
+            bool capitalized = unit.size() == oldSteps.size();
+            for (std::size_t i = 0; capitalized && i < unit.size(); ++i) {
+                capitalized = unit[i] == Capitalized(oldSteps[i]);
+            }
+            if (!capitalized) {
+                return {.names = true, .spec = std::nullopt};
+            }
+            std::transform(newSteps.begin(), newSteps.end(), newSteps.begin(), Capitalized);
+        }
+        std::vector<std::string> rewritten(steps.begin(), steps.begin() + static_cast<std::ptrdiff_t>(first));
+        rewritten.insert(rewritten.end(), newSteps.begin(), newSteps.end());
+        rewritten.insert(rewritten.end(), steps.begin() + static_cast<std::ptrdiff_t>(first + unitSize), steps.end());
+        std::string joined;
+        for (const std::string& step : rewritten) {
+            joined += joined.empty() ? step : std::string(separator) + step;
+        }
+        return {.names = true, .spec = std::move(joined)};
+    }
+    return {};
+}
 
 std::optional<std::string> DottedModuleFor(const std::filesystem::path& file, const std::filesystem::path& root,
                                            const ImportResolutionConfig& resolution) {
@@ -298,6 +368,13 @@ namespace {
                 stems.push_back(parent);
             }
         }
+        // A name joined from module steps ("foo-bar" for Ada's Foo.Bar) is
+        // spelled a step at a time in the import.
+        if (resolution.flatModules && resolution.moduleJoin != "/") {
+            for (std::string& piece : Split(stem, resolution.moduleJoin)) {
+                stems.push_back(std::move(piece));
+            }
+        }
         if (stem.size() > 1 && stem.front() == '_') {
             stems.push_back(stem.substr(1)); // a Sass partial, imported without its "_"
         }
@@ -311,10 +388,23 @@ namespace {
         return stems;
     }
 
-    bool MentionsAny(std::string_view text, const std::vector<std::string>& stems) {
-        return std::any_of(stems.begin(), stems.end(), [text](const std::string& stem) {
-            return !stem.empty() && text.find(stem) != std::string_view::npos;
+    bool MentionsAny(std::string_view text, const std::vector<std::string>& stems, bool foldCase) {
+        const std::string lowered = foldCase ? Lowered(text) : std::string();
+        return std::any_of(stems.begin(), stems.end(), [&](const std::string& stem) {
+            return !stem.empty() && (foldCase ? lowered.find(Lowered(stem)) : text.find(stem)) != std::string_view::npos;
         });
+    }
+
+    // A flat module's name is matched regardless of case (FlatModules.h),
+    // so the files that might import one are found the same way.
+    bool FoldsCase(const std::filesystem::path& path, ModeCache& modes) {
+        return ImportResolutionConfigFor(modes.For(path)).flatModules;
+    }
+
+    bool HasExtension(const std::filesystem::path& path, const ImportResolutionConfig& resolution) {
+        const std::string extension = path.extension().string();
+        return std::any_of(resolution.extensions.begin(), resolution.extensions.end(),
+                           [&](const std::string& candidate) { return extension == "." + candidate; });
     }
 
     // An angle-form include and an absolute path both name a file the
@@ -531,11 +621,13 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
     ModeCache                                              modes;
     std::map<std::filesystem::path, std::filesystem::path> moves;
     std::vector<std::string>                               stems;
+    bool                                                   foldCase = false;
     for (const MovedFile& move : moved) {
         moves[Canonical(move.from)] = move.to;
         for (std::string& stem : SearchStemsFor(move.from, modes)) {
             stems.push_back(std::move(stem));
         }
+        foldCase = foldCase || FoldsCase(move.from, modes);
     }
 
     // A moved file is always its own candidate, whether or not the caller's
@@ -622,7 +714,7 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
         // A file that never spells the moved file's name cannot import it.
         // The moved file itself is exempt: its own imports name everything
         // BUT itself, and they are exactly the other half of this feature.
-        if (!importerMoved && !MentionsAny(*text, stems)) {
+        if (!importerMoved && !MentionsAny(*text, stems, foldCase)) {
             continue;
         }
         ++plan.scanned;
@@ -642,6 +734,31 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
         for (const ImportTarget& target : targets) {
             if (target.targetEndByte > text->size() || target.targetEndByte < target.targetStartByte ||
                 target.isPackageDeclaration) {
+                continue;
+            }
+            // A declared name stays whatever it was declared as, wherever
+            // its file goes.
+            if (target.isModulePath && resolution.declaredNames) {
+                continue;
+            }
+            if (target.isModulePath && resolution.flatModules) {
+                for (const auto& [from, to] : moves) {
+                    if (!HasExtension(from, resolution)) {
+                        continue;
+                    }
+                    const FlatRewrite flat =
+                        RewriteFlatModule(target.target, from.stem().string(), to.stem().string(), resolution);
+                    if (!flat.names) {
+                        continue;
+                    }
+                    if (!flat.spec) {
+                        ++plan.declined;
+                    }
+                    else if (*flat.spec != target.target) {
+                        fixup.edits.push_back(SpecEdit{target.targetStartByte, target.targetEndByte, *flat.spec});
+                    }
+                    break;
+                }
                 continue;
             }
             const link::DetectedLink      detected = ImportLinkFor(target, resolution);
@@ -672,7 +789,11 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
             // close to it the importing file sits.
             const SpecKind kind = prefixed ? SpecKind::RootRelativePath
                                            : SpecKindFor(target, *text, resolved->base, candidate.parent_path());
-            if (!targetMoved && !(importerMoved && DependsOnImporterLocation(target, kind))) {
+            // A package-relative Bazel label (":defs.bzl") is counted from
+            // the importer's package, which a move can leave.
+            const bool packageRelativeLabel =
+                resolution.bazelLabels && !target.target.starts_with("//") && !target.target.starts_with('@');
+            if (!targetMoved && !(importerMoved && (DependsOnImporterLocation(target, kind) || packageRelativeLabel))) {
                 continue; // nothing about this import changed
             }
             if (kind == SpecKind::Unsupported) {
@@ -687,6 +808,17 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
                 !prefixed && Canonical(resolved->base) == Canonical(candidate.parent_path());
             const std::filesystem::path resolutionRoot =
                 rootIsImporter ? newCandidate.parent_path() : resolved->base;
+
+            if (resolution.bazelLabels) {
+                const std::optional<std::string> label = BazelLabelFor(newTarget, newCandidate, target.target);
+                if (!label) {
+                    ++plan.declined;
+                }
+                else if (*label != target.target) {
+                    fixup.edits.push_back(SpecEdit{target.targetStartByte, target.targetEndByte, *label});
+                }
+                continue;
+            }
 
             const std::optional<std::string> rewritten =
                 RewriteSpec(RewriteRequest{.kind              = kind,
@@ -768,16 +900,18 @@ FixupPlan PlanImportFixups(const std::vector<MovedFile>& moved, const std::vecto
 std::string CandidatePattern(const std::vector<MovedFile>& moved) {
     ModeCache             modes;
     std::set<std::string> stems;
+    bool                  foldCase = false;
     for (const MovedFile& move : moved) {
         for (std::string& stem : SearchStemsFor(move.from, modes)) {
             if (!stem.empty()) {
                 stems.insert(std::move(stem));
             }
         }
+        foldCase = foldCase || FoldsCase(move.from, modes);
     }
-    std::string pattern;
+    std::string pattern = foldCase && !stems.empty() ? "(?i)" : "";
     for (const std::string& stem : stems) {
-        if (!pattern.empty()) {
+        if (!pattern.empty() && pattern != "(?i)") {
             pattern += '|';
         }
         // Word-bounded: an import of "Mode.h" spells Mode, and a file that

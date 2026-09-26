@@ -223,6 +223,8 @@ add_library(ned_lib STATIC
         Editor/ImportResolve.cpp
         Editor/GoModules.cpp
         Editor/CueModules.cpp
+        Editor/FlatModules.cpp
+        Editor/BazelLabels.cpp
         Editor/OdinCollections.cpp
         Editor/Project/FileOps.cpp
         Editor/AutoRevert.cpp

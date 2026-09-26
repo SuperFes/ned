@@ -1,13 +1,16 @@
 #include "ImportResolve.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <system_error>
 
 #include <nlohmann/json.hpp>
 
+#include "Editor/BazelLabels.h"
 #include "Editor/CueModules.h"
+#include "Editor/FlatModules.h"
 #include "Editor/GoModules.h"
 #include "Editor/ImportResolutionConfig.h"
 #include "Editor/Lsp/RootResolver.h"
@@ -219,6 +222,29 @@ namespace {
         return parameters;
     }
 
+    // Elixir's Macro.underscore: "HTTPClient" -> "http_client", "MyApp" ->
+    // "my_app". An underscore goes before a capital that ends a lowercase or
+    // digit run, or that starts a word after an acronym.
+    std::string SnakeCase(std::string_view step) {
+        const auto  upper = [](char c) { return std::isupper(static_cast<unsigned char>(c)) != 0; };
+        const auto  lower = [](char c) { return std::islower(static_cast<unsigned char>(c)) != 0; };
+        const auto  digit = [](char c) { return std::isdigit(static_cast<unsigned char>(c)) != 0; };
+        std::string snake;
+        for (std::size_t i = 0; i < step.size(); ++i) {
+            const char c = step[i];
+            if (i > 0 && upper(c)) {
+                const char previous = step[i - 1];
+                const bool startsWord =
+                    lower(previous) || digit(previous) || (upper(previous) && i + 1 < step.size() && lower(step[i + 1]));
+                if (startsWord) {
+                    snake += '_';
+                }
+            }
+            snake += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        return snake;
+    }
+
 } // namespace
 
 ImportResolutionConfig ImportResolutionConfigFor(const Mode& mode) {
@@ -232,6 +258,9 @@ std::string ModulePathToFilePath(std::string_view module, const ImportResolution
     while (true) {
         const std::size_t end  = module.find(separator, start);
         std::string       step = std::string(module.substr(start, end == std::string_view::npos ? end : end - start));
+        if (config.snakeCaseSteps) {
+            step = SnakeCase(step);
+        }
         for (const auto& [from, to] : config.moduleSubstitutions) {
             for (std::size_t at = step.find(from); at != std::string::npos; at = step.find(from, at + to.size())) {
                 step.replace(at, from.size(), to);
@@ -241,7 +270,7 @@ std::string ModulePathToFilePath(std::string_view module, const ImportResolution
         if (end == std::string_view::npos) {
             break;
         }
-        path += '/';
+        path += config.moduleJoin.empty() ? std::string_view("/") : std::string_view(config.moduleJoin);
         start = end + separator.size();
     }
     return path;
@@ -274,6 +303,10 @@ std::optional<PrefixedImport> MatchImportPrefix(const std::string& target, const
                                   .remainder = target.substr(collection->size() + 1),
                                   .root      = OdinCollectionRoot(*collection, start, OdinRoot())};
         }
+    }
+    if (config.bazelLabels) {
+        BazelImportRoot root = BazelImportRootFor(target, importingFile.empty() ? ProjectRoot() / "BUILD" : importingFile);
+        return PrefixedImport{.prefix = std::move(root.prefix), .remainder = std::move(root.remainder), .root = std::move(root.root)};
     }
     if (config.cueModules) {
         CueImportRoot root = CueImportRootFor(target, importingFile.empty() ? ProjectRoot() : importingFile.parent_path());
@@ -355,10 +388,39 @@ std::optional<ResolvedImport> ResolveImportLink(const link::DetectedLink&    det
         link::ResolveFileLink(detected.target, baseDirectory, parameters.includePaths, parameters.config.extensions,
                               parameters.config.indexBasenames, &resolvedBase, parameters.config.partialPrefix);
     const auto file = resolved ? PackageFileFor(*resolved, parameters.config) : std::nullopt;
-    if (!file) {
+    if (file) {
+        return ResolvedImport{.path = *file, .base = resolvedBase};
+    }
+    if (!parameters.config.flatModules) {
         return std::nullopt;
     }
-    return ResolvedImport{.path = *file, .base = resolvedBase};
+    // Where each step is its own module ("Mylib.Bar"), the leftmost one a
+    // file answers is the one the path goes through; a joined name (Ada's
+    // "foo-bar") is one file or none, and a path with a directory in it is
+    // no module name at all.
+    std::vector<std::string> names;
+    if (parameters.config.moduleJoin == "/") {
+        for (std::size_t start = 0; start <= detected.target.size();) {
+            const std::size_t end = std::min(detected.target.find('/', start), detected.target.size());
+            names.push_back(detected.target.substr(start, end - start));
+            start = end + 1;
+        }
+    }
+    else if (detected.target.find('/') == std::string::npos) {
+        names.push_back(detected.target);
+    }
+    std::vector<std::filesystem::path> roots{PackageRootFor(importingFile, LanguageKeyForMode(mode))};
+    if (roots.front() != ProjectRoot()) {
+        roots.push_back(ProjectRoot());
+    }
+    for (const std::string& name : names) {
+        for (const std::filesystem::path& root : roots) {
+            if (auto found = FindFlatModule(name, parameters.config.extensions, root)) {
+                return ResolvedImport{.path = std::move(*found), .base = root};
+            }
+        }
+    }
+    return std::nullopt;
 }
 
 } // namespace ned::editor
