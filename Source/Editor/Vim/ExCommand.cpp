@@ -215,4 +215,21 @@ std::optional<ExGlobalArgs> ParseGlobalArgs(std::string_view rest) {
     return ExGlobalArgs{pattern, std::string(rest)};
 }
 
+std::optional<ExNameToken> ExCommandNameToken(std::string_view text) {
+    std::string_view s = text;
+    TrimLeadingSpaces(s);
+    if (!s.empty() && s.front() == '%') {
+        s.remove_prefix(1);
+    }
+    else if (ParseAddr(s, 0, 0, std::nullopt, true) && !s.empty() && s.front() == ',') {
+        s.remove_prefix(1);
+        (void)ParseAddr(s, 0, 0, std::nullopt, false);
+    }
+    TrimLeadingSpaces(s);
+    if (s.empty() || !std::ranges::all_of(s, [](unsigned char c) { return std::isalpha(c) != 0; })) {
+        return std::nullopt;
+    }
+    return ExNameToken{.offset = text.size() - s.size(), .name = s};
+}
+
 } // namespace ned::editor::vim

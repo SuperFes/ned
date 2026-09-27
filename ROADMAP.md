@@ -430,19 +430,6 @@ commands, never a replacement for them.
       reach `Dispatcher` through `C-x` would mean either breaking real vim's own
       decrement-number binding or a two-key lookahead hack — not worth it now that the
       practical gap (no way to split/close/cycle windows under Vim mode) is closed.
-- [ ] **Vim `:` command line has no completion, and no registry to drive one from.**
-      `Engine::ExecuteExCommand` matches `ExCommand::name` against string literals in a
-      long if-chain (`w`/`wq`/`q`/`sp`/`g`/`normal`/...) with no single place that lists
-      the known command names or what they do — the same thing `M-x`'s registry already
-      carries. Turning that if-chain into a small static `{names, short doc, handler}`
-      table would both read better and unlock command-name completion: while
-      `HandleCommandLineKey` is still building the first token of `commandLineText_` (no
-      space yet, past any leading range/`%`/`'<,'>`), a non-focusable `ListPopup` fed by
-      that table through the same `CandidateList` fuzzy ranking `M-x`/project-find-file/
-      switch-to-buffer already share could narrow-and-preview it live, Tab to accept.
-      Has to fall back to plain text the moment a space, a `:s`-style punctuation
-      delimiter, or a bang appears — unlike `M-x`'s bare command names, a `:` line
-      carries ranges/args/shell-outs that can't go through a fuzzy matcher.
 
 **Status gutter**
 

@@ -14,6 +14,11 @@ namespace ned::editor::vim {
 void               SetModeEnabled(bool enabled);
 [[nodiscard]] bool ModeEnabled();
 
+// Whether a ":" line shows the ex-command completion popup while its command name is
+// being typed. Default true.
+void               SetCommandCompletionEnabled(bool enabled);
+[[nodiscard]] bool CommandCompletionEnabled();
+
 } // namespace ned::editor::vim
 
 #endif // NED_EDITOR_VIM_SETTINGS_H

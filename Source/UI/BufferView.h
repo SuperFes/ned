@@ -1554,6 +1554,15 @@ class BufferView : public Widget {
     // window-management caution as DispatchChordNormally's own doc comment) -- always
     // this call's own return, nothing after.
     bool HandleVimKey(const editor::KeyChord& chord);
+
+    // The ex-command completion popup on a vim ":" line. Refresh re-ranks
+    // vimExCommandList_ against the name being typed and shows or hides the popup;
+    // `resetSelection` is false only for a key that moved the selection without
+    // changing the text.
+    void RefreshVimExCompletion(bool resetSelection);
+    // Tab/Up/Down/C-n/C-p while the popup is showing. True if consumed.
+    bool HandleVimExCompletionKey(const editor::KeyChord& chord);
+    void AcceptVimExCompletion();
     // Vim's quit and window-close, shared by HandleVimKey and a :wq whose
     // save waited on LSP formatting. CloseVimWindow may destroy *this* when it
     // isn't the last window -- nothing after it.
@@ -5246,6 +5255,8 @@ class BufferView : public Widget {
     bufferview::CandidateList bufferCharsetList_;
     bufferview::CandidateList bookmarkList_;
     bufferview::CandidateList selectThemeList_;
+    bufferview::CandidateList vimExCommandList_;
+    bool                      vimExCompletionShown_ = false; // see RefreshVimExCompletion
     bufferview::CandidateList vcsBranchList_;
 
     // search-everywhere follow-up: this session's own equivalent of the

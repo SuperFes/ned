@@ -264,6 +264,7 @@ add_library(ned_lib STATIC
         Editor/Vim/Surround.cpp
         Editor/Vim/Registers.cpp
         Editor/Vim/ExCommand.cpp
+        Editor/Vim/ExCommandTable.cpp
         Editor/Vim/Engine.cpp
         Editor/Vim/GlobalMarks.cpp
         Editor/Vim/Magic.cpp

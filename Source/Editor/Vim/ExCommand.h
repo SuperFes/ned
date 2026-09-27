@@ -77,6 +77,16 @@ struct ExGlobalArgs {
 [[nodiscard]] std::optional<std::size_t> ParseExAddress(std::string_view text, std::size_t currentLine, std::size_t lastLine,
                                                         std::optional<ExRange> visualRange);
 
+// The command name being typed on a ":" line, for completion: the letters after any
+// leading range, as long as nothing but letters follows them. nullopt before the first
+// letter, once the name is finished (a space, '!', a delimiter or a digit follows it),
+// or when the text before it is not a range. `offset` indexes into text.
+struct ExNameToken {
+    std::size_t      offset;
+    std::string_view name;
+};
+[[nodiscard]] std::optional<ExNameToken> ExCommandNameToken(std::string_view text);
+
 } // namespace ned::editor::vim
 
 #endif // NED_EDITOR_VIM_EXCOMMAND_H

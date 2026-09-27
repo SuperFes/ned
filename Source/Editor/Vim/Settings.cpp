@@ -16,6 +16,11 @@ namespace {
         return enabled;
     }
 
+    bool& CommandCompletionStorage() {
+        static bool enabled = true;
+        return enabled;
+    }
+
 } // namespace
 
 void SetModeEnabled(bool enabled) {
@@ -26,6 +31,16 @@ void SetModeEnabled(bool enabled) {
 bool ModeEnabled() {
     const std::lock_guard<std::mutex> lock(EnabledMutex());
     return EnabledStorage();
+}
+
+void SetCommandCompletionEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(EnabledMutex());
+    CommandCompletionStorage() = enabled;
+}
+
+bool CommandCompletionEnabled() {
+    const std::lock_guard<std::mutex> lock(EnabledMutex());
+    return CommandCompletionStorage();
 }
 
 } // namespace ned::editor::vim

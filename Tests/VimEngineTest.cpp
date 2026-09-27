@@ -1449,6 +1449,78 @@ TEST_CASE(":sort sorts lines lexicographically, :sort! reverses", "[Engine]") {
     REQUIRE(buffer.Text() == "cherry\nbanana\napple\n");
 }
 
+TEST_CASE(":substitute is the long spelling of :s", "[Engine]") {
+    Buffer buffer = MakeBuffer("foo bar\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":substitute/foo/baz/\n");
+    REQUIRE(buffer.Text() == "baz bar\n");
+}
+
+TEST_CASE("An unknown ex command reports E492 and leaves the buffer alone", "[Engine]") {
+    Buffer buffer = MakeBuffer("one\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":frobnicate\n");
+    REQUIRE(engine.StatusText() == "E492: Not an editor command: frobnicate");
+    REQUIRE(buffer.Text() == "one\n");
+}
+
+TEST_CASE("The completion token tracks the command name on a ':' line only", "[Engine]") {
+    Buffer buffer = MakeBuffer("banana\napple\n");
+    Engine engine;
+
+    REQUIRE_FALSE(engine.CommandLineCompletionToken());
+
+    Feed(engine, buffer, ":%so");
+    const auto token = engine.CommandLineCompletionToken();
+    REQUIRE(token);
+    REQUIRE(token->offset == 1);
+    REQUIRE(token->name == "so");
+
+    Feed(engine, buffer, " ");
+    REQUIRE_FALSE(engine.CommandLineCompletionToken());
+
+    Feed(engine, buffer, "\x1b/ap");
+    REQUIRE_FALSE(engine.CommandLineCompletionToken());
+}
+
+TEST_CASE("ReplaceCommandLineName completes the name and keeps the range", "[Engine]") {
+    Buffer buffer = MakeBuffer("banana\napple\ncherry\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":%so");
+    engine.ReplaceCommandLineName("sort");
+    REQUIRE(engine.StatusText() == ":%sort");
+
+    Feed(engine, buffer, "\n");
+    REQUIRE(buffer.Text() == "apple\nbanana\ncherry\n");
+}
+
+TEST_CASE("A macro replays a completed command name, not the typed prefix", "[Engine]") {
+    Buffer buffer = MakeBuffer("b\na\n");
+    Engine engine;
+
+    Feed(engine, buffer, "qa:%so");
+    engine.ReplaceCommandLineName("sort");
+    Feed(engine, buffer, "\nq");
+    REQUIRE(buffer.Text() == "a\nb\n");
+
+    Feed(engine, buffer, ":sort!\n");
+    REQUIRE(buffer.Text() == "b\na\n");
+    Feed(engine, buffer, "@a");
+    REQUIRE(buffer.Text() == "a\nb\n");
+}
+
+TEST_CASE("ReplaceCommandLineName is a no-op once the name is finished", "[Engine]") {
+    Buffer buffer = MakeBuffer("one\n");
+    Engine engine;
+
+    Feed(engine, buffer, ":s/x");
+    engine.ReplaceCommandLineName("sort");
+    REQUIRE(engine.StatusText() == ":s/x");
+}
+
 TEST_CASE(":r reads a file's contents in after the target line", "[Engine]") {
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_vimengine_test_read.txt";
     {
