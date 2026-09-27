@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-235 bindings.
+236 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -878,6 +878,10 @@ Set the command open-link-at-point launches (as its own argument, never a shell 
 ## `ned/set-vcs-sequence-auto-stage`
 
 Whether vcs-sequence-continue stages unmerged files that no longer contain conflict markers before continuing a rebase/merge/cherry-pick. Default off: continue refuses and lists them instead.
+
+## `ned/set-vim-command-completion`
+
+Enable or disable the completion popup on a Vim ":" line (default true). While the command name is being typed, matching ex commands are listed; Up/Down or C-n/C-p select, Tab inserts the selected name. Enter always runs the line as typed.
 
 ## `ned/set-which-key-enabled`
 

@@ -8,6 +8,7 @@
 
 #include "UI/BufferView/Internal.h"
 
+#include <cctype>
 #include <fstream>
 #include <thread>
 
@@ -20,6 +21,7 @@
 #include "Editor/HeaderSource.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/TabWidth.h"
+#include "Editor/Vim/ExCommandTable.h"
 #include "Text/BinaryDetect.h"
 
 namespace ned::ui {
@@ -211,6 +213,83 @@ bool BufferView::HandleMultibufferQuickKey(const editor::KeyChord& chord) {
     return true;
 }
 
+namespace {
+
+    // Symbol commands (":>", ":<") are left out: nothing is typed that a name could
+    // complete from.
+    std::vector<std::string> VimExCommandNames() {
+        std::vector<std::string> names;
+        for (const editor::vim::ExCommandInfo& info : editor::vim::ExCommands()) {
+            if (std::isalpha(static_cast<unsigned char>(info.name.front())) != 0) {
+                names.emplace_back(info.name);
+            }
+        }
+        return names;
+    }
+
+} // namespace
+
+void BufferView::RefreshVimExCompletion(bool resetSelection) {
+    const auto token = editor::vim::CommandCompletionEnabled() ? vimEngine_.CommandLineCompletionToken() : std::nullopt;
+    if (token && resetSelection) {
+        vimExCommandList_.Refilter(VimExCommandNames(), token->name);
+        vimExCommandList_.SelectTop();
+    }
+    if (!token || vimExCommandList_.Empty()) {
+        if (vimExCompletionShown_) {
+            vimExCompletionShown_ = false;
+            if (onCandidatesChanged_) {
+                onCandidatesChanged_(std::nullopt);
+            }
+        }
+        return;
+    }
+
+    const std::vector<std::string>& ranked   = vimExCommandList_.Ranked();
+    const std::size_t               selected = vimExCommandList_.Selection();
+    ListPopupModel                  model    = BuildFuzzyCandidatePopupModel(vimEngine_.StatusText(), ranked, selected);
+    const auto [windowStart, windowEnd]      = ComputeCandidatePopupWindow(selected, ranked.size());
+    const std::size_t rowOffset              = windowStart > 0 ? 1 : 0; // the "N more above" row
+    for (std::size_t i = windowStart; i < windowEnd; ++i) {
+        if (const editor::vim::ExCommandInfo* info = editor::vim::LookupExCommand(ranked[i])) {
+            model.rows[i - windowStart + rowOffset].right = std::string(info->doc);
+        }
+    }
+    vimExCompletionShown_ = true;
+    if (onCandidatesChanged_) {
+        onCandidatesChanged_(std::move(model));
+    }
+}
+
+bool BufferView::HandleVimExCompletionKey(const editor::KeyChord& chord) {
+    if (!vimExCompletionShown_ || chord.Meta) {
+        return false;
+    }
+    if (chord.Special == editor::SpecialKey::Tab && !chord.Control) {
+        AcceptVimExCompletion();
+        return true;
+    }
+    const bool next = chord.Special == editor::SpecialKey::Down || (chord.Control && chord.Codepoint == U'n');
+    const bool prev = chord.Special == editor::SpecialKey::Up || (chord.Control && chord.Codepoint == U'p');
+    if (!next && !prev) {
+        return false;
+    }
+    if (next) {
+        vimExCommandList_.SelectNext();
+    }
+    else {
+        vimExCommandList_.SelectPrevious();
+    }
+    RefreshVimExCompletion(/*resetSelection=*/false);
+    return true;
+}
+
+void BufferView::AcceptVimExCompletion() {
+    vimEngine_.ReplaceCommandLineName(vimExCommandList_.Selected());
+    statusMessage_ = vimEngine_.StatusText();
+    RefreshVimExCompletion(/*resetSelection=*/true);
+}
+
 bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
     if (vimEngine_.CurrentMode() == editor::vim::Mode::Insert) {
         if (IsQuit(chord)) {
@@ -229,6 +308,9 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
         }
     }
     else {
+        if (HandleVimExCompletionKey(chord)) {
+            return true;
+        }
         vimEngine_.SetViewport(viewport_.TopLine(), size().height > 0 ? static_cast<std::size_t>(size().height) : 0);
         // vim-keymap-fallthrough follow-up: Engine::HandleKey returns false only for an
         // unrecognized Control chord at the start of a fresh vim command (see its own
@@ -241,6 +323,7 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
         if (!vimEngine_.HandleKey(activeBuffer_.Get(), chord)) {
             return DispatchChordNormally(chord);
         }
+        RefreshVimExCompletion(/*resetSelection=*/true);
     }
 
     const editor::vim::PendingIntent intent  = vimEngine_.TakePendingIntent();
@@ -2180,6 +2263,7 @@ void BufferView::EndInteractiveSession() {
     if (onCandidatesChanged_) {
         onCandidatesChanged_(std::nullopt);
     }
+    vimExCompletionShown_ = false;
     // snippet-expansion follow-up: a snippet session ending through this
     // shared reset (any other session's own end path) clears its
     // buffer-side ranges too, not just the members.
@@ -5221,6 +5305,14 @@ void BufferView::HandleSelectThemeKey(const editor::KeyChord& chord) {
 void BufferView::ActivateCandidatePopupAt(std::size_t index) {
     const editor::KeyChord enter{.Special = editor::SpecialKey::Enter};
 
+    if (vimExCompletionShown_) {
+        if (const auto resolved = ResolveFuzzyCandidateRowIndex(index, vimExCommandList_.Selection(), vimExCommandList_.Size())) {
+            vimExCommandList_.SelectIndex(*resolved);
+            AcceptVimExCompletion();
+        }
+        return;
+    }
+
     switch (inputMode_) {
         case InputMode::ExecuteCommand: {
             const std::vector<std::string>& ranked =
@@ -5382,6 +5474,18 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
 
 void BufferView::ScrollCandidatePopup(int steps) {
     if (steps == 0) {
+        return;
+    }
+    if (vimExCompletionShown_) {
+        for (int i = 0; i < (steps > 0 ? steps : -steps); ++i) {
+            if (steps > 0) {
+                vimExCommandList_.SelectNext();
+            }
+            else {
+                vimExCommandList_.SelectPrevious();
+            }
+        }
+        RefreshVimExCompletion(/*resetSelection=*/false);
         return;
     }
     const editor::KeyChord nav{.Special = steps > 0 ? editor::SpecialKey::Down : editor::SpecialKey::Up};

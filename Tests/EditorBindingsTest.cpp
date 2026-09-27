@@ -30,6 +30,7 @@
 #include "Editor/SnippetRegistry.h"
 #include "Editor/SyntaxTheme.h"
 #include "Editor/ThemeSetting.h"
+#include "Editor/Vim/Settings.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "Janet/Value.h"
@@ -722,6 +723,28 @@ TEST_CASE("ned/register-macro and ned/macro-names round-trip the registry", "[Ed
 
     // An unparseable chord panics with a real error.
     REQUIRE_THROWS(env.DoString(R"((ned/register-macro "bad" ["not-a-real-chord!!"]))"));
+}
+
+TEST_CASE("ned/set-vim-command-completion toggles the process-wide setting", "[EditorBindings]") {
+    struct Guard {
+        Guard() : previous_(ned::editor::vim::CommandCompletionEnabled()) {
+        }
+        ~Guard() {
+            ned::editor::vim::SetCommandCompletionEnabled(previous_);
+        }
+        bool previous_;
+    } guard;
+
+    Environment& env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    REQUIRE(ned::editor::vim::CommandCompletionEnabled());
+
+    env.DoString(R"((ned/set-vim-command-completion false))");
+    REQUIRE_FALSE(ned::editor::vim::CommandCompletionEnabled());
+
+    env.DoString(R"((ned/set-vim-command-completion true))");
+    REQUIRE(ned::editor::vim::CommandCompletionEnabled());
 }
 
 // completion-trigger-characters follow-up.

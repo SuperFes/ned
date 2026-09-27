@@ -94,6 +94,7 @@
 #include "Editor/TrimOnSave.h"
 #include "Editor/Vcs/ProviderRegistry.h"
 #include "Editor/Vcs/Sequence.h"
+#include "Editor/Vim/Settings.h"
 #include "Editor/WhichKeySettings.h"
 #include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapIndent.h"
@@ -296,6 +297,10 @@ namespace {
             throw std::runtime_error("unknown keymap style: " + style + " (expected \"emacs\", \"vim\", or \"modern\")");
         }
         editor::SetKeymapStyle(*parsed);
+    }
+
+    void NedSetVimCommandCompletion(bool enabled) {
+        editor::vim::SetCommandCompletionEnabled(enabled);
     }
 
     void NedSetProjectSearchThreads(std::int64_t threads) {
@@ -1914,6 +1919,11 @@ void InstallEditorBindings(Environment& env) {
         "paste/undo/redo/select-all/save/find chords (C-x/C-c/C-v/C-z/C-y/C-a/C-s/C-f) to their conventional "
         "meaning; every command those displace (and every other C-c/C-x <key> binding, which becomes unreachable "
         "by keystroke once C-c/C-x are leaf commands) stays reachable by name via M-x or search-everywhere.");
+    env.Register<&NedSetVimCommandCompletion>(
+        "ned", "set-vim-command-completion",
+        "Enable or disable the completion popup on a Vim \":\" line (default true). While the command name is "
+        "being typed, matching ex commands are listed; Up/Down or C-n/C-p select, Tab inserts the selected name. "
+        "Enter always runs the line as typed.");
     env.Register<&NedSetLogCategoryVisible>(
         "ned", "set-log-category-visible",
         "Show/hide one category (\"general\"/\"janet\"/\"lsp\"/\"dap\"/\"acp\"/\"vcs\"/\"task\"/\"subprocess\") in the "

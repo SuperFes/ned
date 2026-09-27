@@ -13,6 +13,7 @@
 #include "Editor/Keymap.h"
 #include "Editor/RegexPattern.h"
 #include "Editor/TabWidth.h"
+#include "ExCommandTable.h"
 #include "GlobalMarks.h"
 #include "LineUtil.h"
 #include "Magic.h"
@@ -250,6 +251,30 @@ std::optional<HunkDirection> Engine::TakePendingHunkNavigation() {
     const std::optional<HunkDirection> direction = pendingHunkNavigation_;
     pendingHunkNavigation_                       = std::nullopt;
     return direction;
+}
+
+std::optional<ExNameToken> Engine::CommandLineCompletionToken() const {
+    if (mode_ != Mode::CommandLine || commandLinePrefix_ != U':') {
+        return std::nullopt;
+    }
+    return ExCommandNameToken(commandLineText_);
+}
+
+void Engine::ReplaceCommandLineName(std::string_view name) {
+    const auto token = CommandLineCompletionToken();
+    if (!token) {
+        return;
+    }
+    // Recorded as the keys that would type the same edit, so a macro replays the
+    // completed name rather than the prefix it was completed from.
+    if (isRecordingMacro_) {
+        macroRecordingBuffer_.insert(macroRecordingBuffer_.end(), token->name.size(), KeyChord{.Special = SpecialKey::Backspace});
+        for (const char c : name) {
+            macroRecordingBuffer_.push_back(KeyChord{.Codepoint = static_cast<unsigned char>(c)});
+        }
+    }
+    commandLineText_.replace(token->offset, token->name.size(), name);
+    statusText_ = ":" + commandLineText_;
 }
 
 std::string Engine::ModeIndicator() const {
@@ -2739,75 +2764,19 @@ void Engine::ExecuteExCommand(text::Buffer& buffer, const std::string& text) {
         FinishCommand(buffer);
         return;
     }
-    if (cmd->name == "s") {
-        ExecuteSubstitute(buffer, *cmd);
+
+    const ExCommandInfo* info = LookupExCommand(cmd->name);
+    if (info == nullptr) {
+        statusText_ = "E492: Not an editor command: " + cmd->name;
         FinishCommand(buffer);
         return;
     }
-    if (cmd->name == "w" || cmd->name == "write") {
-        pendingSave_ = true;
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "q" || cmd->name == "quit" || cmd->name == "clo" || cmd->name == "close") {
-        // vim-window-commands follow-up: ":close"/":clo" reuses ":q"'s own
-        // CloseWindow/CloseWindowForced handling wholesale rather than a distinct
-        // value -- real vim's ":close" differs only in refusing outright ("E444:
-        // Cannot close last window") instead of falling through to quit on the last
-        // window, a nuance this codebase's own ":q"/"ZZ" simplification already
-        // declined to reproduce (see PendingIntent's own doc comment).
-        pendingIntent_ = cmd->bang ? PendingIntent::CloseWindowForced : PendingIntent::CloseWindow;
-        FinishCommand(buffer);
-        return;
-    }
-    // A ":sp"/":vs" filename argument (real vim's "split and edit this file") lands in
-    // cmd->rest and is silently ignored -- these only ever split showing the CURRENT
-    // buffer, matching ned's own split-window-below/-right commands (C-x 2/C-x 3)
-    // exactly. A documented v1 cut, not an oversight.
-    if (cmd->name == "sp" || cmd->name == "split") {
-        pendingIntent_ = PendingIntent::SplitBelow;
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "vs" || cmd->name == "vsp" || cmd->name == "vsplit") {
-        pendingIntent_ = PendingIntent::SplitRight;
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "on" || cmd->name == "only") {
-        pendingIntent_ = PendingIntent::CloseOtherWindows;
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "wq" || cmd->name == "x" || cmd->name == "xit") {
-        pendingSave_   = true;
-        pendingIntent_ = PendingIntent::CloseWindow;
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "qa" || cmd->name == "qall" || cmd->name == "quitall") {
-        pendingIntent_ = cmd->bang ? PendingIntent::QuitForced : PendingIntent::Quit;
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "d" || cmd->name == "delete") {
-        const std::size_t sl    = cmd->range.present ? cmd->range.startLine : currentLine;
-        const std::size_t el    = cmd->range.present ? cmd->range.endLine : currentLine;
-        const std::size_t start = LineStart(buffer, sl);
-        const std::size_t end   = el < EffectiveLastLine(buffer) ? LineStart(buffer, el + 1) : buffer.Content().ByteLength();
-        ApplyOperator(buffer, U'd', start, end, true);
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "j" || cmd->name == "join") {
-        const std::size_t sl = cmd->range.present ? cmd->range.startLine : currentLine;
-        const std::size_t el = cmd->range.present ? cmd->range.endLine : currentLine + 1;
-        buffer.SetPoint(LineStart(buffer, sl));
-        JoinLines(buffer, static_cast<long>(el >= sl ? el - sl + 1 : 1));
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "y" || cmd->name == "yank") {
+
+    // The line range a linewise command covers when none was typed: the current line.
+    const std::size_t sl              = cmd->range.present ? cmd->range.startLine : currentLine;
+    const std::size_t el              = cmd->range.present ? cmd->range.endLine : currentLine;
+    const auto        rangeEnd        = [&] { return el < EffectiveLastLine(buffer) ? LineStart(buffer, el + 1) : buffer.Content().ByteLength(); };
+    const auto        takeRegisterArg = [&] {
         std::string_view regArg = cmd->rest;
         while (!regArg.empty() && regArg.front() == ' ') {
             regArg.remove_prefix(1);
@@ -2815,77 +2784,91 @@ void Engine::ExecuteExCommand(text::Buffer& buffer, const std::string& text) {
         if (!regArg.empty()) {
             pendingRegisterName_ = static_cast<char32_t>(static_cast<unsigned char>(regArg.front()));
         }
-        const std::size_t sl    = cmd->range.present ? cmd->range.startLine : currentLine;
-        const std::size_t el    = cmd->range.present ? cmd->range.endLine : currentLine;
-        const std::size_t start = LineStart(buffer, sl);
-        const std::size_t end   = el < EffectiveLastLine(buffer) ? LineStart(buffer, el + 1) : buffer.Content().ByteLength();
-        ApplyOperator(buffer, U'y', start, end, true);
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "pu" || cmd->name == "put") {
-        std::string_view regArg = cmd->rest;
-        while (!regArg.empty() && regArg.front() == ' ') {
-            regArg.remove_prefix(1);
+    };
+
+    switch (info->id) {
+        case ExCommandId::Substitute:
+            ExecuteSubstitute(buffer, *cmd);
+            break;
+        case ExCommandId::Write:
+            pendingSave_ = true;
+            break;
+        case ExCommandId::Quit:
+        case ExCommandId::Close:
+            // Real vim's ":close" refuses on the last window ("E444") instead of falling
+            // through to quit; that nuance is not reproduced (see PendingIntent).
+            pendingIntent_ = cmd->bang ? PendingIntent::CloseWindowForced : PendingIntent::CloseWindow;
+            break;
+        // A filename argument (vim's "split and edit this file") lands in cmd->rest and
+        // is ignored: these always split showing the current buffer, like C-x 2/C-x 3.
+        case ExCommandId::Split:
+            pendingIntent_ = PendingIntent::SplitBelow;
+            break;
+        case ExCommandId::VSplit:
+            pendingIntent_ = PendingIntent::SplitRight;
+            break;
+        case ExCommandId::Only:
+            pendingIntent_ = PendingIntent::CloseOtherWindows;
+            break;
+        case ExCommandId::WriteQuit:
+        case ExCommandId::Xit:
+            pendingSave_   = true;
+            pendingIntent_ = PendingIntent::CloseWindow;
+            break;
+        case ExCommandId::QuitAll:
+            pendingIntent_ = cmd->bang ? PendingIntent::QuitForced : PendingIntent::Quit;
+            break;
+        case ExCommandId::Delete:
+            ApplyOperator(buffer, U'd', LineStart(buffer, sl), rangeEnd(), true);
+            break;
+        case ExCommandId::Join: {
+            const std::size_t joinEnd = cmd->range.present ? cmd->range.endLine : currentLine + 1;
+            buffer.SetPoint(LineStart(buffer, sl));
+            JoinLines(buffer, static_cast<long>(joinEnd >= sl ? joinEnd - sl + 1 : 1));
+            break;
         }
-        if (!regArg.empty()) {
-            pendingRegisterName_ = static_cast<char32_t>(static_cast<unsigned char>(regArg.front()));
+        case ExCommandId::Yank:
+            takeRegisterArg();
+            ApplyOperator(buffer, U'y', LineStart(buffer, sl), rangeEnd(), true);
+            break;
+        case ExCommandId::Put:
+            takeRegisterArg();
+            buffer.SetPoint(LineStart(buffer, el));
+            PasteRegister(buffer, /*before=*/cmd->bang, 1);
+            break;
+        case ExCommandId::ShiftRight:
+        case ExCommandId::ShiftLeft:
+            ShiftLines(buffer, LineStart(buffer, sl), rangeEnd(), info->id == ExCommandId::ShiftRight);
+            break;
+        case ExCommandId::Move:
+            ExecuteMoveOrCopy(buffer, *cmd, /*isMove=*/true);
+            break;
+        case ExCommandId::Copy:
+            ExecuteMoveOrCopy(buffer, *cmd, /*isMove=*/false);
+            break;
+        case ExCommandId::Sort:
+            ExecuteSort(buffer, *cmd);
+            break;
+        case ExCommandId::Read:
+            ExecuteRead(buffer, *cmd);
+            break;
+        case ExCommandId::Global:
+            ExecuteGlobal(buffer, *cmd);
+            break;
+        case ExCommandId::Normal: {
+            std::string keys = cmd->rest;
+            if (!keys.empty() && keys.front() == ' ') {
+                keys.erase(0, 1);
+            }
+            currentCommandChords_.clear();
+            for (const char c : keys) {
+                KeyChord kc;
+                kc.Codepoint = static_cast<unsigned char>(c);
+                (void)HandleKey(buffer, kc); // ":normal" replay -- same reasoning as RepeatLastChange above
+            }
+            break;
         }
-        const std::size_t targetLine = cmd->range.present ? cmd->range.endLine : currentLine;
-        buffer.SetPoint(LineStart(buffer, targetLine));
-        PasteRegister(buffer, /*before=*/cmd->bang, 1);
-        FinishCommand(buffer);
-        return;
     }
-    if (cmd->name == ">" || cmd->name == "<") {
-        const std::size_t sl    = cmd->range.present ? cmd->range.startLine : currentLine;
-        const std::size_t el    = cmd->range.present ? cmd->range.endLine : currentLine;
-        const std::size_t start = LineStart(buffer, sl);
-        const std::size_t end   = el < EffectiveLastLine(buffer) ? LineStart(buffer, el + 1) : buffer.Content().ByteLength();
-        ShiftLines(buffer, start, end, cmd->name == ">");
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "m" || cmd->name == "move") {
-        ExecuteMoveOrCopy(buffer, *cmd, /*isMove=*/true);
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "t" || cmd->name == "co" || cmd->name == "copy") {
-        ExecuteMoveOrCopy(buffer, *cmd, /*isMove=*/false);
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "sort") {
-        ExecuteSort(buffer, *cmd);
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "r" || cmd->name == "read") {
-        ExecuteRead(buffer, *cmd);
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "g" || cmd->name == "global") {
-        ExecuteGlobal(buffer, *cmd);
-        FinishCommand(buffer);
-        return;
-    }
-    if (cmd->name == "normal" || cmd->name == "norm") {
-        std::string keys = cmd->rest;
-        if (!keys.empty() && keys.front() == ' ') {
-            keys.erase(0, 1);
-        }
-        currentCommandChords_.clear();
-        for (const char c : keys) {
-            KeyChord kc;
-            kc.Codepoint = static_cast<unsigned char>(c);
-            (void)HandleKey(buffer, kc); // ":normal" replay -- same reasoning as RepeatLastChange above
-        }
-        FinishCommand(buffer);
-        return;
-    }
-    statusText_ = "E492: Not an editor command: " + cmd->name;
     FinishCommand(buffer);
 }
 

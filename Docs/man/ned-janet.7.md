@@ -886,6 +886,10 @@ The popup is never one source: a language server's items, snippet triggers for t
 
 :   Whether vcs-sequence-continue stages unmerged files that no longer contain conflict markers before continuing a rebase/merge/cherry-pick. Default off: continue refuses and lists them instead.
 
+`ned/set-vim-command-completion`
+
+:   Enable or disable the completion popup on a Vim ":" line (default true). While the command name is being typed, matching ex commands are listed; Up/Down or C-n/C-p select, Tab inserts the selected name. Enter always runs the line as typed.
+
 `ned/set-which-key-enabled`
 
 :   Enable/disable the which-key popup listing possible next chords while a prefix key (C-x, C-c, ...) is pending (default true). The echo area's own "C-x-" pending-sequence text is unaffected either way.

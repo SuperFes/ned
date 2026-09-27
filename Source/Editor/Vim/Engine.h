@@ -33,6 +33,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Editor/Key.h"
@@ -122,6 +123,15 @@ class Engine {
 
     [[nodiscard]] const std::string& StatusText() const;
     [[nodiscard]] std::string        ModeIndicator() const; // "NORMAL"/"INSERT"/"VISUAL"/"V-LINE"/"V-BLOCK"/"REPLACE"/"COMMAND"
+
+    // The ex command name being typed on a ":" line (ExCommandNameToken), for the host's
+    // completion popup; nullopt outside a ":" line. The view is into the engine's own
+    // command-line text and is invalidated by the next key.
+    [[nodiscard]] std::optional<ExNameToken> CommandLineCompletionToken() const;
+
+    // Replaces the name CommandLineCompletionToken reports with `name`, recording the
+    // edit into a macro being recorded. A no-op when there is no such token.
+    void ReplaceCommandLineName(std::string_view name);
 
     // Live viewport facts (H/M/L) -- Buffer itself has no notion of one.
     void SetViewport(std::size_t topLine, std::size_t height);

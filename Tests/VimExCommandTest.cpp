@@ -1,8 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "Editor/Vim/ExCommand.h"
+#include "Editor/Vim/ExCommandTable.h"
 
+#include <set>
+#include <string>
+
+using ned::editor::vim::ExCommandNameToken;
+using ned::editor::vim::ExCommands;
 using ned::editor::vim::ExRange;
+using ned::editor::vim::LookupExCommand;
 using ned::editor::vim::ParseExCommand;
 using ned::editor::vim::ParseGlobalArgs;
 using ned::editor::vim::ParseSubstituteArgs;
@@ -121,4 +128,68 @@ TEST_CASE("ParseGlobalArgs tolerates a missing command (bare pattern)", "[ExComm
     REQUIRE(args.has_value());
     REQUIRE(args->pattern == "foo");
     REQUIRE(args->command.empty());
+}
+
+TEST_CASE("The name token skips a leading range", "[ExCommand]") {
+    const auto plain = ExCommandNameToken("so");
+    REQUIRE(plain);
+    REQUIRE(plain->offset == 0);
+    REQUIRE(plain->name == "so");
+
+    const auto whole = ExCommandNameToken("%so");
+    REQUIRE(whole);
+    REQUIRE(whole->offset == 1);
+    REQUIRE(whole->name == "so");
+
+    const auto visual = ExCommandNameToken("'<,'>no");
+    REQUIRE(visual);
+    REQUIRE(visual->offset == 5);
+    REQUIRE(visual->name == "no");
+
+    const auto spaced = ExCommandNameToken(" 3,$ d");
+    REQUIRE(spaced);
+    REQUIRE(spaced->offset == 5);
+    REQUIRE(spaced->name == "d");
+}
+
+TEST_CASE("The name token ends once anything but a letter follows the name", "[ExCommand]") {
+    REQUIRE_FALSE(ExCommandNameToken(""));
+    REQUIRE_FALSE(ExCommandNameToken("%"));
+    REQUIRE_FALSE(ExCommandNameToken("12"));
+    REQUIRE_FALSE(ExCommandNameToken("w "));
+    REQUIRE_FALSE(ExCommandNameToken("q!"));
+    REQUIRE_FALSE(ExCommandNameToken("s/foo"));
+    REQUIRE_FALSE(ExCommandNameToken("g/x/d"));
+    REQUIRE_FALSE(ExCommandNameToken(">"));
+    REQUIRE_FALSE(ExCommandNameToken("'a"));
+}
+
+TEST_CASE("Every ex command spelling resolves to its own entry", "[ExCommandTable]") {
+    for (const auto& info : ExCommands()) {
+        CHECK(LookupExCommand(info.name) == &info);
+        CHECK_FALSE(info.doc.empty());
+        for (const std::string_view alias : info.aliases) {
+            if (!alias.empty()) {
+                CHECK(LookupExCommand(alias) == &info);
+            }
+        }
+    }
+}
+
+TEST_CASE("No ex command spelling is claimed twice", "[ExCommandTable]") {
+    std::set<std::string> seen;
+    for (const auto& info : ExCommands()) {
+        CHECK(seen.insert(std::string(info.name)).second);
+        for (const std::string_view alias : info.aliases) {
+            if (!alias.empty()) {
+                CHECK(seen.insert(std::string(alias)).second);
+            }
+        }
+    }
+}
+
+TEST_CASE("Unknown ex command names do not resolve", "[ExCommandTable]") {
+    REQUIRE(LookupExCommand("") == nullptr);
+    REQUIRE(LookupExCommand("frobnicate") == nullptr);
+    REQUIRE(LookupExCommand("wri") == nullptr); // no prefix abbreviation
 }
