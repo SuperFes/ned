@@ -107,6 +107,18 @@ class Stack {
         }
         return depth;
     }
+    // A hash of the parse states down the same first-link spine Depth walks:
+    // two configurations with equal fingerprints at one position take the
+    // same actions on the same lookahead.
+    [[nodiscard]] std::uint64_t SpineFingerprint(StackVersion version) const {
+        std::uint64_t    hash = 0xcbf29ce484222325ull;
+        const StackNode* node = heads_[version].node;
+        while (node != nullptr) {
+            hash = (hash ^ node->state) * 0x100000001b3ull;
+            node = node->linkCount > 0 ? node->links[0].node : nullptr;
+        }
+        return hash;
+    }
     [[nodiscard]] Subtree LastExternalToken(StackVersion version) const {
         return heads_[version].lastExternalToken;
     }

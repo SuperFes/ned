@@ -90,6 +90,8 @@ class Engine {
     bool            ExternalScannerScan(abi::StateId externalLexState);
     bool            CanReuseFirstLeaf(abi::StateId state, Subtree tree, TableEntry* tableEntry);
     Subtree         LexToken(StackVersion version, abi::StateId parseState);
+    bool            RepeatsEmptyTokenConfiguration(StackVersion version, std::uint32_t position, abi::Symbol symbol,
+                                                   unsigned scannerStateLength);
     Subtree         GetCachedToken(abi::StateId state, std::size_t position, Subtree lastExternalToken, TableEntry* tableEntry);
     void            SetCachedToken(std::uint32_t byteIndex, Subtree lastExternalToken, Subtree token);
     Subtree         ReuseNode(StackVersion version, abi::StateId* state, std::uint32_t position, Subtree lastExternalToken,
@@ -150,6 +152,13 @@ class Engine {
     // as every other reading, so an unscoped merge would fold the trial's
     // reductions into readings it has nothing to do with.
     StackVersion versionBase_ = 0;
+    // Configurations that accepted an empty external token with unchanged
+    // scanner state, per byte position -- see RepeatsEmptyTokenConfiguration.
+    struct EmptyTokenConfiguration {
+        std::uint32_t position;
+        std::uint64_t fingerprint;
+    };
+    std::vector<EmptyTokenConfiguration> emptyTokenConfigurations_;
 
     const abi::LanguageData*    language_;
     Lexer                       lexer_;

@@ -422,6 +422,14 @@ set_target_properties(ned_demo_scanner PROPERTIES CXX_STANDARD 23 CXX_STANDARD_R
 add_dependencies(ned_tests ned_demo_scanner)
 target_compile_definitions(ned_tests PRIVATE NED_DEMO_SCANNER_LIBRARY="$<TARGET_FILE:ned_demo_scanner>")
 
+# A deliberately broken scanner (an empty token a repetition absorbs) the
+# engine's empty-token loop guard is held against.
+add_library(ned_runaway_scanner SHARED LanguagePackage/RunawayScanner.cpp)
+target_include_directories(ned_runaway_scanner PRIVATE "${CMAKE_SOURCE_DIR}/Source")
+set_target_properties(ned_runaway_scanner PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+add_dependencies(ned_tests ned_runaway_scanner)
+target_compile_definitions(ned_tests PRIVATE NED_RUNAWAY_SCANNER_LIBRARY="$<TARGET_FILE:ned_runaway_scanner>")
+
 # ThemeKeyDocsTest holds Docs/Themes.md's key reference against the real
 # ui::ThemeKeys() table, so it needs to find the repo from a test binary
 # that runs out of the build tree. Tests-only, deliberately: nothing in
