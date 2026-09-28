@@ -439,3 +439,76 @@ TEST_CASE(". KEYBENCH: C++ fold only", "[.][keybench]") {
          << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin).count() / 100
          << " us");
 }
+
+// The MatchCache consumers in grammars whose scanners emit tokens on nearly
+// every line (JavaScript's `||`/template/regex tokens, Python's newlines and
+// indents): whole-document locals behind a highlights query's `#is? local`,
+// and the symbolKind/indent queries -- each reconciled after highlight has
+// already advanced the shared parse, the order a real frame runs them in.
+TEST_CASE(". KEYBENCH: scanner-grammar MatchCache consumers", "[.][keybench]") {
+    const auto timeIt = [](const char* label, int iterations, auto&& fn) {
+        fn(0);
+        const auto begin = std::chrono::steady_clock::now();
+        for (int i = 0; i < iterations; ++i)
+            fn(i + 1);
+        WARN("    " << label << ": "
+                    << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - begin).count() /
+                           iterations
+                    << " us");
+    };
+
+    const std::string jsUnit = "function handler%(event, options) {\n"
+                               "  const name = options.name || `item-${event.id}`;\n"
+                               "  const matched = /^[a-z]+$/.test(name) ? name : null;\n"
+                               "  return items.filter((item) => item.name === matched || item.id > 3);\n"
+                               "}\n\n";
+    const std::string pyUnit = "def handler%(event, options):\n"
+                               "    name = options.name or f\"item-{event.id}\"\n"
+                               "    if name:\n"
+                               "        return [item for item in items if item.name == name]\n"
+                               "    return None\n\n";
+    const auto        build  = [](const std::string& unit, std::size_t bytes) {
+        std::string text;
+        for (int n = 0; text.size() < bytes; ++n) {
+            std::string copy = unit;
+            copy.replace(copy.find('%'), 1, std::to_string(n));
+            text += copy;
+        }
+        return text;
+    };
+
+    struct Case {
+        const char*        label;
+        ned::editor::Mode  mode;
+        const std::string* unit;
+    };
+    for (const Case& language : {Case{"JavaScript", ned::editor::JavaScriptMode(), &jsUnit},
+                                 Case{"Python", ned::editor::PythonMode(), &pyUnit}}) {
+        for (const std::size_t kib : {32U, 128U}) {
+            std::string       text = build(*language.unit, kib * 1024);
+            const std::size_t mid  = text.size() / 2;
+            WARN("  " << language.label << " " << kib << " KiB");
+            ned::editor::Mode            mode = language.mode;
+            ned::editor::HighlightWindow window{.startByte = mid - 8192, .endByte = mid + 8192};
+            timeIt("highlight(window) + its parse", 20, [&](int i) {
+                text.insert(mid, 1, static_cast<char>('a' + (i % 26)));
+                return mode.highlight(text, window).size();
+            });
+            timeIt("  then localScopes      ", 20, [&](int i) {
+                text.insert(mid, 1, static_cast<char>('a' + (i % 26)));
+                const std::size_t h = mode.highlight(text, window).size();
+                return h + (mode.localScopes ? mode.localScopes(text).size() : 0U);
+            });
+            timeIt("  then symbolKind(whole)", 20, [&](int i) {
+                text.insert(mid, 1, static_cast<char>('a' + (i % 26)));
+                const std::size_t h = mode.highlight(text, window).size();
+                return h + (mode.symbolKind ? mode.symbolKind(text).size() : 0U);
+            });
+            timeIt("  then indent(one line) ", 20, [&](int i) {
+                text.insert(mid, 1, static_cast<char>('a' + (i % 26)));
+                const std::size_t h = mode.highlight(text, window).size();
+                return h + (mode.indentColumn && mode.indentColumn(text, mid, mid + 40, {}) ? 1U : 0U);
+            });
+        }
+    }
+}

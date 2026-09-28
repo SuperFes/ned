@@ -585,37 +585,42 @@ TEST_CASE("IncrementalParseCache handles an edit that inserts newlines", "[Gramm
     RequireNodesMatch(tree.RootNode(), freshTree.RootNode());
 }
 
-// per-subtree-fact-memoization follow-up: LastEdit() lets a capability
-// closure (Mode.cpp's symbolKind, via MatchCache) share this cache's own
-// diff instead of re-diffing text independently.
-TEST_CASE("IncrementalParseCache::LastEdit reports nullopt on a cache hit and on the first call", "[Grammar]") {
+TEST_CASE("IncrementalParseCache::EditSince is empty on the first call and across skipped generations", "[Grammar]") {
     Parser                parser(*LanguageByName("json"));
     IncrementalParseCache cache;
 
-    REQUIRE_FALSE(cache.LastEdit().has_value()); // nothing diffed yet
-
     (void)cache.Update(parser, R"({"a": 1})");
-    REQUIRE_FALSE(cache.LastEdit().has_value()); // first call: nothing to diff against
+    REQUIRE(cache.Generation() == 1);
+    CHECK_FALSE(cache.EditSince(0).has_value()); // first call: nothing to diff against
 
-    (void)cache.Update(parser, R"({"a": 1})"); // identical text -- cache hit
-    REQUIRE_FALSE(cache.LastEdit().has_value());
+    (void)cache.Update(parser, R"({"a": 1})"); // identical text -- cache hit, same generation
+    CHECK(cache.Generation() == 1);
+
+    (void)cache.Update(parser, R"({"a": 2})");
+    (void)cache.Update(parser, R"({"a": 3})");
+    CHECK_FALSE(cache.EditSince(1).has_value()); // two generations back: no single edit describes it
+    CHECK(cache.EditSince(2).has_value());
 }
 
-TEST_CASE("IncrementalParseCache::LastEdit reports the exact changed region for a real edit", "[Grammar]") {
+TEST_CASE("IncrementalParseCache::EditSince reports the exact changed region for a real edit", "[Grammar]") {
     Parser                parser(*LanguageByName("json"));
     IncrementalParseCache cache;
 
     (void)cache.Update(parser, R"({"a": 1, "b": 2})");
     (void)cache.Update(parser, R"({"a": 1, "b": 200})"); // widens "2" to "200"
 
-    const std::optional<ned::text::ChangedSpan> span = cache.LastEdit();
-    REQUIRE(span.has_value());
+    // Unlike the last Update() call, the edit survives a later cache hit --
+    // a capability that is not the first to see new text still gets it.
+    (void)cache.Update(parser, R"({"a": 1, "b": 200})");
+    const std::optional<TreeEdit> edit = cache.EditSince(1);
+    REQUIRE(edit.has_value());
+    const ned::text::ChangedSpan& span = edit->span;
     // Matches the prefix/suffix diff computed by hand in
     // Tests/MatchCacheTest.cpp for this exact case.
-    CHECK(span->oldStart == 15);
-    CHECK(span->oldEnd == 15);
-    CHECK(span->newStart == 15);
-    CHECK(span->newEnd == 17);
+    CHECK(span.oldStart == 15);
+    CHECK(span.oldEnd == 15);
+    CHECK(span.newStart == 15);
+    CHECK(span.newEnd == 17);
 }
 
 TEST_CASE("IncrementalParseCache stays correct across a sequence of edits", "[Grammar]") {

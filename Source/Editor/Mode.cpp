@@ -280,11 +280,12 @@ namespace {
     }
 
     // A whole-document locals pass runs on every edit to answer `#is? local`
-    // in a highlights query -- a full walk for any grammar with an external
-    // scanner, which MatchCache never reconciles incrementally (measured:
-    // +14 ms per keystroke on 128 KiB of JavaScript). Past this size the
-    // locals are skipped and no token counts as one.
-    constexpr std::size_t kMaxLocalConditionBytes = 64 * 1024;
+    // in a highlights query. Its query is reconciled incrementally, but
+    // turning matches into local nodes is still linear in the document:
+    // measured at ~25 us per KiB of JavaScript or Python per keystroke, so
+    // this is ~6 ms at the cap. Past it the locals are skipped and no token
+    // counts as one.
+    constexpr std::size_t kMaxLocalConditionBytes = 256 * 1024;
 
     bool LocalConditionHolds(const grammar::QueryCapture& capture, const std::vector<locals::LocalNode>& localNodes) {
         const locals::Range range{capture.startByte, capture.endByte};
@@ -1362,7 +1363,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
 
             std::vector<std::pair<std::size_t, std::size_t>> ranges;
             for (const grammar::QueryMatch& match :
-                 foldMatchCache->Reconcile(*foldQuery, tree, bufferText, sharedParse->LastEdit())) {
+                 foldMatchCache->Reconcile(*foldQuery, tree, bufferText, *sharedParse)) {
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (capture.name != "fold") {
                         continue;
@@ -1491,13 +1492,10 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
         // keystrokes," and folding it in would change what windowing means
         // there (reconcile-then-filter instead of a genuinely pruned walk --
         // see the MatchCache.h header comment on why that's not a
-        // value-neutral swap). Sharing sharedParse->LastEdit() with this
-        // cache is what lets it skip re-deriving facts far from an edit
-        // without independently re-diffing text: safe even when some OTHER
-        // closure already advanced sharedParse to the same bufferText first
-        // in the same frame (LastEdit() then reports nullopt, and Reconcile
-        // just falls back to a full walk -- correct, only not maximally
-        // optimal that call).
+        // value-neutral swap). Reconciling against sharedParse's generations
+        // is what lets it skip re-deriving facts far from an edit without
+        // independently re-diffing text, whichever closure advanced
+        // sharedParse to this bufferText first.
         const auto symbolKindMatchCache = std::make_shared<grammar::MatchCache>();
         // Shared by the whole-document closure and the windowed one below:
         // marker construction plus the two dedupe/nesting collapses. The
@@ -1514,11 +1512,13 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 return {};
             }
 
-            std::vector<SymbolMarker>                 markers;
-            const std::vector<grammar::QueryMatch> matches =
+            std::vector<SymbolMarker>               markers;
+            std::vector<grammar::QueryMatch>        windowed;
+            const std::vector<grammar::QueryMatch>& matches =
                 window.CoversWholeDocument()
-                    ? symbolKindMatchCache->Reconcile(*symbolKindQuery, tree, bufferText, sharedParse->LastEdit())
-                    : symbolKindQuery->MatchesInRange(tree.RootNode(), bufferText, window.startByte, window.endByte);
+                    ? symbolKindMatchCache->Reconcile(*symbolKindQuery, tree, bufferText, *sharedParse)
+                    : (windowed = symbolKindQuery->MatchesInRange(tree.RootNode(), bufferText, window.startByte,
+                                                                  window.endByte));
             for (const grammar::QueryMatch& match : matches) {
                 std::optional<SymbolKind>                    kind;
                 std::string                                rawDefinitionKind;
@@ -1956,7 +1956,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             std::vector<Definition>                          definitions;
             std::vector<std::pair<std::size_t, std::size_t>> names;
             for (const grammar::QueryMatch& match :
-                 testMatchCache->Reconcile(*testQuery, tree, bufferText, sharedParse->LastEdit())) {
+                 testMatchCache->Reconcile(*testQuery, tree, bufferText, *sharedParse)) {
                 for (const grammar::QueryMatchCapture& capture : match.captures) {
                     if (capture.name == "test.definition") {
                         definitions.push_back({capture.startByte, capture.endByte, {}});
@@ -2022,8 +2022,8 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 return {};
             }
 
-            const std::vector<grammar::QueryMatch> matches =
-                signatureMatchCache->Reconcile(*signatureQuery, tree, bufferText, sharedParse->LastEdit());
+            const std::vector<grammar::QueryMatch>& matches =
+                signatureMatchCache->Reconcile(*signatureQuery, tree, bufferText, *sharedParse);
 
             // A query that describes parameters itself (@parameter and
             // friends) is read by range; one that doesn't falls back to the
@@ -2366,8 +2366,8 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
                 return {};
             }
 
-            const std::vector<grammar::QueryMatch> matches =
-                callMatchCache->Reconcile(*callQuery, tree, bufferText, sharedParse->LastEdit());
+            const std::vector<grammar::QueryMatch>& matches =
+                callMatchCache->Reconcile(*callQuery, tree, bufferText, *sharedParse);
 
             // Arguments bound by name or spread (@argument.named/.spread), with
             // a named one's name (@argument.name) where the query gives it.
@@ -2726,7 +2726,7 @@ Mode GrammarModeFromLanguage(std::string name, const grammar::Language& language
             if (localsMemo->generation == generation) {
                 return localsMemo->captures;
             }
-            const std::optional<text::ChangedSpan> edit =
+            const std::optional<grammar::TreeEdit> edit =
                 localsMemo->generation ? sharedParse->EditSince(*localsMemo->generation) : std::nullopt;
 
             std::vector<LocalCapture> captures;

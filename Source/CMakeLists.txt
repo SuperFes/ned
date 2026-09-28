@@ -423,6 +423,7 @@ add_library(ned_lib STATIC
         Editor/Grammar/QueryPredicates.cpp
         Editor/Grammar/QueryMatcher.cpp
         Editor/Grammar/MatchCache.cpp
+        Editor/Grammar/TreeEdit.cpp
         Editor/Grammar/Languages.cpp
         Editor/Parse/Green.cpp
         Editor/Parse/Lexer.cpp
@@ -431,6 +432,7 @@ add_library(ned_lib STATIC
         Editor/Parse/Tree.cpp
         Editor/Parse/Node.cpp
         Editor/Parse/Cursor.cpp
+        Editor/Parse/ChangedRanges.cpp
         Editor/Parse/Sexp.cpp
         Janet/Value.cpp
         Janet/Environment.cpp
