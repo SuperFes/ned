@@ -345,6 +345,38 @@ bool Engine::CanReuseFirstLeaf(abi::StateId state, Subtree tree, TableEntry* tab
     return currentLexMode.externalLexState == 0 && tableEntry->isReusable;
 }
 
+// An empty external token that leaves the scanner state alone consumes
+// nothing, so accepting it again in a configuration it was already accepted
+// in -- same position, same parse states down the stack, same scanner state
+// -- repeats the same actions forever, growing the stack on every pass (a
+// scanner returning a zero-width token a repetition absorbs). Upstream's
+// guard only rules out extras and error recovery. Legitimate runs of empty
+// tokens at one position (closers for nested constructs) always shrink the
+// stack between them, so they never repeat a configuration.
+bool Engine::RepeatsEmptyTokenConfiguration(StackVersion version, std::uint32_t position, abi::Symbol symbol,
+                                            unsigned scannerStateLength) {
+    // Scoped to the version and what keeps versions from merging: sibling
+    // readings of an ambiguity can share a spine, and each legitimately
+    // accepts the same empty token (F# layout tokens do).
+    std::uint64_t fingerprint = stack_->SpineFingerprint(version);
+    for (const std::uint64_t part : {std::uint64_t{version}, std::uint64_t{symbol}, std::uint64_t{stack_->ErrorCost(version)},
+                                     static_cast<std::uint64_t>(stack_->DynamicPrecedence(version))})
+        fingerprint = (fingerprint ^ part) * 0x100000001b3ull;
+    for (unsigned i = 0; i < scannerStateLength; i++)
+        fingerprint = (fingerprint ^ static_cast<unsigned char>(lexer_.scratchBuffer[i])) * 0x100000001b3ull;
+
+    for (const EmptyTokenConfiguration& seen : emptyTokenConfigurations_) {
+        if (seen.position == position && seen.fingerprint == fingerprint)
+            return true;
+    }
+    // Only the positions versions are still parsing at matter.
+    if (emptyTokenConfigurations_.size() >= 64)
+        std::erase_if(emptyTokenConfigurations_,
+                      [position](const EmptyTokenConfiguration& seen) { return seen.position < position; });
+    emptyTokenConfigurations_.push_back({.position = position, .fingerprint = fingerprint});
+    return false;
+}
+
 Subtree Engine::LexToken(StackVersion version, abi::StateId parseState) {
     abi::LexerMode lexMode = LanguageLexModeForState(language_, parseState);
     if (lexMode.lexState == static_cast<std::uint16_t>(-1))
@@ -387,7 +419,8 @@ Subtree Engine::LexToken(StackVersion version, abi::StateId parseState) {
                     const abi::Symbol  symbol         = language_->externalScanner.symbolMap[lexer_.data.resultSymbol];
                     const abi::StateId nextParseState = LanguageNextState(language_, parseState, symbol);
                     const bool         tokenIsExtra   = nextParseState == parseState;
-                    if (errorMode || !stack_->HasAdvancedSinceError(version) || tokenIsExtra)
+                    if (errorMode || !stack_->HasAdvancedSinceError(version) || tokenIsExtra ||
+                        RepeatsEmptyTokenConfiguration(version, currentPosition.bytes, symbol, externalScannerStateLen))
                         foundToken = false;
                 }
             }
@@ -480,6 +513,11 @@ Subtree Engine::LexToken(StackVersion version, abi::StateId parseState) {
 Subtree Engine::GetCachedToken(abi::StateId state, std::size_t position, Subtree lastExternalToken,
                                TableEntry* tableEntry) {
     TokenCache* cache = &tokenCache_;
+    // An empty external token is lexed afresh every time: LexToken's guard is
+    // what stops one being accepted again in a configuration it already was
+    // (RepeatsEmptyTokenConfiguration), and the cache would bypass it.
+    if (cache->token.ptr != nullptr && SubtreeTotalBytes(cache->token) == 0 && SubtreeHasExternalTokens(cache->token))
+        return kNullSubtree;
     if (cache->token.ptr != nullptr && cache->byteIndex == position &&
         SubtreeExternalScannerStateEq(cache->lastExternalToken, lastExternalToken)) {
         LanguageTableEntry(language_, state, SubtreeSymbol(cache->token), tableEntry);
@@ -1882,6 +1920,7 @@ GreenTree Engine::Parse(std::string_view text) {
 GreenTree Engine::Parse(std::string_view text, const GreenTree& oldTree) {
     lexer_.SetText(text);
     eofClosuresApplied_ = 0;
+    emptyTokenConfigurations_.clear();
 
     ExternalScannerCreate();
     ReusableNodeClear(&reusableNode_);

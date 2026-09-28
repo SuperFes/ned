@@ -780,10 +780,13 @@ static bool scan_heredoc_contents(State *state, Lexer *lexer, const bool *valid_
                 }
 
             } else {
+                // No markEnd here: every path that returns a token marks its own
+                // end, and one left behind when nothing matches would make the
+                // next token inner_scan returns zero-width (a heredoc line that
+                // is just "\" looped the parser on an empty line continuation).
                 while (lexer->lookahead == '\t' || lexer->lookahead == ' ') {
                     lex_skip(state, lexer);
                 }
-                lexer->markEnd(lexer);
             }
 
             size_t byte_size = active_heredoc->identifier.size;
@@ -850,7 +853,9 @@ static bool scan_heredoc_contents(State *state, Lexer *lexer, const bool *valid_
                         break;
                     }
 
-                    lexer->markEnd(lexer);
+                    if (found_content) {
+                        lexer->markEnd(lexer);
+                    }
                     lex_advance(lexer);
 
                     if (lexer->lookahead == '{') {

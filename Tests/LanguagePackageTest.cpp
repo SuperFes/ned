@@ -1,11 +1,16 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 
+#include <sys/resource.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "Editor/Grammar/Compile/CompileCommand.h"
@@ -27,15 +32,17 @@ namespace fs = std::filesystem;
 
 const fs::path kDemoGrammar  = fs::path(NED_REPO_ROOT) / "Tests" / "LanguagePackage" / "demo" / "grammar.janet";
 const fs::path kDemoScanner  = NED_DEMO_SCANNER_LIBRARY;
+const fs::path kRunawayGrammar = fs::path(NED_REPO_ROOT) / "Tests" / "LanguagePackage" / "runaway" / "grammar.janet";
+const fs::path kRunawayScanner = NED_RUNAWAY_SCANNER_LIBRARY;
 int            g_packageSeed = 0;
 
 // A fresh package directory per case: loaded packages are cached by path
 // for the process, so a directory is never reused with different contents.
-fs::path NewPackageDir(const std::string& name) {
+fs::path NewPackageDir(const std::string& name, const fs::path& grammar = kDemoGrammar) {
     const fs::path dir = fs::temp_directory_path() / ("ned-language-package-" + std::to_string(::getpid()) + "-" + std::to_string(g_packageSeed++)) / name;
     fs::remove_all(dir.parent_path());
     fs::create_directories(dir);
-    fs::copy_file(kDemoGrammar, dir / "grammar.janet");
+    fs::copy_file(grammar, dir / "grammar.janet");
     return dir;
 }
 
@@ -43,6 +50,30 @@ std::string Sexp(const Language& language, std::string_view text) {
     const ned::editor::grammar::Parser parser(language);
     const ned::editor::grammar::Tree   tree = parser.Parse(text);
     return ned::editor::parse::SubtreeToSexp(tree.Green().Root(), tree.Green().Language());
+}
+
+// Runs `body` in a forked child with `extraBytes` more address space than it
+// starts with and `seconds` of wall time; true when it returned true.
+bool RunsBounded(const std::function<bool()>& body, std::size_t extraBytes, unsigned seconds) {
+    const pid_t child = ::fork();
+    if (child == 0) {
+        long pages = 0;
+        std::ifstream("/proc/self/statm") >> pages;
+        const rlim_t limit = static_cast<rlim_t>(pages) * static_cast<rlim_t>(::sysconf(_SC_PAGESIZE)) + extraBytes;
+        const rlimit cap{.rlim_cur = limit, .rlim_max = limit};
+        ::setrlimit(RLIMIT_AS, &cap);
+        ::alarm(seconds);
+        bool ok = false;
+        try {
+            ok = body();
+        }
+        catch (...) {
+        }
+        std::_Exit(ok ? 0 : 1);
+    }
+    int status = 0;
+    ::waitpid(child, &status, 0);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
 struct RegistryGuard {
@@ -105,4 +136,22 @@ TEST_CASE("A bundled language is a package too", "[LanguagePackage]") {
     REQUIRE(json.has_value());
     CHECK(Sexp(*json, "[1]") == "(document (array (number)))");
     CHECK_FALSE(ned::editor::grammar::LanguageByName("no-such-language").has_value());
+}
+
+TEST_CASE("An empty external token a repetition absorbs is accepted once per configuration, not forever",
+          "[LanguagePackage][ParseEngine]") {
+    const fs::path dir      = NewPackageDir("runaway", kRunawayGrammar);
+    const Language language = LoadLanguagePackage(dir, PackageScanner{.name = "runaway", .library = kRunawayScanner});
+
+    // A regression here parses forever and grows without bound, so the parse
+    // runs in a child capped in address space and time.
+    const auto parsesBounded = [&] {
+        const std::string sexp = Sexp(language, "ab \\ cd\n");
+        std::size_t       gaps = 0;
+        for (std::size_t at = sexp.find("(gap)"); at != std::string::npos; at = sexp.find("(gap)", at + 1))
+            ++gaps;
+        std::fprintf(stderr, "%s\n", sexp.c_str());
+        return gaps <= 2 && sexp.find("(word)") != std::string::npos;
+    };
+    CHECK(RunsBounded(parsesBounded, std::size_t{512} << 20, 20));
 }

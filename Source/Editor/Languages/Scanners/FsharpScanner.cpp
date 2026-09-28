@@ -143,12 +143,23 @@ static inline bool is_bracket_end(Lexer *lexer) {
   }
 }
 
+// indents[0] is the base level deserialize always restores, so popping it
+// changes nothing serialize records: the same DEDENT would be offered again
+// in the same state forever. At the base there is nothing to close -- no
+// token, and the keyword or bracket lexes normally.
+static bool dedent(Scanner *scanner, Lexer *lexer) {
+  if (scanner->indents.size <= 1) {
+    return false;
+  }
+  array_pop(&scanner->indents);
+  lexer->resultSymbol = DEDENT;
+  return true;
+}
+
 static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
   if (valid_symbols[ERROR_SENTINEL]) {
     if (scanner->indents.size > 1) {
-      array_pop(&scanner->indents);
-      lexer->resultSymbol = DEDENT;
-      return true;
+      return dedent(scanner, lexer);
     }
 
     if (scanner->preprocessor_indents.size > 0) {
@@ -249,9 +260,7 @@ static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
                   uint16_t current_preproc_length =
                       *array_back(&scanner->preprocessor_indents);
                   if (current_preproc_length < current_indent_length) {
-                    array_pop(&scanner->indents);
-                    lexer->resultSymbol = DEDENT;
-                    return true;
+                    return dedent(scanner, lexer);
                   }
                 }
                 if (valid_symbols[PREPROC_END]) {
@@ -277,9 +286,7 @@ static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
                 uint16_t current_preproc_length =
                     *array_back(&scanner->preprocessor_indents);
                 if (current_preproc_length < current_indent_length) {
-                  array_pop(&scanner->indents);
-                  lexer->resultSymbol = DEDENT;
-                  return true;
+                  return dedent(scanner, lexer);
                 }
               }
               if (valid_symbols[PREPROC_ELSE]) {
@@ -306,9 +313,7 @@ static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
                 array_push(&scanner->preprocessor_indents,
                            current_indent_length);
               } else {
-                array_pop(&scanner->indents);
-                lexer->resultSymbol = DEDENT;
-                return true;
+                return dedent(scanner, lexer);
               }
             } else {
               lexer->markEnd(lexer);
@@ -436,9 +441,7 @@ static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
             lexer->resultSymbol = THEN;
             return true;
           } else {
-            array_pop(&scanner->indents);
-            lexer->resultSymbol = DEDENT;
-            return true;
+            return dedent(scanner, lexer);
           }
         }
       }
@@ -459,9 +462,7 @@ static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
             lexer->resultSymbol = AND;
             return true;
           } else {
-            array_pop(&scanner->indents);
-            lexer->resultSymbol = DEDENT;
-            return true;
+            return dedent(scanner, lexer);
           }
         }
       }
@@ -484,9 +485,7 @@ static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
               lexer->resultSymbol = WITH;
               return true;
             } else {
-              array_pop(&scanner->indents);
-              lexer->resultSymbol = DEDENT;
-              return true;
+              return dedent(scanner, lexer);
             }
           }
         }
@@ -507,9 +506,7 @@ static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
           if (valid_symbols[ELSE]) {
             if (scanner->indents.size > 0 &&
                 token_indent_level < *array_back(&scanner->indents)) {
-              array_pop(&scanner->indents);
-              lexer->resultSymbol = DEDENT;
-              return true;
+              return dedent(scanner, lexer);
             } else {
               lexer->markEnd(lexer);
               for (;;) {
@@ -536,9 +533,7 @@ static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
               return true;
             }
           } else {
-            array_pop(&scanner->indents);
-            lexer->resultSymbol = DEDENT;
-            return true;
+            return dedent(scanner, lexer);
           }
         }
       } else if (lexer->lookahead == 'i' &&
@@ -549,18 +544,14 @@ static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
           if (valid_symbols[ELIF]) {
             if (scanner->indents.size > 0 &&
                 token_indent_level < *array_back(&scanner->indents)) {
-              array_pop(&scanner->indents);
-              lexer->resultSymbol = DEDENT;
-              return true;
+              return dedent(scanner, lexer);
             } else {
               lexer->markEnd(lexer);
               lexer->resultSymbol = ELIF;
               return true;
             }
           } else {
-            array_pop(&scanner->indents);
-            lexer->resultSymbol = DEDENT;
-            return true;
+            return dedent(scanner, lexer);
           }
         }
       }
@@ -576,9 +567,7 @@ static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
             lexer->resultSymbol = END;
             return true;
           } else if (valid_symbols[DEDENT] && scanner->indents.size > 0) {
-            array_pop(&scanner->indents);
-            lexer->resultSymbol = DEDENT;
-            return true;
+            return dedent(scanner, lexer);
           }
         }
       }
@@ -640,9 +629,7 @@ static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
     uint16_t current_indent_length = *array_back(&scanner->indents);
 
     if (found_bracket_end && valid_symbols[DEDENT]) {
-      array_pop(&scanner->indents);
-      lexer->resultSymbol = DEDENT;
-      return true;
+      return dedent(scanner, lexer);
     }
 
     if (found_end_of_line) {
@@ -676,9 +663,7 @@ static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
       if (indent_length < current_indent_length && !found_bracket_end &&
           can_dedent_preproc && can_dedent_infix_op &&
           !valid_symbols[TUPLE_MARKER]) {
-        array_pop(&scanner->indents);
-        lexer->resultSymbol = DEDENT;
-        return true;
+        return dedent(scanner, lexer);
       }
     }
   }
