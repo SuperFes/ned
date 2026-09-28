@@ -1,35 +1,12 @@
 #include "IncrementalParse.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace ned::editor::grammar {
 
-namespace {
-
-    // Row/column of byte offset `offset` within `text` (0-indexed row,
-    // byte-indexed column within that row --
-    // matching the codepoint-agnostic byte offsets this project's own
-    // Grammar layer already uses throughout). A plain linear scan, not
-    // reused/cached across calls -- IncrementalParseCache calls this at most
-    // three times per edit, each bounded by the edit's own offset into text
-    // that's already fully resident, cheap next to the parse it precedes.
-    parse::abi::Point PointForByteOffset(std::string_view text, std::size_t offset) {
-        uint32_t    row       = 0;
-        std::size_t lineStart = 0;
-        for (std::size_t i = 0; i < offset; ++i) {
-            if (text[i] == '\n') {
-                ++row;
-                lineStart = i + 1;
-            }
-        }
-        return parse::abi::Point{.row = row, .column = static_cast<uint32_t>(offset - lineStart)};
-    }
-
-} // namespace
-
 const Tree& IncrementalParseCache::Update(const Parser& parser, std::string_view bufferText) {
     if (lastTree_.has_value() && lastText_ == bufferText) {
-        lastEdit_ = std::nullopt;
         return *lastTree_;
     }
 
@@ -37,7 +14,6 @@ const Tree& IncrementalParseCache::Update(const Parser& parser, std::string_view
     if (!lastTree_.has_value()) {
         lastTree_ = parser.Parse(bufferText);
         lastText_.assign(bufferText);
-        lastEdit_       = std::nullopt;
         generationEdit_ = std::nullopt;
         return *lastTree_;
     }
@@ -56,27 +32,17 @@ const Tree& IncrementalParseCache::Update(const Parser& parser, std::string_view
         ++suffix;
     }
 
-    const std::size_t startByte  = prefix;
-    const std::size_t oldEndByte = oldText.size() - suffix;
-    const std::size_t newEndByte = newText.size() - suffix;
-
-    parse::InputEdit edit{};
-    edit.startByte   = static_cast<uint32_t>(startByte);
-    edit.oldEndByte  = static_cast<uint32_t>(oldEndByte);
-    edit.newEndByte  = static_cast<uint32_t>(newEndByte);
-    edit.startPoint  = PointForByteOffset(oldText, startByte);
-    edit.oldEndPoint = PointForByteOffset(oldText, oldEndByte);
-    edit.newEndPoint = PointForByteOffset(newText, newEndByte);
-
-    lastTree_->Edit(edit);
-    lastTree_ = parser.Parse(newText, *lastTree_);
-    lastEdit_ = text::ChangedSpan{
-        .oldStart = startByte,
-        .oldEnd   = oldEndByte,
-        .newStart = startByte,
-        .newEnd   = newEndByte,
+    const text::ChangedSpan span{
+        .oldStart = prefix,
+        .oldEnd   = oldText.size() - suffix,
+        .newStart = prefix,
+        .newEnd   = newText.size() - suffix,
     };
-    generationEdit_ = lastEdit_;
+
+    lastTree_->Edit(InputEditFor(oldText, newText, span));
+    Tree reparsed   = parser.Parse(newText, *lastTree_);
+    generationEdit_ = DescribeTreeEdit(*lastTree_, reparsed, span);
+    lastTree_       = std::move(reparsed);
     lastText_.assign(newText);
     return *lastTree_;
 }

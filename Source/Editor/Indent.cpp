@@ -1142,9 +1142,9 @@ IndentFunction BuildIndentFunction(std::shared_ptr<grammar::Parser> parser, std:
     // indent-cache-by-byte-range follow-up: only built (and only consulted
     // below) when there's a real query to reconcile against -- an
     // imprint-only language (indentQuery null) has nothing for MatchCache to
-    // do. Shares sharedParse->LastEdit() the same way Mode.cpp's symbolKind
-    // closure does, so the diff is computed once per generation regardless
-    // of how many capabilities ask for it.
+    // do. Reconciles against sharedParse's generations the same way
+    // Mode.cpp's symbolKind closure does, so the diff is computed once per
+    // generation regardless of how many capabilities ask for it.
     const auto indentMatchCache = indentQuery ? std::make_shared<grammar::MatchCache>() : nullptr;
     // indent-region-batch-perf follow-up: caches the fully merged (query +
     // imprint) captures set, reused wholesale whenever bufferText is
@@ -1158,18 +1158,14 @@ IndentFunction BuildIndentFunction(std::shared_ptr<grammar::Parser> parser, std:
     // measured at 104s on this project's own ~3000-line main.cpp via
     // format-buffer's new Native fallback.
     //
-    // Deliberately compares bufferText directly rather than trusting
-    // sharedParse->LastEdit() (nullopt there does NOT mean "unchanged since
-    // this closure's own last call" -- it means "unchanged since the last
-    // call to sharedParse->Update by ANY caller", and sharedParse is shared
+    // Deliberately compares bufferText directly rather than anything
+    // sharedParse reports about the last Update() call: sharedParse is shared
     // across a Mode's other capabilities too, e.g. mode.highlight, which
     // IndentColumnForLine's own VerbatimRanges call invokes with the exact
-    // same bufferText just before calling into this closure. That interleaving
-    // made LastEdit() falsely report "no edit" here even when the document
-    // genuinely changed since this closure's own previous invocation --
-    // caught by ImprintIndentTest.cpp's "indented relative to nothing is a
-    // root" case, which calls this closure three times over three different
-    // documents on one shared Mode).
+    // same bufferText just before calling into this closure -- caught by
+    // ImprintIndentTest.cpp's "indented relative to nothing is a root" case,
+    // which calls this closure three times over three different documents on
+    // one shared Mode.
     struct CapturesCache {
         bool           hasResult = false;
         std::string    lastText;
@@ -1188,8 +1184,7 @@ IndentFunction BuildIndentFunction(std::shared_ptr<grammar::Parser> parser, std:
             // before this closure started calling MatchCache::Reconcile directly.
             IndentCaptures captures =
                 (indentQuery && !tree.IsNull())
-                    ? IndentCapturesFromMatches(indentMatchCache->Reconcile(*indentQuery, tree, bufferText,
-                                                                            sharedParse->LastEdit()),
+                    ? IndentCapturesFromMatches(indentMatchCache->Reconcile(*indentQuery, tree, bufferText, *sharedParse),
                                                 bufferText)
                     : IndentCaptures{};
             AddImprintCaptures(captures, tree, languageKey, bufferText);

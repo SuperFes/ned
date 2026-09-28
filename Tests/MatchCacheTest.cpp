@@ -14,11 +14,15 @@
 #include <string>
 #include <vector>
 
+#include "Editor/BundledLanguages.h"
+#include "Editor/Grammar/IncrementalParse.h"
 #include "Editor/Grammar/Languages.h"
 #include "Editor/Grammar/MatchCache.h"
 #include "Editor/Grammar/Parser.h"
 #include "Editor/Grammar/QueryMatcher.h"
 #include "Editor/Grammar/Tree.h"
+#include "Editor/Grammar/TreeEdit.h"
+#include "Editor/LanguageFiles.h"
 #include "Text/OffsetRemap.h"
 
 using namespace ned::editor::grammar;
@@ -48,6 +52,30 @@ ChangedSpan DiffSpan(const std::string& oldText, const std::string& newText) {
         .newStart = prefix,
         .newEnd   = newText.size() - suffix,
     };
+}
+
+// What IncrementalParseCache hands MatchCache for `oldText` -> `newText`: an
+// incremental reparse of `before`, and the edit with its structural changes.
+struct Reparsed {
+    Tree     tree;
+    TreeEdit edit;
+};
+
+Reparsed Reparse(const Parser& parser, const Tree& before, const std::string& oldText, const std::string& newText) {
+    const ChangedSpan span   = DiffSpan(oldText, newText);
+    Tree              edited = before.Clone();
+    edited.Edit(InputEditFor(oldText, newText, span));
+    Tree     after = parser.Parse(newText, edited);
+    TreeEdit edit  = DescribeTreeEdit(edited, after, span);
+    return {.tree = std::move(after), .edit = std::move(edit)};
+}
+
+// The language's bundled highlights query, which is where the zero-width
+// tokens below get captured.
+std::string BundledHighlights(std::string_view name) {
+    const ned::editor::LanguageDefinition* definition = ned::editor::BundledLanguage(name);
+    REQUIRE(definition != nullptr);
+    return ned::editor::CompileQueryFiles(definition->queries.highlights).text;
 }
 
 std::string DescribeMatch(const QueryMatch& match) {
@@ -114,10 +142,9 @@ TEST_CASE("MatchCache reconciles a localized edit to match a fresh full recomput
 
     // Widen "b"'s value only; "a" and "c" pairs are untouched.
     const std::string after     = R"({"a": 1, "b": 200, "c": 3})";
-    const ChangedSpan span      = DiffSpan(before, after);
-    const Tree        treeAfter = parser.Parse(after);
+    const auto [treeAfter, edit] = Reparse(parser, treeBefore, before, after);
 
-    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, span);
+    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, edit);
     RequireMatchesFreshRecompute(matcher, after, reconciled);
     REQUIRE(reconciled.size() == 3);
 }
@@ -137,16 +164,15 @@ TEST_CASE("MatchCache stays correct across a sequence of incremental edits (typi
         R"({"a": "hello", "b": 1})",
     };
 
-    MatchCache  cache;
-    std::string previous;
-    for (std::size_t i = 0; i < steps.size(); ++i) {
-        const Tree tree = parser.Parse(steps[i]);
-        const auto reconciled =
-            i == 0 ? cache.Reconcile(matcher, tree, steps[i], std::nullopt)
-                   : cache.Reconcile(matcher, tree, steps[i], DiffSpan(previous, steps[i]));
+    MatchCache cache;
+    Tree       tree = parser.Parse(steps[0]);
+    (void)cache.Reconcile(matcher, tree, steps[0], std::nullopt);
+    for (std::size_t i = 1; i < steps.size(); ++i) {
+        auto [next, edit]     = Reparse(parser, tree, steps[i - 1], steps[i]);
+        const auto reconciled = cache.Reconcile(matcher, next, steps[i], edit);
         INFO("step " << i << ": " << steps[i]);
         RequireMatchesFreshRecompute(matcher, steps[i], reconciled);
-        previous = steps[i];
+        tree = std::move(next);
     }
 }
 
@@ -169,11 +195,10 @@ TEST_CASE("MatchCache handles a deletion that merges two previously-separate mat
     (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
 
     const std::string after = "[1234]";
-    const ChangedSpan span  = DiffSpan(before, after);
-    REQUIRE(span.newStart == span.newEnd); // confirms this is the zero-width-window case
-    const Tree treeAfter = parser.Parse(after);
+    const auto [treeAfter, edit] = Reparse(parser, treeBefore, before, after);
+    REQUIRE(edit.span.newStart == edit.span.newEnd); // confirms this is the zero-width-window case
 
-    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, span);
+    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, edit);
     RequireMatchesFreshRecompute(matcher, after, reconciled);
     REQUIRE(reconciled.size() == 1); // "12" and "34" merged into one "1234"
 }
@@ -193,11 +218,10 @@ TEST_CASE("MatchCache handles an insertion that extends an existing token right 
     (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
 
     const std::string after = "[1, 200, 3]";
-    const ChangedSpan span  = DiffSpan(before, after);
-    REQUIRE(span.oldStart == span.oldEnd); // confirms this is the touching-boundary case
-    const Tree treeAfter = parser.Parse(after);
+    const auto [treeAfter, edit] = Reparse(parser, treeBefore, before, after);
+    REQUIRE(edit.span.oldStart == edit.span.oldEnd); // confirms this is the touching-boundary case
 
-    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, span);
+    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, edit);
     RequireMatchesFreshRecompute(matcher, after, reconciled);
     REQUIRE(reconciled.size() == 3);
 }
@@ -222,10 +246,9 @@ TEST_CASE("MatchCache reclassifies an identifier across a var_spec shape change 
     (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
 
     const std::string after     = "package main\n\nvar (\n x zero = 0\n  one = 1\n)\n";
-    const ChangedSpan span      = DiffSpan(before, after);
-    const Tree        treeAfter = parser.Parse(after);
+    const auto [treeAfter, edit] = Reparse(parser, treeBefore, before, after);
 
-    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, span);
+    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, edit);
     RequireMatchesFreshRecompute(language, matcher, after, reconciled);
 
     const std::size_t zeroStart = after.find("zero");
@@ -254,18 +277,17 @@ TEST_CASE("MatchCache reclassifies a char literal into a symbol after its backsl
     (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
 
     const std::string after     = "a\n";
-    const ChangedSpan span      = DiffSpan(before, after);
-    const Tree        treeAfter = parser.Parse(after);
+    const auto [treeAfter, edit] = Reparse(parser, treeBefore, before, after);
 
-    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, span);
+    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, edit);
     RequireMatchesFreshRecompute(language, matcher, after, reconciled);
     REQUIRE(reconciled.empty()); // "a" alone is a symbol, not a char literal
 }
 
-TEST_CASE("MatchCache always fully re-derives a query set containing an ancestor-crossing pattern", "[MatchCache]") {
+TEST_CASE("MatchCache reconciles a query set containing an ancestor-crossing pattern", "[MatchCache]") {
     // #has-ancestor? makes this pattern's result depend on structure outside
-    // its own node -- MatchCache must never trust a byte-range-scoped
-    // reconciliation for it.
+    // its own node; a change to that structure is a structural change the
+    // edit's changed ranges carry, so incremental reuse stays exact.
     const auto   language = *LanguageByName("json");
     QueryMatcher matcher(language, R"(((number) @nested (#has-ancestor? @nested pair)))");
     REQUIRE(matcher.AncestorCrossingPatternCount() == 1);
@@ -277,9 +299,140 @@ TEST_CASE("MatchCache always fully re-derives a query set containing an ancestor
     (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
 
     const std::string after      = R"({"a": 1, "b": 200})";
-    const Tree        treeAfter  = parser.Parse(after);
-    const auto        reconciled = cache.Reconcile(matcher, treeAfter, after, DiffSpan(before, after));
+    const auto [treeAfter, edit] = Reparse(parser, treeBefore, before, after);
+    const auto reconciled        = cache.Reconcile(matcher, treeAfter, after, edit);
 
     RequireMatchesFreshRecompute(matcher, after, reconciled);
     REQUIRE(reconciled.size() == 2);
+}
+
+TEST_CASE("MatchCache re-derives a heredoc body that grows past a split terminator (bash)", "[MatchCache]") {
+    // Splitting "EOF" stops it terminating the heredoc, so the body grows to
+    // the end of the file. The bytes the body already covered keep their
+    // nesting, so the reparse's changed range starts exactly where the old
+    // body match ENDS -- a match touching that boundary must not be kept.
+    const auto   language = *LanguageByName("bash");
+    QueryMatcher matcher(language, "(heredoc_body) @string (command_name) @function");
+    Parser       parser(language);
+
+    const std::string before     = "\ncat <<EOF > $tmpile\na $Bx ${C}\nEOF\n\nwc -l $tmpfile\n";
+    const Tree        treeBefore = parser.Parse(before);
+    MatchCache        cache;
+    (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
+
+    std::string after = before;
+    after.insert(after.find("EOF\n") + 2, "\n");
+    const auto [treeAfter, edit] = Reparse(parser, treeBefore, before, after);
+    REQUIRE_FALSE(edit.structuralChanges.empty());
+
+    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, edit);
+    RequireMatchesFreshRecompute(language, matcher, after, reconciled);
+}
+
+TEST_CASE("MatchCache reports a zero-width match at the redo window's start exactly once (bash)", "[MatchCache]") {
+    // Empty heredoc bodies are zero-width; one kept from before the edit that
+    // sits exactly where re-derivation starts also comes back from
+    // MatchesInRange.
+    const auto   language = *LanguageByName("bash");
+    QueryMatcher matcher(language, "(heredoc_body) @string (command_name) @function");
+    Parser       parser(language);
+
+    const std::string before =
+        "\nnode <<JS\nJS\n\nnode << 'SJ'\nSJ\n\nusage() {\n\tcat <<-EOF\n\tEOF\n}\n\nnode << 'EOF' > temp\nEOF\n";
+    const Tree treeBefore = parser.Parse(before);
+    MatchCache cache;
+    (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
+
+    std::string after = before;
+    after.insert(after.find("cat"), "x");
+    const auto [treeAfter, edit] = Reparse(parser, treeBefore, before, after);
+
+    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, edit);
+    RequireMatchesFreshRecompute(language, matcher, after, reconciled);
+}
+
+TEST_CASE("MatchCache keeps a zero-width match trailing a parent that ends at the redo window's start (markdown)",
+          "[MatchCache]") {
+    // The block_continuation closing the list item's blank line is the item's
+    // last child, at the item's own end: MatchesInRange prunes the item and
+    // never re-derives it, so the kept copy is the only one.
+    const auto   language = *LanguageByName("markdown");
+    QueryMatcher matcher(language, "(block_continuation) @punctuation.special");
+    Parser       parser(language);
+
+    const std::string before     = "1.  foo\n\n    - bar\n";
+    const Tree        treeBefore = parser.Parse(before);
+    MatchCache        cache;
+    (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
+
+    std::string after = before;
+    after.insert(9, "x");
+    const auto [treeAfter, edit] = Reparse(parser, treeBefore, before, after);
+
+    const auto reconciled = cache.Reconcile(matcher, treeAfter, after, edit);
+    RequireMatchesFreshRecompute(language, matcher, after, reconciled);
+}
+
+TEST_CASE("MatchCache reconciles against its own generation when capabilities share one parse cache", "[MatchCache]") {
+    // Two capabilities over one IncrementalParseCache: `every` reconciles on
+    // every edit, `sometimes` only on every other one, after something else
+    // already advanced the shared cache -- so the last Update() call's edit is
+    // never the one between `sometimes`'s baseline and now. Each insertion
+    // lands BEFORE the existing numbers, so reconciling against the wrong
+    // baseline shifts stale matches to wrong offsets.
+    const auto            language = *LanguageByName("json");
+    QueryMatcher          matcher(language, "(number) @num");
+    Parser                parser(language);
+    IncrementalParseCache parse;
+    MatchCache            every;
+    MatchCache            sometimes;
+
+    std::string text = "[1]";
+    for (int step = 0; step < 8; ++step) {
+        if (step > 0)
+            text.insert(1, std::to_string(step) + ", ");
+        INFO("step " << step << ": " << text);
+        const Tree& tree = parse.Update(parser, text);
+        RequireMatchesFreshRecompute(matcher, text, every.Reconcile(matcher, tree, text, parse));
+        if (step % 2 == 0)
+            RequireMatchesFreshRecompute(matcher, text, sometimes.Reconcile(matcher, tree, text, parse));
+        // A second call on unchanged text reuses the result outright.
+        RequireMatchesFreshRecompute(matcher, text, every.Reconcile(matcher, tree, text, parse));
+    }
+}
+
+TEST_CASE("MatchCache finds a zero-width match at the very end of the text (ruby)", "[MatchCache]") {
+    // A zero-width token at end-of-text lies in no window that ends there, so
+    // the re-derived window has to stay open until a kept match closes it.
+    const auto   language = *LanguageByName("ruby");
+    QueryMatcher matcher(language, BundledHighlights("ruby"));
+    Parser       parser(language);
+
+    const std::string before     = "\n%w()\n";
+    const Tree        treeBefore = parser.Parse(before);
+    MatchCache        cache;
+    (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
+
+    const std::string after      = "\n%w\n()\n";
+    const auto [treeAfter, edit] = Reparse(parser, treeBefore, before, after);
+    RequireMatchesFreshRecompute(language, matcher, after, cache.Reconcile(matcher, treeAfter, after, edit));
+}
+
+TEST_CASE("MatchCache finds a zero-width match that appears where the kept matches resume (matlab)", "[MatchCache]") {
+    // Inserting "x" makes "x 2" two elements, separated by an implicit
+    // zero-width delimiter sitting exactly where the unchanged "2" -- the
+    // first match kept after the edit -- starts: the edge of the window, where
+    // QueryMatcher's range test never admits a zero-width node.
+    const auto   language = *LanguageByName("matlab");
+    QueryMatcher matcher(language, BundledHighlights("matlab"));
+    Parser       parser(language);
+
+    const std::string before     = "\n[\n, 2; 3, 4]\n[1, 2; 3 4]\n";
+    const Tree        treeBefore = parser.Parse(before);
+    MatchCache        cache;
+    (void)cache.Reconcile(matcher, treeBefore, before, std::nullopt);
+
+    const std::string after      = "\n[\n,x 2; 3, 4]\n[1, 2; 3 4]\n";
+    const auto [treeAfter, edit] = Reparse(parser, treeBefore, before, after);
+    RequireMatchesFreshRecompute(language, matcher, after, cache.Reconcile(matcher, treeAfter, after, edit));
 }

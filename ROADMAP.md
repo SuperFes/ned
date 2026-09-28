@@ -62,23 +62,25 @@ are all of the rest. The costs that turned out to be real are fixed -- slug for
 whole-document highlight 50.7 ms -> 14.8 ms, keystroke+repaint on a 9 KiB C++ file
 6.1 ms -> 2.7 ms. Three items left behind.
 
-- [ ] **Fold, locals and indent still walk the whole document per keystroke.** Only
-      highlight and symbolKind are viewport-windowed, so a 107 KiB C++ file pays ~3.0 ms
-      for the fold scan and ~3.4 ms for the locals query on every edit, and indent adds
-      ~5 ms on the Enter path. Windowing them is not the obvious fix it looks like:
+- [ ] **Fold, locals post-processing and indent still walk the whole document per
+      keystroke.** MatchCache's query reconciliation is incremental in every grammar now
+      -- slug for `git log --grep=`: `changed-ranges`; the external-token and
+      ancestor-crossing gates became `parse::ChangedRanges` widening, and every consumer
+      reconciles against its own generation (`EditSince`) instead of whichever capability
+      advanced the shared parse first. Measured on 128 KiB (`Tests/KeystrokeBench.cpp`,
+      "scanner-grammar MatchCache consumers"): JavaScript locals +12.9 -> +2.6 ms and
+      symbolKind +39.9 -> +2.9 ms per keystroke, Python locals +14.9 -> +3.1 ms. What is
+      left is linear work around the queries rather than in them: the fold scan
+      (imprint-based, ~3.0 ms at 107 KiB of C++), turning locals matches into local nodes
+      (~25 us per KiB, which is why `kMaxLocalConditionBytes` in Mode.cpp still caps the
+      `#is? local` pass, now at 256 KiB), and the indent imprint walk (+21 ms on Enter at
+      128 KiB of JavaScript). Windowing them is not the obvious fix it looks like:
       `GutterModel`'s huge-file path already shows what a truncated fold window costs (a
       block whose closer falls outside the window folds to the window edge, which is why
       that path drops any range abutting its own tail). The real question is whether
-      these become incremental -- MatchCache-style reuse keyed on the edit -- rather than
-      windowed. Nothing pulled yet; typing no longer feels bad, which is what would drive
-      it. MatchCache itself is less incremental than it looks: its external-token gate
-      (`NodeHasExternalTokens` on the root) fires on ordinary JavaScript -- a plain
-      `function f() {...}` already carries one -- so every MatchCache consumer re-walks
-      the whole document per edit in any scanner grammar. That now includes the locals
-      pass behind a highlights query's `#is? local` (JavaScript/TypeScript, Groovy,
-      Gleam, Ruby), capped at 64 KiB for that reason (`kMaxLocalConditionBytes`,
-      Mode.cpp): +14 ms per keystroke measured at 128 KiB of JavaScript. Narrowing the
-      gate to external tokens near the edit would lift the cap.
+      these become incremental -- reuse keyed on `TreeEdit::structuralChanges` -- rather
+      than windowed. Nothing pulled yet; typing no longer feels bad, which is what would
+      drive it.
 - [ ] `sexpMotion`'s own O(depth^2) is closed: `NodePrevSiblingImpl`/`NodeNextSiblingImpl`
       used to call `NodeParent` (a full root-to-self descent) once per invocation
       regardless, so climbing an already-collected ancestor chain by sibling rather than
@@ -1366,6 +1368,12 @@ these accumulate detail in place.
       outline is its own code. Flip the flag for Markdown (and teach Org's walk the
       same) only if someone wants literate-programming files outlined by their code.
 
+- [ ] **Resolve highlight capture names once per compiled capture, not per capture.**
+      `std::_Hash_bytes` is ~6% of a 128 KiB JavaScript keystroke profile; the likely
+      source is highlight resolving every capture in the window through string-keyed
+      lookups (`MappedSyntaxClassForCapture`, `HasCaptureStyle`, `FindCaptureClassifier`
+      in Mode.cpp) -- unconfirmed, since the libstdc++ frames don't unwind under `perf`.
+      Justified when highlight is next the thing being profiled.
 - [ ] **A true O(1) `Parent()` call** (`parse::NodeParent`) — every call is still a full
       root-to-self descent; a caller climbing a known chain now has parent-aware sibling
       lookups to avoid re-paying it (`NodeNextSiblingFromParent`/`NodePrevSiblingFromParent`,

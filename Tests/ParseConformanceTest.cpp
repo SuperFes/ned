@@ -23,7 +23,9 @@
 #include "Editor/Grammar/Parser.h"
 #include "Editor/Grammar/QueryMatcher.h"
 #include "Editor/Grammar/Tree.h"
+#include "Editor/Grammar/TreeEdit.h"
 #include "Editor/LanguageFiles.h"
+#include "Editor/Parse/ChangedRanges.h"
 #include "Editor/Parse/Cursor.h"
 #include "Editor/Parse/Node.h"
 #include "Editor/Parse/Parser.h"
@@ -660,6 +662,181 @@ TEST_CASE("Ned parse engine incremental reparses match from-scratch parses", "[P
     HoldAgainstGolden("incremental-divergences.txt", rendered);
 }
 
+// --- Changed ranges ------------------------------------------------------------
+//
+// tree-sitter's own invariant for get_changed_ranges (cli's corpus_test.rs,
+// check_changed_ranges): at every byte, the stack of visible node types
+// enclosing it in the edited old tree and in the new tree may differ only
+// inside a reported range.
+
+namespace {
+
+using ScopeSequence = std::vector<std::vector<ned::editor::parse::abi::Symbol>>;
+
+void CollectScopes(ned::editor::parse::TreeCursor& cursor, ScopeSequence& scopes) {
+    const ned::editor::parse::RedNode     node   = cursor.CurrentNode();
+    const ned::editor::parse::abi::Symbol symbol = ned::editor::parse::NodeSymbol(node);
+    for (std::uint32_t byte = ned::editor::parse::NodeStartByte(node);
+         byte < ned::editor::parse::NodeEndByte(node) && byte < scopes.size(); byte++)
+        scopes[byte].push_back(symbol);
+    if (cursor.GotoFirstChild()) {
+        do {
+            CollectScopes(cursor, scopes);
+        }
+        while (cursor.GotoNextSibling());
+        cursor.GotoParent();
+    }
+}
+
+ScopeSequence ScopesOf(const ned::editor::parse::GreenTree& tree, std::size_t length) {
+    ScopeSequence                  scopes(length);
+    ned::editor::parse::TreeCursor cursor(tree.RootNode());
+    CollectScopes(cursor, scopes);
+    return scopes;
+}
+
+// Bytes whose enclosing scopes differ between the two trees but that no
+// reported range covers.
+std::vector<std::size_t> UnreportedScopeChanges(const ned::editor::parse::GreenTree& oldEdited,
+                                                const ned::editor::parse::GreenTree& newTree, std::size_t length,
+                                                const std::vector<ned::editor::parse::ChangedRange>& ranges) {
+    const ScopeSequence      oldScopes = ScopesOf(oldEdited, length);
+    const ScopeSequence      newScopes = ScopesOf(newTree, length);
+    std::vector<std::size_t> unreported;
+    for (std::size_t byte = 0; byte < length; byte++) {
+        if (oldScopes[byte] == newScopes[byte])
+            continue;
+        const bool covered = std::any_of(ranges.begin(), ranges.end(), [byte](const auto& range) {
+            return range.start.bytes <= byte && byte < range.end.bytes;
+        });
+        if (!covered)
+            unreported.push_back(byte);
+    }
+    return unreported;
+}
+
+} // namespace
+
+TEST_CASE("Changed ranges cover every structural difference across the bundled corpora's scripted edits",
+          "[ParseChangedRanges][Corpus]") {
+    const std::vector<std::string_view> grammars = {"json", "c", "go", "java", "clojure", "markdown",
+                                                    "yaml", "bash", "python", "cpp", "rust", "javascript"};
+
+    std::size_t              totalSteps   = 0;
+    std::size_t              changedBytes = 0;
+    std::size_t              totalBytes   = 0;
+    std::vector<std::string> failures;
+    for (const CorpusSource& source : CorpusSources()) {
+        bool included = false;
+        for (const std::string_view grammar : grammars)
+            included = included || source.defaultLanguage == grammar;
+        if (!included)
+            continue;
+
+        const std::optional<Language> language = LanguageByName(source.defaultLanguage);
+        REQUIRE(language.has_value());
+        ned::editor::parse::Engine engine(language->Raw());
+
+        for (const fs::path& file : CorpusFiles(source)) {
+            const std::string content = ReadFile(file);
+            const std::string label   = CorpusLabel(source, file);
+            for (CorpusCase& item : ParseCorpusFile(content, label)) {
+                if (item.skip || !item.platformMatches || !item.languages.front().empty())
+                    continue;
+                if (item.input.size() < 4)
+                    continue;
+
+                std::string                   text = item.input;
+                ned::editor::parse::GreenTree tree = engine.Parse(text);
+
+                const std::vector<ScriptedEdit> edits = {
+                    {text.size() / 2, 0, "x"},
+                    {text.size() / 3, 1, ""},
+                    {(text.size() * 2) / 3, 0, "\n"},
+                };
+                std::size_t step = 0;
+                for (const ScriptedEdit& edit : edits) {
+                    ++step;
+                    std::string newText = text;
+                    newText.erase(edit.position, edit.deletedLength);
+                    newText.insert(edit.position, edit.insertedText);
+
+                    const ned::editor::parse::GreenTree edited   = tree.WithEdit(MakeEdit(text, newText, edit));
+                    ned::editor::parse::GreenTree       reparsed = engine.Parse(newText, edited);
+                    const auto                          ranges   = ned::editor::parse::ChangedRanges(edited, reparsed);
+
+                    ++totalSteps;
+                    totalBytes += newText.size();
+                    for (const auto& range : ranges)
+                        changedBytes += range.end.bytes - range.start.bytes;
+                    for (std::size_t i = 1; i < ranges.size(); i++) {
+                        if (ranges[i - 1].end.bytes >= ranges[i].start.bytes)
+                            failures.push_back(label + ": " + item.name + " #" + std::to_string(step) +
+                                               " -- ranges overlap or are unsorted");
+                    }
+                    const std::vector<std::size_t> unreported =
+                        UnreportedScopeChanges(edited, reparsed, newText.size(), ranges);
+                    if (!unreported.empty())
+                        failures.push_back(label + ": " + item.name + " #" + std::to_string(step) + " -- byte " +
+                                           std::to_string(unreported.front()) + " changed scope outside every range (" +
+                                           std::to_string(unreported.size()) + " bytes)");
+
+                    text = std::move(newText);
+                    tree = std::move(reparsed);
+                }
+            }
+        }
+    }
+
+    CHECK(totalSteps > 4000);
+    INFO("first failures: " << [&] {
+        std::string joined;
+        for (std::size_t i = 0; i < failures.size() && i < 20; i++)
+            joined += "\n  " + failures[i];
+        return joined;
+    }());
+    CHECK(failures.empty());
+    // Not vacuous: a diff that reported the whole document every time would
+    // pass the coverage check above trivially.
+    INFO("changed bytes " << changedBytes << " of " << totalBytes);
+    CHECK(changedBytes * 4 < totalBytes);
+}
+
+TEST_CASE("Changed ranges are empty for a token-internal edit and bound a structural one", "[ParseChangedRanges]") {
+    const std::optional<Language> language = LanguageByName("c");
+    REQUIRE(language.has_value());
+    ned::editor::parse::Engine engine(language->Raw());
+
+    const std::string before  = "int first(void) { return alpha; }\n\nint second(void) { return 2; }\n";
+    const auto        reparse = [&](const std::string& after, const ScriptedEdit& edit) {
+        const ned::editor::parse::GreenTree edited = engine.Parse(before).WithEdit(MakeEdit(before, after, edit));
+        return ned::editor::parse::ChangedRanges(edited, engine.Parse(after, edited));
+    };
+
+    // Renaming an identifier in place changes text, not structure.
+    {
+        std::string       after = before;
+        const std::size_t at    = after.find("alpha") + 2;
+        after.replace(at, 1, "x");
+        CHECK(reparse(after, {at, 1, "x"}).empty());
+    }
+
+    // Turning `return alpha;` into `return alpha + 1;` changes only the
+    // first function's body; `second` lies outside every range.
+    {
+        std::string       after = before;
+        const std::size_t at    = after.find("alpha") + 5;
+        after.insert(at, " + 1");
+        const auto ranges = reparse(after, {at, 0, " + 1"});
+        REQUIRE_FALSE(ranges.empty());
+        const std::size_t secondStart = after.find("int second");
+        for (const auto& range : ranges) {
+            CHECK(range.start.bytes <= at);
+            CHECK(range.end.bytes <= secondStart);
+        }
+    }
+}
+
 // --- per-subtree-fact-memoization follow-up: MatchCache differential -------
 //
 // Reuses this file's exact corpus + scripted-edit machinery, but checks a
@@ -742,12 +919,10 @@ TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the b
                     continue;
 
                 std::string                          text = item.input;
-                ned::editor::grammar::MatchCache  cache;
-                Parser parser(*language);
-                {
-                    const Tree tree = parser.Parse(text);
-                    (void) cache.Reconcile(matcher, tree, text, std::nullopt);
-                }
+                ned::editor::grammar::MatchCache     cache;
+                Parser                               parser(*language);
+                Tree                                 tree = parser.Parse(text);
+                (void)cache.Reconcile(matcher, tree, text, std::nullopt);
 
                 const std::vector<ScriptedEdit> edits = {
                     {text.size() / 2, 0, "x"},
@@ -776,8 +951,11 @@ TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the b
                         .newEnd   = edit.position + edit.insertedText.size(),
                     };
 
-                    const Tree newTree    = parser.Parse(newText);
-                    const auto reconciled = cache.Reconcile(matcher, newTree, newText, span);
+                    Tree edited = tree.Clone();
+                    edited.Edit(ned::editor::grammar::InputEditFor(text, newText, span));
+                    Tree       newTree    = parser.Parse(newText, edited);
+                    const auto reconciled = cache.Reconcile(
+                        matcher, newTree, newText, ned::editor::grammar::DescribeTreeEdit(edited, newTree, span));
                     const auto fresh      = matcher.Matches(newTree.RootNode(), newText);
 
                     ++totalSteps;
@@ -812,6 +990,7 @@ TEST_CASE("MatchCache reconciliation matches a fresh full recompute across the b
                     }
 
                     text = std::move(newText);
+                    tree = std::move(newTree);
                 }
             }
         }

@@ -20,14 +20,12 @@
 // describing each piece separately. Either way tree-sitter still reuses
 // every subtree outside that span instead of rebuilding the whole tree.
 //
-// per-subtree-fact-memoization follow-up: LastEdit() exposes the same
-// region (as Text/OffsetRemap.h's ChangedSpan, the same vocabulary
-// MatchCache reconciles against) so a capability closure that wants
-// incremental reuse of its OWN derived facts doesn't have to independently
-// re-diff text this cache already diffed -- one diff per generation
-// transition, shared, not one per consumer. nullopt on a cache hit (the
-// fast-path "unchanged" return) or the very first call (nothing to diff
-// against yet), matching Update()'s own two early-return branches exactly.
+// EditSince() exposes the same region, together with where the reparse
+// changed the tree's structure (TreeEdit.h -- the vocabulary MatchCache
+// reconciles against), so a capability closure that wants incremental reuse
+// of its OWN derived facts doesn't have to independently re-diff text or
+// trees this cache already diffed -- one diff per generation transition,
+// shared, not one per consumer.
 //
 
 #ifndef NED_EDITOR_GRAMMAR_INCREMENTALPARSE_H
@@ -39,8 +37,8 @@
 #include <string_view>
 
 #include "Parser.h"
-#include "Text/OffsetRemap.h"
 #include "Tree.h"
+#include "TreeEdit.h"
 
 namespace ned::editor::grammar {
 
@@ -52,15 +50,6 @@ class IncrementalParseCache {
     // returned reference is invalidated by the next call to Update.
     [[nodiscard]] const Tree& Update(const Parser& parser, std::string_view bufferText);
 
-    // The single changed region this Update() computed relative to the text
-    // it saw on the PREVIOUS call -- nullopt if that call was a cache hit
-    // (bufferText unchanged) or the first call ever (nothing to diff
-    // against). Valid only immediately after Update(); a later Update()
-    // call overwrites it, same lifetime discipline as the returned Tree&.
-    [[nodiscard]] std::optional<text::ChangedSpan> LastEdit() const {
-        return lastEdit_;
-    }
-
     // Bumped whenever Update() sees text different from the previous call
     // (0 before the first), so a consumer can memoize facts derived from
     // the tree without keeping its own copy of the text to compare.
@@ -68,20 +57,21 @@ class IncrementalParseCache {
         return generation_;
     }
 
-    // The edit that turned generation `since`'s text into the current one --
-    // nullopt unless `since` is exactly the previous generation. Unlike
-    // LastEdit() it survives later cache-hit calls, so a consumer that is
-    // not the first to see new text can still reconcile incrementally.
-    [[nodiscard]] std::optional<text::ChangedSpan> EditSince(std::uint64_t since) const {
+    // The edit that turned generation `since`'s text into the current one,
+    // with the structural changes it caused -- nullopt unless `since` is
+    // exactly the previous generation. Keyed on the consumer's own last
+    // generation rather than on the last Update() call, so it stays right
+    // whichever of several capabilities sharing this cache saw the new text
+    // first.
+    [[nodiscard]] std::optional<TreeEdit> EditSince(std::uint64_t since) const {
         return since + 1 == generation_ ? generationEdit_ : std::nullopt;
     }
 
   private:
     std::string                      lastText_;
     std::optional<Tree>              lastTree_;
-    std::optional<text::ChangedSpan> lastEdit_;
     std::uint64_t                    generation_ = 0;
-    std::optional<text::ChangedSpan> generationEdit_;
+    std::optional<TreeEdit>          generationEdit_;
 };
 
 } // namespace ned::editor::grammar
