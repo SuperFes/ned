@@ -8,9 +8,11 @@
 
 #include "Editor/HighlightCache.h"
 #include "Editor/InlineDebugValues.h"
+#include "Editor/MergeView.h"
 #include "Editor/RecencyGlow.h"
 #include "Editor/RulerSettings.h"
 #include "Editor/StatusGutterSettings.h"
+#include "Text/MergeAlignment.h"
 #include "UI/BreakpointGlyph.h"
 #include "UI/BufferView/Internal.h"
 
@@ -22,6 +24,27 @@ namespace ned::ui {
 using namespace detail;
 
 std::size_t BufferView::AnnotationRowsForLine(std::size_t line) const {
+    return InlineDiagnosticRowsForLine(line) + AlignmentRowsAfterLine(line);
+}
+
+const text::PaneAlignment* BufferView::ActiveAlignment() const {
+    return alignmentQuery_ ? alignmentQuery_(activeBuffer_.Get()) : nullptr;
+}
+
+std::size_t BufferView::AlignmentRowsAfterLine(std::size_t line) const {
+    const text::PaneAlignment* alignment = ActiveAlignment();
+    return alignment ? alignment->RowsAfter(line) : 0;
+}
+
+std::size_t BufferView::AlignmentRowsBeforeLine(std::size_t line) const {
+    const text::PaneAlignment* alignment = ActiveAlignment();
+    if (!alignment) {
+        return 0;
+    }
+    return (line == 0 ? alignment->LeadingRows() : 0) + (line == viewport_.TopLine() ? TopPadding() : 0);
+}
+
+std::size_t BufferView::InlineDiagnosticRowsForLine(std::size_t line) const {
     if (!editor::InlineDiagnosticsEnabled()) {
         return 0;
     }
@@ -70,7 +93,7 @@ std::string BufferView::CodeLensTitleForLine(std::size_t line) const {
 }
 
 std::size_t BufferView::LeadingAnnotationRowsForLine(std::size_t line) const {
-    return CodeLensTitleForLine(line).empty() ? 0 : 1;
+    return AlignmentRowsBeforeLine(line) + (CodeLensTitleForLine(line).empty() ? 0 : 1);
 }
 
 void BufferView::PaintFoldColumnContinuation(Canvas& c, int row, std::size_t containingLine,
@@ -869,6 +892,14 @@ void BufferView::BeginLineRender(LineRenderState& state, std::size_t line, std::
             state.multibufferTint = tint;
         }
     }
+    state.mergeSideTint.reset();
+    if (const editor::MergeViewSession* session = mergeViewSource_ ? mergeViewSource_() : nullptr) {
+        if (const auto side = session->ChangedSideAt(frame.buffer, line)) {
+            state.mergeSideTint = *side == text::MergeSideKind::Ours     ? theme_.conflictOursBackground
+                                  : *side == text::MergeSideKind::Theirs ? theme_.conflictTheirsBackground
+                                                                         : theme_.conflictBaseBackground;
+        }
+    }
     if (wrapActive) {
         state.segments = ComputeWrappedLineSegments(frame.content, lineStart, lineEnd, contentWidth, state.links, mode_.name,
                                                     frame.buffer.LocalIndent());
@@ -1385,6 +1416,9 @@ Brush BufferView::BrushForCell(std::size_t offset, const LineRenderState& lineSt
     }
     else if (InConflictBase(offset)) {
         brush.background = OverlayBackground(theme_, theme_.conflictBaseBackground);
+    }
+    else if (lineState.mergeSideTint) {
+        brush.background = OverlayBackground(theme_, *lineState.mergeSideTint);
     }
     else if (std::any_of(lineState.documentHighlightSpans.begin(), lineState.documentHighlightSpans.end(),
                          [offset](const auto& span) { return offset >= span.first && offset < span.second; })) {
@@ -1983,15 +2017,18 @@ void BufferView::Paint(Canvas paneCanvas) {
     // an annotation -- the NEXT loop iteration renders that annotation row
     // instead of a buffer line, mirroring how RowsForLine already counts it.
     std::optional<std::size_t> pendingAnnotationLine;
-    // codeLens follow-up: the last line whose leading row has already been
-    // painted -- unlike pendingAnnotationLine (an optional consumed the
-    // very next iteration), a leading row must be checked/emitted the
-    // FIRST time this loop reaches a line (segmentIndex == 0), before that
-    // line's own real content, and must not re-trigger on that same
-    // line's later wrap-continuation rows -- this sentinel is what tells
-    // the two apart. kNoRowLine (never a real line index) starts it "no
-    // line's leading row emitted yet."
-    std::size_t leadingAnnotationEmittedLine = kNoRowLine;
+    // Alignment rows still owed after the just-finished line, painted blank
+    // after its annotation row.
+    std::size_t pendingBlankRows = 0;
+    // codeLens follow-up: the line whose leading rows are being painted, and
+    // how many of them are done -- unlike pendingAnnotationLine (an optional
+    // consumed the very next iteration), leading rows are emitted the FIRST
+    // time this loop reaches a line (segmentIndex == 0), before that line's
+    // own real content, and must not re-trigger on that same line's later
+    // wrap-continuation rows. kNoRowLine (never a real line index) starts it
+    // "no line's leading rows begun yet."
+    std::size_t leadingRowsLine    = kNoRowLine;
+    std::size_t leadingRowsPainted = 0;
     // prose-diagnostic-callout follow-up: recorded per screen row as the main
     // loop below paints it, then walked in one pass by
     // PaintProseDiagnosticCallouts after the loop -- kNoRowLine marks a row
@@ -2041,19 +2078,34 @@ void BufferView::Paint(Canvas paneCanvas) {
             pendingAnnotationLine.reset();
             continue; // consumed this row; `line` already points at the next buffer line
         }
+        if (pendingBlankRows > 0) {
+            --pendingBlankRows;
+            rowContentEndColumn[row] = static_cast<int>(gutter.totalWidth);
+            continue;
+        }
 
         // codeLens follow-up: checked/emitted the first time this loop
         // reaches `line` (segmentIndex == 0), BEFORE that line's own real
         // content -- the opposite ordering from pendingAnnotationLine's
         // trailing row above. Neither `line` nor `segmentIndex` advance
-        // here, so the very next iteration renders this same line's real
-        // first row normally; leadingAnnotationEmittedLine is what stops
-        // this branch from re-triggering on that next iteration.
-        if (line < renderEndLine && segmentIndex == 0 && line != leadingAnnotationEmittedLine &&
-            LeadingAnnotationRowsForLine(line) > 0) {
-            PaintCodeLensRow(c, row, line, gutter);
-            leadingAnnotationEmittedLine = line;
-            continue;
+        // here, so once leadingRowsPainted catches up the next iteration
+        // renders this same line's real first row normally. Blank alignment
+        // rows come first, the code lens row sits directly over its line.
+        if (line < renderEndLine && segmentIndex == 0) {
+            if (line != leadingRowsLine) {
+                leadingRowsLine    = line;
+                leadingRowsPainted = 0;
+            }
+            if (leadingRowsPainted < LeadingAnnotationRowsForLine(line)) {
+                if (leadingRowsPainted >= AlignmentRowsBeforeLine(line)) {
+                    PaintCodeLensRow(c, row, line, gutter);
+                }
+                else {
+                    rowContentEndColumn[row] = static_cast<int>(gutter.totalWidth);
+                }
+                ++leadingRowsPainted;
+                continue;
+            }
         }
 
         if (line < renderEndLine) {
@@ -2315,9 +2367,10 @@ void BufferView::Paint(Canvas paneCanvas) {
             else {
                 // inline-diagnostics follow-up: the annotation row renders
                 // after the line's LAST wrap row, before the next line.
-                if (AnnotationRowsForLine(line) > 0) {
+                if (InlineDiagnosticRowsForLine(line) > 0) {
                     pendingAnnotationLine = line;
                 }
+                pendingBlankRows = AlignmentRowsAfterLine(line);
                 segmentIndex = 0;
                 line         = viewport_.NextVisibleLine(line + 1, renderEndLine);
             }

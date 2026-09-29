@@ -50,9 +50,13 @@ add_executable(ned_tests
             LineDiffTest.cpp
             ThreeWayMergeTest.cpp
             ConflictHunkTest.cpp
+            MergeAlignmentTest.cpp
+            MergeViewTest.cpp
             ConflictResolutionTest.cpp
             BufferViewConflictQuickKeyTest.cpp
             BufferViewConflictChipsTest.cpp
+            BufferViewAlignmentRowsTest.cpp
+            WindowManagerMergeViewTest.cpp
             BufferViewChoicePromptTest.cpp
             BufferViewPromptDriverTest.cpp
             BufferTest.cpp

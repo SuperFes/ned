@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-336 commands.
+338 commands.
 
 ## `acp-rewind`
 
@@ -891,6 +891,18 @@ Resolve the conflict hunk at point by taking "ours".
 Key: `C-c x t`
 
 Resolve the conflict hunk at point by taking "theirs".
+
+## `merge-view`
+
+Key: `C-c x v`
+
+Show the buffer's conflicts side by side (ours, merged, theirs), or close the open merge view.
+
+## `merge-view-take-side`
+
+Key: `C-c x a`
+
+In a merge view's ours or theirs pane, replace the merged hunk at point with that pane's side.
 
 ## `modern-copy`
 

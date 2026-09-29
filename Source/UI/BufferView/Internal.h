@@ -205,7 +205,7 @@ inline bool IsWindowManagementRequest(editor::InteractiveRequest request) {
     using editor::InteractiveRequest;
     return request == InteractiveRequest::SplitBelow || request == InteractiveRequest::SplitRight ||
            request == InteractiveRequest::DeleteWindow || request == InteractiveRequest::DeleteOtherWindows ||
-           request == InteractiveRequest::OtherWindow;
+           request == InteractiveRequest::OtherWindow || request == InteractiveRequest::ToggleMergeView;
 }
 
 // Gutter selection highlighting (gutter-highlight follow-up): whether a

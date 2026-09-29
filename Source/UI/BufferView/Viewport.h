@@ -69,6 +69,8 @@ class Viewport {
         std::function<std::vector<RenderedVirtualText>(std::size_t lineStart, std::size_t lineEnd)> virtualTextForLine;
         // Scrolling invalidates a hover popup anchored to a screen position.
         std::function<void()> dismissHover;
+        // True forces wrap off regardless of the buffer's own setting.
+        std::function<bool()> suppressWrap;
     };
 
     Viewport(EditorContext& context, const GutterModel& gutters, Host host) : context_(context), gutters_(gutters), host_(std::move(host)) {

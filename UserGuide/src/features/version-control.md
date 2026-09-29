@@ -91,6 +91,29 @@ detected, for the rare case where you really do want the commit message in your 
 `vcs-branches` lists branches; `vcs-switch-branch` switches (with Tab-completion over the
 branch list); `vcs-create-branch` creates and switches to a new one.
 
+## Resolving merge conflicts
+
+A buffer with `<<<<<<<` / `=======` / `>>>>>>>` markers tints each side of every
+conflict. From inside a conflict hunk:
+
+| Key | Command | Effect |
+|---|---|---|
+| `C-c x n` / `C-c x p` | `next-conflict-hunk` / `previous-conflict-hunk` | Jump between hunks, wrapping |
+| `C-c x o` / `C-c x t` | `merge-take-ours` / `merge-take-theirs` | Keep one side |
+| `C-c x b` / `C-c x d` | `merge-take-both` / `merge-take-neither` | Keep both, or drop the hunk |
+| `C-c x k` | `merge-keep-base` | Keep the diff3 base section |
+| `C-c x O` / `C-c x T` | `merge-take-all-ours` / `merge-take-all-theirs` | Resolve every hunk the same way |
+
+Each resolution is one undo step, and the buffer stays ordinary text you can edit by hand.
+
+`C-c x v` (`merge-view`) shows the file side by side: ours on the left, the merged file
+in the middle, theirs on the right. Lines stay aligned and the three panes scroll together.
+The middle pane is the real file, so everything above works there as usual. In the ours
+or theirs pane, `C-c x n` / `C-c x p` step through the hunks, `C-c x a`
+(`merge-view-take-side`) takes that pane's side of the hunk at point, and the chords above
+act on the matching hunk in the merged file. `C-c x v` again closes the view and restores
+your previous window layout.
+
 ## Next steps
 
 - [Tasks and Tests](tasks-and-tests.md)

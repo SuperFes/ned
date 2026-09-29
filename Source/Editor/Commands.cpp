@@ -43,6 +43,7 @@
 #include "Lsp/Manager.h"
 #include "Lsp/ServerConfig.h"
 #include "Markdown.h"
+#include "MergeView.h"
 #include "Mode.h"
 #include "ModeOverrides.h"
 #include "Multibuffer.h"
@@ -644,6 +645,56 @@ namespace {
             message += " edited separately since)";
         }
         return message;
+    }
+
+    // Where a conflict command acts: point's own buffer, or, from a merge
+    // view side pane, the merged buffer at the line sharing point's row.
+    struct ConflictTarget {
+        text::Buffer& buffer;
+        std::size_t   point;
+    };
+
+    std::optional<ConflictTarget> ConflictTargetFor(CommandContext& context) {
+        if (!context.mergeView || !context.mergeView->KindOf(context.buffer)) {
+            return ConflictTarget{.buffer = context.buffer, .point = context.buffer.Point()};
+        }
+        context.mergeView->Refresh();
+        text::Buffer* merged = context.mergeView->Merged();
+        if (!merged) {
+            return std::nullopt;
+        }
+        const std::size_t line       = context.buffer.Content().ByteOffsetToLine(context.buffer.Point());
+        const auto        mergedLine = context.mergeView->CorrespondingLine(context.buffer, line, *merged);
+        if (!mergedLine) {
+            return std::nullopt;
+        }
+        return ConflictTarget{.buffer = *merged, .point = merged->Content().LineToByteOffset(*mergedLine)};
+    }
+
+    // next/previous-conflict-hunk from a merge view side pane: step through
+    // the merged buffer's hunks and land on the side's matching line.
+    bool StepMergeViewSide(CommandContext& context, bool forward) {
+        editor::MergeViewSession* session = context.mergeView;
+        if (!session || !session->KindOf(context.buffer)) {
+            return false;
+        }
+        session->Refresh();
+        text::Buffer* merged = session->Merged();
+        if (!merged) {
+            return false;
+        }
+        const std::size_t line       = context.buffer.Content().ByteOffsetToLine(context.buffer.Point());
+        const std::size_t mergedLine = session->CorrespondingLine(context.buffer, line, *merged).value_or(0);
+        const auto        target     = forward ? session->NextChangedLine(mergedLine) : session->PreviousChangedLine(mergedLine);
+        const auto        sideLine   = target ? session->CorrespondingLine(*merged, *target, context.buffer) : std::nullopt;
+        if (!sideLine) {
+            if (context.message) {
+                *context.message = "no conflict hunks in this buffer";
+            }
+            return true;
+        }
+        context.buffer.SetPoint(context.buffer.Content().LineToByteOffset(*sideLine));
+        return true;
     }
 
 } // namespace
@@ -1962,6 +2013,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // wrapping here specifically).
     registry.Register("next-conflict-hunk", "Move point to the next unresolved merge-conflict hunk, wrapping.",
                       [](CommandContext& context) {
+                          if (StepMergeViewSide(context, /*forward=*/true)) {
+                              return;
+                          }
                           const auto next = NextConflictHunkStart(context.buffer, context.buffer.Point());
                           if (!next) {
                               if (context.message) {
@@ -1973,6 +2027,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       });
     registry.Register("previous-conflict-hunk", "Move point to the previous unresolved merge-conflict hunk, wrapping.",
                       [](CommandContext& context) {
+                          if (StepMergeViewSide(context, /*forward=*/false)) {
+                              return;
+                          }
                           const auto prev = PreviousConflictHunkStart(context.buffer, context.buffer.Point());
                           if (!prev) {
                               if (context.message) {
@@ -1990,14 +2047,15 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // identically before and after any of them.
     auto registerMergeResolution = [&registry](const char* name, const char* doc, ConflictResolution resolution) {
         registry.Register(name, doc, [resolution](CommandContext& context) {
-            const auto hunk = ConflictHunkAtPoint(context.buffer, context.buffer.Point());
+            const auto target = ConflictTargetFor(context);
+            const auto hunk   = target ? ConflictHunkAtPoint(target->buffer, target->point) : std::nullopt;
             if (!hunk) {
                 if (context.message) {
                     *context.message = "point is not inside a conflict hunk";
                 }
                 return;
             }
-            if (!ResolveConflictHunk(context.buffer, *hunk, resolution)) {
+            if (!ResolveConflictHunk(target->buffer, *hunk, resolution)) {
                 if (context.message) {
                     *context.message = "hunk has no base section (not a diff3 conflict)";
                 }
@@ -2023,7 +2081,8 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     auto registerBulkResolution = [&registry](const char* name, const char* doc, ConflictResolution resolution,
                                               const char* side) {
         registry.Register(name, doc, [resolution, side](CommandContext& context) {
-            const std::size_t resolved = ResolveAllConflictHunks(context.buffer, resolution);
+            const auto        target   = ConflictTargetFor(context);
+            const std::size_t resolved = target ? ResolveAllConflictHunks(target->buffer, resolution) : 0;
             if (context.message) {
                 *context.message = resolved == 0 ? "no conflict hunks in this buffer"
                                                  : "resolved " + std::to_string(resolved) + " conflict hunk" +
@@ -2035,6 +2094,37 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                            ConflictResolution::TakeOurs, "ours");
     registerBulkResolution("merge-take-all-theirs", "Resolve every conflict hunk in the buffer by taking \"theirs\".",
                            ConflictResolution::TakeTheirs, "theirs");
+
+    // Side-by-side merge view: ours | merged | theirs, lines aligned and
+    // scrolled together. The merged pane is the real buffer, so every command
+    // above keeps working there; from a side pane they act on the merged
+    // hunk sharing point's row.
+    registry.Register("merge-view",
+                      "Show the buffer's conflicts side by side (ours, merged, theirs), or close the open merge view.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::ToggleMergeView; });
+    registry.Register("merge-view-take-side",
+                      "In a merge view's ours or theirs pane, replace the merged hunk at point with that pane's side.",
+                      [](CommandContext& context) {
+                          editor::MergeViewSession* session = context.mergeView;
+                          if (!session || !session->KindOf(context.buffer)) {
+                              if (context.message) {
+                                  *context.message = "not in a merge view's ours or theirs pane";
+                              }
+                              return;
+                          }
+                          const std::size_t line = context.buffer.Content().ByteOffsetToLine(context.buffer.Point());
+                          if (!session->TakeSide(context.buffer, line)) {
+                              if (context.message) {
+                                  *context.message = "no differing hunk at point";
+                              }
+                              return;
+                          }
+                          if (context.message) {
+                              const std::size_t left = session->ConflictCount();
+                              *context.message       = left == 0 ? "no conflicts left (C-c x v closes the merge view)"
+                                                                 : std::to_string(left) + " conflict" + (left == 1 ? "" : "s") + " left";
+                          }
+                      });
 
     registry.Register("quit", "Exit the editor, or prompt for confirmation if any buffer has unsaved changes.",
                       [](CommandContext& context) {
@@ -5191,6 +5281,8 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c x c"), "vcs-sequence-continue");
     keymap.Bind(ParseKeySequence("C-c x s"), "vcs-sequence-skip");
     keymap.Bind(ParseKeySequence("C-c x A"), "vcs-sequence-abort");
+    keymap.Bind(ParseKeySequence("C-c x v"), "merge-view");
+    keymap.Bind(ParseKeySequence("C-c x a"), "merge-view-take-side");
     keymap.Bind(ParseKeySequence("C-c C-r"), "project-replace");
     keymap.Bind(ParseKeySequence("C-c C-p"), "toggle-project-sidebar");
     // sidebar-keyboard-focus follow-up: the non-control second key beside

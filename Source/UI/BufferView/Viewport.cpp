@@ -479,6 +479,9 @@ void Viewport::SetTopLine(std::size_t line) {
 }
 
 bool Viewport::EffectiveWrapLines() const {
+    if (host_.suppressWrap && host_.suppressWrap()) {
+        return false;
+    }
     return editor::EffectiveWrapLines(context_.activeBuffer.Get().Path(), context_.activeBuffer.Get().Name(), context_.mode);
 }
 

@@ -27,6 +27,7 @@
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
 #include "Editor/TabWidth.h"
+#include "Text/ConflictHunk.h"
 
 namespace ned::ui {
 
@@ -577,6 +578,10 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     // vim-quit-window-semantics follow-up: same test DeleteWindow already uses to
     // refuse "Cannot delete the only window." -- a leaf root means no split exists.
     pane->Buffer().SetIsOnlyWindowQuery([this] { return root_->kind == WindowNode::Kind::Leaf; });
+    pane->Buffer().SetAlignmentQuery([this](const text::Buffer& buffer) -> const text::PaneAlignment* {
+        return mergeView_ ? mergeView_->AlignmentFor(buffer) : nullptr;
+    });
+    pane->Buffer().SetMergeViewSource([this] { return mergeView_.get(); });
     return pane;
 }
 
@@ -1812,6 +1817,230 @@ void WindowManager::RestoreWindowLayout(const editor::ProjectSessionData& data) 
     target->pane->Buffer().TakeFocus();
 }
 
+editor::MergeViewSession* WindowManager::MergeView() const {
+    return mergeView_.get();
+}
+
+void WindowManager::ToggleMergeView() {
+    Pane* focused = FocusedPane();
+    if (focused == nullptr) {
+        return;
+    }
+    text::Buffer& buffer = focused->ActiveBufferRef().Get();
+    if (mergeView_ && mergeView_->Contains(buffer)) {
+        CloseMergeView();
+        statusMessage_ = "merge view closed";
+        return;
+    }
+    if (mergeView_) {
+        CloseMergeView();
+    }
+    OpenMergeView(buffer);
+}
+
+void WindowManager::OpenMergeView(text::Buffer& merged) {
+    // The session finds its buffers by name.
+    if (bufferList_.Find(merged.Name()) != &merged) {
+        statusMessage_ = "merge view needs a listed buffer";
+        return;
+    }
+    if (merged.Content().IsHuge()) {
+        statusMessage_ = "merge view is not available for huge files";
+        return;
+    }
+    const std::size_t conflicts = text::ParseConflictHunks(merged.Text()).size();
+    if (conflicts == 0) {
+        statusMessage_ = "no conflict hunks in this buffer";
+        return;
+    }
+    Pane* const       focused = FocusedPane();
+    const std::size_t topLine = focused && &focused->ActiveBufferRef().Get() == &merged ? focused->Buffer().TopLine() : 0;
+
+    mergeViewSavedLayout_ = SaveLayout(*root_);
+    mergeView_            = std::make_unique<editor::MergeViewSession>(
+        bufferList_, merged, std::vector{text::MergeSideKind::Ours, text::MergeSideKind::Theirs});
+    const std::vector<text::Buffer*> sides = mergeView_->Sides();
+
+    auto leaf = [this](text::Buffer& buffer) {
+        auto node  = std::make_unique<WindowNode>();
+        node->kind = WindowNode::Kind::Leaf;
+        node->pane = MakePane(buffer, editor::CachedModeForBuffer(buffer));
+        return node;
+    };
+    auto split = [](std::unique_ptr<WindowNode> first, std::unique_ptr<WindowNode> second, float ratio) {
+        auto node    = std::make_unique<WindowNode>();
+        node->kind   = WindowNode::Kind::SplitRight;
+        node->first  = std::move(first);
+        node->second = std::move(second);
+        node->ratio  = ratio;
+        return node;
+    };
+    auto  mergedLeaf = leaf(merged);
+    Pane* mergedPane = mergedLeaf->pane.get();
+    root_            = sides.size() == 2 ? split(leaf(*sides[0]), split(std::move(mergedLeaf), leaf(*sides[1]), 0.5f), 1.0f / 3.0f)
+                                         : std::move(mergedLeaf);
+    RebuildComponentTree();
+
+    mergedPane->Buffer().SetTopLine(topLine);
+    mergeViewScroll_.clear();
+    SyncMergeViewFrom(*mergedPane);
+    mergedPane->Buffer().TakeFocus();
+    statusMessage_ = std::to_string(conflicts) + " conflict" + (conflicts == 1 ? "" : "s") +
+                     " -- C-c x a takes a side's hunk, C-c x v closes the merge view";
+}
+
+void WindowManager::CloseMergeView() {
+    if (!mergeView_) {
+        return;
+    }
+    text::Buffer* fallback = mergeView_->Merged();
+    if (fallback == nullptr) {
+        for (const auto& candidate : bufferList_.Buffers()) {
+            if (!mergeView_->Contains(*candidate)) {
+                fallback = candidate.get();
+                break;
+            }
+        }
+    }
+    if (fallback == nullptr) {
+        fallback = &bufferList_.CreateBuffer("scratch");
+    }
+
+    Pane* focus = nullptr;
+    if (mergeViewSavedLayout_) {
+        root_ = RestoreLayout(*mergeViewSavedLayout_, *fallback, focus);
+    }
+    else {
+        root_       = std::make_unique<WindowNode>();
+        root_->pane = MakePane(*fallback, editor::CachedModeForBuffer(*fallback));
+    }
+    RebuildComponentTree();
+    // Only now: no pane shows a side buffer any more.
+    mergeView_.reset();
+    mergeViewSavedLayout_.reset();
+    mergeViewScroll_.clear();
+
+    if (focus == nullptr) {
+        focus = Leaves().front();
+    }
+    focus->Buffer().TakeFocus();
+}
+
+std::unique_ptr<WindowManager::SavedLayoutNode> WindowManager::SaveLayout(const WindowNode& node) const {
+    auto saved   = std::make_unique<SavedLayoutNode>();
+    saved->kind  = node.kind;
+    saved->ratio = node.ratio;
+    if (node.kind == WindowNode::Kind::Leaf) {
+        saved->bufferName = node.pane->ActiveBufferRef().Get().Name();
+        saved->topLine    = node.pane->Buffer().TopLine();
+        saved->focused    = node.pane->Buffer().Focused();
+        return saved;
+    }
+    saved->first  = SaveLayout(*node.first);
+    saved->second = SaveLayout(*node.second);
+    return saved;
+}
+
+std::unique_ptr<WindowNode> WindowManager::RestoreLayout(const SavedLayoutNode& saved, text::Buffer& fallback, Pane*& focus) {
+    auto node   = std::make_unique<WindowNode>();
+    node->kind  = saved.kind;
+    node->ratio = saved.ratio;
+    if (saved.kind == WindowNode::Kind::Leaf) {
+        text::Buffer* buffer = bufferList_.Find(saved.bufferName);
+        if (buffer == nullptr || (mergeView_ && mergeView_->KindOf(*buffer))) {
+            buffer = &fallback;
+        }
+        node->pane = MakePane(*buffer, editor::CachedModeForBuffer(*buffer));
+        node->pane->Buffer().SetTopLine(saved.topLine);
+        if (saved.focused) {
+            focus = node->pane.get();
+        }
+        return node;
+    }
+    node->first  = RestoreLayout(*saved.first, fallback, focus);
+    node->second = RestoreLayout(*saved.second, fallback, focus);
+    return node;
+}
+
+std::vector<Pane*> WindowManager::MergeViewPanes() const {
+    std::vector<Pane*> panes;
+    for (Pane* pane : Leaves()) {
+        if (mergeView_ && mergeView_->Contains(pane->ActiveBufferRef().Get())) {
+            panes.push_back(pane);
+        }
+    }
+    return panes;
+}
+
+bool WindowManager::SyncMergeView() {
+    if (!mergeView_) {
+        return false;
+    }
+    if (mergeView_->Merged() == nullptr || mergeView_->Sides().empty()) {
+        CloseMergeView();
+        statusMessage_ = "merge view closed";
+        return true;
+    }
+    // Before any pane paints: this can rewrite the side buffers.
+    mergeView_->Refresh();
+
+    const std::vector<Pane*> panes  = MergeViewPanes();
+    Pane*                    leader = nullptr;
+    bool                     anyNew = false;
+    for (Pane* pane : panes) {
+        const auto it = std::ranges::find(mergeViewScroll_, pane, [](const auto& entry) { return entry.first; });
+        if (it == mergeViewScroll_.end()) {
+            anyNew = true;
+            continue;
+        }
+        const std::pair position{pane->Buffer().TopLine(), pane->Buffer().LeftColumn()};
+        if (it->second != position && (leader == nullptr || pane->Buffer().Focused())) {
+            leader = pane;
+        }
+    }
+    if (leader == nullptr && anyNew && !panes.empty()) {
+        const auto focused = std::ranges::find_if(panes, [](Pane* pane) { return pane->Buffer().Focused(); });
+        leader             = focused != panes.end() ? *focused : panes.front();
+    }
+    return leader != nullptr && SyncMergeViewFrom(*leader);
+}
+
+bool WindowManager::SyncMergeViewFrom(Pane& leader) {
+    const text::PaneAlignment* leaderAlignment = mergeView_->AlignmentFor(leader.ActiveBufferRef().Get());
+    if (leaderAlignment == nullptr) {
+        return false;
+    }
+    const std::size_t row  = leaderAlignment->RowAtTop({.line = leader.Buffer().TopLine(), .padding = leader.Buffer().TopPadding()});
+    const std::size_t left = leader.Buffer().LeftColumn();
+
+    bool moved = false;
+    mergeViewScroll_.clear();
+    for (Pane* pane : MergeViewPanes()) {
+        BufferView&   view   = pane->Buffer();
+        text::Buffer& buffer = pane->ActiveBufferRef().Get();
+        if (pane != &leader) {
+            if (const text::PaneAlignment* alignment = mergeView_->AlignmentFor(buffer)) {
+                const text::PaneAlignment::Top top = alignment->TopForRow(row);
+                if (view.TopLine() != top.line || view.TopPadding() != top.padding || view.LeftColumn() != left) {
+                    view.SetTopLine(top.line);
+                    view.SetTopPadding(top.line, top.padding);
+                    view.SetLeftColumn(left);
+                    moved = true;
+                }
+                // A side pane's point means nothing until it is focused, but
+                // left off-screen it would scroll the pane back to itself.
+                const std::size_t pointLine = buffer.Content().ByteOffsetToLine(buffer.Point());
+                const auto        height    = static_cast<std::size_t>(std::max(1, view.size().height));
+                if (mergeView_->KindOf(buffer) && (pointLine < top.line || pointLine >= top.line + height)) {
+                    buffer.SetPoint(buffer.Content().LineToByteOffset(top.line));
+                }
+            }
+        }
+        mergeViewScroll_.emplace_back(pane, std::pair{view.TopLine(), view.LeftColumn()});
+    }
+    return moved;
+}
+
 void WindowManager::EnableAsyncFileLoading(EventLoop& eventLoop) {
     bufferList_.SetAsyncFileOpener([this, &eventLoop](text::Buffer& placeholder, const std::filesystem::path& path) {
         PurgeFinishedAsyncLoaders();
@@ -1901,6 +2130,9 @@ void WindowManager::HandleWindowRequest(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::OtherWindow:
             OtherWindow();
+            return;
+        case editor::InteractiveRequest::ToggleMergeView:
+            ToggleMergeView();
             return;
         case editor::InteractiveRequest::EnlargeWindow:
             ResizeFocusedWindow(WindowNode::Kind::SplitBelow, /*grow=*/true);

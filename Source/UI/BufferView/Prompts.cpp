@@ -2114,6 +2114,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::DeleteWindow:
         case editor::InteractiveRequest::DeleteOtherWindows:
         case editor::InteractiveRequest::OtherWindow:
+        case editor::InteractiveRequest::ToggleMergeView:
         // Split-resize follow-up: same forward-only shape as the five
         // above -- unlike those, none of these ever reshape the tree (a
         // resize only mutates a WindowNode's own ratio), so `this` stays

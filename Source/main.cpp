@@ -3264,7 +3264,13 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         if (clearCanvasEachFrame) {
             screenBuffer.ClearCells();
         }
+        windowManager->SyncMergeView();
         head.Paint(Canvas(screenBuffer, head.Box_()));
+        // A pane that scrolled while painting (showing point after a buffer
+        // switch) drags its merge view neighbours along in the same frame.
+        if (windowManager->SyncMergeView()) {
+            head.Paint(Canvas(screenBuffer, head.Box_()));
+        }
         syncVcsDiffPreviewVisibility();
         overlays.Paint(screenBuffer);
         // NED_DEBUG_DUMP_SCREEN=<path> rewrites that file with the glyphs of

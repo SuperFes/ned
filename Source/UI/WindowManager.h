@@ -42,6 +42,7 @@
 #include "Editor/FileWatch.h"
 #include "Editor/Keymap.h"
 #include "Editor/Lsp/Manager.h"
+#include "Editor/MergeView.h"
 #include "Editor/Mode.h"
 #include "Editor/Project/Session.h"
 #include "Editor/PromptHistory.h"
@@ -575,6 +576,14 @@ class WindowManager {
     // every call by walking Leaves() and testing Focused(), never cached.
     [[nodiscard]] ActiveBuffer& FocusedActiveBuffer();
 
+    // Keeps an open merge view's panes scrolled together, and closes the
+    // view once its merged buffer or both side buffers are gone. Called
+    // before and after each frame's paint; true when it moved or rebuilt a
+    // pane, so the frame is worth painting again.
+    bool SyncMergeView();
+    // The open merge view, or nullptr.
+    [[nodiscard]] editor::MergeViewSession* MergeView() const;
+
     // Routes to whichever pane is currently focused -- the interactive y/n
     // confirmation session (for a modified buffer) still legitimately runs
     // on that pane's own BufferView, unchanged; this is just the new entry
@@ -1024,6 +1033,35 @@ class WindowManager {
     std::function<void(std::optional<MemoryImageModel>)>               onMemoryImageChanged_;
     Pane*                                                              memoryImageOwnerPane_ = nullptr;
     [[nodiscard]] std::function<void(std::optional<MemoryImageModel>)> WireMemoryImageCallback(Pane* pane);
+
+    // The layout a merge view replaced, rebuilt when it closes. Buffers are
+    // named rather than held, since any of them may be closed meanwhile.
+    struct SavedLayoutNode {
+        WindowNode::Kind                 kind = WindowNode::Kind::Leaf;
+        std::string                      bufferName;  // Leaf
+        std::size_t                      topLine = 0; // Leaf
+        bool                             focused = false;
+        float                            ratio   = 0.5f;
+        std::unique_ptr<SavedLayoutNode> first, second;
+    };
+
+    void ToggleMergeView();
+    void OpenMergeView(text::Buffer& merged);
+    void CloseMergeView();
+    // Scrolls every other merge view pane to line up with `leader`; true if
+    // any moved.
+    bool                                           SyncMergeViewFrom(Pane& leader);
+    [[nodiscard]] std::vector<Pane*>               MergeViewPanes() const;
+    [[nodiscard]] std::unique_ptr<SavedLayoutNode> SaveLayout(const WindowNode& node) const;
+    [[nodiscard]] std::unique_ptr<WindowNode>      RestoreLayout(const SavedLayoutNode& saved, text::Buffer& fallback, Pane*& focus);
+
+    // Declared before root_ so its panes are gone before the session closes
+    // the side buffers they show.
+    std::unique_ptr<editor::MergeViewSession> mergeView_;
+    std::unique_ptr<SavedLayoutNode>          mergeViewSavedLayout_;
+    // Each merge view pane's top line and left column as last synced; a
+    // pane whose position moved since is the one the others follow.
+    std::vector<std::pair<const Pane*, std::pair<std::size_t, std::size_t>>> mergeViewScroll_;
 
     std::unique_ptr<WindowNode> root_;
     Container                   rootComponent_{Axis::Vertical, {}};

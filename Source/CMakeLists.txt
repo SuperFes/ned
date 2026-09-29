@@ -66,6 +66,7 @@ add_library(ned_lib STATIC
         Text/LineDiff.cpp
         Text/ThreeWayMerge.cpp
         Text/ConflictHunk.cpp
+        Text/MergeAlignment.cpp
         Text/Utf8.cpp
         Text/LineEnding.cpp
         Text/Charset.cpp
@@ -89,6 +90,7 @@ add_library(ned_lib STATIC
         Editor/MacroRegistry.cpp
         Editor/Rectangle.cpp
         Editor/ConflictResolution.cpp
+        Editor/MergeView.cpp
         Editor/AutoPair.cpp
         Editor/Completion.cpp
         Editor/CompletionSession.cpp

@@ -109,6 +109,14 @@ namespace ned::janet {
 class Environment; // Self-hosting-completion follow-up: see SetJanetEnvironment below -- only ever held as a raw pointer here, so a forward declaration is enough.
 } // namespace ned::janet
 
+namespace ned::text {
+class PaneAlignment;
+} // namespace ned::text
+
+namespace ned::editor {
+class MergeViewSession;
+} // namespace ned::editor
+
 namespace ned::ui {
 
 // Only ever taken by const reference here (BaseBackgroundAt), so a forward
@@ -716,6 +724,21 @@ class BufferView : public Widget {
     // just one. Unset (or a null/never-true query) is a safe no-op, matching
     // every other Set* hook here.
     void SetSplitResizeQuery(std::function<bool()> query);
+
+    // Blank rows a side-by-side view pads this pane with so its lines share
+    // screen rows with its neighbours'. Asked about the pane's active buffer;
+    // nullptr means that buffer isn't part of an aligned view. Soft wrap is
+    // off while an alignment applies, since its rows count unwrapped lines.
+    // Unset is a safe no-op.
+    void SetAlignmentQuery(std::function<const text::PaneAlignment*(const text::Buffer&)> query);
+    // Blank rows painted above `line` while it is the top line, so an
+    // aligned pane can start partway through the rows after the line before
+    // it. Scrolling away drops them.
+    void SetTopPadding(std::size_t line, std::size_t rows);
+    // SetTopPadding's rows, if they still apply.
+    [[nodiscard]] std::size_t TopPadding() const;
+    // The open merge view, handed to every command this pane runs.
+    void SetMergeViewSource(std::function<editor::MergeViewSession*()> source);
 
     // Window-splitting follow-up: called from CloseBufferNow, before the
     // buffer is actually erased from bufferList_, with the buffer that's
@@ -3422,6 +3445,8 @@ class BufferView : public Widget {
         bool                                         isExecutionLine         = false;
         std::optional<DiffLineKind>                  diffTint;
         std::optional<editor::multibuffer::LineTint> multibufferTint;
+        // A merge view side pane's changed-chunk wash.
+        std::optional<Color> mergeSideTint;
     };
 
     // Recompute `line` into `state`. Called on a line's first visual row only.
@@ -4190,6 +4215,9 @@ class BufferView : public Widget {
     std::function<void(editor::InteractiveRequest)>    onWindowRequest_;
     std::function<void(text::Buffer&)>                 onBufferClosed_;
     std::function<bool()>                              isOnlyWindowQuery_; // see SetIsOnlyWindowQuery
+    std::function<const text::PaneAlignment*(const text::Buffer&)> alignmentQuery_;    // see SetAlignmentQuery
+    std::optional<std::pair<std::size_t, std::size_t>>             topPadding_;        // see SetTopPadding: line, rows
+    std::function<editor::MergeViewSession*()>                     mergeViewSource_;   // see SetMergeViewSource
     std::function<void()>                              onTerminalToggle_;      // see SetOnTerminalToggle
     std::function<void()>                              onNewTerminalRequest_;  // see SetOnNewTerminalRequest
     std::function<void()>                              onAcpPanelToggle_;      // see SetOnAcpPanelToggle
@@ -4487,6 +4515,14 @@ class BufferView : public Widget {
     // editor::InlineDiagnosticsEnabled() is off.
     void                      EnsureInlineDiagnosticCache() const;
     [[nodiscard]] std::size_t AnnotationRowsForLine(std::size_t line) const;
+    [[nodiscard]] std::size_t InlineDiagnosticRowsForLine(std::size_t line) const;
+
+    // SetAlignmentQuery's answer for the active buffer, and the blank rows it
+    // puts after/before a line -- included in AnnotationRowsForLine and
+    // LeadingAnnotationRowsForLine respectively.
+    [[nodiscard]] const text::PaneAlignment* ActiveAlignment() const;
+    [[nodiscard]] std::size_t                AlignmentRowsAfterLine(std::size_t line) const;
+    [[nodiscard]] std::size_t                AlignmentRowsBeforeLine(std::size_t line) const;
 
     // The virtual text anchored inside one line -- inlay hints, colour
     // swatches -- in the same RenderedVirtualText shape Paint() renders from.

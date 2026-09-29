@@ -412,12 +412,20 @@ commands, never a replacement for them.
       search, none of which consult `multibuffer::ExcerptBodyRanges`
       (`multibuffer-scoped-search`) — none has been annoying enough in practice to
       chase, and each would need its own scope plumbing rather than sharing one.
-- [ ] A real visual side-by-side 3-way merge/diff view. `AutoMerge` auto-resolves the
-      common case and drops real `<<<<<<<`/`=======`/`>>>>>>>` conflict markers into the
-      buffer for a genuine divergence, but a real conflict is still hand-edited text,
-      not a visual diff — the `C-c x` resolution chords, chips and
-      `vcs-sequence-continue/-skip/-abort` already cover resolving over these same markers
-      without it.
+- [ ] The side-by-side merge view (`C-c x v`) shipped -- slug for `git log --grep=`:
+      `merge-view`. Its sides are derived from the conflict markers, so ours and theirs
+      differ from the merged file only at conflict hunks; git's clean auto-merges are not
+      shown. The planned second source is the index stages (`:1:`/`:2:`/`:3:`, a new
+      Provider verb), diffed against the merged buffer into the same `AlignedChunk` list
+      `Text/MergeAlignment.h` already aligns from -- but `DiffLines` is an O(m*n) LCS over
+      the trimmed core, fine for a hunk and not for two whole files that differ at both
+      ends, so that source needs a linear-space diff first.
+- [ ] Conscious cuts in the merge view: no base pane (`MergeViewSession` derives one from
+      diff3 markers, the layout just never opens it); soft wrap is forced off in all three
+      panes, since alignment counts unwrapped lines; a follower can't start partway through
+      the blank rows *before* line 0, so it sits up to that many rows off while the leader's
+      top is inside a first-line hunk; and a project session saved while the view is open
+      records no window layout, because the side buffers have no path.
 
 ### Editor Ergonomics
 

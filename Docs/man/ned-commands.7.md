@@ -690,6 +690,14 @@ for the live keymap stack.
 
 :   Resolve the conflict hunk at point by taking "theirs".
 
+`merge-view` (`C-c x v`)
+
+:   Show the buffer's conflicts side by side (ours, merged, theirs), or close the open merge view.
+
+`merge-view-take-side` (`C-c x a`)
+
+:   In a merge view's ours or theirs pane, replace the merged hunk at point with that pane's side.
+
 `modern-copy`
 
 :   Copy the region into the kill ring; with no active region, copy the current line (including its trailing newline) instead. KeymapStyle::Modern's C-c.

@@ -41,6 +41,7 @@ class TestRunner;
 namespace ned::editor {
 
 class ProjectUndoManager;
+class MergeViewSession;
 
 struct Mode;
 
@@ -293,6 +294,9 @@ enum class InteractiveRequest { None,
                                 DeleteWindow,
                                 DeleteOtherWindows,
                                 OtherWindow,
+                                // Opens a side-by-side merge view over the buffer's conflict
+                                // markers, or closes the one the focused pane belongs to.
+                                ToggleMergeView,
                                 // Split-resize follow-up: same "forward to WindowManager" shape
                                 // as the five window-management values just above -- grows/shrinks
                                 // the focused pane against its nearest matching-axis split
@@ -1132,6 +1136,9 @@ struct CommandContext {
     // edit's sibling files into a plain undo/redo invocation when the
     // current buffer sits exactly on that transaction's edge.
     ProjectUndoManager* projectUndo = nullptr;
+    // The open merge view, if any, set by the host UI before each dispatch
+    // (nullptr when none is open, or headless).
+    MergeViewSession* mergeView = nullptr;
     // snippet-expansion follow-up: outbound, paired with
     // InteractiveRequest::SnippetExpand -- what to replace with which
     // registered snippet body. [replaceStart, replaceEnd) is the trigger
