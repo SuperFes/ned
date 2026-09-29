@@ -1,4 +1,4 @@
-// The elixir external scanner, ported from https://github.com/elixir-lang/tree-sitter-elixir (src/scanner.c, MIT
+// The elixir external scanner, ported from https://github.com/elixir-lang/tree-sitter-elixir (src/scanner.c, Apache-2.0
 // license) to ned's scanner interface. The algorithm and its state are the
 // upstream grammar's; only the vocabulary is ned's.
 
