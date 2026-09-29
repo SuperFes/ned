@@ -55,6 +55,7 @@
 #include "UI/EventLoop.h"
 
 #include "Client.h"
+#include "TerminalText.h"
 
 namespace ned::text {
 class Buffer;
@@ -146,6 +147,18 @@ class Manager {
         std::vector<ToolLocation> locations;
         std::string               toolInput;
         std::string               toolOutput;
+        // Kind::ToolCall only: a command's output streamed as terminal
+        // text (_meta.terminal_output[_delta]), which is read from its end,
+        // with its exit code once it finishes.
+        bool               terminal          = false;
+        bool               toolOutputTrimmed = false;
+        TerminalTextState  terminalState;
+        std::optional<int> exitCode;
+        // Kind::ToolCall only: when ned saw it start and finish, for a
+        // running call's elapsed time. Unset for one replayed by
+        // session/load.
+        std::optional<std::chrono::steady_clock::time_point> startedAt;
+        std::optional<std::chrono::steady_clock::time_point> finishedAt;
     };
     [[nodiscard]] const std::vector<TranscriptEntry>& Transcript() const;
     // Bumped on every Transcript()-affecting mutation -- cheap change
@@ -262,6 +275,9 @@ class Manager {
         // (an "@path" mention), so it isn't listed in the transcript's
         // "[attached: ...]" marker.
         bool link = false;
+        // An image (ContentBlock::image): `text` holds its base64 bytes.
+        // Only for an agent that SupportsImages().
+        bool image = false;
     };
 
     // The slash commands the agent accepts (available_commands_update),
@@ -316,6 +332,8 @@ class Manager {
     // `_session/steering` extension, advertised as _meta.steering.supported
     // in its initialize response).
     [[nodiscard]] bool SupportsSteering() const;
+    // Whether the agent accepts image blocks (promptCapabilities.image).
+    [[nodiscard]] bool SupportsImages() const;
     // Adds `prompt` to the running turn, for the agent to read at its next
     // step. No turn running: sent as an ordinary prompt. No steering
     // support, or the turn ended first: queued. A steered message is a
@@ -476,6 +494,11 @@ class Manager {
                            PermissionRequested };
     void SetOnAttention(std::function<void(Attention attention, std::chrono::steady_clock::duration turnElapsed)> handler);
 
+    // A live tool call reached a new file (its first location changed) --
+    // what following the agent opens. Not fired while replaying a loaded
+    // session.
+    void SetOnToolLocation(std::function<void(const ToolLocation& location)> handler);
+
     // The session ended for any reason -- agent disconnect/crash, a failed
     // handshake step, or StopSession. reason is short, user-facing text
     // (also appended to the output buffer, so this is purely for a status
@@ -538,6 +561,7 @@ class Manager {
     // response, reset at the top of every StartSession -- see
     // PromptAttachment/SendPrompt's own doc comments.
     bool agentSupportsEmbeddedContext_ = false;
+    bool agentSupportsImages_          = false;
 
     Json               McpServers();
     [[nodiscard]] Json PromptBlocks(const std::string& text, const std::vector<PromptAttachment>& attachments) const;
@@ -554,6 +578,9 @@ class Manager {
     // True between session/load and its response: user_message_chunk is
     // then a replayed prompt rather than an echo of one SendPrompt pushed.
     bool                                                 replaying_ = false;
+    void                                                 StopToolTimers();
+    TranscriptEntry*                                     FindToolCall(const std::string& toolCallId);
+    std::string                                          permissionToolCallId_; // the tool call the pending permission prompt is for
     std::string                                          replayUserMessageId_;
     std::vector<std::function<void()>>                   whenSessionSettles_; // see ListSessions
     std::vector<AvailableCommand>                        availableCommands_;
@@ -570,6 +597,7 @@ class Manager {
     std::function<void(const PermissionPrompt&)> onPermissionRequest_;
     std::function<void(std::string)>             onSessionEnded_;
     std::function<void(Attention, std::chrono::steady_clock::duration)> onAttention_;
+    std::function<void(const ToolLocation&)>                            onToolLocation_;
 
     std::vector<TranscriptEntry> transcript_;
     std::size_t                  transcriptGeneration_ = 0;

@@ -4,6 +4,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -167,13 +168,88 @@ TEST_CASE("FormatTranscript tints fenced code as code, drops the fences, and lea
     std::vector<Manager::TranscriptEntry> transcript;
     transcript.push_back({.kind = Kind::AgentText, .text = "Run:\n```sh\nls **/*.cpp\n```\ndone"});
     const auto lines = FormatTranscript(transcript, std::nullopt, {.width = 40});
-    REQUIRE(lines.size() == 3);
+    REQUIRE(lines.size() == 4);
     REQUIRE(lines[0].text == "Run:");
-    REQUIRE(lines[1].text == "ls **/*.cpp");
-    REQUIRE(lines[1].spans.size() == 1);
-    REQUIRE(lines[1].spans[0].code);
-    REQUIRE(lines[1].spans[0].columnCount == 11);
-    REQUIRE(lines[2].text == "done");
+    REQUIRE(lines[1].text.starts_with("sh "));
+    REQUIRE(lines[1].text.ends_with("⧉ copy"));
+    REQUIRE(lines[1].action == ned::ui::acppanel::LineAction::Copy);
+    REQUIRE(lines[1].copyText == "ls **/*.cpp");
+    REQUIRE(lines[2].text == "ls **/*.cpp");
+    REQUIRE(lines[2].spans.size() == 1);
+    REQUIRE(lines[2].spans[0].code);
+    REQUIRE(lines[2].spans[0].columnCount == 11);
+    REQUIRE(lines[3].text == "done");
+}
+
+TEST_CASE("FormatTranscript colours fenced code through the fence's language, line by line", "[AcpPanel]") {
+    using ned::editor::HighlightSpan;
+    using ned::editor::SyntaxClass;
+    std::vector<Manager::TranscriptEntry> transcript;
+    transcript.push_back({.kind = Kind::AgentText, .text = "```cpp\nint x;\n\treturn;\n```"});
+    std::string seenLanguage;
+    std::string seenCode;
+    const auto  lines = FormatTranscript(transcript, std::nullopt,
+                                         {.width         = 40,
+                                          .highlightCode = [&](std::string_view language, std::string_view code) {
+                                             seenLanguage = language;
+                                             seenCode     = code;
+                                             // "int" and "return", the second spanning the tab before it
+                                             return std::vector<HighlightSpan>{{.startByte = 0, .endByte = 3, .syntaxClass = SyntaxClass::Type},
+                                                                               {.startByte = 7, .endByte = 14, .syntaxClass = SyntaxClass::Keyword}};
+                                          }});
+    REQUIRE(seenLanguage == "cpp");
+    REQUIRE(seenCode == "int x;\n\treturn;");
+    REQUIRE(lines.size() == 3);
+
+    const auto& first = lines[1];
+    REQUIRE(first.text == "int x;");
+    REQUIRE(first.spans.size() == 2);
+    REQUIRE(first.spans[0].columnCount == 3);
+    REQUIRE(first.spans[0].syntaxClass == SyntaxClass::Type);
+    REQUIRE_FALSE(first.spans[1].syntaxClass.has_value());
+    REQUIRE(first.spans[1].code);
+
+    const auto& second = lines[2];
+    REQUIRE(second.text == "    return;"); // the tab expands to the next 4-column stop
+    REQUIRE(second.spans[0].startColumn == 0);
+    REQUIRE(second.spans[0].columnCount == 10);
+    REQUIRE(second.spans[0].syntaxClass == SyntaxClass::Keyword);
+}
+
+TEST_CASE("ExtractCodeBlocks returns each fenced block, an unclosed last one included", "[AcpPanel]") {
+    using ned::ui::acppanel::ExtractCodeBlocks;
+    const auto blocks = ExtractCodeBlocks("a\n```python\nprint(1)\n```\nb\n``` {.rust}\nfn main() {}\nlet x = 1;");
+    REQUIRE(blocks.size() == 2);
+    REQUIRE(blocks[0].language == "python");
+    REQUIRE(blocks[0].code == "print(1)");
+    REQUIRE(blocks[1].language == "rust");
+    REQUIRE(blocks[1].code == "fn main() {}\nlet x = 1;");
+}
+
+TEST_CASE("FormatTranscript aligns a Markdown table's columns and bolds its header", "[AcpPanel]") {
+    std::vector<Manager::TranscriptEntry> transcript;
+    transcript.push_back({.kind = Kind::AgentText, .text = "| Name | Count |\n|:---|---:|\n| `a\\|b` | 7 |\n| longer | 12 |\nafter"});
+    const auto lines = FormatTranscript(transcript, std::nullopt, {.width = 40});
+    REQUIRE(lines.size() == 5);
+    REQUIRE(lines[0].text == "Name   │ Count");
+    REQUIRE(lines[1].text == "───────┼──────");
+    REQUIRE(lines[2].text == "a|b    │     7");
+    REQUIRE(lines[3].text == "longer │    12");
+    REQUIRE(lines[4].text == "after");
+    REQUIRE(lines[0].spans.size() == 2);
+    REQUIRE(lines[0].spans[0].bold);
+    REQUIRE(lines[0].spans[1].bold);
+    REQUIRE(lines[2].spans.size() == 1);
+    REQUIRE(lines[2].spans[0].code);
+    REQUIRE(lines[2].spans[0].columnCount == 3);
+}
+
+TEST_CASE("FormatTranscript leaves a table too wide for the panel as its own text", "[AcpPanel]") {
+    std::vector<Manager::TranscriptEntry> transcript;
+    transcript.push_back({.kind = Kind::AgentText, .text = "| a very long header | another |\n|---|---|\n| x | y |"});
+    const auto lines = FormatTranscript(transcript, std::nullopt, {.width = 20});
+    REQUIRE(lines.size() == 3);
+    REQUIRE(lines[0].text == "| a very long header | another |");
 }
 
 TEST_CASE("FormatTranscript shows only the first line of a multi-line tool title", "[AcpPanel]") {
@@ -201,4 +277,71 @@ TEST_CASE("FormatTranscript lays a multi-line prompt out one line per row", "[Ac
     REQUIRE(lines[0].text == "> first");
     REQUIRE(lines[1].text == "  second");
     REQUIRE(lines[1].entryIndex == 0);
+}
+
+TEST_CASE("FormatTranscript counts up a running tool call and tails a running command", "[AcpPanel]") {
+    const auto                            now = std::chrono::steady_clock::now();
+    std::vector<Manager::TranscriptEntry> transcript;
+    Manager::TranscriptEntry              entry{.kind = Kind::ToolCall, .text = "make", .status = "in_progress"};
+    entry.toolKind   = "execute";
+    entry.terminal   = true;
+    entry.toolOutput = "one\ntwo\nthree\nfour\n";
+    entry.startedAt  = now - std::chrono::seconds(5);
+    transcript.push_back(entry);
+    const auto lines = FormatTranscript(transcript, std::nullopt, {.width = 40, .now = now});
+    REQUIRE(lines.size() == 4);
+    REQUIRE(lines[0].text.ends_with("… 5s"));
+    REQUIRE(lines[1].text == "    two");
+    REQUIRE(lines[3].text == "    four");
+}
+
+TEST_CASE("FormatTranscript shows a failed command's exit code and its output's end", "[AcpPanel]") {
+    std::vector<Manager::TranscriptEntry> transcript;
+    Manager::TranscriptEntry              entry{.kind = Kind::ToolCall, .text = "make", .status = "failed"};
+    entry.terminal = true;
+    entry.exitCode = 2;
+    for (int i = 1; i <= 20; ++i) {
+        entry.toolOutput += "line " + std::to_string(i) + "\n";
+    }
+    transcript.push_back(entry);
+    const auto collapsed = FormatTranscript(transcript, std::nullopt, {.width = 40});
+    REQUIRE(collapsed.size() == 1);
+    REQUIRE(collapsed[0].text.ends_with("✗ exit 2"));
+
+    const auto expanded = FormatTranscript(transcript, std::nullopt, {.width = 40, .expanded = [](std::size_t) { return true; }});
+    REQUIRE(expanded[1].text == "    (8 earlier line(s))");
+    REQUIRE(expanded[2].text == "    line 9");
+    REQUIRE(expanded.back().text == "    line 20");
+}
+
+TEST_CASE("FormatTranscript keeps a long finished tool call's duration", "[AcpPanel]") {
+    const auto                            now = std::chrono::steady_clock::now();
+    std::vector<Manager::TranscriptEntry> transcript;
+    Manager::TranscriptEntry              quick{.kind = Kind::ToolCall, .text = "ls", .status = "completed"};
+    quick.startedAt  = now - std::chrono::seconds(3);
+    quick.finishedAt = now - std::chrono::seconds(1);
+    Manager::TranscriptEntry slow{.kind = Kind::ToolCall, .text = "build", .status = "completed"};
+    slow.startedAt  = now - std::chrono::seconds(60);
+    slow.finishedAt = now - std::chrono::seconds(18);
+    transcript.push_back(quick);
+    transcript.push_back(slow);
+    const auto lines = FormatTranscript(transcript, std::nullopt, {.width = 40, .now = now});
+    REQUIRE(lines[0].text.ends_with("✓"));
+    REQUIRE(lines[1].text.ends_with("✓ 42s"));
+}
+
+TEST_CASE("CopyCandidates offers each recent reply, then its code blocks, newest first", "[AcpPanel]") {
+    std::vector<Manager::TranscriptEntry> transcript;
+    transcript.push_back({.kind = Kind::AgentText, .text = "old reply"});
+    transcript.push_back({.kind = Kind::UserMessage, .text = "more"});
+    transcript.push_back({.kind = Kind::AgentText, .text = "\nTry:\n```sh\nmake\n```\nor\n```py\nrun()\nagain()\n```\n"});
+    const auto candidates = ned::ui::acppanel::CopyCandidates(transcript, 10);
+    REQUIRE(candidates.size() == 4);
+    REQUIRE(candidates[0].label == "Try:");
+    REQUIRE(candidates[0].detail == "reply · 10 lines");
+    REQUIRE(candidates[1].text == "run()\nagain()");
+    REQUIRE(candidates[1].detail == "py · 2 lines");
+    REQUIRE(candidates[2].text == "make");
+    REQUIRE(candidates[3].text == "old reply");
+    REQUIRE(ned::ui::acppanel::CopyCandidates(transcript, 1).size() == 3);
 }

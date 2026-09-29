@@ -9,6 +9,7 @@
 #ifndef NED_UI_ACPPANEL_TRANSCRIPTFORMAT_H
 #define NED_UI_ACPPANEL_TRANSCRIPTFORMAT_H
 
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <functional>
@@ -19,6 +20,7 @@
 #include <vector>
 
 #include "Editor/Acp/Manager.h"
+#include "Editor/Mode.h"
 
 namespace ned::ui::acppanel {
 
@@ -32,12 +34,15 @@ enum class DisplayStyle { Plain,
 
 // Styling beyond DisplayLine::style over a range of display columns of the
 // line's own (markup-stripped) text. `code` tints the background and keeps
-// the foreground.
+// the foreground; `syntaxClass` then recolours it from the syntax theme.
+// Spans are sorted and never overlap.
 struct InlineSpan {
-    int  startColumn;
-    int  columnCount;
-    bool bold;
-    bool code;
+    int                                startColumn;
+    int                                columnCount;
+    bool                               bold;
+    bool                               code;
+    std::optional<editor::SyntaxClass> syntaxClass = std::nullopt;
+    editor::CaptureId                  captureId   = editor::kNoCapture;
 };
 
 inline constexpr std::size_t kNoEntry = std::numeric_limits<std::size_t>::max();
@@ -45,7 +50,8 @@ inline constexpr std::size_t kNoEntry = std::numeric_limits<std::size_t>::max();
 // What a click on a line does.
 enum class LineAction { None,
                         ToggleExpand,
-                        OpenLocation };
+                        OpenLocation,
+                        Copy };
 
 struct LineLocation {
     std::string                path;
@@ -59,6 +65,7 @@ struct DisplayLine {
     std::size_t                 entryIndex = kNoEntry; // the transcript entry this line renders, if any
     LineAction                  action     = LineAction::None;
     std::optional<LineLocation> location; // LineAction::OpenLocation only
+    std::string                 copyText; // LineAction::Copy only
 };
 
 // One physical row of a wrapped string. startColumn/columnCount are display
@@ -93,6 +100,36 @@ struct InlineMarkdownResult {
 // A compact +/- unified diff, capped with a "(N more...)" tail.
 [[nodiscard]] std::vector<DisplayLine> FormatDiffPreview(const std::string& oldText, const std::string& newText);
 
+// Highlights `code` as the language a fence names; empty when the tag names
+// no language ned knows.
+using CodeHighlighter = std::function<std::vector<editor::HighlightSpan>(std::string_view language, std::string_view code)>;
+
+struct CodeBlock {
+    std::string language; // the fence's first word, possibly empty
+    std::string code;     // without the fences or a trailing newline
+};
+
+// Every fenced block in a Markdown text, in order. A block still open at
+// the end (a reply mid-stream) runs to the end.
+[[nodiscard]] std::vector<CodeBlock> ExtractCodeBlocks(std::string_view markdown);
+
+// A GFM table's rows as aligned columns, or nullopt when `rows` isn't a
+// table (no delimiter row second) or it can't fit `width`.
+[[nodiscard]] std::optional<std::vector<DisplayLine>> FormatTable(const std::vector<std::string_view>& rows, int width, DisplayStyle style,
+                                                                  std::string_view indent);
+
+// Something the copy picker offers: a whole reply, or one code block.
+struct CopyCandidate {
+    std::string label;  // the text's first line
+    std::string detail; // "reply · 12 lines", "cpp · 4 lines"
+    std::string text;
+};
+
+// The agent's last `maxReplies` replies, newest first, each followed by
+// its code blocks, last first.
+[[nodiscard]] std::vector<CopyCandidate> CopyCandidates(const std::vector<editor::acp::Manager::TranscriptEntry>& transcript,
+                                                        std::size_t                                               maxReplies);
+
 struct TranscriptFormatOptions {
     int width = 0;
     // Whether transcript entry i shows its details: a tool call's input,
@@ -102,6 +139,9 @@ struct TranscriptFormatOptions {
     bool                             hideThinking = false;
     // Tool locations under this directory are shown relative to it.
     std::filesystem::path projectRoot;
+    CodeHighlighter       highlightCode;
+    // What a running tool call's elapsed time is measured against.
+    std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
 };
 
 // A tool kind's one-column glyph ("edit" -> "✎", ...).

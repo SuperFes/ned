@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "Editor/Clipboard.h"
+#include "Text/Base64.h"
 
 using ned::editor::BuildOsc52CopySequence;
 using ned::editor::ClipboardEnabled;
@@ -225,4 +226,21 @@ TEST_CASE("SetOsc52Enabled/Osc52Enabled round-trip, independent of ClipboardEnab
 
     SetOsc52Enabled(false);
     REQUIRE_FALSE(Osc52Enabled());
+}
+
+TEST_CASE("Base64Encode pads to a multiple of four and keeps binary bytes", "[Clipboard]") {
+    using ned::text::Base64Encode;
+    REQUIRE(Base64Encode("").empty());
+    REQUIRE(Base64Encode("f") == "Zg==");
+    REQUIRE(Base64Encode("fo") == "Zm8=");
+    REQUIRE(Base64Encode("foo") == "Zm9v");
+    REQUIRE(Base64Encode(std::string("\0\xff\x10", 3)) == "AP8Q");
+}
+
+TEST_CASE("PreferredImageMimeType picks PNG, else the first image type offered", "[Clipboard]") {
+    using ned::editor::PreferredImageMimeType;
+    REQUIRE(PreferredImageMimeType("text/plain\nimage/jpeg\nimage/png\n") == "image/png");
+    REQUIRE(PreferredImageMimeType("TARGETS\r\nimage/bmp\r\nimage/gif\r\n") == "image/bmp");
+    REQUIRE_FALSE(PreferredImageMimeType("text/plain\nUTF8_STRING\n").has_value());
+    REQUIRE_FALSE(PreferredImageMimeType("").has_value());
 }

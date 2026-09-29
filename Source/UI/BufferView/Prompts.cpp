@@ -1532,11 +1532,13 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::AcpSetModel:
         case editor::InteractiveRequest::AcpSetOption:
         case editor::InteractiveRequest::AcpResumeSession:
+        case editor::InteractiveRequest::AcpCopy:
             if (onAcpPickerRequest_) {
-                onAcpPickerRequest_(request == editor::InteractiveRequest::AcpSetMode     ? editor::acp::PanelPicker::Mode
-                                    : request == editor::InteractiveRequest::AcpSetModel  ? editor::acp::PanelPicker::Model
-                                    : request == editor::InteractiveRequest::AcpSetOption ? editor::acp::PanelPicker::Options
-                                                                                          : editor::acp::PanelPicker::Sessions);
+                onAcpPickerRequest_(request == editor::InteractiveRequest::AcpSetMode         ? editor::acp::PanelPicker::Mode
+                                    : request == editor::InteractiveRequest::AcpSetModel      ? editor::acp::PanelPicker::Model
+                                    : request == editor::InteractiveRequest::AcpSetOption     ? editor::acp::PanelPicker::Options
+                                    : request == editor::InteractiveRequest::AcpResumeSession ? editor::acp::PanelPicker::Sessions
+                                                                                              : editor::acp::PanelPicker::Copy);
             }
             return;
         // VCS blame gutter follow-up: one-shot direct actions, same shape

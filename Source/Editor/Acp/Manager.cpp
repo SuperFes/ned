@@ -1,6 +1,7 @@
 #include "Manager.h"
 
 #include <algorithm>
+#include <charconv>
 #include <fstream>
 #include <iterator>
 #include <sstream>
@@ -673,19 +674,61 @@ void Manager::PushOrUpdateToolCall(const Json& update) {
     const bool                       hasKind      = update.contains("kind") && update["kind"].is_string();
     const bool                       hasLocations = update.contains("locations");
     const bool                       hasInput     = update.contains("rawInput");
+    const Json                       meta         = update.contains("_meta") && update["_meta"].is_object() ? update["_meta"] : Json::object();
 
-    auto applyDetails = [&](TranscriptEntry& entry) {
+    std::optional<ToolLocation> reached;
+    auto                        applyDetails = [&](TranscriptEntry& entry) {
         if (hasKind) {
             entry.toolKind = update["kind"].get<std::string>();
         }
         if (hasLocations) {
-            entry.locations = ParseLocations(update["locations"]);
+            std::vector<ToolLocation> locations = ParseLocations(update["locations"]);
+            if (!locations.empty() && !replaying_ &&
+                (entry.locations.empty() || entry.locations.front().path != locations.front().path ||
+                 entry.locations.front().line != locations.front().line)) {
+                reached = locations.front();
+            }
+            entry.locations = std::move(locations);
         }
         if (hasInput) {
             entry.toolInput = SummarizeToolInput(update["rawInput"]);
         }
-        if (output) {
+        if (output && !entry.terminal) {
             entry.toolOutput = *output;
+        }
+        if (meta.contains("terminal_info")) {
+            entry.terminal = true;
+        }
+        // A delta appends; so does terminal_output, which an agent sends
+        // once, whole, at the end.
+        for (const char* key : {"terminal_output_delta", "terminal_output"}) {
+            if (meta.contains(key) && meta[key].is_object()) {
+                if (!entry.terminal) {
+                    entry.terminal = true;
+                    entry.toolOutput.clear();
+                }
+                AppendTerminalText(entry.toolOutput, entry.terminalState, StringField(meta[key], "data", std::string()));
+                entry.toolOutputTrimmed = KeepTail(entry.toolOutput, kMaxToolOutputBytes) || entry.toolOutputTrimmed;
+            }
+        }
+        if (meta.contains("terminal_exit") && meta["terminal_exit"].is_object() && meta["terminal_exit"].contains("exit_code") &&
+            meta["terminal_exit"]["exit_code"].is_number_integer()) {
+            entry.exitCode = meta["terminal_exit"]["exit_code"].get<int>();
+            // claude-agent-acp reports 1 for any failed command; Claude
+            // Code's own output starts with the real status.
+            constexpr std::string_view kExitPrefix = "Exit code ";
+            if (entry.exitCode == 1 && entry.toolOutput.starts_with(kExitPrefix)) {
+                int         code     = 0;
+                const char* from     = entry.toolOutput.data() + kExitPrefix.size();
+                const auto [end, ec] = std::from_chars(from, entry.toolOutput.data() + entry.toolOutput.size(), code);
+                if (ec == std::errc() && end != from) {
+                    entry.exitCode = code;
+                }
+            }
+        }
+        const bool finished = entry.status == "completed" || entry.status == "failed" || entry.status == "cancelled";
+        if (finished && entry.startedAt && !entry.finishedAt) {
+            entry.finishedAt = std::chrono::steady_clock::now();
         }
     };
 
@@ -705,6 +748,9 @@ void Manager::PushOrUpdateToolCall(const Json& update) {
                 applyDetails(*it);
                 ++transcriptGeneration_;
                 NotifyTranscriptChanged();
+                if (reached && onToolLocation_) {
+                    onToolLocation_(*reached);
+                }
                 return;
             }
         }
@@ -717,8 +763,14 @@ void Manager::PushOrUpdateToolCall(const Json& update) {
         .diffOldText = diff ? std::optional<std::string>(diff->oldText) : std::nullopt,
         .diffNewText = diff ? std::optional<std::string>(diff->newText) : std::nullopt,
     };
+    if (!replaying_) {
+        entry.startedAt = std::chrono::steady_clock::now();
+    }
     applyDetails(entry);
     PushTranscriptEntry(std::move(entry));
+    if (reached && onToolLocation_) {
+        onToolLocation_(*reached);
+    }
 }
 
 void Manager::PushOrReplacePlan(const Json& update) {
@@ -792,13 +844,19 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
     agentName_                    = agentName;
     state_                        = SessionState::Starting;
     agentSupportsEmbeddedContext_ = false; // re-negotiated below; see PromptAttachment's doc comment
+    agentSupportsImages_          = false;
     WireClient(*client_);
 
     client_->SendRequest(
         "initialize",
         Json{
             {"protocolVersion", 1},
-            {"clientCapabilities", {{"fs", {{"readTextFile", true}, {"writeTextFile", true}}}}},
+            // _meta.terminal_output[_delta]: a command's output arrives as
+            // raw terminal text with its exit code (claude-agent-acp's
+            // extension), not a console code block.
+            {"clientCapabilities",
+             {{"fs", {{"readTextFile", true}, {"writeTextFile", true}}},
+              {"_meta", {{"terminal_output", true}, {"terminal_output_delta", true}}}}},
         },
         [this](std::optional<Json> result, std::optional<Json> error) {
             if (error) {
@@ -817,6 +875,7 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
             const Json agentCaps          = (result && result->is_object()) ? result->value("agentCapabilities", Json::object()) : Json::object();
             const Json promptCaps         = agentCaps.is_object() ? agentCaps.value("promptCapabilities", Json::object()) : Json::object();
             agentSupportsEmbeddedContext_ = BoolField(promptCaps, "embeddedContext");
+            agentSupportsImages_          = BoolField(promptCaps, "image");
 
             const bool loadCap = BoolField(agentCaps, "loadSession");
             const Json sessionCaps =
@@ -867,7 +926,12 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
 Json Manager::PromptBlocks(const std::string& text, const std::vector<PromptAttachment>& attachments) const {
     Json promptBlocks = Json::array({Json{{"type", "text"}, {"text", text}}});
     for (const PromptAttachment& attachment : attachments) {
-        if (attachment.link) {
+        if (attachment.image) {
+            if (agentSupportsImages_) {
+                promptBlocks.push_back(Json{{"type", "image"}, {"mimeType", attachment.mimeType}, {"data", attachment.text}});
+            }
+        }
+        else if (attachment.link) {
             Json link{{"type", "resource_link"}, {"uri", attachment.uri}, {"name", attachment.name}};
             if (!attachment.mimeType.empty()) {
                 link["mimeType"] = attachment.mimeType;
@@ -887,6 +951,28 @@ Json Manager::PromptBlocks(const std::string& text, const std::vector<PromptAtta
         }
     }
     return promptBlocks;
+}
+
+Manager::TranscriptEntry* Manager::FindToolCall(const std::string& toolCallId) {
+    if (toolCallId.empty()) {
+        return nullptr;
+    }
+    for (auto it = transcript_.rbegin(); it != transcript_.rend(); ++it) {
+        if (it->kind == TranscriptEntry::Kind::ToolCall && it->toolCallId == toolCallId) {
+            return &*it;
+        }
+    }
+    return nullptr;
+}
+
+void Manager::StopToolTimers() {
+    // A tool call the agent never closed stops counting with its turn.
+    const auto now = std::chrono::steady_clock::now();
+    for (TranscriptEntry& entry : transcript_) {
+        if (entry.kind == TranscriptEntry::Kind::ToolCall && entry.startedAt && !entry.finishedAt) {
+            entry.finishedAt = now;
+        }
+    }
 }
 
 std::string Manager::SendPrompt(const std::string& text, const std::vector<PromptAttachment>& attachments) {
@@ -960,6 +1046,7 @@ std::string Manager::SendPrompt(const std::string& text, const std::vector<Promp
             promptStartedAt_.reset();
             editor::EndBackgroundActivity(kAcpActivity);
             FinalizePendingCheckpoint();
+            StopToolTimers();
             if (error) {
                 const std::string message = "error: " + StringField(*error, "message", std::string("prompt failed"));
                 AppendToOutputBuffer("\n[" + message + "]\n");
@@ -1027,6 +1114,10 @@ std::vector<Manager::QueuedPrompt> Manager::TakeQueue() {
 
 bool Manager::SupportsSteering() const {
     return agentSupportsSteering_;
+}
+
+bool Manager::SupportsImages() const {
+    return agentSupportsImages_;
 }
 
 std::string Manager::Steer(QueuedPrompt prompt) {
@@ -1313,6 +1404,14 @@ void Manager::WireClient(Client& client) {
             respond(Json{{"outcome", {{"outcome", "cancelled"}}}}, std::nullopt);
             return;
         }
+        // A call waiting on the user isn't running yet: its timer starts
+        // once it's allowed.
+        permissionToolCallId_ = params.contains("toolCall") && params["toolCall"].is_object()
+                                    ? StringField(params["toolCall"], "toolCallId", std::string())
+                                    : std::string();
+        if (TranscriptEntry* call = FindToolCall(permissionToolCallId_)) {
+            call->startedAt.reset();
+        }
         pendingPermissionPrompt_  = prompt;
         pendingPermissionRespond_ = std::move(respond);
         AppendToOutputBuffer("\n[permission requested: " + prompt.description + "]\n");
@@ -1454,6 +1553,7 @@ void Manager::EndSession(std::string reason) {
         editor::EndBackgroundActivity(kAcpActivity);
         FinalizePendingCheckpoint();
     }
+    StopToolTimers();
     for (const QueuedPrompt& dropped : queuedPrompts_) {
         PushSessionEvent("not sent: " + dropped.text);
     }
@@ -1486,6 +1586,10 @@ void Manager::EndSession(std::string reason) {
     }
 }
 
+void Manager::SetOnToolLocation(std::function<void(const ToolLocation&)> handler) {
+    onToolLocation_ = std::move(handler);
+}
+
 void Manager::SetOnAttention(std::function<void(Attention, std::chrono::steady_clock::duration)> handler) {
     onAttention_ = std::move(handler);
 }
@@ -1505,6 +1609,12 @@ void Manager::ResolvePermissionPrompt(const std::string& optionId) {
     // stable, independent string instead of freed memory.
     const std::string optionIdCopy = optionId;
     RespondFn         respond      = std::move(pendingPermissionRespond_);
+    for (const PermissionOption& option : pendingPermissionPrompt_->options) {
+        TranscriptEntry* call = FindToolCall(permissionToolCallId_);
+        if (option.optionId == optionIdCopy && option.kind.starts_with("allow") && call && !call->finishedAt && !replaying_) {
+            call->startedAt = std::chrono::steady_clock::now();
+        }
+    }
     pendingPermissionPrompt_.reset();
     AppendToOutputBuffer("[selected: " + optionIdCopy + "]\n");
     PushSessionEvent("selected: " + optionIdCopy);

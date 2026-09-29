@@ -355,6 +355,14 @@ bool BufferView::OnKeyEvent(const Event& event) {
 // the lot. WindowManager::DispatchGlobalChord routes a modifier tap here
 // no matter which widget currently holds focus, which is what makes that
 // gesture able to dismiss a panel that has taken the keyboard.
+bool BufferView::KeySequencePending() const {
+    return !dispatcher_.Pending().empty();
+}
+
+bool BufferView::Prompting() const {
+    return inputMode_ != InputMode::Normal;
+}
+
 bool BufferView::HandleChord(const editor::KeyChord& chord) {
     DismissHover(); // hover-tooltips follow-up: any real keystroke ends a pending/shown tooltip
 
@@ -548,7 +556,8 @@ bool BufferView::HandleChord(const editor::KeyChord& chord) {
 
         case InputMode::AcpAgentName:
             HandleAcpAgentNameKey(chord);
-            break;
+            ClampPointToNarrowing();
+            return true;
         case InputMode::BufferCharset:
             HandleBufferCharsetKey(chord);
             ClampPointToNarrowing();

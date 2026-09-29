@@ -8,6 +8,7 @@
 
 #include "DiagnosticsLog.h"
 #include "Process/ChildProcess.h"
+#include "Text/Base64.h"
 
 namespace ned::editor {
 
@@ -136,41 +137,6 @@ namespace {
             // Not found / spawn failure.
         }
         return std::nullopt;
-    }
-
-    std::string Base64Encode(std::string_view data) {
-        static constexpr char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-        std::string result;
-        result.reserve(((data.size() + 2) / 3) * 4);
-
-        std::size_t i = 0;
-        for (; i + 2 < data.size(); i += 3) {
-            const auto b0 = static_cast<unsigned char>(data[i]);
-            const auto b1 = static_cast<unsigned char>(data[i + 1]);
-            const auto b2 = static_cast<unsigned char>(data[i + 2]);
-            result += kAlphabet[b0 >> 2];
-            result += kAlphabet[((b0 & 0x03) << 4) | (b1 >> 4)];
-            result += kAlphabet[((b1 & 0x0F) << 2) | (b2 >> 6)];
-            result += kAlphabet[b2 & 0x3F];
-        }
-
-        const std::size_t remaining = data.size() - i;
-        if (remaining == 1) {
-            const auto b0 = static_cast<unsigned char>(data[i]);
-            result += kAlphabet[b0 >> 2];
-            result += kAlphabet[(b0 & 0x03) << 4];
-            result += "==";
-        }
-        else if (remaining == 2) {
-            const auto b0 = static_cast<unsigned char>(data[i]);
-            const auto b1 = static_cast<unsigned char>(data[i + 1]);
-            result += kAlphabet[b0 >> 2];
-            result += kAlphabet[((b0 & 0x03) << 4) | (b1 >> 4)];
-            result += kAlphabet[(b1 & 0x0F) << 2];
-            result += '=';
-        }
-        return result;
     }
 
     void WriteOsc52(std::string_view text) {
@@ -327,8 +293,64 @@ std::optional<std::string> PasteFromPrimarySelection(std::chrono::milliseconds r
     return RunPasteCommand(*argv, readTimeout, "primary-selection paste");
 }
 
+std::optional<std::string> PreferredImageMimeType(std::string_view offeredTypes) {
+    std::optional<std::string> fallback;
+    while (!offeredTypes.empty()) {
+        const std::size_t newline = offeredTypes.find('\n');
+        std::string_view  type    = offeredTypes.substr(0, newline);
+        offeredTypes              = newline == std::string_view::npos ? std::string_view() : offeredTypes.substr(newline + 1);
+        while (!type.empty() && (type.back() == '\r' || type.back() == ' ')) {
+            type.remove_suffix(1);
+        }
+        if (type == "image/png") {
+            return std::string(type);
+        }
+        if (!fallback && type.starts_with("image/")) {
+            fallback = std::string(type);
+        }
+    }
+    return fallback;
+}
+
+std::optional<ClipboardImage> PasteImageFromSystemClipboard(std::chrono::milliseconds readTimeout) {
+    if (!ClipboardEnabled()) {
+        return std::nullopt;
+    }
+    const std::optional<std::vector<std::string>> paste = ResolvedClipboardPasteCommand();
+    if (!paste || paste->empty()) {
+        return std::nullopt;
+    }
+    std::vector<std::string> listArgv;
+    std::vector<std::string> fetchArgv;
+    if ((*paste)[0] == "wl-paste") {
+        listArgv  = {"wl-paste", "--list-types"};
+        fetchArgv = {"wl-paste", "--type"};
+    }
+    else if ((*paste)[0] == "xclip") {
+        listArgv  = {"xclip", "-selection", "clipboard", "-target", "TARGETS", "-out"};
+        fetchArgv = {"xclip", "-selection", "clipboard", "-out", "-target"};
+    }
+    else {
+        return std::nullopt;
+    }
+    const std::optional<std::string> types = RunPasteCommand(listArgv, readTimeout, "clipboard type list");
+    if (!types) {
+        return std::nullopt;
+    }
+    const std::optional<std::string> mimeType = PreferredImageMimeType(*types);
+    if (!mimeType) {
+        return std::nullopt;
+    }
+    fetchArgv.push_back(*mimeType);
+    std::optional<std::string> bytes = RunPasteCommand(fetchArgv, readTimeout, "clipboard image paste");
+    if (!bytes || bytes->empty()) {
+        return std::nullopt;
+    }
+    return ClipboardImage{.mimeType = *mimeType, .bytes = std::move(*bytes)};
+}
+
 std::string BuildOsc52CopySequence(std::string_view text, bool wrapForTmux) {
-    const std::string sequence = "\x1b]52;c;" + Base64Encode(text) + "\x07";
+    const std::string sequence = "\x1b]52;c;" + text::Base64Encode(text) + "\x07";
     if (!wrapForTmux) {
         return sequence;
     }

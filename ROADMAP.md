@@ -982,29 +982,58 @@ Terminal/ACP/Debug Console on one tab strip. The panel-ergonomics batch (slug fo
 calls/thinking, session modes/config options/usage, slash-command completion,
 `resource_link` file mentions, `session/list`+`load` resume, prompt queueing and
 `_session/steering`, a multi-line composer plus the `*acp compose*` buffer, and
-desktop notifications.
+desktop notifications. Batch 2 (`acp-panel-batch-2`) added fenced code highlighted
+through the fence's language, aligned GFM tables, copying (a code block's header, or
+`M-w`'s picker), terminal output with exit codes and running-tool timers
+(`_meta.terminal_output_delta`), follow-the-agent, and clipboard image paste (`C-v`).
 
-- [ ] **AI-assisted editing (ACP) gaps** (validated live 2026-08-26 against Claude
-      Code's own ACP adapter): `terminal/*` tool-call support and `elicitation/create`
-      structured forms are undeclared as client capabilities; no multiple concurrent
-      agents/sessions (still one at a time, `Dap/`'s own precedent); no per-agent
-      environment-variable override (`ChildProcess`'s `posix_spawn` always forwards the
-      parent's global `environ`); no per-agent "character" (display-name/accent color).
-      Separately: `Keymap::AmbiguousBindings()` is diagnostic-only (a
-      `CommandsTest.cpp` regression test), not enforcement — `Keymap::Bind` still lets a
-      caller construct an unreachable-by-typing binding; a real structural fix (Emacs'
-      own `define-key` semantics: reject/restructure a bind that would shadow an
-      existing command) would change `Bind`'s signature across every call site
-      including `ned/define-key`.
-- [ ] **ACP panel, next batch** — ranked by the 2026-09-29 survey of Claude Code/Zed/
-      Cursor/agent-shell issue trackers: **review a turn's changes** (multi-file keep/undo
-      per hunk in a multibuffer, built on `Manager::Checkpoint`'s file records -- the
-      highest-demand item left); fenced code blocks syntax-highlighted through the
-      block's language `Mode`, and Markdown tables; live Bash output (claude-agent-acp's
-      `_meta.terminal_info`/`terminal_output_delta`, opted into with
-      `clientCapabilities._meta.terminal_output`); follow-the-agent (jump to a running
-      tool call's `locations`); copy a message or code block; image paste (`image`
-      blocks -- the adapter advertises `promptCapabilities.image`).
+- [ ] **ACP protocol gaps**, sized 2026-09-29 against the ACP SDK 1.5.1 schema and
+      claude-agent-acp 0.84 (S/M/L = effort; "Claude" = what the adapter actually uses):
+      - **Elicitation** (`elicitation/create`, `elicitation/complete`; stable) -- M, the
+        top item. Without `clientCapabilities.elicitation.form` the adapter sends
+        Claude's AskUserQuestion as a plain allow/deny permission prompt, so its
+        questions can't be answered. Needs a panel form for the JSON-Schema subset the
+        adapter emits (single-select `oneOf`, multi-select `anyOf`, an optional
+        free-text "custom answer" per question) answering accept/decline/cancel. The
+        `url` mode (MCP OAuth) is a smaller follow-up: open the URL, wait for `complete`.
+      - **`terminal/*`** (create/output/wait_for_exit/kill/release; stable) -- M/L.
+        Claude never calls it (its Bash runs agent-side; batch 2's
+        `terminal_output_delta` covers that); it serves agents that ask the client to run
+        commands. The emulator and `TerminalPanel` exist; the work is terminal-per-id
+        lifetime and a transcript embed.
+      - **`authenticate`/`logout`** (stable) -- S/M. The first-run gap: an agent
+        answering `session/new` with auth-required gets no way to log in. Claude offers
+        terminal auth methods (`clientCapabilities.auth.terminal`), i.e. run its login
+        in ned's terminal.
+      - **`session/close`, `session/delete`** (stable; Claude has both) -- S. Close
+        before stopping; delete from the resume picker.
+      - **`$/cancel_request`** -- S. Cancel an in-flight `session/list`/`load` when its
+        picker is dismissed.
+      - **Unstable, small, Claude sends them**: `session.notices` (styled notices rather
+        than bold agent text), `session.compaction` (compaction status and summary),
+        `session.configOptions.boolean` (declare what ned already handles), and the
+        `plan_update`/`plan_removed`/plan-file shapes -- S each.
+      - **Agent content beyond text** (image, `resource_link`, `resource` in
+        `agent_message_chunk`) -- S. Ignored today.
+      - **Bigger, spec-unstable or ned-side**: `session/fork` (M, pairs with rewind);
+        `sessionCapabilities.subagents` + `_meta.claudeCode.parentToolUseId` subagent
+        tree (M); `additionalDirectories` for multi-root projects (S); concurrent
+        sessions (L, one at a time today, `Dap/`'s precedent); per-agent environment
+        (S, `ChildProcess`'s `posix_spawn` forwards the global `environ`); per-agent
+        display name/colour (S).
+      - **Not worth it now**: `providers/*` (LLM routing, unstable); `mcp/connect` over
+        ACP (unstable; the stdio MCP bridge works); `nes/*` + `document/*` next-edit
+        suggestions (stable, but no agent ned runs implements them -- see "AI
+        edit-prediction").
+- [ ] `Keymap::AmbiguousBindings()` is diagnostic-only (a `CommandsTest.cpp` regression
+      test), not enforcement — `Keymap::Bind` still lets a caller construct an
+      unreachable-by-typing binding; a real structural fix (Emacs' own `define-key`
+      semantics: reject/restructure a bind that would shadow an existing command) would
+      change `Bind`'s signature across every call site including `ned/define-key`.
+- [ ] **ACP panel, next batch**: **review a turn's changes** (multi-file keep/undo per
+      hunk in a multibuffer, built on `Manager::Checkpoint`'s file records) -- the
+      highest-demand item left from the 2026-09-29 survey of Claude Code/Zed/Cursor/
+      agent-shell issue trackers.
 - [ ] Batch-1 limits, each deliberate: replayed turns (`session/load`) carry no
       checkpoints, so rewind can't reach them; resume needs the agent's
       `sessionCapabilities.list` (no ned-side session history to fall back on); the
@@ -1012,6 +1041,13 @@ desktop notifications.
       when the panel is unfocused or the turn ran 20 s or more; `C-RET`/`S-RET` need a
       terminal that reports those modifiers on Enter (kitty keyboard protocol); `C-c C-s`
       (steer) and `M-RET` (newline) work everywhere.
+- [ ] Batch-2 limits: claude-agent-acp sends a command's output only when it finishes,
+      so the live output tail shows only for agents that stream (Claude gets the
+      elapsed-time counter); it also reports exit code 1 for every failure, so ned reads
+      the real code from Claude Code's own "Exit code N" first line. Follow-the-agent moves
+      the editor only while the panel has focus. Image paste reads the clipboard through
+      `wl-paste`/`xclip` only (no macOS/WSL image path), capped at 3.75 MB. `M-w` copies
+      from a picker, since the transcript has no cursor or region to copy from.
 - [ ] **Known rough edge**: a right-docked `AcpPanel`'s resize handle has no visually
       reserved border the way `ProjectSidebar`'s divider column does (right-dock mode
       stays a fully separate, byte-for-byte-unchanged standalone overlay from the
@@ -1296,12 +1332,10 @@ Ideas worth remembering but not worth scoping yet — too undecided for "Open It
 not disliked enough for "Won't do". Promote or delete on revisit rather than letting
 these accumulate detail in place.
 
-- [ ] **ACP panel extras past the next batch** (from the same 2026-09-29 survey): fork a
-      session (`session/fork`, unstable in the spec); elicitation forms
-      (`elicitation/create`, still an RFD); parallel sessions with a thread list; a
-      compaction view (`compaction_update`, unstable); a subagent tree from tool calls'
-      `_meta.claudeCode.parentToolUseId`; PR-style review comments on an agent's diff fed
-      back as a prompt; transcript search and timestamps. Justified each when the spec
+- [ ] **ACP panel extras past the next batch** (from the same 2026-09-29 survey):
+      parallel sessions with a thread list; PR-style review comments on an agent's diff
+      fed back as a prompt; transcript search and timestamps. (Fork, compaction and the
+      subagent tree are sized under "ACP protocol gaps".) Justified each when the spec
       side stabilizes or the next-batch items are in daily use and this is what's missed.
 - [ ] **Android device tooling.** Editing, building and testing an Android project
       works today via Java/Kotlin modes, the task runner (`ned/set-task-command` pointed
@@ -1523,8 +1557,11 @@ these accumulate detail in place.
       cursor/edit history, distinct from LSP-driven completion or ACP's chat) has no
       equivalent here. A different feature from everything `Acp/` already provides, and
       probably needs some model-serving backend of its own — worth naming as a conscious
-      gap rather than assuming ACP already covers "AI in the editor." Sketched further
-      2026-09-07, still unscoped:
+      gap rather than assuming ACP already covers "AI in the editor." ACP has since
+      specified exactly this (`nes/*` suggestions over `document/*` sync, stable in SDK
+      1.5.1), which would settle the backend fork below once an agent ned runs
+      implements it; claude-agent-acp 0.84 doesn't. Sketched further 2026-09-07, still
+      unscoped:
       - **The backend is the real fork.** Reusing `Editor/Acp/` costs no new
         infrastructure and already talks to a live agent, but ACP is conversational
         request/response — latency is seconds, which is fine for an explicit

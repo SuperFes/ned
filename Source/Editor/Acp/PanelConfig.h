@@ -2,7 +2,8 @@
 // ACP chat panel display settings -- one process-wide choice, mutex-guarded
 // static state, mirroring Terminal/Config.h's exact pattern. Configured from
 // Janet (ned/set-acp-panel-dock, ned/set-acp-panel-size-percent,
-// ned/set-acp-tool-calls, ned/set-acp-thinking); nothing built-in changes
+// ned/set-acp-tool-calls, ned/set-acp-thinking, ned/set-acp-follow-agent);
+// the panel's follow toggle changes the last; nothing else changes
 // any of them from its default. Unrecognized strings leave a setting
 // unchanged.
 //
@@ -43,6 +44,11 @@ enum class ThinkingDisplay { Collapsed,
                              Hidden };
 void                          SetAcpThinkingDisplay(const std::string& display);
 [[nodiscard]] ThinkingDisplay GetAcpThinkingDisplay();
+
+// Whether the editor follows the agent, opening each file a tool call
+// reads or edits while the panel has focus. Default false.
+void               SetAcpFollowAgent(bool follow);
+[[nodiscard]] bool GetAcpFollowAgent();
 
 } // namespace ned::editor::acp
 

@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "Editor/Acp/Client.h"
+#include "Editor/Acp/Config.h"
 #include "Editor/Acp/Manager.h"
 #include "Editor/Acp/Transport.h"
 #include "Editor/Backup.h"
@@ -16465,4 +16466,21 @@ TEST_CASE("set-mode switches the current buffer's mode through the pane", "[Buff
     REQUIRE_FALSE(changed.empty());
     CHECK(changed.back() == &fixture.buffer);
     ned::editor::ClearModeCacheFor(fixture.buffer);
+}
+
+TEST_CASE("Typing at the ACP agent prompt fills the prompt, not the buffer", "[BufferView]") {
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("hello");
+    ned::editor::acp::SetAcpAgentCommand("bufferview-agent-prompt", {"true"});
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "acp-start-session");
+    view.OnEvent(ned::ui::test::Return());
+    TypeText(view, "buf");
+    REQUIRE(fixture.buffer.Text() == "hello");
+    REQUIRE(fixture.statusMessage.find("ACP agent: buf") != std::string::npos);
+    view.OnEvent(ned::ui::test::Ctrl('g'));
+    ned::editor::acp::SetAcpAgentCommand("bufferview-agent-prompt", {});
 }

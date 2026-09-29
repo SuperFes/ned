@@ -22,6 +22,10 @@ for the live keymap stack.
 
 :   Send the prompt being composed to the ACP agent (bound C-c C-c in *acp compose*).
 
+`acp-copy` (`C-c A w`)
+
+:   Copy one of the ACP agent's recent replies, or a code block from one, to the kill ring and clipboard.
+
 `acp-resume-session` (`C-c A l`)
 
 :   Resume an earlier ACP session, replaying its conversation into the panel.
@@ -53,6 +57,10 @@ for the live keymap stack.
 `acp-stop-session` (`C-c A k`)
 
 :   Stop the active ACP session.
+
+`acp-toggle-follow` (`C-c A f`)
+
+:   Toggle following the ACP agent: while the ACP panel has focus, open each file its tool calls read or edit.
 
 `acp-toggle-panel` (`S-SUPER`)
 

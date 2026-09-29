@@ -11,6 +11,7 @@
 
 #include "Editor/Acp/Client.h"
 #include "Editor/Acp/Manager.h"
+#include "Editor/Acp/TerminalText.h"
 #include "Editor/Acp/Transport.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/Lsp/Manager.h"
@@ -1274,4 +1275,176 @@ TEST_CASE("Manager reads null or mistyped fields in agent updates as absent inst
     REQUIRE(fixture.manager.Transcript().back().status == "completed");
     REQUIRE_NOTHROW(fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"messageId", nullptr}, {"content", {{"type", "text"}, {"text", nullptr}}}}));
     REQUIRE_NOTHROW(fixture.SendUpdate({{"sessionUpdate", nullptr}}));
+}
+
+TEST_CASE("AppendTerminalText drops escape sequences, even split across chunks", "[Acp]") {
+    using ned::editor::acp::AppendTerminalText;
+    ned::editor::acp::TerminalTextState state;
+    std::string                         out;
+    AppendTerminalText(out, state, "\x1b[31mred\x1b[");
+    AppendTerminalText(out, state, "0m plain \x1b]0;title\a");
+    AppendTerminalText(out, state, "done\x1b]8;;http://x\x1b\\link\n");
+    REQUIRE(out == "red plain donelink\n");
+}
+
+TEST_CASE("AppendTerminalText lets a bare CR rewrite its line, but keeps a CRLF split across chunks", "[Acp]") {
+    using ned::editor::acp::AppendTerminalText;
+    ned::editor::acp::TerminalTextState state;
+    std::string                         out;
+    AppendTerminalText(out, state, "start\n10%\r50%\r");
+    AppendTerminalText(out, state, "100%\r");
+    AppendTerminalText(out, state, "\nnext\n");
+    REQUIRE(out == "start\n100%\nnext\n");
+}
+
+TEST_CASE("KeepTail drops whole lines from the front", "[Acp]") {
+    std::string text = "aaaa\nbbbb\ncccc\n";
+    REQUIRE_FALSE(ned::editor::acp::KeepTail(text, 100));
+    REQUIRE(ned::editor::acp::KeepTail(text, 8));
+    REQUIRE(text == "cccc\n");
+}
+
+TEST_CASE("Manager asks for terminal output and collects a command's streamed output and exit code", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.outputBuffer          = fixture.manager.StartSession("test-agent");
+    const Json  initializeRequest = fixture.reader.Next();
+    const Json& capabilitiesMeta  = initializeRequest["params"]["clientCapabilities"]["_meta"];
+    REQUIRE(capabilitiesMeta["terminal_output"] == true);
+    REQUIRE(capabilitiesMeta["terminal_output_delta"] == true);
+    fixture.client->DispatchFrame(ResultFrame(initializeRequest["id"], Json::object()));
+    const Json sessionNewRequest = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResultFrame(sessionNewRequest["id"], Json{{"sessionId", "s1"}}));
+
+    fixture.SendUpdate({{"sessionUpdate", "tool_call"},
+                        {"toolCallId", "t1"},
+                        {"title", "make"},
+                        {"kind", "execute"},
+                        {"status", "in_progress"},
+                        {"content", Json::array({Json{{"type", "terminal"}, {"terminalId", "t1"}}})},
+                        {"_meta", {{"terminal_info", {{"terminal_id", "t1"}}}}}});
+    const auto& entry = fixture.manager.Transcript().back();
+    REQUIRE(entry.terminal);
+    REQUIRE(entry.startedAt.has_value());
+    REQUIRE_FALSE(entry.finishedAt.has_value());
+
+    fixture.SendUpdate({{"sessionUpdate", "tool_call_update"},
+                        {"toolCallId", "t1"},
+                        {"_meta", {{"terminal_output_delta", {{"terminal_id", "t1"}, {"data", "compiling\n\x1b[1mer"}}}}}});
+    fixture.SendUpdate({{"sessionUpdate", "tool_call_update"},
+                        {"toolCallId", "t1"},
+                        {"_meta", {{"terminal_output_delta", {{"terminal_id", "t1"}, {"data", "ror\x1b[0m\n"}}}}}});
+    REQUIRE(fixture.manager.Transcript().back().toolOutput == "compiling\nerror\n");
+
+    fixture.SendUpdate({{"sessionUpdate", "tool_call_update"},
+                        {"toolCallId", "t1"},
+                        {"status", "failed"},
+                        {"content", Json::array({Json{{"type", "terminal"}, {"terminalId", "t1"}}})},
+                        {"_meta", {{"terminal_exit", {{"terminal_id", "t1"}, {"exit_code", 2}, {"signal", nullptr}}}}}});
+    const auto& finished = fixture.manager.Transcript().back();
+    REQUIRE(finished.exitCode == 2);
+    REQUIRE(finished.finishedAt.has_value());
+    REQUIRE(finished.toolOutput == "compiling\nerror\n");
+}
+
+TEST_CASE("Manager stops a tool call's timer when its turn ends", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    fixture.manager.SendPrompt("go");
+    const Json prompt = fixture.reader.Next();
+    fixture.SendUpdate({{"sessionUpdate", "tool_call"}, {"toolCallId", "t1"}, {"title", "Read a"}, {"status", "pending"}});
+    REQUIRE_FALSE(fixture.manager.Transcript().back().finishedAt.has_value());
+    fixture.client->DispatchFrame(ResultFrame(prompt["id"], Json{{"stopReason", "end_turn"}}));
+    REQUIRE(fixture.manager.Transcript().back().finishedAt.has_value());
+}
+
+TEST_CASE("Manager reports each new file a live tool call reaches", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    std::vector<std::string> reached;
+    fixture.manager.SetOnToolLocation([&reached](const Manager::ToolLocation& location) {
+        reached.push_back(location.path + ":" + (location.line ? std::to_string(*location.line) : std::string("-")));
+    });
+    fixture.SendUpdate({{"sessionUpdate", "tool_call"},
+                        {"toolCallId", "t1"},
+                        {"title", "Read a"},
+                        {"status", "pending"},
+                        {"locations", Json::array({Json{{"path", "/p/a.cpp"}}})}});
+    fixture.SendUpdate({{"sessionUpdate", "tool_call_update"}, {"toolCallId", "t1"}, {"locations", Json::array({Json{{"path", "/p/a.cpp"}}})}});
+    fixture.SendUpdate({{"sessionUpdate", "tool_call_update"},
+                        {"toolCallId", "t1"},
+                        {"locations", Json::array({Json{{"path", "/p/a.cpp"}, {"line", 40}}})}});
+    fixture.SendUpdate({{"sessionUpdate", "tool_call"}, {"toolCallId", "t2"}, {"title", "Think"}, {"status", "pending"}});
+    REQUIRE(reached == std::vector<std::string>{"/p/a.cpp:-", "/p/a.cpp:40"});
+}
+
+TEST_CASE("Manager sends an image attachment as an image block", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.initializeResult = {{"agentCapabilities", {{"promptCapabilities", {{"image", true}}}}}};
+    fixture.StartActiveSession("test-agent");
+    REQUIRE(fixture.manager.SupportsImages());
+    fixture.manager.SendPrompt("look", {{.name = "image 1", .mimeType = "image/png", .text = "AAAA", .image = true}});
+    const Json sent = fixture.reader.Next()["params"]["prompt"];
+    REQUIRE(sent.size() == 2);
+    REQUIRE(sent[1] == Json{{"type", "image"}, {"mimeType", "image/png"}, {"data", "AAAA"}});
+    REQUIRE(fixture.manager.Transcript().back().text.find("[attached: image 1]") != std::string::npos);
+}
+
+TEST_CASE("Manager drops an image attachment for an agent that doesn't take images", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    REQUIRE_FALSE(fixture.manager.SupportsImages());
+    fixture.manager.SendPrompt("look", {{.name = "image 1", .mimeType = "image/png", .text = "AAAA", .image = true}});
+    REQUIRE(fixture.reader.Next()["params"]["prompt"].size() == 1);
+}
+
+TEST_CASE("Manager starts a tool call's timer when its permission is granted, not while it waits", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    fixture.SendUpdate({{"sessionUpdate", "tool_call"}, {"toolCallId", "t1"}, {"title", "make"}, {"status", "pending"}});
+    REQUIRE(fixture.manager.Transcript().back().startedAt.has_value());
+
+    const Json request = {
+        {"jsonrpc", "2.0"},
+        {"id", 3},
+        {"method", "session/request_permission"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"toolCall", {{"toolCallId", "t1"}, {"title", "make"}}},
+          {"options", Json::array({Json{{"optionId", "allow-once"}, {"name", "Allow once"}, {"kind", "allow_once"}},
+                                   Json{{"optionId", "reject-once"}, {"name", "Reject"}, {"kind", "reject_once"}}})}}},
+    };
+    fixture.client->DispatchFrame(request.dump());
+    const auto toolCall = [&fixture] {
+        for (const auto& entry : fixture.manager.Transcript()) {
+            if (entry.toolCallId == "t1") {
+                return entry;
+            }
+        }
+        FAIL("no tool call t1");
+        return Manager::TranscriptEntry{};
+    };
+    REQUIRE_FALSE(toolCall().startedAt.has_value());
+    fixture.manager.ResolvePermissionPrompt("allow-once");
+    REQUIRE(toolCall().startedAt.has_value());
+}
+
+TEST_CASE("Manager takes a failed command's exit code from Claude Code's own status line", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    fixture.SendUpdate({{"sessionUpdate", "tool_call"}, {"toolCallId", "t1"}, {"title", "make"}, {"status", "in_progress"}});
+    fixture.SendUpdate({{"sessionUpdate", "tool_call_update"},
+                        {"toolCallId", "t1"},
+                        {"_meta", {{"terminal_output", {{"terminal_id", "t1"}, {"data", "Exit code 3\nline 1"}}}}}});
+    fixture.SendUpdate({{"sessionUpdate", "tool_call_update"},
+                        {"toolCallId", "t1"},
+                        {"status", "failed"},
+                        {"_meta", {{"terminal_exit", {{"terminal_id", "t1"}, {"exit_code", 1}, {"signal", nullptr}}}}}});
+    REQUIRE(fixture.manager.Transcript().back().exitCode == 3);
 }

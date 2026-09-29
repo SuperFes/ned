@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-239 bindings.
+240 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -212,6 +212,10 @@ Register a Janet function as the parser for a test output format: (name fn). fn 
 ## `ned/set-acp-agent`
 
 Set the command used to launch an Agent Client Protocol (ACP) coding agent: (name argv), e.g. (ned/set-acp-agent "claude-code" ["claude-code-acp"]). Same argv shape and $PATH resolution as ned/set-lsp-command; an empty argv clears the configured command for name. acp-send-prompt (C-c a p) is the entry point that spawns and talks to whichever agent name it's given.
+
+## `ned/set-acp-follow-agent`
+
+Whether the editor follows the ACP agent (default false): while the ACP panel has focus, each file a tool call reads or edits opens in the editor at the line it names. C-c C-f in the panel toggles it.
 
 ## `ned/set-acp-mcp-bridge`
 

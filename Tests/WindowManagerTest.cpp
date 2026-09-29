@@ -17,12 +17,13 @@
 #include "Editor/Register.h"
 #include "Editor/Vcs/Provider.h"
 #include "Editor/Vcs/ProviderRegistry.h"
-#include "Editor/Vim/Settings.h"
 #include "Editor/Vcs/Runner.h"
+#include "Editor/Vim/Settings.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
+#include "UI/AcpPanel.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/EventLoop.h"
 #include "UI/Theme.h"
@@ -1025,4 +1026,34 @@ TEST_CASE("A temp-file rename -- every atomic save in this codebase -- is not a 
     CHECK(fixture.bufferList.Find("*imports*") == nullptr);
 
     std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("DispatchGlobalChord runs a sequence chord by chord and says when it wants more", "[WindowManager]") {
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
+
+    const auto chord = [](char32_t codepoint, bool control) {
+        ned::editor::KeyChord key;
+        key.Codepoint = codepoint;
+        key.Control   = control;
+        return key;
+    };
+    REQUIRE(manager.DispatchGlobalChord(chord(U'x', true)));
+    REQUIRE_FALSE(manager.DispatchGlobalChord(chord(U'2', false)));
+    REQUIRE(manager.WindowCount() == 2);
+}
+
+TEST_CASE("DispatchGlobalChord gives the keyboard to a prompt it opens", "[WindowManager]") {
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
+    ned::ui::AcpPanel panel(fixture.theme);
+    panel.TakeFocus();
+
+    ned::editor::KeyChord metaX;
+    metaX.Codepoint = U'x';
+    metaX.Meta      = true;
+    REQUIRE_FALSE(manager.DispatchGlobalChord(metaX)); // M-x opens its prompt
+    REQUIRE_FALSE(panel.Focused());
 }

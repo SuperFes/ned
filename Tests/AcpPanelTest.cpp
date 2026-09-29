@@ -1674,3 +1674,137 @@ TEST_CASE("AcpPanel's C-c C-s steers too, for terminals without C-RET", "[AcpPan
     REQUIRE(fixture.panel.OnEvent(ned::ui::test::Ctrl('s')));
     REQUIRE(fixture.reader.Next()["method"] == "_session/steering");
 }
+
+TEST_CASE("AcpPanel copies a code block from its header and colours it by language", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    std::string copied;
+    fixture.panel.SetOnCopy([&copied](const std::string& text) { copied = text; });
+    fixture.AgentSays("```cpp\nint x = 1;\n```");
+    fixture.Paint();
+
+    int header = -1;
+    int code   = -1;
+    for (int y = 1; y < kHeight - 1; ++y) {
+        if (fixture.RowText(y).find("⧉ copy") != std::string::npos) {
+            header = y;
+        }
+        if (fixture.RowText(y) == "int x = 1;") {
+            code = y;
+        }
+    }
+    REQUIRE(header >= 0);
+    REQUIRE(code >= 0);
+    REQUIRE(fixture.screen.PixelAt(0, code).background_color == fixture.theme.documentHighlightBackground);
+    REQUIRE(fixture.screen.PixelAt(0, code).foreground_color != fixture.theme.borderAccent.foreground);
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Mouse(1, header, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(copied == "int x = 1;");
+}
+
+TEST_CASE("AcpPanel's M-w copies a reply picked from the transcript", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    std::string copied;
+    fixture.panel.SetOnCopy([&copied](const std::string& text) { copied = text; });
+    fixture.AgentSays("All done.");
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Alt('w')));
+    fixture.Paint();
+    REQUIRE(fixture.ContentText().find("Copy what?") != std::string::npos);
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('1')));
+    REQUIRE(copied == "All done.");
+    fixture.Paint();
+    REQUIRE(fixture.ContentText().find("copied 1 line") != std::string::npos);
+}
+
+TEST_CASE("AcpPanel's C-c C-f toggles following the agent", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    REQUIRE_FALSE(ned::editor::acp::GetAcpFollowAgent());
+    fixture.panel.OnEvent(ned::ui::test::Ctrl('c'));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Ctrl('f')));
+    REQUIRE(ned::editor::acp::GetAcpFollowAgent());
+    fixture.Paint();
+    REQUIRE(fixture.ContentText().find("⇢ follow") != std::string::npos);
+    fixture.panel.OnEvent(ned::ui::test::Ctrl('c'));
+    fixture.panel.OnEvent(ned::ui::test::Ctrl('f'));
+    REQUIRE_FALSE(ned::editor::acp::GetAcpFollowAgent());
+}
+
+TEST_CASE("AcpPanel's C-v attaches a clipboard image to the next prompt", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code", Json::object(), {{"agentCapabilities", {{"promptCapabilities", {{"image", true}}}}}});
+    fixture.panel.SetClipboardSource([] { return std::optional<ned::editor::ClipboardImage>({.mimeType = "image/png", .bytes = "png!"}); },
+                                     [] { return std::optional<std::string>(); });
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Ctrl('v')));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Ctrl('v')));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 2).starts_with("▣ image 1 (png, 1 KB) · image 2"));
+
+    // Backspace at the composer's start takes the last one back.
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Backspace()));
+    Type(fixture, "see");
+    fixture.panel.OnEvent(ned::ui::test::Return());
+    const Json prompt = fixture.reader.Next()["params"]["prompt"];
+    REQUIRE(prompt.size() == 2);
+    REQUIRE(prompt[0]["text"] == "see");
+    REQUIRE(prompt[1]["type"] == "image");
+    REQUIRE(prompt[1]["data"] == "cG5nIQ==");
+    fixture.Paint();
+    REQUIRE(fixture.ContentText().find("▣") == std::string::npos);
+}
+
+TEST_CASE("AcpPanel's C-v refuses an image the agent can't take, and pastes text otherwise", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    bool hasImage = true;
+    fixture.panel.SetClipboardSource(
+        [&hasImage] {
+            return hasImage ? std::optional<ned::editor::ClipboardImage>({.mimeType = "image/png", .bytes = "png!"}) : std::nullopt;
+        },
+        [] { return std::optional<std::string>("pasted\r\ntext"); });
+    fixture.panel.OnEvent(ned::ui::test::Ctrl('v'));
+    fixture.Paint();
+    REQUIRE(fixture.ContentText().find("this agent doesn't accept images") != std::string::npos);
+
+    hasImage = false;
+    fixture.panel.OnEvent(ned::ui::test::Ctrl('v'));
+    fixture.panel.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.reader.Next()["params"]["prompt"][0]["text"] == "pasted\ntext");
+}
+
+TEST_CASE("AcpPanel hands C-c and C-x sequences it doesn't bind to the editor's keymap", "[AcpPanel]") {
+    Fixture                            fixture;
+    std::vector<ned::editor::KeyChord> forwarded;
+    std::size_t                        sequenceLength = 0; // how many chords the fake keymap's sequence takes
+    fixture.panel.SetOnForwardChord([&](const ned::editor::KeyChord& chord) {
+        forwarded.push_back(chord);
+        return forwarded.size() < sequenceLength;
+    });
+
+    sequenceLength = 3; // C-c A s
+    fixture.panel.OnEvent(ned::ui::test::Ctrl('c'));
+    fixture.panel.OnEvent(ned::ui::test::Character('A'));
+    fixture.panel.OnEvent(ned::ui::test::Character('s'));
+    REQUIRE(forwarded.size() == 3);
+    REQUIRE(forwarded[0].Control);
+    REQUIRE(forwarded[0].Codepoint == U'c');
+    REQUIRE(forwarded[2].Codepoint == U's');
+
+    forwarded.clear();
+    sequenceLength = 2; // C-x o
+    fixture.panel.OnEvent(ned::ui::test::Ctrl('x'));
+    fixture.panel.OnEvent(ned::ui::test::Character('o'));
+    REQUIRE(forwarded.size() == 2);
+
+    // Once the sequence is done, keys type again.
+    fixture.panel.OnEvent(ned::ui::test::Character('z'));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1) == "Prompt: z");
+    REQUIRE(forwarded.size() == 2);
+}

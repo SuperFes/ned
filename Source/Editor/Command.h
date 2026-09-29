@@ -999,6 +999,7 @@ enum class InteractiveRequest { None,
                                 AcpSetModel,
                                 AcpSetOption,
                                 AcpResumeSession,
+                                AcpCopy,
                                 // The ACP compose buffer's C-c C-c / C-c C-k -- see
                                 // Editor/Acp/Compose.h.
                                 AcpComposeFinish,

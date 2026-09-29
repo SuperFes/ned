@@ -1899,6 +1899,20 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     acpPanel.SetOnOpenLocation([wm = windowManager.get()](const std::filesystem::path& path, std::size_t line) {
         wm->RequestVisitLocation(path, line);
     });
+    // Following only moves the editor while the panel has focus -- never a
+    // buffer someone is typing in.
+    acpManager.SetOnToolLocation([wm = windowManager.get(), &acpPanel](const ned::editor::acp::Manager::ToolLocation& location) {
+        std::error_code error;
+        if (!ned::editor::acp::GetAcpFollowAgent() || !acpPanel.Focused() || !std::filesystem::is_regular_file(location.path, error)) {
+            return;
+        }
+        wm->RequestVisitLocation(location.path, location.line ? *location.line + 1 : 1);
+    });
+    acpPanel.SetOnForwardChord([wm = windowManager.get()](const ned::editor::KeyChord& chord) { return wm->DispatchGlobalChord(chord); });
+    acpPanel.SetOnCopy([&killRing](const std::string& text) {
+        killRing.Kill(text);
+        ned::editor::CopyToSystemClipboard(text);
+    });
     // ACP round-1-live-validation follow-up: lets a pending permission
     // request resolve inside this panel instead of the focused pane's echo
     // area whenever the panel itself has focus -- see

@@ -267,6 +267,10 @@ class BufferView : public Widget {
     // here whichever widget currently holds focus, which is what lets it
     // dismiss a panel that has taken the keyboard away from this pane.
     bool HandleChord(const editor::KeyChord& chord);
+    // Whether the keymap is partway through a multi-chord sequence.
+    [[nodiscard]] bool KeySequencePending() const;
+    // Whether a prompt (minibuffer, confirmation, picker) is taking keys.
+    [[nodiscard]] bool Prompting() const;
 
     // debug-panel: starts a one-line text prompt on this pane whose result
     // goes straight back to `onAccept` -- the debug panel has no minibuffer

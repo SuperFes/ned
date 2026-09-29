@@ -139,6 +139,24 @@ void CopyToSystemClipboard(std::string_view text);
 // it just for being large.
 [[nodiscard]] std::optional<std::string> PasteFromPrimarySelection(std::chrono::milliseconds readTimeout = SubprocessReadTimeoutMs());
 
+// An image on the system clipboard, as raw bytes.
+struct ClipboardImage {
+    std::string mimeType;
+    std::string bytes;
+};
+
+// The image type to ask the clipboard for, given the newline-separated
+// types it offers (wl-paste --list-types, xclip's TARGETS): PNG first,
+// then any other image/* type. nullopt when it offers no image.
+[[nodiscard]] std::optional<std::string> PreferredImageMimeType(std::string_view offeredTypes);
+
+// Reads an image off the system clipboard: wl-paste on Wayland, xclip on
+// X11 -- the tools that can list and fetch clipboard types -- following
+// whichever of them ResolvedClipboardPasteCommand() resolves to.
+// nullopt when there's no image, no such tool, or ClipboardEnabled() is
+// false. Same hang protection as PasteFromSystemClipboard.
+[[nodiscard]] std::optional<ClipboardImage> PasteImageFromSystemClipboard(std::chrono::milliseconds readTimeout = SubprocessReadTimeoutMs());
+
 // Exposed for testing: the pure OSC 52 escape-sequence construction, no
 // I/O. wrapForTmux
 // applies tmux's DCS passthrough envelope (doubling every literal ESC byte

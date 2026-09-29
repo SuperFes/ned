@@ -11,6 +11,7 @@ namespace {
     int          g_sizePercent = 30;
     ToolCallDisplay g_toolCalls   = ToolCallDisplay::Collapsed;
     ThinkingDisplay g_thinking    = ThinkingDisplay::Collapsed;
+    bool            g_followAgent = false;
 } // namespace
 
 void SetAcpPanelDock(const std::string& side) {
@@ -70,6 +71,16 @@ void SetAcpThinkingDisplay(const std::string& display) {
 ThinkingDisplay GetAcpThinkingDisplay() {
     const std::lock_guard<std::mutex> lock(g_configMutex);
     return g_thinking;
+}
+
+void SetAcpFollowAgent(bool follow) {
+    const std::lock_guard<std::mutex> lock(g_configMutex);
+    g_followAgent = follow;
+}
+
+bool GetAcpFollowAgent() {
+    const std::lock_guard<std::mutex> lock(g_configMutex);
+    return g_followAgent;
 }
 
 } // namespace ned::editor::acp

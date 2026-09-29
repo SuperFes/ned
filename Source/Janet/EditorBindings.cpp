@@ -1129,6 +1129,10 @@ namespace {
         editor::acp::SetAcpThinkingDisplay(display);
     }
 
+    void NedSetAcpFollowAgent(bool follow) {
+        editor::acp::SetAcpFollowAgent(follow);
+    }
+
     void NedSetAcpNotifyCommand(std::vector<std::string> argv) {
         editor::acp::SetAcpNotifyCommand(std::move(argv));
     }
@@ -2589,6 +2593,10 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-acp-thinking",
         "How the ACP panel shows the agent's thinking: \"collapsed\" (default) -- a one-line summary, click or C-o "
         "to read it -- \"expanded\", or \"hidden\". Any other value is ignored.");
+    env.Register<&NedSetAcpFollowAgent>(
+        "ned", "set-acp-follow-agent",
+        "Whether the editor follows the ACP agent (default false): while the ACP panel has focus, each file a tool "
+        "call reads or edits opens in the editor at the line it names. C-c C-f in the panel toggles it.");
     env.Register<&NedSetAcpPanelSizePercent>(
         "ned", "set-acp-panel-size-percent",
         "Set how much of the screen the ACP chat panel covers, as a percentage (default 30, clamped to 15-70) -- "

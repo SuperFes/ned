@@ -1104,18 +1104,31 @@ void WindowManager::RequestVcsPanelAction(VcsPanelAction action) {
     }
 }
 
-void WindowManager::DispatchGlobalChord(const editor::KeyChord& chord) {
+bool WindowManager::DispatchGlobalChord(const editor::KeyChord& chord) {
     // The focused pane when the editor has focus; otherwise the first leaf,
     // because the whole point of a global chord is that it works while some
     // panel owns the keyboard -- and the command it runs (hiding that
     // panel, say) still needs a pane to run against.
-    Pane* pane = FocusedPane();
-    if (pane == nullptr && !Leaves().empty()) {
-        pane = Leaves().front();
-    }
-    if (pane != nullptr) {
+    auto target = [this] {
+        Pane* pane = FocusedPane();
+        return pane == nullptr && !Leaves().empty() ? Leaves().front() : pane;
+    };
+    if (Pane* pane = target()) {
         pane->Buffer().HandleChord(chord);
     }
+    // Looked up again: the command may have closed that pane.
+    Pane* after = target();
+    if (after == nullptr) {
+        return false;
+    }
+    if (after->Buffer().KeySequencePending()) {
+        return true;
+    }
+    // A prompt the chord opened needs the keyboard the panel was holding.
+    if (after->Buffer().Prompting()) {
+        TakeFocus();
+    }
+    return false;
 }
 
 void WindowManager::RequestVisitLocation(const std::filesystem::path& path, std::size_t line) {

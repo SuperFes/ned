@@ -12,6 +12,7 @@
 #include <system_error>
 
 #include "Acp/Compose.h"
+#include "Acp/PanelConfig.h"
 #include "AutoFormatOnSave.h"
 #include "AutoPair.h"
 #include "BlankLineCleanup.h"
@@ -3998,6 +3999,19 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::AcpResumeSession;
                       });
+    registry.Register("acp-copy", "Copy one of the ACP agent's recent replies, or a code block from one, to the kill ring and clipboard.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpCopy;
+                      });
+    registry.Register("acp-toggle-follow",
+                      "Toggle following the ACP agent: while the ACP panel has focus, open each file its tool calls read or edit.",
+                      [](CommandContext& context) {
+                          const bool follow = !acp::GetAcpFollowAgent();
+                          acp::SetAcpFollowAgent(follow);
+                          if (context.message) {
+                              *context.message = follow ? "Following the ACP agent" : "Not following the ACP agent";
+                          }
+                      });
 
     // VCS blame gutter follow-up: same "just set interactiveRequest" shape
     // as lsp-show-log/run-task above -- BufferView owns the actual
@@ -5227,6 +5241,8 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c A M"), "acp-set-model");
     keymap.Bind(ParseKeySequence("C-c A o"), "acp-set-option");
     keymap.Bind(ParseKeySequence("C-c A l"), "acp-resume-session"); // "l" for load
+    keymap.Bind(ParseKeySequence("C-c A w"), "acp-copy");           // "w" for M-w
+    keymap.Bind(ParseKeySequence("C-c A f"), "acp-toggle-follow");
     keymap.Bind(ParseKeySequence("C-c c"), "acp-toggle-panel");   // "c" for chat
     // test-runner integration: "C-c T" prefix (shifted "t" for tests --
     // plain "C-c t" is toggle-terminal's own leaf binding below, so a

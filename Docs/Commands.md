@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-344 commands.
+346 commands.
 
 ## `acp-compose-abort`
 
@@ -17,6 +17,12 @@ Close *acp compose* without sending it (bound C-c C-k in *acp compose*).
 ## `acp-compose-finish`
 
 Send the prompt being composed to the ACP agent (bound C-c C-c in *acp compose*).
+
+## `acp-copy`
+
+Key: `C-c A w`
+
+Copy one of the ACP agent's recent replies, or a code block from one, to the kill ring and clipboard.
 
 ## `acp-resume-session`
 
@@ -65,6 +71,12 @@ Start an Agent Client Protocol (ACP) session with a configured agent, streaming 
 Key: `C-c A k`
 
 Stop the active ACP session.
+
+## `acp-toggle-follow`
+
+Key: `C-c A f`
+
+Toggle following the ACP agent: while the ACP panel has focus, open each file its tool calls read or edit.
 
 ## `acp-toggle-panel`
 

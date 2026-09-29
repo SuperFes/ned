@@ -26,6 +26,7 @@
 #include <set>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "AcpPanel/ChoicePicker.h"
@@ -36,6 +37,8 @@
 #include "Editor/Acp/Manager.h"
 #include "Editor/Acp/PanelConfig.h"
 #include "Editor/Acp/PanelPicker.h"
+#include "Editor/Clipboard.h"
+#include "Editor/Injection.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/MinibufferPrompt.h"
 #include "Theme.h"
@@ -97,6 +100,18 @@ class AcpPanel : public Widget {
     // the file in an editor pane. `line` is 1-based.
     void SetOnOpenLocation(std::function<void(const std::filesystem::path& path, std::size_t line)> onOpenLocation);
 
+    // Where copied text goes: a copy-button click or the copy picker.
+    void SetOnCopy(std::function<void(const std::string& text)> onCopy);
+
+    // Runs a chord through the editor's keymap, returning whether it left a
+    // key sequence waiting for more. C-c and C-x sequences the panel doesn't
+    // handle itself go there (C-c c closing the panel, C-x o, ...).
+    void SetOnForwardChord(std::function<bool(const editor::KeyChord& chord)> forward);
+
+    // Where C-v reads the clipboard from; the system clipboard when unset.
+    void SetClipboardSource(std::function<std::optional<editor::ClipboardImage>()> image,
+                            std::function<std::optional<std::string>()>            text);
+
     // C-c ' hands the composer's text to this (main.cpp: WindowManager::
     // RequestAcpCompose) to continue in a full editing buffer; sending from
     // there submits it through the composer, cancelling refocuses the panel
@@ -127,6 +142,9 @@ class AcpPanel : public Widget {
     // main.cpp's SetOnAcpPickerRequest wiring calls this after
     // showing/focusing the panel. A no-op if no Manager is set.
     void OpenPicker(editor::acp::PanelPicker picker);
+
+    // Flips ned/set-acp-follow-agent, confirming on the status row.
+    void ToggleFollowAgent();
 
     // ACP chat-feel round 2 -- panel resize/minimize follow-up. Collapsed()
     // shrinks the panel to a thin title-only strip (ProjectSidebar's own
@@ -196,6 +214,12 @@ class AcpPanel : public Widget {
     // relative to the current top row.
     void                                   JumpToPrompt(int direction);
     [[nodiscard]] Brush                    BrushForStyle(DisplayStyle style) const;
+    [[nodiscard]] Brush                              SyntaxBrush(editor::SyntaxClass cls, editor::CaptureId captureId) const;
+    [[nodiscard]] std::vector<editor::HighlightSpan> HighlightCode(std::string_view language, std::string_view code);
+    void                                             Copy(const std::string& text);
+    void                                             ShowNotice(std::string notice);
+    void                                             PasteFromClipboard();
+    [[nodiscard]] std::string                        PendingImagesLine() const;
     [[nodiscard]] bool                     CloseButtonAt(Point local) const;
     [[nodiscard]] bool                     MinimizeButtonAt(Point local) const;
     void                                   PaintCollapsedStrip(Canvas& canvas, int width, int height) const;
@@ -356,13 +380,37 @@ class AcpPanel : public Widget {
     editor::acp::ToolCallDisplay transcriptRowsToolCalls_      = editor::acp::ToolCallDisplay::Collapsed;
     editor::acp::ThinkingDisplay transcriptRowsThinking_       = editor::acp::ThinkingDisplay::Collapsed;
     std::size_t                  lastTranscriptSize_           = 0;
+    long long                    transcriptRowsTick_           = -1;
 
     std::function<void(const std::filesystem::path&, std::size_t)>  onOpenLocation_;
     std::function<void(const std::string&, const std::string&)>     desktopNotifier_;
     std::function<void(std::string, editor::acp::ComposeCallbacks)> onComposeRequest_;
     std::function<void()>                                           onRefocusRequest_;
+    std::function<void(const std::string&)>                         onCopy_;
+    std::function<std::optional<editor::ClipboardImage>()>          clipboardImage_;
+    std::function<std::optional<std::string>()>                     clipboardText_;
+
+    // Images pasted into the composer, sent with the next prompt.
+    std::vector<editor::acp::Manager::PromptAttachment> pendingImages_;
+    std::size_t                                         imagesPasted_ = 0;
+
+    // A short confirmation on the status row ("copied 3 lines"), until it expires.
+    std::string                           notice_;
+    std::chrono::steady_clock::time_point noticeUntil_;
+
+    // Fenced-code highlighting: each fence tag's highlighter, and each
+    // block's spans, so re-formatting a streaming transcript re-highlights
+    // only the block still growing.
+    editor::EmbeddedLanguageCache                                       codeLanguages_;
+    std::unordered_map<std::string, std::vector<editor::HighlightSpan>> codeHighlights_;
+    mutable std::unordered_map<std::uint32_t, Brush>                    syntaxBrushes_;
+    mutable std::size_t                                                 syntaxBrushesGeneration_ = static_cast<std::size_t>(-1);
+    mutable std::string                                                 syntaxBrushesTheme_;
     // C-c was pressed: the next chord completes a C-c sequence.
-    bool controlCPending_ = false;
+    bool                                         controlCPending_ = false;
+    editor::KeyChord                             controlCChord_{};
+    std::function<bool(const editor::KeyChord&)> forwardChord_;
+    bool                                         forwardingSequence_ = false; // the rest of a forwarded sequence goes too
     bool attention_       = false; // see NoteAttention
 
     std::optional<std::size_t> historyIndex_;

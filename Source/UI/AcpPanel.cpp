@@ -12,7 +12,9 @@
 #include "Editor/FuzzyMatch.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Tree.h"
+#include "Editor/SyntaxTheme.h"
 #include "KeyTranslation.h"
+#include "Text/Base64.h"
 #include "Text/DisplayWidth.h"
 #include "Text/Utf8.h"
 
@@ -238,6 +240,17 @@ void AcpPanel::OpenPicker(editor::acp::PanelPicker picker) {
             });
             break;
         }
+        case editor::acp::PanelPicker::Copy: {
+            constexpr std::size_t                kMaxReplies = 10;
+            std::vector<acppanel::CopyCandidate> candidates  = acppanel::CopyCandidates(acpManager_->Transcript(), kMaxReplies);
+            std::vector<acppanel::ChoiceItem>    items;
+            for (const acppanel::CopyCandidate& candidate : candidates) {
+                items.push_back({.label = candidate.label, .detail = candidate.detail});
+            }
+            picker_.emplace(items.empty() ? "Nothing to copy yet" : "Copy what?", std::move(items),
+                            [this, candidates = std::move(candidates)](std::size_t index) { Copy(candidates[index].text); });
+            break;
+        }
     }
 }
 
@@ -265,8 +278,9 @@ acppanel::ChoicePicker AcpPanel::ConfigValuePicker(const editor::acp::Manager::C
 }
 
 std::pair<std::string, std::string> AcpPanel::StatusLine() const {
+    const bool noticeShowing = !notice_.empty() && std::chrono::steady_clock::now() < noticeUntil_;
     if (!acpManager_ || acpManager_->State() == editor::acp::Manager::SessionState::Inactive) {
-        return {};
+        return noticeShowing ? std::pair<std::string, std::string>{std::string(), notice_} : std::pair<std::string, std::string>{};
     }
     using Manager   = editor::acp::Manager;
     auto choiceName = [](const Manager::ConfigOption* option) -> std::string {
@@ -298,8 +312,14 @@ std::pair<std::string, std::string> AcpPanel::StatusLine() const {
     add(left, mode.empty() ? std::string() : "⏵ " + mode);
     add(left, choiceName(acpManager_->ConfigOptionByCategory("model")));
     add(left, choiceName(acpManager_->ConfigOptionByCategory("thought_level")));
+    if (editor::acp::GetAcpFollowAgent()) {
+        add(left, "⇢ follow");
+    }
 
     std::string right;
+    if (noticeShowing) {
+        add(right, notice_);
+    }
     if (const auto started = acpManager_->PromptStartedAt()) {
         static constexpr std::string_view kFrames[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"};
         const auto                        elapsed   = std::chrono::steady_clock::now() - *started;
@@ -414,6 +434,135 @@ Brush AcpPanel::BrushForStyle(DisplayStyle style) const {
     return Brush{.background = theme_.background, .foreground = theme_.defaultForeground};
 }
 
+Brush AcpPanel::SyntaxBrush(editor::SyntaxClass cls, editor::CaptureId captureId) const {
+    // BufferView::ResolvedBrush's cache: flushed on any syntax-style change or theme switch.
+    const std::size_t generation = editor::SyntaxThemeGeneration();
+    if (generation != syntaxBrushesGeneration_ || theme_.name != syntaxBrushesTheme_) {
+        syntaxBrushes_.clear();
+        syntaxBrushesGeneration_ = generation;
+        syntaxBrushesTheme_      = theme_.name;
+    }
+    const std::uint32_t key = (static_cast<std::uint32_t>(cls) << 16) | captureId;
+    if (const auto it = syntaxBrushes_.find(key); it != syntaxBrushes_.end()) {
+        return it->second;
+    }
+    return syntaxBrushes_.emplace(key, theme_.BrushFor(cls, captureId)).first->second;
+}
+
+std::vector<editor::HighlightSpan> AcpPanel::HighlightCode(std::string_view language, std::string_view code) {
+    std::string key = std::string(language) + '\0' + std::string(code);
+    if (const auto it = codeHighlights_.find(key); it != codeHighlights_.end()) {
+        return it->second;
+    }
+    std::vector<editor::HighlightSpan> spans;
+    if (const editor::HighlightFunction* highlight = editor::ResolveEmbeddedLanguageHighlight(language, codeLanguages_)) {
+        try {
+            spans = (*highlight)(code, editor::HighlightWindow{});
+        }
+        catch (const std::exception&) {
+            spans.clear(); // unhighlighted code still reads as code
+        }
+    }
+    // Every partial version of a streaming block lands here once; start
+    // over rather than keep them all.
+    constexpr std::size_t kMaxHighlightedBlocks = 256;
+    if (codeHighlights_.size() >= kMaxHighlightedBlocks) {
+        codeHighlights_.clear();
+    }
+    codeHighlights_.emplace(std::move(key), spans);
+    return spans;
+}
+
+void AcpPanel::SetOnCopy(std::function<void(const std::string&)> onCopy) {
+    onCopy_ = std::move(onCopy);
+}
+
+void AcpPanel::Copy(const std::string& text) {
+    if (!onCopy_) {
+        return;
+    }
+    onCopy_(text);
+    const std::size_t lines = static_cast<std::size_t>(std::count(text.begin(), text.end(), '\n')) + 1;
+    ShowNotice("copied " + std::to_string(lines) + (lines == 1 ? " line" : " lines"));
+}
+
+void AcpPanel::SetOnForwardChord(std::function<bool(const editor::KeyChord&)> forward) {
+    forwardChord_ = std::move(forward);
+}
+
+void AcpPanel::SetClipboardSource(std::function<std::optional<editor::ClipboardImage>()> image,
+                                  std::function<std::optional<std::string>()>            text) {
+    clipboardImage_ = std::move(image);
+    clipboardText_  = std::move(text);
+}
+
+namespace {
+
+    std::string ByteSizeLabel(std::size_t bytes) {
+        char label[32];
+        if (bytes >= 1024 * 1024) {
+            std::snprintf(label, sizeof(label), "%.1f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
+        }
+        else {
+            std::snprintf(label, sizeof(label), "%zu KB", (bytes + 1023) / 1024);
+        }
+        return label;
+    }
+
+} // namespace
+
+void AcpPanel::PasteFromClipboard() {
+    const std::optional<editor::ClipboardImage> image = clipboardImage_ ? clipboardImage_() : editor::PasteImageFromSystemClipboard();
+    if (image) {
+        // Anthropic's API refuses an image over 5 MB once encoded.
+        constexpr std::size_t kMaxImageBytes = 3 * 1024 * 1024 + 768 * 1024;
+        if (!acpManager_ || !acpManager_->SupportsImages()) {
+            ShowNotice("this agent doesn't accept images");
+        }
+        else if (image->bytes.size() > kMaxImageBytes) {
+            ShowNotice("image too large (" + ByteSizeLabel(image->bytes.size()) + ")");
+        }
+        else {
+            const std::string subtype = image->mimeType.substr(image->mimeType.find('/') + 1);
+            const std::string name    = "image " + std::to_string(++imagesPasted_) + " (" + subtype + ", " + ByteSizeLabel(image->bytes.size()) + ")";
+            pendingImages_.push_back({.name = name, .mimeType = image->mimeType, .text = text::Base64Encode(image->bytes), .image = true});
+            ShowNotice("attached " + name);
+        }
+        return;
+    }
+    const std::optional<std::string> pasted = clipboardText_ ? clipboardText_() : editor::PasteFromSystemClipboard();
+    if (!pasted || pasted->empty()) {
+        ShowNotice("nothing to paste");
+        return;
+    }
+    for (std::size_t pos = 0; pos < pasted->size(); pos = text::NextCodepointBoundary(*pasted, pos)) {
+        const char32_t codepoint = text::DecodeCodepointUtf8(*pasted, pos);
+        if (codepoint != U'\r') {
+            prompt_.InsertChar(codepoint);
+        }
+    }
+    RefreshMentionState();
+}
+
+std::string AcpPanel::PendingImagesLine() const {
+    std::string line;
+    for (const editor::acp::Manager::PromptAttachment& image : pendingImages_) {
+        line += (line.empty() ? "▣ " : " · ") + image.name;
+    }
+    return line;
+}
+
+void AcpPanel::ToggleFollowAgent() {
+    const bool follow = !editor::acp::GetAcpFollowAgent();
+    editor::acp::SetAcpFollowAgent(follow);
+    ShowNotice(follow ? "following the agent" : "not following the agent");
+}
+
+void AcpPanel::ShowNotice(std::string notice) {
+    notice_      = std::move(notice);
+    noticeUntil_ = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+}
+
 void AcpPanel::PaintStyledRow(Canvas& canvas, int x, int y, std::string_view text, const std::vector<InlineSpan>& spans,
                               const Brush& baseBrush, int maxColumns) const {
     if (spans.empty() || maxColumns <= 0) {
@@ -452,6 +601,10 @@ void AcpPanel::PaintStyledRow(Canvas& canvas, int x, int y, std::string_view tex
         const int spanEnd = std::min(span.startColumn + span.columnCount, totalColumns);
         if (col < spanEnd && painted < maxColumns) {
             Brush spanBrush = baseBrush;
+            if (span.syntaxClass) {
+                spanBrush            = SyntaxBrush(*span.syntaxClass, span.captureId);
+                spanBrush.background = baseBrush.background;
+            }
             if (span.code) {
                 spanBrush.background = theme_.documentHighlightBackground;
             }
@@ -487,14 +640,26 @@ const std::vector<acppanel::PhysicalLine>& AcpPanel::TranscriptRows(int width) {
     const bool                         pending   = acpManager_->PendingPermissionPrompt().has_value();
     const editor::acp::ToolCallDisplay toolCalls = editor::acp::GetAcpToolCallDisplay();
     const editor::acp::ThinkingDisplay thinking  = editor::acp::GetAcpThinkingDisplay();
+    // A running tool call's elapsed time changes the rows once a second.
+    const auto now          = std::chrono::steady_clock::now();
+    bool       toolsRunning = false;
+    for (auto it = transcript.rbegin(); it != transcript.rend() && it->kind != editor::acp::Manager::TranscriptEntry::Kind::UserMessage; ++it) {
+        toolsRunning = toolsRunning || (it->startedAt && !it->finishedAt);
+    }
+    const long long tick = toolsRunning ? std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count() : -1;
     if (acpManager_->TranscriptGeneration() != transcriptRowsGeneration_ || width != transcriptRowsWidth_ ||
         pending != transcriptRowsPending_ || viewGeneration_ != transcriptRowsViewGeneration_ || toolCalls != transcriptRowsToolCalls_ ||
-        thinking != transcriptRowsThinking_) {
+        thinking != transcriptRowsThinking_ || tick != transcriptRowsTick_) {
         transcriptLines_              = acppanel::FormatTranscript(transcript, acpManager_->PendingPermissionPrompt(),
                                                                    {.width        = width,
                                                                     .expanded     = [this](std::size_t index) { return EntryExpanded(index); },
                                                                     .hideThinking = thinking == editor::acp::ThinkingDisplay::Hidden,
-                                                                    .projectRoot  = editor::ProjectRoot()});
+                                                                    .projectRoot  = editor::ProjectRoot(),
+                                                                    .highlightCode =
+                                                                        [this](std::string_view language, std::string_view code) {
+                                                               return HighlightCode(language, code);
+                                                                        },
+                                                                    .now = now});
         transcriptRows_               = acppanel::WrapDisplayLines(transcriptLines_, width);
         transcriptRowsGeneration_     = acpManager_->TranscriptGeneration();
         transcriptRowsWidth_          = width;
@@ -502,6 +667,7 @@ const std::vector<acppanel::PhysicalLine>& AcpPanel::TranscriptRows(int width) {
         transcriptRowsViewGeneration_ = viewGeneration_;
         transcriptRowsToolCalls_      = toolCalls;
         transcriptRowsThinking_       = thinking;
+        transcriptRowsTick_           = tick;
     }
     return transcriptRows_;
 }
@@ -546,6 +712,9 @@ bool AcpPanel::ActivateRowAt(int y) {
                 onOpenLocation_(line.location->path, line.location->line.value_or(1));
             }
             return line.location.has_value();
+        case acppanel::LineAction::Copy:
+            Copy(line.copyText);
+            return true;
         case acppanel::LineAction::None:
             break;
     }
@@ -738,11 +907,13 @@ bool AcpPanel::MoveComposerVertically(int direction) {
 }
 
 void AcpPanel::SubmitComposer(bool steer) {
-    if (!acpManager_ || prompt_.Text().empty()) {
+    if (!acpManager_ || (prompt_.Text().empty() && pendingImages_.empty())) {
         return;
     }
     editor::acp::Manager::QueuedPrompt prompt{.text = prompt_.Text(), .draft = prompt_.Text()};
     prompt.attachments = ResolveMentionAttachments(prompt.text);
+    prompt.attachments.insert(prompt.attachments.end(), pendingImages_.begin(), pendingImages_.end());
+    pendingImages_.clear();
     prompt_.SetText("");
     historyIndex_.reset();
     historyDraft_.clear();
@@ -1122,13 +1293,15 @@ void AcpPanel::Paint(Canvas canvas) {
 
     const auto [statusLeft, statusRight] = StatusLine();
     const int statusRows                 = (!statusLeft.empty() || !statusRight.empty()) && height - titleRows - allottedInputRows >= 2 ? 1 : 0;
+    // Pasted images wait on their own row, right above the composer.
+    const int imageRows = !pendingImages_.empty() && height - titleRows - allottedInputRows - statusRows >= 2 ? 1 : 0;
     // Queued prompts sit between the transcript and the status row, one row
     // each, up to a few -- while leaving the transcript at least a row.
     constexpr int     kMaxQueuedRows = 3;
     const std::size_t queued         = acpManager_ ? acpManager_->QueuedPrompts().size() : 0;
     const int         queuedRows     = std::clamp(std::min(static_cast<int>(queued), kMaxQueuedRows), 0,
-                                                  std::max(0, height - titleRows - allottedInputRows - statusRows - 1));
-    const int         contentRows    = std::max(0, height - titleRows - allottedInputRows - statusRows - queuedRows);
+                                                  std::max(0, height - titleRows - allottedInputRows - statusRows - imageRows - 1));
+    const int         contentRows    = std::max(0, height - titleRows - allottedInputRows - statusRows - imageRows - queuedRows);
     for (int row = 0; row < queuedRows; ++row) {
         const bool  overflow = row == queuedRows - 1 && static_cast<int>(queued) > queuedRows;
         std::string text     = overflow ? "⧗ +" + std::to_string(queued - static_cast<std::size_t>(row)) + " more queued"
@@ -1139,6 +1312,9 @@ void AcpPanel::Paint(Canvas canvas) {
     lastViewportRows_     = contentRows;
     lastTitleRows_        = titleRows;
     lastShowedTranscript_ = contentRows > 0 && !picker_ && !mentionPickerOpen_;
+    if (imageRows > 0) {
+        PaintUtf8Row(canvas, 0, titleRows + contentRows + queuedRows + statusRows, PendingImagesLine(), BrushForStyle(DisplayStyle::Hint), width);
+    }
     if (statusRows > 0) {
         const int   y     = titleRows + contentRows + queuedRows;
         const Brush brush = BrushForStyle(DisplayStyle::Dim);
@@ -1375,6 +1551,10 @@ bool AcpPanel::OnEvent(const Event& event) {
     if (!chord) {
         return false;
     }
+    if (forwardingSequence_) {
+        forwardingSequence_ = forwardChord_ && forwardChord_(*chord);
+        return true;
+    }
 
     // ACP round-1-live-validation follow-up: while a permission prompt is
     // pending, this panel resolves it directly rather than leaving
@@ -1406,12 +1586,16 @@ bool AcpPanel::OnEvent(const Event& event) {
 
     // C-c prefix: C-c ' continues the composer's text in a full buffer
     // (org-edit-special's key); C-c C-s steers, for terminals that can't
-    // tell C-RET from RET. Any other second chord drops the prefix and is
-    // handled as usual.
+    // tell C-RET from RET; C-c C-f toggles following the agent. Any other
+    // sequence belongs to the editor's keymap, as do C-x sequences.
     if (controlCPending_) {
         controlCPending_ = false;
         if (chord->Control && !chord->Meta && chord->Codepoint == U's') {
             SubmitComposer(true);
+            return true;
+        }
+        if (chord->Control && !chord->Meta && chord->Codepoint == U'f') {
+            ToggleFollowAgent();
             return true;
         }
         if (IsPlainCharacter(*chord) && chord->Codepoint == U'\'' && onComposeRequest_) {
@@ -1433,9 +1617,19 @@ bool AcpPanel::OnEvent(const Event& event) {
                                               });
             return true;
         }
+        if (forwardChord_) {
+            forwardChord_(controlCChord_);
+            forwardingSequence_ = forwardChord_(*chord);
+            return true;
+        }
     }
     else if (chord->Control && !chord->Meta && chord->Codepoint == U'c') {
         controlCPending_ = true;
+        controlCChord_   = *chord;
+        return true;
+    }
+    else if (chord->Control && !chord->Meta && chord->Codepoint == U'x' && forwardChord_) {
+        forwardingSequence_ = forwardChord_(*chord);
         return true;
     }
 
@@ -1458,6 +1652,16 @@ bool AcpPanel::OnEvent(const Event& event) {
     }
     if (chord->Meta && !chord->Control && chord->Codepoint == U'p') {
         OpenPicker(editor::acp::PanelPicker::Model);
+        return true;
+    }
+    // C-v pastes an image as an attachment (Claude Code's key), or text.
+    if (chord->Control && !chord->Meta && chord->Codepoint == U'v') {
+        PasteFromClipboard();
+        return true;
+    }
+    // M-w: the composer has no region to copy, so it copies from the transcript.
+    if (chord->Meta && !chord->Control && chord->Codepoint == U'w') {
+        OpenPicker(editor::acp::PanelPicker::Copy);
         return true;
     }
 
@@ -1560,6 +1764,12 @@ bool AcpPanel::OnEvent(const Event& event) {
         }
     }
     if (chord->Special == editor::SpecialKey::Backspace) {
+        // At the very start of the composer it takes back the last pasted image.
+        if (prompt_.CursorByteOffset() == 0 && !pendingImages_.empty()) {
+            ShowNotice("removed " + pendingImages_.back().name);
+            pendingImages_.pop_back();
+            return true;
+        }
         prompt_.DeleteBackward();
         RefreshMentionState();
         return true;

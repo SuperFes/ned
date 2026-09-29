@@ -14,6 +14,8 @@ namespace {
     // A large edit shouldn't push the rest of the transcript off a short panel.
     constexpr std::size_t kMaxDiffPreviewLines = 12;
     constexpr std::size_t kMaxToolOutputLines  = 12;
+    constexpr std::size_t kLiveOutputLines     = 3;
+    constexpr long        kShowDurationSeconds = 10;
 
     int ColumnCount(std::string_view text) {
         return text::StringColumns(text);
@@ -137,7 +139,10 @@ std::vector<InlineSpan> SpansForRow(const std::vector<InlineSpan>& spans, int ro
         const int start = std::max(span.startColumn, rowStartColumn);
         const int end   = std::min(span.startColumn + span.columnCount, rowEnd);
         if (start < end) {
-            result.push_back({.startColumn = start - rowStartColumn, .columnCount = end - start, .bold = span.bold, .code = span.code});
+            InlineSpan clipped  = span;
+            clipped.startColumn = start - rowStartColumn;
+            clipped.columnCount = end - start;
+            result.push_back(clipped);
         }
     }
     return result;
@@ -170,39 +175,207 @@ std::vector<DisplayLine> FormatDiffPreview(const std::string& oldText, const std
 
 namespace {
 
-    // Each line of `text` through ApplyInlineMarkdown, indented by `indent`.
-    // Lines inside a ``` fence are taken literally and tinted as code; the
-    // fence lines themselves are dropped.
-    std::vector<DisplayLine> FormatMarkdownLines(const std::string& text, DisplayStyle style, std::string_view indent) {
-        std::vector<DisplayLine> lines;
-        const int                shift   = ColumnCount(indent);
-        bool                     inFence = false;
-        std::size_t              start   = 0;
-        while (start <= text.size()) {
-            const std::size_t newlinePos = text.find('\n', start);
-            const std::string rawLine    = newlinePos == std::string::npos ? text.substr(start) : text.substr(start, newlinePos - start);
-            const std::size_t firstChar  = rawLine.find_first_not_of(' ');
-            if (firstChar != std::string::npos && rawLine.compare(firstChar, 3, "```") == 0) {
-                inFence = !inFence;
-            }
-            else if (inFence) {
-                const std::string code = rawLine.empty() ? std::string(" ") : rawLine;
-                lines.push_back({.text  = std::string(indent) + code,
-                                 .style = style,
-                                 .spans = {{.startColumn = shift, .columnCount = ColumnCount(code), .bold = false, .code = true}}});
-            }
-            else {
-                InlineMarkdownResult formatted = ApplyInlineMarkdown(rawLine);
-                for (InlineSpan& span : formatted.spans) {
-                    span.startColumn += shift;
-                }
-                formatted.text.insert(0, indent);
-                lines.push_back({.text = std::move(formatted.text), .style = style, .spans = std::move(formatted.spans)});
-            }
-            if (newlinePos == std::string::npos) {
+    constexpr int kCodeTabWidth = 4;
+
+    std::vector<std::string_view> SplitLines(std::string_view text) {
+        std::vector<std::string_view> lines;
+        while (true) {
+            const std::size_t newline = text.find('\n');
+            lines.push_back(text.substr(0, newline));
+            if (newline == std::string_view::npos) {
                 break;
             }
-            start = newlinePos + 1;
+            text = text.substr(newline + 1);
+        }
+        return lines;
+    }
+
+    std::string_view Trim(std::string_view text) {
+        const std::size_t first = text.find_first_not_of(" \t");
+        if (first == std::string_view::npos) {
+            return {};
+        }
+        const std::size_t last = text.find_last_not_of(" \t");
+        return text.substr(first, last - first + 1);
+    }
+
+    bool IsFence(std::string_view line) {
+        return Trim(line).starts_with("```");
+    }
+
+    // The language a fence names: its first word, without Pandoc's "{." wrapping.
+    std::string FenceLanguage(std::string_view fence) {
+        std::string_view info = Trim(Trim(fence).substr(3));
+        while (!info.empty() && (info.front() == '{' || info.front() == '.')) {
+            info.remove_prefix(1);
+        }
+        const std::size_t end = info.find_first_of(" \t,}");
+        return std::string(info.substr(0, end));
+    }
+
+    // The index just past the fenced block opening at lines[open], and the
+    // block's code.
+    std::pair<std::size_t, std::string> CollectFence(const std::vector<std::string_view>& lines, std::size_t open) {
+        std::string code;
+        std::size_t i = open + 1;
+        for (; i < lines.size() && !IsFence(lines[i]); ++i) {
+            if (i > open + 1) {
+                code += '\n';
+            }
+            code.append(lines[i]);
+        }
+        return {i < lines.size() ? i + 1 : i, std::move(code)};
+    }
+
+    // One code line's text, tabs expanded, as runs of equal highlight --
+    // each glyph taking the class of the last span covering its first byte.
+    std::vector<DisplayLine> FormatCodeBlock(std::string_view language, std::string_view code, DisplayStyle style,
+                                             std::string_view indent, const TranscriptFormatOptions& options) {
+        std::vector<editor::HighlightSpan> highlights;
+        if (options.highlightCode && !language.empty() && !code.empty()) {
+            highlights = options.highlightCode(language, code);
+        }
+        constexpr int    kNone = -1;
+        std::vector<int> classAt(code.size(), kNone);
+        for (std::size_t i = 0; i < highlights.size(); ++i) {
+            const std::size_t end = std::min(highlights[i].endByte, code.size());
+            for (std::size_t byte = std::min(highlights[i].startByte, end); byte < end; ++byte) {
+                classAt[byte] = static_cast<int>(i);
+            }
+        }
+
+        std::vector<DisplayLine> lines;
+        const int                shift     = ColumnCount(indent);
+        std::size_t              lineStart = 0;
+        while (lineStart <= code.size()) {
+            const std::size_t newline = code.find('\n', lineStart);
+            const std::size_t lineEnd = newline == std::string_view::npos ? code.size() : newline;
+
+            std::string             text(indent);
+            std::vector<InlineSpan> spans;
+            int                     column = 0;
+            auto                    emit   = [&](std::string_view glyphText, int columns, int highlight) {
+                text.append(glyphText);
+                InlineSpan span{.startColumn = shift + column, .columnCount = columns, .bold = false, .code = true};
+                if (highlight != kNone) {
+                    span.syntaxClass = highlights[static_cast<std::size_t>(highlight)].syntaxClass;
+                    span.captureId   = highlights[static_cast<std::size_t>(highlight)].captureId;
+                }
+                if (!spans.empty() && spans.back().syntaxClass == span.syntaxClass && spans.back().captureId == span.captureId) {
+                    spans.back().columnCount += columns;
+                }
+                else {
+                    spans.push_back(span);
+                }
+                column += columns;
+            };
+            for (std::size_t pos = lineStart; pos < lineEnd;) {
+                if (code[pos] == '\t') {
+                    const int columns = kCodeTabWidth - column % kCodeTabWidth;
+                    emit(std::string(static_cast<std::size_t>(columns), ' '), columns, classAt[pos]);
+                    ++pos;
+                    continue;
+                }
+                const text::Glyph glyph = text::GlyphAt(code, pos);
+                emit(code.substr(pos, glyph.byteLength), glyph.columns, classAt[pos]);
+                pos += glyph.byteLength;
+            }
+            if (column == 0) {
+                emit(" ", 1, kNone); // an empty line still shows the block's tint
+            }
+            lines.push_back({.text = std::move(text), .style = style, .spans = std::move(spans)});
+            if (newline == std::string_view::npos) {
+                break;
+            }
+            lineStart = newline + 1;
+        }
+        return lines;
+    }
+
+    DisplayLine CodeBlockHeader(const std::string& language, std::string code, std::string_view indent, int width) {
+        const std::string label = std::string(indent) + (language.empty() ? "code" : language);
+        return {.text = RightAlignMarker(label, "⧉ copy", width), .style = DisplayStyle::Dim, .action = LineAction::Copy, .copyText = std::move(code)};
+    }
+
+    bool IsTableDelimiterRow(std::string_view line) {
+        line = Trim(line);
+        return line.find('-') != std::string_view::npos && line.find_first_not_of("|:- \t") == std::string_view::npos &&
+               (line.find('|') != std::string_view::npos || line.starts_with(":-") || line.starts_with("--"));
+    }
+
+    // A table row's cells: split at each '|' outside a code span, with the
+    // outer pipes optional and "\|" standing for a literal one.
+    std::vector<std::string> SplitTableRow(std::string_view line) {
+        line = Trim(line);
+        if (line.starts_with('|')) {
+            line.remove_prefix(1);
+        }
+        if (line.ends_with('|') && !line.ends_with("\\|")) {
+            line.remove_suffix(1);
+        }
+        std::vector<std::string> cells(1);
+        bool                     inCode = false;
+        for (std::size_t i = 0; i < line.size(); ++i) {
+            const char c = line[i];
+            if (c == '\\' && i + 1 < line.size() && line[i + 1] == '|') {
+                cells.back() += '|';
+                ++i;
+            }
+            else if (c == '`') {
+                inCode = !inCode;
+                cells.back() += c;
+            }
+            else if (c == '|' && !inCode) {
+                cells.emplace_back();
+            }
+            else {
+                cells.back() += c;
+            }
+        }
+        for (std::string& cell : cells) {
+            cell = std::string(Trim(cell));
+        }
+        return cells;
+    }
+
+    // Each line of `text` through ApplyInlineMarkdown, indented by `indent`.
+    // Fenced code gets a header (its language and a copy button) and
+    // highlighting; the fence lines themselves are dropped. Tables are
+    // aligned when they fit.
+    std::vector<DisplayLine> FormatMarkdownLines(const std::string& text, DisplayStyle style, std::string_view indent,
+                                                 const TranscriptFormatOptions& options) {
+        std::vector<DisplayLine>            lines;
+        const int                           shift = ColumnCount(indent);
+        const std::vector<std::string_view> raw   = SplitLines(text);
+        for (std::size_t i = 0; i < raw.size();) {
+            if (IsFence(raw[i])) {
+                const std::string language     = FenceLanguage(raw[i]);
+                auto [next, code]              = CollectFence(raw, i);
+                std::vector<DisplayLine> block = FormatCodeBlock(language, code, style, indent, options);
+                lines.push_back(CodeBlockHeader(language, std::move(code), indent, options.width));
+                lines.insert(lines.end(), std::make_move_iterator(block.begin()), std::make_move_iterator(block.end()));
+                i = next;
+                continue;
+            }
+            if (raw[i].find('|') != std::string_view::npos && i + 1 < raw.size() && IsTableDelimiterRow(raw[i + 1])) {
+                std::size_t end = i + 2;
+                while (end < raw.size() && raw[end].find('|') != std::string_view::npos && !Trim(raw[end]).empty()) {
+                    ++end;
+                }
+                const std::vector<std::string_view> rows(raw.begin() + static_cast<std::ptrdiff_t>(i), raw.begin() + static_cast<std::ptrdiff_t>(end));
+                if (std::optional<std::vector<DisplayLine>> table = FormatTable(rows, options.width, style, indent)) {
+                    lines.insert(lines.end(), std::make_move_iterator(table->begin()), std::make_move_iterator(table->end()));
+                    i = end;
+                    continue;
+                }
+            }
+            InlineMarkdownResult formatted = ApplyInlineMarkdown(raw[i]);
+            for (InlineSpan& span : formatted.spans) {
+                span.startColumn += shift;
+            }
+            formatted.text.insert(0, indent);
+            lines.push_back({.text = std::move(formatted.text), .style = style, .spans = std::move(formatted.spans)});
+            ++i;
         }
         return lines;
     }
@@ -233,6 +406,41 @@ namespace {
         return label;
     }
 
+    // A tool's output, up to `maxLines` of it: a command's from its end,
+    // where a build's errors and a test run's summary land, anything
+    // else's from its start. `noteHidden` says what was left out.
+    void AppendOutputLines(std::vector<DisplayLine>& lines, const editor::acp::Manager::TranscriptEntry& entry, std::size_t maxLines,
+                           bool noteHidden) {
+        std::string_view output = entry.toolOutput;
+        while (!output.empty() && output.back() == '\n') {
+            output.remove_suffix(1);
+        }
+        if (output.empty()) {
+            return;
+        }
+        std::vector<std::string_view> all;
+        while (true) {
+            const std::size_t newline = output.find('\n');
+            all.push_back(output.substr(0, newline));
+            if (newline == std::string_view::npos) {
+                break;
+            }
+            output = output.substr(newline + 1);
+        }
+        const std::size_t shown = std::min(all.size(), maxLines);
+        const std::size_t first = entry.terminal ? all.size() - shown : 0;
+        if (noteHidden && entry.terminal && (first > 0 || entry.toolOutputTrimmed)) {
+            lines.push_back({.text  = entry.toolOutputTrimmed ? "    (earlier output not kept)" : "    (" + std::to_string(first) + " earlier line(s))",
+                             .style = DisplayStyle::Dim});
+        }
+        for (std::size_t i = first; i < first + shown; ++i) {
+            lines.push_back({.text = "    " + std::string(all[i]), .style = DisplayStyle::Dim});
+        }
+        if (noteHidden && !entry.terminal && all.size() > shown) {
+            lines.push_back({.text = "    (" + std::to_string(all.size() - shown) + " more line(s))", .style = DisplayStyle::Dim});
+        }
+    }
+
     std::vector<DisplayLine> FormatToolCall(const editor::acp::Manager::TranscriptEntry& entry, bool open,
                                             const TranscriptFormatOptions& options) {
         std::vector<DisplayLine> lines;
@@ -249,17 +457,31 @@ namespace {
             }
         }
         const bool           failed    = entry.status == "failed";
-        const std::string    marker    = entry.status == "completed"   ? "✓"
-                                         : failed                      ? "✗ failed"
+        const bool           running   = !failed && entry.status != "completed" && entry.status != "cancelled" && !entry.status.empty();
+        std::string          marker    = entry.status == "completed"   ? "✓"
+                                         : failed                      ? (entry.exitCode && *entry.exitCode != 0 ? "✗ exit " + std::to_string(*entry.exitCode) : "✗ failed")
                                          : entry.status == "cancelled" ? "cancelled"
                                          : entry.status.empty()        ? std::string()
                                                                        : "…";
+        if (entry.startedAt) {
+            // A running call counts up; a finished one keeps its time only
+            // when it took long enough to be worth knowing.
+            const auto end     = entry.finishedAt.value_or(options.now);
+            const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(end - *entry.startedAt).count();
+            if ((running && !entry.finishedAt && seconds >= 1) || (entry.status == "completed" && entry.finishedAt && seconds >= kShowDurationSeconds)) {
+                marker += " " + std::to_string(seconds) + "s";
+            }
+        }
         InlineMarkdownResult formatted = ApplyInlineMarkdown(header);
         lines.push_back({.text   = RightAlignMarker(formatted.text, marker, options.width),
                          .style  = failed ? DisplayStyle::Warning : DisplayStyle::Dim,
                          .spans  = std::move(formatted.spans),
                          .action = LineAction::ToggleExpand});
         if (!open) {
+            // A running command shows what it's printing.
+            if (running && !entry.finishedAt && entry.terminal) {
+                AppendOutputLines(lines, entry, kLiveOutputLines, false);
+            }
             return lines;
         }
 
@@ -276,24 +498,158 @@ namespace {
             std::vector<DisplayLine> diff = FormatDiffPreview(*entry.diffOldText, *entry.diffNewText);
             lines.insert(lines.end(), std::make_move_iterator(diff.begin()), std::make_move_iterator(diff.end()));
         }
-        if (!entry.toolOutput.empty()) {
-            std::string_view  output = entry.toolOutput;
-            const std::size_t total  = LineCount(output);
-            std::size_t       shown  = 0;
-            while (!output.empty() && shown < kMaxToolOutputLines) {
-                const std::size_t newline = output.find('\n');
-                lines.push_back({.text = "    " + std::string(output.substr(0, newline)), .style = DisplayStyle::Dim});
-                ++shown;
-                output = newline == std::string_view::npos ? std::string_view() : output.substr(newline + 1);
-            }
-            if (total > shown) {
-                lines.push_back({.text = "    (" + std::to_string(total - shown) + " more line(s))", .style = DisplayStyle::Dim});
-            }
-        }
+        AppendOutputLines(lines, entry, kMaxToolOutputLines, true);
         return lines;
     }
 
 } // namespace
+
+std::vector<CodeBlock> ExtractCodeBlocks(std::string_view markdown) {
+    std::vector<CodeBlock>              blocks;
+    const std::vector<std::string_view> lines = SplitLines(markdown);
+    for (std::size_t i = 0; i < lines.size();) {
+        if (!IsFence(lines[i])) {
+            ++i;
+            continue;
+        }
+        auto [next, code] = CollectFence(lines, i);
+        blocks.push_back({.language = FenceLanguage(lines[i]), .code = std::move(code)});
+        i = next;
+    }
+    return blocks;
+}
+
+std::optional<std::vector<DisplayLine>> FormatTable(const std::vector<std::string_view>& rows, int width, DisplayStyle style,
+                                                    std::string_view indent) {
+    if (rows.size() < 2 || !IsTableDelimiterRow(rows[1])) {
+        return std::nullopt;
+    }
+    enum class Align { Left,
+                       Center,
+                       Right };
+    const std::vector<std::string> header  = SplitTableRow(rows[0]);
+    const std::size_t              columns = header.size();
+    std::vector<Align>             aligns(columns, Align::Left);
+    {
+        const std::vector<std::string> delimiters = SplitTableRow(rows[1]);
+        for (std::size_t c = 0; c < columns && c < delimiters.size(); ++c) {
+            const bool left  = delimiters[c].starts_with(':');
+            const bool right = delimiters[c].ends_with(':');
+            aligns[c]        = left && right ? Align::Center : right ? Align::Right
+                                                                     : Align::Left;
+        }
+    }
+
+    std::vector<std::vector<InlineMarkdownResult>> cells;
+    for (std::size_t r = 0; r < rows.size(); ++r) {
+        if (r == 1) {
+            continue;
+        }
+        std::vector<std::string> raw = r == 0 ? header : SplitTableRow(rows[r]);
+        raw.resize(columns);
+        std::vector<InlineMarkdownResult> formatted;
+        for (const std::string& cell : raw) {
+            formatted.push_back(ApplyInlineMarkdown(cell));
+        }
+        cells.push_back(std::move(formatted));
+    }
+    std::vector<int> widths(columns, 1);
+    for (const auto& row : cells) {
+        for (std::size_t c = 0; c < columns; ++c) {
+            widths[c] = std::max(widths[c], ColumnCount(row[c].text));
+        }
+    }
+    const std::string separator = " │ ";
+    const int         shift     = ColumnCount(indent);
+    int               total     = shift + 3 * static_cast<int>(columns - 1);
+    for (const int w : widths) {
+        total += w;
+    }
+    if (width > 0 && total > width) {
+        return std::nullopt;
+    }
+
+    std::vector<DisplayLine> lines;
+    for (std::size_t r = 0; r < cells.size(); ++r) {
+        const bool              isHeader = r == 0;
+        std::string             text(indent);
+        std::vector<InlineSpan> spans;
+        int                     column = shift;
+        for (std::size_t c = 0; c < columns; ++c) {
+            if (c > 0) {
+                text += separator;
+                column += 3;
+            }
+            const InlineMarkdownResult& cell    = cells[r][c];
+            const int                   slack   = widths[c] - ColumnCount(cell.text);
+            const int                   before  = aligns[c] == Align::Right ? slack : aligns[c] == Align::Center ? slack / 2
+                                                                                                                 : 0;
+            const int                   textCol = column + before;
+            text += std::string(static_cast<std::size_t>(before), ' ') + cell.text + std::string(static_cast<std::size_t>(slack - before), ' ');
+            // A header cell is bold throughout, its own code spans included.
+            int covered = textCol;
+            for (InlineSpan span : cell.spans) {
+                span.startColumn += textCol;
+                if (isHeader && covered < span.startColumn) {
+                    spans.push_back({.startColumn = covered, .columnCount = span.startColumn - covered, .bold = true, .code = false});
+                }
+                span.bold = span.bold || isHeader;
+                covered   = span.startColumn + span.columnCount;
+                spans.push_back(span);
+            }
+            const int cellEnd = textCol + ColumnCount(cell.text);
+            if (isHeader && covered < cellEnd) {
+                spans.push_back({.startColumn = covered, .columnCount = cellEnd - covered, .bold = true, .code = false});
+            }
+            column += widths[c];
+        }
+        lines.push_back({.text = std::move(text), .style = style, .spans = std::move(spans)});
+        if (isHeader) {
+            std::string rule(indent);
+            for (std::size_t c = 0; c < columns; ++c) {
+                if (c > 0) {
+                    rule += "─┼─";
+                }
+                for (int k = 0; k < widths[c]; ++k) {
+                    rule += "─";
+                }
+            }
+            lines.push_back({.text = std::move(rule), .style = DisplayStyle::Dim});
+        }
+    }
+    return lines;
+}
+
+std::vector<CopyCandidate> CopyCandidates(const std::vector<editor::acp::Manager::TranscriptEntry>& transcript, std::size_t maxReplies) {
+    auto firstLine = [](std::string_view text) {
+        text = text.substr(std::min(text.find_first_not_of(" \n"), text.size()));
+        return std::string(text.substr(0, text.find('\n')));
+    };
+    auto lineCount = [](std::string_view text) {
+        const std::size_t count = LineCount(text);
+        return std::to_string(count) + (count == 1 ? " line" : " lines");
+    };
+    std::vector<CopyCandidate> candidates;
+    std::size_t                replies = 0;
+    for (auto it = transcript.rbegin(); it != transcript.rend() && replies < maxReplies; ++it) {
+        if (it->kind != editor::acp::Manager::TranscriptEntry::Kind::AgentText || it->text.find_first_not_of(" \n") == std::string::npos) {
+            continue;
+        }
+        ++replies;
+        std::string_view reply = it->text;
+        while (!reply.empty() && reply.back() == '\n') {
+            reply.remove_suffix(1);
+        }
+        candidates.push_back({.label = firstLine(reply), .detail = "reply · " + lineCount(reply), .text = std::string(reply)});
+        std::vector<CodeBlock> blocks = ExtractCodeBlocks(it->text);
+        for (auto block = blocks.rbegin(); block != blocks.rend(); ++block) {
+            candidates.push_back({.label  = firstLine(block->code),
+                                  .detail = (block->language.empty() ? std::string("code") : block->language) + " · " + lineCount(block->code),
+                                  .text   = std::move(block->code)});
+        }
+    }
+    return candidates;
+}
 
 std::string_view ToolKindGlyph(std::string_view toolKind) {
     if (toolKind == "read") {
@@ -361,7 +717,7 @@ std::vector<DisplayLine> FormatTranscript(const std::vector<editor::acp::Manager
                 break;
             }
             case Kind::AgentText: {
-                append(FormatMarkdownLines(entry.text, DisplayStyle::Accent, ""), i);
+                append(FormatMarkdownLines(entry.text, DisplayStyle::Accent, "", options), i);
                 break;
             }
             case Kind::AgentThought: {
@@ -374,7 +730,7 @@ std::vector<DisplayLine> FormatTranscript(const std::vector<editor::acp::Manager
                                  .entryIndex = i,
                                  .action     = LineAction::ToggleExpand});
                 if (open) {
-                    append(FormatMarkdownLines(entry.text, DisplayStyle::Dim, "  "), i);
+                    append(FormatMarkdownLines(entry.text, DisplayStyle::Dim, "  ", options), i);
                 }
                 break;
             }

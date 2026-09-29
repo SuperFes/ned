@@ -94,3 +94,10 @@ TEST_CASE("NotifyArgv appends the title and body to the configured command, or i
     REQUIRE_FALSE(ned::editor::acp::SendDesktopNotification("T", "B"));
     ned::editor::acp::SetAcpNotifyCommand(saved);
 }
+
+TEST_CASE("ned/set-acp-follow-agent defaults off and toggles", "[Acp][AcpConfig]") {
+    REQUIRE_FALSE(ned::editor::acp::GetAcpFollowAgent());
+    ned::editor::acp::SetAcpFollowAgent(true);
+    REQUIRE(ned::editor::acp::GetAcpFollowAgent());
+    ned::editor::acp::SetAcpFollowAgent(false);
+}

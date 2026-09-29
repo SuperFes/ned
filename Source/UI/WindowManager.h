@@ -654,7 +654,9 @@ class WindowManager {
     // here rather than handled by whichever one happens to hold focus.
     // That is what lets it dismiss a panel that has taken the keyboard --
     // the panel never sees the chord, and does not have to.
-    void DispatchGlobalChord(const editor::KeyChord& chord);
+    // Returns whether the chord left a key sequence waiting for more. A
+    // chord that opens a prompt moves keyboard focus to it.
+    bool DispatchGlobalChord(const editor::KeyChord& chord);
 
     void RequestVisitLocation(const std::filesystem::path& path, std::size_t line);
     // Opens the ACP compose buffer in the focused pane (the first leaf when
