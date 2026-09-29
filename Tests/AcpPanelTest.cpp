@@ -1808,3 +1808,52 @@ TEST_CASE("AcpPanel hands C-c and C-x sequences it doesn't bind to the editor's 
     REQUIRE(fixture.RowText(kHeight - 1) == "Prompt: z");
     REQUIRE(forwarded.size() == 2);
 }
+
+TEST_CASE("AcpPanel answers an agent's question from its form", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    const Json schema = {{"type", "object"},
+                         {"properties",
+                          {{"question_0",
+                            {{"type", "string"}, {"oneOf", Json::array({Json{{"const", "A"}, {"title", "Alpha"}}, Json{{"const", "B"}, {"title", "Beta"}}})}}}}}};
+    fixture.client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                                       {"id", 40},
+                                       {"method", "elicitation/create"},
+                                       {"params", {{"sessionId", "s1"}, {"mode", "form"}, {"message", "Pick"}, {"requestedSchema", schema}}}}
+                                      .dump());
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "? Pick");
+    REQUIRE(fixture.ContentText().find("> 1 ○ Alpha") != std::string::npos);
+
+    // The form owns the keyboard: nothing reaches the composer.
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('2')));
+    const Json answer = fixture.reader.Next();
+    REQUIRE(answer["id"] == 40);
+    REQUIRE(answer["result"] == Json{{"action", "accept"}, {"content", {{"question_0", "B"}}}});
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1) == "Prompt:");
+    REQUIRE(fixture.ContentText().find("answered: Beta") != std::string::npos);
+}
+
+TEST_CASE("AcpPanel opens a question's URL and can decline one", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    std::string opened;
+    fixture.panel.SetUrlOpener([&opened](const std::string& url) {
+        opened = url;
+        return true;
+    });
+    auto ask = [&fixture](int id, const Json& params) {
+        fixture.client->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", id}, {"method", "elicitation/create"}, {"params", params}}.dump());
+    };
+    ask(41, {{"sessionId", "s1"}, {"mode", "url"}, {"message", "Log in"}, {"url", "https://x.test/login"}, {"elicitationId", "e"}});
+    fixture.panel.OnEvent(ned::ui::test::Return());
+    REQUIRE(opened == "https://x.test/login");
+    REQUIRE(fixture.reader.Next()["result"]["action"] == "accept");
+
+    ask(42, {{"sessionId", "s1"}, {"mode", "form"}, {"message", "Why?"}, {"requestedSchema", {{"type", "object"}}}});
+    fixture.panel.OnEvent(ned::ui::test::Escape());
+    REQUIRE(fixture.reader.Next()["result"]["action"] == "decline");
+}

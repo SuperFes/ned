@@ -1,6 +1,8 @@
 #include "LineDiff.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <utility>
 
 namespace ned::text {
 
@@ -18,6 +20,94 @@ std::vector<std::string_view> SplitLines(std::string_view text) {
     }
     return lines;
 }
+
+namespace {
+
+    // Myers' greedy shortest-edit search over the cores a[prefix, prefix+m)
+    // and b[prefix, prefix+n), keeping each step's diagonal frontier for the
+    // backtrack -- O(D^2) memory for an edit distance of D. An edit distance
+    // past kMaxEditDistance (two unrelated texts) reports the whole core as
+    // one hunk instead.
+    std::vector<LineDiffHunk> MyersHunks(const std::vector<std::string_view>& a, const std::vector<std::string_view>& b, std::size_t prefix,
+                                         std::size_t m, std::size_t n) {
+        constexpr std::ptrdiff_t kMaxEditDistance = 2000;
+        const std::ptrdiff_t     aLength          = static_cast<std::ptrdiff_t>(m);
+        const std::ptrdiff_t     bLength          = static_cast<std::ptrdiff_t>(n);
+        const std::ptrdiff_t     limit            = std::min(aLength + bLength, kMaxEditDistance);
+        const std::ptrdiff_t     offset           = aLength + bLength + 1;
+        auto                     same             = [&](std::ptrdiff_t x, std::ptrdiff_t y) {
+            return a[prefix + static_cast<std::size_t>(x)] == b[prefix + static_cast<std::size_t>(y)];
+        };
+
+        std::vector<std::ptrdiff_t>              frontier(static_cast<std::size_t>(2 * offset + 1), 0);
+        std::vector<std::vector<std::ptrdiff_t>> trace; // trace[d][k + d] = furthest x on diagonal k after d edits
+        std::ptrdiff_t                           distance = -1;
+        for (std::ptrdiff_t d = 0; d <= limit && distance < 0; ++d) {
+            std::vector<std::ptrdiff_t> step(static_cast<std::size_t>(2 * d + 1), 0);
+            for (std::ptrdiff_t k = -d; k <= d; k += 2) {
+                const bool     down = k == -d || (k != d && frontier[offset + k - 1] < frontier[offset + k + 1]);
+                std::ptrdiff_t x    = down ? frontier[offset + k + 1] : frontier[offset + k - 1] + 1;
+                std::ptrdiff_t y    = x - k;
+                while (x < aLength && y < bLength && same(x, y)) {
+                    ++x;
+                    ++y;
+                }
+                frontier[offset + k] = x;
+                step[k + d]          = x;
+                if (x >= aLength && y >= bLength) {
+                    distance = d;
+                }
+            }
+            trace.push_back(std::move(step));
+        }
+        if (distance < 0) {
+            return {LineDiffHunk{prefix, m, prefix, n}};
+        }
+
+        // Walk back from the end, collecting the matched pairs of each snake.
+        std::vector<std::pair<std::ptrdiff_t, std::ptrdiff_t>> matches;
+        std::ptrdiff_t                                         x = aLength;
+        std::ptrdiff_t                                         y = bLength;
+        for (std::ptrdiff_t d = distance; d > 0; --d) {
+            const std::vector<std::ptrdiff_t>& previous = trace[static_cast<std::size_t>(d - 1)];
+            const std::ptrdiff_t               k        = x - y;
+            auto                               at       = [&](std::ptrdiff_t diagonal) { return previous[diagonal + d - 1]; };
+            const bool                         down     = k == -d || (k != d && at(k - 1) < at(k + 1));
+            const std::ptrdiff_t               fromK    = down ? k + 1 : k - 1;
+            const std::ptrdiff_t               fromX    = at(fromK);
+            const std::ptrdiff_t               fromY    = fromX - fromK;
+            const std::ptrdiff_t               snakeX   = down ? fromX : fromX + 1;
+            const std::ptrdiff_t               snakeY   = down ? fromY + 1 : fromY;
+            for (std::ptrdiff_t i = x - 1, j = y - 1; i >= snakeX; --i, --j) {
+                matches.emplace_back(i, j);
+            }
+            x = fromX;
+            y = fromY;
+        }
+        for (std::ptrdiff_t i = x - 1, j = y - 1; i >= 0; --i, --j) {
+            matches.emplace_back(i, j);
+        }
+        std::reverse(matches.begin(), matches.end());
+
+        std::vector<LineDiffHunk> hunks;
+        std::ptrdiff_t            i     = 0;
+        std::ptrdiff_t            j     = 0;
+        auto                      flush = [&](std::ptrdiff_t toI, std::ptrdiff_t toJ) {
+            if (i < toI || j < toJ) {
+                hunks.push_back(LineDiffHunk{prefix + static_cast<std::size_t>(i), static_cast<std::size_t>(toI - i),
+                                             prefix + static_cast<std::size_t>(j), static_cast<std::size_t>(toJ - j)});
+            }
+        };
+        for (const auto& [matchI, matchJ] : matches) {
+            flush(matchI, matchJ);
+            i = matchI + 1;
+            j = matchJ + 1;
+        }
+        flush(aLength, bLength);
+        return hunks;
+    }
+
+} // namespace
 
 std::vector<LineDiffHunk> DiffLines(const std::vector<std::string_view>& a, const std::vector<std::string_view>& b) {
     const std::size_t aSize = a.size();
@@ -42,6 +132,13 @@ std::vector<LineDiffHunk> DiffLines(const std::vector<std::string_view>& a, cons
     if (m == 0 || n == 0) {
         hunks.push_back(LineDiffHunk{prefix, m, prefix, n});
         return hunks;
+    }
+
+    // The LCS table is m*n; past a few million cells (a long file edited
+    // near both ends) Myers' O((m+n)*D) search takes over.
+    constexpr std::size_t kMaxLcsCells = 4'000'000;
+    if (m * n > kMaxLcsCells) {
+        return MyersHunks(a, b, prefix, m, n);
     }
 
     // dp[i][j] = LCS length of a[prefix+i .. prefix+m) and b[prefix+j .. prefix+n).

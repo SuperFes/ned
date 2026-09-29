@@ -1909,6 +1909,9 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         wm->RequestVisitLocation(location.path, location.line ? *location.line + 1 : 1);
     });
     acpPanel.SetOnForwardChord([wm = windowManager.get()](const ned::editor::KeyChord& chord) { return wm->DispatchGlobalChord(chord); });
+    acpPanel.SetOnReviewRequest([wm = windowManager.get()](std::string title, std::vector<ned::editor::acp::TurnFile> files) {
+        wm->RequestAcpReview(std::move(title), std::move(files));
+    });
     acpPanel.SetOnCopy([&killRing](const std::string& text) {
         killRing.Kill(text);
         ned::editor::CopyToSystemClipboard(text);

@@ -14,7 +14,8 @@ enum class PanelPicker { Rewind,
                          Model,
                          Options,
                          Sessions,
-                         Copy };
+                         Copy,
+                         Review };
 
 } // namespace ned::editor::acp
 

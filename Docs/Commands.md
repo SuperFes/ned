@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-346 commands.
+352 commands.
 
 ## `acp-compose-abort`
 
@@ -29,6 +29,32 @@ Copy one of the ACP agent's recent replies, or a code block from one, to the kil
 Key: `C-c A l`
 
 Resume an earlier ACP session, replaying its conversation into the panel.
+
+## `acp-review-keep`
+
+Mark the ACP agent's change under point as kept, and move to the next one.
+
+## `acp-review-quit`
+
+Close the *acp review* buffer.
+
+## `acp-review-refresh`
+
+Re-read the files in an *acp review* buffer.
+
+## `acp-review-turn`
+
+Key: `C-c A v`
+
+Review the files an ACP turn changed, hunk by hunk, keeping or undoing each.
+
+## `acp-review-undo-file`
+
+Undo every change the ACP turn made to the file under point.
+
+## `acp-review-undo-hunk`
+
+Undo the ACP agent's change under point, in the file it changed.
 
 ## `acp-rewind`
 

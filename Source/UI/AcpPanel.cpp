@@ -10,6 +10,7 @@
 #include "Border.h"
 #include "Editor/Acp/PanelConfig.h"
 #include "Editor/FuzzyMatch.h"
+#include "Editor/Link.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Tree.h"
 #include "Editor/SyntaxTheme.h"
@@ -238,6 +239,31 @@ void AcpPanel::OpenPicker(editor::acp::PanelPicker picker) {
                                     scroll_.FollowTail();
                                 });
             });
+            break;
+        }
+        case editor::acp::PanelPicker::Review: {
+            // Newest first, and only turns that changed something.
+            std::vector<acppanel::ChoiceItem> items;
+            std::vector<std::size_t>          turns;
+            for (std::size_t index = acpManager_->CheckpointCount(); index-- > 0;) {
+                const Manager::Checkpoint& checkpoint = acpManager_->CheckpointAt(index);
+                const std::size_t          changed    = static_cast<std::size_t>(
+                    std::count_if(checkpoint.files.begin(), checkpoint.files.end(),
+                                  [](const editor::acp::TurnFile& file) { return file.after && *file.after != file.before; }));
+                if (changed == 0) {
+                    continue;
+                }
+                items.push_back({.label  = checkpoint.promptPreview,
+                                 .detail = std::to_string(changed) + (changed == 1 ? " file · " : " files · ") + LocalTimeLabel(checkpoint.timestamp)});
+                turns.push_back(index);
+            }
+            picker_.emplace(items.empty() ? "No turn has changed files yet" : "Review which turn's changes?", std::move(items),
+                            [this, turns](std::size_t choice) {
+                                const Manager::Checkpoint& checkpoint = acpManager_->CheckpointAt(turns[choice]);
+                                if (onReviewRequest_) {
+                                    onReviewRequest_(checkpoint.promptPreview, checkpoint.files);
+                                }
+                            });
             break;
         }
         case editor::acp::PanelPicker::Copy: {
@@ -486,6 +512,53 @@ void AcpPanel::Copy(const std::string& text) {
     ShowNotice("copied " + std::to_string(lines) + (lines == 1 ? " line" : " lines"));
 }
 
+void AcpPanel::SetUrlOpener(std::function<bool(const std::string&)> opener) {
+    urlOpener_ = std::move(opener);
+}
+
+void AcpPanel::SyncElicitation() {
+    const std::optional<editor::acp::Manager::Elicitation>* pending = acpManager_ ? &acpManager_->PendingElicitation() : nullptr;
+    if (pending == nullptr || !pending->has_value()) {
+        form_.reset();
+        return;
+    }
+    const editor::acp::Manager::Elicitation& elicitation = **pending;
+    if (form_ && formElicitationId_ == elicitation.id) {
+        return;
+    }
+    formElicitationId_ = elicitation.id;
+    form_.emplace(elicitation.mode == "url" ? acppanel::ElicitationForm::ForUrl(elicitation.message, elicitation.url)
+                                            : acppanel::ElicitationForm(elicitation.message, elicitation.schema));
+    picker_.reset();
+    mentionPickerOpen_ = false;
+}
+
+void AcpPanel::SubmitElicitation() {
+    if (!form_ || !acpManager_) {
+        return;
+    }
+    if (!form_->Url().empty()) {
+        const bool opened = urlOpener_ ? urlOpener_(form_->Url()) : editor::link::OpenUrl(form_->Url());
+        if (!opened) {
+            ShowNotice("couldn't open the link");
+            return;
+        }
+        acpManager_->AnswerElicitation("accept");
+        return;
+    }
+    std::string                            problem;
+    const std::optional<editor::acp::Json> content = form_->Content(problem);
+    if (!content) {
+        ShowNotice(problem);
+        return;
+    }
+    acpManager_->AnswerElicitation("accept", *content, form_->Summary());
+}
+
+void AcpPanel::SetOnReviewRequest(std::function<void(std::string, std::vector<editor::acp::TurnFile>)> onReview) {
+    onReviewRequest_ = std::move(onReview);
+}
+
 void AcpPanel::SetOnForwardChord(std::function<bool(const editor::KeyChord&)> forward) {
     forwardChord_ = std::move(forward);
 }
@@ -715,6 +788,18 @@ bool AcpPanel::ActivateRowAt(int y) {
         case acppanel::LineAction::Copy:
             Copy(line.copyText);
             return true;
+        case acppanel::LineAction::Review:
+            // The turn this line closes: the last one starting before it.
+            for (std::size_t index = acpManager_->CheckpointCount(); index-- > 0;) {
+                const editor::acp::Manager::Checkpoint& checkpoint = acpManager_->CheckpointAt(index);
+                if (checkpoint.transcriptIndex < line.entryIndex) {
+                    if (onReviewRequest_) {
+                        onReviewRequest_(checkpoint.promptPreview, checkpoint.files);
+                    }
+                    return true;
+                }
+            }
+            return false;
         case acppanel::LineAction::None:
             break;
     }
@@ -750,6 +835,9 @@ void AcpPanel::NoteAttention(editor::acp::Manager::Attention attention, std::chr
     if (attention == editor::acp::Manager::Attention::PermissionRequested) {
         body = acpManager_->PendingPermissionPrompt() ? acpManager_->PendingPermissionPrompt()->description : std::string();
     }
+    else if (attention == editor::acp::Manager::Attention::QuestionAsked) {
+        body = acpManager_->PendingElicitation() ? acpManager_->PendingElicitation()->message : std::string();
+    }
     else {
         const auto& transcript = acpManager_->Transcript();
         for (auto it = transcript.rbegin(); it != transcript.rend(); ++it) {
@@ -766,7 +854,9 @@ void AcpPanel::NoteAttention(editor::acp::Manager::Attention attention, std::chr
     if (body.size() > kMaxBodyBytes) {
         body = body.substr(0, text::SnapDownToCodepointBoundary(body, kMaxBodyBytes)) + "…";
     }
-    desktopNotifier_(attention == editor::acp::Manager::Attention::PermissionRequested ? agent + " needs permission" : agent + " finished",
+    desktopNotifier_(attention == editor::acp::Manager::Attention::PermissionRequested ? agent + " needs permission"
+                     : attention == editor::acp::Manager::Attention::QuestionAsked     ? agent + " has a question"
+                                                                                       : agent + " finished",
                      body);
 }
 
@@ -1210,6 +1300,7 @@ void AcpPanel::Paint(Canvas canvas) {
     }
 
     RequestProseCheckIfNeeded();
+    SyncElicitation();
     if (Focused()) {
         attention_ = false;
     }
@@ -1311,7 +1402,7 @@ void AcpPanel::Paint(Canvas canvas) {
     }
     lastViewportRows_     = contentRows;
     lastTitleRows_        = titleRows;
-    lastShowedTranscript_ = contentRows > 0 && !picker_ && !mentionPickerOpen_;
+    lastShowedTranscript_ = contentRows > 0 && !picker_ && !mentionPickerOpen_ && !form_;
     if (imageRows > 0) {
         PaintUtf8Row(canvas, 0, titleRows + contentRows + queuedRows + statusRows, PendingImagesLine(), BrushForStyle(DisplayStyle::Hint), width);
     }
@@ -1335,7 +1426,10 @@ void AcpPanel::Paint(Canvas canvas) {
                 PaintStyledRow(canvas, 0, row + titleRows, line.text, line.spans, BrushForStyle(line.style), width);
             }
         };
-        if (picker_) {
+        if (form_) {
+            paintRows(acppanel::WrapDisplayLines(form_->Format(contentRows), width), 0);
+        }
+        else if (picker_) {
             paintRows(acppanel::WrapDisplayLines(picker_->Format(contentRows), width), 0);
         }
         else if (mentionPickerOpen_) {
@@ -1555,6 +1649,7 @@ bool AcpPanel::OnEvent(const Event& event) {
         forwardingSequence_ = forwardChord_ && forwardChord_(*chord);
         return true;
     }
+    SyncElicitation();
 
     // ACP round-1-live-validation follow-up: while a permission prompt is
     // pending, this panel resolves it directly rather than leaving
@@ -1586,7 +1681,8 @@ bool AcpPanel::OnEvent(const Event& event) {
 
     // C-c prefix: C-c ' continues the composer's text in a full buffer
     // (org-edit-special's key); C-c C-s steers, for terminals that can't
-    // tell C-RET from RET; C-c C-f toggles following the agent. Any other
+    // tell C-RET from RET; C-c C-f toggles following the agent; C-c C-r
+    // reviews a turn's file changes. Any other
     // sequence belongs to the editor's keymap, as do C-x sequences.
     if (controlCPending_) {
         controlCPending_ = false;
@@ -1596,6 +1692,14 @@ bool AcpPanel::OnEvent(const Event& event) {
         }
         if (chord->Control && !chord->Meta && chord->Codepoint == U'f') {
             ToggleFollowAgent();
+            return true;
+        }
+        if (chord->Control && !chord->Meta && chord->Codepoint == U'r') {
+            OpenPicker(editor::acp::PanelPicker::Review);
+            return true;
+        }
+        if (chord->Control && !chord->Meta && chord->Codepoint == U'c' && form_) {
+            SubmitElicitation();
             return true;
         }
         if (IsPlainCharacter(*chord) && chord->Codepoint == U'\'' && onComposeRequest_) {
@@ -1630,6 +1734,25 @@ bool AcpPanel::OnEvent(const Event& event) {
     }
     else if (chord->Control && !chord->Meta && chord->Codepoint == U'x' && forwardChord_) {
         forwardingSequence_ = forwardChord_(*chord);
+        return true;
+    }
+
+    // An open question owns the keyboard until it's answered.
+    if (form_) {
+        switch (form_->HandleKey(*chord)) {
+            case acppanel::ElicitationForm::KeyResult::Submit:
+                SubmitElicitation();
+                break;
+            case acppanel::ElicitationForm::KeyResult::Decline:
+                acpManager_->AnswerElicitation("decline");
+                break;
+            case acppanel::ElicitationForm::KeyResult::Cancel:
+                acpManager_->AnswerElicitation("cancel");
+                break;
+            case acppanel::ElicitationForm::KeyResult::Handled:
+                break;
+        }
+        SyncElicitation();
         return true;
     }
 

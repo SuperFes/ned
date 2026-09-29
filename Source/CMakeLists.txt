@@ -285,6 +285,8 @@ add_library(ned_lib STATIC
         Editor/Acp/Manager.cpp
         Editor/Acp/Notify.cpp
         Editor/Acp/TerminalText.cpp
+        Editor/Acp/TurnFiles.cpp
+        Editor/Acp/TurnReview.cpp
         Editor/Lsp/Transport.cpp
         Editor/Lsp/Client.cpp
         Editor/Lsp/ServerConfig.cpp
@@ -464,6 +466,7 @@ add_library(ned_lib STATIC
         UI/TerminalPanel.cpp
         UI/AcpPanel.cpp
         UI/AcpPanel/ChoicePicker.cpp
+        UI/AcpPanel/ElicitationForm.cpp
         UI/AcpPanel/ComposerLayout.cpp
         UI/AcpPanel/TranscriptFormat.cpp
         UI/AcpPanel/TranscriptScroll.cpp
@@ -487,6 +490,7 @@ add_library(ned_lib STATIC
         UI/BufferView/Color.cpp
         UI/BufferView/VcsDap.cpp
         UI/BufferView/AcpCompose.cpp
+        UI/BufferView/AcpReview.cpp
         UI/BufferView/Buffers.cpp
         UI/BufferView/CandidateList.cpp
         UI/BufferView/GutterModel.cpp

@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "AcpPanel/ChoicePicker.h"
+#include "AcpPanel/ElicitationForm.h"
 #include "AcpPanel/TranscriptFormat.h"
 #include "AcpPanel/TranscriptScroll.h"
 #include "ActiveBuffer.h"
@@ -100,6 +101,9 @@ class AcpPanel : public Widget {
     // the file in an editor pane. `line` is 1-based.
     void SetOnOpenLocation(std::function<void(const std::filesystem::path& path, std::size_t line)> onOpenLocation);
 
+    // Opens the review of a turn's file changes, from the review picker.
+    void SetOnReviewRequest(std::function<void(std::string title, std::vector<editor::acp::TurnFile> files)> onReview);
+
     // Where copied text goes: a copy-button click or the copy picker.
     void SetOnCopy(std::function<void(const std::string& text)> onCopy);
 
@@ -107,6 +111,9 @@ class AcpPanel : public Widget {
     // key sequence waiting for more. C-c and C-x sequences the panel doesn't
     // handle itself go there (C-c c closing the panel, C-x o, ...).
     void SetOnForwardChord(std::function<bool(const editor::KeyChord& chord)> forward);
+
+    // How a question's URL is opened; editor::link::OpenUrl when unset.
+    void SetUrlOpener(std::function<bool(const std::string& url)> opener);
 
     // Where C-v reads the clipboard from; the system clipboard when unset.
     void SetClipboardSource(std::function<std::optional<editor::ClipboardImage>()> image,
@@ -219,6 +226,9 @@ class AcpPanel : public Widget {
     void                                             Copy(const std::string& text);
     void                                             ShowNotice(std::string notice);
     void                                             PasteFromClipboard();
+    // Keeps form_ in step with the Manager's pending question.
+    void                                             SyncElicitation();
+    void                                             SubmitElicitation();
     [[nodiscard]] std::string                        PendingImagesLine() const;
     [[nodiscard]] bool                     CloseButtonAt(Point local) const;
     [[nodiscard]] bool                     MinimizeButtonAt(Point local) const;
@@ -387,8 +397,14 @@ class AcpPanel : public Widget {
     std::function<void(std::string, editor::acp::ComposeCallbacks)> onComposeRequest_;
     std::function<void()>                                           onRefocusRequest_;
     std::function<void(const std::string&)>                         onCopy_;
+    std::function<void(std::string, std::vector<editor::acp::TurnFile>)> onReviewRequest_;
     std::function<std::optional<editor::ClipboardImage>()>          clipboardImage_;
     std::function<std::optional<std::string>()>                     clipboardText_;
+    std::function<bool(const std::string&)>                              urlOpener_;
+
+    // The agent's open question, as a form owning the keyboard.
+    std::optional<acppanel::ElicitationForm> form_;
+    std::size_t                              formElicitationId_ = 0;
 
     // Images pasted into the composer, sent with the next prompt.
     std::vector<editor::acp::Manager::PromptAttachment> pendingImages_;

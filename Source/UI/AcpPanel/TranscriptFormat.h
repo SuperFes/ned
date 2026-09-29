@@ -51,7 +51,8 @@ inline constexpr std::size_t kNoEntry = std::numeric_limits<std::size_t>::max();
 enum class LineAction { None,
                         ToggleExpand,
                         OpenLocation,
-                        Copy };
+                        Copy,
+                        Review }; // the turn before this line
 
 struct LineLocation {
     std::string                path;

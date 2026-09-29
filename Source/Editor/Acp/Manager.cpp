@@ -18,8 +18,9 @@
 #include "Editor/WrapOverrides.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
-#include "Text/FilePreservation.h"
 #include "Text/Utf8.h"
+#include "TurnFiles.h"
+#include "TurnReview.h"
 
 namespace ned::editor::acp {
 
@@ -93,50 +94,6 @@ namespace {
     // PromptInFlight's doc comment. String, not string_view, to match
     // BackgroundActivity's own std::string parameters.
     const std::string kAcpActivity{"ACP"};
-
-    // Sibling-temp-file + rename, the same atomic-write shape
-    // ProjectReplace.cpp's own ReplaceMatches uses -- including its
-    // file-attribute-preservation follow-up, since this writes the user's
-    // own files (on an agent's behalf, which is all the more reason not to
-    // quietly strip a mode bit or break a link). See
-    // Text/FilePreservation.h.
-    void WriteFileAtomically(const std::filesystem::path& path, const std::string& content) {
-        const std::filesystem::path         target     = text::ResolveSaveTarget(path);
-        const text::PreservedFileAttributes attributes = text::CaptureFileAttributes(target);
-
-        if (text::ShouldWriteInPlace(attributes)) {
-            std::ofstream output(target, std::ios::binary | std::ios::trunc);
-            if (!output) {
-                throw std::runtime_error("cannot open " + target.string() + " for writing");
-            }
-            output.write(content.data(), static_cast<std::streamsize>(content.size()));
-            if (!output) {
-                throw std::runtime_error("write failed for " + target.string());
-            }
-            return;
-        }
-
-        std::filesystem::path tempPath = target;
-        tempPath += ".ned-tmp";
-        {
-            std::ofstream output(tempPath, std::ios::binary | std::ios::trunc);
-            if (!output) {
-                throw std::runtime_error("cannot open " + tempPath.string() + " for writing");
-            }
-            output.write(content.data(), static_cast<std::streamsize>(content.size()));
-            if (!output) {
-                throw std::runtime_error("write failed for " + tempPath.string());
-            }
-        }
-
-        text::ApplyFileAttributes(tempPath, attributes);
-
-        std::error_code ec;
-        std::filesystem::rename(tempPath, target, ec);
-        if (ec) {
-            throw std::runtime_error("rename failed for " + target.string() + ": " + ec.message());
-        }
-    }
 
     // fs/read_text_file's optional line/limit narrowing -- startLine is
     // 1-based per the ACP spec (matching every other 1-based line convention
@@ -746,6 +703,7 @@ void Manager::PushOrUpdateToolCall(const Json& update) {
                     it->diffNewText = diff->newText;
                 }
                 applyDetails(*it);
+                SnapshotToolCallFiles(*it);
                 ++transcriptGeneration_;
                 NotifyTranscriptChanged();
                 if (reached && onToolLocation_) {
@@ -767,6 +725,7 @@ void Manager::PushOrUpdateToolCall(const Json& update) {
         entry.startedAt = std::chrono::steady_clock::now();
     }
     applyDetails(entry);
+    SnapshotToolCallFiles(entry);
     PushTranscriptEntry(std::move(entry));
     if (reached && onToolLocation_) {
         onToolLocation_(*reached);
@@ -856,6 +815,7 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
             // extension), not a console code block.
             {"clientCapabilities",
              {{"fs", {{"readTextFile", true}, {"writeTextFile", true}}},
+              {"elicitation", {{"form", Json::object()}, {"url", Json::object()}}},
               {"_meta", {{"terminal_output", true}, {"terminal_output_delta", true}}}}},
         },
         [this](std::optional<Json> result, std::optional<Json> error) {
@@ -1214,8 +1174,56 @@ void Manager::RecordCheckpointFileEdit(text::Buffer& buffer, const std::filesyst
     });
 }
 
+void Manager::SnapshotBeforeEdit(const std::string& path) {
+    if (!pendingCheckpoint_ || path.empty()) {
+        return;
+    }
+    std::filesystem::path resolved(path);
+    if (resolved.is_relative()) {
+        resolved = editor::ProjectRoot() / resolved;
+    }
+    resolved = resolved.lexically_normal();
+    for (const TurnFile& file : pendingCheckpoint_->files) {
+        if (file.path == resolved) {
+            return;
+        }
+    }
+    if (std::optional<FileState> before = ReadTurnFile(bufferList_, resolved)) {
+        pendingCheckpoint_->files.push_back(TurnFile{.path = resolved, .before = std::move(*before), .after = std::nullopt});
+    }
+}
+
+void Manager::SnapshotToolCallFiles(const TranscriptEntry& toolCall) {
+    // Only calls that say they change files: a read or a search names paths too.
+    if (toolCall.toolKind != "edit" && toolCall.toolKind != "delete" && toolCall.toolKind != "move") {
+        return;
+    }
+    for (const ToolLocation& location : toolCall.locations) {
+        SnapshotBeforeEdit(location.path);
+    }
+}
+
 void Manager::FinalizePendingCheckpoint() {
     if (pendingCheckpoint_) {
+        std::size_t changedFiles = 0;
+        std::size_t added        = 0;
+        std::size_t removed      = 0;
+        for (TurnFile& file : pendingCheckpoint_->files) {
+            file.after                          = ReadTurnFile(bufferList_, file.path);
+            const std::vector<ReviewHunk> hunks = TurnHunks(file, 0);
+            changedFiles += hunks.empty() ? 0 : 1;
+            for (const ReviewHunk& hunk : hunks) {
+                added += hunk.newLines.size();
+                removed += hunk.oldLines.size();
+            }
+        }
+        if (changedFiles > 0) {
+            // The panel makes this line open the turn's review.
+            PushTranscriptEntry(TranscriptEntry{.kind   = TranscriptEntry::Kind::SessionEvent,
+                                                .text   = std::to_string(changedFiles) + (changedFiles == 1 ? " file" : " files") +
+                                                          " changed (+" + std::to_string(added) + " −" + std::to_string(removed) + ")",
+                                                .status = "review"});
+        }
         checkpoints_.push_back(std::move(*pendingCheckpoint_));
         pendingCheckpoint_.reset();
     }
@@ -1258,7 +1266,32 @@ Manager::RewindOutcome Manager::RewindTo(std::size_t index) {
             }
         }
         for (const std::filesystem::path& path : checkpoints_[i].untrackedPaths) {
-            outcome.untrackedFiles.push_back(path.string());
+            const bool snapshotted = std::any_of(checkpoints_[i].files.begin(), checkpoints_[i].files.end(),
+                                                 [&](const TurnFile& file) { return file.path == path; });
+            if (!snapshotted) {
+                outcome.untrackedFiles.push_back(path.string());
+            }
+        }
+        // Files the agent changed itself: restored from the turn's snapshot
+        // when they still read as the turn left them.
+        for (const TurnFile& file : checkpoints_[i].files) {
+            const bool undoTracked = std::any_of(checkpoints_[i].fileRecords.begin(), checkpoints_[i].fileRecords.end(),
+                                                 [&](const CheckpointFileRecord& record) { return record.path == file.path; });
+            if (undoTracked) {
+                continue;
+            }
+            const std::optional<FileState> current = ReadTurnFile(bufferList_, file.path);
+            if (!current || !file.after || *current != *file.after) {
+                outcome.divergedFiles.push_back(file.path.string());
+                continue;
+            }
+            try {
+                WriteTurnFile(bufferList_, file.path, file.before);
+                outcome.revertedFiles.push_back(file.path.string());
+            }
+            catch (const std::exception&) {
+                outcome.divergedFiles.push_back(file.path.string());
+            }
         }
     }
 
@@ -1283,7 +1316,8 @@ Manager::RewindOutcome Manager::RewindTo(std::size_t index) {
 }
 
 void Manager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
-    if (client_ && !pendingPermissionPrompt_) {
+    // The turn waits on the user while a question is open, however long.
+    if (client_ && !pendingPermissionPrompt_ && !pendingElicitation_) {
         client_->ExpireStaleRequests(maxAge);
     }
 }
@@ -1326,6 +1360,7 @@ void Manager::WireClient(Client& client) {
         // buffer not currently open can't be undo-tracked at all; the best
         // this can do for it is preserve the prior on-disk content as a
         // Backup.h version before it's clobbered below, for manual recovery.
+        SnapshotBeforeEdit(pathStr);
         text::Buffer*              buffer = bufferList_.FindByPath(pathStr);
         std::optional<std::size_t> beforeSequence;
         if (buffer && !buffer->IsLoading()) {
@@ -1371,6 +1406,49 @@ void Manager::WireClient(Client& client) {
         respond(Json::object(), std::nullopt);
     });
 
+    client.SetRequestHandler("elicitation/create", [this](const Json& params, RespondFn respond) {
+        if (pendingElicitation_ || !params.is_object()) {
+            respond(Json{{"action", "cancel"}}, std::nullopt);
+            return;
+        }
+        Elicitation elicitation{.id      = ++elicitationCount_,
+                                .mode    = StringField(params, "mode", std::string("form")),
+                                .message = StringField(params, "message", std::string())};
+        if (elicitation.mode == "form") {
+            elicitation.schema = params.contains("requestedSchema") && params["requestedSchema"].is_object() ? params["requestedSchema"] : Json::object();
+        }
+        else if (elicitation.mode == "url") {
+            elicitation.url           = StringField(params, "url", std::string());
+            elicitation.elicitationId = StringField(params, "elicitationId", std::string());
+        }
+        else {
+            respond(Json{{"action", "decline"}}, std::nullopt); // a mode this client doesn't know
+            return;
+        }
+        elicitation.toolCallId = StringField(params, "toolCallId", std::string());
+        // Time spent waiting on the user isn't the tool's.
+        if (TranscriptEntry* call = FindToolCall(elicitation.toolCallId)) {
+            call->startedAt.reset();
+        }
+        pendingElicitation_        = elicitation;
+        pendingElicitationRespond_ = std::move(respond);
+        PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::SessionEvent, .text = elicitation.message, .status = "question"});
+        if (onAttention_) {
+            onAttention_(Attention::QuestionAsked,
+                         promptStartedAt_ ? std::chrono::steady_clock::now() - *promptStartedAt_ : std::chrono::steady_clock::duration{});
+        }
+    });
+
+    client.SetNotificationHandler("elicitation/complete", [this](const Json& params) {
+        const std::string id = StringField(params, "elicitationId", std::string());
+        const auto        it = std::find_if(openUrlElicitations_.begin(), openUrlElicitations_.end(),
+                                            [&](const auto& open) { return open.first == id; });
+        if (it != openUrlElicitations_.end()) {
+            PushSessionEvent("done: " + it->second);
+            openUrlElicitations_.erase(it);
+        }
+    });
+
     client.SetRequestHandler("session/request_permission", [this](const Json& params, RespondFn respond) {
         PermissionPrompt prompt;
         prompt.description = (params.contains("toolCall") && params["toolCall"].is_object())
@@ -1411,6 +1489,15 @@ void Manager::WireClient(Client& client) {
                                     : std::string();
         if (TranscriptEntry* call = FindToolCall(permissionToolCallId_)) {
             call->startedAt.reset();
+        }
+        // An edit asking permission hasn't run yet -- the surest moment to
+        // record what it's about to change.
+        if (params.contains("toolCall") && params["toolCall"].is_object()) {
+            TranscriptEntry asked{.kind = TranscriptEntry::Kind::ToolCall};
+            asked.toolKind  = StringField(params["toolCall"], "kind", std::string());
+            asked.locations = params["toolCall"].contains("locations") ? ParseLocations(params["toolCall"]["locations"])
+                                                                       : std::vector<ToolLocation>{};
+            SnapshotToolCallFiles(asked);
         }
         pendingPermissionPrompt_  = prompt;
         pendingPermissionRespond_ = std::move(respond);
@@ -1554,6 +1641,9 @@ void Manager::EndSession(std::string reason) {
         FinalizePendingCheckpoint();
     }
     StopToolTimers();
+    pendingElicitation_.reset();
+    pendingElicitationRespond_ = nullptr;
+    openUrlElicitations_.clear();
     for (const QueuedPrompt& dropped : queuedPrompts_) {
         PushSessionEvent("not sent: " + dropped.text);
     }
@@ -1634,6 +1724,30 @@ void Manager::CancelPermissionPrompt() {
 
 const std::optional<Manager::PermissionPrompt>& Manager::PendingPermissionPrompt() const {
     return pendingPermissionPrompt_;
+}
+
+const std::optional<Manager::Elicitation>& Manager::PendingElicitation() const {
+    return pendingElicitation_;
+}
+
+void Manager::AnswerElicitation(const std::string& action, const Json& content, const std::string& summary) {
+    if (!pendingElicitationRespond_ || !pendingElicitation_) {
+        return;
+    }
+    RespondFn         respond     = std::move(pendingElicitationRespond_);
+    const Elicitation elicitation = std::move(*pendingElicitation_);
+    pendingElicitation_.reset();
+    Json result{{"action", action}};
+    if (action == "accept" && elicitation.mode == "form") {
+        result["content"] = content;
+    }
+    if (action == "accept" && elicitation.mode == "url" && !elicitation.elicitationId.empty()) {
+        openUrlElicitations_.emplace_back(elicitation.elicitationId, elicitation.message);
+    }
+    PushSessionEvent(action == "accept"    ? (summary.empty() ? std::string("answered") : "answered: " + summary)
+                     : action == "decline" ? std::string("skipped the question")
+                                           : std::string("question cancelled"));
+    respond(result, std::nullopt);
 }
 
 void Manager::SetOnSessionEnded(std::function<void(std::string)> handler) {

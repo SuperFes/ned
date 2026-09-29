@@ -1156,6 +1156,18 @@ void WindowManager::RequestAcpCompose(std::string seed, editor::acp::ComposeCall
     pane->Buffer().BeginAcpCompose(std::move(seed), std::move(callbacks));
 }
 
+void WindowManager::RequestAcpReview(std::string title, std::vector<editor::acp::TurnFile> files) {
+    Pane* pane = FocusedPane();
+    if (pane == nullptr && !Leaves().empty()) {
+        pane = Leaves().front();
+    }
+    if (pane == nullptr) {
+        return;
+    }
+    TakeFocus();
+    pane->Buffer().OpenAcpTurnReview(std::move(title), std::move(files));
+}
+
 void WindowManager::RequestDebugPanelTextEntry(std::string label, std::string initialText,
                                                std::function<void(std::string)> onAccept) {
     // Unlike the jump above, a prompt needs a pane that will actually
@@ -2191,6 +2203,7 @@ void WindowManager::ReassignPanesShowing(text::Buffer& closingBuffer, Pane* skip
     // a buffer it merely visited in the past, not just its current one.
     editor::ClearModeCacheFor(closingBuffer);
     (void)editor::acp::DetachCompose(closingBuffer); // closed without C-c C-c/C-c C-k: forgotten, see Compose.h
+    editor::acp::DetachReview(closingBuffer);
     for (Pane* pane : Leaves()) {
         pane->ClearBufferCaches(closingBuffer);
     }

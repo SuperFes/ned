@@ -30,6 +30,30 @@ for the live keymap stack.
 
 :   Resume an earlier ACP session, replaying its conversation into the panel.
 
+`acp-review-keep`
+
+:   Mark the ACP agent's change under point as kept, and move to the next one.
+
+`acp-review-quit`
+
+:   Close the *acp review* buffer.
+
+`acp-review-refresh`
+
+:   Re-read the files in an *acp review* buffer.
+
+`acp-review-turn` (`C-c A v`)
+
+:   Review the files an ACP turn changed, hunk by hunk, keeping or undoing each.
+
+`acp-review-undo-file`
+
+:   Undo every change the ACP turn made to the file under point.
+
+`acp-review-undo-hunk`
+
+:   Undo the ACP agent's change under point, in the file it changed.
+
 `acp-rewind` (`C-c A r`)
 
 :   Rewind the ACP conversation and its file edits to before an earlier turn.

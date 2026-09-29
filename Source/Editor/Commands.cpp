@@ -13,6 +13,7 @@
 
 #include "Acp/Compose.h"
 #include "Acp/PanelConfig.h"
+#include "Acp/TurnReview.h"
 #include "AutoFormatOnSave.h"
 #include "AutoPair.h"
 #include "BlankLineCleanup.h"
@@ -4003,6 +4004,29 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::AcpCopy;
                       });
+    registry.Register("acp-review-turn",
+                      "Review the files an ACP turn changed, hunk by hunk, keeping or undoing each.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpReviewTurn;
+                      });
+    registry.Register("acp-review-undo-hunk", "Undo the ACP agent's change under point, in the file it changed.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpReviewUndoHunk;
+                      });
+    registry.Register("acp-review-undo-file", "Undo every change the ACP turn made to the file under point.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpReviewUndoFile;
+                      });
+    registry.Register("acp-review-keep", "Mark the ACP agent's change under point as kept, and move to the next one.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpReviewKeep;
+                      });
+    registry.Register("acp-review-refresh", "Re-read the files in an *acp review* buffer.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::AcpReviewRefresh;
+    });
+    registry.Register("acp-review-quit", "Close the *acp review* buffer.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::AcpReviewQuit;
+    });
     registry.Register("acp-toggle-follow",
                       "Toggle following the ACP agent: while the ACP panel has focus, open each file its tool calls read or edit.",
                       [](CommandContext& context) {
@@ -4136,6 +4160,20 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         composeMode.keymap.Bind(ParseKeySequence("C-c C-c"), "acp-compose-finish");
         composeMode.keymap.Bind(ParseKeySequence("C-c C-k"), "acp-compose-abort");
         RegisterMode(std::string(acp::kComposeModeName), std::move(composeMode));
+    }
+    {
+        // The review buffer is read-only, so plain letters are free; RET
+        // already visits the change's source in any read-only multibuffer.
+        Mode reviewMode;
+        reviewMode.name = std::string(acp::kReviewModeName);
+        reviewMode.keymap.Bind(ParseKeySequence("u"), "acp-review-undo-hunk");
+        reviewMode.keymap.Bind(ParseKeySequence("U"), "acp-review-undo-file");
+        reviewMode.keymap.Bind(ParseKeySequence("k"), "acp-review-keep");
+        reviewMode.keymap.Bind(ParseKeySequence("n"), "next-excerpt");
+        reviewMode.keymap.Bind(ParseKeySequence("p"), "previous-excerpt");
+        reviewMode.keymap.Bind(ParseKeySequence("g"), "acp-review-refresh");
+        reviewMode.keymap.Bind(ParseKeySequence("q"), "acp-review-quit");
+        RegisterMode(std::string(acp::kReviewModeName), std::move(reviewMode));
     }
     registry.Register("vcs-stage-hunk", "Stage just the change hunk covering the line at point.",
                       [](CommandContext& context) {
@@ -5243,6 +5281,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c A l"), "acp-resume-session"); // "l" for load
     keymap.Bind(ParseKeySequence("C-c A w"), "acp-copy");           // "w" for M-w
     keymap.Bind(ParseKeySequence("C-c A f"), "acp-toggle-follow");
+    keymap.Bind(ParseKeySequence("C-c A v"), "acp-review-turn");  // "v" for view
     keymap.Bind(ParseKeySequence("C-c c"), "acp-toggle-panel");   // "c" for chat
     // test-runner integration: "C-c T" prefix (shifted "t" for tests --
     // plain "C-c t" is toggle-terminal's own leaf binding below, so a

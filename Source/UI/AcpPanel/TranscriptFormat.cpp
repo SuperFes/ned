@@ -765,6 +765,17 @@ std::vector<DisplayLine> FormatTranscript(const std::vector<editor::acp::Manager
                 break;
             }
             case Kind::SessionEvent: {
+                if (entry.status == "question") {
+                    lines.push_back({.text = "? " + entry.text, .style = DisplayStyle::Warning, .entryIndex = i});
+                    break;
+                }
+                if (entry.status == "review") {
+                    lines.push_back({.text       = "✎ " + entry.text + " · review (C-c C-r)",
+                                     .style      = DisplayStyle::Hint,
+                                     .entryIndex = i,
+                                     .action     = LineAction::Review});
+                    break;
+                }
                 lines.push_back({.text = "-- " + entry.text + " --", .style = DisplayStyle::Dim, .entryIndex = i});
                 break;
             }

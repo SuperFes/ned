@@ -1533,13 +1533,22 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::AcpSetOption:
         case editor::InteractiveRequest::AcpResumeSession:
         case editor::InteractiveRequest::AcpCopy:
+        case editor::InteractiveRequest::AcpReviewTurn:
             if (onAcpPickerRequest_) {
                 onAcpPickerRequest_(request == editor::InteractiveRequest::AcpSetMode         ? editor::acp::PanelPicker::Mode
                                     : request == editor::InteractiveRequest::AcpSetModel      ? editor::acp::PanelPicker::Model
                                     : request == editor::InteractiveRequest::AcpSetOption     ? editor::acp::PanelPicker::Options
                                     : request == editor::InteractiveRequest::AcpResumeSession ? editor::acp::PanelPicker::Sessions
-                                                                                              : editor::acp::PanelPicker::Copy);
+                                    : request == editor::InteractiveRequest::AcpCopy          ? editor::acp::PanelPicker::Copy
+                                                                                              : editor::acp::PanelPicker::Review);
             }
+            return;
+        case editor::InteractiveRequest::AcpReviewUndoHunk:
+        case editor::InteractiveRequest::AcpReviewUndoFile:
+        case editor::InteractiveRequest::AcpReviewKeep:
+        case editor::InteractiveRequest::AcpReviewRefresh:
+        case editor::InteractiveRequest::AcpReviewQuit:
+            HandleAcpReviewRequest(request);
             return;
         // VCS blame gutter follow-up: one-shot direct actions, same shape
         // as ProjectAgenda/LspGotoDefinition above -- doesn't touch

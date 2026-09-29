@@ -13,6 +13,7 @@
 #include "Editor/Acp/Manager.h"
 #include "Editor/Acp/TerminalText.h"
 #include "Editor/Acp/Transport.h"
+#include "Editor/Acp/TurnFiles.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Mcp/BridgeServer.h"
@@ -834,7 +835,7 @@ TEST_CASE("Manager::RewindTo reports a file edited again since its turn as diver
     std::filesystem::remove(tempPath);
 }
 
-TEST_CASE("Manager::RewindTo reports a file never open in ned as untracked, without touching it on disk", "[Acp]") {
+TEST_CASE("Manager::RewindTo restores a file never open in ned from its turn snapshot", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
 
@@ -852,12 +853,12 @@ TEST_CASE("Manager::RewindTo reports a file never open in ned as untracked, with
     REQUIRE(fixture.manager.CheckpointAt(0).untrackedPaths == std::vector<std::filesystem::path>{tempPath});
 
     const Manager::RewindOutcome outcome = fixture.manager.RewindTo(0);
-    REQUIRE(outcome.untrackedFiles == std::vector<std::string>{tempPath.string()});
-    REQUIRE(outcome.revertedFiles.empty());
+    REQUIRE(outcome.untrackedFiles.empty());
+    REQUIRE(outcome.revertedFiles == std::vector<std::string>{tempPath.string()});
 
     std::ifstream diskContent(tempPath);
     std::string   contentOnDisk((std::istreambuf_iterator<char>(diskContent)), std::istreambuf_iterator<char>());
-    REQUIRE(contentOnDisk == "agent version"); // RewindTo never touches disk directly
+    REQUIRE(contentOnDisk == "original");
 
     std::filesystem::remove(tempPath);
 }
@@ -1447,4 +1448,180 @@ TEST_CASE("Manager takes a failed command's exit code from Claude Code's own sta
                         {"status", "failed"},
                         {"_meta", {{"terminal_exit", {{"terminal_id", "t1"}, {"exit_code", 1}, {"signal", nullptr}}}}}});
     REQUIRE(fixture.manager.Transcript().back().exitCode == 3);
+}
+
+namespace {
+
+std::string ReadWhole(const std::filesystem::path& path) {
+    std::ifstream      input(path, std::ios::binary);
+    std::ostringstream content;
+    content << input.rdbuf();
+    return content.str();
+}
+
+void WriteWhole(const std::filesystem::path& path, const std::string& text) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    output << text;
+}
+
+// A turn that says it edits `path`, changes it on disk the way
+// claude-agent-acp does (never through fs/write_text_file), and ends.
+void RunEditTurn(ManagerFixture& fixture, const std::filesystem::path& path, const std::string& newText, const std::string& toolCallId) {
+    fixture.manager.SendPrompt("edit it");
+    const Json prompt = fixture.reader.Next();
+    fixture.SendUpdate({{"sessionUpdate", "tool_call"},
+                        {"toolCallId", toolCallId},
+                        {"title", "Edit"},
+                        {"kind", "edit"},
+                        {"status", "pending"},
+                        {"locations", Json::array({Json{{"path", path.string()}}})}});
+    WriteWhole(path, newText);
+    fixture.SendUpdate({{"sessionUpdate", "tool_call_update"}, {"toolCallId", toolCallId}, {"status", "completed"}});
+    fixture.client->DispatchFrame(ResultFrame(prompt["id"], Json{{"stopReason", "end_turn"}}));
+}
+
+} // namespace
+
+TEST_CASE("Manager snapshots a file an edit tool call names, before and after its turn", "[Acp]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-acp-turn-snapshot.txt";
+    WriteWhole(path, "one\ntwo\n");
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    RunEditTurn(fixture, path, "one\nTWO\n", "t1");
+
+    REQUIRE(fixture.manager.CheckpointCount() == 1);
+    const auto& files = fixture.manager.CheckpointAt(0).files;
+    REQUIRE(files.size() == 1);
+    REQUIRE(files[0].path == path);
+    REQUIRE(files[0].before.text == "one\ntwo\n");
+    REQUIRE(files[0].after->text == "one\nTWO\n");
+    const auto& summary = fixture.manager.Transcript().back();
+    REQUIRE(summary.kind == Manager::TranscriptEntry::Kind::SessionEvent);
+    REQUIRE(summary.status == "review");
+    REQUIRE(summary.text == "1 file changed (+1 −1)");
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Manager::RewindTo restores a file the agent changed itself", "[Acp]") {
+    const std::filesystem::path path    = std::filesystem::temp_directory_path() / "ned-acp-turn-rewind.txt";
+    const std::filesystem::path created = std::filesystem::temp_directory_path() / "ned-acp-turn-rewind-new.txt";
+    std::filesystem::remove(created);
+    WriteWhole(path, "base\n");
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    RunEditTurn(fixture, path, "first\n", "t1");
+    RunEditTurn(fixture, created, "brand new\n", "t2");
+
+    const Manager::RewindOutcome outcome = fixture.manager.RewindTo(0);
+    REQUIRE(outcome.revertedFiles.size() == 2);
+    REQUIRE(ReadWhole(path) == "base\n");
+    REQUIRE_FALSE(std::filesystem::exists(created));
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Manager::RewindTo leaves a file edited since its turn alone", "[Acp]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-acp-turn-diverged.txt";
+    WriteWhole(path, "base\n");
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    RunEditTurn(fixture, path, "agent\n", "t1");
+    WriteWhole(path, "mine since\n");
+
+    const Manager::RewindOutcome outcome = fixture.manager.RewindTo(0);
+    REQUIRE(outcome.revertedFiles.empty());
+    REQUIRE(outcome.divergedFiles.size() == 1);
+    REQUIRE(ReadWhole(path) == "mine since\n");
+    std::filesystem::remove(path);
+}
+
+TEST_CASE("Manager snapshots an edit when it asks permission, before it can run", "[Acp]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-acp-turn-permission.txt";
+    WriteWhole(path, "before\n");
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    fixture.manager.SendPrompt("edit it");
+    const Json prompt  = fixture.reader.Next();
+    const Json request = {
+        {"jsonrpc", "2.0"},
+        {"id", 7},
+        {"method", "session/request_permission"},
+        {"params",
+         {{"sessionId", "s1"},
+          {"toolCall", {{"toolCallId", "t1"}, {"title", "Write"}, {"kind", "edit"}, {"locations", Json::array({Json{{"path", path.string()}}})}}},
+          {"options", Json::array({Json{{"optionId", "allow"}, {"name", "Allow"}, {"kind", "allow_once"}}})}}},
+    };
+    fixture.client->DispatchFrame(request.dump());
+    fixture.manager.ResolvePermissionPrompt("allow");
+    (void)fixture.reader.Next();
+    WriteWhole(path, "after\n");
+    fixture.client->DispatchFrame(ResultFrame(prompt["id"], Json{{"stopReason", "end_turn"}}));
+
+    const auto& files = fixture.manager.CheckpointAt(0).files;
+    REQUIRE(files.size() == 1);
+    REQUIRE(files[0].before.text == "before\n");
+    REQUIRE(files[0].after->text == "after\n");
+    std::filesystem::remove(path);
+}
+
+namespace {
+
+Json ElicitationFrame(int id, const Json& params) {
+    return Json{{"jsonrpc", "2.0"}, {"id", id}, {"method", "elicitation/create"}, {"params", params}};
+}
+
+} // namespace
+
+TEST_CASE("Manager declares elicitation and holds a form question until it's answered", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.outputBuffer         = fixture.manager.StartSession("test-agent");
+    const Json initializeRequest = fixture.reader.Next();
+    REQUIRE(initializeRequest["params"]["clientCapabilities"]["elicitation"] == Json{{"form", Json::object()}, {"url", Json::object()}});
+    fixture.client->DispatchFrame(ResultFrame(initializeRequest["id"], Json::object()));
+    fixture.client->DispatchFrame(ResultFrame(fixture.reader.Next()["id"], Json{{"sessionId", "s1"}}));
+
+    std::vector<Manager::Attention> attention;
+    fixture.manager.SetOnAttention([&attention](Manager::Attention kind, std::chrono::steady_clock::duration) { attention.push_back(kind); });
+    const Json schema = {{"type", "object"}, {"properties", {{"q", {{"type", "string"}}}}}};
+    fixture.client->DispatchFrame(
+        ElicitationFrame(11, {{"sessionId", "s1"}, {"mode", "form"}, {"message", "Which one?"}, {"requestedSchema", schema}}).dump());
+    REQUIRE(fixture.manager.PendingElicitation());
+    REQUIRE(fixture.manager.PendingElicitation()->schema == schema);
+    REQUIRE(attention == std::vector<Manager::Attention>{Manager::Attention::QuestionAsked});
+    REQUIRE(fixture.manager.Transcript().back().status == "question");
+
+    // A second question while one is open is cancelled.
+    fixture.client->DispatchFrame(ElicitationFrame(12, {{"sessionId", "s1"}, {"mode", "form"}, {"message", "Another?"}}).dump());
+    const Json second = fixture.reader.Next();
+    REQUIRE(second["id"] == 12);
+    REQUIRE(second["result"]["action"] == "cancel");
+
+    fixture.manager.AnswerElicitation("accept", Json{{"q", "this"}}, "this");
+    const Json answer = fixture.reader.Next();
+    REQUIRE(answer["id"] == 11);
+    REQUIRE(answer["result"] == Json{{"action", "accept"}, {"content", {{"q", "this"}}}});
+    REQUIRE_FALSE(fixture.manager.PendingElicitation());
+    REQUIRE(fixture.manager.Transcript().back().text == "answered: this");
+}
+
+TEST_CASE("Manager answers a URL question and reports when the agent says it's done", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    fixture.client->DispatchFrame(
+        ElicitationFrame(5, {{"sessionId", "s1"}, {"mode", "url"}, {"message", "Sign in"}, {"url", "https://x.test"}, {"elicitationId", "e1"}})
+            .dump());
+    REQUIRE(fixture.manager.PendingElicitation()->url == "https://x.test");
+    fixture.manager.AnswerElicitation("accept");
+    REQUIRE(fixture.reader.Next()["result"] == Json{{"action", "accept"}});
+    fixture.client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"method", "elicitation/complete"}, {"params", {{"elicitationId", "e1"}}}}.dump());
+    REQUIRE(fixture.manager.Transcript().back().text == "done: Sign in");
+
+    fixture.client->DispatchFrame(ElicitationFrame(6, {{"sessionId", "s1"}, {"mode", "telepathy"}, {"message", "?"}}).dump());
+    REQUIRE(fixture.reader.Next()["result"]["action"] == "decline");
 }

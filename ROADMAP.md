@@ -986,16 +986,13 @@ desktop notifications. Batch 2 (`acp-panel-batch-2`) added fenced code highlight
 through the fence's language, aligned GFM tables, copying (a code block's header, or
 `M-w`'s picker), terminal output with exit codes and running-tool timers
 (`_meta.terminal_output_delta`), follow-the-agent, and clipboard image paste (`C-v`).
+Batch 3 (`acp-turn-review`) snapshots every file a turn's edit tool calls name, which
+powers an `*acp review*` multibuffer (per-hunk keep/undo, `C-c C-r`/`C-c A v`) and makes
+rewind work for agents that edit the disk themselves; and it answers `elicitation/create`
+questions (Claude's AskUserQuestion, MCP URL sign-ins) from a form in the panel.
 
 - [ ] **ACP protocol gaps**, sized 2026-09-29 against the ACP SDK 1.5.1 schema and
       claude-agent-acp 0.84 (S/M/L = effort; "Claude" = what the adapter actually uses):
-      - **Elicitation** (`elicitation/create`, `elicitation/complete`; stable) -- M, the
-        top item. Without `clientCapabilities.elicitation.form` the adapter sends
-        Claude's AskUserQuestion as a plain allow/deny permission prompt, so its
-        questions can't be answered. Needs a panel form for the JSON-Schema subset the
-        adapter emits (single-select `oneOf`, multi-select `anyOf`, an optional
-        free-text "custom answer" per question) answering accept/decline/cancel. The
-        `url` mode (MCP OAuth) is a smaller follow-up: open the URL, wait for `complete`.
       - **`terminal/*`** (create/output/wait_for_exit/kill/release; stable) -- M/L.
         Claude never calls it (its Bash runs agent-side; batch 2's
         `terminal_output_delta` covers that); it serves agents that ask the client to run
@@ -1030,10 +1027,6 @@ through the fence's language, aligned GFM tables, copying (a code block's header
       unreachable-by-typing binding; a real structural fix (Emacs' own `define-key`
       semantics: reject/restructure a bind that would shadow an existing command) would
       change `Bind`'s signature across every call site including `ned/define-key`.
-- [ ] **ACP panel, next batch**: **review a turn's changes** (multi-file keep/undo per
-      hunk in a multibuffer, built on `Manager::Checkpoint`'s file records) -- the
-      highest-demand item left from the 2026-09-29 survey of Claude Code/Zed/Cursor/
-      agent-shell issue trackers.
 - [ ] Batch-1 limits, each deliberate: replayed turns (`session/load`) carry no
       checkpoints, so rewind can't reach them; resume needs the agent's
       `sessionCapabilities.list` (no ned-side session history to fall back on); the
@@ -1048,6 +1041,11 @@ through the fence's language, aligned GFM tables, copying (a code block's header
       the editor only while the panel has focus. Image paste reads the clipboard through
       `wl-paste`/`xclip` only (no macOS/WSL image path), capped at 3.75 MB. `M-w` copies
       from a picker, since the transcript has no cursor or region to copy from.
+- [ ] Batch-3 limits: a turn's snapshots cover only files its edit/delete/move tool calls
+      name (or `fs/write_text_file` writes), so a shell command's edits (`sed -i`, `rm`)
+      are invisible to the review and to rewind; files over 4 MB or binary aren't
+      tracked; a form's fields show in key order, since the JSON parse doesn't keep the
+      schema's property order.
 - [ ] **Known rough edge**: a right-docked `AcpPanel`'s resize handle has no visually
       reserved border the way `ProjectSidebar`'s divider column does (right-dock mode
       stays a fully separate, byte-for-byte-unchanged standalone overlay from the

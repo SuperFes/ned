@@ -1000,6 +1000,13 @@ enum class InteractiveRequest { None,
                                 AcpSetOption,
                                 AcpResumeSession,
                                 AcpCopy,
+                                AcpReviewTurn,
+                                // The *acp review* buffer's keys -- see Editor/Acp/TurnReview.h.
+                                AcpReviewUndoHunk,
+                                AcpReviewUndoFile,
+                                AcpReviewKeep,
+                                AcpReviewRefresh,
+                                AcpReviewQuit,
                                 // The ACP compose buffer's C-c C-c / C-c C-k -- see
                                 // Editor/Acp/Compose.h.
                                 AcpComposeFinish,

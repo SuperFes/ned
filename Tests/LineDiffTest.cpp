@@ -143,3 +143,56 @@ TEST_CASE("UnifiedDiff handles a changed final line with no trailing newline", "
     REQUIRE(lines[1] == DiffLine{DiffLineKind::Removed, "b"});
     REQUIRE(lines[2] == DiffLine{DiffLineKind::Added, "c"});
 }
+
+namespace {
+
+// Rebuilds b from a and the hunks -- what every hunk list must satisfy.
+std::vector<std::string> ApplyHunks(const std::vector<std::string>& a, const std::vector<std::string>& b,
+                                    const std::vector<ned::text::LineDiffHunk>& hunks) {
+    std::vector<std::string> out;
+    std::size_t              next = 0;
+    for (const auto& hunk : hunks) {
+        out.insert(out.end(), a.begin() + static_cast<std::ptrdiff_t>(next), a.begin() + static_cast<std::ptrdiff_t>(hunk.aStart));
+        out.insert(out.end(), b.begin() + static_cast<std::ptrdiff_t>(hunk.bStart),
+                   b.begin() + static_cast<std::ptrdiff_t>(hunk.bStart + hunk.bCount));
+        next = hunk.aStart + hunk.aCount;
+    }
+    out.insert(out.end(), a.begin() + static_cast<std::ptrdiff_t>(next), a.end());
+    return out;
+}
+
+std::vector<std::string_view> Views(const std::vector<std::string>& lines) {
+    return {lines.begin(), lines.end()};
+}
+
+} // namespace
+
+TEST_CASE("DiffLines finds the few edits in a long file changed near both ends", "[LineDiff]") {
+    std::vector<std::string> a;
+    for (int i = 0; i < 4000; ++i) {
+        a.push_back("line " + std::to_string(i) + "\n");
+    }
+    std::vector<std::string> b = a;
+    b.insert(b.begin() + 1, "added near the top\n");
+    b[2000] = "changed in the middle\n";
+    b.erase(b.end() - 2);
+
+    const auto hunks = ned::text::DiffLines(Views(a), Views(b));
+    REQUIRE(hunks.size() == 3);
+    REQUIRE(hunks[0] == ned::text::LineDiffHunk{1, 0, 1, 1});
+    REQUIRE(hunks[1] == ned::text::LineDiffHunk{1999, 1, 2000, 1});
+    REQUIRE(hunks[2] == ned::text::LineDiffHunk{3998, 1, 3999, 0});
+    REQUIRE(ApplyHunks(a, b, hunks) == b);
+}
+
+TEST_CASE("DiffLines reports two long unrelated texts as one hunk", "[LineDiff]") {
+    std::vector<std::string> a;
+    std::vector<std::string> b;
+    for (int i = 0; i < 3000; ++i) {
+        a.push_back("a" + std::to_string(i) + "\n");
+        b.push_back("b" + std::to_string(i) + "\n");
+    }
+    const auto hunks = ned::text::DiffLines(Views(a), Views(b));
+    REQUIRE(hunks.size() == 1);
+    REQUIRE(ApplyHunks(a, b, hunks) == b);
+}

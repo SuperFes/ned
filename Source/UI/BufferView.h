@@ -35,6 +35,7 @@
 #include "Editor/Acp/Compose.h"
 #include "Editor/Acp/Manager.h"
 #include "Editor/Acp/PanelPicker.h"
+#include "Editor/Acp/TurnReview.h"
 #include "Editor/Backup.h"
 #include "Editor/ClassFileSync.h"
 #include "Editor/CodeFold.h"
@@ -289,6 +290,14 @@ class BufferView : public Widget {
     // acp-compose-finish/acp-compose-abort: closes the compose buffer and
     // hands its text to the panel (send) or tells it the user backed out.
     void FinishAcpCompose(bool send);
+
+    // Opens the *acp review* buffer for one turn's changed files (Editor/
+    // Acp/TurnReview.h), replacing any review already open.
+    void OpenAcpTurnReview(std::string title, std::vector<editor::acp::TurnFile> files);
+    // The review buffer's keys: undo/keep the hunk under point, refresh, quit.
+    void HandleAcpReviewRequest(editor::InteractiveRequest request);
+    // Rebuilds the review buffer from `session`, point on hunk `focusHunk`.
+    void ShowAcpReview(editor::acp::ReviewSession session, std::size_t focusHunk);
 
     // VCS side panel: starts an existing VCS interactive flow (commit
     // compose / branch switch / branch create) on this pane -- the same

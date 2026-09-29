@@ -56,6 +56,7 @@
 
 #include "Client.h"
 #include "TerminalText.h"
+#include "TurnFiles.h"
 
 namespace ned::text {
 class Buffer;
@@ -389,6 +390,11 @@ class Manager {
         std::vector<CheckpointFileRecord>     fileRecords;    // buffers open in ned during this turn -- fully rewindable
         std::vector<std::filesystem::path>    untrackedPaths; // written by the agent but never open in ned -- only a
                                                               // Backup.h version (if any) can recover these
+        // Every file the turn's edit tool calls named (or fs/write_text_file
+        // wrote), before and after -- how rewind and the turn review reach
+        // an agent that edits the disk itself (claude-agent-acp never calls
+        // fs/write_text_file).
+        std::vector<TurnFile> files;
     };
     [[nodiscard]] std::size_t CheckpointCount() const;
     // index 0 = oldest turn. An out-of-range index is a caller-contract
@@ -486,12 +492,31 @@ class Manager {
     // queries -- nullopt when nothing is currently pending.
     [[nodiscard]] const std::optional<PermissionPrompt>& PendingPermissionPrompt() const;
 
+    // A structured question from the agent (elicitation/create): a form --
+    // `schema` is the flat JSON Schema object of its fields -- or a URL to
+    // visit. Claude's AskUserQuestion arrives this way. One at a time; a
+    // second while one is open is cancelled.
+    struct Elicitation {
+        std::size_t id = 0; // new per request, for a UI to notice a replacement
+        std::string mode;   // "form" or "url"
+        std::string message;
+        Json        schema;        // form
+        std::string url;           // url
+        std::string elicitationId; // url, matched by elicitation/complete
+        std::string toolCallId;
+    };
+    [[nodiscard]] const std::optional<Elicitation>& PendingElicitation() const;
+    // `action` is "accept" (with the form's `content`), "decline" or
+    // "cancel"; `summary` is what the transcript says was answered.
+    void AnswerElicitation(const std::string& action, const Json& content = Json::object(), const std::string& summary = {});
+
     // Moments the user may want pulling back to the panel: the agent
     // finished (the last queued prompt included -- not between queued
     // turns), or it's blocked on a permission decision. `turnElapsed` is
     // how long the turn had been running.
     enum class Attention { TurnFinished,
-                           PermissionRequested };
+                           PermissionRequested,
+                           QuestionAsked };
     void SetOnAttention(std::function<void(Attention attention, std::chrono::steady_clock::duration turnElapsed)> handler);
 
     // A live tool call reached a new file (its first location changed) --
@@ -579,8 +604,16 @@ class Manager {
     // then a replayed prompt rather than an echo of one SendPrompt pushed.
     bool                                                 replaying_ = false;
     void                                                 StopToolTimers();
+    // Records `path`'s text as the in-flight turn's "before" the first time
+    // the turn is about to change it.
+    void                                                 SnapshotBeforeEdit(const std::string& path);
+    void                                                 SnapshotToolCallFiles(const TranscriptEntry& toolCall);
     TranscriptEntry*                                     FindToolCall(const std::string& toolCallId);
     std::string                                          permissionToolCallId_; // the tool call the pending permission prompt is for
+    std::optional<Elicitation>                           pendingElicitation_;
+    RespondFn                                            pendingElicitationRespond_;
+    std::size_t                                          elicitationCount_ = 0;
+    std::vector<std::pair<std::string, std::string>>     openUrlElicitations_; // elicitationId, message
     std::string                                          replayUserMessageId_;
     std::vector<std::function<void()>>                   whenSessionSettles_; // see ListSessions
     std::vector<AvailableCommand>                        availableCommands_;

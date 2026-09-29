@@ -662,6 +662,9 @@ class WindowManager {
     // Opens the ACP compose buffer in the focused pane (the first leaf when
     // no pane has focus) and focuses it -- AcpPanel's C-c '.
     void RequestAcpCompose(std::string seed, editor::acp::ComposeCallbacks callbacks);
+    // Opens the *acp review* buffer for a turn's changed files in the
+    // focused pane (the first leaf when a panel has focus), taking focus.
+    void RequestAcpReview(std::string title, std::vector<editor::acp::TurnFile> files);
     void RequestDebugPanelTextEntry(std::string label, std::string initialText, std::function<void(std::string)> onAccept);
 
     // named-projects follow-up: same "route to whichever pane is currently
