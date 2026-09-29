@@ -1,4 +1,4 @@
-// The hcl external scanner, ported from https://github.com/tree-sitter-grammars/tree-sitter-hcl (src/scanner.c, MIT
+// The hcl external scanner, ported from https://github.com/tree-sitter-grammars/tree-sitter-hcl (src/scanner.c, Apache-2.0
 // license) to ned's scanner interface. The algorithm and its state are the
 // upstream grammar's; only the vocabulary is ned's.
 

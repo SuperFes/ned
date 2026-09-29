@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Port a tree-sitter grammar's src/scanner.c to ned's scanner interface.
 
-    Tools/port-scanner.py <scanner.c> <language> <out.cpp> [--repo URL]
+    Tools/port-scanner.py <scanner.c> <language> <out.cpp> [--repo URL] [--license SPDX]
 
 Does the mechanical half: the tree-sitter headers become Editor/Parse/
 Scanner.h (+ ScannerSupport.h when the array vocabulary is used), TSLexer/
@@ -87,7 +87,7 @@ def payload_through_voidptr(body: str) -> str:
     return pattern.sub(replace, body)
 
 
-def port(source: str, language: str, repo: str, library: bool = False) -> str:
+def port(source: str, language: str, repo: str, license: str | None = None, library: bool = False) -> str:
     includes: list[str] = []
     export = re.search(r"\btree_sitter_(\w+)_external_scanner_create\b", source)
     if export is None:
@@ -129,8 +129,9 @@ def port(source: str, language: str, repo: str, library: bool = False) -> str:
 
     ns = f"ned::editor::languages::scanners::{language.replace('-', '_')}"
     out = []
-    out.append(f"// The {language} external scanner, ported from {repo} (src/scanner.c, MIT")
-    out.append("// license) to ned's scanner interface. The algorithm and its state are the")
+    terms = f"{license} license" if license else "under that repository's license"
+    out.append(f"// The {language} external scanner, ported from {repo} (src/scanner.c,")
+    out.append(f"// {terms}) to ned's scanner interface. The algorithm and its state are the")
     out.append("// upstream grammar's; only the vocabulary is ned's.")
     out.append("")
     out.append('#include "Editor/Parse/Scanner.h"')
@@ -161,11 +162,12 @@ def main() -> None:
     parser.add_argument("language")
     parser.add_argument("output")
     parser.add_argument("--repo", default="its upstream repository")
+    parser.add_argument("--license", help="the upstream repository's license, as an SPDX id")
     parser.add_argument("--library", action="store_true", help="export the table as ned_scanner_<language>, for a :scanner-library shared object")
     args = parser.parse_args()
     path = Path(args.scanner)
     source = inline_local_includes(path.read_text(), path.parent)
-    Path(args.output).write_text(port(source, args.language, args.repo, args.library))
+    Path(args.output).write_text(port(source, args.language, args.repo, args.license, library=args.library))
 
 
 if __name__ == "__main__":

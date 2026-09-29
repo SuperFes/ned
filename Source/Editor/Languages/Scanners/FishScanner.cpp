@@ -1,4 +1,4 @@
-// The fish external scanner, ported from https://github.com/ram02z/tree-sitter-fish (src/scanner.c, MIT
+// The fish external scanner, ported from https://github.com/ram02z/tree-sitter-fish (src/scanner.c, Unlicense
 // license) to ned's scanner interface. The algorithm and its state are the
 // upstream grammar's; only the vocabulary is ned's.
 

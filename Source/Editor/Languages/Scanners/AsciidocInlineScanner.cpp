@@ -1,4 +1,4 @@
-// The asciidoc_inline external scanner, ported from https://github.com/cathaysia/tree-sitter-asciidoc (src/scanner.c, MIT
+// The asciidoc_inline external scanner, ported from https://github.com/cathaysia/tree-sitter-asciidoc (src/scanner.c, Apache-2.0
 // license) to ned's scanner interface. The algorithm and its state are the
 // upstream grammar's; only the vocabulary is ned's.
 

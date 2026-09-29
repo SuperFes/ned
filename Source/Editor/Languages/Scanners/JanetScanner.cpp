@@ -1,4 +1,4 @@
-// The janet external scanner, ported from https://github.com/sogaiu/tree-sitter-janet-simple (src/scanner.c, MIT
+// The janet external scanner, ported from https://github.com/sogaiu/tree-sitter-janet-simple (src/scanner.c, CC0-1.0
 // license) to ned's scanner interface. The algorithm and its state are the
 // upstream grammar's; only the vocabulary is ned's.
 
