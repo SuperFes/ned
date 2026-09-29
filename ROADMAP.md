@@ -998,7 +998,8 @@ and `compaction_update` updates and an agent's image/audio/resource content. Pic
 (an agent's images, pasted and replayed prompt images) are drawn inline by Notcurses:
 as glyph-blitter cells everywhere, and as a pixel bitmap on terminals with pixel
 graphics (`AcpPanel/InlineImages`; PNG/JPEG/WebP via the system libpng, libjpeg-turbo
-and libwebp).
+and libwebp). A right-click on one saves it to the XDG download directory or copies it
+(wl-copy/xclip), and `C-c C-w` saves one picked from the transcript (`Editor/Image/Save`).
 
 - [ ] **ACP protocol gaps**, sized 2026-09-29 against the ACP SDK 1.5.1 schema and
       claude-agent-acp 0.84 (S/M/L = effort; "Claude" = what the adapter actually uses):
@@ -1045,7 +1046,8 @@ and libwebp).
 - [ ] Batch-4 limits: GIFs and other formats show only their caption; a picture's
       bitmap goes up only while all of it is on screen and no overlay touches it (the
       cells show otherwise), since a pixel plane can't be clipped or covered; a
-      picture can't be opened in a viewer or copied. A terminal
+      picture can't be opened in a viewer, and copying one needs wl-copy or xclip
+      (OSC 52 carries only text). A terminal
       login ned can't see finish (a TUI left open) needs its tab closed or exited by
       hand, and a prompt refused for want of a login isn't resent after it -- only a
       `session/new` is; `$/cancel_request` covers the session picker's listing only.

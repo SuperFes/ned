@@ -132,6 +132,21 @@ class AcpPanel : public Widget {
     // How a question's URL is opened; editor::link::OpenUrl when unset.
     void SetUrlOpener(std::function<bool(const std::string& url)> opener);
 
+    // A right-click menu's rows and what each does.
+    struct MenuItem {
+        std::string           label;
+        std::function<void()> action;
+    };
+    // Shows a right-click menu at `anchor` (absolute cells); main.cpp puts
+    // it in a popup.
+    void SetOnContextMenuRequest(std::function<void(std::string title, std::vector<MenuItem> items, Point anchor)> onMenu);
+
+    // Where saved pictures go; editor::image::DownloadDirectory() when unset.
+    void SetImageDirectory(std::filesystem::path directory);
+    // Where a copied picture goes; the system clipboard when unset. Returns
+    // whether it was taken.
+    void SetImageCopier(std::function<bool(std::string_view mimeType, std::string_view bytes)> copier);
+
     // Where C-v reads the clipboard from; the system clipboard when unset.
     void SetClipboardSource(std::function<std::optional<editor::ClipboardImage>()> image,
                             std::function<std::optional<std::string>()>            text);
@@ -238,6 +253,16 @@ class AcpPanel : public Widget {
     // Runs the LineAction of the transcript row painted at panel-local row y.
     // Returns false when that row has none.
     bool ActivateRowAt(int y);
+    // The transcript line painted at panel-local row y, if any.
+    [[nodiscard]] const acppanel::DisplayLine* LineAt(int y) const;
+    // The picture at panel-local row y: one of its rows, or the caption of
+    // an agent's image.
+    [[nodiscard]] std::optional<editor::acp::Manager::TranscriptImage> ImageAt(int y) const;
+    // Offers what can be done with the picture at panel-local row y;
+    // false when there's none there.
+    bool OpenImageMenu(int y, Point anchor);
+    void SaveImage(const editor::acp::Manager::TranscriptImage& image);
+    void CopyImage(const editor::acp::Manager::TranscriptImage& image);
     // Scrolls to the previous (direction < 0) or next UserMessage entry
     // relative to the current top row.
     void                                   JumpToPrompt(int direction);
@@ -425,6 +450,9 @@ class AcpPanel : public Widget {
     std::function<std::optional<editor::ClipboardImage>()>          clipboardImage_;
     std::function<std::optional<std::string>()>                     clipboardText_;
     std::function<bool(const std::string&)>                              urlOpener_;
+    std::function<void(std::string, std::vector<MenuItem>, Point)>       onContextMenuRequest_;
+    std::filesystem::path                                                imageDirectory_;
+    std::function<bool(std::string_view, std::string_view)>              imageCopier_;
 
     // The agent's open question, as a form owning the keyboard.
     std::optional<acppanel::ElicitationForm> form_;

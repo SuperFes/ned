@@ -12,6 +12,7 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -29,6 +30,7 @@
 #include "Editor/Lsp/Transport.h"
 #include "Editor/Project/Root.h"
 #include "TestEvents.h"
+#include "Text/Base64.h"
 #include "Text/BufferList.h"
 #include "UI/AcpPanel.h"
 #include "UI/EventLoop.h"
@@ -1990,4 +1992,134 @@ TEST_CASE("AcpPanel draws an agent's picture under its caption", "[AcpPanel][Acp
     };
     REQUIRE((red(corner.foreground_color) || red(corner.background_color)));
     fixture.panel.EndFrame();
+}
+
+namespace {
+
+constexpr const char* kTinyPng = "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAYAAACddGYaAAAAHUlEQVR4nAXBoQEAMAzAIHT1dG/t5xmIJEoVzNv7nJ4Ksxn7EooAAAAASUVORK5CYII=";
+
+// A fresh, empty directory for saved pictures, gone again afterwards.
+struct SaveDirectory {
+    std::filesystem::path path = std::filesystem::temp_directory_path() / ("ned-acp-save-" + std::to_string(::getpid()));
+    SaveDirectory() {
+        std::filesystem::remove_all(path);
+    }
+    ~SaveDirectory() {
+        std::filesystem::remove_all(path);
+    }
+    [[nodiscard]] std::vector<std::filesystem::path> Files() const {
+        std::vector<std::filesystem::path> files;
+        if (std::filesystem::exists(path)) {
+            for (const auto& entry : std::filesystem::directory_iterator(path)) {
+                files.push_back(entry.path());
+            }
+        }
+        return files;
+    }
+};
+
+std::string FileBytes(const std::filesystem::path& path) {
+    std::ifstream      file(path, std::ios::binary);
+    std::ostringstream bytes;
+    bytes << file.rdbuf();
+    return bytes.str();
+}
+
+} // namespace
+
+TEST_CASE("AcpPanel's right-click on a picture saves or copies it", "[AcpPanel][AcpImages]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.panel.SetEventLoop(&fixture.eventLoop);
+    SaveDirectory directory;
+    fixture.panel.SetImageDirectory(directory.path);
+    std::string copiedType;
+    std::string copiedBytes;
+    fixture.panel.SetImageCopier([&](std::string_view mimeType, std::string_view bytes) {
+        copiedType  = mimeType;
+        copiedBytes = bytes;
+        return true;
+    });
+    std::string                              title;
+    std::vector<ned::ui::AcpPanel::MenuItem> items;
+    ned::ui::Point                           anchor{};
+    fixture.panel.SetOnContextMenuRequest([&](std::string menuTitle, std::vector<ned::ui::AcpPanel::MenuItem> menuItems, ned::ui::Point at) {
+        title  = std::move(menuTitle);
+        items  = std::move(menuItems);
+        anchor = at;
+    });
+    fixture.StartActiveSession("claude-code");
+    fixture.AgentSays("Here it is.");
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "image"}, {"mimeType", "image/png"}, {"data", kTinyPng}}}});
+    fixture.Paint();
+    int caption = -1;
+    int reply   = -1;
+    for (int y = 0; y < kHeight; ++y) {
+        if (fixture.RowText(y).starts_with("▣ image")) {
+            caption = y;
+        }
+        if (fixture.RowText(y).starts_with("Here it is.")) {
+            reply = y;
+        }
+    }
+    REQUIRE(caption >= 0);
+    REQUIRE(reply >= 0);
+
+    REQUIRE_FALSE(fixture.panel.OnEvent(ned::ui::test::Mouse(3, reply, ned::ui::MouseEvent::Button::Right, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(items.empty());
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Mouse(3, caption + 1, ned::ui::MouseEvent::Button::Right, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(title == "Picture");
+    REQUIRE(anchor.x == 3);
+    REQUIRE(anchor.y == caption + 1);
+    REQUIRE(items.size() == 2);
+    REQUIRE(items[0].label == "Save to " + directory.path.filename().string());
+    REQUIRE(items[1].label == "Copy Picture");
+
+    const std::string png = ned::text::Base64Decode(kTinyPng).value();
+    items[0].action();
+    items[0].action();
+    // Saved twice: two files, the second beside the first rather than over it.
+    const std::vector<std::filesystem::path> files = directory.Files();
+    REQUIRE(files.size() == 2);
+    for (const std::filesystem::path& file : files) {
+        REQUIRE(file.filename().string().starts_with("ned-image-"));
+        REQUIRE(file.extension() == ".png");
+        REQUIRE(FileBytes(file) == png);
+    }
+    fixture.Paint();
+    REQUIRE(fixture.ContentText().find("saved ") != std::string::npos);
+
+    items[1].action();
+    REQUIRE(copiedType == "image/png");
+    REQUIRE(copiedBytes == png);
+
+    // The caption row offers the same picture.
+    items.clear();
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Mouse(3, caption, ned::ui::MouseEvent::Button::Right, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(items.size() == 2);
+    fixture.panel.EndFrame();
+}
+
+TEST_CASE("AcpPanel's C-c C-w saves a picture picked from the transcript", "[AcpPanel][AcpImages]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    SaveDirectory directory;
+    fixture.panel.SetImageDirectory(directory.path);
+    fixture.StartActiveSession("claude-code");
+    fixture.panel.OnEvent(ned::ui::test::Ctrl('c'));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Ctrl('w')));
+    fixture.Paint();
+    REQUIRE(fixture.ContentText().find("No pictures yet") != std::string::npos);
+    fixture.panel.OnEvent(ned::ui::test::Escape());
+
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "image"}, {"mimeType", "image/png"}, {"data", kTinyPng}}}});
+    fixture.panel.OnEvent(ned::ui::test::Ctrl('c'));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Ctrl('w')));
+    fixture.Paint();
+    REQUIRE(fixture.ContentText().find("Save which picture?") != std::string::npos);
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('1')));
+    const std::vector<std::filesystem::path> files = directory.Files();
+    REQUIRE(files.size() == 1);
+    REQUIRE(FileBytes(files[0]) == ned::text::Base64Decode(kTinyPng).value());
 }

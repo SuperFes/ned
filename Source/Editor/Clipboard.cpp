@@ -349,6 +349,41 @@ std::optional<ClipboardImage> PasteImageFromSystemClipboard(std::chrono::millise
     return ClipboardImage{.mimeType = *mimeType, .bytes = std::move(*bytes)};
 }
 
+std::optional<std::vector<std::string>> ImageCopyCommand(const std::vector<std::string>& copyArgv, std::string_view mimeType) {
+    if (copyArgv.empty()) {
+        return std::nullopt;
+    }
+    if (copyArgv[0] == "wl-copy") {
+        return std::vector<std::string>{"wl-copy", "--type", std::string(mimeType)};
+    }
+    if (copyArgv[0] == "xclip") {
+        return std::vector<std::string>{"xclip", "-selection", "clipboard", "-target", std::string(mimeType), "-in"};
+    }
+    return std::nullopt;
+}
+
+bool CopyImageToSystemClipboard(std::string_view mimeType, std::string_view bytes) {
+    if (!ClipboardEnabled()) {
+        return false;
+    }
+    const std::optional<std::vector<std::string>> copy = ResolvedClipboardCopyCommand();
+    if (!copy) {
+        return false;
+    }
+    const std::optional<std::vector<std::string>> argv = ImageCopyCommand(*copy, mimeType);
+    if (!argv) {
+        return false;
+    }
+    try {
+        process::ChildProcess child(*argv);
+        child.WriteAll(bytes, SubprocessWriteTimeoutMs());
+    }
+    catch (const std::runtime_error&) {
+        return false;
+    }
+    return true;
+}
+
 std::string BuildOsc52CopySequence(std::string_view text, bool wrapForTmux) {
     const std::string sequence = "\x1b]52;c;" + text::Base64Encode(text) + "\x07";
     if (!wrapForTmux) {

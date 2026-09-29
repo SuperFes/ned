@@ -237,6 +237,20 @@ TEST_CASE("Base64Encode pads to a multiple of four and keeps binary bytes", "[Cl
     REQUIRE(Base64Encode(std::string("\0\xff\x10", 3)) == "AP8Q");
 }
 
+TEST_CASE("ImageCopyCommand types the image for wl-copy and xclip only", "[Clipboard]") {
+    using ned::editor::ImageCopyCommand;
+    REQUIRE(ImageCopyCommand({"wl-copy"}, "image/png") == std::vector<std::string>{"wl-copy", "--type", "image/png"});
+    REQUIRE(ImageCopyCommand({"xclip", "-selection", "clipboard", "-in"}, "image/jpeg") ==
+            std::vector<std::string>{"xclip", "-selection", "clipboard", "-target", "image/jpeg", "-in"});
+    REQUIRE_FALSE(ImageCopyCommand({"xsel", "--clipboard", "--input"}, "image/png").has_value());
+    REQUIRE_FALSE(ImageCopyCommand({"pbcopy"}, "image/png").has_value());
+    REQUIRE_FALSE(ImageCopyCommand({}, "image/png").has_value());
+}
+
+TEST_CASE("CopyImageToSystemClipboard does nothing with the clipboard off", "[Clipboard]") {
+    REQUIRE_FALSE(ned::editor::CopyImageToSystemClipboard("image/png", "png!"));
+}
+
 TEST_CASE("PreferredImageMimeType picks PNG, else the first image type offered", "[Clipboard]") {
     using ned::editor::PreferredImageMimeType;
     REQUIRE(PreferredImageMimeType("text/plain\nimage/jpeg\nimage/png\n") == "image/png");

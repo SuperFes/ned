@@ -146,6 +146,16 @@ struct CopyCandidate {
 [[nodiscard]] std::vector<CopyCandidate> CopyCandidates(const std::vector<editor::acp::Manager::TranscriptEntry>& transcript,
                                                         std::size_t                                               maxReplies);
 
+// A picture the save picker offers.
+struct ImageCandidate {
+    std::string                           label;  // the prompt it came with, or the agent's name for it
+    std::string                           detail; // "yours · image/png · 12 KB"
+    editor::acp::Manager::TranscriptImage image;
+};
+
+// Every picture in the transcript, newest first.
+[[nodiscard]] std::vector<ImageCandidate> ImageCandidates(const std::vector<editor::acp::Manager::TranscriptEntry>& transcript);
+
 struct TranscriptFormatOptions {
     int width = 0;
     // Whether transcript entry i shows its details: a tool call's input,

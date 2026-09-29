@@ -286,6 +286,7 @@ add_library(ned_lib STATIC
         Editor/Acp/Notify.cpp
         Editor/Acp/ContentBlocks.cpp
         Editor/Image/Decode.cpp
+        Editor/Image/Save.cpp
         Editor/Acp/TerminalText.cpp
         Editor/Acp/TurnFiles.cpp
         Editor/Acp/TurnReview.cpp

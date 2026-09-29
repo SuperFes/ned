@@ -3048,6 +3048,62 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         wm->TakeFocus();
     });
 
+    // AcpPanel's right-click menu (a picture's Save/Copy): the panel builds
+    // the rows, this shows them -- vcsContextMenu's shape, handing focus
+    // back to the panel rather than a pane.
+    std::vector<std::function<void()>> acpContextMenuActions;
+    ned::ui::ListPopup                 acpContextMenu(theme);
+    acpContextMenu.SetFocusable(true);
+    overlays.Add(acpContextMenu, [panel = &acpContextMenu](Size size) {
+        const ned::ui::Point origin = panel->Anchor().value_or(ned::ui::Point{});
+        const int            width  = std::min(30, size.width);
+        const int            height = std::clamp(panel->ContentRowCount(), 3, std::min(9, size.height));
+
+        const int xMin = std::clamp(origin.x, 0, std::max(0, size.width - width));
+        const int xMax = std::min(size.width - 1, xMin + width - 1);
+
+        int yMin, yMax;
+        if (origin.y + height - 1 <= size.height - 1) {
+            yMin = origin.y;
+            yMax = yMin + height - 1;
+        }
+        else {
+            yMax = std::max(0, origin.y - 1);
+            yMin = std::max(0, yMax - height + 1);
+        }
+        return Box{.x_min = xMin, .x_max = xMax, .y_min = yMin, .y_max = yMax};
+    });
+    acpPanel.SetOnContextMenuRequest([&overlays, panel = &acpContextMenu, &acpContextMenuActions](
+                                         std::string title, std::vector<ned::ui::AcpPanel::MenuItem> items, ned::ui::Point anchor) {
+        ned::ui::ListPopupModel model;
+        model.title  = std::move(title);
+        model.anchor = anchor;
+        acpContextMenuActions.clear();
+        for (ned::ui::AcpPanel::MenuItem& item : items) {
+            model.rows.push_back({.left = "", .main = std::move(item.label)});
+            acpContextMenuActions.push_back(std::move(item.action));
+        }
+        model.selectedIndex = 0;
+        panel->SetModel(std::move(model));
+        overlays.Show(*panel);
+        panel->TakeFocus();
+    });
+    acpContextMenu.SetOnActivate([&acpContextMenuActions, &overlays, panel = &acpContextMenu, &acpPanel](std::size_t index) {
+        overlays.Hide(*panel);
+        acpPanel.TakeFocus();
+        if (index < acpContextMenuActions.size()) {
+            acpContextMenuActions[index]();
+        }
+    });
+    acpContextMenu.SetOnCancel([&overlays, panel = &acpContextMenu, &acpPanel] {
+        overlays.Hide(*panel);
+        acpPanel.TakeFocus();
+    });
+    acpContextMenu.SetOnKey([&overlays, panel = &acpContextMenu, &acpPanel](const ned::editor::KeyChord&) {
+        overlays.Hide(*panel);
+        acpPanel.TakeFocus();
+    });
+
     // Transient commit menu follow-up (ROADMAP's VCS-side-panel entry,
     // "a real transient menu"): 'c' on VcsPanel no longer fires
     // VcsPanelAction::Commit directly -- it opens this small menu instead,
@@ -3295,6 +3351,10 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
                 if (overlays.IsVisible(vcsContextMenu)) {
                     overlays.Hide(vcsContextMenu);
                     windowManager->TakeFocus();
+                }
+                if (overlays.IsVisible(acpContextMenu)) {
+                    overlays.Hide(acpContextMenu);
+                    acpPanel.TakeFocus();
                 }
                 head.OnEvent(event);
             }

@@ -157,6 +157,16 @@ struct ClipboardImage {
 // false. Same hang protection as PasteFromSystemClipboard.
 [[nodiscard]] std::optional<ClipboardImage> PasteImageFromSystemClipboard(std::chrono::milliseconds readTimeout = SubprocessReadTimeoutMs());
 
+// The command that puts an image of `mimeType` on the clipboard, given the
+// resolved copy command: wl-copy and xclip, the tools that can say what
+// type they hold. nullopt for any other.
+[[nodiscard]] std::optional<std::vector<std::string>> ImageCopyCommand(const std::vector<std::string>& copyArgv, std::string_view mimeType);
+
+// Puts an image on the system clipboard (no OSC 52 -- it carries only
+// text). False when there's no tool that can, or ClipboardEnabled() is
+// false.
+bool CopyImageToSystemClipboard(std::string_view mimeType, std::string_view bytes);
+
 // Exposed for testing: the pure OSC 52 escape-sequence construction, no
 // I/O. wrapForTmux
 // applies tmux's DCS passthrough envelope (doubling every literal ESC byte

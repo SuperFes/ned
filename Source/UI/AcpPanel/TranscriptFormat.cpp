@@ -652,6 +652,28 @@ std::vector<CopyCandidate> CopyCandidates(const std::vector<editor::acp::Manager
     return candidates;
 }
 
+std::vector<ImageCandidate> ImageCandidates(const std::vector<editor::acp::Manager::TranscriptEntry>& transcript) {
+    using Kind = editor::acp::Manager::TranscriptEntry::Kind;
+    std::vector<ImageCandidate> candidates;
+    for (auto entry = transcript.rbegin(); entry != transcript.rend(); ++entry) {
+        const bool yours = entry->kind == Kind::UserMessage;
+        if (!yours && entry->kind != Kind::AgentContent) {
+            continue;
+        }
+        const std::string_view text  = yours ? std::string_view(entry->text) : std::string_view(entry->contentName);
+        const std::string      label = text.empty() ? std::string("image") : std::string(text.substr(0, text.find('\n')));
+        for (auto image = entry->images.rbegin(); image != entry->images.rend(); ++image) {
+            std::string detail = yours ? "yours" : "agent's";
+            if (!image->mimeType.empty()) {
+                detail += " · " + image->mimeType;
+            }
+            detail += " · " + editor::acp::FormatByteSize(editor::acp::Base64DecodedSize(image->data));
+            candidates.push_back({.label = label, .detail = std::move(detail), .image = *image});
+        }
+    }
+    return candidates;
+}
+
 std::string_view ToolKindGlyph(std::string_view toolKind) {
     if (toolKind == "read") {
         return "»";

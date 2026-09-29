@@ -1,8 +1,11 @@
 #include "AcpPanel.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 
@@ -10,6 +13,7 @@
 #include "Border.h"
 #include "Editor/Acp/PanelConfig.h"
 #include "Editor/FuzzyMatch.h"
+#include "Editor/Image/Save.h"
 #include "Editor/Link.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Tree.h"
@@ -27,6 +31,15 @@ using acppanel::WrappedRow;
 namespace {
 
     constexpr std::chrono::milliseconds kDoubleClickWindow{400}; // ProjectSidebar/VcsPanel's own kDoubleClickWindow
+
+    std::string HomeRelative(const std::filesystem::path& path) {
+        const char*       home = std::getenv("HOME");
+        const std::string text = path.string();
+        if (home != nullptr && *home != '\0' && text.starts_with(std::string(home) + "/")) {
+            return "~" + text.substr(std::strlen(home));
+        }
+        return text;
+    }
 
     // Mirrors BufferView.cpp's own anonymous-namespace IsPlainCharacter --
     // not shared, it's a one-line predicate private to each consumer there
@@ -337,6 +350,16 @@ void AcpPanel::OpenPicker(editor::acp::PanelPicker picker) {
                             [this, candidates = std::move(candidates)](std::size_t index) { Copy(candidates[index].text); });
             break;
         }
+        case editor::acp::PanelPicker::SaveImage: {
+            std::vector<acppanel::ImageCandidate> candidates = acppanel::ImageCandidates(acpManager_->Transcript());
+            std::vector<acppanel::ChoiceItem>     items;
+            for (const acppanel::ImageCandidate& candidate : candidates) {
+                items.push_back({.label = candidate.label, .detail = candidate.detail});
+            }
+            picker_.emplace(items.empty() ? "No pictures yet" : "Save which picture?", std::move(items),
+                            [this, candidates = std::move(candidates)](std::size_t index) { SaveImage(candidates[index].image); });
+            break;
+        }
     }
 }
 
@@ -572,6 +595,57 @@ void AcpPanel::Copy(const std::string& text) {
     onCopy_(text);
     const std::size_t lines = static_cast<std::size_t>(std::count(text.begin(), text.end(), '\n')) + 1;
     ShowNotice("copied " + std::to_string(lines) + (lines == 1 ? " line" : " lines"));
+}
+
+void AcpPanel::SetOnContextMenuRequest(std::function<void(std::string, std::vector<MenuItem>, Point)> onMenu) {
+    onContextMenuRequest_ = std::move(onMenu);
+}
+
+void AcpPanel::SetImageDirectory(std::filesystem::path directory) {
+    imageDirectory_ = std::move(directory);
+}
+
+void AcpPanel::SetImageCopier(std::function<bool(std::string_view, std::string_view)> copier) {
+    imageCopier_ = std::move(copier);
+}
+
+void AcpPanel::SaveImage(const editor::acp::Manager::TranscriptImage& image) {
+    const std::optional<std::string> bytes = text::Base64Decode(image.data);
+    if (!bytes) {
+        ShowNotice("couldn't read the picture");
+        return;
+    }
+    const std::optional<std::filesystem::path> directory =
+        imageDirectory_.empty() ? editor::image::DownloadDirectory() : std::optional<std::filesystem::path>(imageDirectory_);
+    if (!directory) {
+        ShowNotice("nowhere to save pictures: HOME isn't set");
+        return;
+    }
+    const std::time_t now = std::time(nullptr);
+    std::tm           local{};
+    localtime_r(&now, &local);
+    std::array<char, 32> stem{};
+    std::strftime(stem.data(), stem.size(), "ned-image-%Y%m%d-%H%M%S", &local);
+    const editor::image::WrittenFile written =
+        editor::image::WriteNewFile(*directory, stem.data(), editor::image::ImageFileExtension(image.mimeType, *bytes), *bytes);
+    ShowNotice(written.path.empty() ? written.error : "saved " + HomeRelative(written.path));
+}
+
+void AcpPanel::CopyImage(const editor::acp::Manager::TranscriptImage& image) {
+    const std::optional<std::string> bytes = text::Base64Decode(image.data);
+    if (!bytes) {
+        ShowNotice("couldn't read the picture");
+        return;
+    }
+    // A clipboard needs a type to offer it under; one the agent didn't give
+    // is taken from the bytes.
+    std::string mimeType = image.mimeType;
+    if (mimeType.empty()) {
+        const std::string extension = editor::image::ImageFileExtension("", *bytes);
+        mimeType                    = extension == ".jpg" ? "image/jpeg" : "image/" + extension.substr(1);
+    }
+    const bool copied = imageCopier_ ? imageCopier_(mimeType, *bytes) : editor::CopyImageToSystemClipboard(mimeType, *bytes);
+    ShowNotice(copied ? "copied the picture" : "no clipboard tool here can take a picture (wl-copy or xclip)");
 }
 
 void AcpPanel::SetUrlOpener(std::function<bool(const std::string&)> opener) {
@@ -880,15 +954,56 @@ bool AcpPanel::EntryExpanded(std::size_t index) const {
     return byDefault != toggledEntries_.contains(index);
 }
 
-bool AcpPanel::ActivateRowAt(int y) {
+const acppanel::DisplayLine* AcpPanel::LineAt(int y) const {
     if (!lastShowedTranscript_) {
-        return false;
+        return nullptr;
     }
     const int row = lastFirstRow_ + (y - lastTitleRows_);
     if (y < lastTitleRows_ || y >= lastTitleRows_ + lastViewportRows_ || row < 0 || row >= static_cast<int>(transcriptRows_.size())) {
+        return nullptr;
+    }
+    return &transcriptLines_[transcriptRows_[static_cast<std::size_t>(row)].lineIndex];
+}
+
+std::optional<editor::acp::Manager::TranscriptImage> AcpPanel::ImageAt(int y) const {
+    const acppanel::DisplayLine* line = LineAt(y);
+    if (line == nullptr || !acpManager_ || line->entryIndex >= acpManager_->Transcript().size()) {
+        return std::nullopt;
+    }
+    const editor::acp::Manager::TranscriptEntry& entry = acpManager_->Transcript()[line->entryIndex];
+    for (const editor::acp::Manager::TranscriptImage& image : entry.images) {
+        if (line->image ? image.id == line->image->id : entry.kind == editor::acp::Manager::TranscriptEntry::Kind::AgentContent) {
+            return image;
+        }
+    }
+    return std::nullopt;
+}
+
+bool AcpPanel::OpenImageMenu(int y, Point anchor) {
+    std::optional<editor::acp::Manager::TranscriptImage> image = ImageAt(y);
+    if (!image || !onContextMenuRequest_) {
         return false;
     }
-    const acppanel::DisplayLine& line = transcriptLines_[transcriptRows_[static_cast<std::size_t>(row)].lineIndex];
+    std::string directory = "Downloads";
+    if (!imageDirectory_.empty()) {
+        directory = imageDirectory_.filename().string();
+    }
+    else if (const std::optional<std::filesystem::path> downloads = editor::image::DownloadDirectory()) {
+        directory = downloads->filename().string();
+    }
+    std::vector<MenuItem> items;
+    items.push_back({.label = "Save to " + directory, .action = [this, image = *image] { SaveImage(image); }});
+    items.push_back({.label = "Copy Picture", .action = [this, image = *image] { CopyImage(image); }});
+    onContextMenuRequest_("Picture", std::move(items), anchor);
+    return true;
+}
+
+bool AcpPanel::ActivateRowAt(int y) {
+    const acppanel::DisplayLine* found = LineAt(y);
+    if (found == nullptr) {
+        return false;
+    }
+    const acppanel::DisplayLine& line = *found;
     switch (line.action) {
         case acppanel::LineAction::ToggleExpand:
             if (line.entryIndex == acppanel::kNoEntry) {
@@ -1533,10 +1648,18 @@ void AcpPanel::Paint(Canvas canvas) {
     if (statusRows > 0) {
         const int   y     = titleRows + contentRows + queuedRows;
         const Brush brush = BrushForStyle(DisplayStyle::Dim);
-        PaintUtf8Row(canvas, 0, y, statusLeft, brush, width);
         const int rightColumns = ColumnCount(statusRight);
         if (rightColumns > 0 && ColumnCount(statusLeft) + 1 + rightColumns <= width) {
+            PaintUtf8Row(canvas, 0, y, statusLeft, brush, width);
             PaintUtf8Row(canvas, width - rightColumns, y, statusRight, brush, rightColumns);
+        }
+        else if (rightColumns > 0 && !notice_.empty() && std::chrono::steady_clock::now() < noticeUntil_) {
+            // A notice that doesn't fit beside the rest has the row to
+            // itself while it shows -- it's the one thing just said.
+            PaintUtf8Row(canvas, 0, y, statusRight, brush, width);
+        }
+        else {
+            PaintUtf8Row(canvas, 0, y, statusLeft, brush, width);
         }
     }
     if (contentRows > 0) {
@@ -1701,6 +1824,10 @@ bool AcpPanel::OnEvent(const Event& event) {
             return true;
         }
 
+        if (!collapsed_ && mouse->button == MouseEvent::Button::Right && mouse->motion == MouseEvent::Motion::Pressed) {
+            return OpenImageMenu(mouse->at.y, rawMouse.at);
+        }
+
         // Collapsed/close-button/minimize-button/resize-divider hit-testing
         // is standalone-mode-only -- PanelDock.h's shared tab strip owns all
         // of that when dockHosted_ (collapse has no dock-hosted equivalent
@@ -1807,7 +1934,7 @@ bool AcpPanel::OnEvent(const Event& event) {
     // C-c prefix: C-c ' continues the composer's text in a full buffer
     // (org-edit-special's key); C-c C-s steers, for terminals that can't
     // tell C-RET from RET; C-c C-f toggles following the agent; C-c C-r
-    // reviews a turn's file changes. Any other
+    // reviews a turn's file changes; C-c C-w saves a picture. Any other
     // sequence belongs to the editor's keymap, as do C-x sequences.
     if (controlCPending_) {
         controlCPending_ = false;
@@ -1821,6 +1948,10 @@ bool AcpPanel::OnEvent(const Event& event) {
         }
         if (chord->Control && !chord->Meta && chord->Codepoint == U'r') {
             OpenPicker(editor::acp::PanelPicker::Review);
+            return true;
+        }
+        if (chord->Control && !chord->Meta && chord->Codepoint == U'w') {
+            OpenPicker(editor::acp::PanelPicker::SaveImage);
             return true;
         }
         if (chord->Control && !chord->Meta && chord->Codepoint == U'c' && form_) {

@@ -346,6 +346,22 @@ TEST_CASE("CopyCandidates offers each recent reply, then its code blocks, newest
     REQUIRE(ned::ui::acppanel::CopyCandidates(transcript, 1).size() == 3);
 }
 
+TEST_CASE("ImageCandidates offers every picture, newest first", "[AcpPanel]") {
+    std::vector<Manager::TranscriptEntry> transcript;
+    transcript.push_back({.kind = Kind::UserMessage, .text = "what's this?\nsee attached", .images = {{.id = 1, .mimeType = "image/png", .data = "cG5nIQ=="}}});
+    transcript.push_back({.kind = Kind::AgentText, .text = "a chart:"});
+    transcript.push_back({.kind = Kind::AgentContent, .images = {{.id = 2, .mimeType = "image/jpeg", .data = "anBn"}}});
+    transcript.push_back({.kind = Kind::UserMessage, .text = "thanks"});
+    const auto candidates = ned::ui::acppanel::ImageCandidates(transcript);
+    REQUIRE(candidates.size() == 2);
+    REQUIRE(candidates[0].image.id == 2);
+    REQUIRE(candidates[0].label == "image");
+    REQUIRE(candidates[0].detail.starts_with("agent's · image/jpeg · "));
+    REQUIRE(candidates[1].image.id == 1);
+    REQUIRE(candidates[1].label == "what's this?");
+    REQUIRE(candidates[1].detail.starts_with("yours · image/png · "));
+}
+
 TEST_CASE("FormatTranscript styles a notice by severity and indents its description's later lines", "[AcpPanel]") {
     using ned::ui::acppanel::DisplayStyle;
     std::vector<Manager::TranscriptEntry> transcript;
