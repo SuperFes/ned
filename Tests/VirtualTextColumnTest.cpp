@@ -6,16 +6,18 @@
 // in the wrong place, and the horizontal-scroll decision under-estimated how
 // far right point actually sat.
 //
-// These pin the two directions against each other: VisualColumn (offset ->
-// column) and ByteOffsetForColumnInLine (column -> offset).
+// These pin the column walks against each other: VisualColumn (offset ->
+// column), ByteOffsetForColumnInLine (column -> offset), SkipToColumn, and
+// wrap segmentation.
 //
 // A colour swatch is the second kind of virtual text and rides the same span
-// list for exactly this reason, so the last case here pins its width through
+// list for exactly this reason, so one case here pins its width through
 // the same arithmetic.
 //
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -182,4 +184,77 @@ TEST_CASE("A colour swatch is one column, ahead of any label at the same offset"
                                               {swatchAndLabel}) == offset);
         }
     }
+}
+
+// Wrap segmentation is the fourth walk. Measured without virtual text, a
+// segment that fit the row on paper overflowed it once Paint drew the hints,
+// and the bytes past the right edge were drawn on no row at all -- the next
+// row starts at the segment's end.
+TEST_CASE("Wrap segmentation counts virtual text against the row", "[InlayHint][Wrap]") {
+    using ned::ui::detail::ComputeWrapSegments;
+    using ned::ui::detail::SkipToColumn;
+    const ned::text::RopeStorage content{ned::text::Rope(kLine)};
+    const std::size_t            end   = kLine.size();
+    const auto                   hints = Hints();
+
+    SECTION("a line that fits bare wraps once its hints are counted") {
+        REQUIRE(ComputeWrapSegments(content, 0, end, 22, {}).size() == 1);
+
+        // "Dim(" "plane:" "std_plane" "," " " is 21 columns; "y:" and "y"
+        // no longer fit, so the break falls after the space.
+        const auto segments = ComputeWrapSegments(content, 0, end, 22, {}, 0, hints);
+        REQUIRE(segments.size() == 2);
+        CHECK(segments[0].endByte == 15);
+        CHECK(segments[1].startByte == 15);
+    }
+
+    SECTION("a hint travels to the next row with the glyph it annotates") {
+        // Room for "Dim(" but not for "plane:" plus the 's' it sits before.
+        const auto segments = ComputeWrapSegments(content, 0, end, 8, {}, 0, hints);
+        REQUIRE(segments.size() >= 2);
+        CHECK(segments[0].endByte == 4);
+        CHECK(segments[1].startByte == 4);
+    }
+
+    SECTION("every row fits, at every width") {
+        for (int width = 1; width <= 30; ++width) {
+            const auto  segments      = ComputeWrapSegments(content, 0, end, width, {}, 0, hints);
+            std::size_t expectedStart = 0;
+            for (const auto& segment : segments) {
+                INFO("width " << width << " segment [" << segment.startByte << ", " << segment.endByte << ")");
+                REQUIRE(segment.startByte == expectedStart);
+                const int painted =
+                    SkipToColumn(content, segment.startByte, segment.endByte, std::numeric_limits<int>::max(), {}, hints)
+                        .columns;
+                // Only a lone unit (a glyph plus its hint) wider than the
+                // whole row may overflow it; it has to go somewhere.
+                REQUIRE((painted <= width || segment.endByte - segment.startByte == 1));
+                expectedStart = segment.endByte;
+            }
+            REQUIRE(expectedStart == end);
+        }
+    }
+}
+
+// A collapsed link stands in for its bytes, so Paint never draws a hint
+// anchored at a link's first byte. Every walk has to agree, or the cursor and
+// clicks on that line sit the hint's width off from what was drawn.
+TEST_CASE("A hint at a collapsed link's start costs no columns", "[InlayHint][Link]") {
+    using ned::ui::bufferview::RenderedLink;
+    using ned::ui::detail::ComputeWrapSegments;
+    using ned::ui::detail::SkipToColumn;
+    const ned::text::RopeStorage    content{ned::text::Rope(kLine)};
+    const std::size_t               end   = kLine.size();
+    const auto                      hints = Hints();
+    const std::vector<RenderedLink> links{RenderedLink{.startByte = 4, .endByte = 13, .displayText = "L"}};
+
+    // "Dim(" then "L" in place of "std_plane", and no "plane:".
+    CHECK(VisualColumn(content, 0, 4, 1000, links, hints) == 4);
+    CHECK(VisualColumn(content, 0, 13, 1000, links, hints) == 5);
+    CHECK(ByteOffsetForColumnInLine(content, 0, end, 5, 4, links, hints) == 13);
+    CHECK(SkipToColumn(content, 0, end, 5, links, hints).offset == 13);
+
+    // "Dim(" "L" ", " "y:" "y" ")" is 11 columns: one row at 12. Counting
+    // the unseen "plane:" would have made it 17.
+    CHECK(ComputeWrapSegments(content, 0, end, 12, links, 0, hints).size() == 1);
 }

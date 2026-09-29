@@ -1307,6 +1307,12 @@ class Manager {
     // anchored to text an edit rewrote is dropped rather than clamped, since
     // clamping is that same garbling reached a different way.
     [[nodiscard]] const std::vector<ResolvedInlayHint>& InlayHintSpans(const text::Buffer& buffer) const;
+    // Moves whenever a response changes the virtual text a buffer carries --
+    // an inlay hint merge or a documentColor answer. Virtual text occupies
+    // columns, so a soft-wrapped line's row count is keyed on this. A value is
+    // never reused, even for a buffer whose results were dropped and
+    // re-requested; 0 means nothing has landed.
+    [[nodiscard]] std::size_t VirtualTextRevision(const text::Buffer& buffer) const;
 
     // codeLens follow-up. One applied lens, already resolved to byte
     // offsets -- see Content.h's CodeLens for what each field means;
@@ -2627,14 +2633,18 @@ class Manager {
     mutable std::unordered_map<text::Buffer*, std::vector<ResolvedCodeLens>>             codeLensSpans_;
     std::unordered_set<std::string>                                                      codeLensUnsupported_;
     // documentColor follow-up: the same five-member set the code lenses use,
-    // minus a revision counter -- nothing keys a cache on these arriving (a
-    // swatch is painted inside a line it already owns, so a response landing
-    // moves no rows and invalidates no geometry).
+    // minus a revision counter of its own -- an answer landing moves
+    // virtualTextRevision_, since a swatch cell can push a wrapped line onto
+    // another row.
     mutable std::unordered_map<text::Buffer*, std::size_t>                        documentColorGeneration_;
     std::unordered_map<text::Buffer*, std::size_t>                                documentColorRequestedGeneration_;
     std::unordered_map<text::Buffer*, std::size_t>                                documentColorRequestCounter_;
     mutable std::unordered_map<text::Buffer*, std::vector<ResolvedDocumentColor>> documentColorSpans_;
     std::unordered_set<std::string>                                               documentColorUnsupported_;
+    // See VirtualTextRevision. Values come from one manager-wide counter so
+    // none is ever handed out twice.
+    std::unordered_map<text::Buffer*, std::size_t> virtualTextRevision_;
+    std::size_t                                    virtualTextResultCount_ = 0;
     // Bumped every time codeLensSpans_ is REPLACED, which
     // codeLensSpansGeneration_ cannot stand in for (that one tracks the
     // content the spans were carried forward to, and moves on every edit

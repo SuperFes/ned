@@ -3578,11 +3578,15 @@ class BufferView : public Widget {
     void PaintFoldEllipsis(Canvas& c, int row, int& col, std::size_t line, std::size_t lineStart,
                            const FramePaint& frame) const;
 
-    // Draws every gutter column for `line` on `row`. Called only for a line's
-    // first visual row -- a wrapped continuation row has no gutter of its own.
+    // Draws every gutter column for `line` on `row`. A wrapped line's
+    // continuation rows (continuationRow) carry on what describes the whole
+    // line -- the diff, status and coverage marks, the selection wash, the
+    // fold guides -- and leave out the per-line markers (breakpoint,
+    // diagnostic, quick fix, number, symbol, test, blame), which belong on the
+    // row the line starts on.
     void PaintLineGutter(Canvas& c, int row, std::size_t line, std::size_t lineStart, std::size_t lineEnd,
                          const FramePaint& frame, std::optional<DiffLineKind> lineDiffTint, bool isExecutionLine,
-                         FoldColumnStream& folds);
+                         FoldColumnStream& folds, bool continuationRow);
 
     // Where every gutter column sits this frame. GutterWidth is this layout's
     // totalWidth -- the two used to be computed separately and had to agree.
@@ -4533,6 +4537,9 @@ class BufferView : public Widget {
     // The same, for a buffer and storage the caller already has in hand --
     // BeginLineRender paints from the FramePaint's own pair rather than from
     // activeBuffer_, and the two must produce identical spans.
+    // Moves whenever VirtualTextForLineRange's answer can change without a
+    // content edit -- see Viewport::Host::virtualTextRevision.
+    [[nodiscard]] std::size_t                                  VirtualTextRevision() const;
     [[nodiscard]] std::vector<bufferview::RenderedVirtualText> VirtualTextForRange(
         const text::Buffer& buffer, const text::ITextStorage& content, std::size_t lineStart,
         std::size_t lineEnd) const;

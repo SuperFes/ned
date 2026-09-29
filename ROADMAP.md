@@ -230,11 +230,6 @@ The rest of what the server-side protocol half left behind, unrelated to watch c
       costs. Widening it means windowing on the horizontal scroll, and both producers
       of the span list would have to agree on that window within a frame or the cursor
       drifts -- which is the whole reason the cap is a function of the line alone.
-- [ ] Wrap segmentation still does not count virtual text against a row's width
-      (`ComputeWrapSegments` sees links and codepoints, not `RenderedVirtualText`), so a
-      soft-wrapped line carrying swatches or inlay hints breaks a little later than it
-      should. Pre-existing -- inlay hints have always had it -- and now visible in one
-      more place.
 
 **Colour picker**
 

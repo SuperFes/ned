@@ -873,13 +873,16 @@ inline std::optional<int> VisualColumn(const text::ITextStorage& content, std::s
         // in the line, so an Enter split appeared in the wrong place and the
         // horizontal-scroll decision under-estimated how far right point
         // really was.
-        if (const RenderedVirtualText* hint = VirtualTextStartingAt(lineVirtualText, offset)) {
-            col += VirtualTextColumns(*hint, col);
-        }
+        //
+        // Checked after the link, as in Paint: a collapsed link starting here
+        // stands in for its bytes and draws no hint.
         if (const RenderedLink* link = LinkStartingAt(lineLinks, offset)) {
             col += DisplayColumns(link->displayText, col);
             offset = link->endByte;
             continue;
+        }
+        if (const RenderedVirtualText* hint = VirtualTextStartingAt(lineVirtualText, offset)) {
+            col += VirtualTextColumns(*hint, col);
         }
         const text::Glyph glyph = text::GlyphAt(content, offset, byteOffset);
         col += GlyphColumnsAt(glyph, col);
@@ -895,8 +898,10 @@ inline std::optional<int> VisualColumn(const text::ITextStorage& content, std::s
     // cursor's inverted cell, a selection wash) already lands past the
     // hint, and only this computation -- which is what places the native
     // terminal cursor -- disagreed with them.
-    if (const RenderedVirtualText* hint = VirtualTextStartingAt(lineVirtualText, byteOffset)) {
-        col += VirtualTextColumns(*hint, col);
+    if (LinkStartingAt(lineLinks, byteOffset) == nullptr) {
+        if (const RenderedVirtualText* hint = VirtualTextStartingAt(lineVirtualText, byteOffset)) {
+            col += VirtualTextColumns(*hint, col);
+        }
     }
     return col;
 }
@@ -967,24 +972,6 @@ inline std::size_t ByteOffsetForColumnInLine(const text::ITextStorage& content, 
     std::size_t visualColumn = 0;
     std::size_t steps        = 0;
     while (offset < lineEnd && visualColumn < targetColumn) {
-        // VisualColumn's inverse has to skip the same virtual cells, or a
-        // click lands on a different character than the one under the mouse
-        // by the total width of the hints to its left.
-        if (const RenderedVirtualText* hint = VirtualTextStartingAt(lineVirtualText, offset)) {
-            const std::size_t hintColumns = static_cast<std::size_t>(VirtualTextColumns(*hint, static_cast<int>(visualColumn)));
-            if (targetColumn < visualColumn + hintColumns) {
-                return offset; // the click landed on the hint itself -- the real character it annotates
-            }
-            visualColumn += hintColumns;
-            // A target column landing exactly on the hint/real-character
-            // boundary (guaranteed <= targetColumn by the check above) IS
-            // this character's own column -- stop here rather than falling
-            // through to decode it too, which returned the NEXT character's
-            // offset instead of this one's.
-            if (visualColumn == targetColumn) {
-                return offset;
-            }
-        }
         if (steps >= kMaxTabAwareColumnScan) {
             const std::size_t remainingColumns = targetColumn - visualColumn;
             const std::size_t lineEndCodepoint = content.ByteOffsetToCodepointOffset(lineEnd);
@@ -1001,6 +988,25 @@ inline std::size_t ByteOffsetForColumnInLine(const text::ITextStorage& content, 
             offset = link->endByte;
             ++steps;
             continue;
+        }
+        // VisualColumn's inverse has to skip the same virtual cells, or a
+        // click lands on a different character than the one under the mouse
+        // by the total width of the hints to its left. After the link check,
+        // as in Paint: a collapsed link starting here draws no hint.
+        if (const RenderedVirtualText* hint = VirtualTextStartingAt(lineVirtualText, offset)) {
+            const std::size_t hintColumns = static_cast<std::size_t>(VirtualTextColumns(*hint, static_cast<int>(visualColumn)));
+            if (targetColumn < visualColumn + hintColumns) {
+                return offset; // the click landed on the hint itself -- the real character it annotates
+            }
+            visualColumn += hintColumns;
+            // A target column landing exactly on the hint/real-character
+            // boundary (guaranteed <= targetColumn by the check above) IS
+            // this character's own column -- stop here rather than falling
+            // through to decode it too, which returned the NEXT character's
+            // offset instead of this one's.
+            if (visualColumn == targetColumn) {
+                return offset;
+            }
         }
         const text::Glyph glyph = text::GlyphAt(content, offset, lineEnd);
         const std::size_t next  = visualColumn + static_cast<std::size_t>(
@@ -1024,7 +1030,6 @@ inline std::size_t ByteOffsetForColumnInLine(const text::ITextStorage& content, 
 inline bool IsWrapBreakWhitespace(char32_t cp) {
     return cp == U' ' || cp == U'\t';
 }
-
 
 // line-wrap follow-up. Splits [lineStart, lineEnd) into one or more
 // word-break-aware segments, none exceeding wrapWidth columns. Breaks
@@ -1060,9 +1065,17 @@ inline bool IsWrapBreakWhitespace(char32_t cp) {
 // containing point, never for the whole buffer (RowsForLine's own cache
 // in BufferView.h is what avoids re-running this for the entire buffer
 // on every Paint()).
+//
+// Virtual text counts against the row like any other cells, and travels with
+// the glyph it is anchored before: a parameter hint is never left at the end
+// of one row while the argument it names starts the next. Paint draws the
+// hint when it reaches the anchor's offset, which is the next row's first
+// byte, so the two agree by construction. Measured after a link check, as
+// Paint is: a collapsed link starting at an offset draws no hint there.
 inline std::vector<WrapSegment> ComputeWrapSegments(const text::ITextStorage& content, std::size_t lineStart, std::size_t lineEnd,
                                                     int wrapWidth, const std::vector<RenderedLink>& lineLinks,
-                                                    int continuationIndent = 0) {
+                                                    int                                     continuationIndent = 0,
+                                                    const std::vector<RenderedVirtualText>& lineVirtualText    = {}) {
     wrapWidth          = std::max(wrapWidth, 1);
     continuationIndent = std::clamp(continuationIndent, 0, wrapWidth - 1);
 
@@ -1084,10 +1097,12 @@ inline std::vector<WrapSegment> ComputeWrapSegments(const text::ITextStorage& co
             unitWidth = DisplayColumns(link->displayText, col);
         }
         else {
-            const text::Glyph glyph = text::GlyphAt(content, offset, lineEnd);
-            unitEnd                 = offset + glyph.byteLength;
-            unitWidth               = GlyphColumnsAt(glyph, col);
-            isWhitespace            = IsWrapBreakWhitespace(glyph.codepoint);
+            const RenderedVirtualText* virtualText    = VirtualTextStartingAt(lineVirtualText, offset);
+            const int                  virtualColumns = virtualText ? VirtualTextColumns(*virtualText, col) : 0;
+            const text::Glyph          glyph          = text::GlyphAt(content, offset, lineEnd);
+            unitEnd                                   = offset + glyph.byteLength;
+            unitWidth                                 = virtualColumns + GlyphColumnsAt(glyph, col + virtualColumns);
+            isWhitespace                              = IsWrapBreakWhitespace(glyph.codepoint);
         }
 
         if (col > 0 && col + unitWidth > wrapWidth) {
@@ -1188,12 +1203,13 @@ inline int LeadingIndentColumns(const text::ITextStorage& content, std::size_t l
 
 inline std::vector<WrapSegment> ComputeWrappedLineSegments(const text::ITextStorage& content, std::size_t lineStart,
                                                            std::size_t lineEnd, int fullWidth,
-                                                           const std::vector<RenderedLink>& lineLinks,
-                                                           const std::string&               modeName,
-                                                           const editor::IndentOverride&    bufferIndent) {
+                                                           const std::vector<RenderedLink>&        lineLinks,
+                                                           const std::vector<RenderedVirtualText>& lineVirtualText,
+                                                           const std::string&                      modeName,
+                                                           const editor::IndentOverride&           bufferIndent) {
     const int continuationIndent =
         editor::WrapIndent() ? LeadingIndentColumns(content, lineStart, lineEnd, fullWidth, modeName, bufferIndent) : 0;
-    return ComputeWrapSegments(content, lineStart, lineEnd, fullWidth, lineLinks, continuationIndent);
+    return ComputeWrapSegments(content, lineStart, lineEnd, fullWidth, lineLinks, continuationIndent, lineVirtualText);
 }
 
 // Filters mode_.highlight's whole-buffer HighlightSpan list down to just

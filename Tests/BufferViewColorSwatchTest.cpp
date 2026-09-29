@@ -189,3 +189,112 @@ TEST_CASE("Short hex draws a swatch only where the mode admits that spelling",
         CHECK(painted.screen.PixelAt(painted.gutterWidth, kLiteralRow).background_color == kMagenta);
     }
 }
+
+namespace {
+
+// The characters a painted row shows past the gutter, swatch cells dropped.
+std::string RowContent(ned::ui::Screen& screen, int row, int gutterWidth, int width) {
+    std::string text;
+    for (int x = gutterWidth; x < width; ++x) {
+        const auto& pixel = screen.PixelAt(x, row);
+        if (pixel.background_color == kMagenta) {
+            continue;
+        }
+        text += pixel.character;
+    }
+    return text;
+}
+
+std::string WithoutSpaces(std::string text) {
+    std::erase(text, ' ');
+    return text;
+}
+
+} // namespace
+
+// A swatch cell takes a column on a soft-wrapped row like any character.
+// Segmentation that did not count it produced rows wider than the pane, and
+// the bytes past the right edge were painted on no row at all.
+TEST_CASE("A wrapped line with swatches paints every one of its characters", "[BufferView][ColorSwatch][Wrap]") {
+    const SwatchGuard guard;
+    ned::editor::SetColorSwatchesEnabled(true);
+    ned::editor::SetColorSwatchStyle(ned::editor::ColorSwatchStyle::Block);
+
+    constexpr int     kWidth   = 30;
+    constexpr int     kHeight  = 8;
+    const std::string literals = "#ff00aa #ff00aa #ff00aa #ff00aa #ff00aa #ff00aa";
+
+    Fixture fixture;
+    fixture.mode.wrapLines = true;
+    fixture.buffer.InsertAtPoint("plain\n" + literals + "\nend");
+    BufferView         view = fixture.View();
+    const ned::ui::Box box{.x_min = 0, .x_max = kWidth - 1, .y_min = 0, .y_max = kHeight - 1};
+    view.SetBox_(box);
+
+    fixture.buffer.SetPoint(0);
+    REQUIRE(view.CursorPosition().has_value());
+    const int gutterWidth = view.CursorPosition()->x;
+
+    ned::ui::Screen screen{kWidth, kHeight};
+    ned::ui::Canvas canvas(screen, box);
+    view.Paint(canvas);
+
+    int         endRow = -1;
+    std::string painted;
+    for (int row = kLiteralRow; row < kHeight; ++row) {
+        const std::string content = RowContent(screen, row, gutterWidth, kWidth);
+        if (content.starts_with("end")) {
+            endRow = row;
+            break;
+        }
+        painted += content;
+    }
+    REQUIRE(endRow > kLiteralRow);
+    CHECK(WithoutSpaces(painted) == WithoutSpaces(literals));
+
+    // Point at the literal line's last byte is on screen, on the row before
+    // "end", and past everything painted there.
+    fixture.buffer.SetPoint(6 + literals.size());
+    REQUIRE(view.CursorPosition().has_value());
+    CHECK(view.CursorPosition()->y == endRow - 1);
+    CHECK(view.CursorPosition()->x < kWidth);
+}
+
+// Row counts are memoized per content generation. A swatch setting flips
+// how many rows a line takes without editing anything, so the rows the
+// cursor is placed from have to follow it.
+TEST_CASE("Toggling swatches re-wraps rows without an edit", "[BufferView][ColorSwatch][Wrap]") {
+    const SwatchGuard guard;
+    ned::editor::SetColorSwatchStyle(ned::editor::ColorSwatchStyle::Block);
+
+    constexpr int     kWidth   = 30;
+    constexpr int     kHeight  = 8;
+    const std::string literals = "#ff00aa #ff00aa #ff00aa #ff00aa #ff00aa #ff00aa";
+
+    Fixture fixture;
+    fixture.mode.wrapLines = true;
+    fixture.buffer.InsertAtPoint("plain\n" + literals + "\nend");
+    const std::size_t  endLineStart = 6 + literals.size() + 1;
+    BufferView         view         = fixture.View();
+    const ned::ui::Box box{.x_min = 0, .x_max = kWidth - 1, .y_min = 0, .y_max = kHeight - 1};
+    view.SetBox_(box);
+
+    const auto endRowWith = [&](bool swatches) {
+        ned::editor::SetColorSwatchesEnabled(swatches);
+        ned::ui::Screen screen{kWidth, kHeight};
+        ned::ui::Canvas canvas(screen, box);
+        view.Paint(canvas);
+        fixture.buffer.SetPoint(endLineStart);
+        REQUIRE(view.CursorPosition().has_value());
+        const int x = view.CursorPosition()->x;
+        CHECK(screen.PixelAt(x, view.CursorPosition()->y).character == "e");
+        return view.CursorPosition()->y;
+    };
+
+    const int bare         = endRowWith(false);
+    const int withSwatches = endRowWith(true);
+    // The fixture is sized so the swatches cost the line a row; otherwise this
+    // would not be testing anything.
+    REQUIRE(withSwatches == bare + 1);
+    CHECK(endRowWith(false) == bare);
+}

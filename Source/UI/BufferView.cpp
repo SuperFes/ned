@@ -23,7 +23,7 @@ BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, edi
                                                                                                             dispatcher_, statusMessage_, mode_, theme_, lspManager_, dapManager_,
                                                                                                             acpManager_, vcsRunner_, taskRunner_, testRunner_, projectUndo_,
                                                                                                             eventLoop_, janetEnv_},
-                                                                                                   gutters_(context_, [this](const text::ITextStorage& content) { return viewport_.HugeStructuralWindow(content); }, [this](const text::ITextStorage& content) { return viewport_.SymbolQueryWindow(content); }), viewport_(context_, gutters_, bufferview::Viewport::Host{[this]() { return size(); }, [this]() { return GutterWidth(); }, [this]() { return stickyRowCount_; }, [this](std::size_t line) { return AnnotationRowsForLine(line); }, [this](std::size_t line) { return LeadingAnnotationRowsForLine(line); }, [this](std::size_t lineStart, std::size_t lineEnd) { return VirtualTextForLineRange(lineStart, lineEnd); }, [this]() { DismissHover(); }, [this]() { return ActiveAlignment() != nullptr; }}) {
+                                                                                                   gutters_(context_, [this](const text::ITextStorage& content) { return viewport_.HugeStructuralWindow(content); }, [this](const text::ITextStorage& content) { return viewport_.SymbolQueryWindow(content); }), viewport_(context_, gutters_, bufferview::Viewport::Host{[this]() { return size(); }, [this]() { return GutterWidth(); }, [this]() { return stickyRowCount_; }, [this](std::size_t line) { return AnnotationRowsForLine(line); }, [this](std::size_t line) { return LeadingAnnotationRowsForLine(line); }, [this](std::size_t lineStart, std::size_t lineEnd) { return VirtualTextForLineRange(lineStart, lineEnd); }, [this]() { return VirtualTextRevision(); }, [this]() { DismissHover(); }, [this]() { return ActiveAlignment() != nullptr; }}) {
     if (const char* path = std::getenv("NED_DEBUG_MOUSE"); path && *path) {
         debugMouseLogPath_ = path;
     }
@@ -132,8 +132,10 @@ editor::CommandContext BufferView::MakeContext() {
                 const std::size_t lineStart = content.LineToByteOffset(ln);
                 const std::size_t lineEnd = (ln + 1 < totalLines) ? content.LineToByteOffset(ln + 1) - 1 : content.ByteLength();
                 const std::vector<bufferview::RenderedLink> lineLinks = LinksForLine(viewport_.Links(), lineStart, lineEnd, point);
+                const std::vector<bufferview::RenderedVirtualText> lineVirtualText = VirtualTextForLineRange(lineStart, lineEnd);
                 const int fullWidth = std::max(1, size().width - static_cast<int>(GutterWidth()));
-                return ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks, mode_.name, buffer.LocalIndent());
+                return ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks, lineVirtualText, mode_.name,
+                                                  buffer.LocalIndent());
             };
             const auto toRow = [](const bufferview::WrapSegment& seg) {
                 return editor::CommandContext::VisualRow{.start = seg.startByte, .end = seg.endByte, .hang = seg.continuationIndent};

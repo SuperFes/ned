@@ -1837,6 +1837,7 @@ void Manager::NotifyBufferClosed(text::Buffer& buffer) {
     }
     inlayHintRevision_.erase(&buffer);
     inlayHintView_.erase(&buffer);
+    virtualTextRevision_.erase(&buffer);
     codeLensRequestedGeneration_.erase(&buffer);
     codeLensRequestCounter_.erase(&buffer);
     codeLensSpans_.erase(&buffer);
@@ -3001,6 +3002,11 @@ const std::vector<Manager::ResolvedInlayHint>& Manager::InlayHintSpans(const tex
     return view.hints;
 }
 
+std::size_t Manager::VirtualTextRevision(const text::Buffer& buffer) const {
+    const auto it = virtualTextRevision_.find(const_cast<text::Buffer*>(&buffer));
+    return it != virtualTextRevision_.end() ? it->second : 0;
+}
+
 void Manager::MergeInlayHints(text::Buffer& buffer, std::vector<ResolvedInlayHint> resolved, std::size_t rangeStart,
                               std::size_t rangeEnd) {
     std::vector<AnchoredInlayHint>& retained = inlayHintAnchors_[&buffer];
@@ -3033,6 +3039,7 @@ void Manager::MergeInlayHints(text::Buffer& buffer, std::vector<ResolvedInlayHin
     });
     retained = std::move(kept);
     ++inlayHintRevision_[&buffer];
+    virtualTextRevision_[&buffer] = ++virtualTextResultCount_;
 }
 
 std::optional<std::pair<std::size_t, std::size_t>> Manager::UncoveredRequestRange(ViewportCoverage&   coverage,
@@ -3378,6 +3385,7 @@ void Manager::RequestDocumentColors(text::Buffer& buffer, const std::string& ser
                          });
             documentColorSpans_[bufferPtr]      = std::move(resolved);
             documentColorGeneration_[bufferPtr] = bufferPtr->ContentGeneration();
+            virtualTextRevision_[bufferPtr]     = ++virtualTextResultCount_;
         });
 }
 

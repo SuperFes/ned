@@ -67,6 +67,11 @@ class Viewport {
         // its left. Unset is a safe no-op (an empty list), like every other
         // hook here.
         std::function<std::vector<RenderedVirtualText>(std::size_t lineStart, std::size_t lineEnd)> virtualTextForLine;
+        // Changes whenever virtualTextForLine's answer can change without a
+        // content edit (a hint response landing, a swatch setting toggled).
+        // Virtual text takes up room on a wrapped row, so the memoized row counts are
+        // keyed on it.
+        std::function<std::size_t()> virtualTextRevision;
         // Scrolling invalidates a hover popup anchored to a screen position.
         std::function<void()> dismissHover;
         // True forces wrap off regardless of the buffer's own setting.
@@ -176,6 +181,7 @@ class Viewport {
   private:
     void EnsureHiddenLineRanges() const;
     void EnsureRowCounts() const;
+    [[nodiscard]] std::vector<RenderedVirtualText> LineVirtualText(std::size_t lineStart, std::size_t lineEnd) const;
     void EnsureLinks() const;
 
     EditorContext&     context_;

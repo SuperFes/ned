@@ -351,7 +351,7 @@ int BufferView::PaintStickyScrollRows(Canvas& c, std::size_t gutterWidth) const 
 void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size_t lineStart,
                                  std::size_t lineEnd, const FramePaint& frame,
                                  std::optional<DiffLineKind> lineDiffTint, bool isExecutionLine,
-                                 FoldColumnStream& folds) {
+                                 FoldColumnStream& folds, bool continuationRow) {
     // Includes the line's own newline (unlike lineEnd above), so a
     // region selected through to the start of the next line still
     // counts this one as fully selected -- see ClassifyGutterSelection.
@@ -399,7 +399,7 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
     // geometric-shapes range as the scroll arrows -- DAP round 3
     // adds ◇, the open-diamond hit-count sibling of ◆'s filled
     // condition glyph).
-    if (frame.gutter.dapWidth > 0) {
+    if (frame.gutter.dapWidth > 0 && !continuationRow) {
         Cell& cell = c[{.x = 0, .y = row}];
         if (isExecutionLine) {
             cell.character = "▸";
@@ -450,7 +450,8 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
     if (frame.gutter.diffWidth > 0) {
         const auto it = std::lower_bound(diffLineKinds_.begin(), diffLineKinds_.end(), line,
                                          [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
-        if (it != diffLineKinds_.end() && it->first == line) {
+        // A deletion marks the edge above the line, so only its first row.
+        if (it != diffLineKinds_.end() && it->first == line && !(continuationRow && it->second == DiffLineKind::Removed)) {
             // diff-gutter-icons follow-up (was a solid color
             // swatch for Added/Modified): vim-gitgutter's own
             // classic glyph vocabulary -- the shape says WHAT
@@ -523,7 +524,7 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
     // own doc comment for why a plain binary search suffices here
     // (at most one entry per line -- the most severe -- already
     // sorted).
-    if (static_cast<int>(frame.gutter.diagnosticStart) < c.size().width) {
+    if (static_cast<int>(frame.gutter.diagnosticStart) < c.size().width && !continuationRow) {
         const auto it            = std::lower_bound(frame.diagnosticLineSeverities.begin(), frame.diagnosticLineSeverities.end(), line,
                                                     [](const auto& entry, std::size_t targetLine) { return entry.first < targetLine; });
         const bool hasDiagnostic = it != frame.diagnosticLineSeverities.end() && it->first == line;
@@ -551,7 +552,8 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
     // than the 💡 the same idea wears elsewhere: an emoji is two columns
     // wide in a terminal and would not fit the one-column gutter
     // convention every other column here keeps.
-    if (frame.gutter.codeActionWidth > 0 && static_cast<int>(frame.gutter.codeActionStart) < c.size().width) {
+    if (frame.gutter.codeActionWidth > 0 && static_cast<int>(frame.gutter.codeActionStart) < c.size().width &&
+        !continuationRow) {
         const auto it = std::lower_bound(frame.codeActionHintLines.begin(), frame.codeActionHintLines.end(), line);
         if (it != frame.codeActionHintLines.end() && *it == line) {
             Cell& cell     = c[{.x = static_cast<int>(frame.gutter.codeActionStart), .y = row}];
@@ -587,7 +589,10 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
         // Vim's "relativenumber": current line keeps its real
         // (1-indexed) number, every other visible line shows its
         // distance from it instead.
-        const std::string number  = editor::RelativeLineNumbersEnabled() && line != frame.pointLine
+        // A continuation row keeps the digits' selection wash but not the
+        // number; the wrap glyph goes over it later in the row.
+        const std::string number  = continuationRow ? std::string()
+                                    : editor::RelativeLineNumbersEnabled() && line != frame.pointLine
                                         ? std::to_string(line > frame.pointLine ? line - frame.pointLine : frame.pointLine - line)
                                         : std::to_string(line + 1); // 1-indexed, matches ModeLine's L/C convention
         const std::size_t padding = frame.gutter.digits > number.size() ? frame.gutter.digits - number.size() : 0;
@@ -656,7 +661,7 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
     // lower_bound lookup the blame gutter below already uses.
     // Placed right before fold, matching [digits][gap][symbol]
     // [fold][blame]'s own layout comment above.
-    if (frame.gutter.symbolWidth > 0 && static_cast<int>(frame.gutter.symbolStart) < c.size().width) {
+    if (frame.gutter.symbolWidth > 0 && static_cast<int>(frame.gutter.symbolStart) < c.size().width && !continuationRow) {
         const auto it = std::lower_bound(gutters_.SymbolLineKinds().begin(), gutters_.SymbolLineKinds().end(), line,
                                          [](const auto& entry, std::size_t l) { return entry.first < l; });
         if (it != gutters_.SymbolLineKinds().end() && it->first == line) {
@@ -668,7 +673,7 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
 
     // test-runner integration: the pass/fail mark on a discovered
     // test's own first line -- symbol block's exact lookup shape.
-    if (frame.gutter.testWidth > 0 && static_cast<int>(frame.gutter.testStart) < c.size().width) {
+    if (frame.gutter.testWidth > 0 && static_cast<int>(frame.gutter.testStart) < c.size().width && !continuationRow) {
         const auto it = std::lower_bound(gutters_.TestEntries().begin(), gutters_.TestEntries().end(), line,
                                          [](const TestGutterEntry& entry, std::size_t l) { return entry.line < l; });
         if (it != gutters_.TestEntries().end() && it->line == line) {
@@ -730,7 +735,12 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
         }
     }
 
-    if (frame.gutter.foldWidth > 0) {
+    if (frame.gutter.foldWidth > 0 && continuationRow) {
+        // Between this line and the next, like a trailing callout row: a
+        // header's guide starts here, a closer's has already ended.
+        PaintFoldColumnContinuation(c, row, line + 1, frame.gutter);
+    }
+    else if (frame.gutter.foldWidth > 0) {
         folds.headerAtColumn.fill(nullptr);
         // <= line, not == line: when viewport_.TopLine() > 0 (scrolled past
         // any blocks whose header sits earlier in the file), those
@@ -794,7 +804,7 @@ void BufferView::PaintLineGutter(Canvas& c, int row, std::size_t line, std::size
     // diagnostic gutter's glyph coloring already uses (see
     // SpanAtOffset's own precedent) since SyntaxClass is
     // tree-sitter-capture-oriented, not a fit for this.
-    if (frame.gutter.blameWidth > 0) {
+    if (frame.gutter.blameWidth > 0 && !continuationRow) {
         const auto it = std::lower_bound(blameLineInfo_.begin(), blameLineInfo_.end(), line,
                                          [](const auto& entry, std::size_t l) { return entry.first < l; });
         if (it != blameLineInfo_.end() && it->first == line) {
@@ -901,8 +911,8 @@ void BufferView::BeginLineRender(LineRenderState& state, std::size_t line, std::
         }
     }
     if (wrapActive) {
-        state.segments = ComputeWrappedLineSegments(frame.content, lineStart, lineEnd, contentWidth, state.links, mode_.name,
-                                                    frame.buffer.LocalIndent());
+        state.segments = ComputeWrappedLineSegments(frame.content, lineStart, lineEnd, contentWidth, state.links,
+                                                    state.virtualText, mode_.name, frame.buffer.LocalIndent());
     }
     else {
         state.segments = {WrapSegment{.startByte = lineStart, .endByte = lineEnd}};
@@ -2079,7 +2089,10 @@ void BufferView::Paint(Canvas paneCanvas) {
             continue; // consumed this row; `line` already points at the next buffer line
         }
         if (pendingBlankRows > 0) {
+            // `line` already names the next visible line, and a row trailing
+            // the previous one sits inside whatever blocks enclose it.
             --pendingBlankRows;
+            PaintFoldColumnContinuation(c, row, line, gutter);
             rowContentEndColumn[row] = static_cast<int>(gutter.totalWidth);
             continue;
         }
@@ -2101,6 +2114,7 @@ void BufferView::Paint(Canvas paneCanvas) {
                     PaintCodeLensRow(c, row, line, gutter);
                 }
                 else {
+                    PaintFoldColumnContinuation(c, row, line, gutter);
                     rowContentEndColumn[row] = static_cast<int>(gutter.totalWidth);
                 }
                 ++leadingRowsPainted;
@@ -2128,15 +2142,8 @@ void BufferView::Paint(Canvas paneCanvas) {
             }
             const WrapSegment& currentSegment = lineState.segments[segmentIndex];
 
-            // line-wrap follow-up: everything in this block is per-REAL-LINE,
-            // not per-row (a line number/fold glyph only ever belongs on a
-            // line's own first row) -- skipped entirely for a continuation
-            // row of a wrapped line; the top-of-row blanking pass already
-            // washed this row's gutter columns blank.
-            if (segmentIndex == 0) {
-                PaintLineGutter(c, row, line, lineStart, lineEnd, frame, lineState.diffTint,
-                                lineState.isExecutionLine, folds);
-            }
+            PaintLineGutter(c, row, line, lineStart, lineEnd, frame, lineState.diffTint, lineState.isExecutionLine,
+                            folds, segmentIndex > 0);
 
             const std::vector<editor::HighlightSpan>& lineSpans = lineState.spans;
             const std::vector<RenderedLink>&          lineLinks = lineState.links;
@@ -2233,9 +2240,9 @@ void BufferView::Paint(Canvas paneCanvas) {
             // With line numbers on (the normal case) it goes in the digits
             // column of every CONTINUATION row (segmentIndex > 0): exactly
             // where that row's line number would be if it had one, which is
-            // the whole reason this reads at a glance. PaintLineGutter runs
-            // for segmentIndex == 0 only, so the column is blank here and
-            // this is a single cell write, no reserved width anywhere.
+            // the whole reason this reads at a glance. PaintLineGutter writes
+            // no number on a continuation row, so the cell is free and this
+            // is a single cell write, no reserved width anywhere.
             //
             // With line numbers off there is no digits column, so it goes
             // after the content of every row that HANDS OFF to another
@@ -2268,9 +2275,11 @@ void BufferView::Paint(Canvas paneCanvas) {
             const Brush wrapContinuationBrush{.background = theme_.background,
                                               .foreground = theme_.indentGuideForeground};
             if (LineNumberGutterActive() && segmentIndex > 0 && gutter.digits > 0) {
-                Cell& cell     = c[{.x = static_cast<int>(gutter.digitsStart + gutter.digits) - 1, .y = row}];
-                cell.character = text::EncodeCodepointUtf8(kWrapContinuationIndicator);
-                wrapContinuationBrush.ApplyTo(cell);
+                // Foreground only: the digits column may be carrying the
+                // line's selection wash, which this row shares.
+                Cell& cell            = c[{.x = static_cast<int>(gutter.digitsStart + gutter.digits) - 1, .y = row}];
+                cell.character        = text::EncodeCodepointUtf8(kWrapContinuationIndicator);
+                cell.foreground_color = wrapContinuationBrush.foreground;
             }
             else if (!LineNumberGutterActive() && segmentIndex + 1 < lineState.segments.size() &&
                      col < c.size().width) {
@@ -3304,7 +3313,8 @@ std::optional<Point> BufferView::CursorPosition() const {
     // point's own position (LinksForLine excludes any link containing
     // point), so this always agrees with what Paint() actually drew for
     // this specific row.
-    const std::vector<RenderedLink> lineLinks = LinksForLine(viewport_.Links(), lineStart, lineEnd, point);
+    const std::vector<RenderedLink>        lineLinks       = LinksForLine(viewport_.Links(), lineStart, lineEnd, point);
+    const std::vector<RenderedVirtualText> lineVirtualText = VirtualTextForLineRange(lineStart, lineEnd);
 
     // line-wrap follow-up: which wrap segment (row) of pointLine actually
     // contains point -- 0, and the whole line as one segment, when wrap is
@@ -3322,8 +3332,8 @@ std::optional<Point> BufferView::CursorPosition() const {
     int         continuationIndent = 0; // wrap-indent follow-up: 0 unless point lands on an actual continuation row
     if (viewport_.EffectiveWrapLines() && sizeIsKnown) {
         const int                      fullWidth = std::max(1, sizeNow.width - static_cast<int>(gutterWidth));
-        const std::vector<WrapSegment> segments  = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks, mode_.name,
-                                                                              buffer.LocalIndent());
+        const std::vector<WrapSegment> segments  = ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks,
+                                                                              lineVirtualText, mode_.name, buffer.LocalIndent());
         for (std::size_t i = 0; i < segments.size(); ++i) {
             const bool isLast = (i + 1 == segments.size());
             if (point >= segments[i].startByte && (point < segments[i].endByte || (isLast && point == segments[i].endByte))) {
@@ -3367,7 +3377,6 @@ std::optional<Point> BufferView::CursorPosition() const {
     const int maxColumns = sizeIsKnown ? sizeNow.width - static_cast<int>(gutterWidth) + static_cast<int>(viewport_.LeftColumn())
                                        : std::numeric_limits<int>::max();
 
-    const std::vector<RenderedVirtualText> lineVirtualText = VirtualTextForLineRange(lineStart, lineEnd);
     const std::optional<int>               visualCol       = VisualColumn(content, segmentStart, point, maxColumns, lineLinks, lineVirtualText);
     // Paint does not begin the row at viewport_.LeftColumn(): its
     // fast-forward stops on a glyph or hint boundary, which overshoots
@@ -3454,6 +3463,14 @@ std::vector<editor::ColorLiteral> BufferView::ColorLiteralsInRange(const text::B
                   [](const editor::ColorLiteral& a, const editor::ColorLiteral& b) { return a.begin < b.begin; });
     }
     return literals;
+}
+
+std::size_t BufferView::VirtualTextRevision() const {
+    const std::size_t results = lspManager_ != nullptr ? lspManager_->VirtualTextRevision(activeBuffer_.Get()) : 0;
+    // Only Block swatches occupy columns; see VirtualTextForRange.
+    const bool swatchColumns =
+        editor::ColorSwatchesEnabled() && editor::GetColorSwatchStyle() == editor::ColorSwatchStyle::Block;
+    return (results << 1) | (swatchColumns ? 1 : 0);
 }
 
 std::vector<bufferview::RenderedVirtualText> BufferView::VirtualTextForRange(const text::Buffer&       buffer,

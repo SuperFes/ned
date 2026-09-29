@@ -187,8 +187,9 @@ void Viewport::EnsureRowCounts() const {
     const std::size_t gutterWidth  = host_.gutterWidth();
     const int         contentWidth = std::max(1, host_.size().width - static_cast<int>(gutterWidth));
 
-    const CacheStamp stamp = CacheStamp::For(
-        &buffer, {buffer.ContentGeneration(), static_cast<std::size_t>(contentWidth), static_cast<std::size_t>(wrapEnabled)});
+    const std::size_t virtualTextRevision = host_.virtualTextRevision ? host_.virtualTextRevision() : 0;
+    const CacheStamp  stamp               = CacheStamp::For(&buffer, {buffer.ContentGeneration(), static_cast<std::size_t>(contentWidth),
+                                                                      static_cast<std::size_t>(wrapEnabled), virtualTextRevision});
 
     if (!wrapEnabled) {
         // Fast path: every buffer with wrap off (the common case) never
@@ -254,13 +255,17 @@ std::size_t Viewport::RowsForLine(std::size_t line) const {
         const std::size_t         lineEnd =
             (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
         EnsureLinks();
-        const std::vector<RenderedLink> lineLinks = LinksForLine(links_, lineStart, lineEnd, buffer.Point());
-        rowCountPerLine_[line] =
-            ComputeWrappedLineSegments(content, lineStart, lineEnd, rowCountContentWidth_, lineLinks, context_.mode.name,
-                                       buffer.LocalIndent())
-                .size();
+        const std::vector<RenderedLink>        lineLinks       = LinksForLine(links_, lineStart, lineEnd, buffer.Point());
+        const std::vector<RenderedVirtualText> lineVirtualText = LineVirtualText(lineStart, lineEnd);
+        rowCountPerLine_[line]                                 = ComputeWrappedLineSegments(content, lineStart, lineEnd, rowCountContentWidth_, lineLinks,
+                                                                                            lineVirtualText, context_.mode.name, buffer.LocalIndent())
+                                                                     .size();
     }
     return rowCountPerLine_[line] + leadingRows + annotationRows; // memoized value is content rows only -- annotation state changes independently of the wrap cache's keys
+}
+
+std::vector<RenderedVirtualText> Viewport::LineVirtualText(std::size_t lineStart, std::size_t lineEnd) const {
+    return host_.virtualTextForLine ? host_.virtualTextForLine(lineStart, lineEnd) : std::vector<RenderedVirtualText>{};
 }
 
 std::size_t Viewport::VisibleRowCountBetween(std::size_t startLine, std::size_t endLineExclusive) const {
@@ -445,8 +450,7 @@ void Viewport::ScrollToShowPointHorizontally() {
     const std::size_t lineEnd =
         (pointLine + 1 < content.LineCount()) ? content.LineToByteOffset(pointLine + 1) - 1 : content.ByteLength();
     const std::vector<RenderedLink>      lineLinks = LinksForLine(links_, lineStart, lineEnd, point);
-    const std::vector<RenderedVirtualText> lineVirtualText =
-        host_.virtualTextForLine ? host_.virtualTextForLine(lineStart, lineEnd) : std::vector<RenderedVirtualText>{};
+    const std::vector<RenderedVirtualText> lineVirtualText = LineVirtualText(lineStart, lineEnd);
 
     // Point's true column from the start of the line, unbounded (well,
     // bounded only by the line's own length, not the viewport) -- needed to
@@ -631,7 +635,8 @@ std::size_t Viewport::ByteOffsetForPoint(Point at) const {
     const std::size_t lineStart = content.LineToByteOffset(line);
     const std::size_t lineEnd   = (line + 1 < totalLines) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
     EnsureLinks();
-    const std::vector<RenderedLink> lineLinks = LinksForLine(links_, lineStart, lineEnd, buffer.Point());
+    const std::vector<RenderedLink>        lineLinks       = LinksForLine(links_, lineStart, lineEnd, buffer.Point());
+    const std::vector<RenderedVirtualText> lineVirtualText = LineVirtualText(lineStart, lineEnd);
 
     // line-wrap follow-up: resolve the click against the landed-on
     // segment's own [startByte, endByte) instead of the whole line's range
@@ -644,7 +649,8 @@ std::size_t Viewport::ByteOffsetForPoint(Point at) const {
     if (EffectiveWrapLines()) {
         const int                      fullWidth      = std::max(1, host_.size().width - static_cast<int>(gutterWidth));
         const std::vector<WrapSegment> segments =
-            ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks, context_.mode.name, buffer.LocalIndent());
+            ComputeWrappedLineSegments(content, lineStart, lineEnd, fullWidth, lineLinks, lineVirtualText, context_.mode.name,
+                                       buffer.LocalIndent());
         const std::size_t              clampedSegment = std::min(segmentInLine, segments.size() - 1);
         segStart                                      = segments[clampedSegment].startByte;
         segEnd                                        = segments[clampedSegment].endByte;
@@ -657,8 +663,6 @@ std::size_t Viewport::ByteOffsetForPoint(Point at) const {
         clickColumn                   = (column > continuationIndent) ? column - continuationIndent : 0;
     }
 
-    const std::vector<RenderedVirtualText> lineVirtualText =
-        host_.virtualTextForLine ? host_.virtualTextForLine(lineStart, lineEnd) : std::vector<RenderedVirtualText>{};
     return ByteOffsetForColumnInLine(content, segStart, segEnd, clickColumn, editor::TabWidth(), lineLinks, lineVirtualText);
 }
 
