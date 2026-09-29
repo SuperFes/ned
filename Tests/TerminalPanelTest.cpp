@@ -22,7 +22,9 @@
 
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "Editor/Clipboard.h"
 #include "Editor/Terminal/Config.h"
@@ -546,4 +548,14 @@ TEST_CASE("TerminalPanel copies an OSC 52 write to the system clipboard", "[Term
     std::string   copiedText((std::istreambuf_iterator<char>(copied)), std::istreambuf_iterator<char>());
     REQUIRE(copiedText == "hello there");
     std::filesystem::remove(fakeClipboard);
+}
+
+TEST_CASE("TerminalPanel reports its process's exit code", "[TerminalPanel]") {
+    Fixture                         f;
+    std::vector<std::optional<int>> exits;
+    f.panel.SetOnExit([&exits](std::optional<int> exitCode) { exits.push_back(exitCode); });
+    f.panel.HandleExitForTesting(0);
+    f.panel.HandleExitForTesting(3);
+    f.panel.HandleExitForTesting();
+    REQUIRE(exits == std::vector<std::optional<int>>{0, 3, std::nullopt});
 }

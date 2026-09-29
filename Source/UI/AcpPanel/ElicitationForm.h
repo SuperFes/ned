@@ -47,8 +47,9 @@ class ElicitationForm {
         std::size_t                highlight = 0;     // the option under the cursor
     };
 
-    // A form from its `requestedSchema`.
-    ElicitationForm(std::string message, const editor::acp::Json& schema);
+    // A form from its `requestedSchema`, fields in `order` (property names)
+    // where it names them, the rest after.
+    ElicitationForm(std::string message, const editor::acp::Json& schema, const std::vector<std::string>& order = {});
     // A URL to visit.
     [[nodiscard]] static ElicitationForm ForUrl(std::string message, std::string url);
 

@@ -345,3 +345,99 @@ TEST_CASE("CopyCandidates offers each recent reply, then its code blocks, newest
     REQUIRE(candidates[3].text == "old reply");
     REQUIRE(ned::ui::acppanel::CopyCandidates(transcript, 1).size() == 3);
 }
+
+TEST_CASE("FormatTranscript styles a notice by severity and indents its description's later lines", "[AcpPanel]") {
+    using ned::ui::acppanel::DisplayStyle;
+    std::vector<Manager::TranscriptEntry> transcript;
+    transcript.push_back({.kind = Kind::Notice, .text = "Task stopped", .status = "info"});
+    transcript.push_back({.kind = Kind::Notice, .text = "Hook failed", .status = "error", .detail = "exit 2\nstderr: boom"});
+    const auto lines = FormatTranscript(transcript, std::nullopt, {.width = 40});
+    REQUIRE(lines.size() == 3);
+    REQUIRE(lines[0].text == "ℹ Task stopped");
+    REQUIRE(lines[0].style == DisplayStyle::Hint);
+    REQUIRE(lines[1].text == "✗ Hook failed: exit 2");
+    REQUIRE(lines[1].style == DisplayStyle::Error);
+    REQUIRE(lines[2].text == "  stderr: boom");
+    REQUIRE(lines[2].entryIndex == 1);
+}
+
+TEST_CASE("FormatTranscript shows a compaction's state and folds its summary", "[AcpPanel]") {
+    using ned::ui::acppanel::LineAction;
+    std::vector<Manager::TranscriptEntry> transcript;
+    transcript.push_back({.kind = Kind::Compaction, .text = "Kept:\n- the plan", .status = "completed"});
+    transcript.push_back({.kind = Kind::Compaction, .status = "in_progress"});
+    transcript.push_back({.kind = Kind::Compaction, .status = "failed", .detail = "too big"});
+
+    auto lines = FormatTranscript(transcript, std::nullopt, {.width = 60});
+    REQUIRE(lines.size() == 3);
+    REQUIRE(lines[0].text == "▸ Context compacted (2 lines of summary)");
+    REQUIRE(lines[0].action == LineAction::ToggleExpand);
+    REQUIRE(lines[1].text == "⟳ Compacting context…");
+    REQUIRE(lines[2].text == "✗ Context compaction failed: too big");
+
+    lines = FormatTranscript(transcript, std::nullopt, {.width = 60, .expanded = [](std::size_t i) { return i == 0; }});
+    REQUIRE(lines[0].text == "▾ Context compacted");
+    REQUIRE(lines[1].text == "  Kept:");
+    REQUIRE(lines[1].entryIndex == 0);
+}
+
+TEST_CASE("FormatTranscript links an agent's resources and folds embedded ones", "[AcpPanel]") {
+    using ned::ui::acppanel::LineAction;
+    std::vector<Manager::TranscriptEntry> transcript;
+    transcript.push_back({.kind = Kind::AgentContent, .status = "image", .mimeType = "image/png", .byteSize = 84 * 1024});
+    transcript.push_back({.kind = Kind::AgentContent, .status = "resource_link", .detail = "file:///src/a%20b.cpp", .contentName = "a b.cpp"});
+    transcript.push_back({.kind = Kind::AgentContent, .status = "resource_link", .detail = "https://x.test/doc", .contentName = "doc"});
+    transcript.push_back({.kind = Kind::AgentContent, .text = "int x;\n", .status = "resource", .detail = "file:///m.cpp", .contentName = "m.cpp"});
+
+    auto lines = FormatTranscript(transcript, std::nullopt, {.width = 60});
+    REQUIRE(lines.size() == 4);
+    REQUIRE(lines[0].text == "▣ image · image/png · 84 KB");
+    REQUIRE(lines[0].action == LineAction::None);
+    REQUIRE(lines[1].text == "↗ a b.cpp");
+    REQUIRE(lines[1].action == LineAction::OpenLocation);
+    REQUIRE(lines[1].location->path == "/src/a b.cpp");
+    REQUIRE(lines[2].action == LineAction::OpenUrl);
+    REQUIRE(lines[2].url == "https://x.test/doc");
+    REQUIRE(lines[3].text == "▸ m.cpp (1 line)");
+
+    lines = FormatTranscript(transcript, std::nullopt, {.width = 60, .expanded = [](std::size_t i) { return i == 3; }});
+    REQUIRE(lines[3].text == "▾ m.cpp");
+    REQUIRE(lines[4].text.starts_with("  cpp"));
+    REQUIRE(lines[5].text == "  int x;");
+}
+
+TEST_CASE("ChoicePicker deletes the selection only after a y, and only when told it went", "[AcpPanel]") {
+    using ned::ui::acppanel::ChoiceItem;
+    using ned::ui::acppanel::ChoicePicker;
+    using KeyResult                 = ChoicePicker::KeyResult;
+    auto                        key = [](char32_t c, bool control = false) { return ned::editor::KeyChord{.Control = control, .Codepoint = c}; };
+    const ned::editor::KeyChord del{.Special = ned::editor::SpecialKey::Delete};
+
+    ChoicePicker plain("Pick", {ChoiceItem{.label = "a"}}, nullptr);
+    REQUIRE(plain.HandleKey(del) == KeyResult::Handled);
+    REQUIRE(plain.Format(5)[0].text == "Pick");
+
+    std::vector<std::size_t> deleted;
+    ChoicePicker             picker("Pick", {ChoiceItem{.label = "a"}, ChoiceItem{.label = "b"}, ChoiceItem{.label = "c"}}, nullptr);
+    picker.SetOnDelete([&deleted](std::size_t index) {
+        deleted.push_back(index);
+        return index != 0;
+    });
+    // Refused: stays.
+    picker.HandleKey(del);
+    picker.HandleKey(key(U'y'));
+    REQUIRE(picker.Visible().size() == 3);
+    // Not confirmed: stays, and the key isn't typed into the filter.
+    picker.HandleKey(key(U'n', true));
+    picker.HandleKey(key(U'd', true));
+    REQUIRE(picker.Format(5)[0].text == "Delete \"b\"? (y/n)");
+    picker.HandleKey(key(U'x'));
+    REQUIRE(picker.Format(5)[0].text == "Pick");
+    // Confirmed: gone, selection clamped.
+    picker.HandleKey(key(U'n', true));
+    picker.HandleKey(del);
+    REQUIRE(picker.HandleKey(key(U'y')) == KeyResult::Handled);
+    REQUIRE(deleted == std::vector<std::size_t>{0, 2});
+    REQUIRE(picker.Visible() == std::vector<std::size_t>{0, 1});
+    REQUIRE(picker.Selection() == 1);
+}

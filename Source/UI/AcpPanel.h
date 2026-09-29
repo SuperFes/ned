@@ -104,6 +104,12 @@ class AcpPanel : public Widget {
     // Opens the review of a turn's file changes, from the review picker.
     void SetOnReviewRequest(std::function<void(std::string title, std::vector<editor::acp::TurnFile> files)> onReview);
 
+    // Runs an agent's login command in a terminal: `argv` with `env` set,
+    // under `label`; `done` is told whether it exited 0.
+    using TerminalLoginFn = std::function<void(std::vector<std::string> argv, std::vector<std::pair<std::string, std::string>> env,
+                                               std::string label, std::function<void(bool succeeded)> done)>;
+    void SetOnTerminalLogin(TerminalLoginFn onTerminalLogin);
+
     // Where copied text goes: a copy-button click or the copy picker.
     void SetOnCopy(std::function<void(const std::string& text)> onCopy);
 
@@ -197,6 +203,9 @@ class AcpPanel : public Widget {
     void PaintStyledRow(Canvas& canvas, int x, int y, std::string_view text, const std::vector<InlineSpan>& spans, const Brush& baseBrush,
                         int maxColumns) const;
 
+    // Drops a session list still loading, telling the agent to stop.
+    void StopAwaitingSessions();
+    void StartLogin(const editor::acp::Manager::AuthMethod& method);
     // A picker over one config option's values; nullptr opens one saying
     // the agent offers no such setting.
     [[nodiscard]] acppanel::ChoicePicker ConfigValuePicker(const editor::acp::Manager::ConfigOption* option,
@@ -398,6 +407,7 @@ class AcpPanel : public Widget {
     std::function<void()>                                           onRefocusRequest_;
     std::function<void(const std::string&)>                         onCopy_;
     std::function<void(std::string, std::vector<editor::acp::TurnFile>)> onReviewRequest_;
+    TerminalLoginFn                                                      onTerminalLogin_;
     std::function<std::optional<editor::ClipboardImage>()>          clipboardImage_;
     std::function<std::optional<std::string>()>                     clipboardText_;
     std::function<bool(const std::string&)>                              urlOpener_;

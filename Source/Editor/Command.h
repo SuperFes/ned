@@ -1001,6 +1001,8 @@ enum class InteractiveRequest { None,
                                 AcpResumeSession,
                                 AcpCopy,
                                 AcpReviewTurn,
+                                AcpLogin,
+                                AcpLogout,
                                 // The *acp review* buffer's keys -- see Editor/Acp/TurnReview.h.
                                 AcpReviewUndoHunk,
                                 AcpReviewUndoFile,

@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <string>
+#include <vector>
 
 #include "Editor/Key.h"
 #include "UI/AcpPanel/ElicitationForm.h"
@@ -116,4 +117,15 @@ TEST_CASE("ElicitationForm rejects a number it can't read", "[AcpElicitation]") 
     std::string problem;
     REQUIRE_FALSE(form.Content(problem));
     REQUIRE(problem == "\"n\" needs a number.");
+}
+
+TEST_CASE("ElicitationForm puts fields in the given order, unnamed ones last", "[AcpPanel]") {
+    const Json               schema = {{"type", "object"},
+                                       {"properties", {{"a", {{"type", "string"}}}, {"b", {{"type", "string"}}}, {"c", {{"type", "string"}}}, {"d", {{"type", "string"}}}}}};
+    const ElicitationForm    form("Q", schema, {"c", "a"});
+    std::vector<std::string> keys;
+    for (const auto& field : form.Fields()) {
+        keys.push_back(field.key);
+    }
+    REQUIRE(keys == std::vector<std::string>{"c", "a", "b", "d"});
 }

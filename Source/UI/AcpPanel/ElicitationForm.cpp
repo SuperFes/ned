@@ -67,7 +67,7 @@ namespace {
 
 } // namespace
 
-ElicitationForm::ElicitationForm(std::string message, const Json& schema) : message_(std::move(message)) {
+ElicitationForm::ElicitationForm(std::string message, const Json& schema, const std::vector<std::string>& order) : message_(std::move(message)) {
     std::vector<std::string> required;
     if (schema.contains("required") && schema["required"].is_array()) {
         for (const Json& key : schema["required"]) {
@@ -130,6 +130,10 @@ ElicitationForm::ElicitationForm(std::string message, const Json& schema) : mess
         }
         fields_.push_back(std::move(field));
     }
+    auto rank = [&order](const Field& field) {
+        return static_cast<std::size_t>(std::find(order.begin(), order.end(), field.key) - order.begin());
+    };
+    std::stable_sort(fields_.begin(), fields_.end(), [&rank](const Field& a, const Field& b) { return rank(a) < rank(b); });
 }
 
 ElicitationForm ElicitationForm::ForUrl(std::string message, std::string url) {

@@ -101,8 +101,14 @@ namespace {
         return text::StringColumns(text);
     }
 
-    std::string StateLabel(editor::acp::Manager::SessionState state) {
-        switch (state) {
+    std::string StateLabel(const editor::acp::Manager* manager) {
+        if (!manager) {
+            return "inactive";
+        }
+        if (manager->LoginRequired()) {
+            return "login required";
+        }
+        switch (manager->State()) {
             case editor::acp::Manager::SessionState::Starting:
                 return "starting";
             case editor::acp::Manager::SessionState::Active:
@@ -149,11 +155,40 @@ std::string AcpPanel::TitleText() const {
                               ? sessionTitle.substr(0, text::SnapDownToCodepointBoundary(sessionTitle, kMaxTitleBytes)) + "…"
                               : sessionTitle);
     }
-    title += " [" + StateLabel(acpManager_ ? acpManager_->State() : editor::acp::Manager::SessionState::Inactive) + "]";
+    title += " [" + StateLabel(acpManager_) + "]";
     if (!scroll_.Following()) {
         title += " (scrollback)"; // TerminalPanel/DebugConsolePanel's own convention
     }
     return title;
+}
+
+void AcpPanel::StopAwaitingSessions() {
+    if (awaitingSessions_ && acpManager_) {
+        acpManager_->CancelListSessions();
+    }
+    awaitingSessions_ = false;
+}
+
+void AcpPanel::StartLogin(const editor::acp::Manager::AuthMethod& method) {
+    if (method.type != "terminal") {
+        ShowNotice(acpManager_->Authenticate(method.id));
+        return;
+    }
+    std::optional<std::vector<std::string>> argv = acpManager_->LoginCommand(method);
+    if (!argv || !onTerminalLogin_) {
+        ShowNotice("Can't run this agent's login here");
+        return;
+    }
+    onTerminalLogin_(std::move(*argv), method.env, method.name, [this](bool succeeded) {
+        acpManager_->FinishLogin(succeeded);
+        if (succeeded && onRefocusRequest_) {
+            onRefocusRequest_();
+        }
+    });
+}
+
+void AcpPanel::SetOnTerminalLogin(TerminalLoginFn onTerminalLogin) {
+    onTerminalLogin_ = std::move(onTerminalLogin);
 }
 
 void AcpPanel::OpenPicker(editor::acp::PanelPicker picker) {
@@ -161,8 +196,8 @@ void AcpPanel::OpenPicker(editor::acp::PanelPicker picker) {
         return;
     }
     mentionPickerOpen_ = false;
-    awaitingSessions_  = false;
-    using Manager      = editor::acp::Manager;
+    StopAwaitingSessions();
+    using Manager = editor::acp::Manager;
     switch (picker) {
         case editor::acp::PanelPicker::Rewind: {
             // Newest first: 1 is always the most recent turn.
@@ -233,12 +268,37 @@ void AcpPanel::OpenPicker(editor::acp::PanelPicker picker) {
                                      .detail  = RelativeAge(session.updatedAt),
                                      .current = session.sessionId == acpManager_->SessionId()});
                 }
-                picker_.emplace(items.empty() ? "No earlier sessions" : "Resume which session?", std::move(items),
-                                [this, sessions](std::size_t index) {
+                const bool deletable = acpManager_->CanDeleteSessions() && !items.empty();
+                picker_.emplace(items.empty() ? "No earlier sessions" : deletable ? "Resume which session? (Del deletes)"
+                                                                                  : "Resume which session?",
+                                std::move(items), [this, sessions](std::size_t index) {
                                     acpManager_->LoadSession(sessions[index].sessionId, sessions[index].title);
                                     scroll_.FollowTail();
                                 });
+                if (deletable) {
+                    picker_->SetOnDelete([this, sessions](std::size_t index) {
+                        if (sessions[index].sessionId == acpManager_->SessionId()) {
+                            ShowNotice("That's the session you're in");
+                            return false;
+                        }
+                        const std::string title = sessions[index].title.empty() ? std::string("(untitled)") : sessions[index].title;
+                        acpManager_->DeleteSession(sessions[index].sessionId, [this, title](const std::string& error) {
+                            ShowNotice(error.empty() ? "Deleted " + title : error);
+                        });
+                        return true;
+                    });
+                }
             });
+            break;
+        }
+        case editor::acp::PanelPicker::Login: {
+            std::vector<acppanel::ChoiceItem>       items;
+            const std::vector<Manager::AuthMethod>& methods = acpManager_->AuthMethods();
+            for (const Manager::AuthMethod& method : methods) {
+                items.push_back({.label = method.name, .detail = method.description});
+            }
+            picker_.emplace(items.empty() ? "This agent offers no way to log in from here" : "Log in how?", std::move(items),
+                            [this, methods](std::size_t index) { StartLogin(methods[index]); });
             break;
         }
         case editor::acp::PanelPicker::Review: {
@@ -446,6 +506,8 @@ Brush AcpPanel::BrushForStyle(DisplayStyle style) const {
             return Brush{.background = theme_.background, .foreground = theme_.commentForeground};
         case DisplayStyle::Warning:
             return Brush{.background = theme_.background, .foreground = theme_.diagnosticWarning};
+        case DisplayStyle::Error:
+            return Brush{.background = theme_.background, .foreground = theme_.diagnosticError};
         case DisplayStyle::Accent:
             return Brush{.background = theme_.background, .foreground = theme_.borderAccent.foreground};
         case DisplayStyle::Hint:
@@ -528,7 +590,7 @@ void AcpPanel::SyncElicitation() {
     }
     formElicitationId_ = elicitation.id;
     form_.emplace(elicitation.mode == "url" ? acppanel::ElicitationForm::ForUrl(elicitation.message, elicitation.url)
-                                            : acppanel::ElicitationForm(elicitation.message, elicitation.schema));
+                                            : acppanel::ElicitationForm(elicitation.message, elicitation.schema, elicitation.fieldOrder));
     picker_.reset();
     mentionPickerOpen_ = false;
 }
@@ -800,6 +862,11 @@ bool AcpPanel::ActivateRowAt(int y) {
                 }
             }
             return false;
+        case acppanel::LineAction::OpenUrl:
+            if (!(urlOpener_ ? urlOpener_(line.url) : editor::link::OpenUrl(line.url))) {
+                ShowNotice("Couldn't open " + line.url);
+            }
+            return true;
         case acppanel::LineAction::None:
             break;
     }
@@ -1257,7 +1324,7 @@ void AcpPanel::PaintCollapsedStrip(Canvas& canvas, int width, int height) const 
     }
     const std::string agentName = acpManager_ && !acpManager_->AgentName().empty() ? acpManager_->AgentName() : std::string("ACP agent");
     const std::string title =
-        agentName + " [" + StateLabel(acpManager_ ? acpManager_->State() : editor::acp::Manager::SessionState::Inactive) + "] (minimized)";
+        agentName + " [" + StateLabel(acpManager_) + "] (minimized)";
     DrawBorderTitle(canvas, title, stripBrush);
 }
 
@@ -1762,7 +1829,7 @@ bool AcpPanel::OnEvent(const Event& event) {
         if (picker_->HandleKey(*chord) != acppanel::ChoicePicker::KeyResult::Handled) {
             picker_ = std::move(pendingPicker_);
             pendingPicker_.reset();
-            awaitingSessions_ = false;
+            StopAwaitingSessions();
         }
         return true;
     }

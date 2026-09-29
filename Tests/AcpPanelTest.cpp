@@ -10,6 +10,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
@@ -18,6 +19,7 @@
 #include <unistd.h>
 
 #include "Editor/Acp/Client.h"
+#include "Editor/Acp/Config.h"
 #include "Editor/Acp/Manager.h"
 #include "Editor/Acp/PanelConfig.h"
 #include "Editor/Acp/Transport.h"
@@ -1479,6 +1481,45 @@ TEST_CASE("AcpPanel's session picker lists the agent's sessions and resumes the 
     REQUIRE(load["params"]["sessionId"] == "old");
 }
 
+TEST_CASE("AcpPanel's session picker deletes a session after a y, but not the current one", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession(
+        "claude-code", Json::object(),
+        {{"agentCapabilities", {{"loadSession", true}, {"sessionCapabilities", {{"list", Json::object()}, {"delete", Json::object()}}}}}});
+
+    fixture.panel.OpenPicker(ned::editor::acp::PanelPicker::Sessions);
+    const Json list = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResultFrame(
+        list["id"], Json{{"sessions", Json::array({Json{{"sessionId", "s1"}, {"title", "This one"}}, Json{{"sessionId", "old"}, {"title", "Parser work"}}})}}));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "Resume which session? (Del deletes)");
+
+    // The current session stays.
+    fixture.panel.OnEvent(ned::ui::test::Delete());
+    fixture.panel.OnEvent(ned::ui::test::Character('y'));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(2).find("This one") != std::string::npos);
+
+    // n keeps it; y deletes.
+    fixture.panel.OnEvent(ned::ui::test::ArrowDown());
+    fixture.panel.OnEvent(ned::ui::test::Delete());
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "Delete \"Parser work\"? (y/n)");
+    fixture.panel.OnEvent(ned::ui::test::Character('n'));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(3).find("Parser work") != std::string::npos);
+    fixture.panel.OnEvent(ned::ui::test::Delete());
+    fixture.panel.OnEvent(ned::ui::test::Character('y'));
+    const Json del = fixture.reader.Next();
+    REQUIRE(del["method"] == "session/delete");
+    REQUIRE(del["params"]["sessionId"] == "old");
+    fixture.client->DispatchFrame(ResultFrame(del["id"], Json::object()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(3).find("Parser work") == std::string::npos);
+    REQUIRE(fixture.ContentText().find("Deleted Parser work") != std::string::npos);
+}
+
 TEST_CASE("AcpPanel drops a session listing that arrives after its picker was dismissed", "[AcpPanel]") {
     Fixture fixture;
     fixture.InjectClient();
@@ -1488,6 +1529,10 @@ TEST_CASE("AcpPanel drops a session listing that arrives after its picker was di
     fixture.panel.OpenPicker(ned::editor::acp::PanelPicker::Sessions);
     const Json list = fixture.reader.Next();
     fixture.panel.OnEvent(ned::ui::test::Escape());
+    const Json cancel = fixture.reader.Next();
+    REQUIRE(cancel["method"] == "$/cancel_request");
+    REQUIRE(cancel["params"]["requestId"] == list["id"]);
+    REQUIRE_FALSE(cancel.contains("id"));
     fixture.client->DispatchFrame(ResultFrame(list["id"], Json{{"sessions", Json::array({Json{{"sessionId", "old"}}})}}));
     fixture.Paint();
     REQUIRE(fixture.ContentText().find("Resume which session?") == std::string::npos);
@@ -1856,4 +1901,62 @@ TEST_CASE("AcpPanel opens a question's URL and can decline one", "[AcpPanel]") {
     ask(42, {{"sessionId", "s1"}, {"mode", "form"}, {"message", "Why?"}, {"requestedSchema", {{"type", "object"}}}});
     fixture.panel.OnEvent(ned::ui::test::Escape());
     REQUIRE(fixture.reader.Next()["result"]["action"] == "decline");
+}
+
+TEST_CASE("AcpPanel's login picker runs a terminal login and carries on once it succeeds", "[AcpPanel]") {
+    ned::editor::acp::SetAcpAgentCommand("login-agent", {"agent-bin"});
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.manager.SetOnLoginRequired([&fixture] { fixture.panel.OpenPicker(ned::editor::acp::PanelPicker::Login); });
+    std::vector<std::string>                         loginArgv;
+    std::vector<std::pair<std::string, std::string>> loginEnv;
+    std::string                                      loginLabel;
+    std::function<void(bool)>                        loginDone;
+    fixture.panel.SetOnTerminalLogin([&](std::vector<std::string> argv, std::vector<std::pair<std::string, std::string>> env, std::string label,
+                                         std::function<void(bool)> done) {
+        loginArgv  = std::move(argv);
+        loginEnv   = std::move(env);
+        loginLabel = std::move(label);
+        loginDone  = std::move(done);
+    });
+
+    fixture.manager.StartSession("login-agent");
+    const Json initialize = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResultFrame(
+        initialize["id"], Json{{"authMethods", Json::array({Json{{"id", "console-login"},
+                                                                 {"name", "Anthropic Console"},
+                                                                 {"description", "API billing"},
+                                                                 {"type", "terminal"},
+                                                                 {"args", Json::array({"--cli", "auth", "login"})},
+                                                                 {"env", {{"X", "1"}}}}})}}));
+    const Json sessionNew = fixture.reader.Next();
+    fixture.client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"id", sessionNew["id"]}, {"error", {{"code", -32000}, {"message", "Authentication required"}}}}.dump());
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("[login required]") != std::string::npos);
+    REQUIRE(fixture.RowText(1) == "Log in how?");
+    REQUIRE(fixture.RowText(2).find("Anthropic Console  API billing") != std::string::npos);
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
+    REQUIRE(loginArgv == std::vector<std::string>{"agent-bin", "--cli", "auth", "login"});
+    REQUIRE(loginEnv == std::vector<std::pair<std::string, std::string>>{{"X", "1"}});
+    REQUIRE(loginLabel == "Anthropic Console");
+
+    loginDone(true);
+    const Json retry = fixture.reader.Next();
+    REQUIRE(retry["method"] == "session/new");
+    fixture.client->DispatchFrame(ResultFrame(retry["id"], Json{{"sessionId", "s1"}}));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(0).find("[active]") != std::string::npos);
+}
+
+TEST_CASE("AcpPanel's login picker hands an agent method to authenticate", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code", Json::object(), {{"authMethods", Json::array({Json{{"id", "gateway"}, {"name", "Gateway"}}})}});
+    fixture.panel.OpenPicker(ned::editor::acp::PanelPicker::Login);
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('1')));
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["method"] == "authenticate");
+    REQUIRE(request["params"]["methodId"] == "gateway");
 }

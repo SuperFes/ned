@@ -41,6 +41,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -87,8 +88,14 @@ class Client {
 
     // Sends a JSON-RPC request with a freshly allocated id. callback runs on
     // the main thread once the matching response arrives; if this Client
-    // is destroyed first, callback is simply dropped, uninvoked.
-    void SendRequest(const std::string& method, Json params, ResponseCallback callback);
+    // is destroyed first, callback is simply dropped, uninvoked. Returns the
+    // request's id.
+    int SendRequest(const std::string& method, Json params, ResponseCallback callback);
+
+    // Drops a still-pending request's callback and tells the agent it can
+    // stop working on it ($/cancel_request). A no-op for an id that already
+    // answered.
+    void CancelRequest(int id);
 
     // Sends a JSON-RPC notification (no "id", no response expected) -- e.g.
     // "session/cancel".
@@ -109,6 +116,13 @@ class Client {
     // params (an agent is expected not to invoke a method it wasn't told the
     // client supports; Manager is what actually makes that declaration).
     void SetRequestHandler(std::string method, RequestHandler handler);
+
+    // The raw text of the message whose handler is running -- for a
+    // handler that needs what parsing into Json loses (object key order).
+    // Empty outside a handler.
+    [[nodiscard]] std::string_view CurrentFrame() const {
+        return currentFrame_;
+    }
 
     // Invoked exactly once, on the main thread, when the connection stops
     // running for any reason.
@@ -148,6 +162,7 @@ class Client {
 
     int                                                  nextRequestId_ = 1;
     std::unordered_map<int, PendingRequest>              pending_;
+    std::string_view                                     currentFrame_;
     std::chrono::steady_clock::time_point                lastActivityAt_ = std::chrono::steady_clock::now(); // see ExpireStaleRequests's doc comment
     std::unordered_map<std::string, NotificationHandler> notificationHandlers_;
     std::unordered_map<std::string, RequestHandler>      requestHandlers_;

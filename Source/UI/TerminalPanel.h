@@ -77,6 +77,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "Editor/Key.h"
@@ -115,6 +116,12 @@ class TerminalPanel : public Widget {
     // lambda the toggle-terminal command drives. Unset is a safe no-op.
     void SetOnToggleRequest(std::function<void()> onToggle);
 
+    // Variables set on top of ned's environment for the next spawn.
+    void SetEnvironment(std::vector<std::pair<std::string, std::string>> env);
+    // Fires when the process exits, with its exit status (nullopt when it
+    // was killed by a signal).
+    void SetOnExit(std::function<void(std::optional<int> exitCode)> onExit);
+
     // Spawns the shell if none is running yet (or the previous one exited).
     // Safe to call repeatedly; a live shell is never disturbed.
     void EnsureStarted();
@@ -141,8 +148,8 @@ class TerminalPanel : public Widget {
 
     // Drives the shell-exited transition directly -- the headless stand-in
     // for PtyProcess's onExit callback, same seam philosophy as Feed().
-    void HandleExitForTesting() {
-        HandleExit();
+    void HandleExitForTesting(std::optional<int> exitCode = std::nullopt) {
+        HandleExit(exitCode);
     }
 
     void Paint(Canvas canvas) override;
@@ -196,7 +203,7 @@ class TerminalPanel : public Widget {
     [[nodiscard]] int ContentRows() const;
     [[nodiscard]] int ContentCols() const;
 
-    void HandleExit();
+    void HandleExit(std::optional<int> exitCode);
     void ForwardPendingOutput();
     void ScrollBy(int deltaLines);
 
@@ -227,6 +234,8 @@ class TerminalPanel : public Widget {
 
     std::vector<std::string> argv_;  // see constructor doc comment
     std::string              label_; // see constructor doc comment
+    std::vector<std::pair<std::string, std::string>> env_;
+    std::function<void(std::optional<int> exitCode)> onExit_;
 
     editor::terminal::Emulator                    emulator_;
     std::unique_ptr<editor::terminal::PtyProcess> pty_;

@@ -123,7 +123,10 @@ class Manager {
                           ToolCall,
                           Plan,
                           Permission,
-                          SessionEvent };
+                          SessionEvent,
+                          Notice,
+                          Compaction,
+                          AgentContent };
         Kind                       kind;
         std::string                text;       // message text / tool-call title / session event text / permission description
         std::string                status;     // tool-call or plan status, best-effort, may be empty
@@ -160,6 +163,19 @@ class Manager {
         // session/load.
         std::optional<std::chrono::steady_clock::time_point> startedAt;
         std::optional<std::chrono::steady_clock::time_point> finishedAt;
+        // Kind::Notice: `text` is the title, `status` the severity ("info",
+        // "warning", "error"), `detail` the description.
+        // Kind::Compaction: `status` is its lifecycle ("in_progress",
+        // "completed", "failed", "cancelled"), `text` the retained summary,
+        // `detail` the failure, `itemId` the agent's compactionId.
+        // Kind::AgentContent: a non-text block in the agent's reply --
+        // `status` is its type ("image", "audio", "resource_link",
+        // "resource"), `detail` its uri, `text` a resource's embedded text.
+        std::string   detail;
+        std::string   itemId;
+        std::string   contentName;
+        std::string   mimeType;
+        std::uint64_t byteSize = 0;
     };
     [[nodiscard]] const std::vector<TranscriptEntry>& Transcript() const;
     // Bumped on every Transcript()-affecting mutation -- cheap change
@@ -256,6 +272,45 @@ class Manager {
     // otherwise. Replayed turns have no checkpoints, so rewind can't reach
     // them. Returns a short status for the echo area.
     std::string LoadSession(const std::string& sessionId, const std::string& title);
+    // A way the agent offers to log in (initialize's authMethods). A
+    // "terminal" method is the agent's own command plus `args`, run in a
+    // terminal for the user to log in there; an "agent" method is handled
+    // by the agent itself through `authenticate`.
+    struct AuthMethod {
+        std::string                                      id;
+        std::string                                      name;
+        std::string                                      description;
+        std::string                                      type; // "terminal" or "agent"
+        std::vector<std::string>                         args;
+        std::vector<std::pair<std::string, std::string>> env;
+    };
+    [[nodiscard]] const std::vector<AuthMethod>& AuthMethods() const;
+    // Whether the agent refused to go on until the user logs in (an
+    // auth_required error from session/new, a prompt or a resume).
+    [[nodiscard]] bool LoginRequired() const;
+    // What a terminal method runs; nullopt when the agent's command isn't
+    // known (a test's injected client) or the method isn't a terminal one.
+    [[nodiscard]] std::optional<std::vector<std::string>> LoginCommand(const AuthMethod& method) const;
+    // An "agent" method: asks the agent to authenticate, then carries on
+    // as FinishLogin does. Returns a short status.
+    std::string Authenticate(const std::string& methodId);
+    // A terminal login ended. On success, a session that couldn't be
+    // created for want of a login is created now.
+    void               FinishLogin(bool succeeded);
+    [[nodiscard]] bool CanLogout() const;
+    // Logs the agent out (`logout`). Returns a short status.
+    std::string Logout();
+    // Fires when the agent asks for a login.
+    void SetOnLoginRequired(std::function<void()> handler);
+
+    // Stops waiting for a ListSessions that hasn't answered yet: its `done`
+    // is dropped and the agent is told to stop ($/cancel_request).
+    void CancelListSessions();
+    // Whether the agent can delete a stored session (session/delete).
+    [[nodiscard]] bool CanDeleteSessions() const;
+    // Deletes an earlier session for good; `done` gets an empty string on
+    // success, else a user-facing error. The current session is refused.
+    void DeleteSession(const std::string& sessionId, std::function<void(std::string error)> done);
 
     // ACP context auto-attach follow-up: one piece of referenced context
     // (a buffer's full text, a selection) carried alongside a prompt's own
@@ -504,6 +559,9 @@ class Manager {
         std::string url;           // url
         std::string elicitationId; // url, matched by elicitation/complete
         std::string toolCallId;
+        // The schema's property names in the order the agent sent them,
+        // which `schema` (a sorted Json object) doesn't keep.
+        std::vector<std::string> fieldOrder;
     };
     [[nodiscard]] const std::optional<Elicitation>& PendingElicitation() const;
     // `action` is "accept" (with the form's `content`), "decline" or
@@ -557,6 +615,7 @@ class Manager {
     void PushOrAppendAgentText(TranscriptEntry::Kind kind, std::string_view text);
     void PushOrUpdateToolCall(const Json& update);
     void PushOrReplacePlan(const Json& update);
+    void UpdateCompaction(const std::string& kind, const Json& update);
     void PushTranscriptEntry(TranscriptEntry entry);
     void PushSessionEvent(std::string text);
     void NotifyTranscriptChanged();
@@ -600,6 +659,16 @@ class Manager {
     bool                     agentSupportsLoadSession_  = false;
     bool                     agentSupportsListSessions_ = false;
     bool                     agentSupportsResume_       = false;
+    bool                     agentSupportsDelete_       = false;
+    bool                     agentSupportsClose_        = false;
+    std::optional<int>       listSessionsRequest_; // the session/list page in flight
+    std::vector<AuthMethod>  authMethods_;
+    bool                     agentSupportsLogout_ = false;
+    bool                     loginRequired_       = false;
+    bool                     sessionAwaitsLogin_  = false; // session/new wants retrying after a login
+    std::function<void()>    onLoginRequired_;
+    void                     CreateSession();
+    void                     RequireLogin();
     // True between session/load and its response: user_message_chunk is
     // then a replayed prompt rather than an echo of one SendPrompt pushed.
     bool                                                 replaying_ = false;

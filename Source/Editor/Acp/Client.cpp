@@ -98,6 +98,14 @@ void Client::DispatchFrame(const std::string& frameText) {
                 connection_.SendFrame(response.dump());
                 return;
             }
+            // Cleared on the way out, however the handler leaves.
+            struct FrameScope {
+                std::string_view& frame;
+                ~FrameScope() {
+                    frame = {};
+                }
+            } scope{currentFrame_};
+            currentFrame_ = frameText;
             it->second(params, [this, requestId](std::optional<Json> result, std::optional<Json> error) {
                 Json response = {{"jsonrpc", "2.0"}, {"id", requestId}};
                 if (error) {
@@ -118,7 +126,7 @@ void Client::DispatchFrame(const std::string& frameText) {
     }
 }
 
-void Client::SendRequest(const std::string& method, Json params, ResponseCallback callback) {
+int Client::SendRequest(const std::string& method, Json params, ResponseCallback callback) {
     const int id       = nextRequestId_++;
     pending_[id]       = PendingRequest{std::move(callback), std::chrono::steady_clock::now()};
     const Json message = {
@@ -128,6 +136,14 @@ void Client::SendRequest(const std::string& method, Json params, ResponseCallbac
         {"params", std::move(params)},
     };
     connection_.SendFrame(message.dump());
+    return id;
+}
+
+void Client::CancelRequest(int id) {
+    if (pending_.erase(id) == 0) {
+        return;
+    }
+    SendNotification("$/cancel_request", Json{{"requestId", id}});
 }
 
 void Client::ExpireStaleRequests(std::chrono::milliseconds maxAge) {

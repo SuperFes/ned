@@ -990,6 +990,11 @@ Batch 3 (`acp-turn-review`) snapshots every file a turn's edit tool calls name, 
 powers an `*acp review*` multibuffer (per-hunk keep/undo, `C-c C-r`/`C-c A v`) and makes
 rewind work for agents that edit the disk themselves; and it answers `elicitation/create`
 questions (Claude's AskUserQuestion, MCP URL sign-ins) from a form in the panel.
+Batch 4 (`acp-protocol-batch-4`) logs in when an agent answers `auth_required` (a picker
+over its `authMethods`; a terminal method runs in a dock tab, `C-c A L`/`acp-login`,
+`acp-logout`), deletes sessions from the resume picker, closes the session a resume
+leaves, cancels a dismissed `session/list` with `$/cancel_request`, and shows `notice`
+and `compaction_update` updates and an agent's image/audio/resource content.
 
 - [ ] **ACP protocol gaps**, sized 2026-09-29 against the ACP SDK 1.5.1 schema and
       claude-agent-acp 0.84 (S/M/L = effort; "Claude" = what the adapter actually uses):
@@ -998,20 +1003,6 @@ questions (Claude's AskUserQuestion, MCP URL sign-ins) from a form in the panel.
         `terminal_output_delta` covers that); it serves agents that ask the client to run
         commands. The emulator and `TerminalPanel` exist; the work is terminal-per-id
         lifetime and a transcript embed.
-      - **`authenticate`/`logout`** (stable) -- S/M. The first-run gap: an agent
-        answering `session/new` with auth-required gets no way to log in. Claude offers
-        terminal auth methods (`clientCapabilities.auth.terminal`), i.e. run its login
-        in ned's terminal.
-      - **`session/close`, `session/delete`** (stable; Claude has both) -- S. Close
-        before stopping; delete from the resume picker.
-      - **`$/cancel_request`** -- S. Cancel an in-flight `session/list`/`load` when its
-        picker is dismissed.
-      - **Unstable, small, Claude sends them**: `session.notices` (styled notices rather
-        than bold agent text), `session.compaction` (compaction status and summary),
-        `session.configOptions.boolean` (declare what ned already handles), and the
-        `plan_update`/`plan_removed`/plan-file shapes -- S each.
-      - **Agent content beyond text** (image, `resource_link`, `resource` in
-        `agent_message_chunk`) -- S. Ignored today.
       - **Bigger, spec-unstable or ned-side**: `session/fork` (M, pairs with rewind);
         `sessionCapabilities.subagents` + `_meta.claudeCode.parentToolUseId` subagent
         tree (M); `additionalDirectories` for multi-root projects (S); concurrent
@@ -1021,7 +1012,9 @@ questions (Claude's AskUserQuestion, MCP URL sign-ins) from a form in the panel.
       - **Not worth it now**: `providers/*` (LLM routing, unstable); `mcp/connect` over
         ACP (unstable; the stdio MCP bridge works); `nes/*` + `document/*` next-edit
         suggestions (stable, but no agent ned runs implements them -- see "AI
-        edit-prediction").
+        edit-prediction"); `plan_update`/`plan_removed` (unstable, and Claude never sends
+        them -- only a JetBrains-only plan-file extension); claude-agent-acp's
+        `_auth/status_update` account push (an extension, not ACP).
 - [ ] `Keymap::AmbiguousBindings()` is diagnostic-only (a `CommandsTest.cpp` regression
       test), not enforcement — `Keymap::Bind` still lets a caller construct an
       unreachable-by-typing binding; a real structural fix (Emacs' own `define-key`
@@ -1044,8 +1037,11 @@ questions (Claude's AskUserQuestion, MCP URL sign-ins) from a form in the panel.
 - [ ] Batch-3 limits: a turn's snapshots cover only files its edit/delete/move tool calls
       name (or `fs/write_text_file` writes), so a shell command's edits (`sed -i`, `rm`)
       are invisible to the review and to rewind; files over 4 MB or binary aren't
-      tracked; a form's fields show in key order, since the JSON parse doesn't keep the
-      schema's property order.
+      tracked.
+- [ ] Batch-4 limits: an agent's image shows as a size line, not the picture; a terminal
+      login ned can't see finish (a TUI left open) needs its tab closed or exited by
+      hand, and a prompt refused for want of a login isn't resent after it -- only a
+      `session/new` is; `$/cancel_request` covers the session picker's listing only.
 - [ ] **Known rough edge**: a right-docked `AcpPanel`'s resize handle has no visually
       reserved border the way `ProjectSidebar`'s divider column does (right-dock mode
       stays a fully separate, byte-for-byte-unchanged standalone overlay from the

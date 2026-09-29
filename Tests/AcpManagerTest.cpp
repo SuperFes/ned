@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "Editor/Acp/Client.h"
+#include "Editor/Acp/Config.h"
 #include "Editor/Acp/Manager.h"
 #include "Editor/Acp/TerminalText.h"
 #include "Editor/Acp/Transport.h"
@@ -1624,4 +1625,300 @@ TEST_CASE("Manager answers a URL question and reports when the agent says it's d
 
     fixture.client->DispatchFrame(ElicitationFrame(6, {{"sessionId", "s1"}, {"mode", "telepathy"}, {"message", "?"}}).dump());
     REQUIRE(fixture.reader.Next()["result"]["action"] == "decline");
+}
+
+TEST_CASE("Manager declares notices, compaction and boolean options, and shows a notice", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.outputBuffer         = fixture.manager.StartSession("test-agent");
+    const Json initializeRequest = fixture.reader.Next();
+    const Json session           = initializeRequest["params"]["clientCapabilities"]["session"];
+    REQUIRE(session["notices"] == Json::object());
+    REQUIRE(session["compaction"] == Json::object());
+    REQUIRE(session["configOptions"]["boolean"] == Json::object());
+    fixture.client->DispatchFrame(ResultFrame(initializeRequest["id"], Json::object()));
+    fixture.client->DispatchFrame(ResultFrame(fixture.reader.Next()["id"], Json{{"sessionId", "s1"}}));
+
+    fixture.SendUpdate({{"sessionUpdate", "notice"}, {"severity", "warning"}, {"title", "Rate limited"}, {"description", "Retrying in 5s"}});
+    fixture.SendUpdate({{"sessionUpdate", "notice"}, {"severity", "info"}, {"title", ""}});
+
+    using Kind         = Manager::TranscriptEntry::Kind;
+    const auto& notice = fixture.manager.Transcript().back();
+    REQUIRE(notice.kind == Kind::Notice);
+    REQUIRE(notice.text == "Rate limited");
+    REQUIRE(notice.status == "warning");
+    REQUIRE(notice.detail == "Retrying in 5s");
+}
+
+TEST_CASE("Manager keeps one compaction entry, patched in place, with its streamed summary", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    using Kind = Manager::TranscriptEntry::Kind;
+
+    fixture.SendUpdate({{"sessionUpdate", "compaction_update"}, {"compactionId", "c1"}, {"status", "in_progress"}});
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "text"}, {"text", "meanwhile"}}}});
+    fixture.SendUpdate({{"sessionUpdate", "compaction_summary_chunk"}, {"compactionId", "c1"}, {"content", {{"type", "text"}, {"text", "Did "}}}});
+    fixture.SendUpdate({{"sessionUpdate", "compaction_summary_chunk"}, {"compactionId", "c1"}, {"content", {{"type", "text"}, {"text", "things."}}}});
+    fixture.SendUpdate({{"sessionUpdate", "compaction_summary_chunk"}, {"compactionId", "nope"}, {"content", {{"type", "text"}, {"text", "x"}}}});
+
+    const auto& transcript = fixture.manager.Transcript();
+    REQUIRE(transcript.size() == 2);
+    REQUIRE(transcript[0].kind == Kind::Compaction);
+    REQUIRE(transcript[0].status == "in_progress");
+    REQUIRE(transcript[0].text == "Did things.");
+
+    // Absent fields stay; the status moves on in the same entry.
+    fixture.SendUpdate({{"sessionUpdate", "compaction_update"}, {"compactionId", "c1"}, {"status", "completed"}});
+    REQUIRE(transcript.size() == 2);
+    REQUIRE(transcript[0].status == "completed");
+    REQUIRE(transcript[0].text == "Did things.");
+
+    // A summary replaces; null clears.
+    fixture.SendUpdate({{"sessionUpdate", "compaction_update"},
+                        {"compactionId", "c1"},
+                        {"status", "completed"},
+                        {"summary", Json::array({Json{{"type", "text"}, {"text", "Short."}}})}});
+    REQUIRE(transcript[0].text == "Short.");
+    fixture.SendUpdate({{"sessionUpdate", "compaction_update"}, {"compactionId", "c1"}, {"status", "completed"}, {"summary", nullptr}});
+    REQUIRE(transcript[0].text.empty());
+
+    fixture.SendUpdate({{"sessionUpdate", "compaction_update"}, {"compactionId", "c2"}, {"status", "failed"}, {"error", "too big"}});
+    REQUIRE(transcript.size() == 3);
+    REQUIRE(transcript[2].status == "failed");
+    REQUIRE(transcript[2].detail == "too big");
+}
+
+TEST_CASE("Manager turns an agent's non-text content into entries of their own", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    using Kind = Manager::TranscriptEntry::Kind;
+
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "text"}, {"text", "Here: "}}}});
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "image"}, {"mimeType", "image/png"}, {"data", "iVBORw0KGgo="}}}});
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"},
+                        {"content", {{"type", "resource_link"}, {"uri", "file:///src/a%20b.cpp"}, {"name", "a b.cpp"}}}});
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"},
+                        {"content", {{"type", "resource"}, {"resource", {{"uri", "file:///src/notes.md"}, {"text", "# Notes\n"}}}}}});
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "text"}, {"text", "done"}}}});
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "mystery"}}}});
+
+    const auto& transcript = fixture.manager.Transcript();
+    REQUIRE(transcript.size() == 5);
+    REQUIRE(transcript[0].text == "Here: ");
+    REQUIRE(transcript[1].kind == Kind::AgentContent);
+    REQUIRE(transcript[1].status == "image");
+    REQUIRE(transcript[1].mimeType == "image/png");
+    REQUIRE(transcript[1].byteSize == 8);
+    REQUIRE(transcript[2].status == "resource_link");
+    REQUIRE(transcript[2].contentName == "a b.cpp");
+    REQUIRE(transcript[2].detail == "file:///src/a%20b.cpp");
+    REQUIRE(transcript[3].status == "resource");
+    REQUIRE(transcript[3].contentName == "notes.md");
+    REQUIRE(transcript[3].text == "# Notes\n");
+    REQUIRE(transcript[4].kind == Kind::AgentText);
+    REQUIRE(transcript[4].text == "done");
+}
+
+TEST_CASE("Manager::LoadSession names a replayed prompt's images and resources as attachments", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = ResumableAgent();
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    fixture.manager.LoadSession("s2", "Old work");
+    const Json request = fixture.reader.Next();
+    SendUpdateFor(fixture, "s2", UserChunk("look", "m1"));
+    SendUpdateFor(fixture, "s2",
+                  {{"sessionUpdate", "user_message_chunk"}, {"messageId", "m1"}, {"content", {{"type", "image"}, {"mimeType", "image/png"}, {"data", "AAAA"}}}});
+    SendUpdateFor(fixture, "s2",
+                  {{"sessionUpdate", "user_message_chunk"},
+                   {"messageId", "m1"},
+                   {"content", {{"type", "resource"}, {"resource", {{"uri", "file:///src/main.cpp"}, {"text", "int main;"}}}}}});
+    SendUpdateFor(fixture, "s2",
+                  {{"sessionUpdate", "user_message_chunk"}, {"messageId", "m1"}, {"content", {{"type", "resource_link"}, {"uri", "file:///x"}, {"name", "x"}}}});
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json::object()));
+
+    REQUIRE(fixture.manager.Transcript().back().text == "look\n\n[attached: image, main.cpp]");
+}
+
+TEST_CASE("Manager::DeleteSession refuses the current session and reports the agent's answer", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = {{"agentCapabilities", {{"sessionCapabilities", {{"list", Json::object()}, {"delete", Json::object()}}}}}};
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    REQUIRE(fixture.manager.CanDeleteSessions());
+
+    std::vector<std::string> answers;
+    auto                     record = [&answers](std::string error) { answers.push_back(std::move(error)); };
+    fixture.manager.DeleteSession("s1", record);
+    REQUIRE(answers == std::vector<std::string>{"That's the session you're in."});
+
+    fixture.manager.DeleteSession("old", record);
+    Json request = fixture.reader.Next();
+    REQUIRE(request["method"] == "session/delete");
+    REQUIRE(request["params"] == Json{{"sessionId", "old"}});
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json::object()));
+    REQUIRE(answers.back().empty());
+
+    fixture.manager.DeleteSession("older", record);
+    request = fixture.reader.Next();
+    fixture.client->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", request["id"]}, {"error", {{"code", -32603}, {"message", "not found"}}}}.dump());
+    REQUIRE(answers.back() == "session/delete failed: not found");
+}
+
+TEST_CASE("Manager::DeleteSession is refused when the agent can't delete", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    REQUIRE_FALSE(fixture.manager.CanDeleteSessions());
+    std::string answer;
+    fixture.manager.DeleteSession("old", [&answer](std::string error) { answer = std::move(error); });
+    REQUIRE(answer == "This agent can't delete sessions.");
+}
+
+TEST_CASE("Manager::LoadSession closes the session it left when the agent supports close", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = {{"agentCapabilities", {{"loadSession", true}, {"sessionCapabilities", {{"list", Json::object()}, {"close", Json::object()}}}}}};
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    fixture.manager.LoadSession("s2", "Old work");
+    const Json load = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResultFrame(load["id"], Json::object()));
+    const Json close = fixture.reader.Next();
+    REQUIRE(close["method"] == "session/close");
+    REQUIRE(close["params"] == Json{{"sessionId", "s1"}});
+}
+
+TEST_CASE("Manager::CancelListSessions sends $/cancel_request and drops the answer", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = ResumableAgent();
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    bool done = false;
+    fixture.manager.ListSessions([&done](std::vector<Manager::SessionSummary>, std::string) { done = true; });
+    const Json list = fixture.reader.Next();
+    fixture.manager.CancelListSessions();
+    const Json cancel = fixture.reader.Next();
+    REQUIRE(cancel == Json{{"jsonrpc", "2.0"}, {"method", "$/cancel_request"}, {"params", {{"requestId", list["id"]}}}});
+    fixture.client->DispatchFrame(ResultFrame(list["id"], Json{{"sessions", Json::array()}}));
+    REQUIRE_FALSE(done);
+}
+
+namespace {
+
+std::string ErrorFrame(const Json& id, int code, const std::string& message) {
+    return Json{{"jsonrpc", "2.0"}, {"id", id}, {"error", {{"code", code}, {"message", message}}}}.dump();
+}
+
+Json LoginAgent() {
+    return {{"agentCapabilities", {{"auth", {{"logout", Json::object()}}}}},
+            {"authMethods",
+             Json::array({Json{{"id", "claude-ai-login"},
+                               {"name", "Claude Subscription"},
+                               {"type", "terminal"},
+                               {"args", Json::array({"--cli", "auth", "login"})},
+                               {"env", {{"NO_BROWSER", "1"}}}},
+                          Json{{"id", "gateway"}, {"name", "Gateway"}}})}};
+}
+
+} // namespace
+
+TEST_CASE("Manager waits on a login when session/new needs one, then creates the session", "[Acp]") {
+    ned::editor::acp::SetAcpAgentCommand("login-agent", {"agent-bin", "--acp"});
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    int loginRequests = 0;
+    fixture.manager.SetOnLoginRequired([&loginRequests] { ++loginRequests; });
+
+    fixture.outputBuffer         = fixture.manager.StartSession("login-agent");
+    const Json initializeRequest = fixture.reader.Next();
+    REQUIRE(initializeRequest["params"]["clientCapabilities"]["auth"] == Json{{"terminal", true}});
+    fixture.client->DispatchFrame(ResultFrame(initializeRequest["id"], LoginAgent()));
+
+    const auto& methods = fixture.manager.AuthMethods();
+    REQUIRE(methods.size() == 2);
+    REQUIRE(methods[0].type == "terminal");
+    REQUIRE(methods[0].env == std::vector<std::pair<std::string, std::string>>{{"NO_BROWSER", "1"}});
+    REQUIRE(methods[1].type == "agent");
+    REQUIRE(fixture.manager.LoginCommand(methods[0]) == std::vector<std::string>{"agent-bin", "--acp", "--cli", "auth", "login"});
+    REQUIRE_FALSE(fixture.manager.LoginCommand(methods[1]));
+
+    Json sessionNew = fixture.reader.Next();
+    fixture.client->DispatchFrame(ErrorFrame(sessionNew["id"], -32000, "Authentication required"));
+    REQUIRE(fixture.manager.LoginRequired());
+    REQUIRE(loginRequests == 1);
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Starting);
+    REQUIRE(fixture.manager.Transcript().back().text == "login required");
+
+    fixture.manager.FinishLogin(false);
+    REQUIRE(fixture.manager.LoginRequired());
+    REQUIRE(fixture.manager.Transcript().back().text == "login didn't finish");
+
+    fixture.manager.FinishLogin(true);
+    REQUIRE_FALSE(fixture.manager.LoginRequired());
+    sessionNew = fixture.reader.Next();
+    REQUIRE(sessionNew["method"] == "session/new");
+    fixture.client->DispatchFrame(ResultFrame(sessionNew["id"], Json{{"sessionId", "s1"}}));
+    REQUIRE(fixture.manager.State() == Manager::SessionState::Active);
+}
+
+TEST_CASE("Manager asks for a login when a prompt is refused for want of one", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    fixture.manager.SendPrompt("hi");
+    const Json prompt = fixture.reader.Next();
+    fixture.client->DispatchFrame(ErrorFrame(prompt["id"], -32000, "Authentication required"));
+    REQUIRE(fixture.manager.LoginRequired());
+    REQUIRE_FALSE(fixture.manager.PromptInFlight());
+
+    // Logged in with a live session: nothing to retry.
+    fixture.manager.FinishLogin(true);
+    REQUIRE_FALSE(fixture.manager.LoginRequired());
+    REQUIRE(fixture.manager.Transcript().back().text == "logged in");
+}
+
+TEST_CASE("Manager::Authenticate and Logout talk to the agent", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = LoginAgent();
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    REQUIRE(fixture.manager.CanLogout());
+
+    REQUIRE(fixture.manager.Authenticate("gateway") == "Logging in…");
+    Json request = fixture.reader.Next();
+    REQUIRE(request["method"] == "authenticate");
+    REQUIRE(request["params"] == Json{{"methodId", "gateway"}});
+    fixture.client->DispatchFrame(ErrorFrame(request["id"], -32603, "no gateway configured"));
+    REQUIRE(fixture.manager.Transcript().back().text == "login failed: no gateway configured");
+
+    REQUIRE(fixture.manager.Logout() == "Logging out…");
+    request = fixture.reader.Next();
+    REQUIRE(request["method"] == "logout");
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json::object()));
+    REQUIRE(fixture.manager.Transcript().back().text == "logged out");
+}
+
+TEST_CASE("Manager::Logout is refused when the agent can't log out", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    REQUIRE_FALSE(fixture.manager.CanLogout());
+    REQUIRE(fixture.manager.Logout() == "This agent can't log out.");
+}
+
+TEST_CASE("Manager keeps an elicitation's field order as the agent sent it", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    fixture.client->DispatchFrame(
+        R"({"jsonrpc":"2.0","id":5,"method":"elicitation/create","params":{"sessionId":"s1","mode":"form","message":"Q",)"
+        R"("requestedSchema":{"type":"object","properties":{"zeta":{"type":"string"},"alpha":{"type":"boolean"},"mid":{"type":"number"}}}}})");
+    REQUIRE(fixture.manager.PendingElicitation());
+    REQUIRE(fixture.manager.PendingElicitation()->fieldOrder == std::vector<std::string>{"zeta", "alpha", "mid"});
+    REQUIRE(fixture.client->CurrentFrame().empty());
 }

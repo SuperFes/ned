@@ -134,3 +134,28 @@ TEST_CASE("Destroying a PtyProcess defuses its already-queued callbacks", "[Term
     REQUIRE(outputs == 0);
     REQUIRE(exits == 0);
 }
+
+TEST_CASE("PtyProcess sets or replaces environment variables for the child", "[Terminal]") {
+    ned::ui::EventLoop eventLoop;
+    std::string        output;
+    std::optional<int> exitCode;
+    bool               exited = false;
+
+    PtyProcess process(
+        {"sh", "-c", "printf 'a=%s h=%s t=%s\\n' \"$NED_PTY_TEST\" \"$HOME\" \"$TERM\""}, 24, 80, eventLoop,
+        [&output](std::string_view chunk) { output += chunk; },
+        [&exitCode, &exited](std::optional<int> code) {
+            exitCode = code;
+            exited   = true;
+        },
+        {{"NED_PTY_TEST", "yes"}, {"HOME", "/nowhere"}, {"TERM", "dumb"}});
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!exited && std::chrono::steady_clock::now() < deadline) {
+        eventLoop.DrainPosted_();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    REQUIRE(output.find("a=yes h=/nowhere t=xterm-256color") != std::string::npos);
+    REQUIRE(exitCode == 0);
+}

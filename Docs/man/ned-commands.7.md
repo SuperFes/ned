@@ -26,6 +26,14 @@ for the live keymap stack.
 
 :   Copy one of the ACP agent's recent replies, or a code block from one, to the kill ring and clipboard.
 
+`acp-login` (`C-c A L`)
+
+:   Log the ACP agent in, choosing from the ways it offers.
+
+`acp-logout`
+
+:   Log the ACP agent out.
+
 `acp-resume-session` (`C-c A l`)
 
 :   Resume an earlier ACP session, replaying its conversation into the panel.

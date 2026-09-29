@@ -1875,6 +1875,9 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // time it's actually run.
     std::map<std::string, std::shared_ptr<ned::ui::TerminalPanel>> replPanels;
     std::map<std::string, std::size_t>                             replTabIndices;
+    // The terminal an ACP agent's login runs in, while it's open.
+    std::shared_ptr<ned::ui::TerminalPanel> acpLoginPanel;
+    std::optional<std::size_t>              acpLoginTab;
 
     ned::ui::AcpPanel acpPanel(theme);
     acpPanel.SetAcpManager(&acpManager);
@@ -2171,11 +2174,13 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         // show the panel -- without toggleAcpPanel's reconnect attempt; a
         // picker with nothing to offer says so itself -- then open the
         // requested picker.
-        windowManager->SetOnAcpPickerRequest([&overlays, &panelDock, tabIndex, panel = &acpPanel](ned::editor::acp::PanelPicker picker) {
+        auto openAcpPicker = [&overlays, &panelDock, tabIndex, panel = &acpPanel](ned::editor::acp::PanelPicker picker) {
             overlays.Show(panelDock);
             panelDock.SwitchTo(tabIndex);
             panel->OpenPicker(picker);
-        });
+        };
+        windowManager->SetOnAcpPickerRequest(openAcpPicker);
+        acpManager.SetOnLoginRequired([openAcpPicker] { openAcpPicker(ned::editor::acp::PanelPicker::Login); });
     }
     else {
         // Right-dock mode: a fully independent, unaffected standalone
@@ -2224,14 +2229,16 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
             }
             panel->TakeFocus();
         });
-        windowManager->SetOnAcpPickerRequest([&overlays, panel = &acpPanel](ned::editor::acp::PanelPicker picker) {
+        auto openAcpPicker = [&overlays, panel = &acpPanel](ned::editor::acp::PanelPicker picker) {
             if (!overlays.IsVisible(*panel)) {
                 overlays.Show(*panel);
                 panel->SetCollapsed(false);
             }
             panel->TakeFocus();
             panel->OpenPicker(picker);
-        });
+        };
+        windowManager->SetOnAcpPickerRequest(openAcpPicker);
+        acpManager.SetOnLoginRequired([openAcpPicker] { openAcpPicker(ned::editor::acp::PanelPicker::Login); });
         acpPanel.SetOnCollapseChanged([&overlays, panel = &acpPanel] { overlays.Show(*panel); });
     }
 
@@ -2302,6 +2309,37 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
             panelDock.SwitchTo(replTabIndices[name]); // SwitchTo itself takes focus for the panel
         };
     windowManager->SetOnRunReplRequest(runOrShowRepl);
+
+    // An ACP agent's login, in a terminal tab of its own. A new login
+    // replaces a previous one's tab; a successful one closes its tab (the
+    // panel itself is released later -- this runs inside its exit callback).
+    acpPanel.SetOnTerminalLogin([&overlays, &panelDock, &acpLoginPanel, &acpLoginTab, &theme, &eventLoop](
+                                    std::vector<std::string> argv, std::vector<std::pair<std::string, std::string>> env, std::string label,
+                                    std::function<void(bool)> done) {
+        if (acpLoginTab) {
+            panelDock.RemovePanel(*acpLoginTab);
+        }
+        acpLoginPanel = std::make_shared<ned::ui::TerminalPanel>(theme, std::move(argv), label);
+        acpLoginPanel->SetEventLoop(&eventLoop);
+        acpLoginPanel->SetEnvironment(std::move(env));
+        acpLoginPanel->SetOnExit([&panelDock, &acpLoginPanel, &acpLoginTab, &eventLoop, done = std::move(done)](std::optional<int> exitCode) {
+            const bool succeeded = exitCode == 0;
+            if (succeeded && acpLoginTab) {
+                panelDock.RemovePanel(*acpLoginTab);
+                acpLoginTab.reset();
+                eventLoop.Post([&acpLoginPanel, &acpLoginTab] {
+                    if (!acpLoginTab) {
+                        acpLoginPanel.reset();
+                    }
+                });
+            }
+            done(succeeded);
+        });
+        acpLoginTab = panelDock.AddPanel(label, *acpLoginPanel, [panel = acpLoginPanel.get()] { return panel->TitleText(); }, &ned::editor::terminal::TerminalHeightPercent, &ned::editor::terminal::SetTerminalHeightPercent);
+        acpLoginPanel->EnsureStarted();
+        overlays.Show(panelDock);
+        panelDock.SwitchTo(*acpLoginTab);
+    });
 
     // Debugging wishlist: the live thread window (BufferListPanel's own
     // controller-plus-ListPopup shape, see UI/DapThreadsPanel.h) -- right-

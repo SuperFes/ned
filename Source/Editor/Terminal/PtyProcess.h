@@ -33,6 +33,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "Editor/Process/ChildProcess.h"
@@ -48,9 +49,11 @@ class PtyProcess {
     // chunk on the main thread; onExit fires exactly once, on the main
     // thread, after the child has exited. eventLoop must outlive this
     // PtyProcess. Throws std::runtime_error if argv is empty, argv[0] can't
-    // be resolved, or the pty/fork itself fails.
+    // be resolved, or the pty/fork itself fails. `env` sets (or replaces)
+    // variables in the child's environment on top of ned's own.
     PtyProcess(std::vector<std::string> argv, int rows, int cols, ned::ui::EventLoop& eventLoop,
-               std::function<void(std::string_view chunk)> onOutput, std::function<void(std::optional<int> exitCode)> onExit);
+               std::function<void(std::string_view chunk)> onOutput, std::function<void(std::optional<int> exitCode)> onExit,
+               const std::vector<std::pair<std::string, std::string>>& env = {});
 
     // Marks alive_ false before member destruction does the real teardown
     // work (see header comment) -- unlike TaskProcess/Client, a

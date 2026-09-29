@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,11 @@ class ChoicePicker {
     // caller should close it; Chosen has already run `onChoose`.
     KeyResult HandleKey(const editor::KeyChord& chord);
 
+    // Lets Delete or C-d remove the selected item, once confirmed with y.
+    // `onDelete` gets the item's index and says whether it went; one that
+    // did leaves the list.
+    void SetOnDelete(std::function<bool(std::size_t)> onDelete);
+
     // The title, the filter when there is one, then as many items as fit in
     // `maxRows` around the selection.
     [[nodiscard]] std::vector<DisplayLine> Format(int maxRows) const;
@@ -52,6 +58,9 @@ class ChoicePicker {
     std::string                      title_;
     std::vector<ChoiceItem>          items_;
     std::function<void(std::size_t)> onChoose_;
+    std::function<bool(std::size_t)> onDelete_;
+    std::optional<std::size_t>       confirmingDelete_; // the item a y would delete
+    std::vector<bool>                removed_;
     std::string                      filter_;
     std::size_t                      selection_ = 0;
 };

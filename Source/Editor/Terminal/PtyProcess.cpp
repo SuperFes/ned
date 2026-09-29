@@ -1,5 +1,6 @@
 #include "PtyProcess.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <stdexcept>
 #include <utility>
@@ -28,7 +29,7 @@ namespace {
         std::vector<char*>       envp;
     };
 
-    PreparedExec PrepareExec(std::vector<std::string> argv) {
+    PreparedExec PrepareExec(std::vector<std::string> argv, const std::vector<std::pair<std::string, std::string>>& env) {
         if (argv.empty()) {
             throw std::runtime_error("ned: PtyProcess: empty argv");
         }
@@ -45,14 +46,24 @@ namespace {
         }
         prepared.argv.push_back(nullptr);
 
+        auto overridden = [&env](std::string_view var) {
+            return std::any_of(env.begin(), env.end(), [var](const auto& entry) {
+                return var.size() > entry.first.size() && var.starts_with(entry.first) && var[entry.first.size()] == '=';
+            });
+        };
         for (char** entry = environ; *entry != nullptr; ++entry) {
             const std::string_view var(*entry);
-            if (var.starts_with("TERM=")) {
+            if (var.starts_with("TERM=") || overridden(var)) {
                 continue;
             }
             prepared.envStorage.emplace_back(var);
         }
         prepared.envStorage.emplace_back("TERM=xterm-256color");
+        for (const auto& [name, value] : env) {
+            if (name != "TERM") {
+                prepared.envStorage.push_back(name + "=" + value);
+            }
+        }
         for (std::string& var : prepared.envStorage) {
             prepared.envp.push_back(var.data());
         }
@@ -60,8 +71,8 @@ namespace {
         return prepared;
     }
 
-    process::ChildProcess SpawnPty(std::vector<std::string> argv, int rows, int cols) {
-        const PreparedExec prepared = PrepareExec(std::move(argv));
+    process::ChildProcess SpawnPty(std::vector<std::string> argv, int rows, int cols, const std::vector<std::pair<std::string, std::string>>& env) {
+        const PreparedExec prepared = PrepareExec(std::move(argv), env);
 
         winsize windowSize{};
         windowSize.ws_row = static_cast<unsigned short>(std::max(1, rows));
@@ -93,7 +104,8 @@ namespace {
 } // namespace
 
 PtyProcess::PtyProcess(std::vector<std::string> argv, int rows, int cols, ned::ui::EventLoop& eventLoop,
-                       std::function<void(std::string_view)> onOutput, std::function<void(std::optional<int>)> onExit) : child_(SpawnPty(std::move(argv), rows, cols)), eventLoop_(eventLoop), onOutput_(std::move(onOutput)), onExit_(std::move(onExit)) {
+                       std::function<void(std::string_view)> onOutput, std::function<void(std::optional<int>)> onExit,
+                       const std::vector<std::pair<std::string, std::string>>& env) : child_(SpawnPty(std::move(argv), rows, cols, env)), eventLoop_(eventLoop), onOutput_(std::move(onOutput)), onExit_(std::move(onExit)) {
     StartReadLoop();
 }
 

@@ -1534,14 +1534,19 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::AcpResumeSession:
         case editor::InteractiveRequest::AcpCopy:
         case editor::InteractiveRequest::AcpReviewTurn:
+        case editor::InteractiveRequest::AcpLogin:
             if (onAcpPickerRequest_) {
                 onAcpPickerRequest_(request == editor::InteractiveRequest::AcpSetMode         ? editor::acp::PanelPicker::Mode
                                     : request == editor::InteractiveRequest::AcpSetModel      ? editor::acp::PanelPicker::Model
                                     : request == editor::InteractiveRequest::AcpSetOption     ? editor::acp::PanelPicker::Options
                                     : request == editor::InteractiveRequest::AcpResumeSession ? editor::acp::PanelPicker::Sessions
                                     : request == editor::InteractiveRequest::AcpCopy          ? editor::acp::PanelPicker::Copy
+                                    : request == editor::InteractiveRequest::AcpLogin         ? editor::acp::PanelPicker::Login
                                                                                               : editor::acp::PanelPicker::Review);
             }
+            return;
+        case editor::InteractiveRequest::AcpLogout:
+            statusMessage_ = acpManager_ ? acpManager_->Logout() : std::string("No ACP manager available.");
             return;
         case editor::InteractiveRequest::AcpReviewUndoHunk:
         case editor::InteractiveRequest::AcpReviewUndoFile:

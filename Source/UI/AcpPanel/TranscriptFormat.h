@@ -27,6 +27,7 @@ namespace ned::ui::acppanel {
 enum class DisplayStyle { Plain,
                           Dim,
                           Warning,
+                          Error,
                           Accent,
                           Hint,
                           DiffAdded,
@@ -52,7 +53,8 @@ enum class LineAction { None,
                         ToggleExpand,
                         OpenLocation,
                         Copy,
-                        Review }; // the turn before this line
+                        Review, // the turn before this line
+                        OpenUrl };
 
 struct LineLocation {
     std::string                path;
@@ -67,6 +69,7 @@ struct DisplayLine {
     LineAction                  action     = LineAction::None;
     std::optional<LineLocation> location; // LineAction::OpenLocation only
     std::string                 copyText; // LineAction::Copy only
+    std::string                 url;      // LineAction::OpenUrl only
 };
 
 // One physical row of a wrapped string. startColumn/columnCount are display

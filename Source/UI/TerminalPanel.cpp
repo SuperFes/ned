@@ -73,7 +73,7 @@ void TerminalPanel::EnsureStarted() {
     }
     pty_ = std::make_unique<editor::terminal::PtyProcess>(
         argv_.empty() ? ShellArgv() : argv_, ContentRows(), ContentCols(), *eventLoop_,
-        [this](std::string_view chunk) { Feed(chunk); }, [this](std::optional<int>) { HandleExit(); });
+        [this](std::string_view chunk) { Feed(chunk); }, [this](std::optional<int> exitCode) { HandleExit(exitCode); }, env_);
     writeSink_ = [this](std::string_view data) { pty_->Write(data); };
 }
 
@@ -112,7 +112,15 @@ void TerminalPanel::SetWriteSinkForTesting(std::function<void(std::string_view)>
     writeSink_ = std::move(sink);
 }
 
-void TerminalPanel::HandleExit() {
+void TerminalPanel::SetEnvironment(std::vector<std::pair<std::string, std::string>> env) {
+    env_ = std::move(env);
+}
+
+void TerminalPanel::SetOnExit(std::function<void(std::optional<int>)> onExit) {
+    onExit_ = std::move(onExit);
+}
+
+void TerminalPanel::HandleExit(std::optional<int> exitCode) {
     // Note what must NOT happen here: pty_.reset(). This runs inside the
     // dead PtyProcess's own Post-marshaled onExit callback -- destroying it
     // would tear down the std::function currently executing. It stays
@@ -120,6 +128,9 @@ void TerminalPanel::HandleExit() {
     writeSink_ = nullptr;
     Feed("\r\n[process exited]\r\n");
     exited_ = true;
+    if (onExit_) {
+        onExit_(exitCode);
+    }
 }
 
 int TerminalPanel::ContentRows() const {

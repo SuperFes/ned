@@ -9,7 +9,7 @@
 
 namespace ned::ui::acppanel {
 
-ChoicePicker::ChoicePicker(std::string title, std::vector<ChoiceItem> items, std::function<void(std::size_t)> onChoose) : title_(std::move(title)), items_(std::move(items)), onChoose_(std::move(onChoose)) {
+ChoicePicker::ChoicePicker(std::string title, std::vector<ChoiceItem> items, std::function<void(std::size_t)> onChoose) : title_(std::move(title)), items_(std::move(items)), onChoose_(std::move(onChoose)), removed_(items_.size(), false) {
     for (std::size_t i = 0; i < items_.size(); ++i) {
         if (items_[i].current) {
             selection_ = i;
@@ -21,6 +21,9 @@ ChoicePicker::ChoicePicker(std::string title, std::vector<ChoiceItem> items, std
 std::vector<std::size_t> ChoicePicker::Visible() const {
     std::vector<std::pair<int, std::size_t>> scored;
     for (std::size_t i = 0; i < items_.size(); ++i) {
+        if (removed_[i]) {
+            continue;
+        }
         if (filter_.empty()) {
             scored.emplace_back(0, i);
         }
@@ -49,8 +52,24 @@ ChoicePicker::KeyResult ChoicePicker::HandleKey(const editor::KeyChord& chord) {
         return KeyResult::Chosen;
     };
 
+    if (confirmingDelete_) {
+        const std::size_t index = *confirmingDelete_;
+        confirmingDelete_.reset();
+        if (!chord.Control && !chord.Meta && (chord.Codepoint == U'y' || chord.Codepoint == U'Y') && onDelete_(index)) {
+            removed_[index]             = true;
+            const std::size_t remaining = Visible().size();
+            selection_                  = remaining == 0 ? 0 : std::min(selection_, remaining - 1);
+        }
+        return KeyResult::Handled;
+    }
     if (chord.Special == editor::SpecialKey::Escape || (chord.Control && chord.Codepoint == U'g')) {
         return KeyResult::Closed;
+    }
+    if (onDelete_ && (chord.Special == editor::SpecialKey::Delete || (chord.Control && !chord.Meta && chord.Codepoint == U'd'))) {
+        if (selection_ < visible.size()) {
+            confirmingDelete_ = visible[selection_];
+        }
+        return KeyResult::Handled;
     }
     if (chord.Special == editor::SpecialKey::Enter) {
         return choose(selection_);
@@ -81,9 +100,18 @@ ChoicePicker::KeyResult ChoicePicker::HandleKey(const editor::KeyChord& chord) {
     return KeyResult::Handled;
 }
 
+void ChoicePicker::SetOnDelete(std::function<bool(std::size_t)> onDelete) {
+    onDelete_ = std::move(onDelete);
+}
+
 std::vector<DisplayLine> ChoicePicker::Format(int maxRows) const {
     std::vector<DisplayLine> lines;
-    lines.push_back({.text = title_ + (filter_.empty() ? "" : "  " + filter_), .style = DisplayStyle::Warning});
+    if (confirmingDelete_) {
+        lines.push_back({.text = "Delete \"" + items_[*confirmingDelete_].label + "\"? (y/n)", .style = DisplayStyle::Error});
+    }
+    else {
+        lines.push_back({.text = title_ + (filter_.empty() ? "" : "  " + filter_), .style = DisplayStyle::Warning});
+    }
     const std::vector<std::size_t> visible = Visible();
     if (visible.empty()) {
         lines.push_back({.text = "  (no matches)", .style = DisplayStyle::Dim});

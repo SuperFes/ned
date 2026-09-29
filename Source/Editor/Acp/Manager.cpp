@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "Config.h"
+#include "ContentBlocks.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
 #include "Editor/Mcp/BridgeServer.h"
@@ -30,6 +31,30 @@ namespace {
     // an agent's JSON is input, and nlohmann's value() throws on a present
     // key of the wrong type (a null messageId in a replayed session, seen
     // live).
+    // The property names of an elicitation request's schema, in the order
+    // the raw message lists them.
+    std::vector<std::string> SchemaPropertyOrder(std::string_view frame) {
+        std::vector<std::string> order;
+        try {
+            const nlohmann::ordered_json message = nlohmann::ordered_json::parse(frame);
+            const nlohmann::ordered_json properties =
+                message.value("params", nlohmann::ordered_json::object()).value("requestedSchema", nlohmann::ordered_json::object()).value("properties", nlohmann::ordered_json::object());
+            for (const auto& [key, value] : properties.items()) {
+                order.push_back(key);
+            }
+        }
+        catch (const std::exception&) {
+            // Not an object somewhere along the way: no order to keep.
+        }
+        return order;
+    }
+
+    // ACP's auth_required error.
+    bool IsAuthRequired(const Json& error) {
+        constexpr int kAuthRequired = -32000;
+        return error.is_object() && error.contains("code") && error["code"].is_number_integer() && error["code"].get<int>() == kAuthRequired;
+    }
+
     std::string StringField(const Json& object, const char* key, std::string fallback = {}) {
         if (!object.is_object()) {
             return fallback;
@@ -311,7 +336,8 @@ void Manager::ListSessions(std::function<void(std::vector<SessionSummary> sessio
         if (cursor) {
             params["cursor"] = *cursor;
         }
-        client_->SendRequest("session/list", params, [sessions, fetch = weakFetch.lock(), done, page](std::optional<Json> result, std::optional<Json> error) {
+        listSessionsRequest_ = client_->SendRequest("session/list", params, [this, sessions, fetch = weakFetch.lock(), done, page](std::optional<Json> result, std::optional<Json> error) {
+            listSessionsRequest_.reset();
             if (error || !result || !result->is_object()) {
                 const std::string message = error ? StringField(*error, "message", std::string("unknown error")) : std::string("bad response");
                 done(std::move(*sessions), "session/list failed: " + message);
@@ -333,6 +359,35 @@ void Manager::ListSessions(std::function<void(std::vector<SessionSummary> sessio
         });
     };
     (*fetch)(std::nullopt, 0);
+}
+
+void Manager::CancelListSessions() {
+    if (listSessionsRequest_ && client_) {
+        client_->CancelRequest(*listSessionsRequest_);
+    }
+    listSessionsRequest_.reset();
+}
+
+bool Manager::CanDeleteSessions() const {
+    return agentSupportsDelete_;
+}
+
+void Manager::DeleteSession(const std::string& sessionId, std::function<void(std::string error)> done) {
+    if (state_ != SessionState::Active || !client_) {
+        done("No active ACP session.");
+        return;
+    }
+    if (!agentSupportsDelete_) {
+        done("This agent can't delete sessions.");
+        return;
+    }
+    if (sessionId == sessionId_) {
+        done("That's the session you're in.");
+        return;
+    }
+    client_->SendRequest("session/delete", Json{{"sessionId", sessionId}}, [done = std::move(done)](std::optional<Json>, std::optional<Json> error) {
+        done(error ? "session/delete failed: " + StringField(*error, "message", std::string("unknown error")) : std::string());
+    });
 }
 
 std::string Manager::LoadSession(const std::string& sessionId, const std::string& title) {
@@ -369,11 +424,19 @@ std::string Manager::LoadSession(const std::string& sessionId, const std::string
                              }
                              if (error) {
                                  sessionId_ = previousId;
+                                 if (IsAuthRequired(*error)) {
+                                     RequireLogin();
+                                     return;
+                                 }
                                  PushSessionEvent("resume failed: " + StringField(*error, "message", std::string("unknown error")));
                                  return;
                              }
                              if (result) {
                                  ParseSessionSettings(*result);
+                             }
+                             // The agent keeps a session it's not on alive until told.
+                             if (agentSupportsClose_ && !previousId.empty() && client_) {
+                                 client_->SendRequest("session/close", Json{{"sessionId", previousId}}, [](std::optional<Json>, std::optional<Json>) {});
                              }
                              if (!replay) {
                                  PushSessionEvent("history not replayed -- the agent only resumes");
@@ -815,7 +878,9 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
             // extension), not a console code block.
             {"clientCapabilities",
              {{"fs", {{"readTextFile", true}, {"writeTextFile", true}}},
+              {"auth", {{"terminal", true}}},
               {"elicitation", {{"form", Json::object()}, {"url", Json::object()}}},
+              {"session", {{"notices", Json::object()}, {"compaction", Json::object()}, {"configOptions", {{"boolean", Json::object()}}}}},
               {"_meta", {{"terminal_output", true}, {"terminal_output_delta", true}}}}},
         },
         [this](std::optional<Json> result, std::optional<Json> error) {
@@ -843,44 +908,156 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
             agentSupportsLoadSession_  = loadCap;
             agentSupportsListSessions_ = sessionCaps.is_object() && sessionCaps.contains("list");
             agentSupportsResume_       = sessionCaps.is_object() && sessionCaps.contains("resume");
+            agentSupportsDelete_       = sessionCaps.is_object() && sessionCaps.contains("delete");
+            agentSupportsClose_        = sessionCaps.is_object() && sessionCaps.contains("close");
             const Json meta            = result && result->is_object() ? result->value("_meta", Json::object()) : Json::object();
             agentSupportsSteering_     = meta.is_object() && meta.contains("steering") && meta["steering"].is_object() &&
                                          BoolField(meta["steering"], "supported");
 
-            const Json mcpServers = McpServers();
-            client_->SendRequest(
-                "session/new",
-                Json{
-                    {"cwd", editor::ProjectRoot().string()},
-                    {"mcpServers", mcpServers},
-                },
-                [this](std::optional<Json> newResult, std::optional<Json> newError) {
-                    if (newError || !newResult || StringField(*newResult, "sessionId").empty()) {
-                        const std::string message =
-                            "session/new failed" + (newError ? (": " + StringField(*newError, "message", std::string())) : std::string());
-                        AppendToOutputBuffer("\n" + message + "\n");
-                        PushSessionEvent(message);
-                        state_ = SessionState::Inactive;
-                        RunSessionSettledCallbacks();
-                        return;
+            const Json authCaps  = agentCaps.is_object() ? agentCaps.value("auth", Json::object()) : Json::object();
+            agentSupportsLogout_ = authCaps.is_object() && authCaps.contains("logout") && authCaps["logout"].is_object();
+            authMethods_.clear();
+            const Json methods = result && result->is_object() ? result->value("authMethods", Json::array()) : Json::array();
+            for (const Json& method : methods.is_array() ? methods : Json::array()) {
+                const std::string id = StringField(method, "id", std::string());
+                if (id.empty()) {
+                    continue;
+                }
+                AuthMethod parsed{.id          = id,
+                                  .name        = StringField(method, "name", id),
+                                  .description = StringField(method, "description", std::string()),
+                                  .type        = StringField(method, "type", std::string("agent"))};
+                for (const Json& arg : method.contains("args") && method["args"].is_array() ? method["args"] : Json::array()) {
+                    if (arg.is_string()) {
+                        parsed.args.push_back(arg.get<std::string>());
                     }
-                    sessionId_ = StringField(*newResult, "sessionId");
-                    state_     = SessionState::Active;
-                    ParseSessionSettings(*newResult);
-                    RunSessionSettledCallbacks();
-                    AppendToOutputBuffer("\n[session ready]\n");
-                    // Deliberately not also PushSessionEvent'd into the
-                    // transcript (AcpPanel's chat view) -- the panel's own
-                    // title bar already reads "[Active]" the instant this
-                    // fires (StateLabel), so a second "session ready" line
-                    // in the conversation itself was pure noise, reported
-                    // live the same way the end_turn-suppression follow-up
-                    // below was. The raw *acp: <agent>* protocol-log buffer
-                    // above still gets it verbatim.
-                });
+                }
+                if (method.contains("env") && method["env"].is_object()) {
+                    for (const auto& [name, value] : method["env"].items()) {
+                        if (value.is_string()) {
+                            parsed.env.emplace_back(name, value.get<std::string>());
+                        }
+                    }
+                }
+                authMethods_.push_back(std::move(parsed));
+            }
+
+            CreateSession();
         });
 
     return &buffer;
+}
+
+void Manager::CreateSession() {
+    client_->SendRequest(
+        "session/new",
+        Json{
+            {"cwd", editor::ProjectRoot().string()},
+            {"mcpServers", McpServers()},
+        },
+        [this](std::optional<Json> newResult, std::optional<Json> newError) {
+            if (newError && IsAuthRequired(*newError)) {
+                // The connection stays up, waiting on a login.
+                sessionAwaitsLogin_ = true;
+                RequireLogin();
+                RunSessionSettledCallbacks();
+                return;
+            }
+            if (newError || !newResult || StringField(*newResult, "sessionId").empty()) {
+                const std::string message =
+                    "session/new failed" + (newError ? (": " + StringField(*newError, "message", std::string())) : std::string());
+                AppendToOutputBuffer("\n" + message + "\n");
+                PushSessionEvent(message);
+                state_ = SessionState::Inactive;
+                RunSessionSettledCallbacks();
+                return;
+            }
+            sessionId_ = StringField(*newResult, "sessionId");
+            state_     = SessionState::Active;
+            ParseSessionSettings(*newResult);
+            RunSessionSettledCallbacks();
+            // Only in the protocol log: the panel's title already says Active.
+            AppendToOutputBuffer("\n[session ready]\n");
+        });
+}
+
+void Manager::RequireLogin() {
+    loginRequired_ = true;
+    AppendToOutputBuffer("\n[login required]\n");
+    PushSessionEvent(authMethods_.empty() ? "login required -- the agent offers no way to log in from here" : "login required");
+    if (onLoginRequired_) {
+        onLoginRequired_();
+    }
+}
+
+const std::vector<Manager::AuthMethod>& Manager::AuthMethods() const {
+    return authMethods_;
+}
+
+bool Manager::LoginRequired() const {
+    return loginRequired_;
+}
+
+std::optional<std::vector<std::string>> Manager::LoginCommand(const AuthMethod& method) const {
+    if (method.type != "terminal") {
+        return std::nullopt;
+    }
+    std::optional<std::vector<std::string>> argv = AgentCommand(agentName_);
+    if (argv) {
+        argv->insert(argv->end(), method.args.begin(), method.args.end());
+    }
+    return argv;
+}
+
+std::string Manager::Authenticate(const std::string& methodId) {
+    if (state_ == SessionState::Inactive || !client_) {
+        return "No ACP session.";
+    }
+    client_->SendRequest("authenticate", Json{{"methodId", methodId}}, [this](std::optional<Json>, std::optional<Json> error) {
+        if (error) {
+            PushSessionEvent("login failed: " + StringField(*error, "message", std::string("unknown error")));
+            return;
+        }
+        FinishLogin(true);
+    });
+    return "Logging in…";
+}
+
+void Manager::FinishLogin(bool succeeded) {
+    if (state_ == SessionState::Inactive || !client_) {
+        return;
+    }
+    if (!succeeded) {
+        PushSessionEvent("login didn't finish");
+        return;
+    }
+    loginRequired_ = false;
+    PushSessionEvent("logged in");
+    if (sessionAwaitsLogin_ && state_ == SessionState::Starting) {
+        sessionAwaitsLogin_ = false;
+        CreateSession();
+    }
+}
+
+bool Manager::CanLogout() const {
+    return agentSupportsLogout_ && state_ != SessionState::Inactive;
+}
+
+std::string Manager::Logout() {
+    if (state_ == SessionState::Inactive || !client_) {
+        return "No ACP session.";
+    }
+    if (!agentSupportsLogout_) {
+        return "This agent can't log out.";
+    }
+    client_->SendRequest("logout", Json::object(), [this](std::optional<Json>, std::optional<Json> error) {
+        PushSessionEvent(error ? "logout failed: " + StringField(*error, "message", std::string("unknown error")) : std::string("logged out"));
+    });
+    return "Logging out…";
+}
+
+void Manager::SetOnLoginRequired(std::function<void()> handler) {
+    onLoginRequired_ = std::move(handler);
 }
 
 Json Manager::PromptBlocks(const std::string& text, const std::vector<PromptAttachment>& attachments) const {
@@ -1007,6 +1184,10 @@ std::string Manager::SendPrompt(const std::string& text, const std::vector<Promp
             editor::EndBackgroundActivity(kAcpActivity);
             FinalizePendingCheckpoint();
             StopToolTimers();
+            if (error && IsAuthRequired(*error)) {
+                RequireLogin();
+                return;
+            }
             if (error) {
                 const std::string message = "error: " + StringField(*error, "message", std::string("prompt failed"));
                 AppendToOutputBuffer("\n[" + message + "]\n");
@@ -1416,6 +1597,9 @@ void Manager::WireClient(Client& client) {
                                 .message = StringField(params, "message", std::string())};
         if (elicitation.mode == "form") {
             elicitation.schema = params.contains("requestedSchema") && params["requestedSchema"].is_object() ? params["requestedSchema"] : Json::object();
+            if (client_) {
+                elicitation.fieldOrder = SchemaPropertyOrder(client_->CurrentFrame());
+            }
         }
         else if (elicitation.mode == "url") {
             elicitation.url           = StringField(params, "url", std::string());
@@ -1528,35 +1712,56 @@ void Manager::HandleSessionUpdate(const Json& params) {
     const std::string kind   = StringField(update, "sessionUpdate", std::string());
 
     if (kind == "agent_message_chunk" || kind == "agent_thought_chunk" || kind == "user_message_chunk") {
-        if (update.contains("content") && update["content"].is_object() && StringField(update["content"], "type", std::string()) == "text") {
-            const std::string text = StringField(update["content"], "text", std::string());
-            AppendToOutputBuffer(text);
-            // user_message_chunk is the agent echoing what SendPrompt
-            // already pushed as one clean Kind::UserMessage entry --
-            // coalescing it here too would duplicate that entry.
-            // agent_thought_chunk is routed to its own Kind (AgentThought)
-            // rather than folded into AgentText -- see TranscriptEntry::Kind's
-            // own doc comment.
-            if (kind == "user_message_chunk" && replaying_) {
-                // A replayed prompt. Consecutive chunks of one message
-                // coalesce; a new messageId starts the next.
+        const Json content = update.contains("content") && update["content"].is_object() ? update["content"] : Json::object();
+        if (StringField(content, "type", std::string()) != "text") {
+            if (kind == "agent_message_chunk") {
+                if (std::optional<TranscriptEntry> entry = AgentContentEntry(content)) {
+                    PushTranscriptEntry(std::move(*entry));
+                }
+            }
+            else if (kind == "user_message_chunk" && replaying_) {
+                const std::string name = AttachmentName(content);
+                if (name.empty()) {
+                    return;
+                }
                 const std::string messageId = StringField(update, "messageId", std::string());
-                if (!transcript_.empty() && transcript_.back().kind == TranscriptEntry::Kind::UserMessage && messageId == replayUserMessageId_) {
-                    transcript_.back().text += text;
-                    ++transcriptGeneration_;
-                    NotifyTranscriptChanged();
+                if (transcript_.empty() || transcript_.back().kind != TranscriptEntry::Kind::UserMessage || messageId != replayUserMessageId_) {
+                    PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::UserMessage});
                 }
-                else {
-                    PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::UserMessage, .text = text});
-                }
+                AppendAttachmentName(transcript_.back().text, name);
                 replayUserMessageId_ = messageId;
+                ++transcriptGeneration_;
+                NotifyTranscriptChanged();
             }
-            else if (kind == "agent_thought_chunk") {
-                PushOrAppendAgentText(TranscriptEntry::Kind::AgentThought, text);
+            return;
+        }
+        const std::string text = StringField(content, "text", std::string());
+        AppendToOutputBuffer(text);
+        // user_message_chunk is the agent echoing what SendPrompt
+        // already pushed as one clean Kind::UserMessage entry --
+        // coalescing it here too would duplicate that entry.
+        // agent_thought_chunk is routed to its own Kind (AgentThought)
+        // rather than folded into AgentText -- see TranscriptEntry::Kind's
+        // own doc comment.
+        if (kind == "user_message_chunk" && replaying_) {
+            // A replayed prompt. Consecutive chunks of one message
+            // coalesce; a new messageId starts the next.
+            const std::string messageId = StringField(update, "messageId", std::string());
+            if (!transcript_.empty() && transcript_.back().kind == TranscriptEntry::Kind::UserMessage && messageId == replayUserMessageId_) {
+                transcript_.back().text += text;
+                ++transcriptGeneration_;
+                NotifyTranscriptChanged();
             }
-            else if (kind == "agent_message_chunk") {
-                PushOrAppendAgentText(TranscriptEntry::Kind::AgentText, text);
+            else {
+                PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::UserMessage, .text = text});
             }
+            replayUserMessageId_ = messageId;
+        }
+        else if (kind == "agent_thought_chunk") {
+            PushOrAppendAgentText(TranscriptEntry::Kind::AgentThought, text);
+        }
+        else if (kind == "agent_message_chunk") {
+            PushOrAppendAgentText(TranscriptEntry::Kind::AgentText, text);
         }
         return;
     }
@@ -1620,8 +1825,61 @@ void Manager::HandleSessionUpdate(const Json& params) {
         usage_ = std::move(usage);
         return;
     }
+    if (kind == "notice") {
+        const std::string title = StringField(update, "title", std::string());
+        if (title.empty()) {
+            return;
+        }
+        const std::string description = StringField(update, "description", std::string());
+        AppendToOutputBuffer("\n[" + StringField(update, "severity", std::string("info")) + "] " + title +
+                             (description.empty() ? std::string() : ": " + description) + "\n");
+        PushTranscriptEntry(TranscriptEntry{.kind   = TranscriptEntry::Kind::Notice,
+                                            .text   = title,
+                                            .status = StringField(update, "severity", std::string("info")),
+                                            .detail = description});
+        return;
+    }
+    if (kind == "compaction_update" || kind == "compaction_summary_chunk") {
+        UpdateCompaction(kind, update);
+        return;
+    }
     // Unrecognized/forward-compatible update kind -- see this class's own
     // header comment on why this isn't treated as an error.
+}
+
+void Manager::UpdateCompaction(const std::string& kind, const Json& update) {
+    const std::string compactionId = StringField(update, "compactionId", std::string());
+    if (compactionId.empty()) {
+        return;
+    }
+    const auto found = std::find_if(transcript_.rbegin(), transcript_.rend(), [&compactionId](const TranscriptEntry& entry) {
+        return entry.kind == TranscriptEntry::Kind::Compaction && entry.itemId == compactionId;
+    });
+    if (kind == "compaction_summary_chunk") {
+        if (found != transcript_.rend() && update.contains("content")) {
+            found->text += ContentText(update["content"]);
+            ++transcriptGeneration_;
+            NotifyTranscriptChanged();
+        }
+        return;
+    }
+    // The first update places the compaction in the transcript; later ones
+    // patch it: an absent field is unchanged, null clears it.
+    TranscriptEntry* entry = found == transcript_.rend() ? nullptr : &*found;
+    if (!entry) {
+        PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::Compaction, .itemId = compactionId});
+        entry = &transcript_.back();
+    }
+    entry->status = StringField(update, "status", entry->status);
+    if (update.contains("summary")) {
+        entry->text = ContentText(update["summary"]);
+    }
+    if (update.contains("error")) {
+        entry->detail = StringField(update, "error", std::string());
+    }
+    AppendToOutputBuffer("\n[compaction " + entry->status + "]\n");
+    ++transcriptGeneration_;
+    NotifyTranscriptChanged();
 }
 
 void Manager::EndSession(std::string reason) {
@@ -1648,6 +1906,9 @@ void Manager::EndSession(std::string reason) {
         PushSessionEvent("not sent: " + dropped.text);
     }
     queuedPrompts_.clear();
+    listSessionsRequest_.reset();
+    loginRequired_      = false;
+    sessionAwaitsLogin_ = false;
     sessionId_.clear();
     availableCommands_.clear();
     modes_.clear();

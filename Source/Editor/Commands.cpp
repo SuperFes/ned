@@ -4004,6 +4004,14 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::AcpCopy;
                       });
+    registry.Register("acp-login", "Log the ACP agent in, choosing from the ways it offers.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpLogin;
+                      });
+    registry.Register("acp-logout", "Log the ACP agent out.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpLogout;
+                      });
     registry.Register("acp-review-turn",
                       "Review the files an ACP turn changed, hunk by hunk, keeping or undoing each.",
                       [](CommandContext& context) {
@@ -5282,6 +5290,7 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c A w"), "acp-copy");           // "w" for M-w
     keymap.Bind(ParseKeySequence("C-c A f"), "acp-toggle-follow");
     keymap.Bind(ParseKeySequence("C-c A v"), "acp-review-turn");  // "v" for view
+    keymap.Bind(ParseKeySequence("C-c A L"), "acp-login");
     keymap.Bind(ParseKeySequence("C-c c"), "acp-toggle-panel");   // "c" for chat
     // test-runner integration: "C-c T" prefix (shifted "t" for tests --
     // plain "C-c t" is toggle-terminal's own leaf binding below, so a

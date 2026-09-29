@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <iterator>
 
+#include "Editor/Acp/ContentBlocks.h"
 #include "Text/DisplayWidth.h"
 #include "Text/LineDiff.h"
 #include "Text/Utf8.h"
@@ -682,6 +683,121 @@ std::string_view ToolKindGlyph(std::string_view toolKind) {
     return "•";
 }
 
+namespace {
+
+    using Entry = editor::acp::Manager::TranscriptEntry;
+
+    std::string LineCountLabel(std::string_view text) {
+        const std::size_t count = LineCount(text);
+        return std::to_string(count) + (count == 1 ? " line" : " lines");
+    }
+
+    std::vector<DisplayLine> FormatNotice(const Entry& entry) {
+        DisplayStyle style = DisplayStyle::Hint;
+        std::string  glyph = "ℹ ";
+        if (entry.status == "warning") {
+            style = DisplayStyle::Warning;
+            glyph = "⚠ ";
+        }
+        else if (entry.status == "error") {
+            style = DisplayStyle::Error;
+            glyph = "✗ ";
+        }
+        std::vector<DisplayLine> lines;
+        std::string_view         rest   = entry.detail;
+        std::string              prefix = glyph + entry.text + (rest.empty() ? "" : ": ");
+        do {
+            const std::size_t newline = rest.find('\n');
+            lines.push_back({.text = prefix + std::string(rest.substr(0, newline)), .style = style});
+            rest   = newline == std::string_view::npos ? std::string_view() : rest.substr(newline + 1);
+            prefix = "  ";
+        }
+        while (!rest.empty());
+        return lines;
+    }
+
+    std::vector<DisplayLine> FormatCompaction(const Entry& entry, bool open, const TranscriptFormatOptions& options) {
+        if (entry.status == "in_progress") {
+            return {{.text = "⟳ Compacting context…", .style = DisplayStyle::Dim}};
+        }
+        if (entry.status == "failed") {
+            return {{.text = "✗ Context compaction failed" + (entry.detail.empty() ? std::string() : ": " + entry.detail), .style = DisplayStyle::Warning}};
+        }
+        if (entry.status == "cancelled") {
+            return {{.text = "Context compaction cancelled", .style = DisplayStyle::Dim}};
+        }
+        if (entry.status != "completed") {
+            return {{.text = "Context compaction: " + entry.status, .style = DisplayStyle::Dim}};
+        }
+        if (entry.text.find_first_not_of(" \n") == std::string::npos) {
+            return {{.text = "✓ Context compacted", .style = DisplayStyle::Dim}};
+        }
+        std::vector<DisplayLine> lines{
+            {.text   = open ? "▾ Context compacted" : "▸ Context compacted (" + LineCountLabel(entry.text) + " of summary)",
+             .style  = DisplayStyle::Dim,
+             .action = LineAction::ToggleExpand}};
+        if (open) {
+            std::vector<DisplayLine> summary = FormatMarkdownLines(entry.text, DisplayStyle::Dim, "  ", options);
+            lines.insert(lines.end(), std::make_move_iterator(summary.begin()), std::make_move_iterator(summary.end()));
+        }
+        return lines;
+    }
+
+    // Where a click on an agent's resource goes: a file opens in the editor,
+    // anything else with a scheme is handed to the system.
+    void LinkTarget(DisplayLine& line, const std::string& uri) {
+        if (const std::optional<std::string> path = editor::acp::FileUriPath(uri)) {
+            line.action   = LineAction::OpenLocation;
+            line.location = LineLocation{.path = *path};
+        }
+        else if (uri.find("://") != std::string::npos) {
+            line.action = LineAction::OpenUrl;
+            line.url    = uri;
+        }
+    }
+
+    std::vector<DisplayLine> FormatAgentContent(const Entry& entry, bool open, const TranscriptFormatOptions& options) {
+        std::string details;
+        auto        add = [&details](const std::string& part) {
+            if (!part.empty()) {
+                details += " · " + part;
+            }
+        };
+        add(entry.mimeType);
+        if (entry.byteSize > 0) {
+            add(editor::acp::FormatByteSize(entry.byteSize));
+        }
+        const std::string name = entry.contentName.empty() ? entry.status : entry.contentName;
+        if (entry.status == "resource_link") {
+            DisplayLine line{.text = "↗ " + name + details, .style = DisplayStyle::Hint};
+            LinkTarget(line, entry.detail);
+            return {line};
+        }
+        if (entry.status == "resource" && !entry.text.empty()) {
+            std::vector<DisplayLine> lines{
+                {.text   = open ? "▾ " + name : "▸ " + name + " (" + LineCountLabel(entry.text) + ")",
+                 .style  = DisplayStyle::Hint,
+                 .action = LineAction::ToggleExpand}};
+            if (open) {
+                const std::size_t dot      = name.rfind('.');
+                const std::string language = dot == std::string::npos ? std::string() : name.substr(dot + 1);
+                std::string       fence    = "```";
+                while (entry.text.find(fence) != std::string::npos) {
+                    fence += '`';
+                }
+                const std::string        body = entry.text.ends_with('\n') ? entry.text : entry.text + "\n";
+                std::vector<DisplayLine> code = FormatMarkdownLines(fence + language + "\n" + body + fence, DisplayStyle::Plain, "  ", options);
+                lines.insert(lines.end(), std::make_move_iterator(code.begin()), std::make_move_iterator(code.end()));
+            }
+            return lines;
+        }
+        DisplayLine line{.text = "▣ " + name + details, .style = DisplayStyle::Dim};
+        LinkTarget(line, entry.detail);
+        return {line};
+    }
+
+} // namespace
+
 std::vector<DisplayLine> FormatTranscript(const std::vector<editor::acp::Manager::TranscriptEntry>&    transcript,
                                           const std::optional<editor::acp::Manager::PermissionPrompt>& pending,
                                           const TranscriptFormatOptions&                               options) {
@@ -777,6 +893,18 @@ std::vector<DisplayLine> FormatTranscript(const std::vector<editor::acp::Manager
                     break;
                 }
                 lines.push_back({.text = "-- " + entry.text + " --", .style = DisplayStyle::Dim, .entryIndex = i});
+                break;
+            }
+            case Kind::Notice: {
+                append(FormatNotice(entry), i);
+                break;
+            }
+            case Kind::Compaction: {
+                append(FormatCompaction(entry, isExpanded(i), options), i);
+                break;
+            }
+            case Kind::AgentContent: {
+                append(FormatAgentContent(entry, isExpanded(i), options), i);
                 break;
             }
         }
