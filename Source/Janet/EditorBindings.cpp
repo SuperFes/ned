@@ -1129,6 +1129,10 @@ namespace {
         editor::acp::SetAcpThinkingDisplay(display);
     }
 
+    void NedSetAcpSessionTabs(std::string position) {
+        editor::acp::SetAcpSessionTabs(position);
+    }
+
     void NedSetAcpFollowAgent(bool follow) {
         editor::acp::SetAcpFollowAgent(follow);
     }
@@ -2593,6 +2597,11 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-acp-thinking",
         "How the ACP panel shows the agent's thinking: \"collapsed\" (default) -- a one-line summary, click or C-o "
         "to read it -- \"expanded\", or \"hidden\". Any other value is ignored.");
+    env.Register<&NedSetAcpSessionTabs>(
+        "ned", "set-acp-session-tabs",
+        "Where the ACP panel shows its conversation tabs once there is more than one (after acp-fork-session or "
+        "acp-new-session): \"bottom\" (default), \"top\", or \"hidden\" -- C-PageUp/C-PageDown and C-c A [ / C-c A ] "
+        "still switch. Any other value is ignored.");
     env.Register<&NedSetAcpFollowAgent>(
         "ned", "set-acp-follow-agent",
         "Whether the editor follows the ACP agent (default false): while the ACP panel has focus, each file a tool "

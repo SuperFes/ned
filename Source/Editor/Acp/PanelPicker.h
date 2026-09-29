@@ -17,7 +17,8 @@ enum class PanelPicker { Rewind,
                          Copy,
                          Review,
                          Login,
-                         SaveImage };
+                         SaveImage,
+                         Fork };
 
 } // namespace ned::editor::acp
 

@@ -12,6 +12,7 @@ namespace {
     ToolCallDisplay g_toolCalls   = ToolCallDisplay::Collapsed;
     ThinkingDisplay g_thinking    = ThinkingDisplay::Collapsed;
     bool            g_followAgent = false;
+    SessionTabsPosition g_sessionTabs = SessionTabsPosition::Bottom;
 } // namespace
 
 void SetAcpPanelDock(const std::string& side) {
@@ -71,6 +72,24 @@ void SetAcpThinkingDisplay(const std::string& display) {
 ThinkingDisplay GetAcpThinkingDisplay() {
     const std::lock_guard<std::mutex> lock(g_configMutex);
     return g_thinking;
+}
+
+void SetAcpSessionTabs(const std::string& position) {
+    const std::lock_guard<std::mutex> lock(g_configMutex);
+    if (position == "bottom") {
+        g_sessionTabs = SessionTabsPosition::Bottom;
+    }
+    else if (position == "top") {
+        g_sessionTabs = SessionTabsPosition::Top;
+    }
+    else if (position == "hidden") {
+        g_sessionTabs = SessionTabsPosition::Hidden;
+    }
+}
+
+SessionTabsPosition GetAcpSessionTabs() {
+    const std::lock_guard<std::mutex> lock(g_configMutex);
+    return g_sessionTabs;
 }
 
 void SetAcpFollowAgent(bool follow) {

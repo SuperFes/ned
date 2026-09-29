@@ -323,6 +323,7 @@ add_executable(ned_tests
             AcpContentBlocksTest.cpp
             ImageDecodeTest.cpp
             ImageSaveTest.cpp
+            AcpSessionStripTest.cpp
             AcpInlineImagesTest.cpp
             FramedConnectionTest.cpp
             LspTransportTest.cpp

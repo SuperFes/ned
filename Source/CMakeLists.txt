@@ -472,6 +472,7 @@ add_library(ned_lib STATIC
         UI/AcpPanel/ElicitationForm.cpp
         UI/AcpPanel/InlineImages.cpp
         UI/AcpPanel/ComposerLayout.cpp
+        UI/AcpPanel/SessionStrip.cpp
         UI/AcpPanel/TranscriptFormat.cpp
         UI/AcpPanel/TranscriptScroll.cpp
         UI/DebugConsolePanel.cpp

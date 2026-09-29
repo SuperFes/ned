@@ -14,6 +14,10 @@ for the live keymap stack.
 
 # COMMANDS
 
+`acp-close-session` (`C-c A c`)
+
+:   Close the current ACP conversation tab.
+
 `acp-compose-abort`
 
 :   Close *acp compose* without sending it (bound C-c C-k in *acp compose*).
@@ -26,6 +30,10 @@ for the live keymap stack.
 
 :   Copy one of the ACP agent's recent replies, or a code block from one, to the kill ring and clipboard.
 
+`acp-fork-session` (`C-c A b`)
+
+:   Continue the ACP conversation in a new tab, keeping this one as it is.
+
 `acp-login` (`C-c A L`)
 
 :   Log the ACP agent in, choosing from the ways it offers.
@@ -33,6 +41,18 @@ for the live keymap stack.
 `acp-logout`
 
 :   Log the ACP agent out.
+
+`acp-new-session` (`C-c A n`)
+
+:   Start a new ACP conversation in its own tab, on the running agent.
+
+`acp-next-session` (`C-c A ]`)
+
+:   Switch to the next ACP conversation tab.
+
+`acp-previous-session` (`C-c A [`)
+
+:   Switch to the previous ACP conversation tab.
 
 `acp-resume-session` (`C-c A l`)
 

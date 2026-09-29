@@ -2,7 +2,8 @@
 // ACP chat panel display settings -- one process-wide choice, mutex-guarded
 // static state, mirroring Terminal/Config.h's exact pattern. Configured from
 // Janet (ned/set-acp-panel-dock, ned/set-acp-panel-size-percent,
-// ned/set-acp-tool-calls, ned/set-acp-thinking, ned/set-acp-follow-agent);
+// ned/set-acp-tool-calls, ned/set-acp-thinking, ned/set-acp-session-tabs,
+// ned/set-acp-follow-agent);
 // the panel's follow toggle changes the last; nothing else changes
 // any of them from its default. Unrecognized strings leave a setting
 // unchanged.
@@ -44,6 +45,15 @@ enum class ThinkingDisplay { Collapsed,
                              Hidden };
 void                          SetAcpThinkingDisplay(const std::string& display);
 [[nodiscard]] ThinkingDisplay GetAcpThinkingDisplay();
+
+// Where the panel shows its session tabs while it has more than one
+// conversation: "bottom" (default, under the composer), "top", or
+// "hidden" (the tab keys still switch).
+enum class SessionTabsPosition { Bottom,
+                                 Top,
+                                 Hidden };
+void                              SetAcpSessionTabs(const std::string& position);
+[[nodiscard]] SessionTabsPosition GetAcpSessionTabs();
 
 // Whether the editor follows the agent, opening each file a tool call
 // reads or edits while the panel has focus. Default false.

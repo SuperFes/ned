@@ -1003,6 +1003,13 @@ enum class InteractiveRequest { None,
                                 AcpReviewTurn,
                                 AcpLogin,
                                 AcpLogout,
+                                // Conversation tabs: fork (through the panel, which picks
+                                // where from), a new one, close the current one, or switch.
+                                AcpForkSession,
+                                AcpNewSession,
+                                AcpCloseSession,
+                                AcpNextSession,
+                                AcpPreviousSession,
                                 // The *acp review* buffer's keys -- see Editor/Acp/TurnReview.h.
                                 AcpReviewUndoHunk,
                                 AcpReviewUndoFile,

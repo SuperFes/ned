@@ -8,7 +8,13 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-354 commands.
+359 commands.
+
+## `acp-close-session`
+
+Key: `C-c A c`
+
+Close the current ACP conversation tab.
 
 ## `acp-compose-abort`
 
@@ -24,6 +30,12 @@ Key: `C-c A w`
 
 Copy one of the ACP agent's recent replies, or a code block from one, to the kill ring and clipboard.
 
+## `acp-fork-session`
+
+Key: `C-c A b`
+
+Continue the ACP conversation in a new tab, keeping this one as it is.
+
 ## `acp-login`
 
 Key: `C-c A L`
@@ -33,6 +45,24 @@ Log the ACP agent in, choosing from the ways it offers.
 ## `acp-logout`
 
 Log the ACP agent out.
+
+## `acp-new-session`
+
+Key: `C-c A n`
+
+Start a new ACP conversation in its own tab, on the running agent.
+
+## `acp-next-session`
+
+Key: `C-c A ]`
+
+Switch to the next ACP conversation tab.
+
+## `acp-previous-session`
+
+Key: `C-c A [`
+
+Switch to the previous ACP conversation tab.
 
 ## `acp-resume-session`
 

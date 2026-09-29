@@ -59,6 +59,8 @@ namespace ned::ui::test {
 [[nodiscard]] Event ArrowDownAlt();
 [[nodiscard]] Event HomeCtrl();
 [[nodiscard]] Event EndCtrl();
+[[nodiscard]] Event PageUpCtrl();
+[[nodiscard]] Event PageDownCtrl();
 [[nodiscard]] Event ReturnAlt();
 [[nodiscard]] Event ReturnShift();
 [[nodiscard]] Event ReturnCtrl();

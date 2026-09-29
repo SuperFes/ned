@@ -240,6 +240,10 @@ configuration is Janet code, and these are the bindings it calls.
 
 :   Set how much of the screen the ACP chat panel covers, as a percentage (default 30, clamped to 15-70) -- height when docked at the bottom, width when docked at the right.
 
+`ned/set-acp-session-tabs`
+
+:   Where the ACP panel shows its conversation tabs once there is more than one (after acp-fork-session or acp-new-session): "bottom" (default), "top", or "hidden" -- C-PageUp/C-PageDown and C-c A [ / C-c A ] still switch. Any other value is ignored.
+
 `ned/set-acp-thinking`
 
 :   How the ACP panel shows the agent's thinking: "collapsed" (default) -- a one-line summary, click or C-o to read it -- "expanded", or "hidden". Any other value is ignored.

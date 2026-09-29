@@ -32,6 +32,7 @@
 #include "AcpPanel/ChoicePicker.h"
 #include "AcpPanel/ElicitationForm.h"
 #include "AcpPanel/InlineImages.h"
+#include "AcpPanel/SessionStrip.h"
 #include "AcpPanel/TranscriptFormat.h"
 #include "AcpPanel/TranscriptScroll.h"
 #include "ActiveBuffer.h"
@@ -231,6 +232,14 @@ class AcpPanel : public Widget {
 
     // Drops a session list still loading, telling the agent to stop.
     void StopAwaitingSessions();
+    // When the Manager's current conversation changed since the last call,
+    // puts away the view of the old one (scroll, draft, expansions) and
+    // brings back the new one's.
+    void SyncSessionView();
+    // Paints the session strip on row y and remembers where its items are.
+    void PaintSessionStrip(Canvas& canvas, int y, int width);
+    // A click on the session strip; `right` opens its menu.
+    void ClickSessionStrip(int x, bool right, Point anchor);
     void StartLogin(const editor::acp::Manager::AuthMethod& method);
     void PaintImages(Canvas& canvas, const std::vector<acppanel::PhysicalLine>& rows, int firstRow, int visibleRows, int titleRows, int width);
     // A picker over one config option's values; nullptr opens one saying
@@ -453,6 +462,18 @@ class AcpPanel : public Widget {
     std::function<void(std::string, std::vector<MenuItem>, Point)>       onContextMenuRequest_;
     std::filesystem::path                                                imageDirectory_;
     std::function<bool(std::string_view, std::string_view)>              imageCopier_;
+
+    // Each conversation's view while another is shown.
+    struct SessionView {
+        acppanel::TranscriptScroll                          scroll;
+        std::set<std::size_t>                               toggledEntries;
+        std::string                                         draft;
+        std::vector<editor::acp::Manager::PromptAttachment> pendingImages;
+    };
+    std::unordered_map<std::uint64_t, SessionView> sessionViews_;
+    std::uint64_t                                  viewedSession_ = 0;
+    std::vector<acppanel::SessionStripItem>        stripItems_;
+    int                                            stripRow_ = -1; // panel-local, -1 when not shown
 
     // The agent's open question, as a form owning the keyboard.
     std::optional<acppanel::ElicitationForm> form_;

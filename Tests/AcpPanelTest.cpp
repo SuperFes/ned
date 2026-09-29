@@ -2123,3 +2123,46 @@ TEST_CASE("AcpPanel's C-c C-w saves a picture picked from the transcript", "[Acp
     REQUIRE(files.size() == 1);
     REQUIRE(FileBytes(files[0]) == ned::text::Base64Decode(kTinyPng).value());
 }
+
+TEST_CASE("AcpPanel's session strip switches conversations, each keeping its own draft", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code", Json::object(), Json{{"agentCapabilities", {{"sessionCapabilities", {{"fork", Json::object()}}}}}});
+    fixture.Paint();
+    const std::string composerAlone = fixture.RowText(kHeight - 1);
+    REQUIRE(composerAlone.find(" 1 new") == std::string::npos);
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('a')));
+
+    fixture.panel.OpenPicker(ned::editor::acp::PanelPicker::Fork);
+    const Json fork = fixture.reader.Next();
+    REQUIRE(fork["method"] == "session/fork");
+    fixture.client->DispatchFrame(ResultFrame(fork["id"], Json{{"sessionId", "s2"}}));
+    fixture.Paint();
+    // The strip takes the bottom row; the composer moves up above it.
+    REQUIRE(fixture.RowText(kHeight - 1).starts_with(" 1 new  2 new  ×  +"));
+    REQUIRE_FALSE(fixture.RowText(kHeight - 2).ends_with("a"));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('b')));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 2).ends_with("b"));
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Mouse(1, kHeight - 1, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    fixture.Paint();
+    REQUIRE(fixture.manager.SessionId() == "s1");
+    REQUIRE(fixture.RowText(kHeight - 2).ends_with("a"));
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::PageDownCtrl()));
+    fixture.Paint();
+    REQUIRE(fixture.manager.SessionId() == "s2");
+    REQUIRE(fixture.RowText(kHeight - 2).ends_with("b"));
+}
+
+TEST_CASE("AcpPanel can put the session strip on top", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    ned::editor::acp::SetAcpSessionTabs("top");
+    REQUIRE(fixture.manager.NewSession() == "Starting a new conversation.");
+    fixture.Paint();
+    ned::editor::acp::SetAcpSessionTabs("bottom");
+    REQUIRE(fixture.RowText(1).starts_with(" 1 new  2 new  ×  +"));
+}

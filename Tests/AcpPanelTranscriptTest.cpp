@@ -4,10 +4,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <string>
 #include <vector>
 
+#include "Text/DisplayWidth.h"
 #include "UI/AcpPanel/ChoicePicker.h"
 #include "UI/AcpPanel/ComposerLayout.h"
 #include "UI/AcpPanel/TranscriptFormat.h"
@@ -489,4 +491,39 @@ TEST_CASE("FormatTranscript gives each picture it can fit rows of its own", "[Ac
     REQUIRE(lines[6].image->id == 8);
     REQUIRE(lines[7].image->rows == 2);
     REQUIRE(lines[7].entryIndex == 1);
+}
+
+TEST_CASE("FormatTranscript nests a subagent's work under the tool call that started it", "[AcpPanel]") {
+    std::vector<Manager::TranscriptEntry> transcript;
+    transcript.push_back({.kind = Kind::ToolCall, .text = "Task: explore", .status = "in_progress", .toolCallId = "t1"});
+    Manager::TranscriptEntry read{.kind = Kind::ToolCall, .text = "Read a.cpp", .status = "completed", .toolCallId = "t2"};
+    read.parentToolCallId = "t1";
+    transcript.push_back(read);
+    transcript.push_back({.kind = Kind::AgentText, .text = "main agent"});
+    Manager::TranscriptEntry said{.kind = Kind::AgentText, .text = "subagent notes"};
+    said.parentToolCallId = "t1";
+    transcript.push_back(said);
+
+    auto texts = [&transcript](bool open) {
+        std::vector<std::string> result;
+        for (const auto& line : FormatTranscript(transcript, std::nullopt,
+                                                 {.width = 60, .expanded = [open](std::size_t index) { return open && index == 0; }})) {
+            result.push_back(line.text);
+        }
+        return result;
+    };
+
+    const std::vector<std::string> collapsed = texts(false);
+    REQUIRE(collapsed.size() == 3);
+    REQUIRE(collapsed[0].find("Task: explore") != std::string::npos);
+    REQUIRE(collapsed[1] == "  └ subagent · 1 step · Read a.cpp");
+    REQUIRE(collapsed[2] == "main agent");
+
+    const std::vector<std::string> open    = texts(true);
+    const auto                     readRow = std::find_if(open.begin(), open.end(), [](const std::string& text) { return text.find("Read a.cpp") != std::string::npos; });
+    REQUIRE(readRow != open.end());
+    REQUIRE(readRow->starts_with("│ "));
+    REQUIRE(ned::text::StringColumns(*readRow) <= 60);
+    REQUIRE(std::find(open.begin(), open.end(), "│ subagent notes") != open.end());
+    REQUIRE(open.back() == "main agent");
 }

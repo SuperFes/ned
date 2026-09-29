@@ -1548,6 +1548,23 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::AcpLogout:
             statusMessage_ = acpManager_ ? acpManager_->Logout() : std::string("No ACP manager available.");
             return;
+        case editor::InteractiveRequest::AcpForkSession:
+            if (onAcpPickerRequest_) {
+                onAcpPickerRequest_(editor::acp::PanelPicker::Fork);
+            }
+            return;
+        case editor::InteractiveRequest::AcpNewSession:
+            statusMessage_ = acpManager_ ? acpManager_->NewSession() : std::string("No ACP manager available.");
+            return;
+        case editor::InteractiveRequest::AcpCloseSession:
+            statusMessage_ = acpManager_ ? acpManager_->CloseSession(acpManager_->CurrentSessionKey()) : std::string("No ACP manager available.");
+            return;
+        case editor::InteractiveRequest::AcpNextSession:
+        case editor::InteractiveRequest::AcpPreviousSession:
+            if (acpManager_) {
+                acpManager_->CycleSession(request == editor::InteractiveRequest::AcpNextSession ? 1 : -1);
+            }
+            return;
         case editor::InteractiveRequest::AcpReviewUndoHunk:
         case editor::InteractiveRequest::AcpReviewUndoFile:
         case editor::InteractiveRequest::AcpReviewKeep:

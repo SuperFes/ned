@@ -3,10 +3,10 @@
 // streams the conversation into a plain, read-only, find-or-create output
 // buffer ("*acp: <agent>*") -- the same TaskRunner::RunTask/
 // TaskOutputBufferName convention, deliberately reused instead of a new
-// widget for v1 (see ROADMAP.md's AI-assisted-editing entry). Analogous to
-// Dap/Manager.h: one session at a time, not a per-agent map -- chatting
-// with an agent is a modal activity the same way debugging is, and nothing
-// in v1's scope needs two agents live at once.
+// widget for v1 (see ROADMAP.md's AI-assisted-editing entry). One agent
+// connection at a time, like Dap/Manager.h, carrying any number of
+// conversations (Session, one per panel tab): new ones and forks share the
+// agent process, and each update is routed by its sessionId.
 //
 // Session shape (the ACP handshake):
 //   1. spawn the agent, send `initialize` (capabilities exchange -- this
@@ -175,6 +175,8 @@ class Manager {
         // Kind::Compaction: `status` is its lifecycle ("in_progress",
         // "completed", "failed", "cancelled"), `text` the retained summary,
         // `detail` the failure, `itemId` the agent's compactionId.
+        // Kind::AgentText/AgentThought: `itemId` is the messageId of the
+        // latest chunk, when the agent sends one.
         // Kind::AgentContent: a non-text block in the agent's reply --
         // `status` is its type ("image", "audio", "resource_link",
         // "resource"), `detail` its uri, `text` a resource's embedded text.
@@ -186,6 +188,10 @@ class Manager {
         // Pictures shown with the entry: a user message's pasted images, an
         // agent's image (Kind::AgentContent).
         std::vector<TranscriptImage> images;
+        // A subagent's work: the toolCallId of the tool call that started
+        // it (claude-agent-acp's _meta.claudeCode.parentToolUseId). Empty for
+        // the agent's own.
+        std::string parentToolCallId;
     };
     [[nodiscard]] const std::vector<TranscriptEntry>& Transcript() const;
     // Bumped on every Transcript()-affecting mutation -- cheap change
@@ -282,6 +288,49 @@ class Manager {
     // otherwise. Replayed turns have no checkpoints, so rewind can't reach
     // them. Returns a short status for the echo area.
     std::string LoadSession(const std::string& sessionId, const std::string& title);
+    // Conversations open on this connection, one tab each; the rest of this
+    // class's session API is about the current one. A background session
+    // keeps streaming, and its permission prompts and questions wait for its
+    // tab to be picked.
+    struct SessionTab {
+        std::uint64_t key = 0;
+        std::string   label; // its title, else its first prompt's first line
+        bool          current   = false;
+        bool          live      = false; // on the agent now (or being created)
+        bool          busy      = false; // a prompt in flight
+        bool          attention = false; // finished or asked something while hidden
+    };
+    [[nodiscard]] std::vector<SessionTab> SessionTabs() const;
+    [[nodiscard]] std::uint64_t           CurrentSessionKey() const;
+    void                                  SelectSession(std::uint64_t key);
+    // Selects the tab `direction` steps from the current one, wrapping.
+    void CycleSession(int direction);
+    // Closes a tab, cancelling its turn and telling the agent (session/close)
+    // when it can. The last tab stays: ending that one is StopSession.
+    // Returns a short status.
+    std::string CloseSession(std::uint64_t key);
+    // A fresh conversation in a new tab, on the running agent.
+    std::string NewSession();
+    // Whether the agent can fork a session (sessionCapabilities.fork).
+    [[nodiscard]] bool CanForkSessions() const;
+    // An earlier place the current conversation can be forked from: the end
+    // of a finished turn's reply. Only claude-agent-acp takes one (through
+    // its `_meta.jetbrains.air.fork`); any other agent forks from now.
+    struct ForkPoint {
+        std::size_t transcriptEnd = 0; // the fork's copy of the transcript stops here
+        std::string preview;           // the turn's prompt, first line
+        std::string messageId;         // the reply's last message
+    };
+    // Newest first, leaving out the latest turn (forking from now covers it).
+    [[nodiscard]] std::vector<ForkPoint> ForkPoints() const;
+    // Continues the current conversation in a new tab (session/fork) and
+    // switches to it; the agent remembers everything up to now, or up to
+    // `point`, in both. The new tab starts with a copy of the transcript but
+    // no rewind history: the files on disk are shared, so rewinding a turn
+    // made before the fork is left to the tab it was made in. Returns a
+    // short status.
+    std::string ForkSession(const std::optional<ForkPoint>& point = std::nullopt);
+
     // A way the agent offers to log in (initialize's authMethods). A
     // "terminal" method is the agent's own command plus `args`, run in a
     // terminal for the user to log in there; an "agent" method is handled
@@ -616,41 +665,99 @@ class Manager {
     Client& SetClientForTesting(std::unique_ptr<Client> client);
 
   private:
+    // One conversation on the connection. The panel shows one at a time
+    // (current_); the others keep streaming in the background.
+    struct Session {
+        std::uint64_t key = 0;           // ned's own, stable across resume and reconnect
+        std::string   id;                // the agent's sessionId; empty until session/new answers
+        std::string   title;             // session_info_update's
+        bool          attention = false; // something happened while it wasn't shown
+        bool          creating  = false; // session/new or session/fork not answered yet
+
+        std::vector<TranscriptEntry> transcript;
+        std::size_t                  generation = 0; // see Bump
+        std::optional<std::size_t>   livePlanEntryIndex;
+
+        bool                                                 promptInFlight = false;
+        std::optional<std::chrono::steady_clock::time_point> promptStartedAt;
+        std::deque<QueuedPrompt>                             queuedPrompts;
+        // True between session/load and its response: user_message_chunk is
+        // then a replayed prompt rather than an echo of one SendPrompt pushed.
+        bool        replaying = false;
+        std::string replayUserMessageId;
+
+        std::vector<AvailableCommand> availableCommands;
+        std::vector<SessionMode>      modes;
+        std::string                   currentModeId;
+        std::vector<ConfigOption>     configOptions;
+        std::optional<Usage>          usage;
+
+        std::optional<PermissionPrompt>                  pendingPermissionPrompt;
+        RespondFn                                        pendingPermissionRespond;
+        std::string                                      permissionToolCallId; // the tool call the pending permission prompt is for
+        std::optional<Elicitation>                       pendingElicitation;
+        RespondFn                                        pendingElicitationRespond;
+        std::vector<std::pair<std::string, std::string>> openUrlElicitations; // elicitationId, message
+
+        // ACP checkpoint/rewind follow-up. pendingCheckpoint accumulates the
+        // in-flight turn's file edits (started in SendPrompt, finalized by
+        // FinalizePendingCheckpoint into checkpoints once that turn's
+        // session/prompt response arrives); checkpoints itself persists
+        // across StartSession/EndSession, matching transcript's own "never
+        // cleared" lifetime, so a rewind can still reach a turn from an
+        // earlier session in this same process.
+        std::vector<Checkpoint>   checkpoints;
+        std::optional<Checkpoint> pendingCheckpoint;
+    };
+
     void          WireClient(Client& client);
     void          HandleSessionUpdate(const Json& params);
     void          EndSession(std::string reason);
     void          AppendToOutputBuffer(std::string_view text);
     text::Buffer& OutputBuffer(const std::string& agentName);
 
-    void PushOrAppendAgentText(TranscriptEntry::Kind kind, std::string_view text);
-    void PushOrUpdateToolCall(const Json& update);
-    void PushOrReplacePlan(const Json& update);
-    void UpdateCompaction(const std::string& kind, const Json& update);
-    void PushTranscriptEntry(TranscriptEntry entry);
-    void PushSessionEvent(std::string text);
-    void NotifyTranscriptChanged();
+    // The session a message from the agent is about: its sessionId's, else
+    // the current one while that is still being created. Null for a
+    // session this client no longer has.
+    Session* SessionFor(const Json& params);
+    Session* SessionByKey(std::uint64_t key);
+    // Marks `session`'s transcript changed. Stamps come from one counter, so
+    // switching sessions changes TranscriptGeneration() too.
+    void Bump(Session& session);
+    void CloseOrphan(const std::optional<Json>& result);
 
-    // ACP checkpoint/rewind follow-up. Records/updates pendingCheckpoint_'s
-    // entry for `path` -- called from the fs/write_text_file handler with
-    // `buffer`'s CurrentUndoSequence() captured immediately before that
-    // write was applied. A safe no-op if no turn is currently pending (a
-    // tool call arriving outside an in-flight SendPrompt shouldn't happen,
-    // but this stays defensive rather than assuming it can't).
-    void RecordCheckpointFileEdit(text::Buffer& buffer, const std::filesystem::path& path, std::size_t beforeSequence);
-    // Moves pendingCheckpoint_ (if any) onto checkpoints_ -- called once a
-    // turn's own session/prompt response arrives (success, error, or a
+    void PushOrAppendAgentText(Session& session, TranscriptEntry::Kind kind, std::string_view text, const std::string& messageId,
+                               const std::string& parentToolCallId);
+    void PushOrUpdateToolCall(Session& session, const Json& update);
+    void PushOrReplacePlan(Session& session, const Json& update);
+    void UpdateCompaction(Session& session, const std::string& kind, const Json& update);
+    void PushTranscriptEntry(Session& session, TranscriptEntry entry);
+    void PushSessionEvent(Session& session, std::string text);
+    void NotifyTranscriptChanged();
+    // Tells the UI a session wants the user; one that isn't shown is
+    // flagged for the session strip too.
+    void NoteAttention(Session& session, Attention attention, std::chrono::steady_clock::duration turnElapsed);
+
+    // ACP checkpoint/rewind follow-up. Records/updates the pending
+    // checkpoint's entry for `path` -- called from the fs/write_text_file
+    // handler with `buffer`'s CurrentUndoSequence() captured immediately
+    // before that write was applied. A safe no-op if no turn is currently
+    // pending (a tool call arriving outside an in-flight SendPrompt
+    // shouldn't happen, but this stays defensive rather than assuming it
+    // can't).
+    void RecordCheckpointFileEdit(Session& session, text::Buffer& buffer, const std::filesystem::path& path, std::size_t beforeSequence);
+    // Moves the pending checkpoint (if any) onto checkpoints -- called once
+    // a turn's own session/prompt response arrives (success, error, or a
     // session tearing down mid-turn), never mid-turn.
-    void FinalizePendingCheckpoint();
+    void FinalizePendingCheckpoint(Session& session);
 
     text::BufferList&   bufferList_;
     ned::ui::EventLoop& eventLoop_;
 
     std::unique_ptr<Client> client_;
     mcp::BridgeServer*      mcpBridgeServer_ = nullptr;
-    std::string                agentName_;
-    std::string                sessionId_;
-    SessionState               state_          = SessionState::Inactive;
-    bool                       promptInFlight_ = false;
+    std::string             agentName_;
+    SessionState            state_ = SessionState::Inactive;
     // ACP context auto-attach follow-up: captured from the initialize
     // response, reset at the top of every StartSession -- see
     // PromptAttachment/SendPrompt's own doc comments.
@@ -660,76 +767,52 @@ class Manager {
     Json               McpServers();
     [[nodiscard]] Json PromptBlocks(const std::string& text, const std::vector<PromptAttachment>& attachments) const;
     void               RunSessionSettledCallbacks();
-    void               ParseSessionSettings(const Json& result);
-    void               ApplyConfigOptions(const Json& options);
-    void               ApplyCurrentModeId(std::string modeId);
+    void               ParseSessionSettings(Session& session, const Json& result);
+    void               ApplyConfigOptions(Session& session, const Json& options);
+    void               ApplyCurrentModeId(Session& session, std::string modeId);
+    std::string        SendPrompt(Session& session, const std::string& text, const std::vector<PromptAttachment>& attachments);
 
-    bool                     agentSupportsSteering_ = false;
-    std::deque<QueuedPrompt> queuedPrompts_;
-    bool                     agentSupportsLoadSession_  = false;
-    bool                     agentSupportsListSessions_ = false;
-    bool                     agentSupportsResume_       = false;
-    bool                     agentSupportsDelete_       = false;
-    bool                     agentSupportsClose_        = false;
-    std::optional<int>       listSessionsRequest_; // the session/list page in flight
-    std::vector<AuthMethod>  authMethods_;
-    bool                     agentSupportsLogout_ = false;
-    bool                     loginRequired_       = false;
-    bool                     sessionAwaitsLogin_  = false; // session/new wants retrying after a login
-    std::function<void()>    onLoginRequired_;
-    void                     CreateSession();
-    void                     RequireLogin();
-    // True between session/load and its response: user_message_chunk is
-    // then a replayed prompt rather than an echo of one SendPrompt pushed.
-    bool                                                 replaying_ = false;
-    void                                                 StopToolTimers();
+    bool                    agentSupportsSteering_     = false;
+    bool                    agentSupportsLoadSession_  = false;
+    bool                    agentSupportsListSessions_ = false;
+    bool                    agentSupportsResume_       = false;
+    bool                    agentSupportsDelete_       = false;
+    bool                    agentSupportsClose_        = false;
+    bool                    agentSupportsFork_         = false;
+    bool                    agentForksAtMessage_       = false; // see ForkPoint
+    std::optional<int>      listSessionsRequest_;               // the session/list page in flight
+    std::vector<AuthMethod> authMethods_;
+    bool                    agentSupportsLogout_ = false;
+    bool                    loginRequired_       = false;
+    bool                    sessionAwaitsLogin_  = false; // session/new wants retrying after a login
+    std::function<void()>   onLoginRequired_;
+    void                    CreateSession();
+    void                    RequireLogin();
+    void                    StopToolTimers(Session& session);
     // Records `path`'s text as the in-flight turn's "before" the first time
     // the turn is about to change it.
-    void                                                 SnapshotBeforeEdit(const std::string& path);
-    void                                                 SnapshotToolCallFiles(const TranscriptEntry& toolCall);
-    TranscriptEntry*                                     FindToolCall(const std::string& toolCallId);
-    std::string                                          permissionToolCallId_; // the tool call the pending permission prompt is for
-    std::optional<Elicitation>                           pendingElicitation_;
-    RespondFn                                            pendingElicitationRespond_;
-    std::size_t                                          elicitationCount_ = 0;
-    std::vector<std::pair<std::string, std::string>>     openUrlElicitations_; // elicitationId, message
-    std::string                                          replayUserMessageId_;
-    std::vector<std::function<void()>>                   whenSessionSettles_; // see ListSessions
-    std::vector<AvailableCommand>                        availableCommands_;
-    std::vector<SessionMode>                             modes_;
-    std::string                                          currentModeId_;
-    std::vector<ConfigOption>                            configOptions_;
-    std::string                                          sessionTitle_;
-    std::optional<Usage>                                 usage_;
-    std::optional<std::chrono::steady_clock::time_point> promptStartedAt_;
+    void                               SnapshotBeforeEdit(Session& session, const std::string& path);
+    void                               SnapshotToolCallFiles(Session& session, const TranscriptEntry& toolCall);
+    static TranscriptEntry*            FindToolCall(Session& session, const std::string& toolCallId);
+    std::size_t                        elicitationCount_ = 0;
+    std::vector<std::function<void()>> whenSessionSettles_; // see ListSessions
 
-    std::optional<PermissionPrompt> pendingPermissionPrompt_;
-    RespondFn                       pendingPermissionRespond_;
+    std::vector<std::unique_ptr<Session>> sessions_;
+    Session*                              current_         = nullptr; // never null once constructed
+    std::uint64_t                         nextSessionKey_  = 1;
+    std::size_t                           generationStamp_ = 0;
 
     std::function<void(const PermissionPrompt&)> onPermissionRequest_;
     std::function<void(std::string)>             onSessionEnded_;
     std::function<void(Attention, std::chrono::steady_clock::duration)> onAttention_;
     std::function<void(const ToolLocation&)>                            onToolLocation_;
 
-    std::vector<TranscriptEntry> transcript_;
-    std::size_t                  transcriptGeneration_ = 0;
-    std::optional<std::size_t>   livePlanEntryIndex_; // index into transcript_, reset on EndSession
-
-    // ACP checkpoint/rewind follow-up. pendingCheckpoint_ accumulates the
-    // in-flight turn's file edits (started in SendPrompt, finalized by
-    // FinalizePendingCheckpoint into checkpoints_ once that turn's
-    // session/prompt response arrives); checkpoints_ itself persists across
-    // StartSession/EndSession, matching transcript_'s own "never cleared"
-    // lifetime, so a rewind can still reach a turn from an earlier session
-    // in this same process.
-    std::vector<Checkpoint>   checkpoints_;
-    std::optional<Checkpoint> pendingCheckpoint_;
-    std::function<void()>     onTranscriptChanged_;
+    std::function<void()> onTranscriptChanged_;
     // ACP chat-feel round 2: coalesces the UI-facing onTranscriptChanged_
-    // callback while a reply streams in token-by-token -- transcript_/
-    // transcriptGeneration_ above stay synchronously correct on every single
-    // chunk either way (nothing here is delayed for *data* consumers), only
-    // the repaint-triggering notification is debounced. Confirmed live as
+    // callback while a reply streams in token-by-token -- the transcript and
+    // its generation stay synchronously correct on every single chunk either
+    // way (nothing here is delayed for *data* consumers), only the
+    // repaint-triggering notification is debounced. Confirmed live as
     // visible jitter otherwise: AcpPanel's own transcript rendering
     // word-wraps the whole logical line fresh on every Paint(), so a
     // several-times-a-second notification for a several-byte append was

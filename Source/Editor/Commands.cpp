@@ -4012,6 +4012,23 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::AcpLogout;
                       });
+    registry.Register("acp-fork-session", "Continue the ACP conversation in a new tab, keeping this one as it is.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpForkSession;
+                      });
+    registry.Register("acp-new-session", "Start a new ACP conversation in its own tab, on the running agent.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpNewSession;
+                      });
+    registry.Register("acp-close-session", "Close the current ACP conversation tab.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::AcpCloseSession;
+    });
+    registry.Register("acp-next-session", "Switch to the next ACP conversation tab.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::AcpNextSession;
+    });
+    registry.Register("acp-previous-session", "Switch to the previous ACP conversation tab.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::AcpPreviousSession;
+    });
     registry.Register("acp-review-turn",
                       "Review the files an ACP turn changed, hunk by hunk, keeping or undoing each.",
                       [](CommandContext& context) {
@@ -5291,6 +5308,11 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c A f"), "acp-toggle-follow");
     keymap.Bind(ParseKeySequence("C-c A v"), "acp-review-turn");  // "v" for view
     keymap.Bind(ParseKeySequence("C-c A L"), "acp-login");
+    keymap.Bind(ParseKeySequence("C-c A b"), "acp-fork-session"); // "b" for branch
+    keymap.Bind(ParseKeySequence("C-c A n"), "acp-new-session");
+    keymap.Bind(ParseKeySequence("C-c A c"), "acp-close-session");
+    keymap.Bind(ParseKeySequence("C-c A ]"), "acp-next-session");
+    keymap.Bind(ParseKeySequence("C-c A ["), "acp-previous-session");
     keymap.Bind(ParseKeySequence("C-c c"), "acp-toggle-panel");   // "c" for chat
     // test-runner integration: "C-c T" prefix (shifted "t" for tests --
     // plain "C-c t" is toggle-terminal's own leaf binding below, so a

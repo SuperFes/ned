@@ -204,10 +204,108 @@ void AcpPanel::SetOnTerminalLogin(TerminalLoginFn onTerminalLogin) {
     onTerminalLogin_ = std::move(onTerminalLogin);
 }
 
+void AcpPanel::SyncSessionView() {
+    if (!acpManager_) {
+        return;
+    }
+    const std::uint64_t key = acpManager_->CurrentSessionKey();
+    if (key == viewedSession_) {
+        return;
+    }
+    if (viewedSession_ != 0) {
+        sessionViews_[viewedSession_] = SessionView{.scroll         = scroll_,
+                                                    .toggledEntries = std::move(toggledEntries_),
+                                                    .draft          = prompt_.Text(),
+                                                    .pendingImages  = std::move(pendingImages_)};
+    }
+    viewedSession_ = key;
+    SessionView view;
+    if (const auto it = sessionViews_.find(key); it != sessionViews_.end()) {
+        view = std::move(it->second);
+        sessionViews_.erase(it);
+    }
+    std::erase_if(sessionViews_, [tabs = acpManager_->SessionTabs()](const auto& entry) {
+        return std::none_of(tabs.begin(), tabs.end(), [&entry](const editor::acp::Manager::SessionTab& tab) { return tab.key == entry.first; });
+    });
+    scroll_         = view.scroll;
+    toggledEntries_ = std::move(view.toggledEntries);
+    pendingImages_  = std::move(view.pendingImages);
+    prompt_.SetText(std::move(view.draft));
+    historyIndex_.reset();
+    historyDraft_.clear();
+    mentionPickerOpen_ = false;
+    StopAwaitingSessions();
+    picker_.reset();
+    pendingPicker_.reset();
+    ++viewGeneration_;
+}
+
+void AcpPanel::PaintSessionStrip(Canvas& canvas, int y, int width) {
+    stripRow_        = y;
+    stripItems_      = acppanel::LayoutSessionStrip(acpManager_->SessionTabs(), width);
+    const Brush base = BrushForStyle(DisplayStyle::Dim);
+    for (int x = 0; x < width; ++x) {
+        Cell& cell     = canvas[{.x = x, .y = y}];
+        cell.character = " ";
+        base.ApplyTo(cell);
+    }
+    for (const acppanel::SessionStripItem& item : stripItems_) {
+        if (item.x >= width) {
+            break;
+        }
+        Brush brush = !item.live ? BrushForStyle(DisplayStyle::Dim) : BrushForStyle(DisplayStyle::Plain);
+        if (item.current) {
+            brush      = theme_.echoArea;
+            brush.bold = true;
+        }
+        else if (item.attention) {
+            brush.foreground = theme_.borderAccent.foreground;
+        }
+        PaintUtf8Row(canvas, item.x, y, item.text, brush, width - item.x);
+    }
+}
+
+void AcpPanel::ClickSessionStrip(int x, bool right, Point anchor) {
+    const acppanel::SessionStripItem* item = acppanel::SessionStripItemAt(stripItems_, x);
+    if (right) {
+        std::vector<MenuItem> items;
+        if (item && (item->kind == acppanel::SessionStripItem::Kind::Tab || item->kind == acppanel::SessionStripItem::Kind::Close)) {
+            acpManager_->SelectSession(item->key);
+        }
+        if (acpManager_->CanForkSessions()) {
+            items.push_back({.label = "Fork", .action = [this] { OpenPicker(editor::acp::PanelPicker::Fork); }});
+        }
+        items.push_back({.label = "New Conversation", .action = [this] { ShowNotice(acpManager_->NewSession()); }});
+        if (acpManager_->SessionTabs().size() > 1) {
+            items.push_back({.label = "Close", .action = [this] { ShowNotice(acpManager_->CloseSession(acpManager_->CurrentSessionKey())); }});
+        }
+        if (onContextMenuRequest_) {
+            onContextMenuRequest_("Conversation", std::move(items), anchor);
+        }
+        return;
+    }
+    if (!item) {
+        return;
+    }
+    switch (item->kind) {
+        case acppanel::SessionStripItem::Kind::Tab:
+        case acppanel::SessionStripItem::Kind::More:
+            acpManager_->SelectSession(item->key);
+            break;
+        case acppanel::SessionStripItem::Kind::Close:
+            ShowNotice(acpManager_->CloseSession(item->key));
+            break;
+        case acppanel::SessionStripItem::Kind::New:
+            ShowNotice(acpManager_->NewSession());
+            break;
+    }
+}
+
 void AcpPanel::OpenPicker(editor::acp::PanelPicker picker) {
     if (!acpManager_) {
         return;
     }
+    SyncSessionView();
     mentionPickerOpen_ = false;
     StopAwaitingSessions();
     using Manager = editor::acp::Manager;
@@ -348,6 +446,25 @@ void AcpPanel::OpenPicker(editor::acp::PanelPicker picker) {
             }
             picker_.emplace(items.empty() ? "Nothing to copy yet" : "Copy what?", std::move(items),
                             [this, candidates = std::move(candidates)](std::size_t index) { Copy(candidates[index].text); });
+            break;
+        }
+        case editor::acp::PanelPicker::Fork: {
+            const std::vector<Manager::ForkPoint> points = acpManager_->ForkPoints();
+            // Runs inside the picker's own key handling, so it leaves the
+            // view switch to the next SyncSessionView.
+            auto fork = [this](const std::optional<Manager::ForkPoint>& point) { ShowNotice(acpManager_->ForkSession(point)); };
+            if (points.empty()) {
+                picker_.reset();
+                fork(std::nullopt);
+                break;
+            }
+            std::vector<acppanel::ChoiceItem> items{{.label = "Now", .detail = "the whole conversation"}};
+            for (const Manager::ForkPoint& point : points) {
+                items.push_back({.label = point.preview, .detail = "after its reply"});
+            }
+            picker_.emplace("Fork from where?", std::move(items), [points, fork](std::size_t index) {
+                fork(index == 0 ? std::nullopt : std::optional<Manager::ForkPoint>(points[index - 1]));
+            });
             break;
         }
         case editor::acp::PanelPicker::SaveImage: {
@@ -1533,11 +1650,13 @@ void AcpPanel::EndResize() {
 
 void AcpPanel::Paint(Canvas canvas) {
     const int width  = canvas.size().width;
-    const int height = canvas.size().height;
+    int       height = canvas.size().height;
+    stripRow_        = -1;
     if (width <= 0 || height <= 0) {
         return;
     }
 
+    SyncSessionView();
     RequestProseCheckIfNeeded();
     SyncElicitation();
     if (Focused()) {
@@ -1593,9 +1712,23 @@ void AcpPanel::Paint(Canvas canvas) {
         }
     }
 
-    const int titleRows = dockHosted_ ? 0 : 1;
+    int titleRows = dockHosted_ ? 0 : 1;
     if (height < titleRows + 1) {
         return;
+    }
+    // The session strip takes a row of its own once there's more than one
+    // conversation, and only while the panel has room to spare for it.
+    const editor::acp::SessionTabsPosition stripPosition = editor::acp::GetAcpSessionTabs();
+    if (acpManager_ && stripPosition != editor::acp::SessionTabsPosition::Hidden && acpManager_->SessionTabs().size() > 1 &&
+        height >= titleRows + 3) {
+        if (stripPosition == editor::acp::SessionTabsPosition::Top) {
+            PaintSessionStrip(canvas, titleRows, width);
+            ++titleRows;
+        }
+        else {
+            --height;
+            PaintSessionStrip(canvas, height, width);
+        }
     }
 
     // The composer grows to however many wrapped rows its text needs (capped
@@ -1794,6 +1927,7 @@ void AcpPanel::Paint(Canvas canvas) {
 }
 
 bool AcpPanel::OnEvent(const Event& event) {
+    SyncSessionView();
     if (event.is_mouse()) {
         const MouseEvent rawMouse = event.mouse();
 
@@ -1815,6 +1949,14 @@ bool AcpPanel::OnEvent(const Event& event) {
         const std::optional<MouseEvent> mouse = LocalMouseEvent(event);
         if (!mouse) {
             return false;
+        }
+
+        if (!collapsed_ && acpManager_ && stripRow_ >= 0 && mouse->at.y == stripRow_ && mouse->motion == MouseEvent::Motion::Pressed &&
+            (mouse->button == MouseEvent::Button::Left || mouse->button == MouseEvent::Button::Right)) {
+            TakeFocus();
+            ClickSessionStrip(mouse->at.x, mouse->button == MouseEvent::Button::Right, rawMouse.at);
+            SyncSessionView();
+            return true;
         }
 
         if (!collapsed_ && (mouse->button == MouseEvent::Button::WheelUp || mouse->button == MouseEvent::Button::WheelDown) &&
@@ -2114,6 +2256,12 @@ bool AcpPanel::OnEvent(const Event& event) {
         verbose_ = !verbose_;
         toggledEntries_.clear();
         ++viewGeneration_;
+        return true;
+    }
+    // C-PageUp/C-PageDown switch conversations, like tabs elsewhere.
+    if ((chord->Special == editor::SpecialKey::PageUp || chord->Special == editor::SpecialKey::PageDown) && chord->Control && acpManager_) {
+        acpManager_->CycleSession(chord->Special == editor::SpecialKey::PageDown ? 1 : -1);
+        SyncSessionView();
         return true;
     }
     // Transcript scrolling. C-Home/C-End rather than Home/End, which move

@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-240 bindings.
+241 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -232,6 +232,10 @@ Dock the ACP chat panel at the "bottom" (default) or "right" edge. Any other val
 ## `ned/set-acp-panel-size-percent`
 
 Set how much of the screen the ACP chat panel covers, as a percentage (default 30, clamped to 15-70) -- height when docked at the bottom, width when docked at the right.
+
+## `ned/set-acp-session-tabs`
+
+Where the ACP panel shows its conversation tabs once there is more than one (after acp-fork-session or acp-new-session): "bottom" (default), "top", or "hidden" -- C-PageUp/C-PageDown and C-c A [ / C-c A ] still switch. Any other value is ignored.
 
 ## `ned/set-acp-thinking`
 

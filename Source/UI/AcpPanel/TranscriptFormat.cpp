@@ -1,7 +1,9 @@
 #include "TranscriptFormat.h"
 
 #include <algorithm>
+#include <functional>
 #include <iterator>
+#include <unordered_map>
 
 #include "Editor/Acp/ContentBlocks.h"
 #include "Text/DisplayWidth.h"
@@ -839,9 +841,48 @@ namespace {
 
 } // namespace
 
+namespace {
+
+    // "│ " before each line of a subagent's work.
+    constexpr int kSubagentIndentColumns = 2;
+
+    void IndentLines(std::vector<DisplayLine>& lines, std::size_t start) {
+        for (std::size_t i = start; i < lines.size(); ++i) {
+            lines[i].text = "│ " + lines[i].text;
+            for (InlineSpan& span : lines[i].spans) {
+                span.startColumn += kSubagentIndentColumns;
+            }
+            if (lines[i].image) {
+                lines[i].image->column += kSubagentIndentColumns;
+            }
+        }
+    }
+
+    // A collapsed subagent: how much it has done, and what it's doing now.
+    std::string SubagentSummary(const std::vector<editor::acp::Manager::TranscriptEntry>& transcript, const std::vector<std::size_t>& children,
+                                const std::string& parentStatus) {
+        using Kind                                          = editor::acp::Manager::TranscriptEntry::Kind;
+        std::size_t                                  steps  = 0;
+        const editor::acp::Manager::TranscriptEntry* latest = nullptr;
+        for (const std::size_t child : children) {
+            if (transcript[child].kind == Kind::ToolCall) {
+                ++steps;
+                latest = &transcript[child];
+            }
+        }
+        std::string summary = "  └ subagent · " + std::to_string(steps) + (steps == 1 ? " step" : " steps");
+        const bool  running = parentStatus != "completed" && parentStatus != "failed" && parentStatus != "cancelled";
+        if (running && latest) {
+            summary += " · " + latest->text.substr(0, latest->text.find('\n'));
+        }
+        return summary;
+    }
+
+} // namespace
+
 std::vector<DisplayLine> FormatTranscript(const std::vector<editor::acp::Manager::TranscriptEntry>&    transcript,
                                           const std::optional<editor::acp::Manager::PermissionPrompt>& pending,
-                                          const TranscriptFormatOptions&                               options) {
+                                          const TranscriptFormatOptions&                               rootOptions) {
     using Kind = editor::acp::Manager::TranscriptEntry::Kind;
     std::vector<DisplayLine> lines;
 
@@ -852,9 +893,32 @@ std::vector<DisplayLine> FormatTranscript(const std::vector<editor::acp::Manager
         }
     };
 
-    auto isExpanded = [&options](std::size_t i) { return options.expanded && options.expanded(i); };
+    auto isExpanded = [&rootOptions](std::size_t i) { return rootOptions.expanded && rootOptions.expanded(i); };
 
+    // A subagent's entries nest under the tool call that started it, shown
+    // while that call is expanded; one whose call isn't in the transcript
+    // stays where it arrived.
+    std::unordered_map<std::string, std::size_t> toolCalls;
     for (std::size_t i = 0; i < transcript.size(); ++i) {
+        if (transcript[i].kind == Kind::ToolCall && transcript[i].toolCallId) {
+            toolCalls.emplace(*transcript[i].toolCallId, i);
+        }
+    }
+    std::vector<std::vector<std::size_t>> children(transcript.size());
+    std::vector<bool>                     nested(transcript.size(), false);
+    for (std::size_t i = 0; i < transcript.size(); ++i) {
+        if (transcript[i].parentToolCallId.empty()) {
+            continue;
+        }
+        const auto parent = toolCalls.find(transcript[i].parentToolCallId);
+        if (parent != toolCalls.end() && parent->second != i) {
+            children[parent->second].push_back(i);
+            nested[i] = true;
+        }
+    }
+
+    std::function<void(std::size_t, const TranscriptFormatOptions&, int)> render = [&](std::size_t i, const TranscriptFormatOptions& options,
+                                                                                       int depth) {
         const auto& entry = transcript[i];
         switch (entry.kind) {
             case Kind::UserMessage: {
@@ -951,6 +1015,34 @@ std::vector<DisplayLine> FormatTranscript(const std::vector<editor::acp::Manager
                 append(FormatAgentContent(entry, isExpanded(i), options), i);
                 break;
             }
+        }
+        if (children[i].empty()) {
+            return;
+        }
+        if (!isExpanded(i)) {
+            lines.push_back({.text       = SubagentSummary(transcript, children[i], entry.status),
+                             .style      = DisplayStyle::Dim,
+                             .entryIndex = i,
+                             .action     = LineAction::ToggleExpand});
+            return;
+        }
+        // Deep enough to be a loop, not a real chain of subagents.
+        constexpr int kMaxSubagentDepth = 8;
+        if (depth >= kMaxSubagentDepth) {
+            return;
+        }
+        TranscriptFormatOptions inner = options;
+        inner.width                   = std::max(1, options.width - kSubagentIndentColumns);
+        for (const std::size_t child : children[i]) {
+            const std::size_t start = lines.size();
+            render(child, inner, depth + 1);
+            IndentLines(lines, start);
+        }
+    };
+
+    for (std::size_t i = 0; i < transcript.size(); ++i) {
+        if (!nested[i]) {
+            render(i, rootOptions, 0);
         }
     }
     return lines;

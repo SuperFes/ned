@@ -185,6 +185,12 @@ Event HomeCtrl() {
 Event EndCtrl() {
     return WithModifiers(NCKEY_END, NCKEY_MOD_CTRL);
 }
+Event PageUpCtrl() {
+    return WithModifiers(NCKEY_PGUP, NCKEY_MOD_CTRL);
+}
+Event PageDownCtrl() {
+    return WithModifiers(NCKEY_PGDOWN, NCKEY_MOD_CTRL);
+}
 Event ReturnAlt() {
     return WithModifiers(NCKEY_ENTER, NCKEY_MOD_ALT);
 }

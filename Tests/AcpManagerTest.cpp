@@ -1953,3 +1953,240 @@ TEST_CASE("Manager keeps the pictures of a prompt, an agent's reply and a replay
     REQUIRE(fixture.manager.Transcript().back().images.size() == 1);
     REQUIRE(fixture.manager.Transcript().back().images[0].data == "CCCC");
 }
+
+namespace {
+
+Json ForkCapableAgent() {
+    return Json{{"agentCapabilities", {{"sessionCapabilities", {{"fork", Json::object()}, {"close", Json::object()}}}}}};
+}
+
+bool TranscriptHasText(const Manager& manager, const std::string& text) {
+    const auto& transcript = manager.Transcript();
+    return std::any_of(transcript.begin(), transcript.end(), [&text](const Manager::TranscriptEntry& entry) { return entry.text.find(text) != std::string::npos; });
+}
+
+// Forks the fake agent's s1 into s2, leaving s2 current.
+void ForkIntoS2(ManagerFixture& fixture) {
+    REQUIRE(fixture.manager.ForkSession() == "Forking the conversation.");
+    const Json fork = fixture.reader.Next();
+    REQUIRE(fork["method"] == "session/fork");
+    REQUIRE(fork["params"]["sessionId"] == "s1");
+    fixture.client->DispatchFrame(ResultFrame(fork["id"], Json{{"sessionId", "s2"}}));
+}
+
+} // namespace
+
+TEST_CASE("Manager::ForkSession continues the conversation in a new tab", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = ForkCapableAgent();
+    fixture.InjectClient();
+    fixture.StartActiveSession("fake-agent");
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "text"}, {"text", "before the fork"}}}});
+    REQUIRE(fixture.manager.CanForkSessions());
+    const std::uint64_t original = fixture.manager.CurrentSessionKey();
+
+    REQUIRE(fixture.manager.ForkSession() == "Forking the conversation.");
+    const Json fork = fixture.reader.Next();
+    REQUIRE(fork["method"] == "session/fork");
+    REQUIRE(fork["params"]["sessionId"] == "s1");
+    REQUIRE(fixture.manager.SessionTabs().size() == 2);
+    REQUIRE(fixture.manager.CurrentSessionKey() != original);
+    REQUIRE(TranscriptHasText(fixture.manager, "before the fork"));
+    REQUIRE(fixture.manager.Transcript().back().text == "forked");
+    REQUIRE(fixture.manager.SendPrompt("too soon") == "This conversation is still starting.");
+
+    fixture.client->DispatchFrame(ResultFrame(fork["id"], Json{{"sessionId", "s2"}}));
+    REQUIRE(fixture.manager.SessionId() == "s2");
+    REQUIRE(fixture.manager.SendPrompt("in the fork") == "Sent.");
+    REQUIRE(fixture.reader.Next()["params"]["sessionId"] == "s2");
+
+    // Each session's updates land in its own transcript.
+    SendUpdateFor(fixture, "s1", {{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "text"}, {"text", "only in the original"}}}});
+    REQUIRE_FALSE(TranscriptHasText(fixture.manager, "only in the original"));
+    const std::size_t forkGeneration = fixture.manager.TranscriptGeneration();
+    fixture.manager.SelectSession(original);
+    REQUIRE(fixture.manager.TranscriptGeneration() != forkGeneration);
+    REQUIRE(fixture.manager.SessionId() == "s1");
+    REQUIRE(TranscriptHasText(fixture.manager, "only in the original"));
+    REQUIRE_FALSE(TranscriptHasText(fixture.manager, "in the fork"));
+}
+
+TEST_CASE("Manager::ForkSession is refused without the capability or mid-turn, and a failed fork closes its tab", "[Acp]") {
+    SECTION("no capability") {
+        ManagerFixture fixture;
+        fixture.InjectClient();
+        fixture.StartActiveSession("fake-agent");
+        REQUIRE_FALSE(fixture.manager.CanForkSessions());
+        REQUIRE(fixture.manager.ForkSession() == "This agent can't fork a session.");
+        REQUIRE(fixture.manager.SessionTabs().size() == 1);
+    }
+    SECTION("mid-turn") {
+        ManagerFixture fixture;
+        fixture.initializeResult = ForkCapableAgent();
+        fixture.InjectClient();
+        fixture.StartActiveSession("fake-agent");
+        REQUIRE(fixture.manager.SendPrompt("working") == "Sent.");
+        REQUIRE(fixture.manager.ForkSession() == "Can't fork mid-turn; wait for it or interrupt it.");
+        REQUIRE(fixture.manager.SessionTabs().size() == 1);
+    }
+    SECTION("the agent refuses") {
+        ManagerFixture fixture;
+        fixture.initializeResult = ForkCapableAgent();
+        fixture.InjectClient();
+        fixture.StartActiveSession("fake-agent");
+        const std::uint64_t original = fixture.manager.CurrentSessionKey();
+        REQUIRE(fixture.manager.ForkSession() == "Forking the conversation.");
+        const Json fork = fixture.reader.Next();
+        fixture.client->DispatchFrame(
+            Json{{"jsonrpc", "2.0"}, {"id", fork["id"]}, {"error", {{"code", -32603}, {"message", "no history"}}}}.dump());
+        REQUIRE(fixture.manager.SessionTabs().size() == 1);
+        REQUIRE(fixture.manager.CurrentSessionKey() == original);
+        REQUIRE(fixture.manager.Transcript().back().text == "fork failed: no history");
+    }
+}
+
+TEST_CASE("Manager keeps a hidden session's permission prompt for its own tab", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = ForkCapableAgent();
+    fixture.InjectClient();
+    fixture.StartActiveSession("fake-agent");
+    const std::uint64_t original = fixture.manager.CurrentSessionKey();
+    ForkIntoS2(fixture);
+    int handlerCalls = 0;
+    fixture.manager.SetOnPermissionRequest([&handlerCalls](const Manager::PermissionPrompt&) { ++handlerCalls; });
+
+    fixture.client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                                       {"id", 7},
+                                       {"method", "session/request_permission"},
+                                       {"params",
+                                        {{"sessionId", "s1"},
+                                         {"toolCall", {{"title", "Edit main.cpp"}}},
+                                         {"options", Json::array({Json{{"optionId", "allow"}, {"name", "Allow"}, {"kind", "allow_once"}}})}}}}
+                                      .dump());
+    REQUIRE(handlerCalls == 0);
+    REQUIRE_FALSE(fixture.manager.PendingPermissionPrompt().has_value());
+    REQUIRE(fixture.manager.SessionTabs().front().attention);
+
+    fixture.manager.SelectSession(original);
+    REQUIRE_FALSE(fixture.manager.SessionTabs().front().attention);
+    REQUIRE(fixture.manager.PendingPermissionPrompt().has_value());
+    fixture.manager.ResolvePermissionPrompt("allow");
+    const Json response = fixture.reader.Next();
+    REQUIRE(response["id"] == 7);
+    REQUIRE(response["result"]["outcome"]["optionId"] == "allow");
+}
+
+TEST_CASE("Manager::CloseSession cancels the tab's turn, tells the agent, and keeps the last tab", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = ForkCapableAgent();
+    fixture.InjectClient();
+    fixture.StartActiveSession("fake-agent");
+    const std::uint64_t original = fixture.manager.CurrentSessionKey();
+    ForkIntoS2(fixture);
+    const std::uint64_t forked = fixture.manager.CurrentSessionKey();
+    REQUIRE(fixture.manager.SendPrompt("busy") == "Sent.");
+    REQUIRE(fixture.reader.Next()["method"] == "session/prompt");
+
+    REQUIRE(fixture.manager.CloseSession(forked) == "Closed the conversation.");
+    const Json cancel = fixture.reader.Next();
+    REQUIRE(cancel["method"] == "session/cancel");
+    REQUIRE(cancel["params"]["sessionId"] == "s2");
+    const Json close = fixture.reader.Next();
+    REQUIRE(close["method"] == "session/close");
+    REQUIRE(close["params"]["sessionId"] == "s2");
+    REQUIRE(fixture.manager.CurrentSessionKey() == original);
+    REQUIRE_FALSE(fixture.manager.PromptInFlight());
+
+    REQUIRE(fixture.manager.CloseSession(original) == "That's the only conversation; acp-stop-session ends it.");
+    REQUIRE(fixture.manager.SessionTabs().size() == 1);
+}
+
+TEST_CASE("Manager::NewSession opens a fresh conversation beside the current one", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("fake-agent");
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "text"}, {"text", "first"}}}});
+
+    REQUIRE(fixture.manager.NewSession() == "Starting a new conversation.");
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["method"] == "session/new");
+    REQUIRE(fixture.manager.Transcript().empty());
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json{{"sessionId", "s3"}}));
+    REQUIRE(fixture.manager.SessionId() == "s3");
+
+    const std::vector<Manager::SessionTab> tabs = fixture.manager.SessionTabs();
+    REQUIRE(tabs.size() == 2);
+    REQUIRE_FALSE(tabs[0].current);
+    REQUIRE(tabs[1].current);
+    REQUIRE(tabs[1].live);
+}
+
+TEST_CASE("Manager::ForkPoints lets claude-agent-acp fork after an earlier reply", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult                      = ForkCapableAgent();
+    fixture.initializeResult["agentInfo"]["name"] = "@agentclientprotocol/claude-agent-acp";
+    fixture.InjectClient();
+    fixture.StartActiveSession("fake-agent");
+    auto turn = [&fixture](const std::string& prompt, const std::string& reply, const std::string& messageId) {
+        REQUIRE(fixture.manager.SendPrompt(prompt) == "Sent.");
+        const Json request = fixture.reader.Next();
+        fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"messageId", messageId}, {"content", {{"type", "text"}, {"text", reply}}}});
+        fixture.client->DispatchFrame(ResultFrame(request["id"], Json{{"stopReason", "end_turn"}}));
+    };
+    turn("first question\nwith detail", "first answer", "msg_1");
+    turn("second question", "second answer", "msg_2");
+    turn("third question", "third answer", "msg_3");
+
+    const std::vector<Manager::ForkPoint> points = fixture.manager.ForkPoints();
+    REQUIRE(points.size() == 2);
+    REQUIRE(points[0].preview == "second question");
+    REQUIRE(points[0].messageId == "msg_2");
+    REQUIRE(points[1].preview == "first question");
+    REQUIRE(points[1].messageId == "msg_1");
+
+    REQUIRE(fixture.manager.ForkSession(points[1]) == "Forking the conversation.");
+    const Json fork = fixture.reader.Next();
+    REQUIRE(fork["params"]["_meta"]["jetbrains"]["air"]["fork"] == Json{{"version", 1}, {"messageId", "msg_1"}});
+    REQUIRE(TranscriptHasText(fixture.manager, "first answer"));
+    REQUIRE_FALSE(TranscriptHasText(fixture.manager, "second question"));
+    REQUIRE(fixture.manager.Transcript().back().text == "forked after \"first question\"");
+}
+
+TEST_CASE("Manager::ForkPoints is empty for an agent that can only fork from now", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = ForkCapableAgent();
+    fixture.InjectClient();
+    fixture.StartActiveSession("fake-agent");
+    for (const char* prompt : {"one", "two"}) {
+        REQUIRE(fixture.manager.SendPrompt(prompt) == "Sent.");
+        const Json request = fixture.reader.Next();
+        fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"messageId", std::string("m-") + prompt}, {"content", {{"type", "text"}, {"text", "ok"}}}});
+        fixture.client->DispatchFrame(ResultFrame(request["id"], Json{{"stopReason", "end_turn"}}));
+    }
+    REQUIRE(fixture.manager.ForkPoints().empty());
+    REQUIRE(fixture.manager.ForkSession() == "Forking the conversation.");
+    REQUIRE_FALSE(fixture.reader.Next()["params"].contains("_meta"));
+}
+
+TEST_CASE("Manager tags a subagent's updates with the tool call that started it", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("fake-agent");
+    const Json subagent = {{"claudeCode", {{"parentToolUseId", "task-1"}}}};
+    fixture.SendUpdate({{"sessionUpdate", "tool_call"}, {"toolCallId", "task-1"}, {"title", "Task"}, {"status", "in_progress"}});
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "text"}, {"text", "main "}}}});
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"_meta", subagent}, {"content", {{"type", "text"}, {"text", "sub"}}}});
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "text"}, {"text", "again"}}}});
+    fixture.SendUpdate({{"sessionUpdate", "tool_call"}, {"_meta", subagent}, {"toolCallId", "read-1"}, {"title", "Read"}});
+    fixture.SendUpdate({{"sessionUpdate", "tool_call_update"}, {"toolCallId", "read-1"}, {"status", "completed"}});
+
+    const auto& transcript = fixture.manager.Transcript();
+    REQUIRE(transcript.size() == 5);
+    REQUIRE(transcript[1].text == "main ");
+    REQUIRE(transcript[1].parentToolCallId.empty());
+    REQUIRE(transcript[2].text == "sub");
+    REQUIRE(transcript[2].parentToolCallId == "task-1");
+    REQUIRE(transcript[3].text == "again");
+    REQUIRE(transcript[4].parentToolCallId == "task-1");
+    REQUIRE(transcript[4].status == "completed");
+}

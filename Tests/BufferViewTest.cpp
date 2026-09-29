@@ -7630,7 +7630,7 @@ TEST_CASE("M-x prompts for a command name, listing every command alphabetically 
     // -- the alphabetically first registered command is always within that
     // window regardless of how many other commands exist. Which command that
     // is shifts as commands are added.
-    REQUIRE(CandidateSelected(fixture.candidates, "acp-compose-abort"));
+    REQUIRE(CandidateSelected(fixture.candidates, "acp-close-session"));
     REQUIRE(CandidatesHaveMoreTail(fixture.candidates)); // more than kMaxPopupRows commands are registered
 }
 

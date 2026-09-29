@@ -1000,26 +1000,53 @@ as glyph-blitter cells everywhere, and as a pixel bitmap on terminals with pixel
 graphics (`AcpPanel/InlineImages`; PNG/JPEG/WebP via the system libpng, libjpeg-turbo
 and libwebp). A right-click on one saves it to the XDG download directory or copies it
 (wl-copy/xclip), and `C-c C-w` saves one picked from the transcript (`Editor/Image/Save`).
+Conversations: `Manager` multiplexes sessions over one agent connection, routing each
+update, permission prompt and question by its `sessionId`; the panel shows one at a
+time with a session strip (`AcpPanel/SessionStrip`, bottom by default,
+`ned/set-acp-session-tabs`). `C-c A b` forks (`session/fork`; claude-agent-acp can fork
+after an earlier reply through `_meta.jetbrains.air.fork`, every other agent from now),
+`C-c A n` starts a new conversation, `C-c A c` closes one, `C-c A [`/`]` and
+`C-PageUp`/`C-PageDown` switch. A subagent's work (claude-agent-acp's
+`_meta.claudeCode.parentToolUseId`) nests under the tool call that started it.
 
 - [ ] **ACP protocol gaps**, sized 2026-09-29 against the ACP SDK 1.5.1 schema and
       claude-agent-acp 0.84 (S/M/L = effort; "Claude" = what the adapter actually uses):
-      - **`terminal/*`** (create/output/wait_for_exit/kill/release; stable) -- M/L.
-        Claude never calls it (its Bash runs agent-side; batch 2's
-        `terminal_output_delta` covers that); it serves agents that ask the client to run
-        commands. The emulator and `TerminalPanel` exist; the work is terminal-per-id
-        lifetime and a transcript embed.
-      - **Bigger, spec-unstable or ned-side**: `session/fork` (M, pairs with rewind);
-        `sessionCapabilities.subagents` + `_meta.claudeCode.parentToolUseId` subagent
-        tree (M); `additionalDirectories` for multi-root projects (S); concurrent
-        sessions (L, one at a time today, `Dap/`'s precedent); per-agent environment
-        (S, `ChildProcess`'s `posix_spawn` forwards the global `environ`); per-agent
-        display name/colour (S).
-      - **Not worth it now**: `providers/*` (LLM routing, unstable); `mcp/connect` over
-        ACP (unstable; the stdio MCP bridge works); `nes/*` + `document/*` next-edit
-        suggestions (stable, but no agent ned runs implements them -- see "AI
-        edit-prediction"); `plan_update`/`plan_removed` (unstable, and Claude never sends
-        them -- only a JetBrains-only plan-file extension); claude-agent-acp's
+      - **Subagents as child sessions** (M): declaring `clientCapabilities.subagents`
+        makes an agent announce each subagent as a session of its own
+        (`subagent_spawned`/`subagent_state_update`, then updates under the child's
+        `sessionId`) -- the agent-neutral form of the `parentToolUseId` nesting ned does
+        today. Not in the published schema yet (SDK PR #1992); the per-session routing
+        is already there for it.
+      - **Fork limits**: forking from an earlier reply is claude-agent-acp only (the
+        spec has no fork point); a fork gets a copy of the transcript but no rewind
+        history, since the files on disk are shared between tabs. Tabs aren't
+        remembered across restarts; the resume picker brings a session back.
+      - **Ned-side, small**: `additionalDirectories` for multi-root projects (S);
+        per-agent environment (S, `ChildProcess`'s `posix_spawn` forwards the global
+        `environ`); per-agent display name/colour (S).
+      - **Not worth it now**: `providers/*` (LLM routing, unstable); claude-agent-acp's
         `_auth/status_update` account push (an extension, not ACP).
+- [ ] **ACP compatibility beyond Claude.** Every live probe so far has been
+      claude-agent-acp, so the panel is shaped by what one adapter sends. Parts of the
+      spec Claude never exercises, each wanted for agents that do:
+      - **An interop pass against a second agent** (S to run, unknown to fix):
+        `opencode acp` is installed here; Gemini CLI and Codex's ACP adapter are the
+        other common ones. Probe the handshake, `session/update` shapes, auth and
+        permissions before building anything below, and record what each agent
+        actually sends, the way the claude-agent-acp facts were gathered.
+      - **`terminal/*`** (create/output/wait_for_exit/kill/release; stable) -- M/L.
+        For agents that ask the client to run commands rather than running them
+        agent-side. The emulator and `TerminalPanel` exist; the work is terminal-per-id
+        lifetime and a transcript embed.
+      - **`plan_update`/`plan_removed`** (unstable): the structured successor to the
+        `plan` update ned already renders; Claude never sends them.
+      - **`nes/*` + `document/*` next-edit suggestions** (stable): ned would have to
+        stream document events to the agent and show suggestions as virtual text --
+        see "AI edit-prediction" in the Maybelist for the display side.
+      - **`mcp/connect` over ACP** (unstable): the agent reaching ned's MCP bridge
+        through the ACP connection instead of a spawned stdio server.
+      - **Audio prompts/content** (`promptCapabilities.audio`): shown today only as a
+        caption.
 - [ ] `Keymap::AmbiguousBindings()` is diagnostic-only (a `CommandsTest.cpp` regression
       test), not enforcement — `Keymap::Bind` still lets a caller construct an
       unreachable-by-typing binding; a real structural fix (Emacs' own `define-key`
@@ -1336,9 +1363,9 @@ not disliked enough for "Won't do". Promote or delete on revisit rather than let
 these accumulate detail in place.
 
 - [ ] **ACP panel extras past the next batch** (from the same 2026-09-29 survey):
-      parallel sessions with a thread list; PR-style review comments on an agent's diff
-      fed back as a prompt; transcript search and timestamps. (Fork, compaction and the
-      subagent tree are sized under "ACP protocol gaps".) Justified each when the spec
+      PR-style review comments on an agent's diff fed back as a prompt; transcript
+      search and timestamps. (Fork, parallel sessions and the subagent tree are under
+      "ACP protocol gaps".) Justified each when the spec
       side stabilizes or the next-batch items are in daily use and this is what's missed.
 - [ ] **Android device tooling.** Editing, building and testing an Android project
       works today via Java/Kotlin modes, the task runner (`ned/set-task-command` pointed
