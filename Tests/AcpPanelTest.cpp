@@ -110,17 +110,36 @@ struct Fixture {
             std::make_unique<ned::editor::acp::Client>(Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop));
     }
 
-    void StartActiveSession(const std::string& agentName) {
+    void StartActiveSession(const std::string& agentName, Json sessionNewResult = Json::object(), const Json& initializeResult = Json::object()) {
         manager.StartSession(agentName);
         const Json initializeRequest = reader.Next();
-        client->DispatchFrame(ResultFrame(initializeRequest["id"], Json::object()));
-        const Json sessionNewRequest = reader.Next();
-        client->DispatchFrame(ResultFrame(sessionNewRequest["id"], Json{{"sessionId", "s1"}}));
+        client->DispatchFrame(ResultFrame(initializeRequest["id"], initializeResult));
+        const Json sessionNewRequest  = reader.Next();
+        sessionNewResult["sessionId"] = "s1";
+        client->DispatchFrame(ResultFrame(sessionNewRequest["id"], sessionNewResult));
         REQUIRE(manager.State() == ned::editor::acp::Manager::SessionState::Active);
     }
 
     void Paint() {
         panel.Paint(Canvas(screen, panel.Box_()));
+    }
+
+    void SendUpdate(const Json& update) {
+        client->DispatchFrame(
+            Json{{"jsonrpc", "2.0"}, {"method", "session/update"}, {"params", {{"sessionId", "s1"}, {"update", update}}}}.dump());
+    }
+
+    void AgentSays(const std::string& text) {
+        SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "text"}, {"text", text}}}});
+    }
+
+    // Every content row between the title and the input row, joined by '\n'.
+    [[nodiscard]] std::string ContentText() {
+        std::string joined;
+        for (int y = 1; y < kHeight - 1; ++y) {
+            joined += RowText(y) + "\n";
+        }
+        return joined;
     }
 
     [[nodiscard]] std::string RowText(int y) {
@@ -233,7 +252,7 @@ TEST_CASE("AcpPanel renders a Plan transcript entry's checkbox glyphs", "[AcpPan
 
 // diff-preview-line-diff-utility follow-up (ROADMAP "AI-assisted editing
 // (ACP) gaps" -- "a real diff view").
-TEST_CASE("AcpPanel renders a real +/- diff for a tool call that carries one", "[AcpPanel]") {
+TEST_CASE("AcpPanel renders a real +/- diff for a tool call once it is expanded", "[AcpPanel]") {
     Fixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("claude-code");
@@ -251,6 +270,12 @@ TEST_CASE("AcpPanel renders a real +/- diff for a tool call that carries one", "
             {"content", Json::array({Json{{"type", "diff"}, {"path", "foo.txt"}, {"oldText", "a\nb\nc\n"}, {"newText", "a\nX\nc\n"}}})}}}}},
     };
     fixture.client->DispatchFrame(toolCall.dump());
+    fixture.Paint();
+
+    // Collapsed by default: the header alone, until clicked.
+    REQUIRE(fixture.RowText(1).find("▸ • Edit foo.txt") == 0);
+    REQUIRE(fixture.ContentText().find("- b") == std::string::npos);
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Mouse(2, 1, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
     fixture.Paint();
 
     bool sawRemovedBackground = false;
@@ -1049,4 +1074,603 @@ TEST_CASE("AcpPanel dock-hosted mode ignores M-m and never collapses", "[AcpPane
     // chord, so there's nothing left for it to do.
     REQUIRE_FALSE(fixture.panel.OnEvent(ned::ui::test::Alt('m')));
     REQUIRE_FALSE(fixture.panel.Collapsed());
+}
+
+namespace {
+
+std::string NumberedLines(int from, int to) {
+    std::string text;
+    for (int i = from; i <= to; ++i) {
+        text += (i == from ? "" : "\n") + std::string("L") + std::to_string(i);
+    }
+    return text;
+}
+
+} // namespace
+
+TEST_CASE("AcpPanel's PageUp scrolls back and new output doesn't move the scrolled-back view", "[AcpPanel][AcpScroll]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    fixture.AgentSays(NumberedLines(1, 12));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "L9");
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::PageUp()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "L6");
+    REQUIRE(fixture.RowText(4).find("3 more") != std::string::npos);
+    REQUIRE(fixture.panel.TitleText().find("(scrollback)") != std::string::npos);
+
+    fixture.AgentSays("\n" + NumberedLines(13, 14));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "L6");
+    REQUIRE(fixture.RowText(4).find("5 more") != std::string::npos);
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::EndCtrl()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "L11");
+    REQUIRE(fixture.RowText(4) == "L14");
+    REQUIRE(fixture.panel.TitleText().find("(scrollback)") == std::string::npos);
+}
+
+TEST_CASE("AcpPanel's C-Home jumps to the top and the mouse wheel scrolls", "[AcpPanel][AcpScroll]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    fixture.AgentSays(NumberedLines(1, 12));
+    fixture.Paint();
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::HomeCtrl()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "L1");
+
+    REQUIRE(fixture.panel.OnEvent(
+        ned::ui::test::Mouse(3, 2, ned::ui::MouseEvent::Button::WheelDown, ned::ui::MouseEvent::Motion::Pressed)));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "L4");
+}
+
+TEST_CASE("AcpPanel's M-Up/M-Down jump between the user's prompts", "[AcpPanel][AcpScroll]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    fixture.manager.SendPrompt("first");
+    fixture.AgentSays(NumberedLines(1, 8));
+    fixture.manager.SendPrompt("second");
+    fixture.AgentSays(NumberedLines(9, 16));
+    fixture.Paint();
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowUpAlt()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "> second");
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowUpAlt()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "> first");
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowDownAlt()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "> second");
+}
+
+TEST_CASE("AcpPanel's Enter snaps a scrolled-back transcript to the tail", "[AcpPanel][AcpScroll]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    fixture.AgentSays(NumberedLines(1, 12));
+    fixture.Paint();
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::HomeCtrl()));
+    fixture.Paint();
+
+    fixture.panel.OnEvent(ned::ui::test::Character('x'));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(3) == "> x"); // row 4 is the in-flight status row
+}
+
+namespace {
+
+Json ToolCallUpdate(const std::string& id, const std::string& status) {
+    return {{"sessionUpdate", "tool_call"},
+            {"toolCallId", id},
+            {"title", "Run tests"},
+            {"kind", "execute"},
+            {"status", status},
+            {"rawInput", {{"command", "ctest -j8"}}},
+            {"locations", Json::array({Json{{"path", ned::editor::ProjectRoot().string() + "/Tests/Foo.cpp"}, {"line", 9}}})},
+            {"content", Json::array({Json{{"type", "content"}, {"content", {{"type", "text"}, {"text", "100% tests passed"}}}}})}};
+}
+
+} // namespace
+
+TEST_CASE("AcpPanel collapses a tool call to one line with its kind glyph, location and status", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    fixture.SendUpdate(ToolCallUpdate("t1", "completed"));
+    fixture.Paint();
+
+    const std::string header = fixture.RowText(1);
+    REQUIRE(header.find("▸ $ Run tests · Tests/Foo.cpp:10") == 0);
+    REQUIRE(header.find("✓") != std::string::npos);
+    REQUIRE(fixture.ContentText().find("ctest") == std::string::npos);
+}
+
+TEST_CASE("AcpPanel's C-o expands every tool call to show its command, locations and output", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    fixture.SendUpdate(ToolCallUpdate("t1", "completed"));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Ctrl('o')));
+    fixture.Paint();
+
+    REQUIRE(fixture.RowText(1).find("▾ $ Run tests") == 0);
+    REQUIRE(fixture.RowText(2) == "    $ ctest -j8");
+    REQUIRE(fixture.RowText(3) == "    ↳ Tests/Foo.cpp:10");
+    REQUIRE(fixture.RowText(4) == "    100% tests passed");
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Ctrl('o')));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1).find("▸ $ Run tests") == 0);
+}
+
+TEST_CASE("AcpPanel opens a clicked tool location at its 1-based line", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    std::filesystem::path opened;
+    std::size_t           openedLine = 0;
+    fixture.panel.SetOnOpenLocation([&](const std::filesystem::path& path, std::size_t line) {
+        opened     = path;
+        openedLine = line;
+    });
+    fixture.SendUpdate(ToolCallUpdate("t1", "completed"));
+    fixture.panel.OnEvent(ned::ui::test::Ctrl('o'));
+    fixture.Paint();
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Mouse(6, 3, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+    REQUIRE(opened == ned::editor::ProjectRoot() / "Tests/Foo.cpp");
+    REQUIRE(openedLine == 10);
+}
+
+TEST_CASE("AcpPanel keeps a tool call's details across updates that omit them", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    fixture.SendUpdate(ToolCallUpdate("t1", "in_progress"));
+    fixture.SendUpdate({{"sessionUpdate", "tool_call_update"}, {"toolCallId", "t1"}, {"status", "failed"}});
+
+    const auto& entry = fixture.manager.Transcript().back();
+    REQUIRE(entry.status == "failed");
+    REQUIRE(entry.toolKind == "execute");
+    REQUIRE(entry.toolInput == "$ ctest -j8");
+    REQUIRE(entry.toolOutput == "100% tests passed");
+    REQUIRE(entry.locations.size() == 1);
+    REQUIRE(entry.locations[0].line == 9);
+
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1).find("✗") != std::string::npos);
+    REQUIRE(fixture.RowText(2) == "failed");
+}
+
+TEST_CASE("AcpPanel collapses thinking to a summary line, expands it on click, and hides it on request", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    fixture.SendUpdate({{"sessionUpdate", "agent_thought_chunk"}, {"content", {{"type", "text"}, {"text", "hmm\nlet me see"}}}});
+    fixture.AgentSays("Answer");
+    fixture.Paint();
+
+    REQUIRE(fixture.RowText(1) == "▸ Thinking (2 lines)");
+    REQUIRE(fixture.RowText(2) == "Answer");
+
+    fixture.panel.OnEvent(ned::ui::test::Mouse(1, 1, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "▾ Thinking");
+    REQUIRE(fixture.RowText(2) == "  hmm");
+    REQUIRE(fixture.RowText(3) == "  let me see");
+
+    ned::editor::acp::SetAcpThinkingDisplay("hidden");
+    fixture.Paint();
+    ned::editor::acp::SetAcpThinkingDisplay("collapsed");
+    REQUIRE(fixture.RowText(1) == "Answer");
+}
+
+namespace {
+
+Json SessionSettings() {
+    return {{"configOptions",
+             Json::array({Json{{"id", "mode"},
+                               {"name", "Mode"},
+                               {"category", "mode"},
+                               {"currentValue", "default"},
+                               {"options", Json::array({Json{{"value", "default"}, {"name", "Manual"}}, Json{{"value", "plan"}, {"name", "Plan"}}})}},
+                          Json{{"id", "model"},
+                               {"name", "Model"},
+                               {"category", "model"},
+                               {"currentValue", "opus"},
+                               {"options", Json::array({Json{{"value", "opus"}, {"name", "Opus"}}, Json{{"value", "haiku"}, {"name", "Haiku"}}})}},
+                          Json{{"id", "fast"}, {"name", "Fast mode"}, {"type", "boolean"}, {"currentValue", false}}})}};
+}
+
+} // namespace
+
+TEST_CASE("AcpPanel's status row shows the session's mode and model, and its usage", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code", SessionSettings());
+    fixture.SendUpdate({{"sessionUpdate", "usage_update"}, {"used", 1000}, {"size", 4000}});
+    fixture.Paint();
+
+    REQUIRE(fixture.RowText(4).find("⏵ Manual · Opus") == 0);
+    REQUIRE(fixture.RowText(4).find("ctx 25%") != std::string::npos);
+
+    fixture.SendUpdate({{"sessionUpdate", "session_info_update"}, {"title", "Fix the parser"}});
+    REQUIRE(fixture.panel.TitleText() == "claude-code · Fix the parser [active]");
+}
+
+TEST_CASE("AcpPanel's S-Tab cycles the session's mode", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code", SessionSettings());
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::TabReverse()));
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["method"] == "session/set_config_option");
+    REQUIRE(request["params"]["configId"] == "mode");
+    REQUIRE(request["params"]["value"] == "plan");
+}
+
+TEST_CASE("AcpPanel's M-p opens the model picker and a digit picks a model", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code", SessionSettings());
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Alt('p')));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "Model");
+    REQUIRE(fixture.RowText(2).find("● Opus") != std::string::npos);
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('2')));
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["params"]["configId"] == "model");
+    REQUIRE(request["params"]["value"] == "haiku");
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('z'))); // the picker closed; this types
+    REQUIRE(fixture.panel.TitleText().find("claude-code") == 0);
+}
+
+TEST_CASE("AcpPanel's options picker leads to the chosen option's own values", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code", SessionSettings());
+
+    fixture.panel.OpenPicker(ned::editor::acp::PanelPicker::Options);
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "Setting");
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('3')));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "Fast mode");
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('1')));
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["params"]["configId"] == "fast");
+    REQUIRE(request["params"]["value"] == true);
+}
+
+TEST_CASE("AcpPanel's model picker says so when the agent offers no model choice", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+
+    fixture.panel.OpenPicker(ned::editor::acp::PanelPicker::Model);
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "This agent offers no model choice");
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Escape()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1).empty());
+}
+
+namespace {
+
+void AdvertiseCommands(Fixture& fixture) {
+    fixture.SendUpdate({{"sessionUpdate", "available_commands_update"},
+                        {"availableCommands",
+                         Json::array({Json{{"name", "compact"}, {"description", "Summarize the conversation"}, {"input", nullptr}},
+                                      Json{{"name", "review"}, {"description", "Review a PR"}, {"input", {{"hint", "PR number"}}}}})}});
+}
+
+void Type(Fixture& fixture, std::string_view text) {
+    for (const char ch : text) {
+        fixture.panel.OnEvent(ned::ui::test::Character(ch));
+    }
+}
+
+} // namespace
+
+TEST_CASE("AcpPanel completes the agent's slash commands, showing each one's input hint", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    AdvertiseCommands(fixture);
+
+    Type(fixture, "/rev");
+    fixture.Paint();
+    REQUIRE(fixture.ContentText().find("> /review <PR number>") != std::string::npos);
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Tab()));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1) == "Prompt: /review");
+    REQUIRE(fixture.ContentText().find("Command (") == std::string::npos);
+}
+
+TEST_CASE("AcpPanel's Enter on a slash command that takes no input runs it", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    AdvertiseCommands(fixture);
+
+    Type(fixture, "/co");
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["method"] == "session/prompt");
+    REQUIRE(request["params"]["prompt"][0]["text"] == "/compact");
+}
+
+TEST_CASE("AcpPanel only completes a slash command as the prompt's first word", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    AdvertiseCommands(fixture);
+
+    Type(fixture, "see /co");
+    fixture.Paint();
+    REQUIRE(fixture.ContentText().find("Command (") == std::string::npos);
+}
+
+TEST_CASE("AcpPanel sends an @file mention as a resource_link and keeps the mention in the text", "[AcpPanel]") {
+    const ProjectRootGuard      rootGuard;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_acp_link_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "src");
+    std::ofstream(dir / "src" / "a.txt") << "a";
+    ned::editor::SetProjectRoot(dir);
+
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    Type(fixture, "look at @src/a.txt and @nobody");
+    fixture.panel.OnEvent(ned::ui::test::Escape()); // dismiss the completion list
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
+
+    const Json  request = fixture.reader.Next();
+    const Json& prompt  = request["params"]["prompt"];
+    REQUIRE(prompt.size() == 2);
+    REQUIRE(prompt[0]["text"] == "look at @src/a.txt and @nobody");
+    REQUIRE(prompt[1]["type"] == "resource_link");
+    REQUIRE(prompt[1]["uri"] == "file://" + (dir / "src" / "a.txt").string());
+    REQUIRE(prompt[1]["name"] == "src/a.txt");
+    REQUIRE(fixture.manager.Transcript().back().text == "look at @src/a.txt and @nobody");
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("AcpPanel's session picker lists the agent's sessions and resumes the one picked", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code", Json::object(),
+                               {{"agentCapabilities", {{"loadSession", true}, {"sessionCapabilities", {{"list", Json::object()}}}}}});
+
+    fixture.panel.OpenPicker(ned::editor::acp::PanelPicker::Sessions);
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "Loading sessions…");
+
+    const Json list = fixture.reader.Next();
+    REQUIRE(list["method"] == "session/list");
+    fixture.client->DispatchFrame(ResultFrame(
+        list["id"], Json{{"sessions", Json::array({Json{{"sessionId", "s1"}, {"title", "This one"}},
+                                                   Json{{"sessionId", "old"}, {"title", "Parser work"}, {"updatedAt", "2020-01-02T03:04:05Z"}}})}}));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(1) == "Resume which session?");
+    REQUIRE(fixture.RowText(2).find("● This one") != std::string::npos);
+    REQUIRE(fixture.RowText(3).find("Parser work  2020-01-02") != std::string::npos);
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('2')));
+    const Json load = fixture.reader.Next();
+    REQUIRE(load["method"] == "session/load");
+    REQUIRE(load["params"]["sessionId"] == "old");
+}
+
+TEST_CASE("AcpPanel drops a session listing that arrives after its picker was dismissed", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code", Json::object(),
+                               {{"agentCapabilities", {{"loadSession", true}, {"sessionCapabilities", {{"list", Json::object()}}}}}});
+
+    fixture.panel.OpenPicker(ned::editor::acp::PanelPicker::Sessions);
+    const Json list = fixture.reader.Next();
+    fixture.panel.OnEvent(ned::ui::test::Escape());
+    fixture.client->DispatchFrame(ResultFrame(list["id"], Json{{"sessions", Json::array({Json{{"sessionId", "old"}}})}}));
+    fixture.Paint();
+    REQUIRE(fixture.ContentText().find("Resume which session?") == std::string::npos);
+}
+
+TEST_CASE("AcpPanel queues a prompt sent mid-turn, shows it, and Up takes it back to edit", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    Type(fixture, "first");
+    fixture.panel.OnEvent(ned::ui::test::Return());
+    (void)fixture.reader.Next();
+
+    Type(fixture, "second");
+    fixture.panel.OnEvent(ned::ui::test::Return());
+    REQUIRE(fixture.manager.QueuedPrompts().size() == 1);
+    fixture.Paint();
+    REQUIRE(fixture.RowText(3) == "⧗ second");
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowUp()));
+    REQUIRE(fixture.manager.QueuedPrompts().empty());
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1) == "Prompt: second");
+}
+
+TEST_CASE("AcpPanel's Escape mid-turn cancels and hands queued prompts back to the composer", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    Type(fixture, "first");
+    fixture.panel.OnEvent(ned::ui::test::Return());
+    (void)fixture.reader.Next();
+    Type(fixture, "second");
+    fixture.panel.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Escape()));
+    REQUIRE(fixture.reader.Next()["method"] == "session/cancel");
+    REQUIRE(fixture.manager.QueuedPrompts().empty());
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1) == "Prompt: second");
+}
+
+TEST_CASE("AcpPanel's C-RET steers the running turn", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code", Json::object(), {{"_meta", {{"steering", {{"supported", true}}}}}});
+    Type(fixture, "first");
+    fixture.panel.OnEvent(ned::ui::test::Return());
+    (void)fixture.reader.Next();
+
+    Type(fixture, "nudge");
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ReturnCtrl()));
+    REQUIRE(fixture.reader.Next()["method"] == "_session/steering");
+    REQUIRE(fixture.manager.QueuedPrompts().empty());
+}
+
+TEST_CASE("AcpPanel's M-RET and S-RET start a new composer line that Enter sends along", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    Type(fixture, "one");
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ReturnAlt()));
+    Type(fixture, "two");
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ReturnShift()));
+    Type(fixture, "three");
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 3) == "Prompt: one");
+    REQUIRE(fixture.RowText(kHeight - 2) == "two");
+    REQUIRE(fixture.RowText(kHeight - 1) == "three");
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
+    REQUIRE(fixture.reader.Next()["params"]["prompt"][0]["text"] == "one\ntwo\nthree");
+}
+
+TEST_CASE("AcpPanel's Up/Down move between composer lines before recalling history", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    fixture.manager.SendPrompt("earlier");
+    Type(fixture, "abc");
+    fixture.panel.OnEvent(ned::ui::test::ReturnAlt());
+    Type(fixture, "xy");
+    fixture.Paint();
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowUp()));
+    fixture.panel.OnEvent(ned::ui::test::Character('!'));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 2) == "Prompt: !abc"); // column 2 of row 0 is inside the label
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::End()));
+    fixture.panel.OnEvent(ned::ui::test::Character('?'));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 2) == "Prompt: !abc?");
+
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::ArrowUp())); // first row: history
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1) == "Prompt: earlier");
+}
+
+TEST_CASE("AcpPanel marks its title and notifies when a turn finishes while it isn't focused", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    std::vector<std::pair<std::string, std::string>> notified;
+    fixture.panel.SetDesktopNotifier([&](const std::string& title, const std::string& body) { notified.emplace_back(title, body); });
+    fixture.manager.SetOnAttention([&](ned::editor::acp::Manager::Attention attention, std::chrono::steady_clock::duration elapsed) {
+        fixture.panel.NoteAttention(attention, elapsed);
+    });
+
+    fixture.manager.SendPrompt("go");
+    const Json request = fixture.reader.Next();
+    fixture.AgentSays("\nAll tests pass now.\nDetails follow.");
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json{{"stopReason", "end_turn"}}));
+
+    REQUIRE(fixture.panel.TitleText().find("● claude-code") == 0);
+    REQUIRE(notified.size() == 1);
+    REQUIRE(notified[0].first == "claude-code finished");
+    REQUIRE(notified[0].second == "All tests pass now.");
+
+    fixture.panel.OnEvent(ned::ui::test::Mouse(1, 1, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
+    fixture.Paint();
+    REQUIRE(fixture.panel.TitleText().find("●") == std::string::npos);
+}
+
+TEST_CASE("AcpPanel stays quiet about a short turn it was watching", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    int notified = 0;
+    fixture.panel.SetDesktopNotifier([&](const std::string&, const std::string&) { ++notified; });
+    fixture.panel.OnEvent(ned::ui::test::Mouse(1, 1, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed));
+    REQUIRE(fixture.panel.Focused());
+
+    fixture.panel.NoteAttention(ned::editor::acp::Manager::Attention::TurnFinished, std::chrono::seconds(2));
+    REQUIRE(notified == 0);
+    REQUIRE(fixture.panel.TitleText().find("●") == std::string::npos);
+
+    fixture.panel.NoteAttention(ned::editor::acp::Manager::Attention::TurnFinished, std::chrono::seconds(45));
+    REQUIRE(notified == 1);
+}
+
+TEST_CASE("AcpPanel's C-c ' continues the composer in a compose buffer whose send submits it", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code");
+    std::optional<ned::editor::acp::ComposeCallbacks> callbacks;
+    std::string                                       seed;
+    int                                               refocused = 0;
+    fixture.panel.SetOnComposeRequest([&](std::string text, ned::editor::acp::ComposeCallbacks c) {
+        seed      = std::move(text);
+        callbacks = std::move(c);
+    });
+    fixture.panel.SetOnRefocusRequest([&] { ++refocused; });
+
+    Type(fixture, "start");
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Ctrl('c')));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('\'')));
+    REQUIRE(seed == "start");
+    REQUIRE(callbacks);
+
+    callbacks->onSend("start\nand finish");
+    REQUIRE(fixture.reader.Next()["params"]["prompt"][0]["text"] == "start\nand finish");
+    REQUIRE(refocused == 1);
+}
+
+TEST_CASE("AcpPanel drops a C-c prefix that another key doesn't complete", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.panel.OnEvent(ned::ui::test::Ctrl('c'));
+    fixture.panel.OnEvent(ned::ui::test::Character('x'));
+    fixture.Paint();
+    REQUIRE(fixture.RowText(kHeight - 1) == "Prompt: x");
+}
+
+TEST_CASE("AcpPanel's C-c C-s steers too, for terminals without C-RET", "[AcpPanel]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("claude-code", Json::object(), {{"_meta", {{"steering", {{"supported", true}}}}}});
+    Type(fixture, "first");
+    fixture.panel.OnEvent(ned::ui::test::Return());
+    (void)fixture.reader.Next();
+
+    Type(fixture, "nudge");
+    fixture.panel.OnEvent(ned::ui::test::Ctrl('c'));
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Ctrl('s')));
+    REQUIRE(fixture.reader.Next()["method"] == "_session/steering");
 }

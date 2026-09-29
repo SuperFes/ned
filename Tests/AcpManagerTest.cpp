@@ -95,14 +95,25 @@ struct ManagerFixture {
 
         const Json initializeRequest = reader.Next();
         REQUIRE(initializeRequest["method"] == "initialize");
-        client->DispatchFrame(ResultFrame(initializeRequest["id"], Json::object()));
+        client->DispatchFrame(ResultFrame(initializeRequest["id"], initializeResult));
 
         const Json sessionNewRequest = reader.Next();
         REQUIRE(sessionNewRequest["method"] == "session/new");
-        client->DispatchFrame(ResultFrame(sessionNewRequest["id"], Json{{"sessionId", "s1"}}));
+        Json newResult         = sessionNewResult;
+        newResult["sessionId"] = "s1";
+        client->DispatchFrame(ResultFrame(sessionNewRequest["id"], newResult));
 
         REQUIRE(manager.State() == Manager::SessionState::Active);
     }
+
+    void SendUpdate(const Json& update) {
+        client->DispatchFrame(
+            Json{{"jsonrpc", "2.0"}, {"method", "session/update"}, {"params", {{"sessionId", "s1"}, {"update", update}}}}.dump());
+    }
+
+    // What StartActiveSession answers initialize and session/new with.
+    Json initializeResult = Json::object();
+    Json sessionNewResult = Json::object();
 
     ~ManagerFixture() {
         if (agentStdoutWrite >= 0) {
@@ -860,4 +871,407 @@ TEST_CASE("Manager::RewindTo with an out-of-range index is a no-op", "[Acp]") {
     REQUIRE(outcome.turnsRewound == 0);
     REQUIRE(outcome.revertedFiles.empty());
     REQUIRE(fixture.manager.Transcript().size() == transcriptSize);
+}
+
+namespace {
+
+// The shape claude-agent-acp 0.84 answers session/new with, trimmed.
+Json ClaudeSessionSettings() {
+    const Json modeChoices = Json::array({Json{{"value", "default"}, {"name", "Manual"}},
+                                          Json{{"value", "acceptEdits"}, {"name", "Accept edits"}},
+                                          Json{{"value", "plan"}, {"name", "Plan"}},
+                                          Json{{"value", "bypassPermissions"}, {"name", "Bypass permissions"}}});
+    return {{"modes",
+             {{"currentModeId", "default"},
+              {"availableModes", Json::array({Json{{"id", "default"}, {"name", "Manual"}},
+                                              Json{{"id", "acceptEdits"}, {"name", "Accept edits"}},
+                                              Json{{"id", "plan"}, {"name", "Plan"}},
+                                              Json{{"id", "bypassPermissions"}, {"name", "Bypass permissions"}}})}}},
+            {"configOptions",
+             Json::array({Json{{"id", "mode"}, {"name", "Mode"}, {"category", "mode"}, {"type", "select"}, {"currentValue", "default"}, {"options", modeChoices}},
+                          Json{{"id", "model"},
+                               {"name", "Model"},
+                               {"category", "model"},
+                               {"type", "select"},
+                               {"currentValue", "default"},
+                               {"options",
+                                Json::array({Json{{"value", "default"}, {"name", "Default (recommended)"}},
+                                             Json{{"group", "Older"}, {"name", "Older"}, {"options", Json::array({Json{{"value", "haiku"}, {"name", "Haiku"}}})}}})}},
+                          Json{{"id", "fast"}, {"name", "Fast mode"}, {"type", "boolean"}, {"currentValue", false}}})}};
+}
+
+} // namespace
+
+TEST_CASE("Manager parses the modes and config options session/new advertises", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.sessionNewResult = ClaudeSessionSettings();
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    REQUIRE(fixture.manager.Modes().size() == 4);
+    REQUIRE(fixture.manager.CurrentModeId() == "default");
+    REQUIRE(fixture.manager.ConfigOptions().size() == 3);
+    const Manager::ConfigOption* model = fixture.manager.ConfigOptionByCategory("model");
+    REQUIRE(model != nullptr);
+    REQUIRE(model->choices.size() == 2); // the grouped "haiku" flattened in
+    REQUIRE(model->choices[1].value == "haiku");
+    REQUIRE(fixture.manager.ConfigOptions()[2].currentValue == "false");
+}
+
+TEST_CASE("Manager::CycleMode sets the next mode through the mode config option, skipping bypassPermissions", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.sessionNewResult = ClaudeSessionSettings();
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    fixture.manager.CycleMode();
+    Json request = fixture.reader.Next();
+    REQUIRE(request["method"] == "session/set_config_option");
+    REQUIRE(request["params"]["configId"] == "mode");
+    REQUIRE(request["params"]["value"] == "acceptEdits");
+    Json options               = ClaudeSessionSettings()["configOptions"];
+    options[0]["currentValue"] = "plan";
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json{{"configOptions", options}}));
+    REQUIRE(fixture.manager.CurrentModeId() == "plan");
+
+    fixture.manager.CycleMode();
+    request = fixture.reader.Next();
+    REQUIRE(request["params"]["value"] == "default"); // wrapped, never "bypassPermissions"
+}
+
+TEST_CASE("Manager::SetMode falls back to session/set_mode without a mode config option", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.sessionNewResult = {{"modes", ClaudeSessionSettings()["modes"]}};
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    fixture.manager.SetMode("plan");
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["method"] == "session/set_mode");
+    REQUIRE(request["params"]["modeId"] == "plan");
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json::object()));
+    REQUIRE(fixture.manager.CurrentModeId() == "plan");
+}
+
+TEST_CASE("Manager sends a boolean config option's value as a JSON boolean", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.sessionNewResult = ClaudeSessionSettings();
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    fixture.manager.SetConfigOption("fast", "true");
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["params"]["value"] == true);
+}
+
+TEST_CASE("Manager tracks agent-initiated mode changes, session titles and usage", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.sessionNewResult = ClaudeSessionSettings();
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    fixture.SendUpdate({{"sessionUpdate", "current_mode_update"}, {"currentModeId", "plan"}});
+    REQUIRE(fixture.manager.CurrentModeId() == "plan");
+    REQUIRE(fixture.manager.ConfigOptionByCategory("mode")->currentValue == "plan");
+    REQUIRE(fixture.manager.Transcript().back().text == "mode: Plan");
+
+    fixture.SendUpdate({{"sessionUpdate", "session_info_update"}, {"title", "Fix the parser"}});
+    REQUIRE(fixture.manager.SessionTitle() == "Fix the parser");
+
+    fixture.SendUpdate({{"sessionUpdate", "usage_update"}, {"used", 50000}, {"size", 200000}, {"cost", {{"amount", 0.25}, {"currency", "USD"}}}});
+    REQUIRE(fixture.manager.SessionUsage()->used == 50000);
+    REQUIRE(fixture.manager.SessionUsage()->size == 200000);
+    REQUIRE(fixture.manager.SessionUsage()->costAmount == 0.25);
+
+    fixture.SendUpdate({{"sessionUpdate", "usage_update"}, {"used", "garbage"}});
+    REQUIRE(fixture.manager.SessionUsage()->used == 0);
+}
+
+namespace {
+
+Json ResumableAgent(bool load = true) {
+    Json caps{{"sessionCapabilities", {{"list", Json::object()}, {"resume", Json::object()}}}};
+    if (load) {
+        caps["loadSession"] = true;
+    }
+    return {{"agentCapabilities", caps}};
+}
+
+void SendUpdateFor(ManagerFixture& fixture, const std::string& sessionId, const Json& update) {
+    fixture.client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"method", "session/update"}, {"params", {{"sessionId", sessionId}, {"update", update}}}}.dump());
+}
+
+Json UserChunk(const std::string& text, const std::string& messageId) {
+    return {{"sessionUpdate", "user_message_chunk"}, {"messageId", messageId}, {"content", {{"type", "text"}, {"text", text}}}};
+}
+
+} // namespace
+
+TEST_CASE("Manager::ListSessions reports an agent that can't list sessions", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    std::string error;
+    fixture.manager.ListSessions([&](std::vector<Manager::SessionSummary>, std::string e) { error = std::move(e); });
+    REQUIRE(error == "This agent can't list or resume its sessions.");
+}
+
+TEST_CASE("Manager::ListSessions follows session/list's cursor across pages", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = ResumableAgent();
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    std::vector<Manager::SessionSummary> sessions;
+    bool                                 done = false;
+    fixture.manager.ListSessions([&](std::vector<Manager::SessionSummary> s, std::string) {
+        sessions = std::move(s);
+        done     = true;
+    });
+    Json request = fixture.reader.Next();
+    REQUIRE(request["method"] == "session/list");
+    REQUIRE(request["params"]["cwd"].is_string());
+    REQUIRE_FALSE(request["params"].contains("cursor"));
+    fixture.client->DispatchFrame(ResultFrame(
+        request["id"], Json{{"sessions", Json::array({Json{{"sessionId", "a"}, {"title", "First"}, {"updatedAt", "2026-09-29T10:00:00Z"}}})},
+                            {"nextCursor", "page2"}}));
+    request = fixture.reader.Next();
+    REQUIRE(request["params"]["cursor"] == "page2");
+    REQUIRE_FALSE(done);
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json{{"sessions", Json::array({Json{{"sessionId", "b"}}})}}));
+
+    REQUIRE(done);
+    REQUIRE(sessions.size() == 2);
+    REQUIRE(sessions[0].title == "First");
+    REQUIRE(sessions[1].sessionId == "b");
+    REQUIRE(sessions[1].title.empty());
+}
+
+TEST_CASE("Manager::LoadSession replays the conversation, coalescing a prompt's chunks by messageId", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = ResumableAgent();
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    REQUIRE(fixture.manager.LoadSession("s2", "Old work") == "Resuming Old work.");
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["method"] == "session/load");
+    REQUIRE(request["params"]["sessionId"] == "s2");
+
+    SendUpdateFor(fixture, "s1", {{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "text"}, {"text", "stray"}}}});
+    SendUpdateFor(fixture, "s2", UserChunk("hello ", "m1"));
+    SendUpdateFor(fixture, "s2", UserChunk("world", "m1"));
+    SendUpdateFor(fixture, "s2", {{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "text"}, {"text", "hi"}}}});
+    SendUpdateFor(fixture, "s2", UserChunk("again", "m2"));
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json{{"modes", {{"currentModeId", "plan"}, {"availableModes", Json::array()}}}}));
+
+    using Kind              = Manager::TranscriptEntry::Kind;
+    const auto& transcript  = fixture.manager.Transcript();
+    const auto  resumeEvent = std::find_if(transcript.begin(), transcript.end(),
+                                           [](const auto& entry) { return entry.text == "resuming: Old work"; });
+    REQUIRE(resumeEvent != transcript.end());
+    REQUIRE(transcript.end() - resumeEvent == 4);
+    REQUIRE((resumeEvent + 1)->kind == Kind::UserMessage);
+    REQUIRE((resumeEvent + 1)->text == "hello world");
+    REQUIRE((resumeEvent + 2)->text == "hi");
+    REQUIRE((resumeEvent + 3)->text == "again");
+    REQUIRE(fixture.manager.SessionId() == "s2");
+    REQUIRE(fixture.manager.CurrentModeId() == "plan");
+
+    // Live again: a user_message_chunk is once more an echo, not a prompt.
+    SendUpdateFor(fixture, "s2", UserChunk("echo", "m3"));
+    REQUIRE(transcript.back().text == "again");
+}
+
+TEST_CASE("Manager::LoadSession falls back to the previous session when the load fails", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = ResumableAgent();
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    fixture.manager.LoadSession("gone", "");
+    const Json request = fixture.reader.Next();
+    fixture.client->DispatchFrame(
+        Json{{"jsonrpc", "2.0"}, {"id", request["id"]}, {"error", {{"code", -32602}, {"message", "no such session"}}}}.dump());
+    REQUIRE(fixture.manager.SessionId() == "s1");
+    REQUIRE(fixture.manager.Transcript().back().text == "resume failed: no such session");
+}
+
+TEST_CASE("Manager::LoadSession uses session/resume when the agent can't replay", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = ResumableAgent(false);
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    fixture.manager.LoadSession("s2", "Old work");
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["method"] == "session/resume");
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json::object()));
+    REQUIRE(fixture.manager.Transcript().back().text == "history not replayed -- the agent only resumes");
+}
+
+TEST_CASE("Manager::ListSessions asked mid-handshake answers once the session is up", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.manager.StartSession("test-agent");
+    bool answered = false;
+    fixture.manager.ListSessions([&](std::vector<Manager::SessionSummary>, std::string) { answered = true; });
+    REQUIRE_FALSE(answered);
+
+    const Json initializeRequest = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResultFrame(initializeRequest["id"], ResumableAgent()));
+    const Json sessionNewRequest = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResultFrame(sessionNewRequest["id"], Json{{"sessionId", "s1"}}));
+    const Json listRequest = fixture.reader.Next();
+    REQUIRE(listRequest["method"] == "session/list");
+    fixture.client->DispatchFrame(ResultFrame(listRequest["id"], Json{{"sessions", Json::array()}}));
+    REQUIRE(answered);
+}
+
+TEST_CASE("Manager sends queued prompts one per turn, in order, once each turn ends", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    fixture.manager.SendPrompt("first");
+    Json request = fixture.reader.Next();
+    fixture.manager.QueuePrompt({.text = "second"});
+    fixture.manager.QueuePrompt({.text = "third"});
+    REQUIRE(fixture.manager.QueuedPrompts().size() == 2);
+
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json{{"stopReason", "end_turn"}}));
+    request = fixture.reader.Next();
+    REQUIRE(request["params"]["prompt"][0]["text"] == "second");
+    REQUIRE(fixture.manager.QueuedPrompts().size() == 1);
+    REQUIRE(fixture.manager.PromptInFlight());
+}
+
+TEST_CASE("Manager holds the queue after a cancelled turn and drops it when the session ends", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    fixture.manager.SendPrompt("first");
+    const Json request = fixture.reader.Next();
+    fixture.manager.QueuePrompt({.text = "second"});
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json{{"stopReason", "cancelled"}}));
+    REQUIRE(fixture.manager.QueuedPrompts().size() == 1);
+    REQUIRE_FALSE(fixture.manager.PromptInFlight());
+
+    // EOF first, so teardown's reader thread can exit -- see the StopSession
+    // test above.
+    ::close(fixture.agentStdoutWrite);
+    fixture.agentStdoutWrite = -1;
+    fixture.manager.StopSession();
+    REQUIRE(fixture.manager.QueuedPrompts().empty());
+    const auto& transcript = fixture.manager.Transcript();
+    REQUIRE(std::any_of(transcript.begin(), transcript.end(), [](const auto& entry) { return entry.text == "not sent: second"; }));
+}
+
+TEST_CASE("Manager::Steer queues when the agent can't steer", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    fixture.manager.SendPrompt("first");
+    (void)fixture.reader.Next();
+
+    REQUIRE(fixture.manager.Steer({.text = "also this"}).find("queued") != std::string::npos);
+    REQUIRE(fixture.manager.QueuedPrompts().size() == 1);
+}
+
+TEST_CASE("Manager::Steer injects into the running turn through _session/steering", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = {{"_meta", {{"steering", {{"supported", true}}}}}};
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    REQUIRE(fixture.manager.SupportsSteering());
+    fixture.manager.SendPrompt("first");
+    (void)fixture.reader.Next();
+
+    REQUIRE(fixture.manager.Steer({.text = "use the other API"}) == "Steering.");
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["method"] == "_session/steering");
+    REQUIRE(request["params"]["sessionId"] == "s1");
+    REQUIRE(request["params"]["prompt"][0]["text"] == "use the other API");
+    REQUIRE(request["params"]["_meta"]["steering"]["idleBehavior"] == "promptRequired");
+
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json{{"outcome", "injected"}}));
+    REQUIRE(fixture.manager.Transcript().back().text == "use the other API");
+    REQUIRE(fixture.manager.Transcript().back().status == "steered");
+}
+
+TEST_CASE("Manager::Steer sends a plain prompt once the turn it aimed at has ended", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = {{"_meta", {{"steering", {{"supported", true}}}}}};
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    fixture.manager.SendPrompt("first");
+    const Json prompt = fixture.reader.Next();
+
+    fixture.manager.Steer({.text = "late"});
+    const Json steering = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResultFrame(prompt["id"], Json{{"stopReason", "end_turn"}}));
+    fixture.client->DispatchFrame(ResultFrame(steering["id"], Json{{"outcome", "promptRequired"}, {"reason", "noRunningTurn"}}));
+
+    const Json followUp = fixture.reader.Next();
+    REQUIRE(followUp["method"] == "session/prompt");
+    REQUIRE(followUp["params"]["prompt"][0]["text"] == "late");
+}
+
+TEST_CASE("Manager calls for attention when a turn finishes, but not between queued turns or after a cancel", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    std::vector<Manager::Attention> seen;
+    fixture.manager.SetOnAttention([&seen](Manager::Attention attention, std::chrono::steady_clock::duration) { seen.push_back(attention); });
+
+    fixture.manager.SendPrompt("first");
+    Json request = fixture.reader.Next();
+    fixture.manager.QueuePrompt({.text = "second"});
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json{{"stopReason", "end_turn"}}));
+    REQUIRE(seen.empty());
+
+    request = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json{{"stopReason", "end_turn"}}));
+    REQUIRE(seen == std::vector<Manager::Attention>{Manager::Attention::TurnFinished});
+
+    fixture.manager.SendPrompt("third");
+    request = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResultFrame(request["id"], Json{{"stopReason", "cancelled"}}));
+    REQUIRE(seen.size() == 1);
+}
+
+TEST_CASE("Manager calls for attention when the agent asks for permission", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+    std::vector<Manager::Attention> seen;
+    fixture.manager.SetOnAttention([&seen](Manager::Attention attention, std::chrono::steady_clock::duration) { seen.push_back(attention); });
+
+    fixture.client->DispatchFrame(Json{{"jsonrpc", "2.0"},
+                                       {"id", 50},
+                                       {"method", "session/request_permission"},
+                                       {"params",
+                                        {{"sessionId", "s1"},
+                                         {"toolCall", {{"toolCallId", "t1"}, {"title", "rm -rf build"}}},
+                                         {"options", Json::array({Json{{"optionId", "y"}, {"name", "Allow"}, {"kind", "allow_once"}}})}}}}
+                                      .dump());
+    REQUIRE(seen == std::vector<Manager::Attention>{Manager::Attention::PermissionRequested});
+}
+
+TEST_CASE("Manager reads null or mistyped fields in agent updates as absent instead of throwing", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = {{"agentCapabilities", {{"loadSession", nullptr}, {"promptCapabilities", {{"embeddedContext", "yes"}}}}}};
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    REQUIRE_NOTHROW(fixture.SendUpdate({{"sessionUpdate", "tool_call"}, {"toolCallId", "t1"}, {"title", nullptr}, {"kind", "read"}, {"status", nullptr}}));
+    REQUIRE(fixture.manager.Transcript().back().text == "read");
+    REQUIRE_NOTHROW(fixture.SendUpdate({{"sessionUpdate", "tool_call_update"}, {"toolCallId", "t1"}, {"title", nullptr}, {"status", "completed"}}));
+    REQUIRE(fixture.manager.Transcript().back().text == "read");
+    REQUIRE(fixture.manager.Transcript().back().status == "completed");
+    REQUIRE_NOTHROW(fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"messageId", nullptr}, {"content", {{"type", "text"}, {"text", nullptr}}}}));
+    REQUIRE_NOTHROW(fixture.SendUpdate({{"sessionUpdate", nullptr}}));
 }

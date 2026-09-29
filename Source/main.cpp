@@ -34,6 +34,7 @@
 
 #include "Editor/Acp/Config.h"
 #include "Editor/Acp/Manager.h"
+#include "Editor/Acp/Notify.h"
 #include "Editor/Acp/PanelConfig.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
@@ -1886,6 +1887,18 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // the composer, via the same prose-checker connection ProseChecker.h
     // already wires up generically.
     acpPanel.SetLspManager(&lspManager);
+    acpPanel.SetOnComposeRequest([wm = windowManager.get()](std::string seed, ned::editor::acp::ComposeCallbacks callbacks) {
+        wm->RequestAcpCompose(std::move(seed), std::move(callbacks));
+    });
+    acpPanel.SetDesktopNotifier([](const std::string& title, const std::string& body) {
+        ned::editor::acp::SendDesktopNotification(title, body);
+    });
+    acpManager.SetOnAttention([&acpPanel](ned::editor::acp::Manager::Attention attention, std::chrono::steady_clock::duration elapsed) {
+        acpPanel.NoteAttention(attention, elapsed);
+    });
+    acpPanel.SetOnOpenLocation([wm = windowManager.get()](const std::filesystem::path& path, std::size_t line) {
+        wm->RequestVisitLocation(path, line);
+    });
     // ACP round-1-live-validation follow-up: lets a pending permission
     // request resolve inside this panel instead of the focused pane's echo
     // area whenever the panel itself has focus -- see
@@ -2132,16 +2145,19 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
             };
         windowManager->SetOnAcpPanelToggle(toggleAcpPanel);
         acpPanel.SetOnToggleRequest(toggleAcpPanel);
-        // ACP checkpoint/rewind follow-up: acp-rewind (C-c A r) ensures the
-        // panel is visible/focused (no session-reconnect attempt -- unlike
-        // toggleAcpPanel's own show-branch above, there's nothing useful to
-        // rewind without an already-active or prior session, and the picker
-        // itself reports "no turns recorded yet" when checkpoints_ is empty)
-        // then opens its rewind picker.
-        windowManager->SetOnAcpRewindRequest([&overlays, &panelDock, tabIndex, panel = &acpPanel] {
+        acpPanel.SetOnRefocusRequest([&overlays, &panelDock, tabIndex, panel = &acpPanel] {
             overlays.Show(panelDock);
             panelDock.SwitchTo(tabIndex);
-            panel->OpenRewindPicker();
+            panel->TakeFocus();
+        });
+        // The acp-* picker commands (rewind, mode, model, options, sessions)
+        // show the panel -- without toggleAcpPanel's reconnect attempt; a
+        // picker with nothing to offer says so itself -- then open the
+        // requested picker.
+        windowManager->SetOnAcpPickerRequest([&overlays, &panelDock, tabIndex, panel = &acpPanel](ned::editor::acp::PanelPicker picker) {
+            overlays.Show(panelDock);
+            panelDock.SwitchTo(tabIndex);
+            panel->OpenPicker(picker);
         });
     }
     else {
@@ -2184,13 +2200,20 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
             };
         windowManager->SetOnAcpPanelToggle(toggleAcpPanel);
         acpPanel.SetOnToggleRequest(toggleAcpPanel);
-        windowManager->SetOnAcpRewindRequest([&overlays, panel = &acpPanel] {
+        acpPanel.SetOnRefocusRequest([&overlays, panel = &acpPanel] {
             if (!overlays.IsVisible(*panel)) {
                 overlays.Show(*panel);
                 panel->SetCollapsed(false);
             }
             panel->TakeFocus();
-            panel->OpenRewindPicker();
+        });
+        windowManager->SetOnAcpPickerRequest([&overlays, panel = &acpPanel](ned::editor::acp::PanelPicker picker) {
+            if (!overlays.IsVisible(*panel)) {
+                overlays.Show(*panel);
+                panel->SetCollapsed(false);
+            }
+            panel->TakeFocus();
+            panel->OpenPicker(picker);
         });
         acpPanel.SetOnCollapseChanged([&overlays, panel = &acpPanel] { overlays.Show(*panel); });
     }

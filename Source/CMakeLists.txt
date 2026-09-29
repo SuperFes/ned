@@ -280,7 +280,9 @@ add_library(ned_lib STATIC
         Editor/Acp/Client.cpp
         Editor/Acp/Config.cpp
         Editor/Acp/PanelConfig.cpp
+        Editor/Acp/Compose.cpp
         Editor/Acp/Manager.cpp
+        Editor/Acp/Notify.cpp
         Editor/Lsp/Transport.cpp
         Editor/Lsp/Client.cpp
         Editor/Lsp/ServerConfig.cpp
@@ -459,6 +461,10 @@ add_library(ned_lib STATIC
         UI/PanelDock.cpp
         UI/TerminalPanel.cpp
         UI/AcpPanel.cpp
+        UI/AcpPanel/ChoicePicker.cpp
+        UI/AcpPanel/ComposerLayout.cpp
+        UI/AcpPanel/TranscriptFormat.cpp
+        UI/AcpPanel/TranscriptScroll.cpp
         UI/DebugConsolePanel.cpp
         UI/JanetReplPanel.cpp
         UI/ListPopup.cpp
@@ -478,6 +484,7 @@ add_library(ned_lib STATIC
         UI/BufferView/ClassFileSync.cpp
         UI/BufferView/Color.cpp
         UI/BufferView/VcsDap.cpp
+        UI/BufferView/AcpCompose.cpp
         UI/BufferView/Buffers.cpp
         UI/BufferView/CandidateList.cpp
         UI/BufferView/GutterModel.cpp

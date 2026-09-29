@@ -14,6 +14,18 @@ for the live keymap stack.
 
 # COMMANDS
 
+`acp-compose-abort`
+
+:   Close *acp compose* without sending it (bound C-c C-k in *acp compose*).
+
+`acp-compose-finish`
+
+:   Send the prompt being composed to the ACP agent (bound C-c C-c in *acp compose*).
+
+`acp-resume-session` (`C-c A l`)
+
+:   Resume an earlier ACP session, replaying its conversation into the panel.
+
 `acp-rewind` (`C-c A r`)
 
 :   Rewind the ACP conversation and its file edits to before an earlier turn.
@@ -21,6 +33,18 @@ for the live keymap stack.
 `acp-send-prompt` (`C-c A p`)
 
 :   Send a message to the active ACP session.
+
+`acp-set-mode` (`C-c A m`)
+
+:   Pick the ACP session's mode (e.g. ask before edits, accept edits, plan).
+
+`acp-set-model` (`C-c A M`)
+
+:   Pick the model the ACP session uses.
+
+`acp-set-option` (`C-c A o`)
+
+:   Change one of the ACP session's settings (mode, model, effort, ...).
 
 `acp-start-session` (`C-c A s`)
 

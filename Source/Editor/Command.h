@@ -986,12 +986,23 @@ enum class InteractiveRequest { None,
                                 // ACP checkpoint/rewind follow-up: one-shot direct action, same
                                 // "just forward, the target lives above this class" shape as
                                 // AcpTogglePanel above -- BufferView forwards to
-                                // SetOnAcpRewindRequest (main.cpp wires it to show/focus the ACP
+                                // SetOnAcpPickerRequest (main.cpp wires it to show/focus the ACP
                                 // panel and open its rewind picker; AcpPanel::OnEvent then reads
                                 // Manager::CheckpointCount()/CheckpointAt() to render the list
                                 // and calls Manager::RewindTo() on a digit keystroke -- see
                                 // Editor/Acp/Manager.h for the checkpoint/rewind data model).
                                 AcpRewind,
+                                // Same forwarding as AcpRewind, each opening its own AcpPanel
+                                // picker: the session's mode, its model, any of its config
+                                // options, or a past session to resume.
+                                AcpSetMode,
+                                AcpSetModel,
+                                AcpSetOption,
+                                AcpResumeSession,
+                                // The ACP compose buffer's C-c C-c / C-c C-k -- see
+                                // Editor/Acp/Compose.h.
+                                AcpComposeFinish,
+                                AcpComposeAbort,
                                 // REPL-engine follow-up: ToggleJanetRepl is a one-shot direct
                                 // action, same shape as DapToggleConsole/ToggleTerminal above --
                                 // BufferView shows+focuses (or hides) the Janet REPL's PanelDock

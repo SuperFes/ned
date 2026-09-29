@@ -11,6 +11,7 @@
 #include <string>
 #include <system_error>
 
+#include "Acp/Compose.h"
 #include "AutoFormatOnSave.h"
 #include "AutoPair.h"
 #include "BlankLineCleanup.h"
@@ -3982,6 +3983,21 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::AcpRewind;
                       });
+    registry.Register("acp-set-mode", "Pick the ACP session's mode (e.g. ask before edits, accept edits, plan).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpSetMode;
+                      });
+    registry.Register("acp-set-model", "Pick the model the ACP session uses.", [](CommandContext& context) {
+        context.interactiveRequest = InteractiveRequest::AcpSetModel;
+    });
+    registry.Register("acp-set-option", "Change one of the ACP session's settings (mode, model, effort, ...).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpSetOption;
+                      });
+    registry.Register("acp-resume-session", "Resume an earlier ACP session, replaying its conversation into the panel.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpResumeSession;
+                      });
 
     // VCS blame gutter follow-up: same "just set interactiveRequest" shape
     // as lsp-show-log/run-task above -- BufferView owns the actual
@@ -4086,6 +4102,26 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         commitMode.keymap.Bind(ParseKeySequence("C-c C-k"), "vcs-commit-abort");
         RegisterMode("vcs-commit-message-mode", std::move(commitMode));
         SetModeForFilename(std::string(vcs::kVcsCommitMessageFilename), "vcs-commit-message-mode");
+    }
+    // The ACP compose buffer's own keys, reachable only through its
+    // keymap-only mode (chosen for the buffer when it's created -- it has no
+    // path for a filename rule to match), the same shape as the commit
+    // message buffer's just above.
+    registry.Register("acp-compose-finish", "Send the prompt being composed to the ACP agent (bound C-c C-c in *acp compose*).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpComposeFinish;
+                      });
+    registry.Register("acp-compose-abort", "Close *acp compose* without sending it (bound C-c C-k in *acp compose*).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::AcpComposeAbort;
+                      });
+    {
+        Mode composeMode;
+        composeMode.name      = std::string(acp::kComposeModeName);
+        composeMode.wrapLines = true;
+        composeMode.keymap.Bind(ParseKeySequence("C-c C-c"), "acp-compose-finish");
+        composeMode.keymap.Bind(ParseKeySequence("C-c C-k"), "acp-compose-abort");
+        RegisterMode(std::string(acp::kComposeModeName), std::move(composeMode));
     }
     registry.Register("vcs-stage-hunk", "Stage just the change hunk covering the line at point.",
                       [](CommandContext& context) {
@@ -5187,6 +5223,10 @@ Keymap BuildDefaultGlobalKeymap() {
     keymap.Bind(ParseKeySequence("C-c A p"), "acp-send-prompt");
     keymap.Bind(ParseKeySequence("C-c A k"), "acp-stop-session"); // "k" for kill, matching Emacs' own kill-process vocabulary
     keymap.Bind(ParseKeySequence("C-c A r"), "acp-rewind");       // "r" for rewind
+    keymap.Bind(ParseKeySequence("C-c A m"), "acp-set-mode");
+    keymap.Bind(ParseKeySequence("C-c A M"), "acp-set-model");
+    keymap.Bind(ParseKeySequence("C-c A o"), "acp-set-option");
+    keymap.Bind(ParseKeySequence("C-c A l"), "acp-resume-session"); // "l" for load
     keymap.Bind(ParseKeySequence("C-c c"), "acp-toggle-panel");   // "c" for chat
     // test-runner integration: "C-c T" prefix (shifted "t" for tests --
     // plain "C-c t" is toggle-terminal's own leaf binding below, so a

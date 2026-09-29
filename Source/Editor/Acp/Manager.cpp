@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 #include <string_view>
 #include <system_error>
@@ -17,10 +18,31 @@
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/FilePreservation.h"
+#include "Text/Utf8.h"
 
 namespace ned::editor::acp {
 
 namespace {
+
+    // A field that is missing, null or of another type reads as `fallback`:
+    // an agent's JSON is input, and nlohmann's value() throws on a present
+    // key of the wrong type (a null messageId in a replayed session, seen
+    // live).
+    std::string StringField(const Json& object, const char* key, std::string fallback = {}) {
+        if (!object.is_object()) {
+            return fallback;
+        }
+        const auto it = object.find(key);
+        return it != object.end() && it->is_string() ? it->get<std::string>() : std::move(fallback);
+    }
+
+    bool BoolField(const Json& object, const char* key) {
+        if (!object.is_object()) {
+            return false;
+        }
+        const auto it = object.find(key);
+        return it != object.end() && it->is_boolean() && it->get<bool>();
+    }
 
     std::string OutputBufferName(std::string_view agentName) {
         return "*acp: " + std::string(agentName) + "*";
@@ -43,8 +65,8 @@ namespace {
             return std::nullopt;
         }
         for (const Json& item : content) {
-            if (item.is_object() && item.value("type", std::string()) == "diff") {
-                return DiffContent{item.value("oldText", std::string()), item.value("newText", std::string())};
+            if (item.is_object() && StringField(item, "type", std::string()) == "diff") {
+                return DiffContent{StringField(item, "oldText", std::string()), StringField(item, "newText", std::string())};
             }
         }
         return std::nullopt;
@@ -139,6 +161,84 @@ namespace {
         return result;
     }
 
+    // Enough of a tool's output to read in the panel without holding a
+    // whole build log per tool call.
+    constexpr std::size_t kMaxToolOutputBytes = 16 * 1024;
+    constexpr std::size_t kMaxToolInputBytes  = 200;
+
+    std::vector<Manager::ToolLocation> ParseLocations(const Json& locations) {
+        std::vector<Manager::ToolLocation> result;
+        if (!locations.is_array()) {
+            return result;
+        }
+        for (const Json& location : locations) {
+            if (!location.is_object() || !location.contains("path") || !location["path"].is_string()) {
+                continue;
+            }
+            Manager::ToolLocation parsed{.path = location["path"].get<std::string>(), .line = std::nullopt};
+            if (location.contains("line") && location["line"].is_number_unsigned()) {
+                parsed.line = location["line"].get<std::size_t>();
+            }
+            result.push_back(std::move(parsed));
+        }
+        return result;
+    }
+
+    // One line describing what a tool was asked to do. rawInput is the
+    // agent's own tool-specific shape, so this only knows the field names
+    // common coding tools use.
+    std::string SummarizeToolInput(const Json& rawInput) {
+        std::string summary;
+        if (rawInput.is_string()) {
+            summary = rawInput.get<std::string>();
+        }
+        else if (rawInput.is_object()) {
+            for (const char* key : {"command", "file_path", "path", "notebook_path", "pattern", "url", "query"}) {
+                if (rawInput.contains(key) && rawInput[key].is_string()) {
+                    summary = rawInput[key].get<std::string>();
+                    if (std::string_view(key) == "command") {
+                        summary = "$ " + summary;
+                    }
+                    break;
+                }
+            }
+        }
+        if (const std::size_t newline = summary.find('\n'); newline != std::string::npos) {
+            summary = summary.substr(0, newline) + " ...";
+        }
+        if (summary.size() > kMaxToolInputBytes) {
+            summary = summary.substr(0, text::SnapDownToCodepointBoundary(summary, kMaxToolInputBytes)) + "...";
+        }
+        return summary;
+    }
+
+    // The text of every {type: "content"} item, or nullopt when there are
+    // none (a diff- or terminal-only update leaves the output unchanged).
+    std::optional<std::string> ExtractToolOutput(const Json& content) {
+        if (!content.is_array()) {
+            return std::nullopt;
+        }
+        std::optional<std::string> output;
+        for (const Json& item : content) {
+            if (!item.is_object() || StringField(item, "type", std::string()) != "content" || !item.contains("content") ||
+                !item["content"].is_object() || StringField(item["content"], "type", std::string()) != "text") {
+                continue;
+            }
+            if (!output) {
+                output.emplace();
+            }
+            else {
+                output->push_back('\n');
+            }
+            *output += StringField(item["content"], "text", std::string());
+        }
+        if (output && output->size() > kMaxToolOutputBytes) {
+            const std::size_t total = output->size();
+            *output                 = output->substr(0, text::SnapDownToCodepointBoundary(*output, kMaxToolOutputBytes)) + "\n... [" + std::to_string(total) + " bytes total]";
+        }
+        return output;
+    }
+
 } // namespace
 
 Manager::Manager(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop) : bufferList_(bufferList), eventLoop_(eventLoop) {
@@ -176,6 +276,321 @@ void Manager::SetOnTranscriptChanged(std::function<void()> handler) {
 
 void Manager::SetMcpBridgeServer(mcp::BridgeServer* server) {
     mcpBridgeServer_ = server;
+}
+
+const std::vector<Manager::SessionMode>& Manager::Modes() const {
+    return modes_;
+}
+
+const std::string& Manager::CurrentModeId() const {
+    return currentModeId_;
+}
+
+const std::vector<Manager::ConfigOption>& Manager::ConfigOptions() const {
+    return configOptions_;
+}
+
+const Manager::ConfigOption* Manager::ConfigOptionByCategory(std::string_view category) const {
+    const auto it = std::find_if(configOptions_.begin(), configOptions_.end(),
+                                 [category](const ConfigOption& option) { return option.category == category; });
+    return it == configOptions_.end() ? nullptr : &*it;
+}
+
+Json Manager::McpServers() {
+    Json mcpServers = Json::array();
+    if (mcpBridgeServer_ && mcp::McpBridgeEnabled()) {
+        try {
+            mcpBridgeServer_->Start(); // idempotent -- a no-op if already listening
+            mcpServers.push_back(Json{
+                {"type", "stdio"},
+                {"name", "ned"},
+                {"command", SelfExecutablePath().string()},
+                {"args", Json::array({"--mcp-stdio-relay", mcpBridgeServer_->SocketPath().string()})},
+                {"env", Json::array()},
+            });
+        }
+        catch (const std::exception& e) {
+            // A failed bridge start (runtime dir/socket trouble) shouldn't
+            // block the session itself -- fall back to no MCP tools, same
+            // as if no bridge were wired at all.
+            AppendToOutputBuffer(std::string("\n[MCP bridge unavailable: ") + e.what() + "]\n");
+        }
+    }
+    return mcpServers;
+}
+
+const std::string& Manager::SessionId() const {
+    return sessionId_;
+}
+
+bool Manager::CanResumeSessions() const {
+    return agentSupportsListSessions_ && (agentSupportsLoadSession_ || agentSupportsResume_);
+}
+
+void Manager::ListSessions(std::function<void(std::vector<SessionSummary> sessions, std::string error)> done) {
+    if (state_ == SessionState::Starting) {
+        // Answered once the handshake settles, either way.
+        whenSessionSettles_.push_back([this, done = std::move(done)]() mutable { ListSessions(std::move(done)); });
+        return;
+    }
+    if (state_ != SessionState::Active || !client_) {
+        done({}, "No active ACP session (see acp-start-session).");
+        return;
+    }
+    if (!CanResumeSessions()) {
+        done({}, "This agent can't list or resume its sessions.");
+        return;
+    }
+    auto sessions = std::make_shared<std::vector<SessionSummary>>();
+    auto fetch    = std::make_shared<std::function<void(std::optional<std::string>, int)>>();
+    // Bounded: enough history to pick from without walking an agent's
+    // entire archive one page at a time.
+    constexpr int kMaxPages = 5;
+    // Each pending response owns the fetcher; the fetcher only refers back
+    // weakly, so a response the client drops (the session ended) frees it.
+    *fetch = [this, sessions, weakFetch = std::weak_ptr(fetch), done = std::move(done)](std::optional<std::string> cursor, int page) {
+        Json params{{"cwd", editor::ProjectRoot().string()}};
+        if (cursor) {
+            params["cursor"] = *cursor;
+        }
+        client_->SendRequest("session/list", params, [sessions, fetch = weakFetch.lock(), done, page](std::optional<Json> result, std::optional<Json> error) {
+            if (error || !result || !result->is_object()) {
+                const std::string message = error ? StringField(*error, "message", std::string("unknown error")) : std::string("bad response");
+                done(std::move(*sessions), "session/list failed: " + message);
+                return;
+            }
+            const Json list = result->value("sessions", Json::array());
+            for (const Json& entry : list.is_array() ? list : Json::array()) {
+                if (entry.is_object() && entry.contains("sessionId") && entry["sessionId"].is_string()) {
+                    sessions->push_back({.sessionId = entry["sessionId"].get<std::string>(),
+                                         .title     = entry.contains("title") && entry["title"].is_string() ? entry["title"].get<std::string>() : std::string(),
+                                         .updatedAt = entry.contains("updatedAt") && entry["updatedAt"].is_string() ? entry["updatedAt"].get<std::string>() : std::string()});
+                }
+            }
+            if (result->contains("nextCursor") && (*result)["nextCursor"].is_string() && page + 1 < kMaxPages) {
+                (*fetch)((*result)["nextCursor"].get<std::string>(), page + 1);
+                return;
+            }
+            done(std::move(*sessions), std::string());
+        });
+    };
+    (*fetch)(std::nullopt, 0);
+}
+
+std::string Manager::LoadSession(const std::string& sessionId, const std::string& title) {
+    if (state_ != SessionState::Active || !client_) {
+        return "No active ACP session.";
+    }
+    if (promptInFlight_) {
+        return "Can't resume while a prompt is in flight.";
+    }
+    if (sessionId == sessionId_) {
+        return "That session is already the current one.";
+    }
+    if (!agentSupportsLoadSession_ && !agentSupportsResume_) {
+        return "This agent can't resume sessions.";
+    }
+    const std::string label      = title.empty() ? sessionId : title;
+    const bool        replay     = agentSupportsLoadSession_;
+    const std::string previousId = sessionId_;
+    // Everything the old session advertised is replaced by what the loaded
+    // one answers with.
+    sessionId_ = sessionId;
+    availableCommands_.clear();
+    sessionTitle_ = title;
+    usage_.reset();
+    livePlanEntryIndex_.reset();
+    PushSessionEvent(std::string(replay ? "resuming: " : "resumed: ") + label);
+    replaying_ = replay;
+    client_->SendRequest(replay ? "session/load" : "session/resume",
+                         Json{{"sessionId", sessionId}, {"cwd", editor::ProjectRoot().string()}, {"mcpServers", McpServers()}},
+                         [this, sessionId, previousId, replay](std::optional<Json> result, std::optional<Json> error) {
+                             replaying_ = false;
+                             if (sessionId_ != sessionId) {
+                                 return; // superseded by a later resume or a new session
+                             }
+                             if (error) {
+                                 sessionId_ = previousId;
+                                 PushSessionEvent("resume failed: " + StringField(*error, "message", std::string("unknown error")));
+                                 return;
+                             }
+                             if (result) {
+                                 ParseSessionSettings(*result);
+                             }
+                             if (!replay) {
+                                 PushSessionEvent("history not replayed -- the agent only resumes");
+                             }
+                         });
+    return "Resuming " + label + ".";
+}
+
+const std::vector<Manager::AvailableCommand>& Manager::AvailableCommands() const {
+    return availableCommands_;
+}
+
+const std::string& Manager::SessionTitle() const {
+    return sessionTitle_;
+}
+
+const std::optional<Manager::Usage>& Manager::SessionUsage() const {
+    return usage_;
+}
+
+std::optional<std::chrono::steady_clock::time_point> Manager::PromptStartedAt() const {
+    return promptStartedAt_;
+}
+
+void Manager::RunSessionSettledCallbacks() {
+    std::vector<std::function<void()>> callbacks = std::move(whenSessionSettles_);
+    whenSessionSettles_.clear();
+    for (auto& callback : callbacks) {
+        callback();
+    }
+}
+
+void Manager::ParseSessionSettings(const Json& result) {
+    if (!result.is_object()) {
+        return;
+    }
+    if (result.contains("modes") && result["modes"].is_object()) {
+        const Json& modes = result["modes"];
+        modes_.clear();
+        if (modes.contains("availableModes") && modes["availableModes"].is_array()) {
+            for (const Json& mode : modes["availableModes"]) {
+                if (mode.is_object() && mode.contains("id") && mode["id"].is_string()) {
+                    modes_.push_back({.id          = mode["id"].get<std::string>(),
+                                      .name        = StringField(mode, "name", mode["id"].get<std::string>()),
+                                      .description = StringField(mode, "description", std::string())});
+                }
+            }
+        }
+        if (modes.contains("currentModeId") && modes["currentModeId"].is_string()) {
+            ApplyCurrentModeId(modes["currentModeId"].get<std::string>());
+        }
+    }
+    if (result.contains("configOptions")) {
+        ApplyConfigOptions(result["configOptions"]);
+    }
+}
+
+void Manager::ApplyConfigOptions(const Json& options) {
+    if (!options.is_array()) {
+        return;
+    }
+    configOptions_.clear();
+    for (const Json& option : options) {
+        if (!option.is_object() || !option.contains("id") || !option["id"].is_string()) {
+            continue;
+        }
+        ConfigOption parsed{.id          = option["id"].get<std::string>(),
+                            .name        = StringField(option, "name", option["id"].get<std::string>()),
+                            .description = StringField(option, "description", std::string()),
+                            .category    = StringField(option, "category", std::string()),
+                            .type        = StringField(option, "type", std::string("select"))};
+        if (option.contains("currentValue")) {
+            const Json& current = option["currentValue"];
+            parsed.currentValue = current.is_boolean()  ? (current.get<bool>() ? "true" : "false")
+                                  : current.is_string() ? current.get<std::string>()
+                                                        : current.dump();
+        }
+        // A select's options may be grouped ({group, name, options: [...]}),
+        // flattened here since the panel lists them in one column.
+        auto collect = [&parsed](const Json& list, auto& self) -> void {
+            if (!list.is_array()) {
+                return;
+            }
+            for (const Json& choice : list) {
+                if (!choice.is_object()) {
+                    continue;
+                }
+                if (choice.contains("value") && choice["value"].is_string()) {
+                    parsed.choices.push_back({.value       = choice["value"].get<std::string>(),
+                                              .name        = StringField(choice, "name", choice["value"].get<std::string>()),
+                                              .description = StringField(choice, "description", std::string())});
+                }
+                else if (choice.contains("options")) {
+                    self(choice["options"], self);
+                }
+            }
+        };
+        if (option.contains("options")) {
+            collect(option["options"], collect);
+        }
+        configOptions_.push_back(std::move(parsed));
+    }
+    if (const ConfigOption* mode = ConfigOptionByCategory("mode")) {
+        currentModeId_ = mode->currentValue;
+    }
+}
+
+void Manager::ApplyCurrentModeId(std::string modeId) {
+    currentModeId_ = std::move(modeId);
+    for (ConfigOption& option : configOptions_) {
+        if (option.category == "mode") {
+            option.currentValue = currentModeId_;
+        }
+    }
+}
+
+std::string Manager::SetMode(const std::string& modeId) {
+    if (state_ != SessionState::Active || !client_) {
+        return "No active ACP session.";
+    }
+    if (const ConfigOption* option = ConfigOptionByCategory("mode")) {
+        return SetConfigOption(option->id, modeId);
+    }
+    if (modes_.empty()) {
+        return "This agent has no modes.";
+    }
+    client_->SendRequest("session/set_mode", Json{{"sessionId", sessionId_}, {"modeId", modeId}},
+                         [this, modeId](std::optional<Json>, std::optional<Json> error) {
+                             if (error) {
+                                 PushSessionEvent("mode change failed: " + StringField(*error, "message", std::string("unknown error")));
+                                 return;
+                             }
+                             ApplyCurrentModeId(modeId);
+                         });
+    return "Mode change sent.";
+}
+
+std::string Manager::SetConfigOption(const std::string& configId, const std::string& value) {
+    if (state_ != SessionState::Active || !client_) {
+        return "No active ACP session.";
+    }
+    const auto it        = std::find_if(configOptions_.begin(), configOptions_.end(), [&configId](const ConfigOption& option) { return option.id == configId; });
+    const Json wireValue = it != configOptions_.end() && it->type == "boolean" ? Json(value == "true") : Json(value);
+    client_->SendRequest("session/set_config_option", Json{{"sessionId", sessionId_}, {"configId", configId}, {"value", wireValue}},
+                         [this](std::optional<Json> result, std::optional<Json> error) {
+                             if (error) {
+                                 PushSessionEvent("setting change failed: " + StringField(*error, "message", std::string("unknown error")));
+                                 return;
+                             }
+                             if (result && result->is_object() && result->contains("configOptions")) {
+                                 ApplyConfigOptions((*result)["configOptions"]);
+                             }
+                         });
+    return "Setting change sent.";
+}
+
+std::string Manager::CycleMode() {
+    std::vector<std::string> ids;
+    if (const ConfigOption* option = ConfigOptionByCategory("mode")) {
+        for (const ConfigChoice& choice : option->choices) {
+            ids.push_back(choice.value);
+        }
+    }
+    else {
+        for (const SessionMode& mode : modes_) {
+            ids.push_back(mode.id);
+        }
+    }
+    std::erase(ids, std::string("bypassPermissions"));
+    if (ids.empty()) {
+        return state_ == SessionState::Active ? "This agent has no modes." : "No active ACP session.";
+    }
+    const auto        current = std::find(ids.begin(), ids.end(), currentModeId_);
+    const std::size_t next    = current == ids.end() ? 0 : (static_cast<std::size_t>(current - ids.begin()) + 1) % ids.size();
+    return SetMode(ids[next]);
 }
 
 text::Buffer& Manager::OutputBuffer(const std::string& agentName) {
@@ -240,11 +655,11 @@ void Manager::PushOrUpdateToolCall(const Json& update) {
     // Absence must mean "unchanged," not "reset to the generic fallback" --
     // ROADMAP.md's own prediction that this parsing would need widening once
     // exercised against a real agent.
-    const bool        hasTitle   = update.contains("title") || update.contains("kind");
-    const std::string title      = update.value("title", update.value("kind", std::string("tool call")));
-    const bool        hasStatus  = update.contains("status");
-    const std::string status     = update.value("status", std::string());
-    const std::string toolCallId = update.value("toolCallId", std::string());
+    const bool        hasTitle   = !StringField(update, "title").empty() || !StringField(update, "kind").empty();
+    const std::string title      = StringField(update, "title", StringField(update, "kind", std::string("tool call")));
+    const bool        hasStatus  = !StringField(update, "status").empty();
+    const std::string status     = StringField(update, "status", std::string());
+    const std::string toolCallId = StringField(update, "toolCallId", std::string());
 
     // A "diff"-typed content item, when present, is the actual before/after
     // text of a file edit -- confirmed live against Claude Code's Edit tool
@@ -254,6 +669,25 @@ void Manager::PushOrUpdateToolCall(const Json& update) {
     // have an empty "content": []) -- so, same as title/status, absence here
     // must mean "no new diff this update," not "clear the one we already have."
     const std::optional<DiffContent> diff = update.contains("content") ? ExtractDiffContent(update["content"]) : std::nullopt;
+    const std::optional<std::string> output       = update.contains("content") ? ExtractToolOutput(update["content"]) : std::nullopt;
+    const bool                       hasKind      = update.contains("kind") && update["kind"].is_string();
+    const bool                       hasLocations = update.contains("locations");
+    const bool                       hasInput     = update.contains("rawInput");
+
+    auto applyDetails = [&](TranscriptEntry& entry) {
+        if (hasKind) {
+            entry.toolKind = update["kind"].get<std::string>();
+        }
+        if (hasLocations) {
+            entry.locations = ParseLocations(update["locations"]);
+        }
+        if (hasInput) {
+            entry.toolInput = SummarizeToolInput(update["rawInput"]);
+        }
+        if (output) {
+            entry.toolOutput = *output;
+        }
+    };
 
     if (!toolCallId.empty()) {
         for (auto it = transcript_.rbegin(); it != transcript_.rend(); ++it) {
@@ -268,20 +702,23 @@ void Manager::PushOrUpdateToolCall(const Json& update) {
                     it->diffOldText = diff->oldText;
                     it->diffNewText = diff->newText;
                 }
+                applyDetails(*it);
                 ++transcriptGeneration_;
                 NotifyTranscriptChanged();
                 return;
             }
         }
     }
-    PushTranscriptEntry(TranscriptEntry{
+    TranscriptEntry entry{
         .kind        = TranscriptEntry::Kind::ToolCall,
         .text        = title,
         .status      = status,
         .toolCallId  = toolCallId.empty() ? std::nullopt : std::optional<std::string>(toolCallId),
         .diffOldText = diff ? std::optional<std::string>(diff->oldText) : std::nullopt,
         .diffNewText = diff ? std::optional<std::string>(diff->newText) : std::nullopt,
-    });
+    };
+    applyDetails(entry);
+    PushTranscriptEntry(std::move(entry));
 }
 
 void Manager::PushOrReplacePlan(const Json& update) {
@@ -294,13 +731,13 @@ void Manager::PushOrReplacePlan(const Json& update) {
                     content = entryJson["content"].get<std::string>();
                 }
                 else if (entryJson["content"].is_object()) {
-                    content = entryJson["content"].value("text", std::string());
+                    content = StringField(entryJson["content"], "text", std::string());
                 }
             }
             if (content.empty()) {
-                content = entryJson.value("description", std::string());
+                content = StringField(entryJson, "description", std::string());
             }
-            const std::string status = entryJson.value("status", std::string());
+            const std::string status = StringField(entryJson, "status", std::string());
             const char*       glyph  = status == "completed" ? "[x] " : status == "in_progress" ? "[~] "
                                                                                                 : "[ ] ";
             steps.push_back(glyph + content);
@@ -365,10 +802,11 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
         },
         [this](std::optional<Json> result, std::optional<Json> error) {
             if (error) {
-                const std::string message = "ACP initialize failed: " + error->value("message", std::string("unknown error"));
+                const std::string message = "ACP initialize failed: " + StringField(*error, "message", std::string("unknown error"));
                 AppendToOutputBuffer("\n" + message + "\n");
                 PushSessionEvent(message);
                 state_ = SessionState::Inactive;
+                RunSessionSettledCallbacks();
                 return;
             }
             // ACP context auto-attach follow-up: whether this agent accepts
@@ -378,27 +816,19 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
             // simply omits agentCapabilities entirely).
             const Json agentCaps          = (result && result->is_object()) ? result->value("agentCapabilities", Json::object()) : Json::object();
             const Json promptCaps         = agentCaps.is_object() ? agentCaps.value("promptCapabilities", Json::object()) : Json::object();
-            agentSupportsEmbeddedContext_ = promptCaps.is_object() && promptCaps.value("embeddedContext", false);
+            agentSupportsEmbeddedContext_ = BoolField(promptCaps, "embeddedContext");
 
-            Json mcpServers = Json::array();
-            if (mcpBridgeServer_ && mcp::McpBridgeEnabled()) {
-                try {
-                    mcpBridgeServer_->Start(); // idempotent -- a no-op if already listening
-                    mcpServers.push_back(Json{
-                        {"type", "stdio"},
-                        {"name", "ned"},
-                        {"command", SelfExecutablePath().string()},
-                        {"args", Json::array({"--mcp-stdio-relay", mcpBridgeServer_->SocketPath().string()})},
-                        {"env", Json::array()},
-                    });
-                }
-                catch (const std::exception& e) {
-                    // A failed bridge start (runtime dir/socket trouble) shouldn't
-                    // block the session itself -- fall back to no MCP tools, same
-                    // as if no bridge were wired at all.
-                    AppendToOutputBuffer(std::string("\n[MCP bridge unavailable: ") + e.what() + "]\n");
-                }
-            }
+            const bool loadCap = BoolField(agentCaps, "loadSession");
+            const Json sessionCaps =
+                agentCaps.is_object() ? agentCaps.value("sessionCapabilities", Json::object()) : Json::object();
+            agentSupportsLoadSession_  = loadCap;
+            agentSupportsListSessions_ = sessionCaps.is_object() && sessionCaps.contains("list");
+            agentSupportsResume_       = sessionCaps.is_object() && sessionCaps.contains("resume");
+            const Json meta            = result && result->is_object() ? result->value("_meta", Json::object()) : Json::object();
+            agentSupportsSteering_     = meta.is_object() && meta.contains("steering") && meta["steering"].is_object() &&
+                                         BoolField(meta["steering"], "supported");
+
+            const Json mcpServers = McpServers();
             client_->SendRequest(
                 "session/new",
                 Json{
@@ -406,16 +836,19 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
                     {"mcpServers", mcpServers},
                 },
                 [this](std::optional<Json> newResult, std::optional<Json> newError) {
-                    if (newError || !newResult || !newResult->contains("sessionId")) {
+                    if (newError || !newResult || StringField(*newResult, "sessionId").empty()) {
                         const std::string message =
-                            "session/new failed" + (newError ? (": " + newError->value("message", std::string())) : std::string());
+                            "session/new failed" + (newError ? (": " + StringField(*newError, "message", std::string())) : std::string());
                         AppendToOutputBuffer("\n" + message + "\n");
                         PushSessionEvent(message);
                         state_ = SessionState::Inactive;
+                        RunSessionSettledCallbacks();
                         return;
                     }
-                    sessionId_ = (*newResult)["sessionId"].get<std::string>();
+                    sessionId_ = StringField(*newResult, "sessionId");
                     state_     = SessionState::Active;
+                    ParseSessionSettings(*newResult);
+                    RunSessionSettledCallbacks();
                     AppendToOutputBuffer("\n[session ready]\n");
                     // Deliberately not also PushSessionEvent'd into the
                     // transcript (AcpPanel's chat view) -- the panel's own
@@ -431,6 +864,31 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
     return &buffer;
 }
 
+Json Manager::PromptBlocks(const std::string& text, const std::vector<PromptAttachment>& attachments) const {
+    Json promptBlocks = Json::array({Json{{"type", "text"}, {"text", text}}});
+    for (const PromptAttachment& attachment : attachments) {
+        if (attachment.link) {
+            Json link{{"type", "resource_link"}, {"uri", attachment.uri}, {"name", attachment.name}};
+            if (!attachment.mimeType.empty()) {
+                link["mimeType"] = attachment.mimeType;
+            }
+            promptBlocks.push_back(std::move(link));
+        }
+        else if (agentSupportsEmbeddedContext_) {
+            Json resource{{"uri", attachment.uri}, {"text", attachment.text}};
+            if (!attachment.mimeType.empty()) {
+                resource["mimeType"] = attachment.mimeType;
+            }
+            promptBlocks.push_back(Json{{"type", "resource"}, {"resource", resource}});
+        }
+        else {
+            promptBlocks[0]["text"] =
+                promptBlocks[0]["text"].get<std::string>() + "\n\n--- " + attachment.name + " ---\n" + attachment.text;
+        }
+    }
+    return promptBlocks;
+}
+
 std::string Manager::SendPrompt(const std::string& text, const std::vector<PromptAttachment>& attachments) {
     if (state_ != SessionState::Active) {
         return "No active ACP session (see acp-start-session).";
@@ -443,15 +901,14 @@ std::string Manager::SendPrompt(const std::string& text, const std::vector<Promp
     // regardless of which path (resource block vs. folded-into-text) ends
     // up using it.
     std::string displayText = text;
-    if (!attachments.empty()) {
-        displayText += "\n\n[attached: ";
-        for (std::size_t i = 0; i < attachments.size(); ++i) {
-            if (i > 0) {
-                displayText += ", ";
-            }
-            displayText += attachments[i].name;
+    std::string attachedNames;
+    for (const PromptAttachment& attachment : attachments) {
+        if (!attachment.link) {
+            attachedNames += (attachedNames.empty() ? "" : ", ") + attachment.name;
         }
-        displayText += "]";
+    }
+    if (!attachedNames.empty()) {
+        displayText += "\n\n[attached: " + attachedNames + "]";
     }
     AppendToOutputBuffer("\n> " + displayText + "\n");
     PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::UserMessage, .text = displayText});
@@ -479,7 +936,8 @@ std::string Manager::SendPrompt(const std::string& text, const std::vector<Promp
     // and the first agent_message_chunk used to be nothing at all -- reads
     // as "did this hang?" for however long the agent takes to say anything.
     // Reuses the same mode-line spinner registry LSP already drives.
-    promptInFlight_ = true;
+    promptInFlight_  = true;
+    promptStartedAt_ = std::chrono::steady_clock::now();
     editor::BeginBackgroundActivity(kAcpActivity);
 
     // ACP context auto-attach follow-up: a real ContentBlock::resource per
@@ -488,20 +946,7 @@ std::string Manager::SendPrompt(const std::string& text, const std::vector<Promp
     // straight into the one text block so an agent that never declared the
     // capability still receives the content, just without its own distinct
     // rendering -- see PromptAttachment/SendPrompt's own doc comments.
-    Json promptBlocks = Json::array({Json{{"type", "text"}, {"text", text}}});
-    for (const PromptAttachment& attachment : attachments) {
-        if (agentSupportsEmbeddedContext_) {
-            Json resource{{"uri", attachment.uri}, {"text", attachment.text}};
-            if (!attachment.mimeType.empty()) {
-                resource["mimeType"] = attachment.mimeType;
-            }
-            promptBlocks.push_back(Json{{"type", "resource"}, {"resource", resource}});
-        }
-        else {
-            promptBlocks[0]["text"] =
-                promptBlocks[0]["text"].get<std::string>() + "\n\n--- " + attachment.name + " ---\n" + attachment.text;
-        }
-    }
+    const Json promptBlocks = PromptBlocks(text, attachments);
 
     client_->SendRequest(
         "session/prompt",
@@ -510,16 +955,21 @@ std::string Manager::SendPrompt(const std::string& text, const std::vector<Promp
             {"prompt", promptBlocks},
         },
         [this](std::optional<Json> result, std::optional<Json> error) {
-            promptInFlight_ = false;
+            const auto elapsed = promptStartedAt_ ? std::chrono::steady_clock::now() - *promptStartedAt_ : std::chrono::steady_clock::duration{};
+            promptInFlight_    = false;
+            promptStartedAt_.reset();
             editor::EndBackgroundActivity(kAcpActivity);
             FinalizePendingCheckpoint();
             if (error) {
-                const std::string message = "error: " + error->value("message", std::string("prompt failed"));
+                const std::string message = "error: " + StringField(*error, "message", std::string("prompt failed"));
                 AppendToOutputBuffer("\n[" + message + "]\n");
                 PushSessionEvent(message);
+                if (onAttention_) {
+                    onAttention_(Attention::TurnFinished, elapsed);
+                }
                 return;
             }
-            const std::string stopReason = result ? result->value("stopReason", std::string("end")) : std::string("end");
+            const std::string stopReason = result ? StringField(*result, "stopReason", std::string("end")) : std::string("end");
             AppendToOutputBuffer("\n[" + stopReason + "]\n");
             // chat-feel follow-up (2026-08-26): an ordinary completed turn
             // ("end_turn", or "end" -- this method's own fallback for a
@@ -537,8 +987,84 @@ std::string Manager::SendPrompt(const std::string& text, const std::vector<Promp
             if (stopReason != "end_turn" && stopReason != "end") {
                 PushSessionEvent(stopReason);
             }
+            // The next queued prompt goes out once a turn ends on its own. A
+            // cancelled turn holds the queue: the user interrupted, and the
+            // panel hands the queued drafts back to the composer.
+            if (stopReason != "cancelled" && !queuedPrompts_.empty() && state_ == SessionState::Active) {
+                QueuedPrompt next = std::move(queuedPrompts_.front());
+                queuedPrompts_.pop_front();
+                SendPrompt(next.text, next.attachments);
+            }
+            else if (onAttention_ && stopReason != "cancelled") {
+                onAttention_(Attention::TurnFinished, elapsed);
+            }
         });
     return "Sent.";
+}
+
+void Manager::QueuePrompt(QueuedPrompt prompt) {
+    queuedPrompts_.push_back(std::move(prompt));
+}
+
+const std::deque<Manager::QueuedPrompt>& Manager::QueuedPrompts() const {
+    return queuedPrompts_;
+}
+
+std::optional<Manager::QueuedPrompt> Manager::TakeLastQueued() {
+    if (queuedPrompts_.empty()) {
+        return std::nullopt;
+    }
+    QueuedPrompt last = std::move(queuedPrompts_.back());
+    queuedPrompts_.pop_back();
+    return last;
+}
+
+std::vector<Manager::QueuedPrompt> Manager::TakeQueue() {
+    std::vector<QueuedPrompt> all(std::make_move_iterator(queuedPrompts_.begin()), std::make_move_iterator(queuedPrompts_.end()));
+    queuedPrompts_.clear();
+    return all;
+}
+
+bool Manager::SupportsSteering() const {
+    return agentSupportsSteering_;
+}
+
+std::string Manager::Steer(QueuedPrompt prompt) {
+    if (state_ != SessionState::Active || !client_) {
+        return "No active ACP session (see acp-start-session).";
+    }
+    if (!promptInFlight_) {
+        return SendPrompt(prompt.text, prompt.attachments);
+    }
+    if (!agentSupportsSteering_) {
+        QueuePrompt(std::move(prompt));
+        return "This agent can't take a message mid-turn; queued for when it finishes.";
+    }
+    const Json blocks = PromptBlocks(prompt.text, prompt.attachments);
+    client_->SendRequest(
+        "_session/steering",
+        Json{{"sessionId", sessionId_}, {"prompt", blocks}, {"_meta", {{"steering", {{"idleBehavior", "promptRequired"}}}}}},
+        [this, prompt = std::move(prompt)](std::optional<Json> result, std::optional<Json> error) mutable {
+            if (error) {
+                PushSessionEvent("steering failed: " + StringField(*error, "message", std::string("unknown error")) + " -- queued instead");
+                QueuePrompt(std::move(prompt));
+                return;
+            }
+            const std::string outcome = result && result->is_object() ? StringField(*result, "outcome", std::string()) : std::string();
+            if (outcome == "promptRequired") {
+                // The turn ended before the message could join it.
+                if (promptInFlight_) {
+                    QueuePrompt(std::move(prompt));
+                }
+                else {
+                    SendPrompt(prompt.text, prompt.attachments);
+                }
+                return;
+            }
+            AppendToOutputBuffer("\n>> " + prompt.text + "\n");
+            PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::UserMessage, .text = prompt.text, .status = "steered"});
+        });
+    return "Steering.";
 }
 
 std::string Manager::StopSession() {
@@ -675,7 +1201,7 @@ void Manager::WireClient(Client& client) {
     client.SetNotificationHandler("session/update", [this](const Json& params) { HandleSessionUpdate(params); });
 
     client.SetRequestHandler("fs/read_text_file", [this](const Json& params, RespondFn respond) {
-        const std::string pathStr = params.value("path", std::string());
+        const std::string pathStr = StringField(params, "path", std::string());
         std::string       content;
         if (text::Buffer* buffer = bufferList_.FindByPath(pathStr)) {
             content = buffer->Text();
@@ -691,14 +1217,14 @@ void Manager::WireClient(Client& client) {
             content = contentStream.str();
         }
         if (params.contains("line") && params["line"].is_number_integer()) {
-            content = SliceLines(content, params["line"].get<int>(), params.value("limit", -1));
+            content = SliceLines(content, params["line"].get<int>(), params.contains("limit") && params["limit"].is_number_integer() ? params["limit"].get<int>() : -1);
         }
         respond(Json{{"content", content}}, std::nullopt);
     });
 
     client.SetRequestHandler("fs/write_text_file", [this](const Json& params, RespondFn respond) {
-        const std::string pathStr = params.value("path", std::string());
-        const std::string content = params.value("content", std::string());
+        const std::string pathStr = StringField(params, "path", std::string());
+        const std::string content = StringField(params, "content", std::string());
         if (pathStr.empty()) {
             respond(std::nullopt, Json{{"code", 1}, {"message", "missing path"}});
             return;
@@ -757,14 +1283,14 @@ void Manager::WireClient(Client& client) {
     client.SetRequestHandler("session/request_permission", [this](const Json& params, RespondFn respond) {
         PermissionPrompt prompt;
         prompt.description = (params.contains("toolCall") && params["toolCall"].is_object())
-                                 ? params["toolCall"].value("title", params["toolCall"].value("kind", std::string("Permission request")))
+                                 ? StringField(params["toolCall"], "title", StringField(params["toolCall"], "kind", std::string("Permission request")))
                                  : std::string("Permission request");
         if (params.contains("options") && params["options"].is_array()) {
             for (const Json& optionJson : params["options"]) {
                 prompt.options.push_back(PermissionOption{
-                    .optionId = optionJson.value("optionId", std::string()),
-                    .name     = optionJson.value("name", std::string("option")),
-                    .kind     = optionJson.value("kind", std::string()),
+                    .optionId = StringField(optionJson, "optionId", std::string()),
+                    .name     = StringField(optionJson, "name", std::string("option")),
+                    .kind     = StringField(optionJson, "kind", std::string()),
                 });
             }
         }
@@ -794,6 +1320,10 @@ void Manager::WireClient(Client& client) {
         if (onPermissionRequest_) {
             onPermissionRequest_(prompt);
         }
+        if (onAttention_) {
+            onAttention_(Attention::PermissionRequested,
+                         promptStartedAt_ ? std::chrono::steady_clock::now() - *promptStartedAt_ : std::chrono::steady_clock::duration{});
+        }
     });
 
     client.SetOnDisconnected([this](std::string reason) { EndSession("ACP agent disconnected: " + reason); });
@@ -803,12 +1333,17 @@ void Manager::HandleSessionUpdate(const Json& params) {
     if (!params.contains("update") || !params["update"].is_object()) {
         return;
     }
+    // Stray updates for a session this one replaced (a resume) are not ours.
+    if (params.contains("sessionId") && params["sessionId"].is_string() && !sessionId_.empty() &&
+        params["sessionId"].get<std::string>() != sessionId_) {
+        return;
+    }
     const Json&       update = params["update"];
-    const std::string kind   = update.value("sessionUpdate", std::string());
+    const std::string kind   = StringField(update, "sessionUpdate", std::string());
 
     if (kind == "agent_message_chunk" || kind == "agent_thought_chunk" || kind == "user_message_chunk") {
-        if (update.contains("content") && update["content"].is_object() && update["content"].value("type", std::string()) == "text") {
-            const std::string text = update["content"].value("text", std::string());
+        if (update.contains("content") && update["content"].is_object() && StringField(update["content"], "type", std::string()) == "text") {
+            const std::string text = StringField(update["content"], "text", std::string());
             AppendToOutputBuffer(text);
             // user_message_chunk is the agent echoing what SendPrompt
             // already pushed as one clean Kind::UserMessage entry --
@@ -816,7 +1351,21 @@ void Manager::HandleSessionUpdate(const Json& params) {
             // agent_thought_chunk is routed to its own Kind (AgentThought)
             // rather than folded into AgentText -- see TranscriptEntry::Kind's
             // own doc comment.
-            if (kind == "agent_thought_chunk") {
+            if (kind == "user_message_chunk" && replaying_) {
+                // A replayed prompt. Consecutive chunks of one message
+                // coalesce; a new messageId starts the next.
+                const std::string messageId = StringField(update, "messageId", std::string());
+                if (!transcript_.empty() && transcript_.back().kind == TranscriptEntry::Kind::UserMessage && messageId == replayUserMessageId_) {
+                    transcript_.back().text += text;
+                    ++transcriptGeneration_;
+                    NotifyTranscriptChanged();
+                }
+                else {
+                    PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::UserMessage, .text = text});
+                }
+                replayUserMessageId_ = messageId;
+            }
+            else if (kind == "agent_thought_chunk") {
                 PushOrAppendAgentText(TranscriptEntry::Kind::AgentThought, text);
             }
             else if (kind == "agent_message_chunk") {
@@ -826,13 +1375,63 @@ void Manager::HandleSessionUpdate(const Json& params) {
         return;
     }
     if (kind == "tool_call" || kind == "tool_call_update") {
-        const std::string title = update.value("title", update.value("kind", std::string("tool call")));
+        const std::string title = StringField(update, "title", StringField(update, "kind", std::string("tool call")));
         AppendToOutputBuffer("\n[tool: " + title + "]\n");
         PushOrUpdateToolCall(update);
         return;
     }
     if (kind == "plan") {
         PushOrReplacePlan(update);
+        return;
+    }
+    if (kind == "current_mode_update") {
+        const std::string modeId = StringField(update, "currentModeId", std::string());
+        if (!modeId.empty() && modeId != currentModeId_) {
+            ApplyCurrentModeId(modeId);
+            const auto mode = std::find_if(modes_.begin(), modes_.end(), [&modeId](const SessionMode& m) { return m.id == modeId; });
+            PushSessionEvent("mode: " + (mode == modes_.end() ? modeId : mode->name));
+        }
+        return;
+    }
+    if (kind == "available_commands_update") {
+        availableCommands_.clear();
+        const Json commands = update.value("availableCommands", Json::array());
+        for (const Json& command : commands.is_array() ? commands : Json::array()) {
+            if (!command.is_object() || !command.contains("name") || !command["name"].is_string()) {
+                continue;
+            }
+            std::string hint;
+            if (command.contains("input") && command["input"].is_object() && command["input"].contains("hint") &&
+                command["input"]["hint"].is_string()) {
+                hint = command["input"]["hint"].get<std::string>();
+            }
+            availableCommands_.push_back({.name        = command["name"].get<std::string>(),
+                                          .description = StringField(command, "description", std::string()),
+                                          .inputHint   = std::move(hint)});
+        }
+        return;
+    }
+    if (kind == "config_option_update") {
+        ApplyConfigOptions(update.value("configOptions", Json::array()));
+        return;
+    }
+    if (kind == "session_info_update") {
+        if (update.contains("title") && update["title"].is_string()) {
+            sessionTitle_ = update["title"].get<std::string>();
+        }
+        return;
+    }
+    if (kind == "usage_update") {
+        auto count = [&update](const char* key) {
+            return update.contains(key) && update[key].is_number_unsigned() ? update[key].get<std::uint64_t>() : std::uint64_t{0};
+        };
+        Usage usage{.used = count("used"), .size = count("size")};
+        if (update.contains("cost") && update["cost"].is_object() && update["cost"].contains("amount") &&
+            update["cost"]["amount"].is_number()) {
+            usage.costAmount   = update["cost"]["amount"].get<double>();
+            usage.costCurrency = StringField(update["cost"], "currency", std::string("USD"));
+        }
+        usage_ = std::move(usage);
         return;
     }
     // Unrecognized/forward-compatible update kind -- see this class's own
@@ -843,7 +1442,8 @@ void Manager::EndSession(std::string reason) {
     if (state_ == SessionState::Inactive) {
         return; // e.g. disconnect EOF arriving after an explicit StopSession already tore down
     }
-    state_ = SessionState::Inactive;
+    state_     = SessionState::Inactive;
+    replaying_ = false;
     if (promptInFlight_) {
         // A prompt was still outstanding when the session ended out from
         // under it (StopSession mid-turn, or the agent disconnecting) --
@@ -854,7 +1454,18 @@ void Manager::EndSession(std::string reason) {
         editor::EndBackgroundActivity(kAcpActivity);
         FinalizePendingCheckpoint();
     }
+    for (const QueuedPrompt& dropped : queuedPrompts_) {
+        PushSessionEvent("not sent: " + dropped.text);
+    }
+    queuedPrompts_.clear();
     sessionId_.clear();
+    availableCommands_.clear();
+    modes_.clear();
+    currentModeId_.clear();
+    configOptions_.clear();
+    sessionTitle_.clear();
+    usage_.reset();
+    promptStartedAt_.reset();
     pendingPermissionPrompt_.reset();
     pendingPermissionRespond_ = nullptr;
     livePlanEntryIndex_.reset();
@@ -869,9 +1480,14 @@ void Manager::EndSession(std::string reason) {
     client_.reset();
     AppendToOutputBuffer("\n[" + reason + "]\n");
     PushSessionEvent(reason);
+    RunSessionSettledCallbacks();
     if (onSessionEnded_) {
         onSessionEnded_(std::move(reason));
     }
+}
+
+void Manager::SetOnAttention(std::function<void(Attention, std::chrono::steady_clock::duration)> handler) {
+    onAttention_ = std::move(handler);
 }
 
 void Manager::SetOnPermissionRequest(std::function<void(const PermissionPrompt&)> handler) {

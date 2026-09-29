@@ -37,6 +37,7 @@
 #include "AsyncFileSaver.h"
 #include "BufferView.h"
 #include "DebugPanel.h"
+#include "Editor/Acp/PanelPicker.h"
 #include "Editor/Command.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FileWatch.h"
@@ -303,12 +304,12 @@ class WindowManager {
     // over the OverlayHost-owned AcpPanel) lives above this class entirely.
     void SetOnAcpPanelToggle(std::function<void()> onToggle);
 
-    // ACP checkpoint/rewind follow-up: same "forwarded to every pane,
-    // present and future" shape as SetOnAcpPanelToggle immediately above --
-    // acp-rewind can fire from whichever pane has focus, and the handler
-    // (main.cpp's, showing/focusing the OverlayHost-owned AcpPanel and
-    // opening its rewind picker) lives above this class entirely.
-    void SetOnAcpRewindRequest(std::function<void()> onRewind);
+    // Same "forwarded to every pane, present and future" shape as
+    // SetOnAcpPanelToggle immediately above -- the acp-* picker commands
+    // can fire from whichever pane has focus, and the handler (main.cpp's,
+    // showing/focusing AcpPanel and opening the requested picker) lives
+    // above this class entirely.
+    void SetOnAcpPickerRequest(std::function<void(editor::acp::PanelPicker)> onPicker);
 
     // ACP round-1-live-validation follow-up: lets SetAcpManager's own
     // SetOnPermissionRequest wiring below know whether the OverlayHost-owned
@@ -656,6 +657,9 @@ class WindowManager {
     void DispatchGlobalChord(const editor::KeyChord& chord);
 
     void RequestVisitLocation(const std::filesystem::path& path, std::size_t line);
+    // Opens the ACP compose buffer in the focused pane (the first leaf when
+    // no pane has focus) and focuses it -- AcpPanel's C-c '.
+    void RequestAcpCompose(std::string seed, editor::acp::ComposeCallbacks callbacks);
     void RequestDebugPanelTextEntry(std::string label, std::string initialText, std::function<void(std::string)> onAccept);
 
     // named-projects follow-up: same "route to whichever pane is currently
@@ -988,7 +992,7 @@ class WindowManager {
     std::function<void()>                              onTerminalToggle_;          // see SetOnTerminalToggle
     std::function<void()>                              onNewTerminalRequest_;      // see SetOnNewTerminalRequest
     std::function<void()>                              onAcpPanelToggle_;          // see SetOnAcpPanelToggle
-    std::function<void()>                              onAcpRewindRequest_;        // see SetOnAcpRewindRequest
+    std::function<void(editor::acp::PanelPicker)>      onAcpPickerRequest_;        // see SetOnAcpPickerRequest
     std::function<bool()>                              acpPanelFocused_;           // see SetAcpPanelFocusChecker
     std::function<void()>                              onDapConsoleToggle_;        // see SetOnDapConsoleToggle
     std::function<void()>                              onJanetReplToggle_;         // see SetOnJanetReplToggle

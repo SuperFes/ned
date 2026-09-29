@@ -8,7 +8,21 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-338 commands.
+344 commands.
+
+## `acp-compose-abort`
+
+Close *acp compose* without sending it (bound C-c C-k in *acp compose*).
+
+## `acp-compose-finish`
+
+Send the prompt being composed to the ACP agent (bound C-c C-c in *acp compose*).
+
+## `acp-resume-session`
+
+Key: `C-c A l`
+
+Resume an earlier ACP session, replaying its conversation into the panel.
 
 ## `acp-rewind`
 
@@ -21,6 +35,24 @@ Rewind the ACP conversation and its file edits to before an earlier turn.
 Key: `C-c A p`
 
 Send a message to the active ACP session.
+
+## `acp-set-mode`
+
+Key: `C-c A m`
+
+Pick the ACP session's mode (e.g. ask before edits, accept edits, plan).
+
+## `acp-set-model`
+
+Key: `C-c A M`
+
+Pick the model the ACP session uses.
+
+## `acp-set-option`
+
+Key: `C-c A o`
+
+Change one of the ACP session's settings (mode, model, effort, ...).
 
 ## `acp-start-session`
 

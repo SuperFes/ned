@@ -166,6 +166,34 @@ Event ArrowRightCtrl() {
     input.modifiers |= NCKEY_MOD_CTRL;
     return FromInput(input);
 }
+namespace {
+    Event WithModifiers(uint32_t key, unsigned modifiers) {
+        ncinput input = SpecialInput(key);
+        input.modifiers |= modifiers;
+        return FromInput(input);
+    }
+} // namespace
+Event ArrowUpAlt() {
+    return WithModifiers(NCKEY_UP, NCKEY_MOD_ALT);
+}
+Event ArrowDownAlt() {
+    return WithModifiers(NCKEY_DOWN, NCKEY_MOD_ALT);
+}
+Event HomeCtrl() {
+    return WithModifiers(NCKEY_HOME, NCKEY_MOD_CTRL);
+}
+Event EndCtrl() {
+    return WithModifiers(NCKEY_END, NCKEY_MOD_CTRL);
+}
+Event ReturnAlt() {
+    return WithModifiers(NCKEY_ENTER, NCKEY_MOD_ALT);
+}
+Event ReturnShift() {
+    return WithModifiers(NCKEY_ENTER, NCKEY_MOD_SHIFT);
+}
+Event ReturnCtrl() {
+    return WithModifiers(NCKEY_ENTER, NCKEY_MOD_CTRL);
+}
 Event ArrowUpCtrl() {
     ncinput input = SpecialInput(NCKEY_UP);
     input.modifiers |= NCKEY_MOD_CTRL;

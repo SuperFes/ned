@@ -39,11 +39,14 @@
 #define NED_EDITOR_ACP_MANAGER_H
 
 #include <chrono>
+#include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -96,6 +99,12 @@ class Manager {
     // SetDiagnostics precedent, since a "plan" or "tool_call_update" is a
     // fresh authoritative snapshot of that one plan/tool-call, not an
     // independent new event.
+    struct ToolLocation {
+        std::string path;
+        // As sent. The schema doesn't state a base; Zed, the reference
+        // client, reads it as 0-based, and so does ned.
+        std::optional<std::size_t> line;
+    };
     struct TranscriptEntry {
         // ACP chat-feel round 2: AgentThought is its own Kind, not a bool
         // tacked onto AgentText -- session/update's agent_thought_chunk and
@@ -127,6 +136,16 @@ class Manager {
         // attempted here.
         std::optional<std::string> diffOldText;
         std::optional<std::string> diffNewText;
+        // Kind::ToolCall only. The ACP tool kind ("read", "edit",
+        // "execute", ...), the files it touches, a one-line summary of its
+        // input (a shell command, a path, a pattern), and the text it
+        // produced -- capped, since a tool's output can be arbitrarily
+        // large. Each is replaced wholesale by an update that carries it,
+        // like title/status.
+        std::string               toolKind;
+        std::vector<ToolLocation> locations;
+        std::string               toolInput;
+        std::string               toolOutput;
     };
     [[nodiscard]] const std::vector<TranscriptEntry>& Transcript() const;
     // Bumped on every Transcript()-affecting mutation -- cheap change
@@ -149,6 +168,81 @@ class Manager {
     // returns.
     text::Buffer* StartSession(const std::string& agentName);
 
+    // Session settings the agent advertises: its modes (session/new's
+    // `modes`) and config options (`configOptions` -- mode, model, effort,
+    // ...), kept current by current_mode_update/config_option_update. An
+    // agent may send either or both; a "mode"-category config option and
+    // the modes list describe the same setting.
+    struct SessionMode {
+        std::string id;
+        std::string name;
+        std::string description;
+    };
+    struct ConfigChoice {
+        std::string value;
+        std::string name;
+        std::string description;
+    };
+    struct ConfigOption {
+        std::string               id;
+        std::string               name;
+        std::string               description;
+        std::string               category;     // "mode", "model", "thought_level", ... -- may be empty
+        std::string               type;         // "select" or "boolean"
+        std::string               currentValue; // a boolean's is "true"/"false"
+        std::vector<ConfigChoice> choices;      // "select" only
+    };
+    struct Usage {
+        std::uint64_t         used = 0; // context tokens in use
+        std::uint64_t         size = 0; // context window
+        std::optional<double> costAmount;
+        std::string           costCurrency;
+    };
+    [[nodiscard]] const std::vector<SessionMode>&  Modes() const;
+    [[nodiscard]] const std::string&               CurrentModeId() const;
+    [[nodiscard]] const std::vector<ConfigOption>& ConfigOptions() const;
+    // The first config option in `category`, if the agent offers one.
+    [[nodiscard]] const ConfigOption* ConfigOptionByCategory(std::string_view category) const;
+    // session_info_update's title; empty until the agent names the session.
+    [[nodiscard]] const std::string&          SessionTitle() const;
+    [[nodiscard]] const std::optional<Usage>& SessionUsage() const;
+    // When the in-flight prompt was sent; nullopt when none is.
+    [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> PromptStartedAt() const;
+
+    // Switches the session's mode through the "mode" config option when the
+    // agent offers one, session/set_mode otherwise. The new state lands when
+    // the agent answers. Returns a short status for the echo area.
+    std::string SetMode(const std::string& modeId);
+    // session/set_config_option; `value` is a choice's value, or
+    // "true"/"false" for a boolean.
+    std::string SetConfigOption(const std::string& configId, const std::string& value);
+    // The mode after the current one, wrapping. Skips "bypassPermissions":
+    // cycling is a quick, repeated keystroke, and landing on a mode that
+    // silently stops asking before edits and commands shouldn't be one
+    // press away. It stays selectable through SetMode.
+    std::string CycleMode();
+
+    // Earlier sessions the agent can resume (session/list, scoped to the
+    // project root). `updatedAt` is the agent's ISO 8601 timestamp, as sent.
+    struct SessionSummary {
+        std::string sessionId;
+        std::string title;
+        std::string updatedAt;
+    };
+    // The session this connection is on; empty when none is.
+    [[nodiscard]] const std::string& SessionId() const;
+    // Whether the agent can both list its sessions and load or resume one.
+    [[nodiscard]] bool CanResumeSessions() const;
+    // Calls `done` with the sessions, or with a user-facing error. Asked
+    // while the session is still starting, it answers once that settles.
+    void ListSessions(std::function<void(std::vector<SessionSummary> sessions, std::string error)> done);
+    // Switches this connection to an earlier session: session/load when the
+    // agent supports it, which replays the conversation into the transcript
+    // as ordinary session/update notifications, session/resume (no replay)
+    // otherwise. Replayed turns have no checkpoints, so rewind can't reach
+    // them. Returns a short status for the echo area.
+    std::string LoadSession(const std::string& sessionId, const std::string& title);
+
     // ACP context auto-attach follow-up: one piece of referenced context
     // (a buffer's full text, a selection) carried alongside a prompt's own
     // typed text. `uri` is a "file://<path>" for a file-backed buffer or a
@@ -162,7 +256,22 @@ class Manager {
         std::string name;
         std::string mimeType;
         std::string text;
+        // A reference the agent reads itself (ContentBlock::resource_link,
+        // which every agent must accept) rather than content carried in the
+        // prompt; `text` is unused. The prompt's own text already names it
+        // (an "@path" mention), so it isn't listed in the transcript's
+        // "[attached: ...]" marker.
+        bool link = false;
     };
+
+    // The slash commands the agent accepts (available_commands_update),
+    // sent as ordinary prompt text beginning with "/name".
+    struct AvailableCommand {
+        std::string name;
+        std::string description;
+        std::string inputHint; // empty when the command takes no input
+    };
+    [[nodiscard]] const std::vector<AvailableCommand>& AvailableCommands() const;
 
     // Sends session/prompt for the active session. Returns a short,
     // immediate status string ("Sent." or an explanation of why not) for
@@ -186,6 +295,32 @@ class Manager {
     // attachment's own distinct rendering (a file chip vs. inlined text) on
     // an agent that can't do better.
     std::string SendPrompt(const std::string& text, const std::vector<PromptAttachment>& attachments = {});
+
+    // A prompt held back until the in-flight turn ends. `draft` is the
+    // composer text it came from (mentions unresolved), for handing it back
+    // to the composer to edit.
+    struct QueuedPrompt {
+        std::string                   text;
+        std::vector<PromptAttachment> attachments;
+        std::string                   draft;
+    };
+    // Queued prompts go out one per turn, in order, each once the previous
+    // turn ends -- except after a cancelled turn, which holds the queue.
+    // Ending the session drops them, each noted in the transcript.
+    void                                          QueuePrompt(QueuedPrompt prompt);
+    [[nodiscard]] const std::deque<QueuedPrompt>& QueuedPrompts() const;
+    std::optional<QueuedPrompt>                   TakeLastQueued();
+    std::vector<QueuedPrompt>                     TakeQueue();
+
+    // Whether the agent accepts a message mid-turn (claude-agent-acp's
+    // `_session/steering` extension, advertised as _meta.steering.supported
+    // in its initialize response).
+    [[nodiscard]] bool SupportsSteering() const;
+    // Adds `prompt` to the running turn, for the agent to read at its next
+    // step. No turn running: sent as an ordinary prompt. No steering
+    // support, or the turn ended first: queued. A steered message is a
+    // UserMessage entry whose status is "steered". Returns a short status.
+    std::string Steer(QueuedPrompt prompt);
 
     // Best-effort session/close, then tears the session down regardless
     // (Manager::StopSession's own "must not depend on the agent
@@ -333,6 +468,14 @@ class Manager {
     // queries -- nullopt when nothing is currently pending.
     [[nodiscard]] const std::optional<PermissionPrompt>& PendingPermissionPrompt() const;
 
+    // Moments the user may want pulling back to the panel: the agent
+    // finished (the last queued prompt included -- not between queued
+    // turns), or it's blocked on a permission decision. `turnElapsed` is
+    // how long the turn had been running.
+    enum class Attention { TurnFinished,
+                           PermissionRequested };
+    void SetOnAttention(std::function<void(Attention attention, std::chrono::steady_clock::duration turnElapsed)> handler);
+
     // The session ended for any reason -- agent disconnect/crash, a failed
     // handshake step, or StopSession. reason is short, user-facing text
     // (also appended to the output buffer, so this is purely for a status
@@ -396,11 +539,37 @@ class Manager {
     // PromptAttachment/SendPrompt's own doc comments.
     bool agentSupportsEmbeddedContext_ = false;
 
+    Json               McpServers();
+    [[nodiscard]] Json PromptBlocks(const std::string& text, const std::vector<PromptAttachment>& attachments) const;
+    void               RunSessionSettledCallbacks();
+    void               ParseSessionSettings(const Json& result);
+    void               ApplyConfigOptions(const Json& options);
+    void               ApplyCurrentModeId(std::string modeId);
+
+    bool                     agentSupportsSteering_ = false;
+    std::deque<QueuedPrompt> queuedPrompts_;
+    bool                     agentSupportsLoadSession_  = false;
+    bool                     agentSupportsListSessions_ = false;
+    bool                     agentSupportsResume_       = false;
+    // True between session/load and its response: user_message_chunk is
+    // then a replayed prompt rather than an echo of one SendPrompt pushed.
+    bool                                                 replaying_ = false;
+    std::string                                          replayUserMessageId_;
+    std::vector<std::function<void()>>                   whenSessionSettles_; // see ListSessions
+    std::vector<AvailableCommand>                        availableCommands_;
+    std::vector<SessionMode>                             modes_;
+    std::string                                          currentModeId_;
+    std::vector<ConfigOption>                            configOptions_;
+    std::string                                          sessionTitle_;
+    std::optional<Usage>                                 usage_;
+    std::optional<std::chrono::steady_clock::time_point> promptStartedAt_;
+
     std::optional<PermissionPrompt> pendingPermissionPrompt_;
     RespondFn                       pendingPermissionRespond_;
 
     std::function<void(const PermissionPrompt&)> onPermissionRequest_;
     std::function<void(std::string)>             onSessionEnded_;
+    std::function<void(Attention, std::chrono::steady_clock::duration)> onAttention_;
 
     std::vector<TranscriptEntry> transcript_;
     std::size_t                  transcriptGeneration_ = 0;

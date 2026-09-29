@@ -977,15 +977,18 @@ Shipped here — see `git log --grep=ACP` for the panel's own long tail (interru
 spinner, thought/text split, streaming debounce, collapsed tool calls, composer
 word-motion/history, auto-reconnect, word-wrap, checkpoint/rewind, Markdown rendering,
 @-mention autocomplete) and `--grep=panel-dock` for the tabbed bottom dock that now hosts
-Terminal/ACP/Debug Console on one tab strip.
+Terminal/ACP/Debug Console on one tab strip. The panel-ergonomics batch (slug for
+`git log --grep=`: `acp-panel-batch`) added tail-following scrollback, collapsible tool
+calls/thinking, session modes/config options/usage, slash-command completion,
+`resource_link` file mentions, `session/list`+`load` resume, prompt queueing and
+`_session/steering`, a multi-line composer plus the `*acp compose*` buffer, and
+desktop notifications.
 
 - [ ] **AI-assisted editing (ACP) gaps** (validated live 2026-08-26 against Claude
-      Code's own ACP adapter): no scrollback in the panel; `terminal/*`
-      tool-call support and `elicitation/create` structured forms are undeclared as
-      client capabilities; no multiple concurrent agents/sessions (still one at a time,
-      `Dap/`'s own precedent); no `session/load` history replay;
-      `session/set_config_option`/`session/set_mode` aren't surfaced to the user; no
-      per-agent environment-variable override (`ChildProcess`'s `posix_spawn` always forwards the
+      Code's own ACP adapter): `terminal/*` tool-call support and `elicitation/create`
+      structured forms are undeclared as client capabilities; no multiple concurrent
+      agents/sessions (still one at a time, `Dap/`'s own precedent); no per-agent
+      environment-variable override (`ChildProcess`'s `posix_spawn` always forwards the
       parent's global `environ`); no per-agent "character" (display-name/accent color).
       Separately: `Keymap::AmbiguousBindings()` is diagnostic-only (a
       `CommandsTest.cpp` regression test), not enforcement — `Keymap::Bind` still lets a
@@ -993,6 +996,22 @@ Terminal/ACP/Debug Console on one tab strip.
       own `define-key` semantics: reject/restructure a bind that would shadow an
       existing command) would change `Bind`'s signature across every call site
       including `ned/define-key`.
+- [ ] **ACP panel, next batch** — ranked by the 2026-09-29 survey of Claude Code/Zed/
+      Cursor/agent-shell issue trackers: **review a turn's changes** (multi-file keep/undo
+      per hunk in a multibuffer, built on `Manager::Checkpoint`'s file records -- the
+      highest-demand item left); fenced code blocks syntax-highlighted through the
+      block's language `Mode`, and Markdown tables; live Bash output (claude-agent-acp's
+      `_meta.terminal_info`/`terminal_output_delta`, opted into with
+      `clientCapabilities._meta.terminal_output`); follow-the-agent (jump to a running
+      tool call's `locations`); copy a message or code block; image paste (`image`
+      blocks -- the adapter advertises `promptCapabilities.image`).
+- [ ] Batch-1 limits, each deliberate: replayed turns (`session/load`) carry no
+      checkpoints, so rewind can't reach them; resume needs the agent's
+      `sessionCapabilities.list` (no ned-side session history to fall back on); the
+      desktop notification can't see terminal focus (ned doesn't track it), so it fires
+      when the panel is unfocused or the turn ran 20 s or more; `C-RET`/`S-RET` need a
+      terminal that reports those modifiers on Enter (kitty keyboard protocol); `C-c C-s`
+      (steer) and `M-RET` (newline) work everywhere.
 - [ ] **Known rough edge**: a right-docked `AcpPanel`'s resize handle has no visually
       reserved border the way `ProjectSidebar`'s divider column does (right-dock mode
       stays a fully separate, byte-for-byte-unchanged standalone overlay from the
@@ -1277,6 +1296,13 @@ Ideas worth remembering but not worth scoping yet — too undecided for "Open It
 not disliked enough for "Won't do". Promote or delete on revisit rather than letting
 these accumulate detail in place.
 
+- [ ] **ACP panel extras past the next batch** (from the same 2026-09-29 survey): fork a
+      session (`session/fork`, unstable in the spec); elicitation forms
+      (`elicitation/create`, still an RFD); parallel sessions with a thread list; a
+      compaction view (`compaction_update`, unstable); a subagent tree from tool calls'
+      `_meta.claudeCode.parentToolUseId`; PR-style review comments on an agent's diff fed
+      back as a prompt; transcript search and timestamps. Justified each when the spec
+      side stabilizes or the next-batch items are in daily use and this is what's missed.
 - [ ] **Android device tooling.** Editing, building and testing an Android project
       works today via Java/Kotlin modes, the task runner (`ned/set-task-command` pointed
       at `./gradlew ...`) and XML mode for layout files. `adb logcat` streaming and a

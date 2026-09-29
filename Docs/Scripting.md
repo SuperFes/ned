@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-236 bindings.
+239 bindings.
 
 ## `ned/auto-header-guard-enabled`
 
@@ -217,6 +217,10 @@ Set the command used to launch an Agent Client Protocol (ACP) coding agent: (nam
 
 Enable/disable advertising ned's own MCP tool-server bridge (get_diagnostics/hover/goto_definition/find_references/git_status/git_diff/search_project/run_tests/get_test_results) to an ACP agent on session start (default true). Off falls back to sending an empty mcpServers list, as if no bridge were wired at all.
 
+## `ned/set-acp-notify-command`
+
+Set the command the ACP panel runs to raise a desktop notification when a turn finishes or the agent is waiting on a permission decision while you're looking elsewhere (the panel unfocused, or a turn that ran 20 seconds or more). The title and body are appended as two more arguments, run without a shell. Default ["notify-send" "-a" "ned"]; an empty list turns notifications off.
+
 ## `ned/set-acp-panel-dock`
 
 Dock the ACP chat panel at the "bottom" (default) or "right" edge. Any other value is ignored. Takes effect on the next resize or panel show.
@@ -224,6 +228,14 @@ Dock the ACP chat panel at the "bottom" (default) or "right" edge. Any other val
 ## `ned/set-acp-panel-size-percent`
 
 Set how much of the screen the ACP chat panel covers, as a percentage (default 30, clamped to 15-70) -- height when docked at the bottom, width when docked at the right.
+
+## `ned/set-acp-thinking`
+
+How the ACP panel shows the agent's thinking: "collapsed" (default) -- a one-line summary, click or C-o to read it -- "expanded", or "hidden". Any other value is ignored.
+
+## `ned/set-acp-tool-calls`
+
+How the ACP panel shows tool calls: "collapsed" (default) -- one line each, click or C-o to see the command, files, diff and output -- or "expanded", always showing them. Any other value is ignored.
 
 ## `ned/set-async-load-threshold`
 

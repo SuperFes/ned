@@ -32,7 +32,9 @@
 
 #include "ActiveBuffer.h"
 #include "DebugPanel.h"
+#include "Editor/Acp/Compose.h"
 #include "Editor/Acp/Manager.h"
+#include "Editor/Acp/PanelPicker.h"
 #include "Editor/Backup.h"
 #include "Editor/ClassFileSync.h"
 #include "Editor/CodeFold.h"
@@ -275,6 +277,14 @@ class BufferView : public Widget {
     // not start a second prompt of its own: the session teardown that
     // follows every accept would cancel it immediately.
     void BeginDebugPanelTextEntry(std::string label, std::string initialText, std::function<void(std::string)> onAccept);
+
+    // Opens the ACP compose buffer (Editor/Acp/Compose.h) in this pane --
+    // `seed` as its text when it's created, its existing draft otherwise --
+    // with `callbacks` answering its C-c C-c / C-c C-k.
+    void BeginAcpCompose(std::string seed, editor::acp::ComposeCallbacks callbacks);
+    // acp-compose-finish/acp-compose-abort: closes the compose buffer and
+    // hands its text to the panel (send) or tells it the user backed out.
+    void FinishAcpCompose(bool send);
 
     // VCS side panel: starts an existing VCS interactive flow (commit
     // compose / branch switch / branch create) on this pane -- the same
@@ -781,13 +791,12 @@ class BufferView : public Widget {
     // a safe no-op.
     void SetOnAcpPanelToggle(std::function<void()> handler);
 
-    // ACP checkpoint/rewind follow-up: acp-rewind's forwarding hook, same
-    // shape as SetOnAcpPanelToggle immediately above -- the picker itself
-    // lives in AcpPanel (another OverlayHost overlay owned by main.cpp's
-    // composition), wired via WindowManager::SetOnAcpRewindRequest fanning
-    // out to every pane. Unset is a safe no-op (reported via statusMessage_
-    // instead, see the InteractiveRequest::AcpRewind case).
-    void SetOnAcpRewindRequest(std::function<void()> handler);
+    // The forwarding hook for the acp-* commands that open one of
+    // AcpPanel's pickers (rewind, mode, model, options, sessions), same
+    // shape as SetOnAcpPanelToggle immediately above -- the pickers live in
+    // AcpPanel, wired via WindowManager::SetOnAcpPickerRequest fanning out
+    // to every pane. Unset is a safe no-op.
+    void SetOnAcpPickerRequest(std::function<void(editor::acp::PanelPicker)> handler);
 
     // DAP round 2: dap-toggle-console's forwarding hook, same shape and
     // reasoning as SetOnAcpPanelToggle immediately above -- the debug
@@ -4225,7 +4234,7 @@ class BufferView : public Widget {
     std::function<void()>                              onTerminalToggle_;      // see SetOnTerminalToggle
     std::function<void()>                              onNewTerminalRequest_;  // see SetOnNewTerminalRequest
     std::function<void()>                              onAcpPanelToggle_;      // see SetOnAcpPanelToggle
-    std::function<void()>                              onAcpRewindRequest_;    // see SetOnAcpRewindRequest
+    std::function<void(editor::acp::PanelPicker)>                  onAcpPickerRequest_;    // see SetOnAcpPickerRequest
     std::function<void()>                              onDapConsoleToggle_;    // see SetOnDapConsoleToggle
     std::function<void()>                              onJanetReplToggle_;     // see SetOnJanetReplToggle
     std::function<void(const std::string&)>            onRunReplRequest_;      // see SetOnRunReplRequest

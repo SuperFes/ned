@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "Editor/Acp/Config.h"
+#include "Editor/Acp/Notify.h"
 #include "Editor/Acp/PanelConfig.h"
 #include "Editor/AutoFormatOnSave.h"
 #include "Editor/AutoMerge.h"
@@ -1118,6 +1119,18 @@ namespace {
     // covers, mirroring NedSetTerminalHeightPercent's own shape.
     void NedSetAcpPanelDock(std::string side) {
         editor::acp::SetAcpPanelDock(side);
+    }
+
+    void NedSetAcpToolCalls(std::string display) {
+        editor::acp::SetAcpToolCallDisplay(display);
+    }
+
+    void NedSetAcpThinking(std::string display) {
+        editor::acp::SetAcpThinkingDisplay(display);
+    }
+
+    void NedSetAcpNotifyCommand(std::vector<std::string> argv) {
+        editor::acp::SetAcpNotifyCommand(std::move(argv));
     }
 
     void NedSetAcpPanelSizePercent(std::int64_t percent) {
@@ -2562,6 +2575,20 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-acp-panel-dock",
         "Dock the ACP chat panel at the \"bottom\" (default) or \"right\" edge. Any other value is ignored. Takes "
         "effect on the next resize or panel show.");
+    env.Register<&NedSetAcpToolCalls>(
+        "ned", "set-acp-tool-calls",
+        "How the ACP panel shows tool calls: \"collapsed\" (default) -- one line each, click or C-o to see the "
+        "command, files, diff and output -- or \"expanded\", always showing them. Any other value is ignored.");
+    env.Register<&NedSetAcpNotifyCommand>(
+        "ned", "set-acp-notify-command",
+        "Set the command the ACP panel runs to raise a desktop notification when a turn finishes or the agent is "
+        "waiting on a permission decision while you're looking elsewhere (the panel unfocused, or a turn that ran "
+        "20 seconds or more). The title and body are appended as two more arguments, run without a shell. Default "
+        "[\"notify-send\" \"-a\" \"ned\"]; an empty list turns notifications off.");
+    env.Register<&NedSetAcpThinking>(
+        "ned", "set-acp-thinking",
+        "How the ACP panel shows the agent's thinking: \"collapsed\" (default) -- a one-line summary, click or C-o "
+        "to read it -- \"expanded\", or \"hidden\". Any other value is ignored.");
     env.Register<&NedSetAcpPanelSizePercent>(
         "ned", "set-acp-panel-size-percent",
         "Set how much of the screen the ACP chat panel covers, as a percentage (default 30, clamped to 15-70) -- "

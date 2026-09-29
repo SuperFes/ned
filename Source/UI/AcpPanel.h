@@ -8,12 +8,11 @@
 // opaque title row (agent name + state + [x] close) over content rows over
 // one input row.
 //
-// Deliberate v1 cut: permission-prompt *resolution* keystrokes stay in the
-// already-shipped BufferView flow (InputMode::AcpPermissionPrompt) -- this
-// panel only *displays* the pending prompt (Manager::PendingPermissionPrompt())
-// read-only. Also no scrollback (TerminalPanel's own documented v1 cut, same
-// status here): the content rows show only the tail of the transcript that
-// fits.
+// Transcript formatting and the scroll model live in AcpPanel/. The
+// transcript follows its tail until scrolled away from it (wheel,
+// PageUp/PageDown, C-Home/C-End, M-Up/M-Down between prompts); new output
+// never moves a scrolled-back view, and a "↓ N more" marker says what's
+// below.
 //
 
 #ifndef NED_UI_ACPPANEL_H
@@ -21,14 +20,22 @@
 
 #include <chrono>
 #include <cstddef>
+#include <filesystem>
 #include <functional>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
 
+#include "AcpPanel/ChoicePicker.h"
+#include "AcpPanel/TranscriptFormat.h"
+#include "AcpPanel/TranscriptScroll.h"
 #include "ActiveBuffer.h"
+#include "Editor/Acp/Compose.h"
 #include "Editor/Acp/Manager.h"
+#include "Editor/Acp/PanelConfig.h"
+#include "Editor/Acp/PanelPicker.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/MinibufferPrompt.h"
 #include "Theme.h"
@@ -86,19 +93,40 @@ class AcpPanel : public Widget {
     // TerminalPanel::SetOnToggleRequest exactly.
     void SetOnToggleRequest(std::function<void()> onToggle);
 
+    // Invoked when a tool call's location line is clicked; main.cpp opens
+    // the file in an editor pane. `line` is 1-based.
+    void SetOnOpenLocation(std::function<void(const std::filesystem::path& path, std::size_t line)> onOpenLocation);
+
+    // C-c ' hands the composer's text to this (main.cpp: WindowManager::
+    // RequestAcpCompose) to continue in a full editing buffer; sending from
+    // there submits it through the composer, cancelling refocuses the panel
+    // with its text untouched.
+    void SetOnComposeRequest(std::function<void(std::string seed, editor::acp::ComposeCallbacks callbacks)> onCompose);
+    // Invoked after the compose buffer is finished either way, to bring the
+    // panel back -- main.cpp's show-and-focus.
+    void SetOnRefocusRequest(std::function<void()> onRefocus);
+
+    // Manager::SetOnAttention's handler (main.cpp wires it). Unless the
+    // panel has focus, marks the title with "● " until it does; and raises
+    // a desktop notification through the notifier when the panel isn't
+    // focused or the turn ran long enough that the user has likely looked
+    // away (kLongTurn).
+    void NoteAttention(editor::acp::Manager::Attention attention, std::chrono::steady_clock::duration turnElapsed);
+    // What NoteAttention notifies through; main.cpp passes
+    // acp::SendDesktopNotification. Unset is a safe no-op.
+    void SetDesktopNotifier(std::function<void(const std::string& title, const std::string& body)> notifier);
+
     // This tab's dynamic label for PanelDock's shared tab strip (dock-hosted
     // mode only, but harmless to call either way): "<agent name> [<state>]",
     // the exact text this panel's own title row draws in standalone mode.
     [[nodiscard]] std::string TitleText() const;
 
-    // ACP checkpoint/rewind follow-up: main.cpp's SetOnAcpRewindRequest
-    // wiring calls this after showing/focusing the panel (acp-rewind, C-c A
-    // r). Replaces the transcript view with a numbered list of past turns
-    // (FormatRewindPicker) built from Manager::CheckpointCount()/
-    // CheckpointAt() -- a digit 1-9 rewinds to that turn (Manager::
-    // RewindTo) and closes the picker; Escape cancels with no effect. A
-    // no-op if no Manager is set.
-    void OpenRewindPicker();
+    // Replaces the transcript view with one of the pickers (see
+    // acppanel::ChoicePicker): past turns to rewind to, the session's modes,
+    // its models, its config options, or earlier sessions to resume.
+    // main.cpp's SetOnAcpPickerRequest wiring calls this after
+    // showing/focusing the panel. A no-op if no Manager is set.
+    void OpenPicker(editor::acp::PanelPicker picker);
 
     // ACP chat-feel round 2 -- panel resize/minimize follow-up. Collapsed()
     // shrinks the panel to a thin title-only strip (ProjectSidebar's own
@@ -134,92 +162,39 @@ class AcpPanel : public Widget {
     }
 
   private:
-    // ACP round-1-live-validation follow-up: Accent/Hint widen this past the
-    // original three buckets so an agent's own words (Accent) and its plan
-    // steps (Hint) read as visually distinct from a plain UserMessage echo,
-    // not flattened into the same Plain style -- a small, low-risk step
-    // toward the transcript reading as less generic/interchangeable across
-    // entry kinds. See ROADMAP.md's "AI-assisted editing (ACP) gaps" for the
-    // bigger, deliberately-not-attempted-yet ideas this doesn't cover
-    // (per-agent theming, distinguishing agent_thought_chunk).
-    // diff-preview-line-diff-utility follow-up: DiffAdded/DiffRemoved paint
-    // Theme::diffAddedBackground/diffRemovedBackground -- the exact same
-    // background-tint-only (foreground untouched) treatment BufferView's own
-    // VCS diff gutter already uses for these two colors, reused here rather
-    // than inventing a second visual language for "this line was
-    // added/removed."
-    enum class DisplayStyle { Plain,
-                              Dim,
-                              Warning,
-                              Accent,
-                              Hint,
-                              DiffAdded,
-                              DiffRemoved };
+    using DisplayStyle = acppanel::DisplayStyle;
+    using DisplayLine  = acppanel::DisplayLine;
+    using InlineSpan   = acppanel::InlineSpan;
 
-    // ACP Markdown rendering follow-up: a byte range of a *plain, already
-    // markup-stripped* DisplayLine::text carrying styling beyond
-    // DisplayLine::style itself. startColumn/columnCount are codepoint
-    // columns (WordWrap/PaintUtf8Row's own convention), so a span survives
-    // being re-based onto whichever WrappedRow it lands in after word-wrap
-    // (see SpansForRow). `code` paints a subtle Theme::
-    // documentHighlightBackground tint over the existing foreground rather
-    // than picking a new foreground outright -- that field's own doc
-    // comment's "keep the glyph foreground, overlay only" contract.
-    struct InlineSpan {
-        int  startColumn;
-        int  columnCount;
-        bool bold;
-        bool code;
-    };
-    struct DisplayLine {
-        std::string             text;
-        DisplayStyle            style;
-        std::vector<InlineSpan> spans;
-    };
-    struct InlineMarkdownResult {
-        std::string             text;
-        std::vector<InlineSpan> spans;
-    };
-
-    // Strips **bold**/`code` markup and a leading "- "/"* "/"+ " bullet
-    // marker from one logical line of agent-authored text, returning the
-    // plain text plus the spans marking what to restyle. Only called for
-    // Kind::AgentText/AgentThought/Plan lines (FormatTranscript's own call
-    // sites) -- deliberately not run over structural lines this panel
-    // itself writes (UserMessage's "> " prefix, ToolCall's "* "/status
-    // marker, Permission/SessionEvent chrome), since those aren't Markdown
-    // and running this over them would mis-render their own literal
-    // "* "/backtick-free punctuation. No nesting, no escapes, unmatched
-    // delimiters pass through literally -- deliberately lightweight per
-    // ROADMAP.md's own framing of this item.
-    [[nodiscard]] static InlineMarkdownResult ApplyInlineMarkdown(std::string_view raw);
-    // Re-bases `spans` (a logical DisplayLine's own plain-text column space)
-    // onto one WrappedRow's local [0, rowColumnCount) space, clipping
-    // anything that doesn't overlap this row at all.
-    [[nodiscard]] static std::vector<InlineSpan> SpansForRow(const std::vector<InlineSpan>& spans, int rowStartColumn, int rowColumnCount);
     // PaintUtf8Row's multi-segment sibling: paints `text` in `baseBrush`
-    // except where `spans` says otherwise (bold / a documentHighlightBackground
-    // tint for inline code). Falls back to a single PaintUtf8Row call when
-    // spans is empty -- the common case for every non-agent-authored line.
+    // except where `spans` restyle it (bold, or a documentHighlightBackground
+    // tint for inline code).
     void PaintStyledRow(Canvas& canvas, int x, int y, std::string_view text, const std::vector<InlineSpan>& spans, const Brush& baseBrush,
                         int maxColumns) const;
 
-    [[nodiscard]] std::vector<DisplayLine> FormatTranscript(int width) const;
-    // ACP checkpoint/rewind follow-up: rewindPickerOpen_'s own content,
-    // same DisplayLine/word-wrap pipeline FormatTranscript's result already
-    // flows through (Paint()'s content-row loop doesn't care which one fed
-    // it). Ignores `width` today (no line here is ever long enough to need
-    // it) -- kept as a parameter to match FormatTranscript's own signature.
-    [[nodiscard]] std::vector<DisplayLine> FormatRewindPicker(int width) const;
-    // diff-preview-line-diff-utility follow-up: a compact +/- unified-diff
-    // rendering (Text/LineDiff.h's UnifiedDiff) shared by Kind::ToolCall's
-    // own diff sub-lines and the Permission entry's pending-prompt diff --
-    // both carry the exact same {oldText, newText} shape (Manager::
-    // TranscriptEntry / PermissionPrompt's own doc comments). Capped at
-    // kMaxDiffPreviewLines with a FormatMentionPicker-style "(N more...)"
-    // tail beyond that, so one large edit can't push the rest of the
-    // transcript off-panel.
-    [[nodiscard]] std::vector<DisplayLine> FormatDiffPreview(const std::string& oldText, const std::string& newText) const;
+    // A picker over one config option's values; nullptr opens one saying
+    // the agent offers no such setting.
+    [[nodiscard]] acppanel::ChoicePicker ConfigValuePicker(const editor::acp::Manager::ConfigOption* option,
+                                                           std::string_view                          missing);
+    // The row between transcript and composer: mode/model/effort on the
+    // left, the in-flight timer, context use and cost on the right. Empty
+    // when there's nothing to show, which gives the row back.
+    [[nodiscard]] std::pair<std::string, std::string> StatusLine() const;
+    // The wrapped transcript rows, rebuilt only when the transcript, the
+    // pending permission prompt or the width changed since the last frame.
+    [[nodiscard]] const std::vector<acppanel::PhysicalLine>& TranscriptRows(int width);
+    // Rows the transcript area gets this frame -- what PageUp/PageDown and
+    // the scroll keys measure against between frames.
+    [[nodiscard]] int TranscriptViewportRows() const;
+    // Whether transcript entry `index` currently shows its details -- see
+    // TranscriptFormatOptions::expanded.
+    [[nodiscard]] bool EntryExpanded(std::size_t index) const;
+    // Runs the LineAction of the transcript row painted at panel-local row y.
+    // Returns false when that row has none.
+    bool ActivateRowAt(int y);
+    // Scrolls to the previous (direction < 0) or next UserMessage entry
+    // relative to the current top row.
+    void                                   JumpToPrompt(int direction);
     [[nodiscard]] Brush                    BrushForStyle(DisplayStyle style) const;
     [[nodiscard]] bool                     CloseButtonAt(Point local) const;
     [[nodiscard]] bool                     MinimizeButtonAt(Point local) const;
@@ -271,19 +246,29 @@ class AcpPanel : public Widget {
     void RefreshMentionState();
     void RefreshMentionCandidates();
     // Splices the currently-selected ranked candidate into the composer in
-    // place of "@" + the typed query, replacing [mentionStartByte_,
-    // cursorByteOffset) with "@<path> " -- MinibufferPrompt::SetText's own
+    // place of the sigil ("@" or "/") + the typed query, replacing
+    // [mentionStartByte_, cursorByteOffset) with "@<path> " or "/<name> ",
+    // and returns the candidate accepted -- MinibufferPrompt::SetText's own
     // documented "cursor moves to the end of the replacement" behavior
     // applies here too (same as Tab-completion elsewhere in this codebase),
     // so a mention accepted with trailing text already typed after the
     // cursor loses that trailing text's own cursor position, a deliberate,
     // pre-existing SetText limitation, not a new one.
-    void AcceptMentionCandidate();
-    // mentionPickerOpen_'s own content, FormatRewindPicker's shape: a
+    std::optional<std::string>                                  AcceptMentionCandidate();
+    [[nodiscard]] const editor::acp::Manager::AvailableCommand* FindCommand(std::string_view name) const;
+    // Sends the composer's text (mentions resolved into attachments) and
+    // clears it -- queued instead while a turn is running, or with `steer`,
+    // added to the running turn (Manager::Steer). A no-op when it's empty.
+    void SubmitComposer(bool steer = false);
+    // Moves the composer's cursor one row up (direction < 0) or down, as
+    // laid out at the last painted width. False when already on the
+    // first/last row.
+    bool MoveComposerVertically(int direction);
+    // mentionPickerOpen_'s own content: a
     // fuzzy-ranked (Editor/FuzzyMatch.h) list of mentionCandidates_ against
     // mentionQuery_, capped at a handful of rows with a "N more" tail line
     // beyond that, the current selection marked "> ".
-    [[nodiscard]] std::vector<DisplayLine> FormatMentionPicker(int width) const;
+    [[nodiscard]] std::vector<DisplayLine> FormatMentionPicker() const;
 
     // ACP context auto-attach follow-up: called once, right before sending,
     // on the composer's own about-to-be-sent text. Finds the built-in
@@ -296,6 +281,10 @@ class AcpPanel : public Widget {
     // or "@selection" with no active mark, is left as literal text --
     // silently not treated as a mention at all, rather than erroring).
     [[nodiscard]] std::vector<editor::acp::Manager::PromptAttachment> ResolveMentionAttachments(std::string& text) const;
+    // Every "@path" word in `text` naming an existing file (relative to the
+    // project root, or absolute) as a resource_link attachment. The text is
+    // left as typed: the agent sees the mention and gets the link.
+    static void AppendFileMentionLinks(const std::string& text, std::vector<editor::acp::Manager::PromptAttachment>& attachments);
 
     // Prose-check-the-composer follow-up: called once per Paint() (there's
     // no per-keystroke edit hook the way RefreshMentionState has -- Paint()
@@ -343,11 +332,51 @@ class AcpPanel : public Widget {
     bool                                  dividerClickPending_ = false;
     std::chrono::steady_clock::time_point lastDividerPressTime_;
 
+    // The transcript area's scroll position, and the wrapped rows it
+    // indexes into (see TranscriptRows).
+    acppanel::TranscriptScroll          scroll_;
+    std::vector<acppanel::DisplayLine>  transcriptLines_;
+    std::vector<acppanel::PhysicalLine> transcriptRows_;
+    std::size_t                         transcriptRowsGeneration_ = static_cast<std::size_t>(-1);
+    int                                 transcriptRowsWidth_      = -1;
+    bool                                transcriptRowsPending_    = false;
+    int                                 lastViewportRows_         = 0;
+    int                                 lastComposerWidth_        = 0; // what Up/Down lay the composer out at
+    int                                 lastFirstRow_             = 0;
+    int                                 lastTitleRows_            = 0;
+    bool                                lastShowedTranscript_     = false;
+
+    // Expansion: entries in toggledEntries_ show the opposite of their
+    // default, and C-o's verbose_ flips every default to expanded. Both feed
+    // the row cache through viewGeneration_ and the two settings it samples.
+    std::set<std::size_t>        toggledEntries_;
+    bool                         verbose_                      = false;
+    std::size_t                  viewGeneration_               = 0;
+    std::size_t                  transcriptRowsViewGeneration_ = static_cast<std::size_t>(-1);
+    editor::acp::ToolCallDisplay transcriptRowsToolCalls_      = editor::acp::ToolCallDisplay::Collapsed;
+    editor::acp::ThinkingDisplay transcriptRowsThinking_       = editor::acp::ThinkingDisplay::Collapsed;
+    std::size_t                  lastTranscriptSize_           = 0;
+
+    std::function<void(const std::filesystem::path&, std::size_t)>  onOpenLocation_;
+    std::function<void(const std::string&, const std::string&)>     desktopNotifier_;
+    std::function<void(std::string, editor::acp::ComposeCallbacks)> onComposeRequest_;
+    std::function<void()>                                           onRefocusRequest_;
+    // C-c was pressed: the next chord completes a C-c sequence.
+    bool controlCPending_ = false;
+    bool attention_       = false; // see NoteAttention
+
     std::optional<std::size_t> historyIndex_;
     std::string                historyDraft_;
 
-    // ACP checkpoint/rewind follow-up: see OpenRewindPicker/FormatRewindPicker.
-    bool rewindPickerOpen_ = false;
+    // See OpenPicker. pendingPicker_ is a picker a choice opened (an
+    // option's value list, after picking the option), installed once the
+    // choosing picker has closed.
+    std::optional<acppanel::ChoicePicker> picker_;
+    std::optional<acppanel::ChoicePicker> pendingPicker_;
+    // The session picker fills in asynchronously; its answer is dropped
+    // unless the "Loading" picker it replaces is still the one open.
+    bool        awaitingSessions_ = false;
+    std::size_t sessionsRequest_  = 0;
 
     // @-style file-mention autocomplete follow-up -- see RefreshMentionState's
     // own doc comment. mentionStartByte_ is the byte offset of '@' itself
@@ -356,6 +385,11 @@ class AcpPanel : public Widget {
     // (BuildProjectTree's own output shape, ProjectFindFile's precedent),
     // re-walked fresh each time the picker opens rather than kept forever,
     // so a file the agent creates mid-conversation is still mentionable.
+    // What the open completion list completes: "@" file mentions, or "/"
+    // commands from the agent's available_commands_update.
+    enum class CompletionKind { File,
+                                Command };
+    CompletionKind           completionKind_    = CompletionKind::File;
     bool                     mentionPickerOpen_ = false;
     std::size_t              mentionStartByte_  = 0;
     std::string              mentionQuery_;

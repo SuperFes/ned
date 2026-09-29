@@ -55,6 +55,13 @@ namespace ned::ui::test {
 [[nodiscard]] Event ArrowRightCtrl();
 [[nodiscard]] Event ArrowUpCtrl();
 [[nodiscard]] Event ArrowDownCtrl();
+[[nodiscard]] Event ArrowUpAlt();
+[[nodiscard]] Event ArrowDownAlt();
+[[nodiscard]] Event HomeCtrl();
+[[nodiscard]] Event EndCtrl();
+[[nodiscard]] Event ReturnAlt();
+[[nodiscard]] Event ReturnShift();
+[[nodiscard]] Event ReturnCtrl();
 [[nodiscard]] Event ArrowUpShift();
 [[nodiscard]] Event ArrowDownShift();
 [[nodiscard]] Event ArrowLeftShift();

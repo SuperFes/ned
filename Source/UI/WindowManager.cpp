@@ -555,7 +555,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnTerminalToggle(onTerminalToggle_);
     pane->Buffer().SetOnNewTerminalRequest(onNewTerminalRequest_);
     pane->Buffer().SetOnAcpPanelToggle(onAcpPanelToggle_);
-    pane->Buffer().SetOnAcpRewindRequest(onAcpRewindRequest_);
+    pane->Buffer().SetOnAcpPickerRequest(onAcpPickerRequest_);
     pane->Buffer().SetOnDapConsoleToggle(onDapConsoleToggle_);
     pane->Buffer().SetOnJanetReplToggle(onJanetReplToggle_);
     pane->Buffer().SetOnRunReplRequest(onRunReplRequest_);
@@ -688,10 +688,10 @@ void WindowManager::SetOnAcpPanelToggle(std::function<void()> onToggle) {
     }
 }
 
-void WindowManager::SetOnAcpRewindRequest(std::function<void()> onRewind) {
-    onAcpRewindRequest_ = std::move(onRewind);
+void WindowManager::SetOnAcpPickerRequest(std::function<void(editor::acp::PanelPicker)> onPicker) {
+    onAcpPickerRequest_ = std::move(onPicker);
     for (Pane* pane : Leaves()) {
-        pane->Buffer().SetOnAcpRewindRequest(onAcpRewindRequest_);
+        pane->Buffer().SetOnAcpPickerRequest(onAcpPickerRequest_);
     }
 }
 
@@ -1129,6 +1129,18 @@ void WindowManager::RequestVisitLocation(const std::filesystem::path& path, std:
     if (pane != nullptr) {
         pane->Buffer().JumpToPathLine(path, line);
     }
+}
+
+void WindowManager::RequestAcpCompose(std::string seed, editor::acp::ComposeCallbacks callbacks) {
+    Pane* pane = FocusedPane();
+    if (pane == nullptr && !Leaves().empty()) {
+        pane = Leaves().front();
+    }
+    if (pane == nullptr) {
+        return;
+    }
+    TakeFocus();
+    pane->Buffer().BeginAcpCompose(std::move(seed), std::move(callbacks));
 }
 
 void WindowManager::RequestDebugPanelTextEntry(std::string label, std::string initialText,
@@ -2165,6 +2177,7 @@ void WindowManager::ReassignPanesShowing(text::Buffer& closingBuffer, Pane* skip
     // (skipped via `skip` below) -- a pane can hold a stale cache entry for
     // a buffer it merely visited in the past, not just its current one.
     editor::ClearModeCacheFor(closingBuffer);
+    (void)editor::acp::DetachCompose(closingBuffer); // closed without C-c C-c/C-c C-k: forgotten, see Compose.h
     for (Pane* pane : Leaves()) {
         pane->ClearBufferCaches(closingBuffer);
     }

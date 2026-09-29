@@ -44,6 +44,9 @@ class MinibufferPrompt {
     void MoveCursorToStart();       // Home
     void MoveCursorToEnd();         // End
     void SetText(std::string text); // wholesale replace, e.g. Tab-completion; cursor moves to the end
+    // Moves the cursor to `offset` (a byte offset into Text()), clamped to
+    // the text and snapped down to a codepoint boundary.
+    void SetCursorByteOffset(std::size_t offset);
 
     [[nodiscard]] const std::string& Text() const;
     [[nodiscard]] std::string        StatusText() const; // label + current text, for the echo area

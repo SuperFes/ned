@@ -69,8 +69,8 @@ void BufferView::SetOnAcpPanelToggle(std::function<void()> handler) {
     onAcpPanelToggle_ = std::move(handler);
 }
 
-void BufferView::SetOnAcpRewindRequest(std::function<void()> handler) {
-    onAcpRewindRequest_ = std::move(handler);
+void BufferView::SetOnAcpPickerRequest(std::function<void(editor::acp::PanelPicker)> handler) {
+    onAcpPickerRequest_ = std::move(handler);
 }
 
 void BufferView::SetOnCandidatesChanged(std::function<void(std::optional<ListPopupModel>)> handler) {
@@ -1520,8 +1520,23 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             else if (acpManager_->PromptInFlight()) {
                 statusMessage_ = "Can't rewind while a prompt is in flight.";
             }
-            else if (onAcpRewindRequest_) {
-                onAcpRewindRequest_();
+            else if (onAcpPickerRequest_) {
+                onAcpPickerRequest_(editor::acp::PanelPicker::Rewind);
+            }
+            return;
+        case editor::InteractiveRequest::AcpComposeFinish:
+        case editor::InteractiveRequest::AcpComposeAbort:
+            FinishAcpCompose(request == editor::InteractiveRequest::AcpComposeFinish);
+            return;
+        case editor::InteractiveRequest::AcpSetMode:
+        case editor::InteractiveRequest::AcpSetModel:
+        case editor::InteractiveRequest::AcpSetOption:
+        case editor::InteractiveRequest::AcpResumeSession:
+            if (onAcpPickerRequest_) {
+                onAcpPickerRequest_(request == editor::InteractiveRequest::AcpSetMode     ? editor::acp::PanelPicker::Mode
+                                    : request == editor::InteractiveRequest::AcpSetModel  ? editor::acp::PanelPicker::Model
+                                    : request == editor::InteractiveRequest::AcpSetOption ? editor::acp::PanelPicker::Options
+                                                                                          : editor::acp::PanelPicker::Sessions);
             }
             return;
         // VCS blame gutter follow-up: one-shot direct actions, same shape

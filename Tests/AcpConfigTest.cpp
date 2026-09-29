@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "Editor/Acp/Config.h"
+#include "Editor/Acp/Notify.h"
 #include "Editor/Acp/PanelConfig.h"
 
 using ned::editor::acp::AgentCommand;
@@ -82,4 +83,14 @@ TEST_CASE("SetAcpPanelSizePercent/PanelSizePercent round-trip and clamp", "[Acp]
     REQUIRE(PanelSizePercent() == 70);
 
     SetAcpPanelSizePercent(30); // cleanup
+}
+
+TEST_CASE("NotifyArgv appends the title and body to the configured command, or is empty when off", "[Acp]") {
+    const std::vector<std::string> saved = ned::editor::acp::AcpNotifyCommand();
+    REQUIRE(saved == std::vector<std::string>{"notify-send", "-a", "ned"});
+    REQUIRE(ned::editor::acp::NotifyArgv("T", "B") == std::vector<std::string>{"notify-send", "-a", "ned", "T", "B"});
+    ned::editor::acp::SetAcpNotifyCommand({});
+    REQUIRE(ned::editor::acp::NotifyArgv("T", "B").empty());
+    REQUIRE_FALSE(ned::editor::acp::SendDesktopNotification("T", "B"));
+    ned::editor::acp::SetAcpNotifyCommand(saved);
 }

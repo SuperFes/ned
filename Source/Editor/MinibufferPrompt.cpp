@@ -1,5 +1,6 @@
 #include "MinibufferPrompt.h"
 
+#include <algorithm>
 #include <string_view>
 #include <utility>
 
@@ -100,6 +101,10 @@ void MinibufferPrompt::MoveCursorToStart() {
 
 void MinibufferPrompt::MoveCursorToEnd() {
     cursor_ = text_.size();
+}
+
+void MinibufferPrompt::SetCursorByteOffset(std::size_t offset) {
+    cursor_ = text::SnapDownToCodepointBoundary(text_, std::min(offset, text_.size()));
 }
 
 void MinibufferPrompt::SetText(std::string text) {
