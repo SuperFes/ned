@@ -11,7 +11,7 @@
 # CMake/LanguageTables.cmake runs it for every bundled language: whatever
 # those outputs depend on is rebuilt on every editor source change. It
 # reaches nothing in the editor -- Editor/JanetData.h (a Janet *data* reader
-# with no VM behind it) and utf8proc are its entire external surface -- so
+# with no VM behind it) is its entire external surface -- so
 # splitting it out is what lets a UI or LSP edit leave all 111 compiled
 # tables alone. ImportCommand/TestCommand stay in ned_lib: they drive
 # corpora, the parser and child processes, none of which compiling needs.
@@ -34,7 +34,6 @@ add_library(ned_grammar_compile STATIC
         Editor/Grammar/Compile/CompileCommand.cpp)
 
 target_include_directories(ned_grammar_compile PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(ned_grammar_compile PUBLIC utf8proc)
 
 if (NED_ENABLE_SANITIZERS)
     target_compile_options(ned_grammar_compile PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)

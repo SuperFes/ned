@@ -7,7 +7,7 @@
 // on every editor source change. Pointed at `ned`, that meant one edit
 // anywhere in the editor invalidated all of them; pointed here, it is only
 // the generator's own ~15 translation units -- which depend on no editor
-// code at all, just Editor/JanetData.h and utf8proc.
+// code at all, just Editor/JanetData.h.
 //
 // `ned --compile-language` stays, running the same ned_grammar_compile
 // library in-process, since the editor compiles out-of-tree language

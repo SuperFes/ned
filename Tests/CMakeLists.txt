@@ -360,6 +360,7 @@ add_executable(ned_tests
             TerminalEmulatorTest.cpp
             TerminalPanelTest.cpp
             GrammarTest.cpp
+            GrammarUnicodeTest.cpp
             ParseConformanceTest.cpp
             ParseLexerTest.cpp
             ModeOverridesTest.cpp
