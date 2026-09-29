@@ -451,6 +451,7 @@ TEST_CASE("Manager routes session/request_permission to the registered handler a
     REQUIRE(response["result"]["outcome"]["outcome"] == "selected");
     REQUIRE(response["result"]["outcome"]["optionId"] == "allow-once");
     REQUIRE_FALSE(fixture.manager.PendingPermissionPrompt().has_value());
+    REQUIRE(fixture.manager.Transcript().back().text == "selected: Allow once");
 }
 
 // diff-preview-line-diff-utility follow-up (ROADMAP "Diff preview before an
@@ -1866,6 +1867,30 @@ TEST_CASE("Manager waits on a login when session/new needs one, then creates the
     REQUIRE(fixture.manager.State() == Manager::SessionState::Active);
 }
 
+TEST_CASE("Manager runs a login offered in the pre-spec terminal-auth form as its own command", "[Acp]") {
+    ned::editor::acp::SetAcpAgentCommand("legacy-login-agent", {"agent-bin", "acp"});
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.outputBuffer         = fixture.manager.StartSession("legacy-login-agent");
+    const Json initializeRequest = fixture.reader.Next();
+    REQUIRE(initializeRequest["params"]["clientCapabilities"]["_meta"]["terminal-auth"] == true);
+    const Json legacyOnly = {{"id", "opencode-login"},
+                             {"name", "Login with opencode"},
+                             {"_meta", {{"terminal-auth", {{"command", "opencode"}, {"args", Json::array({"auth", "login"})}, {"label", "OpenCode Login"}}}}}};
+    const Json bothForms  = {{"id", "agy-login"},
+                             {"name", "Login"},
+                             {"type", "terminal"},
+                             {"args", Json::array({"--login"})},
+                             {"_meta", {{"terminal-auth", {{"command", "/usr/bin/node"}, {"args", Json::array({"agy-acp", "--login"})}}}}}};
+    fixture.client->DispatchFrame(ResultFrame(initializeRequest["id"], Json{{"authMethods", Json::array({legacyOnly, bothForms})}}));
+
+    const auto& methods = fixture.manager.AuthMethods();
+    REQUIRE(methods.size() == 2);
+    REQUIRE(methods[0].type == "terminal");
+    REQUIRE(fixture.manager.LoginCommand(methods[0]) == std::vector<std::string>{"opencode", "auth", "login"});
+    REQUIRE(fixture.manager.LoginCommand(methods[1]) == std::vector<std::string>{"agent-bin", "acp", "--login"});
+}
+
 TEST_CASE("Manager asks for a login when a prompt is refused for want of one", "[Acp]") {
     ManagerFixture fixture;
     fixture.InjectClient();
@@ -2009,6 +2034,28 @@ TEST_CASE("Manager::ForkSession continues the conversation in a new tab", "[Acp]
     REQUIRE(fixture.manager.SessionId() == "s1");
     REQUIRE(TranscriptHasText(fixture.manager, "only in the original"));
     REQUIRE_FALSE(TranscriptHasText(fixture.manager, "in the fork"));
+}
+
+TEST_CASE("Manager::ForkSession ignores an agent replaying the fork's history before it answers", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = ForkCapableAgent();
+    fixture.InjectClient();
+    fixture.StartActiveSession("fake-agent");
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"messageId", "m1"}, {"content", {{"type", "text"}, {"text", "hello"}}}});
+
+    REQUIRE(fixture.manager.ForkSession() == "Forking the conversation.");
+    const Json fork = fixture.reader.Next();
+    SendUpdateFor(fixture, "s2", {{"sessionUpdate", "user_message_chunk"}, {"content", {{"type", "text"}, {"text", "say hello"}}}});
+    SendUpdateFor(fixture, "s2", {{"sessionUpdate", "agent_message_chunk"}, {"messageId", "m1"}, {"content", {{"type", "text"}, {"text", "hello"}}}});
+    SendUpdateFor(fixture, "s2", {{"sessionUpdate", "tool_call"}, {"toolCallId", "t1"}, {"title", "Read calc.py"}, {"status", "completed"}});
+    SendUpdateFor(fixture, "s2", {{"sessionUpdate", "available_commands_update"}, {"availableCommands", Json::array({Json{{"name", "review"}}})}});
+    fixture.client->DispatchFrame(ResultFrame(fork["id"], Json{{"sessionId", "s2"}}));
+
+    const auto& transcript = fixture.manager.Transcript();
+    REQUIRE(std::count_if(transcript.begin(), transcript.end(), [](const Manager::TranscriptEntry& entry) { return entry.text == "hello"; }) == 1);
+    REQUIRE_FALSE(TranscriptHasText(fixture.manager, "Read calc.py"));
+    REQUIRE(transcript.back().text == "forked");
+    REQUIRE(fixture.manager.AvailableCommands().size() == 1);
 }
 
 TEST_CASE("Manager::ForkSession is refused without the capability or mid-turn, and a failed fork closes its tab", "[Acp]") {

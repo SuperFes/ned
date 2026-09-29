@@ -152,8 +152,13 @@ std::vector<InlineSpan> SpansForRow(const std::vector<InlineSpan>& spans, int ro
 }
 
 std::vector<DisplayLine> FormatDiffPreview(const std::string& oldText, const std::string& newText) {
+    // Agents often send just the edited fragment, whose last line may lack
+    // the newline the replacement gives it; that isn't a change worth showing.
+    auto terminated = [](const std::string& text) {
+        return text.empty() || text.ends_with('\n') ? text : text + '\n';
+    };
     std::vector<DisplayLine>          lines;
-    const std::vector<text::DiffLine> diff  = text::UnifiedDiff(oldText, newText);
+    const std::vector<text::DiffLine> diff  = text::UnifiedDiff(terminated(oldText), terminated(newText));
     const std::size_t                 shown = std::min(diff.size(), kMaxDiffPreviewLines);
     for (std::size_t i = 0; i < shown; ++i) {
         const text::DiffLine& diffLine = diff[i];
@@ -401,6 +406,15 @@ namespace {
         return relative.generic_string();
     }
 
+    // Some agents (opencode) title a tool call or permission with nothing but
+    // the absolute path it touches.
+    std::string DisplayTitle(const std::string& title, const std::filesystem::path& projectRoot) {
+        if (title.starts_with('/') && title.find_first_of(" \n") == std::string::npos) {
+            return DisplayPath(title, projectRoot);
+        }
+        return title;
+    }
+
     std::string LocationLabel(const editor::acp::Manager::ToolLocation& location, const std::filesystem::path& projectRoot) {
         std::string label = DisplayPath(location.path, projectRoot);
         if (location.line) {
@@ -451,12 +465,15 @@ namespace {
         // A title is one line; a multi-line one (a shell command) shows its
         // first.
         const std::size_t titleBreak = entry.text.find('\n');
-        const std::string title      = titleBreak == std::string::npos ? entry.text : entry.text.substr(0, titleBreak) + " …";
+        const std::string title      = titleBreak == std::string::npos ? DisplayTitle(entry.text, options.projectRoot)
+                                                                       : entry.text.substr(0, titleBreak) + " …";
         std::string       header     = std::string(open ? "▾ " : "▸ ") + std::string(ToolKindGlyph(entry.toolKind)) + " " + title;
         if (!entry.locations.empty()) {
             const std::string filename = std::filesystem::path(entry.locations.front().path).filename().string();
-            if (filename.empty() || title.find(filename) == std::string::npos) {
-                header += " · " + LocationLabel(entry.locations.front(), options.projectRoot);
+            const std::string label    = LocationLabel(entry.locations.front(), options.projectRoot);
+            // A command run in the project root says nothing by naming it.
+            if ((filename.empty() || title.find(filename) == std::string::npos) && label != ".") {
+                header += " · " + label;
             }
         }
         const bool           failed    = entry.status == "failed";
@@ -970,7 +987,7 @@ std::vector<DisplayLine> FormatTranscript(const std::vector<editor::acp::Manager
                 break;
             }
             case Kind::Permission: {
-                lines.push_back({.text = "! " + entry.text, .style = DisplayStyle::Warning, .entryIndex = i});
+                lines.push_back({.text = "! " + DisplayTitle(entry.text, options.projectRoot), .style = DisplayStyle::Warning, .entryIndex = i});
                 if (pending && pending->description == entry.text) {
                     std::string choices;
                     for (std::size_t optIndex = 0; optIndex < pending->options.size(); ++optIndex) {

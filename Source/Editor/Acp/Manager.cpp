@@ -1189,13 +1189,15 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
             {"protocolVersion", 1},
             // _meta.terminal_output[_delta]: a command's output arrives as
             // raw terminal text with its exit code (claude-agent-acp's
-            // extension), not a console code block.
+            // extension), not a console code block. _meta.terminal-auth:
+            // agents predating auth.terminal (opencode) offer their login
+            // command only when asked this way.
             {"clientCapabilities",
              {{"fs", {{"readTextFile", true}, {"writeTextFile", true}}},
               {"auth", {{"terminal", true}}},
               {"elicitation", {{"form", Json::object()}, {"url", Json::object()}}},
               {"session", {{"notices", Json::object()}, {"compaction", Json::object()}, {"configOptions", {{"boolean", Json::object()}}}}},
-              {"_meta", {{"terminal_output", true}, {"terminal_output_delta", true}}}}},
+              {"_meta", {{"terminal_output", true}, {"terminal_output_delta", true}, {"terminal-auth", true}}}}},
         },
         [this](std::optional<Json> result, std::optional<Json> error) {
             if (error) {
@@ -1249,12 +1251,27 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
                         parsed.args.push_back(arg.get<std::string>());
                     }
                 }
-                if (method.contains("env") && method["env"].is_object()) {
-                    for (const auto& [name, value] : method["env"].items()) {
-                        if (value.is_string()) {
-                            parsed.env.emplace_back(name, value.get<std::string>());
+                auto readEnv = [&parsed](const Json& env) {
+                    if (env.is_object()) {
+                        for (const auto& [name, value] : env.items()) {
+                            if (value.is_string()) {
+                                parsed.env.emplace_back(name, value.get<std::string>());
+                            }
                         }
                     }
+                };
+                readEnv(method.value("env", Json::object()));
+                const Json legacy = method.contains("_meta") && method["_meta"].is_object() ? method["_meta"].value("terminal-auth", Json())
+                                                                                            : Json();
+                if (parsed.type != "terminal" && legacy.is_object() && !StringField(legacy, "command").empty()) {
+                    parsed.type    = "terminal";
+                    parsed.command = {StringField(legacy, "command")};
+                    for (const Json& arg : legacy.value("args", Json::array())) {
+                        if (arg.is_string()) {
+                            parsed.command.push_back(arg.get<std::string>());
+                        }
+                    }
+                    readEnv(legacy.value("env", Json::object()));
                 }
                 authMethods_.push_back(std::move(parsed));
             }
@@ -1321,6 +1338,9 @@ bool Manager::LoginRequired() const {
 std::optional<std::vector<std::string>> Manager::LoginCommand(const AuthMethod& method) const {
     if (method.type != "terminal") {
         return std::nullopt;
+    }
+    if (!method.command.empty()) {
+        return method.command;
     }
     std::optional<std::vector<std::string>> argv = AgentCommand(agentName_);
     if (argv) {
@@ -2087,6 +2107,13 @@ void Manager::HandleSessionUpdate(const Json& params) {
     const Json&       update = params["update"];
     const std::string kind   = StringField(update, "sessionUpdate", std::string());
 
+    // A new conversation has no history yet, and a fork's is already copied
+    // in; some agents (opencode) replay the fork's history before answering.
+    if (s.creating && (kind == "agent_message_chunk" || kind == "agent_thought_chunk" || kind == "user_message_chunk" ||
+                       kind == "tool_call" || kind == "tool_call_update" || kind == "plan")) {
+        return;
+    }
+
     if (kind == "agent_message_chunk" || kind == "agent_thought_chunk" || kind == "user_message_chunk") {
         const Json content = update.contains("content") && update["content"].is_object() ? update["content"] : Json::object();
         if (StringField(content, "type", std::string()) != "text") {
@@ -2346,15 +2373,22 @@ void Manager::ResolvePermissionPrompt(const std::string& optionId) {
     // stable, independent string instead of freed memory.
     const std::string optionIdCopy = optionId;
     RespondFn         respond      = std::move(s.pendingPermissionRespond);
+    std::string       chosen       = optionIdCopy;
     for (const PermissionOption& option : s.pendingPermissionPrompt->options) {
+        if (option.optionId != optionIdCopy) {
+            continue;
+        }
+        if (!option.name.empty()) {
+            chosen = option.name;
+        }
         TranscriptEntry* call = FindToolCall(s, s.permissionToolCallId);
-        if (option.optionId == optionIdCopy && option.kind.starts_with("allow") && call && !call->finishedAt && !s.replaying) {
+        if (option.kind.starts_with("allow") && call && !call->finishedAt && !s.replaying) {
             call->startedAt = std::chrono::steady_clock::now();
         }
     }
     s.pendingPermissionPrompt.reset();
     AppendToOutputBuffer("[selected: " + optionIdCopy + "]\n");
-    PushSessionEvent(s, "selected: " + optionIdCopy);
+    PushSessionEvent(s, "selected: " + chosen);
     respond(Json{{"outcome", {{"outcome", "selected"}, {"optionId", optionIdCopy}}}}, std::nullopt);
 }
 

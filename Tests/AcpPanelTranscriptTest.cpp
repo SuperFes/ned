@@ -262,6 +262,24 @@ TEST_CASE("FormatTranscript shows only the first line of a multi-line tool title
     REQUIRE(lines[0].text.find('\n') == std::string::npos);
 }
 
+TEST_CASE("FormatTranscript shows a path-only title relative to the project and leaves out the root as a location", "[AcpPanel]") {
+    std::vector<Manager::TranscriptEntry> transcript;
+    Manager::TranscriptEntry              run{.kind = Kind::ToolCall, .text = "make", .status = "completed", .toolKind = "execute"};
+    run.locations = {{.path = "/work/proj"}};
+    transcript.push_back(run);
+    transcript.push_back({.kind = Kind::Permission, .text = "/work/proj/src/calc.py"});
+    const auto lines = FormatTranscript(transcript, std::nullopt, {.width = 60, .projectRoot = "/work/proj"});
+    REQUIRE(lines[0].text.find("▸ $ make") == 0);
+    REQUIRE(lines[0].text.find(" · ") == std::string::npos);
+    REQUIRE(lines[1].text == "! src/calc.py");
+}
+
+TEST_CASE("FormatDiffPreview doesn't count a fragment's missing final newline as a change", "[AcpPanel]") {
+    const auto lines = ned::ui::acppanel::FormatDiffPreview("def sub(a, b):\n    return a - b", "def sub(a, b):\n    return a - b\n\n\ndef mul(a, b):\n    return a * b");
+    REQUIRE(std::none_of(lines.begin(), lines.end(), [](const auto& line) { return line.text.starts_with("  - "); }));
+    REQUIRE(std::count_if(lines.begin(), lines.end(), [](const auto& line) { return line.text.starts_with("  + "); }) == 4);
+}
+
 TEST_CASE("FormatTranscript marks a steered message apart from a prompt", "[AcpPanel]") {
     std::vector<Manager::TranscriptEntry> transcript;
     transcript.push_back({.kind = Kind::UserMessage, .text = "go"});

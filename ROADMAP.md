@@ -1029,11 +1029,18 @@ after an earlier reply through `_meta.jetbrains.air.fork`, every other agent fro
 - [ ] **ACP compatibility beyond Claude.** Every live probe so far has been
       claude-agent-acp, so the panel is shaped by what one adapter sends. Parts of the
       spec Claude never exercises, each wanted for agents that do:
-      - **An interop pass against a second agent** (S to run, unknown to fix):
-        `opencode acp` is installed here; Gemini CLI and Codex's ACP adapter are the
-        other common ones. Probe the handshake, `session/update` shapes, auth and
-        permissions before building anything below, and record what each agent
-        actually sends, the way the claude-agent-acp facts were gathered.
+      - **Interop, as probed 2026-09-29.** opencode 1.18 and agy-acp 0.5.2 (Google
+        Antigravity) both work as configured agents with no ned-side special case;
+        ned now asks for `_meta["terminal-auth"]` logins, ignores a fork's history
+        replayed before `session/fork` answers, and treats a diff fragment's missing
+        final newline as no change. Left, by agent:
+        - opencode sends its todo list as a `todowrite` tool call whose content is the
+          JSON list (no `plan`), and a command's exit code only in
+          `rawOutput.metadata.exit`. Rendering either would key on opencode's shapes.
+        - agy-acp ends a turn (`end_turn`) while agy is still waiting on a
+          `RunCommand` confirmation, with no `session/request_permission` sent: an
+          adapter bug, reproduced with a bare client too, so it's for upstream.
+        - Gemini CLI and Codex's ACP adapter are not installed here and still unprobed.
       - **`terminal/*`** (create/output/wait_for_exit/kill/release; stable) -- M/L.
         For agents that ask the client to run commands rather than running them
         agent-side. The emulator and `TerminalPanel` exist; the work is terminal-per-id

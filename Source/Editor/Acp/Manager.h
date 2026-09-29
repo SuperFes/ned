@@ -342,6 +342,9 @@ class Manager {
         std::string                                      type; // "terminal" or "agent"
         std::vector<std::string>                         args;
         std::vector<std::pair<std::string, std::string>> env;
+        // The pre-spec `_meta["terminal-auth"]` form names its own program
+        // instead of rerunning the agent with args.
+        std::vector<std::string> command;
     };
     [[nodiscard]] const std::vector<AuthMethod>& AuthMethods() const;
     // Whether the agent refused to go on until the user logs in (an
