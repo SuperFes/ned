@@ -692,6 +692,23 @@ namespace {
         return std::to_string(count) + (count == 1 ? " line" : " lines");
     }
 
+    // Rows for each of `images` the panel can show, `indent` cells in.
+    void AppendImages(std::vector<DisplayLine>& lines, const std::vector<editor::acp::Manager::TranscriptImage>& images,
+                      const TranscriptFormatOptions& options, int indent) {
+        if (!options.imageFit) {
+            return;
+        }
+        for (const editor::acp::Manager::TranscriptImage& image : images) {
+            const std::optional<editor::image::CellFit> fit = options.imageFit(image, std::max(1, options.width - indent));
+            if (!fit || fit->columns <= 0 || fit->rows <= 0) {
+                continue;
+            }
+            for (int row = 0; row < fit->rows; ++row) {
+                lines.push_back({.image = ImageRow{.id = image.id, .row = row, .rows = fit->rows, .columns = fit->columns, .column = indent}});
+            }
+        }
+    }
+
     std::vector<DisplayLine> FormatNotice(const Entry& entry) {
         DisplayStyle style = DisplayStyle::Hint;
         std::string  glyph = "ℹ ";
@@ -793,7 +810,9 @@ namespace {
         }
         DisplayLine line{.text = "▣ " + name + details, .style = DisplayStyle::Dim};
         LinkTarget(line, entry.detail);
-        return {line};
+        std::vector<DisplayLine> lines{line};
+        AppendImages(lines, entry.images, options, 2);
+        return lines;
     }
 
 } // namespace
@@ -830,6 +849,9 @@ std::vector<DisplayLine> FormatTranscript(const std::vector<editor::acp::Manager
                     rest   = rest.substr(newline + 1);
                     prefix = "  ";
                 }
+                std::vector<DisplayLine> pictures;
+                AppendImages(pictures, entry.images, options, 2);
+                append(std::move(pictures), i);
                 break;
             }
             case Kind::AgentText: {

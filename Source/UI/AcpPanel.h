@@ -31,6 +31,7 @@
 
 #include "AcpPanel/ChoicePicker.h"
 #include "AcpPanel/ElicitationForm.h"
+#include "AcpPanel/InlineImages.h"
 #include "AcpPanel/TranscriptFormat.h"
 #include "AcpPanel/TranscriptScroll.h"
 #include "ActiveBuffer.h"
@@ -103,6 +104,16 @@ class AcpPanel : public Widget {
 
     // Opens the review of a turn's file changes, from the review picker.
     void SetOnReviewRequest(std::function<void(std::string title, std::vector<editor::acp::TurnFile> files)> onReview);
+
+    // Pictures are drawn through `eventLoop`'s Notcurses; unset, they're
+    // left out.
+    void SetEventLoop(EventLoop* eventLoop);
+    // Whether something painted above the panel covers `box` (absolute
+    // cells) -- a picture's bitmap, which ordinary cells can't cover, only
+    // goes where nothing does.
+    void SetOcclusionTest(std::function<bool(Box)> covered);
+    // Once a frame after painting: takes down bitmaps not drawn this frame.
+    void EndFrame();
 
     // Runs an agent's login command in a terminal: `argv` with `env` set,
     // under `label`; `done` is told whether it exited 0.
@@ -206,6 +217,7 @@ class AcpPanel : public Widget {
     // Drops a session list still loading, telling the agent to stop.
     void StopAwaitingSessions();
     void StartLogin(const editor::acp::Manager::AuthMethod& method);
+    void PaintImages(Canvas& canvas, const std::vector<acppanel::PhysicalLine>& rows, int firstRow, int visibleRows, int titleRows, int width);
     // A picker over one config option's values; nullptr opens one saying
     // the agent offers no such setting.
     [[nodiscard]] acppanel::ChoicePicker ConfigValuePicker(const editor::acp::Manager::ConfigOption* option,
@@ -378,6 +390,8 @@ class AcpPanel : public Widget {
     // The transcript area's scroll position, and the wrapped rows it
     // indexes into (see TranscriptRows).
     acppanel::TranscriptScroll          scroll_;
+    acppanel::InlineImages              images_;
+    std::function<bool(Box)>            occlusionTest_;
     std::vector<acppanel::DisplayLine>  transcriptLines_;
     std::vector<acppanel::PhysicalLine> transcriptRows_;
     std::size_t                         transcriptRowsGeneration_ = static_cast<std::size_t>(-1);

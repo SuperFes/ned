@@ -244,6 +244,31 @@ bool OverlayHost::CoversPoint(Point point, const Widget* painter) const {
     return false;
 }
 
+bool OverlayHost::CoversBox(Box box, const Widget* painter) const {
+    auto overlaps = [&box](const Box& other) {
+        return other.x_min <= box.x_max && box.x_min <= other.x_max && other.y_min <= box.y_max && box.y_min <= other.y_max;
+    };
+    bool above = true; // until `painter` itself is found in paint order
+    for (const Entry& entry : entries_) {
+        if (entry.widget == painter) {
+            above = false;
+            continue;
+        }
+        if (!above && entry.widget->active && overlaps(entry.widget->Box_())) {
+            return true;
+        }
+    }
+    if (above) {
+        // `painter` is not one of ours: below every overlay.
+        for (const Entry& entry : entries_) {
+            if (entry.widget->active && overlaps(entry.widget->Box_())) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool OverlayHost::OnMouseEvent(const Event& event) {
     if (!event.is_mouse()) {
         return false;

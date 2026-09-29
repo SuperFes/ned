@@ -1922,3 +1922,34 @@ TEST_CASE("Manager keeps an elicitation's field order as the agent sent it", "[A
     REQUIRE(fixture.manager.PendingElicitation()->fieldOrder == std::vector<std::string>{"zeta", "alpha", "mid"});
     REQUIRE(fixture.client->CurrentFrame().empty());
 }
+
+TEST_CASE("Manager keeps the pictures of a prompt, an agent's reply and a replayed prompt", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.initializeResult = {{"agentCapabilities", {{"loadSession", true}, {"promptCapabilities", {{"image", true}}}, {"sessionCapabilities", {{"list", Json::object()}}}}}};
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    fixture.manager.SendPrompt("see", {{.name = "shot.png", .mimeType = "image/png", .text = "AAAA", .image = true}});
+    const Json  prompt = fixture.reader.Next();
+    const auto& sent   = fixture.manager.Transcript().back();
+    REQUIRE(sent.images.size() == 1);
+    REQUIRE(sent.images[0].data == "AAAA");
+    REQUIRE(sent.images[0].mimeType == "image/png");
+    const std::uint64_t sentId = sent.images[0].id;
+    fixture.client->DispatchFrame(ResultFrame(prompt["id"], Json{{"stopReason", "end_turn"}}));
+
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"}, {"content", {{"type", "image"}, {"mimeType", "image/jpeg"}, {"data", "BBBB"}}}});
+    const auto& reply = fixture.manager.Transcript().back();
+    REQUIRE(reply.images.size() == 1);
+    REQUIRE(reply.images[0].data == "BBBB");
+    REQUIRE(reply.images[0].id != sentId);
+
+    fixture.manager.LoadSession("s2", "Old");
+    const Json load = fixture.reader.Next();
+    SendUpdateFor(fixture, "s2", UserChunk("then", "m1"));
+    SendUpdateFor(fixture, "s2",
+                  {{"sessionUpdate", "user_message_chunk"}, {"messageId", "m1"}, {"content", {{"type", "image"}, {"mimeType", "image/png"}, {"data", "CCCC"}}}});
+    fixture.client->DispatchFrame(ResultFrame(load["id"], Json::object()));
+    REQUIRE(fixture.manager.Transcript().back().images.size() == 1);
+    REQUIRE(fixture.manager.Transcript().back().images[0].data == "CCCC");
+}

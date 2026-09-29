@@ -263,3 +263,23 @@ TEST_CASE("OverlayHost::CoversPoint reports overlays painted above the asking wi
     host.Hide(upper);
     REQUIRE_FALSE(host.CoversPoint(ned::ui::Point{.x = 3, .y = 1}, &lower));
 }
+
+TEST_CASE("OverlayHost::CoversBox reports any overlap with an overlay painted above", "[Overlay]") {
+    using ned::ui::Box;
+    OverlayHost host;
+    FakeOverlay lower("L");
+    FakeOverlay upper("U");
+    host.Add(lower, [](Size) { return Box{.x_min = 0, .x_max = 9, .y_min = 0, .y_max = 3}; });
+    host.Add(upper, [](Size) { return Box{.x_min = 4, .x_max = 5, .y_min = 1, .y_max = 1}; });
+    host.Reflow(Size{.width = 10, .height = 4});
+    host.Show(lower);
+
+    const Box around{.x_min = 2, .x_max = 7, .y_min = 0, .y_max = 2};
+    REQUIRE_FALSE(host.CoversBox(around, &lower));
+    host.Show(upper);
+    // Wholly inside the box, with none of its corners covered.
+    REQUIRE(host.CoversBox(around, &lower));
+    REQUIRE_FALSE(host.CoversBox(Box{.x_min = 6, .x_max = 9, .y_min = 0, .y_max = 3}, &lower));
+    REQUIRE_FALSE(host.CoversBox(around, &upper));
+    REQUIRE(host.CoversBox(Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0}, nullptr));
+}

@@ -285,6 +285,7 @@ add_library(ned_lib STATIC
         Editor/Acp/Manager.cpp
         Editor/Acp/Notify.cpp
         Editor/Acp/ContentBlocks.cpp
+        Editor/Image/Decode.cpp
         Editor/Acp/TerminalText.cpp
         Editor/Acp/TurnFiles.cpp
         Editor/Acp/TurnReview.cpp
@@ -468,6 +469,7 @@ add_library(ned_lib STATIC
         UI/AcpPanel.cpp
         UI/AcpPanel/ChoicePicker.cpp
         UI/AcpPanel/ElicitationForm.cpp
+        UI/AcpPanel/InlineImages.cpp
         UI/AcpPanel/ComposerLayout.cpp
         UI/AcpPanel/TranscriptFormat.cpp
         UI/AcpPanel/TranscriptScroll.cpp
@@ -558,6 +560,9 @@ target_link_libraries(ned_lib
         # reference, so the dependency is public, not main.cpp's alone.
         PUBLIC CLI11::CLI11
         PRIVATE PkgConfig::LIBMAGIC
+        PRIVATE PkgConfig::LIBPNG
+        PRIVATE PkgConfig::TURBOJPEG
+        PRIVATE PkgConfig::LIBWEBP
         PRIVATE ${CMAKE_DL_LIBS}
         # internal-project-search follow-up: only ProjectSearch.cpp's own
         # implementation includes RE2 headers, so this stays off the public

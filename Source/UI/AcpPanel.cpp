@@ -794,7 +794,9 @@ const std::vector<acppanel::PhysicalLine>& AcpPanel::TranscriptRows(int width) {
                                                                         [this](std::string_view language, std::string_view code) {
                                                                return HighlightCode(language, code);
                                                                         },
-                                                                    .now = now});
+                                                                    .now      = now,
+                                                                    .imageFit = [this](const editor::acp::Manager::TranscriptImage& image,
+                                                                                       int                                          maxColumns) { return images_.Fit(image, maxColumns); }});
         transcriptRows_               = acppanel::WrapDisplayLines(transcriptLines_, width);
         transcriptRowsGeneration_     = acpManager_->TranscriptGeneration();
         transcriptRowsWidth_          = width;
@@ -805,6 +807,61 @@ const std::vector<acppanel::PhysicalLine>& AcpPanel::TranscriptRows(int width) {
         transcriptRowsTick_           = tick;
     }
     return transcriptRows_;
+}
+
+void AcpPanel::PaintImages(Canvas& canvas, const std::vector<acppanel::PhysicalLine>& rows, int firstRow, int visibleRows, int titleRows,
+                           int width) {
+    const auto& transcript = acpManager_->Transcript();
+    auto        imageOf    = [&transcript](const acppanel::DisplayLine& line) -> const editor::acp::Manager::TranscriptImage* {
+        if (!line.image || line.entryIndex >= transcript.size()) {
+            return nullptr;
+        }
+        const auto& images = transcript[line.entryIndex].images;
+        const auto  found  = std::find_if(images.begin(), images.end(), [&line](const auto& image) { return image.id == line.image->id; });
+        return found == images.end() ? nullptr : &*found;
+    };
+    for (int row = 0; row < visibleRows; ++row) {
+        const std::size_t index = static_cast<std::size_t>(firstRow + row);
+        if (index >= rows.size()) {
+            break;
+        }
+        const acppanel::DisplayLine&                 line  = transcriptLines_[rows[index].lineIndex];
+        const editor::acp::Manager::TranscriptImage* image = imageOf(line);
+        if (image == nullptr) {
+            continue;
+        }
+        const acppanel::ImageRow& place = *line.image;
+        if (const std::vector<Cell>* cells = images_.Cells(*image, place.columns, place.rows, theme_.background)) {
+            for (int x = 0; x < place.columns && place.column + x < width; ++x) {
+                canvas[{.x = place.column + x, .y = titleRows + row}] =
+                    (*cells)[static_cast<std::size_t>(place.row) * static_cast<std::size_t>(place.columns) + static_cast<std::size_t>(x)];
+            }
+        }
+        // A picture whose first row this is, and whose every row is on
+        // screen, also gets its real pixels where the terminal can show them.
+        if (place.row != 0 || row + place.rows > visibleRows || place.column + place.columns > width) {
+            continue;
+        }
+        const Box box{.x_min = Box_().x_min + place.column,
+                      .x_max = Box_().x_min + place.column + place.columns - 1,
+                      .y_min = Box_().y_min + titleRows + row,
+                      .y_max = Box_().y_min + titleRows + row + place.rows - 1};
+        if (!occlusionTest_ || !occlusionTest_(box)) {
+            images_.ShowPixels(*image, box, theme_.background);
+        }
+    }
+}
+
+void AcpPanel::SetEventLoop(EventLoop* eventLoop) {
+    images_.SetEventLoop(eventLoop);
+}
+
+void AcpPanel::SetOcclusionTest(std::function<bool(Box)> covered) {
+    occlusionTest_ = std::move(covered);
+}
+
+void AcpPanel::EndFrame() {
+    images_.EndFrame();
 }
 
 bool AcpPanel::EntryExpanded(std::size_t index) const {
@@ -1523,6 +1580,7 @@ void AcpPanel::Paint(Canvas canvas) {
             lastFirstRow_                                        = firstRow;
             paintRows(rows, firstRow);
             const int below = totalRows - (firstRow + contentRows);
+            PaintImages(canvas, rows, firstRow, contentRows - (below > 0 ? 1 : 0), titleRows, width);
             if (below > 0) {
                 const std::string marker  = " ↓ " + std::to_string(below) + " more (C-End) ";
                 const int         columns = ColumnCount(marker);

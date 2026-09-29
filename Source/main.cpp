@@ -1881,6 +1881,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
 
     ned::ui::AcpPanel acpPanel(theme);
     acpPanel.SetAcpManager(&acpManager);
+    acpPanel.SetEventLoop(&eventLoop);
     // ACP context auto-attach follow-up: same provider-callback shape
     // TabBar/ProjectSidebar/VcsPanel already take above -- lets "@buffer"/
     // "@selection" resolve against whichever pane currently has keyboard
@@ -2181,6 +2182,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         };
         windowManager->SetOnAcpPickerRequest(openAcpPicker);
         acpManager.SetOnLoginRequired([openAcpPicker] { openAcpPicker(ned::editor::acp::PanelPicker::Login); });
+        acpPanel.SetOcclusionTest([&overlays, &panelDock](Box box) { return overlays.CoversBox(box, &panelDock); });
     }
     else {
         // Right-dock mode: a fully independent, unaffected standalone
@@ -2239,6 +2241,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         };
         windowManager->SetOnAcpPickerRequest(openAcpPicker);
         acpManager.SetOnLoginRequired([openAcpPicker] { openAcpPicker(ned::editor::acp::PanelPicker::Login); });
+        acpPanel.SetOcclusionTest([&overlays, panel = &acpPanel](Box box) { return overlays.CoversBox(box, panel); });
         acpPanel.SetOnCollapseChanged([&overlays, panel = &acpPanel] { overlays.Show(*panel); });
     }
 
@@ -3351,6 +3354,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         }
         syncVcsDiffPreviewVisibility();
         overlays.Paint(screenBuffer);
+        acpPanel.EndFrame();
         // NED_DEBUG_DUMP_SCREEN=<path> rewrites that file with the glyphs of
         // the frame just painted, before it reaches any plane. Whatever it
         // holds is what this process decided to draw, so a fault visible on

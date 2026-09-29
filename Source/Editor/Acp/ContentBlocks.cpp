@@ -50,6 +50,22 @@ std::string FormatByteSize(std::uint64_t bytes) {
     return buffer;
 }
 
+std::uint64_t NextImageId() {
+    static std::uint64_t next = 0;
+    return ++next;
+}
+
+std::optional<Manager::TranscriptImage> ImageFromBlock(const Json& block) {
+    if (Field(block, "type") != "image") {
+        return std::nullopt;
+    }
+    std::string data = Field(block, "data");
+    if (data.empty()) {
+        return std::nullopt;
+    }
+    return Manager::TranscriptImage{.id = NextImageId(), .mimeType = Field(block, "mimeType"), .data = std::move(data)};
+}
+
 std::optional<Manager::TranscriptEntry> AgentContentEntry(const Json& block) {
     using Entry            = Manager::TranscriptEntry;
     const std::string type = Field(block, "type");
@@ -62,6 +78,9 @@ std::optional<Manager::TranscriptEntry> AgentContentEntry(const Json& block) {
             return std::nullopt;
         }
         entry.contentName = entry.detail.empty() ? std::string() : UriName(entry.detail);
+        if (std::optional<Manager::TranscriptImage> image = ImageFromBlock(block)) {
+            entry.images.push_back(std::move(*image));
+        }
         return entry;
     }
     if (type == "resource_link") {

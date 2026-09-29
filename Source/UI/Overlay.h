@@ -106,6 +106,10 @@ class OverlayHost {
     // all of them, so every visible overlay counts.
     [[nodiscard]] bool CoversPoint(Point point, const Widget* painter = nullptr) const;
 
+    // CoversPoint for any cell of `box`: whether a visible overlay painted
+    // above `painter` overlaps it at all.
+    [[nodiscard]] bool CoversBox(Box box, const Widget* painter = nullptr) const;
+
   private:
     struct Entry {
         Widget*               widget = nullptr;

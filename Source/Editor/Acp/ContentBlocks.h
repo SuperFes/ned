@@ -27,6 +27,13 @@ namespace ned::editor::acp {
 // block it can't make sense of.
 [[nodiscard]] std::optional<Manager::TranscriptEntry> AgentContentEntry(const Json& block);
 
+// The picture an image block carries, under a fresh id; nullopt for any
+// other block, or an image given only by uri.
+[[nodiscard]] std::optional<Manager::TranscriptImage> ImageFromBlock(const Json& block);
+
+// A fresh TranscriptImage id.
+[[nodiscard]] std::uint64_t NextImageId();
+
 // What a prompt's non-text block is called in "[attached: ...]"; empty for
 // text and for a resource link, which the prompt's own text already names.
 [[nodiscard]] std::string AttachmentName(const Json& block);

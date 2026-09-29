@@ -107,6 +107,13 @@ class Manager {
         // client, reads it as 0-based, and so does ned.
         std::optional<std::size_t> line;
     };
+    // An image as the agent or the user sent it. `id` is unique for the
+    // process, so a UI can cache what it decoded.
+    struct TranscriptImage {
+        std::uint64_t id = 0;
+        std::string   mimeType;
+        std::string   data; // base64
+    };
     struct TranscriptEntry {
         // ACP chat-feel round 2: AgentThought is its own Kind, not a bool
         // tacked onto AgentText -- session/update's agent_thought_chunk and
@@ -176,6 +183,9 @@ class Manager {
         std::string   contentName;
         std::string   mimeType;
         std::uint64_t byteSize = 0;
+        // Pictures shown with the entry: a user message's pasted images, an
+        // agent's image (Kind::AgentContent).
+        std::vector<TranscriptImage> images;
     };
     [[nodiscard]] const std::vector<TranscriptEntry>& Transcript() const;
     // Bumped on every Transcript()-affecting mutation -- cheap change

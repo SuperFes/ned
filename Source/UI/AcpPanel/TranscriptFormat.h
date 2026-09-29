@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "Editor/Acp/Manager.h"
+#include "Editor/Image/Decode.h"
 #include "Editor/Mode.h"
 
 namespace ned::ui::acppanel {
@@ -61,6 +62,16 @@ struct LineLocation {
     std::optional<std::size_t> line; // 1-based
 };
 
+// One row of a picture drawn inline: which image, which of its rows, and
+// the box of cells it fills, starting `column` cells in.
+struct ImageRow {
+    std::uint64_t id      = 0; // TranscriptImage::id
+    int           row     = 0;
+    int           rows    = 0;
+    int           columns = 0;
+    int           column  = 0;
+};
+
 struct DisplayLine {
     std::string                 text;
     DisplayStyle                style = DisplayStyle::Plain;
@@ -70,6 +81,7 @@ struct DisplayLine {
     std::optional<LineLocation> location; // LineAction::OpenLocation only
     std::string                 copyText; // LineAction::Copy only
     std::string                 url;      // LineAction::OpenUrl only
+    std::optional<ImageRow>     image;    // a picture's row, drawn over the (empty) text
 };
 
 // One physical row of a wrapped string. startColumn/columnCount are display
@@ -146,7 +158,13 @@ struct TranscriptFormatOptions {
     CodeHighlighter       highlightCode;
     // What a running tool call's elapsed time is measured against.
     std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    // The box of cells a picture fills within `maxColumns`; nullopt (or
+    // unset) when it can't be shown, leaving only its caption.
+    std::function<std::optional<editor::image::CellFit>(const editor::acp::Manager::TranscriptImage& image, int maxColumns)> imageFit;
 };
+
+// The most rows a picture takes in the transcript.
+inline constexpr int kImageMaxRows = 20;
 
 // A tool kind's one-column glyph ("edit" -> "✎", ...).
 [[nodiscard]] std::string_view ToolKindGlyph(std::string_view toolKind);

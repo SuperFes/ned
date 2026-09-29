@@ -441,3 +441,36 @@ TEST_CASE("ChoicePicker deletes the selection only after a y, and only when told
     REQUIRE(picker.Visible() == std::vector<std::size_t>{0, 1});
     REQUIRE(picker.Selection() == 1);
 }
+
+TEST_CASE("FormatTranscript gives each picture it can fit rows of its own", "[AcpPanel]") {
+    std::vector<Manager::TranscriptEntry> transcript;
+    transcript.push_back({.kind = Kind::UserMessage, .text = "look\n\n[attached: image]", .images = {{.id = 7, .data = "x"}}});
+    transcript.push_back({.kind = Kind::AgentContent, .status = "image", .mimeType = "image/png", .images = {{.id = 8, .data = "y"}, {.id = 9, .data = "z"}}});
+
+    // Without a fit, only the captions.
+    auto lines = FormatTranscript(transcript, std::nullopt, {.width = 40});
+    REQUIRE(lines.size() == 4);
+
+    std::vector<int> maxColumnsAsked;
+    lines = FormatTranscript(transcript, std::nullopt,
+                             {.width    = 40,
+                              .imageFit = [&maxColumnsAsked](const Manager::TranscriptImage& image, int maxColumns) -> std::optional<ned::editor::image::CellFit> {
+                                  maxColumnsAsked.push_back(maxColumns);
+                                  if (image.id == 9) {
+                                      return std::nullopt; // doesn't decode
+                                  }
+                                  return ned::editor::image::CellFit{.columns = 5, .rows = 2};
+                              }});
+    REQUIRE(maxColumnsAsked == std::vector<int>{38, 38, 38});
+    REQUIRE(lines.size() == 8);
+    REQUIRE(lines[3].image);
+    REQUIRE(lines[3].image->id == 7);
+    REQUIRE(lines[3].image->row == 0);
+    REQUIRE(lines[4].image->row == 1);
+    REQUIRE(lines[4].image->column == 2);
+    REQUIRE(lines[4].entryIndex == 0);
+    REQUIRE(lines[5].text == "▣ image · image/png");
+    REQUIRE(lines[6].image->id == 8);
+    REQUIRE(lines[7].image->rows == 2);
+    REQUIRE(lines[7].entryIndex == 1);
+}

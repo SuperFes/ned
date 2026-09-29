@@ -102,6 +102,14 @@ add_library(vterm ALIAS PkgConfig::VTERM)
 pkg_check_modules(LIBMAGIC REQUIRED IMPORTED_TARGET libmagic)
 #------------------------------------------------------------------------------
 
+#--- System image decoders -------------------------------------------------------
+# PNG, JPEG and WebP -- the formats an ACP agent or a clipboard paste hands
+# over -- decoded to RGBA for Notcurses to draw. Editor/Image/Decode.h.
+pkg_check_modules(LIBPNG REQUIRED IMPORTED_TARGET libpng)
+pkg_check_modules(TURBOJPEG REQUIRED IMPORTED_TARGET libturbojpeg)
+pkg_check_modules(LIBWEBP REQUIRED IMPORTED_TARGET libwebp)
+#------------------------------------------------------------------------------
+
 #--- Catch2 ---------------------------------------------------------------------
 if (NED_BUILD_TESTS)
     # System package (Gentoo's dev-cpp/catch, v3.15.3) ships Catch2Config.cmake,

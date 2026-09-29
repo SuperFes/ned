@@ -994,7 +994,11 @@ Batch 4 (`acp-protocol-batch-4`) logs in when an agent answers `auth_required` (
 over its `authMethods`; a terminal method runs in a dock tab, `C-c A L`/`acp-login`,
 `acp-logout`), deletes sessions from the resume picker, closes the session a resume
 leaves, cancels a dismissed `session/list` with `$/cancel_request`, and shows `notice`
-and `compaction_update` updates and an agent's image/audio/resource content.
+and `compaction_update` updates and an agent's image/audio/resource content. Pictures
+(an agent's images, pasted and replayed prompt images) are drawn inline by Notcurses:
+as glyph-blitter cells everywhere, and as a pixel bitmap on terminals with pixel
+graphics (`AcpPanel/InlineImages`; PNG/JPEG/WebP via the system libpng, libjpeg-turbo
+and libwebp).
 
 - [ ] **ACP protocol gaps**, sized 2026-09-29 against the ACP SDK 1.5.1 schema and
       claude-agent-acp 0.84 (S/M/L = effort; "Claude" = what the adapter actually uses):
@@ -1038,7 +1042,10 @@ and `compaction_update` updates and an agent's image/audio/resource content.
       name (or `fs/write_text_file` writes), so a shell command's edits (`sed -i`, `rm`)
       are invisible to the review and to rewind; files over 4 MB or binary aren't
       tracked.
-- [ ] Batch-4 limits: an agent's image shows as a size line, not the picture; a terminal
+- [ ] Batch-4 limits: GIFs and other formats show only their caption; a picture's
+      bitmap goes up only while all of it is on screen and no overlay touches it (the
+      cells show otherwise), since a pixel plane can't be clipped or covered; a
+      picture can't be opened in a viewer or copied. A terminal
       login ned can't see finish (a TUI left open) needs its tab closed or exited by
       hand, and a prompt refused for want of a login isn't resent after it -- only a
       `session/new` is; `$/cancel_request` covers the session picker's listing only.

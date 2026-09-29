@@ -1960,3 +1960,34 @@ TEST_CASE("AcpPanel's login picker hands an agent method to authenticate", "[Acp
     REQUIRE(request["method"] == "authenticate");
     REQUIRE(request["params"]["methodId"] == "gateway");
 }
+
+TEST_CASE("AcpPanel draws an agent's picture under its caption", "[AcpPanel][AcpImages]") {
+    Fixture fixture;
+    fixture.InjectClient();
+    fixture.panel.SetEventLoop(&fixture.eventLoop);
+    fixture.StartActiveSession("claude-code");
+    // 3x2: red, green, blue over white, clear, dark blue.
+    fixture.SendUpdate({{"sessionUpdate", "agent_message_chunk"},
+                        {"content",
+                         {{"type", "image"},
+                          {"mimeType", "image/png"},
+                          {"data", "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAYAAACddGYaAAAAHUlEQVR4nAXBoQEAMAzAIHT1dG/t5xmIJEoVzNv7nJ4Ksxn7EooAAAAASUVORK5CYII="}}}});
+    fixture.Paint();
+    int caption = -1;
+    for (int y = 0; y < kHeight; ++y) {
+        if (fixture.RowText(y).starts_with("▣ image")) {
+            caption = y;
+        }
+    }
+    REQUIRE(caption >= 0);
+    REQUIRE(caption + 1 < kHeight);
+    const ned::ui::Cell& corner = fixture.screen.PixelAt(2, caption + 1);
+    REQUIRE(corner.character != " ");
+    auto red = [](const ned::ui::Color& color) {
+        std::uint8_t r = 0, g = 0, b = 0;
+        ned::ui::ColorToRgb8(color, r, g, b);
+        return r > 150 && g < 100 && b < 100;
+    };
+    REQUIRE((red(corner.foreground_color) || red(corner.background_color)));
+    fixture.panel.EndFrame();
+}

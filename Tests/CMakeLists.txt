@@ -321,6 +321,8 @@ add_executable(ned_tests
             AcpTurnReviewTest.cpp
             AcpElicitationFormTest.cpp
             AcpContentBlocksTest.cpp
+            ImageDecodeTest.cpp
+            AcpInlineImagesTest.cpp
             FramedConnectionTest.cpp
             LspTransportTest.cpp
             LspClientTest.cpp

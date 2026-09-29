@@ -1134,7 +1134,13 @@ std::string Manager::SendPrompt(const std::string& text, const std::vector<Promp
         displayText += "\n\n[attached: " + attachedNames + "]";
     }
     AppendToOutputBuffer("\n> " + displayText + "\n");
-    PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::UserMessage, .text = displayText});
+    TranscriptEntry message{.kind = TranscriptEntry::Kind::UserMessage, .text = displayText};
+    for (const PromptAttachment& attachment : attachments) {
+        if (attachment.image && agentSupportsImages_) {
+            message.images.push_back({.id = NextImageId(), .mimeType = attachment.mimeType, .data = attachment.text});
+        }
+    }
+    PushTranscriptEntry(std::move(message));
     // ACP checkpoint/rewind follow-up: opens this turn's checkpoint,
     // finalized by FinalizePendingCheckpoint once its response arrives
     // (below) or the session ends mid-turn (EndSession). A single-line,
@@ -1729,6 +1735,9 @@ void Manager::HandleSessionUpdate(const Json& params) {
                     PushTranscriptEntry(TranscriptEntry{.kind = TranscriptEntry::Kind::UserMessage});
                 }
                 AppendAttachmentName(transcript_.back().text, name);
+                if (std::optional<TranscriptImage> image = ImageFromBlock(content)) {
+                    transcript_.back().images.push_back(std::move(*image));
+                }
                 replayUserMessageId_ = messageId;
                 ++transcriptGeneration_;
                 NotifyTranscriptChanged();

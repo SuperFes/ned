@@ -1,5 +1,7 @@
 #include "Base64.h"
 
+#include <cstdint>
+
 namespace ned::text {
 
 std::string Base64Encode(std::string_view data) {
@@ -33,6 +35,61 @@ std::string Base64Encode(std::string_view data) {
         result += kAlphabet[((b0 & 0x03) << 4) | (b1 >> 4)];
         result += kAlphabet[(b1 & 0x0F) << 2];
         result += '=';
+    }
+    return result;
+}
+
+std::optional<std::string> Base64Decode(std::string_view text) {
+    std::string   result;
+    std::uint32_t bits    = 0;
+    int           count   = 0;
+    bool          padding = false;
+    result.reserve(text.size() / 4 * 3);
+    for (const char c : text) {
+        int value = -1;
+        if (c >= 'A' && c <= 'Z') {
+            value = c - 'A';
+        }
+        else if (c >= 'a' && c <= 'z') {
+            value = c - 'a' + 26;
+        }
+        else if (c >= '0' && c <= '9') {
+            value = c - '0' + 52;
+        }
+        else if (c == '+') {
+            value = 62;
+        }
+        else if (c == '/') {
+            value = 63;
+        }
+        else if (c == '=') {
+            padding = true;
+            continue;
+        }
+        else if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+            continue;
+        }
+        if (value < 0 || padding) {
+            return std::nullopt;
+        }
+        bits = (bits << 6) | static_cast<std::uint32_t>(value);
+        if (++count == 4) {
+            result += static_cast<char>((bits >> 16) & 0xFF);
+            result += static_cast<char>((bits >> 8) & 0xFF);
+            result += static_cast<char>(bits & 0xFF);
+            bits  = 0;
+            count = 0;
+        }
+    }
+    if (count == 1) {
+        return std::nullopt;
+    }
+    if (count == 2) {
+        result += static_cast<char>((bits >> 4) & 0xFF);
+    }
+    else if (count == 3) {
+        result += static_cast<char>((bits >> 10) & 0xFF);
+        result += static_cast<char>((bits >> 2) & 0xFF);
     }
     return result;
 }
