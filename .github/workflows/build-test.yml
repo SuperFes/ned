@@ -48,7 +48,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang lld pkg-config libunistring-dev libdeflate-dev libncurses-dev \
-            libcli11-dev libre2-dev libpcre2-dev libvterm-dev libutf8proc-dev nlohmann-json3-dev catch2 \
+            libcli11-dev libre2-dev libpcre2-dev libvterm-dev libutf8proc-dev nlohmann-json3-dev catch2 libmagic-dev \
             libstdc++-14-dev
 
       # CMAKE_LINKER_TYPE (CMakePresets.json's "default" preset) needs CMake
