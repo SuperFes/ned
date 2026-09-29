@@ -142,7 +142,7 @@ TEST_CASE("JumpToPreviousHunk walks backward through every hunk then stops", "[B
 // already perform -- JumpToNextHunk/JumpToPreviousHunk themselves are already covered
 // above, this only exercises the vim key path (Engine::HandleBracketPrefixed ->
 // TakePendingHunkNavigation -> BufferView::HandleVimKey).
-TEST_CASE("]c and [c walk hunks under Vim mode", "[BufferView][Vcs][Vim]") {
+TEST_CASE("Right-bracket c and left-bracket c walk hunks under Vim mode", "[BufferView][Vcs][Vim]") {
     VimModeGuard vimGuard;
     Fixture      fixture;
     fixture.buffer.InsertAtPoint("one\ntwo\nthree\nfour\n");
