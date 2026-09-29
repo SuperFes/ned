@@ -1,7 +1,7 @@
-// Range tables for the derived identifier properties and the emoji
-// properties -- see Tools/gen-unicode-tables.py, which generates
-// UnicodeTables.cpp. Each table is a flat list of half-open [start, end)
-// pairs, ascending and disjoint.
+// The Unicode data the grammar compiler uses, generated at a fixed Unicode
+// version by Tools/gen-unicode-tables.py (UnicodeTables.cpp). The property
+// tables are flat lists of half-open [start, end) pairs, ascending and
+// disjoint.
 
 #ifndef NED_EDITOR_GRAMMAR_COMPILE_UNICODETABLES_H
 #define NED_EDITOR_GRAMMAR_COMPILE_UNICODETABLES_H
@@ -10,6 +10,53 @@
 #include <cstdint>
 
 namespace ned::editor::grammar::compile::unicode {
+
+// General categories, in the generator's CATEGORIES order.
+enum class Category : std::uint8_t {
+    Lu,
+    Ll,
+    Lt,
+    Lm,
+    Lo,
+    Mn,
+    Mc,
+    Me,
+    Nd,
+    Nl,
+    No,
+    Pc,
+    Pd,
+    Ps,
+    Pe,
+    Pi,
+    Pf,
+    Po,
+    Sm,
+    Sc,
+    Sk,
+    So,
+    Zs,
+    Zl,
+    Zp,
+    Cc,
+    Cf,
+    Cs,
+    Co,
+    Cn,
+};
+
+// Run i covers [kCategoryRunStart[i], kCategoryRunStart[i + 1]) (the last
+// run ends at the end of the codepoint space) and has category
+// kCategoryRunValue[i]. Adjacent runs differ.
+extern const std::uint32_t kCategoryRunStart[];
+extern const std::size_t   kCategoryRunStartCount;
+extern const std::uint8_t  kCategoryRunValue[];
+extern const std::size_t   kCategoryRunValueCount;
+
+// {c, lower, upper, title} quadruples, one per character whose simple case
+// mappings are not all c itself.
+extern const std::uint32_t kCaseMappings[];
+extern const std::size_t   kCaseMappingsCount;
 
 extern const std::uint32_t kXidStart[];
 extern const std::size_t   kXidStartCount;

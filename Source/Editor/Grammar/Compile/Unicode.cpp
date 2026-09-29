@@ -5,8 +5,6 @@
 #include <string>
 #include <unordered_map>
 
-#include <utf8proc.h>
-
 #include "Editor/Grammar/Compile/UnicodeTables.h"
 
 namespace ned::editor::grammar::compile::unicode {
@@ -20,39 +18,38 @@ namespace {
         return set;
     }
 
-    // utf8proc's category enum in two-letter spelling order.
-    std::optional<utf8proc_category_t> CategoryFor(std::string_view name) {
-        static const std::unordered_map<std::string_view, utf8proc_category_t> kCategories = {
-            {"Lu", UTF8PROC_CATEGORY_LU},
-            {"Ll", UTF8PROC_CATEGORY_LL},
-            {"Lt", UTF8PROC_CATEGORY_LT},
-            {"Lm", UTF8PROC_CATEGORY_LM},
-            {"Lo", UTF8PROC_CATEGORY_LO},
-            {"Mn", UTF8PROC_CATEGORY_MN},
-            {"Mc", UTF8PROC_CATEGORY_MC},
-            {"Me", UTF8PROC_CATEGORY_ME},
-            {"Nd", UTF8PROC_CATEGORY_ND},
-            {"Nl", UTF8PROC_CATEGORY_NL},
-            {"No", UTF8PROC_CATEGORY_NO},
-            {"Pc", UTF8PROC_CATEGORY_PC},
-            {"Pd", UTF8PROC_CATEGORY_PD},
-            {"Ps", UTF8PROC_CATEGORY_PS},
-            {"Pe", UTF8PROC_CATEGORY_PE},
-            {"Pi", UTF8PROC_CATEGORY_PI},
-            {"Pf", UTF8PROC_CATEGORY_PF},
-            {"Po", UTF8PROC_CATEGORY_PO},
-            {"Sm", UTF8PROC_CATEGORY_SM},
-            {"Sc", UTF8PROC_CATEGORY_SC},
-            {"Sk", UTF8PROC_CATEGORY_SK},
-            {"So", UTF8PROC_CATEGORY_SO},
-            {"Zs", UTF8PROC_CATEGORY_ZS},
-            {"Zl", UTF8PROC_CATEGORY_ZL},
-            {"Zp", UTF8PROC_CATEGORY_ZP},
-            {"Cc", UTF8PROC_CATEGORY_CC},
-            {"Cf", UTF8PROC_CATEGORY_CF},
-            {"Cs", UTF8PROC_CATEGORY_CS},
-            {"Co", UTF8PROC_CATEGORY_CO},
-            {"Cn", UTF8PROC_CATEGORY_CN},
+    std::optional<Category> CategoryFor(std::string_view name) {
+        static const std::unordered_map<std::string_view, Category> kCategories = {
+            {"Lu", Category::Lu},
+            {"Ll", Category::Ll},
+            {"Lt", Category::Lt},
+            {"Lm", Category::Lm},
+            {"Lo", Category::Lo},
+            {"Mn", Category::Mn},
+            {"Mc", Category::Mc},
+            {"Me", Category::Me},
+            {"Nd", Category::Nd},
+            {"Nl", Category::Nl},
+            {"No", Category::No},
+            {"Pc", Category::Pc},
+            {"Pd", Category::Pd},
+            {"Ps", Category::Ps},
+            {"Pe", Category::Pe},
+            {"Pi", Category::Pi},
+            {"Pf", Category::Pf},
+            {"Po", Category::Po},
+            {"Sm", Category::Sm},
+            {"Sc", Category::Sc},
+            {"Sk", Category::Sk},
+            {"So", Category::So},
+            {"Zs", Category::Zs},
+            {"Zl", Category::Zl},
+            {"Zp", Category::Zp},
+            {"Cc", Category::Cc},
+            {"Cf", Category::Cf},
+            {"Cs", Category::Cs},
+            {"Co", Category::Co},
+            {"Cn", Category::Cn},
         };
         const auto it = kCategories.find(name);
         return it == kCategories.end() ? std::nullopt : std::optional(it->second);
@@ -103,19 +100,28 @@ namespace {
         return it == kAliases.end() ? name : it->second;
     }
 
-    CharacterSet ScanCategories(const std::vector<utf8proc_category_t>& categories) {
+    Category CategoryOf(std::uint32_t c) {
+        const std::uint32_t* const end  = kCategoryRunStart + kCategoryRunStartCount;
+        const std::uint32_t* const next = std::upper_bound(kCategoryRunStart, end, c);
+        return static_cast<Category>(kCategoryRunValue[next - kCategoryRunStart - 1]);
+    }
+
+    // Member runs that touch are joined into one range, whichever of
+    // `categories` each has.
+    CharacterSet ScanCategories(const std::vector<Category>& categories) {
         CharacterSet  set;
         std::uint32_t runStart = 0;
         bool          inRun    = false;
-        for (std::uint32_t c = 0; c < kCodepointEnd; ++c) {
-            const utf8proc_category_t category = utf8proc_category(static_cast<utf8proc_int32_t>(c));
-            const bool                member   = std::find(categories.begin(), categories.end(), category) != categories.end();
+        for (std::size_t i = 0; i < kCategoryRunStartCount; ++i) {
+            const auto start  = kCategoryRunStart[i];
+            const bool member = std::find(categories.begin(), categories.end(), static_cast<Category>(kCategoryRunValue[i])) !=
+                                categories.end();
             if (member && !inRun) {
-                runStart = c;
+                runStart = start;
                 inRun    = true;
             }
             else if (!member && inRun) {
-                set   = set.AddRange(runStart, c - 1);
+                set   = set.AddRange(runStart, start - 1);
                 inRun = false;
             }
         }
@@ -128,19 +134,19 @@ namespace {
     std::unordered_map<std::string, CharacterSet> g_propertyCache;
 
     // Simple case folding as an equivalence: two characters share an orbit
-    // when tolower/toupper/totitle connect them. Built once over the whole
-    // codepoint space.
+    // when their simple lower/upper/title mappings connect them. Built once
+    // over the whole codepoint space.
     class FoldOrbits {
       public:
         FoldOrbits() {
             parent_.resize(kCodepointEnd);
             for (std::uint32_t c = 0; c < kCodepointEnd; ++c)
                 parent_[c] = c;
-            for (std::uint32_t c = 0; c < kCodepointEnd; ++c) {
-                const auto cp = static_cast<utf8proc_int32_t>(c);
-                Join(c, static_cast<std::uint32_t>(utf8proc_tolower(cp)));
-                Join(c, static_cast<std::uint32_t>(utf8proc_toupper(cp)));
-                Join(c, static_cast<std::uint32_t>(utf8proc_totitle(cp)));
+            for (std::size_t i = 0; i < kCaseMappingsCount; ++i) {
+                const std::uint32_t* const mapping = kCaseMappings + 4 * i;
+                Join(mapping[0], mapping[1]);
+                Join(mapping[0], mapping[2]);
+                Join(mapping[0], mapping[3]);
             }
             members_.resize(kCodepointEnd);
             for (std::uint32_t c = 0; c < kCodepointEnd; ++c)
@@ -212,7 +218,7 @@ std::optional<CharacterSet> Property(std::string_view name) {
     // White_Space (PropList.txt): the space separators plus the ASCII
     // controls and NEL.
     else if (name == "White_Space" || name == "space")
-        result = ScanCategories({UTF8PROC_CATEGORY_ZS, UTF8PROC_CATEGORY_ZL, UTF8PROC_CATEGORY_ZP}).AddRange(0x09, 0x0D).AddChar(0x85);
+        result = ScanCategories({Category::Zs, Category::Zl, Category::Zp}).AddRange(0x09, 0x0D).AddChar(0x85);
     else {
         const std::string_view canonical = CanonicalCategory(name);
         if (canonical.size() == 2) {
@@ -220,7 +226,7 @@ std::optional<CharacterSet> Property(std::string_view name) {
                 result = ScanCategories({*category});
         }
         else if (canonical.size() == 1) {
-            std::vector<utf8proc_category_t> categories;
+            std::vector<Category> categories;
             for (const std::string_view two : {"Lu", "Ll", "Lt", "Lm", "Lo", "Mn", "Mc", "Me", "Nd", "Nl", "No", "Pc", "Pd", "Ps",
                                                "Pe", "Pi", "Pf", "Po", "Sm", "Sc", "Sk", "So", "Zs", "Zl", "Zp", "Cc", "Cf", "Cs", "Co",
                                                "Cn"}) {
@@ -242,13 +248,13 @@ std::optional<CharacterSet> Property(std::string_view name) {
 bool IsAlphabetic(std::uint32_t c) {
     if (c >= kCodepointEnd)
         return false;
-    switch (utf8proc_category(static_cast<utf8proc_int32_t>(c))) {
-        case UTF8PROC_CATEGORY_LU:
-        case UTF8PROC_CATEGORY_LL:
-        case UTF8PROC_CATEGORY_LT:
-        case UTF8PROC_CATEGORY_LM:
-        case UTF8PROC_CATEGORY_LO:
-        case UTF8PROC_CATEGORY_NL:
+    switch (CategoryOf(c)) {
+        case Category::Lu:
+        case Category::Ll:
+        case Category::Lt:
+        case Category::Lm:
+        case Category::Lo:
+        case Category::Nl:
             return true;
         default:
             return false;

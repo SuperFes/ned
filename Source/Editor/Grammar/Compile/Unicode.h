@@ -1,8 +1,8 @@
 //
 // The Unicode facts a grammar's token regexes need: `\p{...}` classes
 // (general categories and the identifier properties) and the simple case
-// folding a case-insensitive pattern applies. Categories and folding come
-// from utf8proc, the identifier tables from UnicodeTables.cpp.
+// folding a case-insensitive pattern applies, all from UnicodeTables.cpp so
+// the compiled tables do not vary with the build machine's Unicode data.
 //
 
 #ifndef NED_EDITOR_GRAMMAR_COMPILE_UNICODE_H
