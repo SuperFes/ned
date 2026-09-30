@@ -2512,7 +2512,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("revert-buffer-with-charset", "Reload this buffer's file, decoding it as a charset you name.",
                       [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::RevertBufferWithCharset; });
 
-    registry.Register("list-buffers", "Open a keyboard-navigable buffer list panel (mark/kill, switch).",
+    registry.Register("list-buffers",
+                      "Open a keyboard-navigable buffer list panel (d/s/u mark for kill/save or unmark, x executes, Enter "
+                      "or 1-9 switches, 'S' sorts by the next column and 'R' reverses, 'g' refreshes).",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::ListBuffers;
                       });
@@ -2834,8 +2836,9 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("tracker-panel",
                       "Pick an issue-tracker panel by name and move keyboard focus into it (Enter opens an issue's "
                       "buffer, 'o' opens it in the browser, 'b' makes a branch for it, 'c' comments on it, 's' changes "
-                      "its status, 'a' assigns it, 'i' clocks in on it, 'w'/'W' copy its key/URL, 'g' refreshes, Left/Right "
-                      "collapse/expand a status, Escape or C-g returns to the editor).",
+                      "its status, 'a' assigns it, 'i' clocks in on it, 'w'/'W' copy its key/URL, 'g' refreshes, 'S' sorts "
+                      "by the next column and 'R' reverses, Left/Right collapse/expand a status, Escape or C-g returns to "
+                      "the editor).",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::FocusTrackerPanel;
                       });

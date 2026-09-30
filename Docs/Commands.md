@@ -780,7 +780,7 @@ Begin recording a keyboard macro.
 
 Key: `C-x C-b`
 
-Open a keyboard-navigable buffer list panel (mark/kill, switch).
+Open a keyboard-navigable buffer list panel (d/s/u mark for kill/save or unmark, x executes, Enter or 1-9 switches, 'S' sorts by the next column and 'R' reverses, 'g' refreshes).
 
 ## `load-coverage-report`
 
@@ -1702,7 +1702,7 @@ Pick one of the issues the tracker panels have fetched and insert its key at poi
 
 ## `tracker-panel`
 
-Pick an issue-tracker panel by name and move keyboard focus into it (Enter opens an issue's buffer, 'o' opens it in the browser, 'b' makes a branch for it, 'c' comments on it, 's' changes its status, 'a' assigns it, 'i' clocks in on it, 'w'/'W' copy its key/URL, 'g' refreshes, Left/Right collapse/expand a status, Escape or C-g returns to the editor).
+Pick an issue-tracker panel by name and move keyboard focus into it (Enter opens an issue's buffer, 'o' opens it in the browser, 'b' makes a branch for it, 'c' comments on it, 's' changes its status, 'a' assigns it, 'i' clocks in on it, 'w'/'W' copy its key/URL, 'g' refreshes, 'S' sorts by the next column and 'R' reverses, Left/Right collapse/expand a status, Escape or C-g returns to the editor).
 
 ## `tracker-set-status`
 

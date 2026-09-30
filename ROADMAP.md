@@ -1165,10 +1165,16 @@ The shape, agreed 2026-09-29:
     such a heading offers the interval as a Jira worklog. GitHub has no time tracking.
 
 **Stage 7 -- extract what the panels share.**
-- [ ] A generic **record list/table** widget. `TreeView` covers hierarchies and
-      `ListPopup` transient pick-lists; a persistent, sortable, column-aligned list of
-      external records is the thing neither is. The `ListPopupRow` span-awareness cut
-      (Editor Ergonomics, above) is the same gap seen from the other side.
+- [ ] The record table shipped -- `git log --grep=TableView`: `UI/TableView.h` over
+      `UI/Table/` (Fit/Flex columns that drop by priority as a panel narrows, natural
+      per-group sort, selection/collapse/sort keyed by id so they survive a push). The
+      tracker panels, the buffer list and the DAP thread panel are on it; `DebugPanel`
+      and the hierarchy browser stay on `TreeView`, being real hierarchies. Conscious
+      cuts: cells are one foreground each, not spans, so the `ListPopupRow`
+      span-awareness gap (Editor Ergonomics, above) is still open; sort order isn't
+      remembered across restarts; the tracker's Age column is computed at fetch time
+      and only moves on a refetch; columns can't be resized or reordered by hand.
+      Revisit each when a panel actually wants it.
 - [ ] A generic **async external record source** -- the `Provider` + `Runner` +
       registry triple -- extracted only if the tracker copy and the VCS copy genuinely
       agree. The `FramedConnection` finding elsewhere in this file is the cautionary
