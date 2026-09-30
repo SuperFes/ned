@@ -492,6 +492,8 @@ add_library(ned_lib STATIC
         UI/JanetReplPanel.cpp
         UI/ListPopup.cpp
         UI/TreeView.cpp
+        UI/Table/Layout.cpp
+        UI/Table/Order.cpp
         UI/MemoryImageView.cpp
         UI/BufferListPanel.cpp
         UI/DapThreadsPanel.cpp
