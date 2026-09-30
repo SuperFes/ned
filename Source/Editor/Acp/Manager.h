@@ -768,6 +768,9 @@ class Manager {
     bool agentSupportsImages_          = false;
 
     Json               McpServers();
+    // cwd, mcpServers and the project's acpAdditionalDirectories, shared by
+    // session/new, load, resume and fork.
+    Json               SessionParams(Session& session);
     [[nodiscard]] Json PromptBlocks(const std::string& text, const std::vector<PromptAttachment>& attachments) const;
     void               RunSessionSettledCallbacks();
     void               ParseSessionSettings(Session& session, const Json& result);
@@ -782,6 +785,7 @@ class Manager {
     bool                    agentSupportsDelete_       = false;
     bool                    agentSupportsClose_        = false;
     bool                    agentSupportsFork_         = false;
+    bool                    agentSupportsAdditionalDirectories_ = false;
     bool                    agentForksAtMessage_       = false; // see ForkPoint
     std::optional<int>      listSessionsRequest_;               // the session/list page in flight
     std::vector<AuthMethod> authMethods_;

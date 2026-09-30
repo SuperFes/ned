@@ -16,6 +16,7 @@
 #include "Editor/Mcp/BridgeServer.h"
 #include "Editor/Mcp/BridgeSetting.h"
 #include "Editor/Project/Root.h"
+#include "Editor/Project/Settings.h"
 #include "Editor/WrapOverrides.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -318,6 +319,33 @@ Json Manager::McpServers() {
     return mcpServers;
 }
 
+Json Manager::SessionParams(Session& session) {
+    const std::filesystem::path root = editor::ProjectRoot();
+    Json                        params{{"cwd", root.string()}, {"mcpServers", McpServers()}};
+    const auto                  configured = LoadProjectSettings(root).acpAdditionalDirectories;
+    if (configured.empty()) {
+        return params;
+    }
+    if (!agentSupportsAdditionalDirectories_) {
+        PushSessionEvent(session, "acpAdditionalDirectories not sent: " + agentName_ + " doesn't support them");
+        return params;
+    }
+    Json directories = Json::array();
+    for (const std::filesystem::path& directory : configured) {
+        std::error_code ec;
+        if (std::filesystem::is_directory(directory, ec)) {
+            directories.push_back(directory.string());
+        }
+        else {
+            PushSessionEvent(session, "additional directory not found: " + directory.string());
+        }
+    }
+    if (!directories.empty()) {
+        params["additionalDirectories"] = std::move(directories);
+    }
+    return params;
+}
+
 const std::string& Manager::SessionId() const {
     const Session& s = *current_;
     return s.id;
@@ -535,7 +563,7 @@ std::string Manager::NewSession() {
     s.key      = nextSessionKey_++;
     s.creating = true;
     SelectSession(s.key);
-    client_->SendRequest("session/new", Json{{"cwd", editor::ProjectRoot().string()}, {"mcpServers", McpServers()}},
+    client_->SendRequest("session/new", SessionParams(s),
                          [this, key = s.key](std::optional<Json> result, std::optional<Json> error) {
                              Session* found = SessionByKey(key);
                              if (!found) {
@@ -629,7 +657,8 @@ std::string Manager::ForkSession(const std::optional<ForkPoint>& point) {
     fork.availableCommands = source.availableCommands;
     PushSessionEvent(fork, point ? "forked after \"" + point->preview + "\"" : std::string("forked"));
     SelectSession(fork.key);
-    Json params{{"sessionId", source.id}, {"cwd", editor::ProjectRoot().string()}, {"mcpServers", McpServers()}};
+    Json params         = SessionParams(fork);
+    params["sessionId"] = source.id;
     if (point) {
         params["_meta"] = {{"jetbrains", {{"air", {{"fork", {{"version", 1}, {"messageId", point->messageId}}}}}}}};
     }
@@ -694,9 +723,10 @@ std::string Manager::LoadSession(const std::string& sessionId, const std::string
     s.usage.reset();
     s.livePlanEntryIndex.reset();
     PushSessionEvent(s, std::string(replay ? "resuming: " : "resumed: ") + label);
-    s.replaying = replay;
-    client_->SendRequest(replay ? "session/load" : "session/resume",
-                         Json{{"sessionId", sessionId}, {"cwd", editor::ProjectRoot().string()}, {"mcpServers", McpServers()}},
+    s.replaying         = replay;
+    Json params         = SessionParams(s);
+    params["sessionId"] = sessionId;
+    client_->SendRequest(replay ? "session/load" : "session/resume", params,
                          [this, key = s.key, sessionId, previousId, replay](std::optional<Json> result, std::optional<Json> error) {
                              Session* found = SessionByKey(key);
                              if (!found) {
@@ -1227,6 +1257,8 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
             agentSupportsDelete_       = sessionCaps.is_object() && sessionCaps.contains("delete");
             agentSupportsClose_        = sessionCaps.is_object() && sessionCaps.contains("close");
             agentSupportsFork_         = sessionCaps.is_object() && sessionCaps.contains("fork");
+            agentSupportsAdditionalDirectories_ =
+                sessionCaps.is_object() && sessionCaps.contains("additionalDirectories") && !sessionCaps["additionalDirectories"].is_null();
             const Json agentInfo       = result && result->is_object() ? result->value("agentInfo", Json::object()) : Json::object();
             agentForksAtMessage_       = StringField(agentInfo, "name") == "@agentclientprotocol/claude-agent-acp";
             const Json meta            = result && result->is_object() ? result->value("_meta", Json::object()) : Json::object();
@@ -1284,11 +1316,7 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
 
 void Manager::CreateSession() {
     client_->SendRequest(
-        "session/new",
-        Json{
-            {"cwd", editor::ProjectRoot().string()},
-            {"mcpServers", McpServers()},
-        },
+        "session/new", SessionParams(*current_),
         [this, key = current_->key](std::optional<Json> newResult, std::optional<Json> newError) {
             // The session being created; the current one if its tab is gone.
             Session* found = SessionByKey(key);

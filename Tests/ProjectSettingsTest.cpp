@@ -147,3 +147,18 @@ TEST_CASE("LoadProjectSettings returns empty on malformed JSON", "[ProjectSettin
 
     std::filesystem::remove_all(root);
 }
+
+TEST_CASE("LoadProjectSettings resolves acpAdditionalDirectories against root", "[ProjectSettings]") {
+    const std::filesystem::path root = MakeTempRoot("ned_project_settings_test_acp_dirs");
+    {
+        std::ofstream file(root / ".ned" / "settings.json");
+        file << R"({"acpAdditionalDirectories": ["../shared", "/opt/lib", 7]})";
+    }
+
+    const ProjectSettings settings = LoadProjectSettings(root);
+    REQUIRE(settings.acpAdditionalDirectories.size() == 2);
+    CHECK(settings.acpAdditionalDirectories[0] == (root / "../shared").lexically_normal());
+    CHECK(settings.acpAdditionalDirectories[1] == "/opt/lib");
+
+    std::filesystem::remove_all(root);
+}

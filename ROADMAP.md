@@ -1011,49 +1011,12 @@ after an earlier reply through `_meta.jetbrains.air.fork`, every other agent fro
 
 - [ ] **ACP protocol gaps**, sized 2026-09-29 against the ACP SDK 1.5.1 schema and
       claude-agent-acp 0.84 (S/M/L = effort; "Claude" = what the adapter actually uses):
-      - **Subagents as child sessions** (M): declaring `clientCapabilities.subagents`
-        makes an agent announce each subagent as a session of its own
-        (`subagent_spawned`/`subagent_state_update`, then updates under the child's
-        `sessionId`) -- the agent-neutral form of the `parentToolUseId` nesting ned does
-        today. Not in the published schema yet (SDK PR #1992); the per-session routing
-        is already there for it.
       - **Fork limits**: forking from an earlier reply is claude-agent-acp only (the
         spec has no fork point); a fork gets a copy of the transcript but no rewind
         history, since the files on disk are shared between tabs. Tabs aren't
         remembered across restarts; the resume picker brings a session back.
-      - **Ned-side, small**: `additionalDirectories` for multi-root projects (S);
-        per-agent environment (S, `ChildProcess`'s `posix_spawn` forwards the global
-        `environ`); per-agent display name/colour (S).
       - **Not worth it now**: `providers/*` (LLM routing, unstable); claude-agent-acp's
         `_auth/status_update` account push (an extension, not ACP).
-- [ ] **ACP compatibility beyond Claude.** Every live probe so far has been
-      claude-agent-acp, so the panel is shaped by what one adapter sends. Parts of the
-      spec Claude never exercises, each wanted for agents that do:
-      - **Interop, as probed 2026-09-29.** opencode 1.18 and agy-acp 0.5.2 (Google
-        Antigravity) both work as configured agents with no ned-side special case;
-        ned now asks for `_meta["terminal-auth"]` logins, ignores a fork's history
-        replayed before `session/fork` answers, and treats a diff fragment's missing
-        final newline as no change. Left, by agent:
-        - opencode sends its todo list as a `todowrite` tool call whose content is the
-          JSON list (no `plan`), and a command's exit code only in
-          `rawOutput.metadata.exit`. Rendering either would key on opencode's shapes.
-        - agy-acp ends a turn (`end_turn`) while agy is still waiting on a
-          `RunCommand` confirmation, with no `session/request_permission` sent: an
-          adapter bug, reproduced with a bare client too, so it's for upstream.
-        - Gemini CLI and Codex's ACP adapter are not installed here and still unprobed.
-      - **`terminal/*`** (create/output/wait_for_exit/kill/release; stable) -- M/L.
-        For agents that ask the client to run commands rather than running them
-        agent-side. The emulator and `TerminalPanel` exist; the work is terminal-per-id
-        lifetime and a transcript embed.
-      - **`plan_update`/`plan_removed`** (unstable): the structured successor to the
-        `plan` update ned already renders; Claude never sends them.
-      - **`nes/*` + `document/*` next-edit suggestions** (stable): ned would have to
-        stream document events to the agent and show suggestions as virtual text --
-        see "AI edit-prediction" in the Maybelist for the display side.
-      - **`mcp/connect` over ACP** (unstable): the agent reaching ned's MCP bridge
-        through the ACP connection instead of a spawned stdio server.
-      - **Audio prompts/content** (`promptCapabilities.audio`): shown today only as a
-        caption.
 - [ ] `Keymap::AmbiguousBindings()` is diagnostic-only (a `CommandsTest.cpp` regression
       test), not enforcement — `Keymap::Bind` still lets a caller construct an
       unreachable-by-typing binding; a real structural fix (Emacs' own `define-key`
@@ -1371,9 +1334,55 @@ these accumulate detail in place.
 
 - [ ] **ACP panel extras past the next batch** (from the same 2026-09-29 survey):
       PR-style review comments on an agent's diff fed back as a prompt; transcript
-      search and timestamps. (Fork, parallel sessions and the subagent tree are under
-      "ACP protocol gaps".) Justified each when the spec
-      side stabilizes or the next-batch items are in daily use and this is what's missed.
+      search and timestamps. (Fork and parallel sessions are under "ACP protocol
+      gaps".) Justified each when the spec side stabilizes or the next-batch items are
+      in daily use and this is what's missed. A per-agent colour waits on ned running
+      more than one agent at a time; the panel already titles itself with the
+      configured agent name.
+- [ ] **ACP subagents as child sessions.** Declaring `clientCapabilities.subagents`
+      makes an agent announce each subagent as a session of its own instead of the
+      `parentToolUseId` nesting ned does for Claude. Not in the published schema yet
+      (SDK PR #1992); codex-acp 2.0.1 sends it: `subagent_spawned` (`subagentSessionId`,
+      `name`, `task`, `capabilities`) on the parent, the child's updates under its own
+      id, then `subagent_state_update` with `completed`/`failed`/`cancelled`/`stopped`.
+      The per-session routing is already there. Justified when an agent in use sends
+      it (Claude and agy-acp don't).
+- [ ] **ACP compatibility beyond Claude.** Parts of the spec that claude-agent-acp
+      and agy-acp never exercise (neither calls `terminal/create`; Claude's command
+      output comes through `_meta.terminal_output`). Justified each when an agent in
+      use needs it:
+      - **Interop, as probed 2026-09-29.** opencode 1.18 and agy-acp 0.5.2 (Google
+        Antigravity) both work as configured agents with no ned-side special case;
+        ned now asks for `_meta["terminal-auth"]` logins, ignores a fork's history
+        replayed before `session/fork` answers, and treats a diff fragment's missing
+        final newline as no change. Left, by agent:
+        - opencode sends its todo list as a `todowrite` tool call whose content is the
+          JSON list (no `plan`), and a command's exit code only in
+          `rawOutput.metadata.exit`. Rendering either would key on opencode's shapes.
+        - agy-acp ends a turn (`end_turn`) while agy is still waiting on a
+          `RunCommand` confirmation, with no `session/request_permission` sent: an
+          adapter bug, reproduced with a bare client too, so it's for upstream.
+        - Gemini CLI 0.62 (`gemini --acp`) and codex-acp 2.0.1 were probed up to login
+          only (no accounts here): both answer `session/new` with auth_required, which
+          ned already turns into its login picker. Their API-key methods take the key
+          in `authenticate`'s `_meta["api-key"]`, but in incompatible shapes (Gemini a
+          string, Codex `{apiKey}`); both also read it from the environment
+          (`GEMINI_API_KEY`, `CODEX_API_KEY`/`OPENAI_API_KEY`), so an `env` prefix on
+          the agent's argv covers it. Codex's device-code login runs through URL
+          elicitation, which ned has.
+      - **`terminal/*`** (create/output/wait_for_exit/kill/release; stable) -- M/L.
+        For agents that ask the client to run commands rather than running them
+        agent-side. The emulator and `TerminalPanel` exist; the work is terminal-per-id
+        lifetime and a transcript embed.
+      - **`plan_update`/`plan_removed`** (unstable): the structured successor to the
+        `plan` update ned already renders; Claude never sends them.
+      - **`nes/*` + `document/*` next-edit suggestions** (stable): ned would have to
+        stream document events to the agent and show suggestions as virtual text --
+        see "AI edit-prediction" in the Maybelist for the display side.
+      - **`mcp/connect` over ACP** (unstable): the agent reaching ned's MCP bridge
+        through the ACP connection instead of a spawned stdio server.
+      - **Audio prompts/content** (`promptCapabilities.audio`): shown today only as a
+        caption.
 - [ ] **Android device tooling.** Editing, building and testing an Android project
       works today via Java/Kotlin modes, the task runner (`ned/set-task-command` pointed
       at `./gradlew ...`) and XML mode for layout files. `adb logcat` streaming and a

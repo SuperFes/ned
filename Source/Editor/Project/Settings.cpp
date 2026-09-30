@@ -32,6 +32,14 @@ ProjectSettings LoadProjectSettings(const std::filesystem::path& root) {
                 settings.includePathsByMode.emplace(modeName, std::move(paths));
             }
         }
+        if (parsed.contains("acpAdditionalDirectories") && parsed["acpAdditionalDirectories"].is_array()) {
+            for (const nlohmann::json& entry : parsed["acpAdditionalDirectories"]) {
+                if (entry.is_string()) {
+                    const std::filesystem::path path(entry.get<std::string>());
+                    settings.acpAdditionalDirectories.push_back((path.is_absolute() ? path : root / path).lexically_normal());
+                }
+            }
+        }
         if (parsed.contains("lspInitializationOptions") && parsed["lspInitializationOptions"].is_object()) {
             for (const auto& [language, options] : parsed["lspInitializationOptions"].items()) {
                 settings.lspInitializationOptionsByLanguage.emplace(language, options);

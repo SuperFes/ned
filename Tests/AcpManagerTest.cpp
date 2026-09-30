@@ -19,6 +19,7 @@
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Mcp/BridgeServer.h"
 #include "Editor/Mcp/ToolRegistry.h"
+#include "Editor/Project/Root.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/Vcs/Runner.h"
 #include "Editor/WrapOverrides.h"
@@ -2236,4 +2237,65 @@ TEST_CASE("Manager tags a subagent's updates with the tool call that started it"
     REQUIRE(transcript[3].text == "again");
     REQUIRE(transcript[4].parentToolCallId == "task-1");
     REQUIRE(transcript[4].status == "completed");
+}
+
+TEST_CASE("Manager sends the project's acpAdditionalDirectories to an agent that takes them", "[Acp]") {
+    struct RootGuard {
+        std::filesystem::path previous = ned::editor::ProjectRoot();
+        ~RootGuard() {
+            ned::editor::SetProjectRoot(previous);
+        }
+    } const rootGuard;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_acp_additional_dirs_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "project" / ".ned");
+    std::filesystem::create_directories(dir / "shared");
+    {
+        std::ofstream settings(dir / "project" / ".ned" / "settings.json");
+        settings << R"({"acpAdditionalDirectories": ["../shared", "../missing"]})";
+    }
+    ned::editor::SetProjectRoot(dir / "project");
+
+    SECTION("supported") {
+        ManagerFixture fixture;
+        fixture.initializeResult                                                                      = ResumableAgent();
+        fixture.initializeResult["agentCapabilities"]["sessionCapabilities"]["additionalDirectories"] = Json::object();
+        fixture.InjectClient();
+        fixture.manager.StartSession("test-agent");
+        const Json initializeRequest = fixture.reader.Next();
+        fixture.client->DispatchFrame(ResultFrame(initializeRequest["id"], fixture.initializeResult));
+
+        const Json newRequest = fixture.reader.Next();
+        REQUIRE(newRequest["method"] == "session/new");
+        REQUIRE(newRequest["params"]["additionalDirectories"] == Json::array({(dir / "shared").string()}));
+        fixture.client->DispatchFrame(ResultFrame(newRequest["id"], Json{{"sessionId", "s1"}}));
+        const auto& transcript = fixture.manager.Transcript();
+        REQUIRE(std::any_of(transcript.begin(), transcript.end(), [&](const auto& entry) {
+            return entry.text == "additional directory not found: " + (dir / "missing").string();
+        }));
+
+        fixture.manager.LoadSession("s2", "");
+        const Json loadRequest = fixture.reader.Next();
+        REQUIRE(loadRequest["method"] == "session/load");
+        REQUIRE(loadRequest["params"]["sessionId"] == "s2");
+        REQUIRE(loadRequest["params"]["additionalDirectories"] == Json::array({(dir / "shared").string()}));
+    }
+
+    SECTION("unsupported") {
+        ManagerFixture fixture;
+        fixture.InjectClient();
+        fixture.manager.StartSession("test-agent");
+        const Json initializeRequest = fixture.reader.Next();
+        fixture.client->DispatchFrame(ResultFrame(initializeRequest["id"], fixture.initializeResult));
+
+        const Json newRequest = fixture.reader.Next();
+        REQUIRE_FALSE(newRequest["params"].contains("additionalDirectories"));
+        fixture.client->DispatchFrame(ResultFrame(newRequest["id"], Json{{"sessionId", "s1"}}));
+        const auto& transcript = fixture.manager.Transcript();
+        REQUIRE(std::any_of(transcript.begin(), transcript.end(), [](const auto& entry) {
+            return entry.text == "acpAdditionalDirectories not sent: test-agent doesn't support them";
+        }));
+    }
+
+    std::filesystem::remove_all(dir);
 }

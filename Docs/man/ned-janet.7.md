@@ -218,7 +218,7 @@ configuration is Janet code, and these are the bindings it calls.
 
 `ned/set-acp-agent`
 
-:   Set the command used to launch an Agent Client Protocol (ACP) coding agent: (name argv), e.g. (ned/set-acp-agent "claude-code" ["claude-code-acp"]). Same argv shape and $PATH resolution as ned/set-lsp-command; an empty argv clears the configured command for name. acp-send-prompt (C-c a p) is the entry point that spawns and talks to whichever agent name it's given.
+:   Set the command used to launch an Agent Client Protocol (ACP) coding agent: (name argv), e.g. (ned/set-acp-agent "claude-code" ["claude-code-acp"]). Same argv shape and $PATH resolution as ned/set-lsp-command; an empty argv clears the configured command for name. For per-agent environment variables, start argv with env, e.g. ["env" "OPENCODE_CONFIG_CONTENT=..." "opencode" "acp"]. acp-send-prompt (C-c a p) is the entry point that spawns and talks to whichever agent name it's given.
 
 `ned/set-acp-follow-agent`
 

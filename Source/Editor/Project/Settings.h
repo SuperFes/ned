@@ -9,7 +9,7 @@
 // CachedGitIgnoreMatcher), since this is only consulted on an interactive
 // link-open, not a hot path.
 //
-// v1 scope: four fields.
+// v1 scope: five fields.
 //
 // includePaths -- extra directories Link.cpp's ResolveFileLink searches for a
 // non-project-relative include/import target (an angle-form C/C++ #include, a
@@ -55,7 +55,11 @@
 //
 // importResolution -- see ImportResolutionOverride's own doc comment below.
 //
-// All four default a mode/language/section with no entry to "nothing configured"
+// acpAdditionalDirectories -- workspace roots beyond the project root that an ACP
+// agent may read and edit (session/new's additionalDirectories), resolved relative
+// to root like includePaths.
+//
+// All five default a mode/language/section with no entry to "nothing configured"
 // -- the same convention everywhere else in this codebase (GitIgnoreMatcher's
 // missing .gitignore, Mode::fold's empty function, ...).
 //
@@ -93,6 +97,7 @@ struct ProjectSettings {
     std::unordered_map<std::string, nlohmann::json>                     lspInitializationOptionsByLanguage;
     nlohmann::json                                                      lspWorkspaceConfiguration = nlohmann::json::object();
     std::unordered_map<std::string, ImportResolutionOverride>           importResolutionByLanguage;
+    std::vector<std::filesystem::path>                                  acpAdditionalDirectories;
 };
 
 // Convenience accessor: settings.includePathsByMode[modeName], or an empty list if
