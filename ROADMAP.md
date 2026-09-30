@@ -1,16 +1,17 @@
 # Ned Roadmap
 
-What's still open. Completed work is deliberately not tracked here — the detailed
-per-feature design/decision records this file used to carry were pruned 2026-08-20,
-2026-08-25, 2026-09-06, and again 2026-09-07; full history lives in git
-(`it log --follow ROADMAP.md`, `git show <rev>:ROADMAP.md`, or `git log --grep=<slug>`
-for a specific feature — most shipped items below name the slug to search for). Current
-architecture is documented in `CLAUDE.md`. When an item here ships, replace its entry
-with a one-line pointer to the shipping commit (or delete it outright) rather than
-writing up what was done — the writeup belongs in the commit message, this file is a
-todo list, not an archive. A shipped feature that left behind a genuine gap gets its own
-short, standalone `- [ ]` item under the relevant section, not a paragraph of "here's
-what shipped" with the gap buried at the end of it.
+What's still open. Completed work is deliberately not tracked here — full history lives in
+git (`git log --follow ROADMAP.md`, `git show <rev>:ROADMAP.md`, or `git log --grep=<slug>`
+for a specific feature). Current architecture is documented in `CLAUDE.md`.
+
+How this file is kept:
+- **Open Items** are work we intend to do. When one ships, delete it; the writeup belongs
+  in the commit message.
+- **Maybelist** is neither committed nor rejected. Every entry names the trigger that
+  would promote it. Promote or delete on revisit rather than letting detail accumulate.
+- **Won't Do** records a rejection and its reason, so it stays a conscious call.
+- A deliberate design cut with no trigger to reopen it is not a todo. It goes in the
+  commit message or a source comment, not here.
 
 ## Vision
 
@@ -31,1801 +32,412 @@ Notcurses.
   `$XDG_DATA_HOME/ned/`, caches → `$XDG_CACHE_HOME/ned/`, other persistent state →
   `$XDG_STATE_HOME/ned/`. Never a bare dot-file in `$HOME`.
 - **Keep `Source/UI/` loosely coupled from the TUI library where it's cheap.**
+- **The mouse is an accelerant, never the only path.** Over SSH/tmux, mouse support is
+  unreliable, so every mouse action needs a keyboard equivalent that already exists or
+  lands alongside it.
 
 ## Open Items
 
 ### Releases
 
-**1.0, for context, since branching starts near it.** For a scriptable editor 1.0 is a
-promise about the *Janet surface*, not about features: 160 `Register<>` bindings and 275
-command names, and declaring 1.0 makes breaking any of them a major-version event. That
-surface is still moving (`GrammarQuerySources` became designated-initializers mid-flight;
-the parsing engine would reshape `Mode` outright), which is the real reason 1.0 is not close
-regardless of how usable ned feels. Candidate criteria, all already present below: Janet API
-frozen · parsing-engine decision made either way · no known data-loss paths · release
-artifacts · the mdBook docs site.
+1.0 is a promise about the *Janet surface* (`Register<>` bindings and command names), not
+about features. Declaring it makes breaking any of them a major-version event. Criteria:
+- [ ] Janet API frozen.
+- [ ] No known data-loss paths.
+- [ ] Release artifacts.
+- [ ] The mdBook site (`Docs/book.toml`) published.
 
-### Rendering & Keystroke Performance
-What is left of the translucency/theme-v2 work is performance, not appearance: the
-compositor and theme engine shipped, and these are the costs that surfaced while building
-them. Compositing design and the measurements behind it: `Docs/Translucency.md`,
-`Tools/NotcursesGradientProbe.cpp`, `Tools/TerminalImageAlphaProbe.cpp`.
-`Tests/KeystrokeBench.cpp` is the instrument for all three — it exists because every CPU
-measurement said "fine" while typing felt bad.
+### Correctness
 
-The entry that stood here until 2026-09-22 said the incremental re-parse is what
-dominates a keystroke on a large C++ file. It does not, and the correction is the only
-part worth keeping: timed separately (the C++ attribution case in `Tests/KeystrokeBench.cpp`),
-the re-parse is ~0.36 ms of a ~13 ms keystroke on a 107 KiB file and the per-frame queries
-are all of the rest. The costs that turned out to be real are fixed -- slug for
-`git log --grep=`: `query-walk-ancestry`; windowed highlight 6.9 ms -> 2.8 ms,
-whole-document highlight 50.7 ms -> 14.8 ms, keystroke+repaint on a 9 KiB C++ file
-6.1 ms -> 2.7 ms. Three items left behind.
+- [ ] **`PathToUri` doesn't percent-encode** (`Lsp/Manager.cpp`), but `UriToPath` decodes.
+      A project path containing a space, `#` or `?` sends an invalid URI in every
+      `didOpen`. Encode on the way out, with a round-trip test.
+- [ ] **Snippet variables inside a placeholder's default** (`${1:$TM_FILENAME}`) don't
+      resolve. Only a top-level `$`/`${` reference does.
 
-- [ ] **Fold, locals post-processing and indent still walk the whole document per
-      keystroke.** MatchCache's query reconciliation is incremental in every grammar now
-      -- slug for `git log --grep=`: `changed-ranges`; the external-token and
-      ancestor-crossing gates became `parse::ChangedRanges` widening, and every consumer
-      reconciles against its own generation (`EditSince`) instead of whichever capability
-      advanced the shared parse first. Measured on 128 KiB (`Tests/KeystrokeBench.cpp`,
-      "scanner-grammar MatchCache consumers"): JavaScript locals +12.9 -> +2.6 ms and
-      symbolKind +39.9 -> +2.9 ms per keystroke, Python locals +14.9 -> +3.1 ms. What is
-      left is linear work around the queries rather than in them: the fold scan
-      (imprint-based, ~3.0 ms at 107 KiB of C++), turning locals matches into local nodes
-      (~25 us per KiB, which is why `kMaxLocalConditionBytes` in Mode.cpp still caps the
-      `#is? local` pass, now at 256 KiB), and the indent imprint walk (+21 ms on Enter at
-      128 KiB of JavaScript). Windowing them is not the obvious fix it looks like:
-      `GutterModel`'s huge-file path already shows what a truncated fold window costs (a
-      block whose closer falls outside the window folds to the window edge, which is why
-      that path drops any range abutting its own tail). The real question is whether
-      these become incremental -- reuse keyed on `TreeEdit::structuralChanges` -- rather
-      than windowed. Nothing pulled yet; typing no longer feels bad, which is what would
-      drive it.
-- [ ] `sexpMotion`'s own O(depth^2) is closed: `NodePrevSiblingImpl`/`NodeNextSiblingImpl`
-      used to call `NodeParent` (a full root-to-self descent) once per invocation
-      regardless, so climbing an already-collected ancestor chain by sibling rather than
-      by parent paid that descent again at every level. `NodeNextSiblingFromParent`/
-      `NodePrevSiblingFromParent` (`Editor/Parse/Node.h`, plus the named
-      `grammar::Node::NextNamedSibling(parent)`/`PrevNamedSibling(parent)` overloads) take
-      the caller's already-known parent instead, and `sexpMotion`'s two ancestor-chain
-      loops (Mode.cpp) pass the chain link they already have. A true O(1) single `Parent()`
-      call for a caller with no chain in hand at all moved to the Maybelist -- nothing
-      left calls it in a loop, so it was never worth the shared-mutable-state cost of
-      building it.
-- [ ] One measured non-fix worth not re-trying: rewriting `ImprintBracket`'s
-      `DelimitersOf` `Child(i)` loops as `ForEachChild` cursor passes made a fold scan
-      ~25% *slower* (2952 -> 3714 us). A closer is nearly always a node's last child and
-      its opener the first, so the reverse `Child(i)` scan stops after two lookups where
-      a cursor pass visits every child. `Node::Child`'s "prefer ForEachChild" rule is
-      about loops that walk ALL children; this is not one.
+### Unverified Against Real Environments
 
-### Language Intelligence
+- [ ] The six capability-gated DAP requests added with the debug panel (`modules`,
+      `loadedSources`, `breakpointLocations`, `stepInTargets`, `setExpression`,
+      `completions`) are unit-tested against a fake adapter only. Exercise them against a
+      real lldb-dap and debugpy session. `breakpointLocations` must read an empty list as
+      "no opinion".
+- [ ] The GNOME Terminal handler in `TerminalTabLauncher` has never run live.
+- [ ] `C-Tab`/`C-S-Tab` in the modern keymap are untested on a legacy (non-kitty-protocol)
+      terminal.
 
-**Quick-fix gutter marker**
+### Editor & UI
 
-- [ ] The marker only ever names a **diagnostic-attached** quick fix, because an
-      attached diagnostic is the only thing that maps an action back to a line. A
-      selection-scoped refactor (extract function/variable) and a whole-file source
-      action (organize imports) light nothing, and asking per line to find them would
-      be a request per visible line rather than one per viewport. `lsp-code-action`
-      (`C-c C-a`) still reaches all of them at point.
-- [ ] Prose-origin diagnostics are excluded from the request outright: the viewport
-      request goes to the buffer's primary language server, and only the prose
-      checker's own connection knows what a harper-ls-flagged word is. A prose
-      diagnostic's "add to dictionary"/"ignore" fix is reachable from
-      `lsp-code-action` (which does route to `kProseLanguageKey`) and never from the
-      marker. Fixing it properly means a second viewport request on that connection.
-- [ ] A marker retires when the range it sits in is re-answered, which needs a
-      diagnostics publish or an edit to re-arm. A server that silently stops offering
-      a fix without republishing its diagnostics leaves the marker up until the next
-      publish -- not observed on any of the three servers measured, since a fix going
-      away is a diagnostic changing.
-- [ ] The column is reserved from the frame after the server opens the document, so
-      opening a file in a server-backed language still shifts the gutter one column
-      once -- the same one-time shift the diff, blame and symbol columns already make.
-      Reserving it before the server attaches would mean paying a column in every
-      buffer, LSP or not. (The breakpoint column made the opposite call as of
-      `debug-panel`: it is reserved for any language with a configured DAP adapter,
-      because that column is where the first breakpoint gets clicked, so gating it on
-      one already existing was a chicken-and-egg.)
-- [ ] `Lsp/Manager.cpp`'s `PathToUri` doesn't percent-encode, while its `UriToPath` now
-      decodes (`lsp-document-link`, after clangd's own encoded targets proved every
-      URI-carrying response was missing paths outside the unreserved set). Nothing has
-      needed the outgoing direction yet — it would change the URI every `didOpen` sends,
-      so it was left alone deliberately rather than overlooked. Revisit if a project path
-      with a space/`#`/`?` in it ever misbehaves.
-
-**LSP results as buffer-anchored data, not byte snapshots**
-
-- [ ] The throttle is per buffer and per window, not per request kind: a viewport-scoped
-      `semanticTokens/range` and a whole-document `codeLens` share one window even though
-      only the first has any reason to move with the viewport. Harmless today (codeLens
-      dedups on generation, so a viewport-only change costs it nothing), and splitting it
-      would mean a timer per kind per buffer -- worth it only if a third viewport-scoped
-      request kind ever shows up.
-- [ ] `documentHighlight` is deliberately *not* carried forward (`BufferView.h`'s
-      `DocumentHighlightState` says why): it describes the symbol under point rather
-      than a span of text, so typing inside that symbol makes it a different symbol,
-      which no relocation fixes -- and any edit moves point, which re-arms its own
-      debounce. Suppress-and-re-request is the right model there. Revisit only if the
-      one-debounce-window gap turns out to be visible in practice.
-- [ ] Open policy question: a server's semantic tokens currently override any syntax
-      class the grammar produced, including `comment`. No live case motivates it now --
-      the phpantom_lsp one this entry used to cite was a misdiagnosis (checked against
-      0.9.0 and 0.10.0: both classify `//x`, `#x` and `/*x*/` as `comment` and flag only
-      the uncommented call), and 0.10.0's `[semantic_tokens] mode = "contextual"` default
-      stops emitting comment tokens at all. Decide it when a server actually recolours a
-      grammar `comment` cell.
-- [ ] **The tree snapshot refreshes every ~30s (6 auto-save ticks), not on every change.**
-      Computed off `autoSaveThread_` rather than inside `ResyncFileWatcher` (called after
-      every debounced file-watcher burst) specifically so a real recursive filesystem walk
-      never lands on the main thread. A brand-new subdirectory's contents can therefore
-      take up to ~30s to become watched; an already-watched directory's own changes are
-      seen the moment inotify reports them, unaffected. Revisit only if that staleness
-      proves annoying in practice -- the alternative (reacting to `IN_ISDIR`-flagged create
-      events for near-instant coverage) needs real machinery of its own: a race-window
-      rescan for `mkdir -p`, and stale-path bookkeeping across a watched directory's own
-      rename, neither of which this pass built.
-- [ ] **A hard cap (`kMaxTreeWatchedDirectories`, 8000) bounds inotify watch usage,
-      conservatively below the historic Linux `max_user_watches` default of 8192** so ned
-      alone never exhausts a stock system's per-user budget before any other running
-      application's own watches. An open buffer's own directory always wins a truncation;
-      past the cap, some project directories simply go unwatched for the per-entry LSP
-      path, which -- unlike AutoRevert/AutoMerge -- has no poll-tick fallback to catch what
-      inotify missed. `WatchBudgetExceeded()` is edge-triggered into one `DiagnosticsLog`
-      line per transition rather than silent, since this is a standing gap worth a durable
-      record, not a transient failure like a single missing directory.
-
-The rest of what the server-side protocol half left behind, unrelated to watch coverage:
-
-- [ ] Per-entry reporting flips on at the next background tick after a server registers
-      its watchers (`WindowManager::ResyncFileWatcher`, ~5s), so file events in that
-      window are missed. Inherent to refreshing the toggle from a poll rather than a hook,
-      and harmless in practice: a server that has just registered has just finished
-      indexing the tree it would be told about.
-- [ ] `window/showMessageRequest` always answers null ("the user chose none of these").
-      `Client::RequestHandler` is synchronous, so a real modal choice can't be driven from
-      it -- the same constraint `workspace/applyEdit` works under. The message and the
-      actions it offered do reach the user; only the answer is fixed.
-- [ ] `window/showDocument` honors the path and the selection's start *line*. `takeFocus:
-      false` is ignored (every pane ned could show a document in is one the user is
-      looking at) and the selection's column is dropped with it, since the jump goes
-      through `JumpToPathLine`.
-- [ ] `window/showDocument` with `external: true` (or any non-`file:` scheme) goes
-      straight to `Editor/Link.h`'s `OpenUrl` -- the configured opener, `xdg-open` by
-      default -- with no confirmation. Deliberate: the server is a process the user
-      already configured and could launch a browser itself, and the opener is
-      exec-based (no shell) and disable-able with `(ned/set-url-open-command "")`.
-      Revisit if a "server asked to open <url>, allow?" prompt ever earns its keep.
-- [ ] A dynamic registration for anything other than `workspace/didChangeWatchedFiles` and
-      `textDocument/didSave` is recorded and logged but changes no behavior. Mostly
-      moot -- ned sends feature requests without consulting a capability and latches off
-      a real MethodNotFound response -- but a server that registers, say, on-type
-      formatting dynamically still has its trigger characters ignored, because those are
-      read from the `initialize` response only.
-- [ ] Observed consequence of `didSave`, not a ned bug: harper-ls advertises
-      `textDocumentSync.save: true` and then logs "got a `textDocument/didSave`
-      notification, but it is not implemented" on every save, which ned's stderr capture
-      dutifully files as a WARN. Anyone editing prose sees one such line per save in
-      `*Messages*`. Suppressing it would mean either second-guessing a server's own
-      advertised capability or filtering a server's log text by content; revisit only if
-      a second server does the same.
-- [ ] `textDocument/willSave` / `willSaveWaitUntil` stay unsent on purpose: the latter is
-      the spec's format-on-save hook and ned runs its own pipeline there
-      (`format-buffer-lsp-tier`), which a server offering competing edits would fight.
-
-**Colour swatches**
-
-- [ ] `lab()` / `lch()` / `oklab()` / `oklch()` are not recognised. Parsing them is
-      trivial; the round trip is not. Those spaces are wider than sRGB, so offering
-      "the same colour as `#rrggbb`" for an out-of-gamut `oklch()` would silently
-      rewrite a P3 colour as its clipped sRGB twin -- data loss wearing a conversion's
-      clothes. Admitting them needs a gamut-mapping policy first, which is its own
-      decision, not a chore.
-- [ ] The scan reads at most 8 KiB of each visible line, the same bounded-walk tradeoff
-      `kMaxTabAwareColumnScan` makes: a literal past that column earns no swatch. The
-      bound exists because the scan is a real copy out of the rope and
-      `PerformanceTest.cpp`'s pathologically-long-line case caught the uncapped version
-      redoing five million bytes per frame. Minified CSS is the one real file this
-      costs. Widening it means windowing on the horizontal scroll, and both producers
-      of the span list would have to agree on that window within a frame or the cursor
-      drifts -- which is the whole reason the cap is a function of the line alone.
-
-**Colour picker**
-
-- [ ] No LSP tier: the picker offers ned's own notations only. A colour a server *names*
-      (`rebeccapurple`) is a conversion, which is what `color-at-point` is for, and
-      `colorPresentation` has nothing to say about a colour the user has not chosen yet.
-
-**LSP completion fidelity**
-
-- [ ] `commitCharacters` and `preselect` are honored only where a server actually
-      declares them — no default set is ever substituted. That turned out to be
-      less protective than it sounds: verified live, `typescript-language-server`
-      sends `{".", ",", ";", "("}` on *every* item, so `ned/set-lsp-commit-characters`
-      (default on, VS Code's own default) is the switch for anyone who doesn't want
-      `;` accepting whatever suggestion happened to be showing. Revisit the default
-      if that proves annoying in practice.
-- [ ] `additionalTextEdits` are applied against the buffer as it stands at accept
-      time, not as it stood when the server computed them. Anything positioned
-      *before* point is unaffected by the intervening keystrokes (typing a newline
-      dismisses the session outright, so no line above point can shift), which covers
-      every real case — an `#include`/`import` near the top of the file. An edit
-      positioned after point on point's own line would be off by the characters typed
-      since; no server has been observed to send one.
-
-**Merged completion sources**
-
-- [ ] Buffer words are collected from `Buffer::Text()` -- a whole-document copy -- on
-      every completion request, which is why a huge buffer (`ITextStorage::IsHuge()`)
-      is skipped outright rather than scanned incrementally. A windowed scan (the
-      viewport plus some margin, the shape the huge-file search work already uses)
-      would give a huge file back its buffer words; nothing has needed it, since a
-      huge file is usually one being read rather than one being typed into.
-- [ ] Snippet and buffer-word candidates are collected once, at request time, and
-      re-ranked from there for the rest of the session -- correct for narrowing, and
-      for widening back to the prefix the session started at, which is the only
-      widening `CompletionSession` permits. A *server* answering `isIncomplete` re-asks
-      and re-collects; a local source has no equivalent, and needs none as long as the
-      collection is a superset of every prefix the session can reach.
+- [ ] **Setting for terminal application titles.** An OSC 0/2 title replaces the terminal
+      tab's label unconditionally (truncated to 24 columns). Add a `ned/set-*` toggle.
+- [ ] **Merge view: index-stage source.** Sides come from conflict markers today, so git's
+      clean auto-merges aren't shown. Diff the `:1:`/`:2:`/`:3:` stages (a new Provider
+      verb) against the merged buffer into the same `AlignedChunk` list. `DiffLines` is an
+      O(m*n) LCS, so this needs a linear-space diff first.
+- [ ] **Right-docked `AcpPanel` has no reserved resize border**, unlike
+      `ProjectSidebar`'s divider column.
 
 ### Refactoring
 
-**Sidecar metadata: association without binding**
+- [ ] **Consolidate the background-loop + `EventLoop::Post` pattern.**
+      `Mcp/BridgeServer` is a full copy of `FramedConnection`'s machinery (jthread read
+      loop, `shared_ptr<bool> alive_`, destruction-order comment). `Terminal/PtyProcess`,
+      `Tasks/TaskProcess`, `FileWatch` and `ModePrewarm` carry thinner versions.
+      `FramedConnection` can't be reused as-is, because it owns one spawned transport by
+      value and the bridge accepts N sockets. Extract the per-connection half into
+      something the bridge can hold per accepted connection.
 
-- [ ] The eight existing tenants are **not** migrated onto anchors, and that is a cost
-    finding rather than a leftover: each accessor (`Diagnostics()`, `SnippetRanges()`,
-    `ExcerptRanges()`, `SecondaryCursors()`, `FoldMarkerAt()`) has 58-108 call sites and
-    returns a reference to stored state, so a migration means either touching all of
-    them or materializing a vector per read -- and `Diagnostics()`/`SecondaryCursors()`
-    are read inside `Paint()` loops. They already relocate correctly through the one
-    feed, so the churn buys nothing visible. Snippet ranges were the candidate
-    exception — "migrate them and nested placeholders fall out" — and building nesting
-    for real showed that to be wrong (`git log --grep=nested-snippet-stops`): `Buffer`
-    already relocated each endpoint independently under its own gravity, so anchors
-    offered nothing it lacked. What nesting actually needed was *carried ancestry*
-    (which field encloses which — a placeholder that is exactly one nested stop shares
-    its parent's span, so geometry can't say) plus a gravity that changes on every TAB,
-    and `AnchorSet::Create` fixes a policy for the anchor's lifetime. A tenant whose
-    gravity is dynamic is the shape anchors do **not** fit today; that is the finding,
-    and it applies to any future migration candidate too.
-- [ ] **`IncrementalParseCache` re-derives an edit the buffer already recorded exactly.**
-    `Editor/Grammar/IncrementalParse.h` keeps `lastText_` -- a second full copy of the
-    document -- and reconstructs one changed region per call by common-prefix/suffix
-    diffing it, which is what `Buffer::Edits()` has held exactly since
-    `sidecar-anchors`. Cost, not wrongness: the reconstruction is conservative (two
-    distant edits widen to one span covering both, so the parser reuses fewer subtrees
-    but never a wrong one). The reason it diffs is a real constraint, not an oversight
-    -- every `Mode` capability is a pure function of "the buffer's full current text",
-    with no `Buffer&` and no edit-delta parameter, which is what keeps `Mode` a
-    copyable value type a test can drive with a bare string. So this is a change to
-    that seam, not to this file. Worth doing only once the doubled resident text
-    actually shows up in a measurement (`Tests/KeystrokeBench.cpp`, a large file, RSS
-    per open buffer) rather than on principle.
-- [ ] **The background-loop-plus-`EventLoop::Post` machine is hand-rolled in five more
-    places.** `Editor/Protocol/FramedConnection.h` exists because three protocol
-    clients each rebuilt the same thing and a member-declaration-order invariant was
-    defended only by a comment repeated in three files. `Editor/Mcp/BridgeServer` is a
-    fourth copy of exactly that -- jthread read loop, `shared_ptr<bool> alive_` captured
-    by value into every `Post`, and the same "declared last so its destructor runs after
-    the body has unblocked it" comment -- and `Terminal/PtyProcess`, `Tasks/TaskProcess`,
-    `FileWatch` and `ModePrewarm` each carry a thinner version. `FramedConnection`
-    cannot be reused as-is: it owns one spawned `TransportT` by value (which is what
-    enforces the destruction order), while the bridge accepts N socket connections and
-    the other four aren't framed protocols at all. So the honest options are extracting
-    the per-connection half into something the bridge can hold one of per accepted
-    connection, or leaving it -- not a migration. Nothing here is known-broken; the
-    cost is that the next bug of the shape `lsp-use-after-free` was has five places to
-    hide in instead of one.
-- [ ] Anchors have no Janet surface. Deliberate for now: the C++ seam has one consumer
-    shape so far, and a scripted holder that leaks handles leaks them forever (there is
-    no RAII handle -- `Buffer` is move-only and an anchor outliving its owner would
-    dangle across a `Clone()`). Revisit when a plugin actually wants to mark a position.
-- [ ] Explicitly *not* a fix for stale server data: an anchor placed at a wrong offset
-    stays faithfully wrong, which is exactly what the 2026-09-18 phpantom_lsp session
-    turned out to be (the server's own `character` values disagreed with its own
-    document; ned's conversion and relocation were both correct).
-- [ ] A huge buffer (`ITextStorage::IsHuge()`) never gets the scope-aware tier at all.
-      Unlike the fold/symbol/test gutters beside it, this one cannot window: a binding's
-      occurrence set is only complete if the whole file was parsed, so a windowed answer
-      would be a partial *rename*, not a partial display (`scope-aware-rename`).
-- [ ] A rename carrying filesystem resource operations (a `documentChanges` edit that also
-      creates, deletes or renames a file) is applied directly rather than reviewed -- a
-      multibuffer has no way to represent a resource op, and reviewing half an edit is
-      worse than reviewing none of it. Same for a huge source among the touched files, and
-      for a server whose `newText` isn't the new name verbatim (a qualified or re-cased
-      replacement, which the review has no way to propose). All three say so in the echo
-      area rather than behaving differently in silence (`rename-review`).
-- [ ] An excerpt mixing a real reference with a comment/string hit on the same line is one
-      row with three states, not two independently togglable hits -- `M-a` steps it from
-      original to references-only to every occurrence. Per-hit granularity would need the
-      review to carry sub-excerpt ranges, which nothing else in the multibuffer does
-      (`rename-review`).
-- [ ] The comment/string candidate scan covers only the files the rename already touches.
-      A name that appears in a comment in a file with no code reference at all is never
-      offered -- that would be a project-wide search, which `project-replace` already is
-      (`rename-review`).
-- [ ] An import fixup only ever rewrites a specifier in the style it was already written
-      in, and declines anything that style cannot express: an angle-form system include, a
-      PHP `use` namespace, a Rust `mod` declaration, a bare package specifier, and a target
-      that moved out of the root its specifier counts from (a project-root-relative
-      `"Editor/Widget.h"` moved outside the project). Declines are counted and named in the
-      review's status line rather than guessed at. Lifting any of them means teaching the
-      rewriter a second style to write in, which is what the "never restyle" rule exists to
-      refuse (`file-rename-propagation`).
-- [ ] An externally detected move is only seen inside a directory ned already watches --
-      the parent of an open buffer -- and only paired when BOTH ends are such a directory.
-      A rename inside one always pairs (the moved file itself need not be open); a move
-      into a directory nothing is open in delivers inotify's `IN_MOVED_FROM` half alone,
-      which still triggers the existing sweep but has no destination to name, and none is
-      guessed at. Watching the whole project tree would fix both and cost a watch per
-      directory, which is the trade that was declined (`file-rename-propagation`).
-- [ ] An externally detected move opens its review unprompted, switching the focused pane
-      to it. That is the point -- the imports are broken either way and the review is
-      non-destructive -- but a branch switch that moves many files will interrupt whatever
-      was on screen. A "N imports need fixing (C-c i to review)" status line instead, with
-      the review built on demand, is the obvious alternative if it turns out to grate
-      (`file-rename-propagation`).
-- [ ] The import scan runs synchronously on the main thread, inside the rename itself:
-      one `SearchDirectory` pass for the moved file's own name, then a tree-sitter parse of
-      each file that matched. Measured at ~1.2s for the worst case in ned's own tree
-      (renaming `Mode.h`, whose stem half the codebase mentions) and far less for an
-      ordinary file. Bounded by `ned/set-import-fixup-max-files` and skipped outright for a
-      move with no end inside the project root. Worth moving off-thread only if a real
-      repository makes the pause visible (`file-rename-propagation`).
-- [ ] The automatic offers ride on a SERVER rename landing, or on a `*rename*` review being
-      committed -- never on the no-server in-buffer rewrite, because renaming a top-level
-      type is always cross-file and `rename-symbol`'s scope-aware tier declines it by
-      construction (`LocalBinding::scopeIsFile`). With no server configured for a language,
-      `rename-file-to-match-type`/`rename-type-to-match-file` are the whole feature; they
-      need none (`class-file-sync`).
-- [ ] `rename-type-to-match-file` with no server renames the declaration and its whole-word
-      occurrences **in that file only**, and says so. The "top-scoped name pair" is the
-      reliable half -- this file's one top-level type is named after this file -- and the
-      dependency tree is the half it cannot follow. The obvious lift is a project-wide
-      whole-word scan into the same review (`Project/Search.h` plus `ClassifyHit`, which is
-      what `project-replace` already is), deliberately not built into this: a rename that
-      silently rewrote matches across a repository on a name match alone is a different,
-      riskier feature than the one asked for (`class-file-sync`).
+### Janet Widget Surface
 
-### Mouse Ergonomics
+The tracker panels, buffer list and DAP thread panel now share `UI/TableView.h`. That
+table is the evidence this stage was waiting for.
+- [ ] **A declarative Janet panel API.** Janet returns a model and C++ paints it, the
+      same split `ListPopupModel` and `JanetVcsProvider` already use. Never hand Janet a
+      `Canvas`, because per-cell granularity is the wrong place for the scripting
+      boundary. The deliverable is a model vocabulary: rows, columns, actions, key
+      bindings, and a refresh callback. It falls under the 1.0 freeze the moment it ships
+      as `ned/*`.
 
-Design stance: over SSH/tmux/a bare terminal, mouse support is genuinely unreliable (no
-capture semantics, TUI subprocesses inside `TerminalPanel` don't receive forwarded
-clicks at all) — so the mouse must never
-be the *only* path to a control; every mouse action needs a keyboard equivalent that
-already exists or gets added alongside it. That said, "unreliable as the sole path"
-doesn't mean "not worth it" — a right-click menu scoped to exactly what's under the
-cursor is often faster than keyboarding to a location and running a named command, even
-for a keyboard-first user. Treat mouse work as an accelerant layered on existing
-commands, never a replacement for them.
+### Remote Development
 
-### Navigation & Search
+Goal: edit files on a remote host over SSH without ned running remotely, comfortably
+enough that it doesn't feel like a degraded mode.
 
-- [ ] Excerpt-scoped search covers isearch and query-replace only. A multibuffer's
-      chrome is also visible to `next-error`, dabbrev completion and Vim-mode `/`
-      search, none of which consult `multibuffer::ExcerptBodyRanges`
-      (`multibuffer-scoped-search`) — none has been annoying enough in practice to
-      chase, and each would need its own scope plumbing rather than sharing one.
-- [ ] The side-by-side merge view (`C-c x v`) shipped -- slug for `git log --grep=`:
-      `merge-view`. Its sides are derived from the conflict markers, so ours and theirs
-      differ from the merged file only at conflict hunks; git's clean auto-merges are not
-      shown. The planned second source is the index stages (`:1:`/`:2:`/`:3:`, a new
-      Provider verb), diffed against the merged buffer into the same `AlignedChunk` list
-      `Text/MergeAlignment.h` already aligns from -- but `DiffLines` is an O(m*n) LCS over
-      the trimmed core, fine for a hunk and not for two whole files that differ at both
-      ends, so that source needs a linear-space diff first.
-- [ ] Conscious cuts in the merge view: no base pane (`MergeViewSession` derives one from
-      diff3 markers, the layout just never opens it); soft wrap is forced off in all three
-      panes, since alignment counts unwrapped lines; a follower can't start partway through
-      the blank rows *before* line 0, so it sits up to that many rows off while the leader's
-      top is inside a first-line hunk; and a project session saved while the view is open
-      records no window layout, because the side buffers have no path.
+**Approach.** Build **(a) client-only** first: shell out to `ssh`/`sftp` per operation,
+with no footprint on the remote host. Add **(b) a thin remote agent** only once search
+latency, or LSP running against the wrong toolchain, proves it necessary. The agent
+would do fast search, change notification, and host LSP/DAP/task/VCS processes against
+the remote toolchain. Edit locally and sync on save; don't build a remote-authoritative
+buffer.
 
-### Editor Ergonomics
+**File I/O and editing**
+- [ ] A remote file I/O seam behind `Buffer::FromFile` and the save path. Rope, undo and
+      multi-cursor stay unchanged.
+- [ ] Remote semantics for `ExternallyModified`/`AutoRevert`/`AutoMerge`/`FileWatch`:
+      a `stat` round trip on the poll tick, with a longer interval over a slow link.
+- [ ] `user@host:/path` display everywhere (tab bar, mode line, sidebar, buffer names).
+      Project-registry roots accept the same syntax.
+- [ ] Failure handling for a connection that drops mid-save/revert/search. Use
+      configurable timeouts in the `Editor/ProcessTimeouts.h` shape and show a visible
+      failure, never a silent hang.
+- [ ] Confirm local and remote buffers mix in one window layout.
 
-- [ ] `C-x` itself is still vim's own "decrement number under point" in Normal mode
-      (`Engine::HandleAction`'s Control-chord block), so ned's Emacs-style `C-x 2`/
-      `C-x 0`/`C-x o` window-split/-close/-cycle prefix still has no way to reach
-      `Dispatcher` under Vim mode — confirmed live (`vim-keymap-fallthrough`'s own
-      fallthrough deliberately leaves every Control chord vim already recognizes, `C-x`
-      included, alone). Left alone deliberately rather than fixed: `vim-window-commands`
-      gives window management a real vim-native path (`C-w` prefix, `:sp`/`:vs`/`:on`)
-      that needs no resolution of this conflict at all, and the only way to actually
-      reach `Dispatcher` through `C-x` would mean either breaking real vim's own
-      decrement-number binding or a two-key lookahead hack — not worth it now that the
-      practical gap (no way to split/close/cycle windows under Vim mode) is closed.
+**Connect**
+- [ ] SSH transport: shell out to real `ssh`/`sftp`, reusing the user's config, agent and
+      `known_hosts`. Try `ControlMaster` multiplexing before reaching for libssh.
+- [ ] Parse `~/.ssh/config` directly (`Host`/`HostName`/`User`/`Port`/`IdentityFile`/
+      `ProxyJump`, wildcards) to fill in defaults.
+- [ ] A connect prompt that completes the project name first, then the host, then the
+      remote path (lazy `readdir`), all through `FuzzyMatch`.
+- [ ] A first-connection host-key trust prompt, following `Project/Trust.h`'s precedent.
 
-**Status gutter**
+**Project tree and search**
+- [ ] A lazy, async remote directory listing for the sidebar (`AsyncFileLoader`
+      precedent).
+- [ ] Remote project search. Start with a remote `rg`, whose semantics differ from ned's
+      gitignore/binary rules. The agent is the fix for exact parity. Decide how
+      project-replace, find-references and the agenda scan degrade in client-only mode.
 
-- [ ] Only a streaming buffer marks. A read-only buffer rebuilt wholesale (`*debug*`,
-      a results buffer regenerated from scratch rather than appended to) disarms
-      tracking on the rebuild and never shows the marker -- correct, since the frontier
-      was measured against text that no longer exists, but it means the feature covers
-      `*lsp log*`/task output/test results and nothing else. A rebuild that wanted a
-      marker would need a content diff, not a byte offset.
-- [ ] The frontier is committed in `ActiveBuffer::Set`, which is the last point the
-      outgoing buffer is guaranteed alive. Two consequences: closing a pane or window
-      without switching buffers never commits, and two panes showing the same log share
-      one frontier -- whichever leaves first marks as seen whatever the other one was
-      displaying. Both need a per-pane frontier to fix, which is a map keyed by buffer
-      with the lifetime problem that implies.
-- [ ] `Manager::HasUnseenLogEntry`/`AcknowledgeLogEntry` still track the same
-      unseen/seen edge for `*lsp log*` at whole-buffer granularity, for the echo-area
-      surfacing, and are not derived from the new frontier. Two mechanisms for one
-      fact; worth merging only if they drift.
-- [ ] The search-everywhere preview footer shipped (slug for `git log --grep=`:
-      `search-everywhere-preview`) -- one conscious cut left behind. The excerpt is
-      painted in one brush, unhighlighted: a per-file `Mode::highlight` on every
-      selection change is a parse the popup cannot afford, and `ListPopupRow` carries
-      one foreground per column rather than spans, so a highlighted footer needs the
-      widget to grow a span-aware row first.
-- [ ] `describe-bindings` (`C-c ?`) and `Docs/Commands.md`'s key column both shipped --
-      slug for `git log --grep=`: `describe-bindings`. Two conscious cuts left behind.
-      The report's "Major mode" section is whatever mode was active when it ran, and
-      there is no way to ask for another language's layer without opening a file in it;
-      a mode argument would mean instantiating a `Mode` the pane isn't showing.
-      `Docs/Commands.md`'s key column is the default global keymap alone, for the same
-      reason from the other side: the page is generated from a static registry, so a
-      per-mode column would be a different, per-language page.
-- [ ] **Transient mode covers the five VCS tools whose editor filenames are fixed, and
-      nothing else.** Shipped, slug for `git log --grep=`: `transient-mode`
-      (`Editor/TransientSession.h` -- `--transient`/`--no-transient` plus automatic
-      detection, verified live against git/hg/svn/jj/fossil by running each tool with a
-      probe editor. Composition of switches that already existed rather than new gating:
-      the quit-time saves are the load-bearing half, since `SaveFilePlaces(force)`/
-      `SaveRecentFiles(force)` write the in-memory store without consulting their own
-      enabled flag). A tool whose editor file is randomly named -- `crontab -e`,
-      `sudoedit`, `cvs`, `gh pr create` -- cannot be detected and needs
-      `EDITOR="ned --transient"`; that is inherent, not a todo. Three conscious calls
-      worth not re-litigating: the mode suppresses what ned records on the user's behalf
-      (save-place, recent files, session, undo, backups) but **not** what the user
-      deliberately asked for, which is why bookmarks still save and `bookmark-set` instead
-      grew a guard refusing the message file itself; `DiagnosticsLog` still writes (it is
-      a log about the process, not state about the file); and there is deliberately no
-      `ned/set-transient` Janet setting -- the mode is chosen at invocation, and the Janet
-      surface is a 1.0 freeze commitment.
-- [ ] Terminal-side mouse forwarding and the OSC 52/title relay both shipped -- slug for
-      `git log --grep=`: `terminal-mouse-and-osc-relay`. Two conscious calls left behind,
-      each its own item below.
-- [ ] An OSC 52 *query* from a program inside `TerminalPanel` is never answered
-      (`Emulator`'s selection-query callback returns libvterm's "not handled"), so such a
-      program can write ned's clipboard but never read it — xterm's own default, and the
-      alternative hands the user's clipboard to every subprocess. Revisit only against a
-      real need.
-- [ ] An application-set title (OSC 0/2) replaces the terminal tab's static label
-      unconditionally, truncated to 24 columns, with no setting to turn it off. A noisy
-      PS1-driven title is the case that would want one; the Janet surface is a 1.0 freeze
-      commitment, so it waits for a real complaint rather than landing speculatively.
-- [ ] **DAP gaps, remainder**: data breakpoints shipped -- slug for `git log --grep=`:
-      `dap-data-breakpoints` (`dataBreakpointInfo`/`setDataBreakpoints`, armed from a
-      `*debug*` buffer variable row's own `[owner:M]` container reference, listed and
-      removed via `[data:N]` rows in the same buffer). Thread-focus reattachment across a
-      session restart is deliberately excluded even if revisited — a fresh session has
-      entirely new thread IDs, nothing meaningful to reattach it to.
-- [ ] A data breakpoint is session-scoped and deliberately not persisted: the `dataId` is
-      minted by one adapter for one run, so the store is cleared in `EndSession` alongside
-      the exception filters and for the same reason. DAP's own `canPersist` flag is read
-      but not acted on — a persistable id still needs the next session to be the same
-      build of the same program, which nothing here can check. Revisit only if an adapter
-      that sets it turns out to make re-arming after a restart genuinely tedious.
+**Agent (phase b)**
+- [ ] A headless `add_executable` over `ned_lib`. Measured 2026-09-08: it links without
+      `-ljanet` and runs real `ProjectSearch` at 8.7 MB, so no library split is needed.
+- [ ] A seam to spawn LSP/DAP/task/VCS subprocesses remotely instead of through
+      `ChildProcess`, and relay remote inotify. This is the biggest lift in the section.
+- [ ] Auto-deploy with a version handshake. Build per architecture, either
+      cross-compiled or prebuilt, because the remote host may have no toolchain.
 
-**Debug panel**
-
-- [ ] The panel's Watches section and the `*debug*` buffer's own now show the same
-      expressions through two entirely separate fetch paths (`DebugPanel::FetchWatchValues`
-      and `BuildDebugInfoLines`'s chunked fan-out). Deliberate: the `*debug*` buffer is
-      also what `dap-ask-agent` sends to an agent, so it stays a text rendering rather
-      than becoming a view of the panel's model. Worth merging only if they drift.
-- [ ] `DebugPanel` re-fetches every scope and variable of the focused frame on each stop,
-      and `Manager::RefreshFrameLocals` independently fetches the same non-expensive
-      scopes for the inline values. Two overlapping fan-outs, kept apart because the
-      panel needs the tree (per-`variablesReference` children, lazily expanded) and the
-      painter needs a flat name→value map it can read synchronously. Measured at nothing
-      so far -- both are a handful of requests per stop -- but it is duplicated work, and
-      a `Manager`-side variables cache keyed by reference would serve both.
-- [ ] A variable row's tree depth is recomputed in `PushModel` from a map of
-      container-reference → depth rather than stored on the row, which works only because
-      a container is always an earlier row than its children. True by construction today
-      (`AppendVariableRows` is a pre-order walk); a future row source that isn't would
-      silently mis-indent rather than fail.
-- [ ] Inline debug values resolve a local to a line through the language's own locals
-      query (`Editor/InlineDebugValues.h`'s `ResolveInlineDebugValues`, slug for
-      `git log --grep=`: `inline-debug-values-scoped`), which needs one -- so the
-      whole-word text search it replaced is still the tier a mode without a locals query
-      gets, and so is a huge buffer, which is never handed a whole-document query at
-      all. That tier keeps its old failure mode: a value against a line mentioning the
-      same word in a comment or a string. Two conscious calls in the scoped tier: a mode
-      that HAS a locals query but captured nothing draws nothing rather than falling
-      back (precision over recall -- the query has said there is no binding here), and
-      only the innermost binding the stop can see is annotated, because the adapter
-      reports one value per name and that is the one it means. At most three per line,
-      and only in the file the debuggee is actually stopped in.
-- [ ] Inline values show only the focused frame's *locals*, never a watch or an
-      arbitrary expression, and never a field of a composite. The flat name→value map
-      they read is exactly what the non-expensive scopes report.
-- [ ] `Manager::SnapBreakpointToValidLine` moves a newly-set breakpoint to the nearest
-      line the adapter says can hold one, within an 8-line window. It is the pre-emptive
-      sibling of `Breakpoint::actualLine`, which stays the fallback for adapters that
-      don't implement `breakpointLocations` -- so two mechanisms now correct the same
-      thing from different ends. Kept separate deliberately: the snap makes the *store*
-      honest (conditions and removals address a real line), `actualLine` only ever
-      corrected the display, and collapsing them would mean making every edit operation
-      re-address itself asynchronously.
-- [ ] The debug console's Tab completion lists several candidates into the transcript and
-      inserts their common prefix, readline-style, rather than showing a popup. The panel
-      has no `ListPopup` of its own and adding one for the debug console alone would be a
-      second completion UI beside `CompletionSession`'s.
-- [ ] `BufferView::BeginDebugPanelTextEntry`'s accept callback must not start a second
-      prompt: the session teardown that follows every accept would cancel it immediately.
-      Fine for every prompt the panel actually needs (all single-shot); a chained one
-      would need the callback deferred past the reset.
-- [ ] `TreeView`'s selection brush deliberately wins over a row's own colours, so a
-      selected row cannot say anything in colour alone -- which is exactly the row being
-      acted on. Worked around where it mattered (a disabled breakpoint says `off` in its
-      value column, an exception filter's `▣`/`▢` differ in shape), not fixed: a row that
-      wants its colours through selection would need the widget to say so per row.
-- [ ] `Manager::FrameLocals` is a flat name→value map of the focused frame's
-      non-expensive scopes, so inline values can never show a field of a composite
-      (`node->key`) or a watch -- only a top-level local. The adapter reports
-      `evaluateName` per variable, which is what a deeper version would key on.
-- [ ] Six DAP requests were added with the debug panel and all six are capability-gated,
-      which is load-bearing rather than polite: an empty answer and "this adapter does
-      not implement the request" are indistinguishable on the wire. `breakpointLocations`
-      in particular must read an empty list as "no opinion", never as "no valid lines",
-      or it would refuse every breakpoint against a thin adapter. Only unit-tested
-      against a fake adapter so far -- none of `modules`, `loadedSources`,
-      `breakpointLocations`, `stepInTargets`, `setExpression` or `completions` has been
-      exercised against a real lldb-dap/debugpy session.
-- [ ] **No server/daemon mode** — no `emacsclient`-equivalent; one process per terminal,
-      no way to keep a warm process (buffers, LSP connections, undo history) alive and
-      attach a new terminal client to it.
-- [ ] `TestSourceResolver`'s basename search picks the shallowest candidate when
-      nothing disambiguates (no go package hint, no directory components in the
-      reported path, several same-named files) — deterministic, but it can be the
-      wrong file. A prompt-to-choose would be the honest answer; not worth it until
-      the silent wrong pick is actually seen.
-- [ ] A snippet body that spells one tabstop index with two different placeholders
-      (`${2:A} ${1:foo ${2:bar}}`) renders the nested occurrence with its own baked text
-      until the first edit syncs the mirrors — the substitution for an index is resolved
-      before emission, so the nested run is already spliced by the time the top-level
-      placeholder wins. Ill-defined in the LSP grammar to begin with, and it degrades to
-      a cosmetic first-render disagreement, never a wrong edit (`nested-snippet-stops`).
-- [ ] A variable reference nested inside another placeholder's own default text still
-      doesn't resolve (only a top-level `$`/`${` reference does) — untouched by
-      `nested-snippet-stops`, which taught the placeholder parser about nested *tabstops*
-      only.
-- [ ] Hunk unstage matches point against the *cached* staged diff, which drifts when
-      unstaged edits exist earlier in the file — exact in the common stage-then-undo
-      flow; revisit only if it bites.
-- [ ] **`libned` as a real shared library** — `ned_lib` (static today) exists solely so
-      `ned_tests` can link real editor code without pulling in `main()`; a static lib
-      already does that job. Worth revisiting only if a second real consumer shows up
-      (an embedding use case, a separate CLI tool) — would need symbol-visibility
-      curation and SONAME/ABI-versioning discipline that don't pay for themselves yet.
-      Note the likeliest second consumer, a headless remote agent, does *not* force this:
-      it links the existing static `ned_lib` fine, scripting runtime and all left behind
-      (measured — see "Remote Development"'s toolchain-choice item).
-- [ ] A friendlier, possibly visual surface for browsing/editing ned's own settings
-      beyond hand-writing `init.janet` — real live-editing already exists for themes
-      specifically (`save-theme`/`ned/theme-set`); a general settings surface would
-      generalize that. Vague, unscoped.
-
-**Alternate "modern" keymap (VS Code/JetBrains-style)**
-
-- [ ] `C-Tab`/`C-S-Tab` (tab-next/tab-previous, replacing the now-unreachable `C-x
-      LEFT`/`C-x RIGHT`) carry the same terminal-support caveat every other
-      Ctrl+Shift-letter chord in the Emacs default already does (`C-S-DOWN`/`C-S-UP`) --
-      untested against a real legacy (non-kitty-protocol) terminal.
-- [ ] **Bracketed-paste multi-cursor distribution** (paste-perf-and-drag-drop
-      follow-up, scoped down 2026-09-06). A real terminal paste (via
-      `BufferView::HandleBulkPastedText`/`Buffer::InsertAtPoint` fast path) inserts at
-      a single point only, even with secondary cursors active — v1 deliberately
-      matches the existing middle-click-paste precedent rather than `yank`'s
-      `ForEachCursor`-based per-cursor splitting. Revisit if multi-cursor editing and
-      real terminal paste turn out to be used together often enough to matter.
-
-### Jupyter Notebooks
-
-Feasible, but subsystem-sized — closer in total scope to the LSP and DAP builds
-combined than to any single feature shipped so far. Three genuinely separable pieces,
-each with its own verdict:
-
-**The kernel protocol client** (the hard, unavoidable part) — real interactive
-notebooks need the actual Jupyter messaging protocol: 5 ZeroMQ sockets (shell/iopub/
-stdin/control/heartbeat) carrying HMAC-signed multipart JSON, addressed via a
-connection file (ports + key) written after the kernel process is spawned. There's no
-shortcut around this — `jupyter console --simple-prompt`'s text-only REPL loses rich
-output entirely (no `image/png`, no structured tables), and shelling out to `nbconvert
---execute` per run loses the interactive "run one cell, keep kernel state" loop that's
-the entire point.
-- [ ] ZeroMQ becomes a new dependency (libzmq C library + cppzmq's header-only C++
-      wrapper) — pullable via `FetchContent` like everything else, but a heavier build
-      dependency than anything currently vendored.
-- [ ] HMAC-SHA256 message signing has no existing primitive in this tree. Hand-rolling
-      SHA256+HMAC (~150 lines, a well-specified algorithm, low stakes since it's
-      same-machine IPC integrity rather than a real security boundary) fits this
-      codebase's own precedent (hand-rolled LSP/DAP/ACP framing) better than pulling in
-      a full crypto library for one function.
-- [ ] The client itself is the same shape already proven three times over
-      (`Lsp/Client.h`, `Dap/Client.h`, `Acp/Client.h`): background `jthread`
-      read loop, `EventLoop::Post` marshaling every frame onto the main thread, a
-      manager above it owning lifecycle/handshake/in-flight-request bookkeeping — the
-      wire format differs (ZMQ multipart + HMAC vs. `Content-Length` or
-      newline-delimited JSON), the architecture doesn't.
-- [ ] Kernel discovery should walk `share/jupyter/kernels/*/kernel.json` directly
-      rather than shelling out to `jupyter kernelspec list --json`, so this doesn't
-      hard-depend on the `jupyter` CLI being on `$PATH` at all.
-
-**Rich output rendering** (two real synergies with existing subsystems, one real gap)
-- [ ] Tables (`text/html` DataFrame reprs) parse into a grid and align via the
-      *existing* `Editor/Table.h` toolkit (`SplitRow`/`ComputeColumnWidths`/`PadCell`
-      are already format-agnostic) — a small `<table>`-extraction layer on top, not a
-      new engine.
-- [ ] Images (`image/png`, the matplotlib case) reuse the *existing* pixel-graphics
-      path already proven live in `Minimap.cpp`: `ncvisual_from_rgba` +
-      `ncvisual_blit(..., NCBLIT_PIXEL)` already renders arbitrary RGBA buffers as real
-      terminal pixels where the terminal supports it, falling back gracefully where it
-      doesn't, exactly as Minimap does today. The one missing piece is a PNG decoder —
-      nothing in this tree parses PNG; a single-header vendor (stb_image-style) is the
-      pragmatic addition, not a hand-rolled zlib+PNG implementation.
-- [ ] `image/svg+xml` (also common from plotting libraries) has no rendering path
-      anywhere in this codebase and no terminal protocol renders vector graphics
-      directly — v1 would skip it, or later shell out to `rsvg-convert`/similar as an
-      optional external tool.
-- [ ] Error tracebacks arrive ANSI-colored — needs stripping or a small ANSI-to-`Cell`
-      translator, not the full `libvterm` emulator `TerminalPanel` uses (that's built
-      for a live interactive shell; this is a static blob of text).
-- [ ] `text/plain` (every rich mimetype's required fallback in nbformat) needs nothing
-      new.
-
-**The editing/UI model** (the real structural departure) — ned's whole editing surface
-is built on `Buffer` = one Rope of text; a notebook's natural unit is a *sequence of
-cells*, each with its own source text, type (code/markdown/raw), and non-text output
-data. Nothing today models "many independently-editable text regions plus non-text
-data, composed as one document." `Editor/EmbeddedDocuments.h` is the nearest existing
-precedent and isn't that close — it builds *virtual, non-editable, width-preserving*
-documents for LSP sync only, not real independently-editable cells.
-- [ ] Two shapes are open: **(a)** a `NotebookView` widget (parallel to `BufferView`)
-      directly composing several real per-cell `Buffer`s + a per-cell `Mode` (a code
-      cell in a Python kernel gets full `PythonMode` highlighting, potentially real LSP
-      sync too) plus non-editable output panels between them; **(b)** something closer
-      to Org's outline-over-flat-text trick — one `Buffer` in a synthetic linear
-      representation with cell boundaries as markers, translating to/from `.ipynb` JSON
-      only at load/save. (a) is more work but composes cleanly with everything
-      `Buffer`/`Mode`/LSP already assume; (b) is a smaller structural add but forces
-      outputs (images, rich tables) into a `Buffer`'s text model, which they
-      fundamentally aren't. (a) is the likely right call precisely because it reuses
-      more of the existing machinery, not less.
-- [ ] File identity gets murkier under (a): does each open notebook register its cell
-      `Buffer`s in `BufferList` (so they'd leak into `switch-to-buffer`/the tab bar), or
-      does `NotebookView` own them privately outside `BufferList` entirely? The latter
-      is probably right but is a real departure from "everything is a buffer."
-
-**Explicit constraint carried over from the Org Babel "won't do" entry below**: a
-`.ipynb` *is* a code-execution artifact by definition — unlike a `.org` file, which is
-ostensibly prose that Babel would silently turn into one — so building this at all is a
-different call than Org Babel was. The same principle still applies inside it, though:
-opening a notebook file must never execute anything; every cell run is one explicit
-user action, mirroring how `Dap/`'s launch step and `Tasks/`'s run command already
-require an explicit trigger rather than firing on buffer-open.
-
-**Suggested phasing** (each phase independently shippable/demoable):
-1. Parse/serialize nbformat v4 JSON into an in-memory `Notebook` struct — pure,
-   unit-testable, no kernel/UI involved; round-trip fidelity is the only bar.
-2. Read-only `NotebookView`: render existing cells (source + already-saved outputs)
-   with the rendering pieces above — proves the rendering story before any protocol
-   work starts.
-3. Kernel protocol client + manager (ZMQ, HMAC, spawn/handshake), no UI — testable
-   headlessly against a real `ipykernel`, the same way `LspClient`'s tests run against
-   real `clangd`.
-4. Wire "run cell" into `NotebookView`, one cell at a time, no kernel-state UI polish.
-5. Everything else (interrupt/restart kernel, kernel-status indicator, variable
-   inspector, notebook-wide "run all") is incremental once 1-4 exist.
-
-Won't do in v1 regardless of the above: ipywidgets (a separate protocol layered on top
-of the base one), collaborative/real-time editing, any kernel-specific special-casing
-beyond whatever `kernel.json` advertises.
-
-**Reuse candidates once this exists**: the rich-output-cell renderer (table via
-`Table.h`, image via the pixel-blit path, ANSI-stripped text) is generic over "a block
-of structured content below some source," not Jupyter-specific — `AcpPanel`'s
-transcript has the same open gap (lightweight markdown rendering, better tool-call/
-table output display, both listed in its own ROADMAP entry above) and is a stronger,
-nearer-term reuse target than Jupyter itself. If Org Babel is ever revisited despite
-the "won't do" below, this same renderer (and possibly `NotebookView`'s cell-execution
-UI) is the natural substrate for displaying a `#+BEGIN_SRC` block's results, rather than
-a third bespoke implementation — worth designing the renderer as its own reusable piece
-rather than embedding it directly in `NotebookView` for exactly this reason.
-
-### Named Projects & Multi-Project Sidebar (New Feature)
-
-Still open, all genuinely gated on Remote Development below (a registry entry's root
-staying local-only for now is a storage-shape choice, not a hole in what shipped):
-
-- [ ] **Remote project URIs (`user@host:/path`)** — a registry entry's root can be a
-      remote URI using the same syntax `scp`/`ssh` already accept (no bespoke URI
-      grammar to invent). Actually opening one is gated on Remote Development's own
-      file-I/O seam (`Buffer::FromFile`'s remote path) existing first — this bullet is a
-      UI/storage change on top of that, not a substitute for it.
-- [ ] **`~/.ssh/config` awareness** — parse (not shell out to `ssh -G`, which resolves
-      one host at a time and is awkward to batch-query for autocomplete) the user's own
-      `~/.ssh/config` — `Host`/`HostName`/`User`/`Port`/`IdentityFile`/`ProxyJump`,
-      wildcard `Host` patterns included — to default the user/port/key when a typed
-      `host:/path` URI doesn't repeat what SSH config already knows, and to drive
-      host-name autocomplete on the open/connect prompt. A small self-contained parser
-      (the format is simple and line-oriented) rather than a new dependency.
-- [ ] **Autocomplete on the open/connect prompt** — project name (registry) first, then
-      host (parsed `~/.ssh/config` `Host` entries) for an unregistered target, then
-      remote path (once connected, via lazy per-directory SFTP `readdir` — the same
-      expand-on-demand shape `ProjectSidebar` already uses locally). `Editor/
-      FuzzyMatch.h` is the natural filter for all three, matching every other
-      fuzzy-completed prompt in this codebase.
-- [ ] **SSH transport: shell out vs. libssh** — either is fine; leaning shell-out first,
-      consistent with Remote Development's own phase-(a) plan below. Shelling out to
-      real `ssh`/`sftp` (`Editor/Process/ChildProcess.h`'s existing subprocess-wrapping
-      precedent) means zero new build dependency and automatic, free reuse of the
-      user's own config/agent/`known_hosts` handling — the cost is a process-spawn
-      round trip per operation and no persistent multiplexed connection without also
-      managing `ssh -M`/`ControlMaster` sockets by hand (worth trying before reaching
-      for `libssh` — it may close most of the multiplexing gap with no new dependency
-      at all). Direct `libssh` linkage buys one auth handshake + many channels and
-      programmatic SFTP with no per-call subprocess spawn, at the cost of a new
-      `FetchContent` dependency and reimplementing config/agent/known-hosts handling
-      the real `ssh` binary already gives away for free.
-- [ ] **`TerminalTabLauncher` remainder** — Terminator, Tilix, and any other emulator
-      with a real CLI/IPC way to join a running instance are a documented remainder,
-      not v1; add on the same table-driven pattern once someone actually needs one. GNOME
-      Terminal's own handler shipped but was never live-verified (not installed in the
-      environment this shipped in) — worth a real check the first time it's reachable.
-
-### Remote Execution & Server Protocol
-
-- [ ] **Design ned's own client/server protocol** (raised 2026-09-08 — unstarted, no
-  design committed yet; this entry records the shape of the problem and what's already
-  known, not a spec). The motivating idea: rather than a remote ned shipping buffers
-  back and forth, send *the operation* to where the files are and return only the
-  result — a project-wide search, a refactor, a script evaluation. Round-trip count,
-  not bandwidth, is what makes remote editing feel bad, so this is likely faster as
-  well as simpler.
-
-  **The load-bearing design decision — local is the degenerate case.** The protocol
-  should be the *only* interface, with in-process execution as one transport behind
-  it rather than a bypass around it. Two things follow. It can't rot: every local
-  keystroke exercises the same path a remote session uses, so remote stops being a
-  bolt-on that's broken every time it's picked back up. And it makes "where does
-  this script run" a transport question rather than an architectural one — the same
-  request answered in-process, by a local subprocess, or by a host across a socket.
-
-  That last point interacts directly with the jank analysis above: if scripts execute
-  where the files are, the heavy runtime (jank + Clang/LLVM + a 68 MB PCH, ~237 MB RSS)
-  lives on whichever side actually runs them. A remote session's client could then be
-  genuinely thin — and, per the same analysis, a headless binary already links
-  `libned_lib.a` cleanly with no scripting runtime at all (verified: `Text/` +
-  `ProjectSearch` + `GitIgnore`, 8.7 MB, `-ljanet` removed entirely). Only 12 of 316
-  objects in `ned_lib` touch anything named "janet", three of those are the tree-sitter
-  *grammar* rather than the runtime, and the whole UI-side coupling is one call
-  (`Environment::BindingNamesWithPrefix`, for binding-aware completion). The split is
-  already there to be taken.
-
-  **Compression must be negotiated, and "none" must be first-class.** Nothing
-  compression-related is linked into ned today — `ldd build/ned` shows no zstd, zlib,
-  lzma or brotli — so any codec is a new dependency, and assuming one is present on
-  both ends is exactly the trap to avoid. Compress per-frame payloads, not the stream,
-  or the encoding can't change after the handshake; advertise available codecs at
-  handshake and fall back to identity. LSP's own `capabilities` exchange is the model,
-  and this codebase already understands it well.
-
-  **This must inherit four protocol bugs already paid for, not rediscover them.** Ned
-  has built four framed clients — LSP (`Content-Length` JSON-RPC), DAP (a `seq`/`type`
-  envelope over LSP's framing), ACP (newline-delimited JSON), and the broker (an
-  `AF_UNIX` relay) — and each of these was a real, root-caused, user-visible failure:
-  - an unbounded blocking `connect()` froze a live editor when the daemon's backlog
-    filled (`Lsp/BrokerConnect.cpp` now does the non-blocking-connect + `poll` dance);
-  - joining a reader thread under a held mutex wedged the daemon for hours;
-  - `poll()` on a `-1` fd with a `-1` timeout parks forever — the root cause of the
-    `ctest -j8` timeouts;
-  - an unbounded `WriteAll` hung the UI, fixed by a per-client writer thread in
-    `LspClient`/`DapClient`/`AcpClient`.
-  A new protocol gets timeouts on every blocking call, a non-blocking connect, an
-  asynchronous write queue, and no lock held across a join — by construction, on day
-  one. `EventLoop::Post` is the existing, proven way results come back to the main
-  thread; the protocol layer should not invent a second one.
-
-  **Open questions worth settling before any code:** framing (length-prefixed binary
-  vs. reusing the `Content-Length` shape already implemented three times); whether
-  requests are JSON (nlohmann is already vendored) or something denser; how a long-
-  running remote operation streams partial results and gets cancelled (LSP's
-  `$/progress` and `$/cancelRequest` are the obvious prior art, already handled in
-  `LspManager`); versioning and forward compatibility; and authentication/transport
-  (bare `AF_UNIX` locally vs. stdio-over-ssh vs. TCP — the broker's socket-path and
-  trust conventions in `BrokerSocketPath.cpp` are the local precedent).
-
-  **Security is not a later concern here.** "Execute this script over a socket" is a
-  remote code execution surface by definition. Ned already gates project-local
-  `.ned/init.janet` behind `ProjectTrust`'s content-hash registry precisely because
-  opening a directory shouldn't run arbitrary code; the same discipline has to extend
-  across a transport, where the threat model is strictly worse. Decide the trust model
-  alongside the framing, not after it.
-
-### Remote Development (SSH Remote Editing)
-
-The goal: edit files on a remote host over SSH without ned itself running remotely —
-comfortable enough that it doesn't feel like a degraded mode. See "Named Projects &
-Multi-Project Sidebar" above for how a remote root is named/stored/opened/switched to;
-this section is the actual file-I/O/search/agent mechanics underneath one. Two shapes
-are on the table and genuinely undecided: **(a) client-only**, everything shells out to
-`ssh`/`sftp` per operation, no code footprint on the remote host at all; **(b) client +
-thin remote agent**, a small companion binary deployed to the remote host (the
-JetBrains Gateway/VS Code Remote-SSH precedent) that does what a bare SSH session is
-genuinely bad at — fast recursive search, live file-change notification, and, the big
-one, running the actual language server/debugger/task/VCS subprocesses *on* the remote
-host against its real toolchain rather than against a locally-synced copy missing the
-remote system's headers/deps/`compile_commands.json`. Likely path: build (a) first
-since it's simpler and gets editing working at all; add (b) only once search latency or
-LSP-against-the-wrong-toolchain prove it's needed in practice, not speculatively.
-
-**File I/O & the editing model**
-- [ ] A remote-file I/O seam behind `Buffer::FromFile`/the save path (an interface, not
-      a hardcoded `std::filesystem` call) so a remote buffer's `Rope`/`UndoTree`/
-      multi-cursor/etc. stay completely unchanged — read the whole file once (`sftp`/
-      `ssh host cat`), edit it exactly like a local buffer, write it back on save
-      (matching the instinct: edit locally, sync on save, not a live remote-authoritative
-      buffer). This is most of "make it work at all" and touches no core editing code.
-- [ ] `ExternallyModified()`/`AutoRevert`/`AutoMerge`/`FileWatch` all assume a cheap
-      local `stat` — decide what they mean for a remote buffer: probably a `stat`-only
-      round trip on the existing poll tick (no live inotify without a remote agent),
-      likely with a longer poll interval over a slow link.
-- [ ] Remote path display throughout the UI — tab bar, mode line, sidebar title, buffer
-      names — needs a clear `user@host:/path` presentation distinct from local paths.
-- [ ] Save/revert/external-modification error handling for a connection that can drop
-      mid-operation — a local-disk write basically can't fail; a remote one can,
-      constantly, and needs real user-facing recovery (`Editor/ProcessTimeouts.h`'s
-      existing settings-module shape is the right precedent for configurable timeouts).
-
-**Project tree & search**
-- [ ] Remote directory listing for the sidebar — plain SFTP `readdir`, lazily per
-      expanded directory (matches `ProjectSidebar`'s existing expand-on-demand model, no
-      new mechanism needed), just slower per round trip; needs an async/spinner
-      treatment so a slow link doesn't freeze the UI (`AsyncFileLoader`'s own precedent).
-- [ ] **Remote project search is the one place a bare SSH session is genuinely
-      insufficient** — shipping every file across the wire to search locally would be
-      very slow past a LAN. Two real options: (a) shell out to a remote `rg`/`grep` if
-      present on the remote host — zero deployment, but an extra dependency assumption
-      and search semantics that won't exactly match ned's own `.gitignore`/binary-
-      detection rules; (b) a remote agent reusing ned's actual `ProjectSearch`/
-      `GitIgnoreMatcher`/RE2 engine, guaranteeing identical results locally and remotely.
-      This is the strongest concrete argument for building the agent at all.
-- [ ] Project-wide replace, find-references, and the agenda/TODO scan all sit on top of
-      `ProjectSearch` today — decide whether they degrade gracefully in client-only mode
-      or need the same remote-agent path search does.
-
-**The remote agent/service** (explicitly OK to defer — scoped here, not started)
-- [ ] Define what it actually needs to do beyond search: fast directory listings without
-      N round trips; cheap change notification (a remote `inotify` watcher relayed back,
-      closing the same gap `FileWatch.h` solves locally); optionally hosting the real
-      LSP/DAP/task-runner/VCS subprocesses on the remote machine against its own
-      toolchain and proxying their stdio back — likely the single biggest design lift in
-      this whole feature, bigger than local file editing itself, since it means
-      `LspManager`/`DapManager`/`TaskRunner`/`VcsRunner` would all need a "spawn this
-      subprocess remotely instead of via `ChildProcess::posix_spawn`" seam.
-- [ ] Transport/protocol for talking to the agent — now covered in full by "Remote
-      Execution & Server Protocol" directly above, including the local-is-the-degenerate-
-      case framing, compression negotiation, and the four protocol bugs a new client must
-      inherit rather than re-earn. Note the earlier framing here ("a fourth following the
-      same precedent is low-risk") is exactly what that section argues against: fold
-      `LspClient`/`DapClient`/`AcpClient`'s triplicated machinery into one connection class
-      *first*, so the agent transport is its first consumer rather than a fourth copy.
-- [ ] Auto-deployment: detect the agent is missing or stale on the remote host and
-      self-install it (`scp`/`sftp` push + `chmod +x`), the VS Code Remote-SSH/JetBrains
-      Gateway precedent, with a version handshake so a stale cached copy gets replaced
-      rather than silently mismatching.
-- [ ] **Language/toolchain choice for the agent is genuinely open.** Reusing `ned_lib`'s
-      own C++ `ProjectSearch`/`GitIgnoreMatcher`/RE2/`ChildProcess` code as a headless,
-      UI-free build gives identical search/gitignore semantics locally and remotely for
-      free and avoids a second implementation to keep in sync. **The "but `ned_lib` doesn't
-      separate cleanly from Notcurses/Janet" objection recorded here earlier turns out to
-      be false — measured 2026-09-08.** A headless program linking `libned_lib.a` with
-      `-ljanet` removed from the link line entirely compiles, links and runs: 8.7 MB,
-      opening a real `Buffer` and returning real `ProjectSearch` hits. Static-archive
-      member granularity does the work — objects are only pulled in when referenced.
-      Only 12 of 316 objects in `ned_lib` reference anything named "janet", three of those
-      want the tree-sitter *grammar* rather than the runtime (`Languages`/`Mode`/
-      `ModeOverrides`), `WindowManager` only forwards a `const*` through setters, and the
-      entire remaining UI-side coupling is one call: `Environment::BindingNamesWithPrefix`,
-      for binding-aware completion. No "split `ned_lib` first" prerequisite exists; a
-      separate `add_executable` target is enough (note the existing headless modes —
-      `--lsp-broker`, `--mcp-stdio-relay` — are *modes of `ned`*, so they do link
-      `-ljanet` today despite never using it; a separate target is what lets the linker
-      drop it). Rust or Go therefore look much weaker than they did: they would buy easier
-      cross-compilation at the cost of reimplementing and hand-syncing gitignore/search
-      semantics a second time, against a C++ path whose cost is now known to be near zero.
-- [ ] Repo/build story: a standalone repo (this is a genuinely separable concern from
-      the core editor), pulled back into ned's own build via CMake `FetchContent` like
-      every other bundled dependency. The agent binary itself needs to target the
-      *remote* host's architecture, not the build machine's — either cross-compiled at
-      ned's build time or fetched prebuilt per-arch (GitHub-releases-style), since a
-      build toolchain isn't guaranteed to exist on an arbitrary remote host.
-- [ ] Perhaps we could have a way to enable and execute a remote debug session,
-      particularly useful for things like PHP, and the like, where we could remotely
-      debug something that's happening live in production.
-
-**Connect UX**
-- [ ] A connect dialog/command (`ned-connect` or similar): host, user, port, key/agent
-      selection, jump-host/bastion support. Sourcing defaults from `~/.ssh/config` and
-      the remembered-projects list are covered by "Named Projects & Multi-Project
-      Sidebar" above rather than a separate mechanism here.
-- [ ] Host-key verification / first-connection trust prompt — `Project/Trust.h`'s
-      existing hash-based, disuse-expiring trust registry (built for `.ned/init.janet`)
-      is a good precedent for this UX rather than silently trusting or reimplementing
-      OpenSSH's own `known_hosts` handling from scratch.
-- [ ] Reconnection/resilience story for a dropped connection mid-session: unsaved local
-      buffer content already survives (it's just memory), but in-flight remote
-      operations (search, save, LSP requests) need a clear timeout/retry/failure surface
-      rather than hanging silently.
-- [ ] Confirm mixing local and remote buffers in the same window layout genuinely "just
-      works" once the I/O seam exists (`WindowManager`'s panes are already
-      buffer-agnostic) rather than assuming it without checking.
-- [ ] Port-forwarding scope check: is this only for reaching the remote agent's own
-      socket, or also user-facing forwarding of a remote dev-server port back to the
-      local machine (JetBrains Gateway does the latter) — worth naming as a distinct,
-      smaller feature rather than silently bundling it in.
-
-### Collaboration & AI
-
-Shipped here — see `git log --grep=ACP` for the panel's own long tail (interrupt/
-spinner, thought/text split, streaming debounce, collapsed tool calls, composer
-word-motion/history, auto-reconnect, word-wrap, checkpoint/rewind, Markdown rendering,
-@-mention autocomplete) and `--grep=panel-dock` for the tabbed bottom dock that now hosts
-Terminal/ACP/Debug Console on one tab strip. The panel-ergonomics batch (slug for
-`git log --grep=`: `acp-panel-batch`) added tail-following scrollback, collapsible tool
-calls/thinking, session modes/config options/usage, slash-command completion,
-`resource_link` file mentions, `session/list`+`load` resume, prompt queueing and
-`_session/steering`, a multi-line composer plus the `*acp compose*` buffer, and
-desktop notifications. Batch 2 (`acp-panel-batch-2`) added fenced code highlighted
-through the fence's language, aligned GFM tables, copying (a code block's header, or
-`M-w`'s picker), terminal output with exit codes and running-tool timers
-(`_meta.terminal_output_delta`), follow-the-agent, and clipboard image paste (`C-v`).
-Batch 3 (`acp-turn-review`) snapshots every file a turn's edit tool calls name, which
-powers an `*acp review*` multibuffer (per-hunk keep/undo, `C-c C-r`/`C-c A v`) and makes
-rewind work for agents that edit the disk themselves; and it answers `elicitation/create`
-questions (Claude's AskUserQuestion, MCP URL sign-ins) from a form in the panel.
-Batch 4 (`acp-protocol-batch-4`) logs in when an agent answers `auth_required` (a picker
-over its `authMethods`; a terminal method runs in a dock tab, `C-c A L`/`acp-login`,
-`acp-logout`), deletes sessions from the resume picker, closes the session a resume
-leaves, cancels a dismissed `session/list` with `$/cancel_request`, and shows `notice`
-and `compaction_update` updates and an agent's image/audio/resource content. Pictures
-(an agent's images, pasted and replayed prompt images) are drawn inline by Notcurses:
-as glyph-blitter cells everywhere, and as a pixel bitmap on terminals with pixel
-graphics (`AcpPanel/InlineImages`; PNG/JPEG/WebP via the system libpng, libjpeg-turbo
-and libwebp). A right-click on one saves it to the XDG download directory or copies it
-(wl-copy/xclip), and `C-c C-w` saves one picked from the transcript (`Editor/Image/Save`).
-Conversations: `Manager` multiplexes sessions over one agent connection, routing each
-update, permission prompt and question by its `sessionId`; the panel shows one at a
-time with a session strip (`AcpPanel/SessionStrip`, bottom by default,
-`ned/set-acp-session-tabs`). `C-c A b` forks (`session/fork`; claude-agent-acp can fork
-after an earlier reply through `_meta.jetbrains.air.fork`, every other agent from now),
-`C-c A n` starts a new conversation, `C-c A c` closes one, `C-c A [`/`]` and
-`C-PageUp`/`C-PageDown` switch. A subagent's work (claude-agent-acp's
-`_meta.claudeCode.parentToolUseId`) nests under the tool call that started it.
-
-- [ ] **ACP protocol gaps**, sized 2026-09-29 against the ACP SDK 1.5.1 schema and
-      claude-agent-acp 0.84 (S/M/L = effort; "Claude" = what the adapter actually uses):
-      - **Fork limits**: forking from an earlier reply is claude-agent-acp only (the
-        spec has no fork point); a fork gets a copy of the transcript but no rewind
-        history, since the files on disk are shared between tabs. Tabs aren't
-        remembered across restarts; the resume picker brings a session back.
-      - **Not worth it now**: `providers/*` (LLM routing, unstable); claude-agent-acp's
-        `_auth/status_update` account push (an extension, not ACP).
-- [ ] `Keymap::AmbiguousBindings()` is diagnostic-only (a `CommandsTest.cpp` regression
-      test), not enforcement — `Keymap::Bind` still lets a caller construct an
-      unreachable-by-typing binding; a real structural fix (Emacs' own `define-key`
-      semantics: reject/restructure a bind that would shadow an existing command) would
-      change `Bind`'s signature across every call site including `ned/define-key`.
-- [ ] Batch-1 limits, each deliberate: replayed turns (`session/load`) carry no
-      checkpoints, so rewind can't reach them; resume needs the agent's
-      `sessionCapabilities.list` (no ned-side session history to fall back on); the
-      desktop notification can't see terminal focus (ned doesn't track it), so it fires
-      when the panel is unfocused or the turn ran 20 s or more; `C-RET`/`S-RET` need a
-      terminal that reports those modifiers on Enter (kitty keyboard protocol); `C-c C-s`
-      (steer) and `M-RET` (newline) work everywhere.
-- [ ] Batch-2 limits: claude-agent-acp sends a command's output only when it finishes,
-      so the live output tail shows only for agents that stream (Claude gets the
-      elapsed-time counter); it also reports exit code 1 for every failure, so ned reads
-      the real code from Claude Code's own "Exit code N" first line. Follow-the-agent moves
-      the editor only while the panel has focus. Image paste reads the clipboard through
-      `wl-paste`/`xclip` only (no macOS/WSL image path), capped at 3.75 MB. `M-w` copies
-      from a picker, since the transcript has no cursor or region to copy from.
-- [ ] Batch-3 limits: a turn's snapshots cover only files its edit/delete/move tool calls
-      name (or `fs/write_text_file` writes), so a shell command's edits (`sed -i`, `rm`)
-      are invisible to the review and to rewind; files over 4 MB or binary aren't
-      tracked.
-- [ ] Batch-4 limits: GIFs and other formats show only their caption; a picture's
-      bitmap goes up only while all of it is on screen and no overlay touches it (the
-      cells show otherwise), since a pixel plane can't be clipped or covered; a
-      picture can't be opened in a viewer, and copying one needs wl-copy or xclip
-      (OSC 52 carries only text). A terminal
-      login ned can't see finish (a TUI left open) needs its tab closed or exited by
-      hand, and a prompt refused for want of a login isn't resent after it -- only a
-      `session/new` is; `$/cancel_request` covers the session picker's listing only.
-- [ ] **Known rough edge**: a right-docked `AcpPanel`'s resize handle has no visually
-      reserved border the way `ProjectSidebar`'s divider column does (right-dock mode
-      stays a fully separate, byte-for-byte-unchanged standalone overlay from the
-      `PanelDock`-hosted bottom-dock mode).
-- [ ] The MCP `rename_symbol`/`apply_code_action`/`goto_location` tools shipped -- slug for
-      `git log --grep=`: `mcp-apply-goto`. Limits, each deliberate: an edit applied through
-      them isn't in the ACP turn's rewind snapshots (the tool call names no files, same gap
-      as a shell command's edits); edits a code action's *command* makes arrive as a
-      server-pushed `workspace/applyEdit` and stay unsaved, since only the action's own
-      edit is known to the tool; `goto_location` takes a line, not a column.
-- [ ] **A `dap_get_pointer_graph`-shaped MCP tool** — the pointer-graph/memory/
-      disassembly/thread/function-and-exception-breakpoint surface stayed out of the DAP
-      tool set on purpose (not part of the ask/step/inspect loop that slice targeted),
-      but the graph one specifically needs real work rather than another thin wrapper:
-      `BufferView::ExpandPointerGraphNode`'s cycle-detection traversal would have to be
-      extracted into a UI-free helper first (`Editor/PointerGraphNode.h`'s data shape is
-      already reusable, the traversal isn't).
-- [ ] **Real-time collaborative editing** (CRDT-based) — the biggest lift in this file;
-      last.
-- [ ] VCS: "generalize the two-callback plugin shape past version control" (cloud CLIs,
-      Terraform, Docker) remains an open idea, not a plan.
-
-Explicitly *not* pulled from prior research: OpenCode's session-sharing (needs a hosted
-backend, out of scope for a local-first editor) and a unified command palette (a stated
-non-goal, see below).
-
-### Issue Tracker Integration (Jira + GitHub) — and the Widget Layer It Forces
-
-Wanted for real, daily use: two Jira Cloud sites (one primary) and GitHub issues,
-reachable from inside ned rather than a browser tab beside it. Nothing here writes to a
-tracker until the actions stage; every provider can be live-tested read-only against the
-user's own sites and repos. The end state everyone pictures is "write a widget in Janet
-and dock it", and that is still several subsystems away -- no record-list widget and
-**no UI surface in Janet at all** -- so the staging stays: concrete panels first, a
-generic layer only once they show what they share, the scripting surface last. Every
-generic layer in this codebase arrived that way (`PanelDock`, `FramedConnection`,
-`CacheStamp`).
-
-The shape, agreed 2026-09-29:
-- **Connection**: a named tracker instance -- provider, URL, and for Jira the account
-  email plus a token *command*. Global, defined once in `init.janet`.
-- **Panel**: a named view over one connection (a board, a saved JQL/`gh` search,
-  "assigned to me"), with its own rail glyph. Any number per connection, across any
-  number of connections -- the left rail has room for twenty.
-- **Project scope is where a panel is declared**: `init.janet` panels are always there;
-  `.ned/settings.json` panels exist only while that project is active and leave the rail
-  on a switch. GitHub panels also appear with no configuration at all when the project's
-  git remote is on github.com and `gh` is logged in (the provider's `:detect`).
-- `LeftDock` is ready for this: `RemovePanel`, panels restored by name through
-  `SetPreferredPanel` (so a project's panel comes back active when the project does), and
-  a rail tooltip naming each panel.
-- The provider seam is in (`Editor/Tracker/`, `Janet/JanetTrackerProvider.h`):
-  `ned/tracker-register-provider` (`:list-argv`/`:parse-list`, optional
-  `:view-argv`/`:parse-view`), `ned/set-tracker-connection`, `ned/add-tracker-panel`,
-  `ned/json-decode`, and `tracker::Runner`. Transport is
-  **`gh`/`curl` argv from Janet, JSON parsed in Janet**; a C++ HTTP client (libcurl) and an
-  MCP client stay rejected unless that demonstrably hurts -- ned's MCP side is a server
-  (`Mcp/BridgeServer`), and a client would hand the user's credentials to another process.
-  Output is TaskProcess's merged stdout+stderr: fine while a successful `gh`/`curl -sS` run
-  writes nothing to stderr, revisit if one does.
-
-- The panels are in (`UI/TrackerPanel.h`): one per declared panel, issues grouped under
-  collapsible statuses, fetched the first time a panel is shown; `RET` opens a read-only
-  Markdown `*issue KEY*` buffer, `o` the browser, `w`/`W` copy key/URL. `trackerPanels`
-  in `.ned/settings.json`; `tracker-panel` picks one by name; `tracker-insert-issue-key`
-  inserts a fetched issue's key at point, off the registry's per-panel issue cache.
-  Live-checked against `gh` on a public repo. A panel added from the REPL after startup
-  isn't on the rail until a restart -- worth fixing only if that turns out to bite.
-
-- GitHub is in (`Plugins/tracker-github.janet`, bundled): `gh issue list/view --json`,
-  `gh` owning the login, a panel's query handed to `--search` verbatim. A provider's
-  optional `:detect` is shown the project's `git remote -v` URLs at startup
-  (`Tracker/Detect.h`), so every github.com remote gets a panel when `gh` is installed;
-  `ned/set-tracker-auto-detect` turns that off, and a declared name always wins. Keys are
-  `#N`, so two GitHub repositories' `#12` share one `*issue #12*` buffer and one
-  `tracker-insert-issue-key` entry -- qualify them (`owner/repo#12`) if that bites.
-  Projects boards (GraphQL, the `project` scope) wait until columns are wanted.
-
-- Jira Cloud is in (`Plugins/tracker-jira.janet`, bundled): curl over
-  `/rest/api/3/search/jql` (a panel's query is JQL; empty means my unresolved issues) and
-  `/rest/api/3/issue/KEY`, descriptions and comments rendered from ADF to Markdown in
-  Janet. An argv callback may return `{:argv [...] :curl-credentials true}`; the Runner
-  then runs the connection's `:token-command` (stderr dropped, output never shown), writes
-  `user = "email:token"` to a 0600 mkstemp file in `$XDG_RUNTIME_DIR` (`Tracker/Credentials.h`)
-  and appends `-K <file>`, removing it when curl exits -- the token never reaches an argv
-  or Janet. Only classic API tokens (Basic auth against the site); scoped tokens need the
-  `api.atlassian.com/ex/jira/<cloudId>` gateway -- add it if a site forces them. Search
-  returns the first 100 issues; paging waits until a panel wants more.
-
-- Actions are in. A provider's optional callbacks (`Tracker/Provider.h`'s `Capability`)
-  list transitions and assignable users, move, assign, comment, log work, list project
-  keys and name a "mine" query; `:input` text reaches a command through a private file
-  named by `{input-file}` in its argv. From a panel row (`b` `c` `s` `a` `i`), an
-  `*issue KEY*` buffer (the same plain letters, `g` refetches), or `tracker-*` commands:
-  - Keys in commits: `Vcs/CurrentBranch.h` records the branch whenever `Vcs/Runner`
-    lists, switches or creates one; its key (`DEV-450-...`, or `42-...` for a `#`-key
-    tracker) shows in the mode line and seeds a new `COMMIT_EDITMSG`
-    (`ned/set-tracker-commit-seed`). `tracker-create-branch` prefills `KEY-short-title`.
-    A branch switched outside ned shows up on the next list; the commit buffer re-checks.
-    Jira's smart commits (`KEY #comment`, `#time 1h`, `#done`) are Jira's own, working
-    only where the repository host is linked to Jira.
-  - Comments are written as Markdown in `*comment KEY*` (keymap-only
-    `tracker-comment-mode`, so no Markdown highlighting there); Jira's is converted to ADF
-    in Janet, and the buffer stays until the post lands.
-  - Status and assignee are picked from the tracker's own lists, in its order, yourself
-    first. The panels listing a changed issue refetch.
-  - Key completion: `KEY-` for a known project key, or `#` with a `#`-key tracker,
-    completes from each connection's "mine" issues (assigned or watched; GitHub's
-    `involves:@me`), cached per connection and refetched after five minutes, in any
-    buffer -- comments and strings included. The same keys open `*issue KEY*` through
-    `open-link-at-point`.
-  - Time: `tracker-clock-in` clocks in under the issue's heading (`:ISSUE:`/`:TRACKER:`)
-    in `$XDG_DATA_HOME/ned/issues.org` (`ned/set-tracker-clock-file`); clocking out of
-    such a heading offers the interval as a Jira worklog. GitHub has no time tracking.
-
-**Stage 7 -- extract what the panels share.**
-- [ ] The record table shipped -- `git log --grep=TableView`: `UI/TableView.h` over
-      `UI/Table/` (Fit/Flex columns that drop by priority as a panel narrows, natural
-      per-group sort, selection/collapse/sort keyed by id so they survive a push). The
-      tracker panels, the buffer list and the DAP thread panel are on it; `DebugPanel`
-      and the hierarchy browser stay on `TreeView`, being real hierarchies. Conscious
-      cuts: cells are one foreground each, not spans, so the `ListPopupRow`
-      span-awareness gap (Editor Ergonomics, above) is still open; sort order isn't
-      remembered across restarts; the tracker's Age column is computed at fetch time
-      and only moves on a refetch; columns can't be resized or reordered by hand.
-      Revisit each when a panel actually wants it.
-- [ ] A generic **async external record source** -- the `Provider` + `Runner` +
-      registry triple -- extracted only if the tracker copy and the VCS copy genuinely
-      agree. The `FramedConnection` finding elsewhere in this file is the cautionary
-      version: three copies of a shape can still be three different shapes.
-
-**Stage 8 -- the Janet widget surface. Last, and declarative, not immediate-mode.**
-- [ ] `Widget`'s contract is `Paint(Canvas)` + `OnEvent(Event)` -- a per-frame, per-cell
-      API. Handing Janet a `Canvas` would put the scripting boundary at per-cell
-      granularity, the wrong place for it for the same reason dynamic dispatch per
-      element is. The shape that works is the one this codebase already uses everywhere
-      it crosses that boundary: **Janet returns a model, C++ paints it** --
-      `ListPopupModel`, `VcsPanelContextMenuTarget` and `JanetVcsProvider`'s callback
-      table are all already that split.
-- [ ] So the deliverable is a *model vocabulary* (rows, columns, actions, key bindings,
-      a refresh callback), not a rendering API, designable only once Stage 7 has said
-      what real panels have in common. Jank changes none of this (Maybelist, below).
-- [ ] The 1.0 freeze commitment applies the moment any of this ships as `ned/*` -- an
-      argument for reaching this stage late and with evidence.
+**Client/server protocol** — its first consumer is the agent, and the second is a
+daemon/attach mode.
+- [ ] Design the protocol. Local execution is the degenerate case: in-process is one
+      transport behind the protocol, not a bypass around it. Send operations, not
+      buffers. Compress per frame, and negotiate the codec at the handshake with
+      "none" as a first-class option; nothing compression-related is linked today.
+      Build on `FramedConnection`: timeouts on every blocking call, a non-blocking
+      connect, an async write queue, and no lock held across a join. Decide the trust
+      model together with the framing, since this is a remote code execution surface.
+      Still open: the framing, JSON vs. something denser, streaming and cancellation
+      (`$/progress`/`$/cancelRequest` are prior art), versioning, and
+      `AF_UNIX`/stdio-over-ssh/TCP.
+- [ ] **Daemon/attach mode** (`emacsclient`-equivalent): keep a warm process (buffers,
+      LSP connections, undo) and attach a new terminal to it.
+- [ ] **Remote debug sessions**, e.g. attaching to live PHP in production.
+- [ ] Decide on port forwarding: only the agent's own socket, or also forwarding a
+      user's dev-server port back to the local machine.
 
 ### Documentation & Companion Tooling
 
-- [ ] **Internal/developer docs: Doxygen.** `/** */` doc-tags on the C++ side
-      (namespace/class-hierarchy aware, matching this codebase's `ned::text`/`editor`/
-      `janet`/`ui` layering), themed with Doxygen Awesome. Wired via CMake's
-      `find_package(Doxygen)` + `doxygen_add_docs()` as an opt-in `docs` target, not part
-      of `ALL` — a build/release-time step, nothing ned does at runtime. clang-doc was
-      considered and rejected as still too early-stage (LLVM's own docs warn of bugs/
-      crashes on real codebases).
-- [ ] **Environment setup tool** (`ned-setup` or similar) — first-run detection: shell
-      integration, installed language servers and debug adapters, *generating an
-      editable Janet file* loaded from `init.janet`. Deliberately a standalone,
-      inspectable generator — silent runtime auto-detection was considered and rejected.
-      (Languages are no longer part of this: every grammar is a package under
-      `share/ned/languages`, and a new one comes in through `ned --import-language`.)
-- [ ] **Cookbook entries for debugger-adjacent tools that already work with zero new
-      code** (audit finding, 2026-09-06 — a documentation gap, not a code gap):
-      Valgrind (`valgrind --vgdb=yes --vgdb-error=0` + DAP `Attach`, memcheck errors
-      arrive as ordinary `stopped` events) and Docker/embedded/OpenOCD targets
-      (`Attach`'s adapter/config is opaque argv + JSON, so `cortex-debug`-style or
-      Docker-aware adapters already work via `ned/set-dap-adapter`/`ned/set-dap-attach`)
-      both need a worked example in the docs, not new `DapManager` code.
+- [ ] **Doxygen developer docs**, themed with Doxygen Awesome, as an opt-in `docs` target
+      through `doxygen_add_docs()`. It is not part of `ALL`.
+- [ ] **`ned-setup`**: first-run detection of shell integration, language servers and
+      debug adapters, generating an editable Janet file loaded from `init.janet`.
+      Deliberately a generator rather than silent runtime detection.
+- [ ] **Cookbook entries for tools that already work with no new code**: Valgrind
+      (`--vgdb=yes --vgdb-error=0` + DAP attach), and Docker/embedded/OpenOCD targets
+      through `ned/set-dap-adapter`/`ned/set-dap-attach`.
 
-### Notcurses Patches Worth Upstreaming (Watch List)
+### Notcurses Patches to Upstream
 
-The mechanical barrier is gone now: `Patches/notcurses/` carries all three as real
-`git am`-able files with proper commit messages, generated from the CMake scripts by
-`Patches/notcurses/regenerate.sh` and verified to apply against pristine v3.0.17. Opening
-a PR is a `git am` and a push rather than a re-derivation.
+`Patches/notcurses/` carries each patch as a `git am`-able file (regenerated by
+`regenerate.sh`, verified against pristine v3.0.17).
+- [ ] `PatchNotcursesNulKey` (Ctrl+Space swallowed as NUL) and `PatchNotcursesMouseWheel`
+      (SGR wheel-right misdecoded). Both reproduce on upstream `master` as of 2026-09-06
+      and have no existing issue. They are ready to PR.
+- [ ] `PatchNotcursesBracketedPaste`, for upstream
+      [#2704](https://github.com/dankamongmen/notcurses/issues/2704). Our shape buffers in
+      `EventLoop::Run()`, not in Notcurses, so it doesn't match tstack's sketch there.
 
-- [ ] **`CMake/PatchNotcursesNulKey.cmake`** (Ctrl+Space/Ctrl+@ swallowed as a NUL byte)
-      and **`CMake/PatchNotcursesMouseWheel.cmake`** (SGR wheel-right, Cb=67, misdecoded
-      as a motion+release) are both still-reproducible bugs against upstream
-      `dankamongmen/notcurses` `master` as of 2026-09-06 (verified live against the
-      current `src/lib/in.c`, not just our pinned `v3.0.17`) — checked GitHub issues for
-      both ("Ctrl+Space", "NUL", "0x00", "wheel") and found nothing matching, so these
-      look like genuinely novel, unreported bugs. Both patches are already small,
-      root-caused, and general (not ned-specific workarounds), so they're close to
-      PR-ready as-is whenever we decide to open them.
-- [ ] **`CMake/PatchNotcursesBracketedPaste.cmake`** — shipped in ned 2026-09-06
-      (`git log --grep=paste-perf-and-drag-drop`); it is the *upstreaming* that is still
-      open, same as the two above. Upstream issue
-      [#2704](https://github.com/dankamongmen/notcurses/issues/2704) has been open since
-      2023 with a maintainer-endorsed design sketch from `tstack` (`lnav`'s maintainer)
-      that was never turned into a PR — our own patch deliberately took a simpler shape
-      (no `fbuf`/`paste_content` field inside Notcurses itself; all buffering happens in
-      `EventLoop::Run()`, which already owns the right place for it), so it isn't a
-      drop-in match for that sketch if we ever revisit upstreaming this specific gap.
+### Known Issues / Test Flakiness (Watch List)
 
-### Known Test Flakiness / Non-Critical Issues (Watch List)
-
-Real, reproduced, non-urgent — each is safe to leave as-is for now, but worth fixing
-opportunistically rather than re-discovering from scratch. Add to this list instead of
-just fixing-and-forgetting or letting it fade from memory between sessions. Fixed entries
-are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
-for closed-issue history.
+Real, reproduced, non-urgent. Fix opportunistically; delete when fixed.
 
 - **Org clock and agenda timestamps are UTC.** `TimestampFromTimePoint` and "today"
-  (`Org.cpp`, `Project/Agenda.cpp`, the deadline prompt) floor `system_clock` to days, so a
-  CLOCK line reads 17:05 at 10:05 in UTC-7, and "today" turns over at UTC midnight. Real
-  Org writes local time. Internally consistent -- durations are right, and a tracker
-  worklog reads the start back through `org::ClockTimePoint` -- but a fix to local time
-  must move all of them together, and existing files' clock lines would shift by the
-  offset.
-- **F# grammar: application and infix share a precedence, and EOF needs a newline.**
-  `1 + f a` parses as `(1 + f) a` (`_low_prec_app` and `infix_expression` are both
-  `prec-left 16`; raising application conflicts with `tuple_expression` and
-  `ce_expression`), which fsharp/calls.janet works around. `let f x y = ()` with no
-  trailing newline doesn't parse as a function at all; the change-signature template
-  carries its own newline.
-- **Markdown emphasis on a pathological paragraph.** Each `*`/`_` run that can open reads
-  ahead (up to 4096 codepoints) to see whether anything closes it, so a single paragraph
-  of thousands of openers that never close costs that read-ahead for every one: 15,000 of
-  them in one 45KB paragraph parse in 0.65s, against 0.09s before. Ordinary text resolves
-  within a few characters and is faster than before. Worth a closer-free memo in the
-  scanner state if a real generated document ever hits it.
-- **`BufferView's highlight cache updates after an edit changes the buffer's content`
-  is intermittently flaky under `--order rand`.** Found 2026-09-15 while stress-testing
-  the new Wrap rule kind's own `--order rand` reruns -- confirmed unrelated to that work
-  (the failure reproduces on its own, in a test file/subsystem the Wrap rollout never
-  touches: `Editor/Mode.cpp`'s `formatCaptures` closure and the Wrap/Rules/Config files
-  are all it changed, none of which this test exercises). Roughly 1 in 10-15
-  `--order rand` runs. The surprising part: it's the test's OWN FIRST assertion that
-  fails (`Tests/BufferViewTest.cpp:1774`, checking that a freshly-painted `"a"` string
-  literal renders with `SyntaxClass::String` on the very first `Paint()` call), not the
-  post-edit one the test's own name is about -- `REQUIRE(CellMatchesBrush(screen.PixelAt
-  (gutter + 0, 0), fixture.theme.BrushFor(ned::editor::SyntaxClass::String)))` evaluates
-  false, meaning the cell rendered as `Default` instead, as if the JSON mode's highlight
-  query hadn't produced a capture yet at the moment of that first paint. Smells like a
-  mode-construction/parse-readiness race (this codebase already has precedent for that
-  class of bug -- see `ModePrewarmTest.cpp` and the dynamic-mode-race entry closed
-  earlier) rather than anything about cache invalidation specifically, but not
-  root-caused -- logged rather than guessed at.
-
-- **Notcurses and the terminal can disagree about a glyph's width.** Every column
-  ned lays out comes from Notcurses' `ncstrwidth` (`Text/DisplayWidth.h`), which is
-  glibc's `wcwidth` underneath; the terminal draws from its own table and font. They
-  agree on CJK and on most emoji, but not everywhere: an emoji written with VS16
-  (`❤️`) measures 1 while many terminals draw 2, and tmux draws Nerd Font private-use
-  icons 2 wide where Notcurses says 1 (visible live as the activity bar's rows sitting
-  one column off in a tmux capture). Konsole is the terminal that matters; nothing seen
-  there yet. A startup probe (print a glyph, ask the terminal where the cursor went)
-  could calibrate a table of exceptions if one bites.
-
-- **`search-everywhere debounces a background text search and Enter opens the matching
-  file at that line` fails occasionally under `ctest -j8`.** Seen once on 2026-09-20
-  during the async-save work; passes on its own and on an immediate full rerun, and the
-  branch it appeared on touches neither search-everywhere nor the debounce timer. Same
-  shape as the parallel-run flakes closed on 2026-09-08: a timing assertion that loses
-  its margin when eight test binaries contend for the machine, rather than a real defect.
-  Worth pinning the debounce to a fake clock if it resurfaces; not chased now.
-
-### Named Non-Goals (Leaning "Won't Do", Kept Visible So It's a Conscious Call)
-
-- [ ] A plugin marketplace/package registry (VSCode extensions, MELPA/straight.el).
-      Ned's model is one Janet-scriptable environment plus opt-in project-local plugins
-      gated by `ProjectTrust`'s hash-based trust registry — a marketplace implies a
-      supply-chain-trust problem this project has deliberately stayed out of.
-- ~~A single fuzzy command palette~~ — **stale, corrected 2026-09-18.** This was
-      already false when written: `search-everywhere` ships a merged Command/Macro/File/
-      Buffer/Symbol/TextMatch palette on a double-tap-Shift gesture. The distinction the
-      entry was reaching for is real and still holds, so keep it: M-x, `project-find-file`
-      and `switch-to-buffer` remain separate purpose-built commands with their own
-      bindings, and the palette is an *additional* front door rather than their
-      replacement. Remaining work is under Editor Ergonomics ("Search-everywhere
-      remainder").
-
-### Native Windows Port (Idea, Unstarted — Design Sketch Only)
-
-Raised alongside the system-clipboard work (`Editor/Clipboard.h`'s WSL detection covers
-running ned as a Linux binary under WSL today, shelling out to `clip.exe`/
-`powershell.exe` over WSL's own interop — already shipped). A *native* Windows build
-(running directly under Windows Terminal or a raw console host, no WSL layer) is a
-distinct, much larger effort: this codebase is POSIX throughout, not just at one or two
-call sites, so "port" means replacing the platform layer wholesale:
-
-- **Process spawning** (`Editor/Process/ChildProcess.h`, `posix_spawn` + `pipe`) needs a
-  `CreateProcess`/anonymous-pipe implementation behind the same `WriteAll`/`ReadSome`/
-  `WaitForExit`/`Kill` surface — every LSP/DAP/ACP/task/VCS subprocess integration in
-  `Editor/` is built on this one class.
-- **The embedded terminal panel** (`Editor/Terminal/PtyProcess.h`, `forkpty`) needs
-  ConPTY (`CreatePseudoConsole`) instead — a real API, but a different threading/
-  handle-lifetime shape than a POSIX pty fd pair.
-- **Raw terminal I/O** — the `termios`/`poll` raw-mode work now lives in
-  `Editor/Clipboard.h`'s OSC 52 path and `UI/EventLoop.cpp` (the earlier
-  `UI/TerminalColorProbe.*` this used to name was removed with `--detect-theme`). Needs
-  the Win32 console API, or VT passthrough on a recent-enough Windows Terminal.
-- **Notcurses itself** would need to build and run against the Win32 console/Windows
-  Terminal target — worth checking Notcurses' own upstream platform support before
-  committing, since ned's `UI/` layer sits directly on it with no abstraction gap.
-- A PowerShell-flavored bundled theme would be a small addition once the port exists —
-  `UI/ThemeRegistry.h`'s fixed name→factory table is exactly the extension point.
-- **LSP broker self-staleness detection** (`Editor/Lsp/BrokerMain.cpp`'s executable-
-  identity check) is Linux-specific (`/proc/self/exe`, and depends on rename-over-a-
-  running-binary being legal at all — the exact thing that lets a rebuild replace
-  `build/ned` while the broker daemon still has the old inode mapped). Windows
-  generally can't do that swap in the first place — the OS locks a running executable's
-  file, so a rebuild while the broker is up would fail outright rather than silently
-  going stale. A native port needs a different mechanism entirely (or may not need one,
-  if Windows' own lock makes the failure mode "rebuild fails with a clear error"
-  instead of "silent staleness").
-
-Unscoped beyond this sketch — process spawning is the obvious dependency root; nothing
-else works without it.
+  (`Org.cpp`, `Project/Agenda.cpp`, the deadline prompt) floor `system_clock` to days.
+  Real Org writes local time. A fix must move all of them together, and it shifts
+  existing files' clock lines by the UTC offset.
+- **F# grammar**: application and infix share `prec-left 16`, so `1 + f a` parses as
+  `(1 + f) a`. Also, `let f x y = ()` without a trailing newline doesn't parse as a
+  function.
+- **Markdown emphasis on a pathological paragraph.** Each unclosed opener reads ahead up
+  to 4096 codepoints: 15,000 of them in 45 KB take 0.65 s. A closer-free memo in the
+  scanner state would fix it if a real document hits this.
+- **`BufferView's highlight cache updates after an edit…` flakes under `--order rand`**
+  (about 1 in 10–15 runs). The test's *first* assertion fails: the first `Paint()`
+  renders a JSON string as `Default`. It smells like a parse-readiness race
+  (`ModePrewarmTest.cpp` precedent) and hasn't been root-caused.
+- **Notcurses and the terminal can disagree on glyph width**: VS16 emoji, and Nerd Font
+  private-use glyphs under tmux. Nothing has been seen in Konsole. A startup
+  cursor-position probe could calibrate an exception table.
+- **`search-everywhere debounces a background text search…` flakes under `ctest -j8`**.
+  It's a timing margin under contention; pin the debounce to a fake clock if it
+  resurfaces.
+- **Hunk unstage matches point against the cached staged diff**, which drifts when
+  unstaged edits exist earlier in the file. It's exact in the stage-then-undo flow.
 
 ## Maybelist (Speculative — Neither Committed nor Rejected)
 
-Ideas worth remembering but not worth scoping yet — too undecided for "Open Items",
-not disliked enough for "Won't do". Promote or delete on revisit rather than letting
-these accumulate detail in place.
+### Big subsystems
 
-- [ ] **Jira agile boards as panels** (`/rest/agile/1.0/board/{id}/issue`, columns from
-      its configuration). A JQL panel already covers a board's filter
-      (`sprint in openSprints() AND project = X`). Justified when a board's column order,
-      rather than status grouping, is what's wanted.
-- [ ] **ACP panel extras past the next batch** (from the same 2026-09-29 survey):
-      PR-style review comments on an agent's diff fed back as a prompt; transcript
-      search and timestamps. (Fork and parallel sessions are under "ACP protocol
-      gaps".) Justified each when the spec side stabilizes or the next-batch items are
-      in daily use and this is what's missed. A per-agent colour waits on ned running
-      more than one agent at a time; the panel already titles itself with the
-      configured agent name.
-- [ ] **ACP subagents as child sessions.** Declaring `clientCapabilities.subagents`
-      makes an agent announce each subagent as a session of its own instead of the
-      `parentToolUseId` nesting ned does for Claude. Not in the published schema yet
-      (SDK PR #1992); codex-acp 2.0.1 sends it: `subagent_spawned` (`subagentSessionId`,
-      `name`, `task`, `capabilities`) on the parent, the child's updates under its own
-      id, then `subagent_state_update` with `completed`/`failed`/`cancelled`/`stopped`.
-      The per-session routing is already there. Justified when an agent in use sends
-      it (Claude and agy-acp don't).
-- [ ] **ACP compatibility beyond Claude.** Parts of the spec that claude-agent-acp
-      and agy-acp never exercise (neither calls `terminal/create`; Claude's command
-      output comes through `_meta.terminal_output`). Justified each when an agent in
-      use needs it:
-      - **Interop, as probed 2026-09-29.** opencode 1.18 and agy-acp 0.5.2 (Google
-        Antigravity) both work as configured agents with no ned-side special case;
-        ned now asks for `_meta["terminal-auth"]` logins, ignores a fork's history
-        replayed before `session/fork` answers, and treats a diff fragment's missing
-        final newline as no change. Left, by agent:
-        - opencode sends its todo list as a `todowrite` tool call whose content is the
-          JSON list (no `plan`), and a command's exit code only in
-          `rawOutput.metadata.exit`. Rendering either would key on opencode's shapes.
-        - agy-acp ends a turn (`end_turn`) while agy is still waiting on a
-          `RunCommand` confirmation, with no `session/request_permission` sent: an
-          adapter bug, reproduced with a bare client too, so it's for upstream.
-        - Gemini CLI 0.62 (`gemini --acp`) and codex-acp 2.0.1 were probed up to login
-          only (no accounts here): both answer `session/new` with auth_required, which
-          ned already turns into its login picker. Their API-key methods take the key
-          in `authenticate`'s `_meta["api-key"]`, but in incompatible shapes (Gemini a
-          string, Codex `{apiKey}`); both also read it from the environment
-          (`GEMINI_API_KEY`, `CODEX_API_KEY`/`OPENAI_API_KEY`), so an `env` prefix on
-          the agent's argv covers it. Codex's device-code login runs through URL
-          elicitation, which ned has.
-      - **`terminal/*`** (create/output/wait_for_exit/kill/release; stable) -- M/L.
-        For agents that ask the client to run commands rather than running them
-        agent-side. The emulator and `TerminalPanel` exist; the work is terminal-per-id
-        lifetime and a transcript embed.
-      - **`plan_update`/`plan_removed`** (unstable): the structured successor to the
-        `plan` update ned already renders; Claude never sends them.
-      - **`nes/*` + `document/*` next-edit suggestions** (stable): ned would have to
-        stream document events to the agent and show suggestions as virtual text --
-        see "AI edit-prediction" in the Maybelist for the display side.
-      - **`mcp/connect` over ACP** (unstable): the agent reaching ned's MCP bridge
-        through the ACP connection instead of a spawned stdio server.
-      - **Audio prompts/content** (`promptCapabilities.audio`): shown today only as a
-        caption.
-- [ ] **Android device tooling.** Editing, building and testing an Android project
-      works today via Java/Kotlin modes, the task runner (`ned/set-task-command` pointed
-      at `./gradlew ...`) and XML mode for layout files. `adb logcat` streaming and a
-      one-click "install + run on device/emulator" flow have no home in anything that
-      exists. Justified when shelled-out `adb`/`gradlew` tasks prove too manual in
-      practice.
-- [ ] **Language servers for Markdown fences and Org `#+BEGIN_SRC` blocks**, the way
-      HTML `<script>`/`<style>` embedded documents already get one. A live server per
-      fence in an ordinary notes file could be noisy for illustrative, incomplete
-      snippets. Justified when someone wants diagnostics or completion in literate files.
-- [ ] **Charset edges.** UTF-16 is always written with a BOM, so a BOM-less UTF-16 file
-      (reachable only by stating or choosing the charset) gains one on save; modelling
-      "BOM or not" apart from the encoding would fix it. The huge-file path maps bytes
-      and never decodes: a UTF-16 huge file is refused, a latin1 one opens byte for byte
-      and ignores a stated latin1. A charset stated in `.editorconfig` for files opened
-      before `init.janet` disables `.editorconfig` has already decoded them. Justified
-      when one of these files turns up.
-- [ ] **Mixed tabs and spaces:** Emacs's `indent-tabs-mode` with an indent width below
-      the tab width (GNU C: 2-column levels, 8-column tabs, so a level-3 line is one tab
-      and two spaces). Needs a tab width separate from `IndentStyle::width`, which today
-      doubles as both. Justified when such a file has to be edited without being
-      rewritten.
-- [ ] **Perl's lexical `my sub`.** It parses exactly like a package `sub`, so a rename
-      treats it as file-level and declines. Justified if lexical subs turn up in code
-      people rename; it needs the grammar to keep the `my`.
-- [ ] **Locals forms that decline today.** Lisp destructuring (`[{:keys [x y]} m]`,
-      `[[a b] pair]` -- the names aren't direct children of the binding vector), fish's
-      `set -l -x count 0` (flag not adjacent to its target) and `read -l line`, and a
-      use that precedes its binding in a whole-scope language (Python function scope,
-      JavaScript `var` hoisting -- `LocalBinding::usedBeforeDefinition`). All decline
-      rather than mis-rename. Markdown's reference links have no locals at all: a
-      label keeps its brackets in the grammar's node and is usually several words.
-      Justified when one of them blocks a real rename.
-- [ ] **change-signature's remaining misses.** A Kotlin class with no primary
-      constructor may list an interface before its superclass (no parens tell them
-      apart), and `super(...)` is then sent to the first; a C# extension method called
-      statically with its trailing defaults omitted reads as a member call; Ruby's and
-      Crystal's bare `super` forwards the child's own arguments, which a reorder of the
-      parent's would need spelled out. A function passed on unapplied (`foldr f 0 xs`,
-      `map f` in any language) isn't found, and neither is one applied infix
-      (`` x `f` y ``) or in an operator section; a Haskell equation written infix isn't
-      reordered with its siblings. Justified when one of them turns up in a real
-      refactor.
-- [ ] **Imports that name no file.** C#, F# and Vala `using`/`open` name a namespace that
-      any number of files add to, and an Elixir multi-alias (`alias A.{B, C}`) splits its
-      path across a dot and a tuple. An Ada rename declines when the `with` clause's case is
-      neither the file's nor each step capitalized (`Ada_IO` for `ada_io.ads`), and a Bazel
-      label into another repository (`@rules_cc//...`) resolves nowhere, since only Bazel's
-      output base holds it. Justified when go-to-file or a move fixup is missed through one
-      in practice.
-- [ ] **Org links as imports.** `[[file:a.org]]` and `[[./a.org][desc]]` open with
-      open-link-at-point but aren't imports (the grammar has no link node, only
-      `#+INCLUDE`/`#+SETUPFILE` are read), so moving a note doesn't fix the links to it.
-      Justified when Org notes that link each other get reorganised.
-- [ ] **Scala selector and rename imports.** `import a.b.{C, D}` and `import a.b.{C => D}`
-      aren't read: the path is sibling identifiers rather than one node, so each
-      selector would need its own composed target. Justified when Scala go-to-file or
-      move fixups are missed through them.
-- [ ] **Import source roots read from the build.** Cabal's `hs-source-dirs`,
-      `elm.json`'s `source-directories`, Maven/Gradle source sets and rebar's include
-      dirs are approximated by the bundled defaults and a project's
-      `importResolution.<language>.sourceRoots`. Justified when a real project's layout
-      defeats both.
-- [ ] **Import spellings that name no one file.** CMake paths through variables
-      (`${CMAKE_CURRENT_LIST_DIR}/x.cmake`), globs (Caddy, nginx, Apache), Just's bare
-      `mod name`, Nim's `pkg/[a, b]` groups. Justified when go-to-file on one of them is
-      missed in practice.
-- [ ] **Tests with no name to run by.** A D `unittest` with no `@("name")` UDA,
-      MATLAB's script-based `%%` sections (run by a name MATLAB derives from the title in
-      an undocumented way), and judge's (Janet) top-level `test` forms, which run only by
-      position. Justified if MATLAB documents the mapping or someone wants run-at-point by
-      `file:line`.
-- [ ] **Native formatter parity with the canonical formatters.** The bundled styles
-      (PSR-12, gofmt, rustfmt, Kotlin, .NET, Prettier, `dart format`, scalafmt,
-      `forge fmt`, dfmt, PEP 8/black, RuboCop, `mix format`, swift-format, and the
-      rest) stop short of gofmt's field/comment alignment and gofmt's and black's
-      redundant-paren removal, rustfmt's and Prettier's width-driven wrapping, rustfmt's
-      `where`-clause layout, a Prettier config written as JavaScript or a shared package
-      or with `overrides`, C#'s finer brace categories (accessors, lambdas,
-      initializers), Vala's space before a call's parenthesis, perltidy's paren
-      tightness (it spaces inside parens by what they hold), clang-format's one-blank-line
-      cap between a proto message's members, and a Scala braced body
-      on the line after its header (an
-      `indented_block`, so moving its brace would change the tree). The language
-      server's formatting or `ned/set-format-command` is what makes a file canonical.
-      Justified per item when a language people use here has no working external
-      formatter.
+- [ ] **Jupyter notebooks.** Subsystem-sized, comparable to LSP and DAP combined. The
+      shape: a ZMQ kernel client (5 sockets, HMAC-SHA256 multipart JSON, discovery via
+      `share/jupyter/kernels/*/kernel.json`) on the `FramedConnection` threading model.
+      A `NotebookView` composes per-cell `Buffer`s and `Mode`s with output panels between
+      them. Rich output reuses `Table.h`, the Notcurses pixel path, and the system
+      image decoders `AcpPanel/InlineImages` already links. Phasing: nbformat
+      round-trip → a read-only view → a headless kernel client → run cell → the rest.
+      Hard rule: opening a notebook never executes anything. ipywidgets is out.
+      Justified when notebooks are edited here regularly.
+- [ ] **Native Windows port.** ned is POSIX throughout. The work: `ChildProcess` on
+      `CreateProcess` (the dependency root, since every LSP/DAP/ACP/task/VCS integration
+      sits on it), `PtyProcess` on ConPTY, raw terminal I/O on the Win32 console or VT
+      passthrough, Notcurses' own Windows support (check it first), and the broker's
+      `/proc/self/exe` staleness check. WSL already works today. Justified by a real
+      Windows user.
+- [ ] **Real-time collaborative editing** (CRDT). No design exists. Justified when a
+      concrete pairing workflow wants it.
+- [ ] **Jank replaces Janet.** Embedding works (`Docs/JankFeasibility.md`, 2026-09-08).
+      Three things block it: ~237 MB RSS against ned's ~28 MB, a hard dependency on
+      Clang/LLVM (~266 MB of shared libraries), and BDWGC thread registration at 39
+      thread sites. Re-check upstream's embedded builds before any workaround.
+- [ ] **AI edit-prediction** (Zed's Zeta-style next-edit). ACP now specifies `nes/*` over
+      `document/*`; claude-agent-acp 0.84 doesn't implement it. Prove the value first with
+      an explicit command over ACP. The new work is multi-line inline rendering, and
+      `Text/LineDiff.h` plus `UndoTree` already supply the prompt input.
 
-- [ ] **Code-block definitions in a Markdown/Org outline.** HTML, Svelte, Vue and
-      Astro list what their `<script>`/`<style>` blocks define (`:injected-symbols`);
-      Markdown doesn't, so a notes file's outline stays its headings, and Org's
-      outline is its own code. Flip the flag for Markdown (and teach Org's walk the
-      same) only if someone wants literate-programming files outlined by their code.
+### Performance
 
-- [ ] **Resolve highlight capture names once per compiled capture, not per capture.**
-      `std::_Hash_bytes` is ~6% of a 128 KiB JavaScript keystroke profile; the likely
-      source is highlight resolving every capture in the window through string-keyed
-      lookups (`MappedSyntaxClassForCapture`, `HasCaptureStyle`, `FindCaptureClassifier`
-      in Mode.cpp) -- unconfirmed, since the libstdc++ frames don't unwind under `perf`.
-      Justified when highlight is next the thing being profiled.
-- [ ] **A true O(1) `Parent()` call** (`parse::NodeParent`) — every call is still a full
-      root-to-self descent; a caller climbing a known chain now has parent-aware sibling
-      lookups to avoid re-paying it (`NodeNextSiblingFromParent`/`NodePrevSiblingFromParent`,
-      closed the one loop that needed them, `sexpMotion`), but a genuinely isolated call
-      with no chain in hand (`CLike.cpp`'s one `NextNamedSibling()`, single uses in
-      `QueryMatcher.cpp`/`QueryPredicates.cpp`) still pays O(depth) every time. Making
-      that O(1) needs a memo per tree, which means shared mutable state on `TreeData` --
-      today `const` and shared cross-thread via `shared_ptr` with no locking, exactly the
-      shape that has produced real bugs before (the dynamic-mode-race SIGSEGV, the
-      `LspManager` UAF). Revisit only if a genuinely hot single-call site shows up; no
-      measured cost drives it today.
-- [ ] **Jank replaces Janet** — swapping the scripting layer for
-      [jank](https://github.com/jank-lang/jank), a Clojure dialect on LLVM. Full
-      measured feasibility record: `Docs/JankFeasibility.md` (investigated 2026-09-08
-      against a real local install, not from documentation). Verdict: embedding works
-      today and per-form cost after warm-up is negligible, but three things block it.
-      **Peak RSS ~237 MB** against ned's current ~28 MB with a file open — a 10x floor
-      before a single buffer loads, which sits badly beside the huge-file work done
-      specifically to keep memory bounded. **Eval forces the dynamic runtime**, so ned
-      would ship a hard dependency on a matching Clang/LLVM (`libclang-cpp.so` 84 MB +
-      `libLLVM.so` 182 MB) where Janet is a ~1 MB library with no toolchain dependency.
-      And **BDWGC is statically baked into both jank archives**, so every `std::thread`
-      in ned needs explicit `GC_register_my_thread` bracketing — about eight lines of
-      RAII, but at 39 call sites. Upstream was reportedly easing embedded builds around
-      the time this was measured; re-check before investing in any workaround.
-- [ ] **Widening the project-wide problem list.** The list (slug for
-      `git log --grep=`: `show project-wide diagnostics in the problem list`) covers
-      whatever servers volunteer about files with no buffer open, which for a
-      whole-project checker is most of what they say. Three ways it could go further,
-      none of them started, each with the thing that would justify it:
-      **Coverage** -- a server that only reports on what it has been asked about still
-      yields a list scoped to open buffers. A project-tree crawl, or opening files
-      headlessly to provoke a check, would widen it; the store is already the seam
-      (keyed by path and connection, not by how a diagnostic arrived, so another tier
-      writes into the same map and merges for free). Justified when a server someone
-      actually uses turns out to be that quiet.
-      **Cold start** -- the store is empty after a restart until each server re-checks:
-      automatic for rust-analyzer, blank until a save for a check-on-save server.
-      Persisting it would mean trusting positions against files that may have changed
-      while ned was not running, so it wants the staleness answer below first.
-      **Staleness** -- a file edited on disk under a recorded diagnostic is flagged
-      (`(file changed since)`, off a size/mtime stamp) rather than re-resolved.
-      Re-resolving against the file as it stands is a read-side change with no
-      migration -- the store keeps `{line, character}` rather than byte offsets
-      precisely so that stays possible. Justified when the flag starts showing up often
-      enough to be noise rather than information.
-- [ ] **Merge-conflict chrome with no VCS verdict.** Two deliberate splits, each with
-      the symptom that would reopen it. With no VCS answer at all (no provider for the
-      root, a pathless buffer, `git status` in flight or failed) the conflict chrome falls
-      back to reading marker text: a briefly invisible conflict is worse than a doc file
-      briefly showing chips, but a custom provider whose status can't express "unmerged"
-      never suppresses anything -- revisit if such a provider shows up. And the explicit
-      `C-c x` commands are never gated on the verdict (they parse the buffer themselves,
-      `Editor/ConflictResolution.h`), so they resolve files the VCS has no opinion about
-      -- revisit if "the chips are gone but `C-c x o` worked" reads as a bug.
-- [ ] **ned in Carbon, eventually.** Speculative and deliberately unscoped, but worth
-      remembering: ned is C++23 throughout, and Carbon's entire pitch is C++ interop as a
-      migration path for large existing C++ codebases — which describes this one. Carbon is
-      pre-0.1 (its own roadmap says end of 2026 is the *soonest* 0.1 could ship) and no
-      admissible tree-sitter grammar exists — six `tree-sitter-carbon` repos, all zero
-      stars, one archived — so the correct action is to watch, not wire. Full entry with
-      the admission trigger in `Docs/LanguageCoverage.md` ("Ahead of the catalogue").
-      Relevant to the parsing-engine work rather than separate from it: Carbon names *"low
-      context-sensitivity"* as an explicit design principle, which is exactly the property
-      Tier 0 structural inference relies on, so it is an easy case rather than a hard one.
+- [ ] **Incremental fold/locals/indent passes.** Queries are incremental (`changed-ranges`),
+      but the linear work around them isn't: the fold scan (~3 ms at 107 KiB of C++),
+      locals-to-nodes (~25 µs/KiB, hence the 256 KiB `kMaxLocalConditionBytes` cap), and
+      the indent imprint walk (+21 ms on Enter at 128 KiB of JS). Use reuse keyed on
+      `TreeEdit::structuralChanges`, not windowing, since truncated folds are wrong at the
+      window edge. Justified when typing on large files feels slow again.
+- [ ] **Resolve highlight capture names once per compiled capture.** `std::_Hash_bytes` is
+      ~6% of a 128 KiB JS keystroke. The likely cause is string-keyed lookups in Mode.cpp,
+      unconfirmed. Justified when highlight is next profiled.
+- [ ] **O(1) `parse::NodeParent`.** Needs a per-tree memo, which means shared mutable
+      state on a `const` `TreeData` that is shared across threads. Justified by a hot
+      single-call site.
+- [ ] **`IncrementalParseCache` using `Buffer::Edits()`** instead of diffing a second full
+      copy of the document. This changes `Mode`'s pure "full text in" seam. Justified by
+      an RSS measurement that shows the doubled text.
 
-- [ ] **Configurable indicator glyphs** — the five render-indicator characters
-      (`Source/UI/BufferView/Internal.h`) are `constexpr char32_t`: `…` fold ellipsis,
-      `»` truncation, `│` indent guide, `↳` wrap continuation, `¬` no-trailing-newline.
-      Their *colours* already follow the theme — the wrap glyph paints in
-      `indentGuideForeground`, which `ThemeFromPalette` defines as
-      `Interpolate(0.5, subtleForeground, background)`, so it recedes correctly on light
-      and dark alike (verified live across `light`/`high-contrast-dark`/`mono-light`) —
-      but the characters themselves are fixed. Raised when the wrap indicator moved into
-      the gutter (2026-09-11); deliberately not done for that one glyph alone, since a
-      bespoke `ned/set-wrap-glyph` beside four hardcoded siblings is exactly the
-      one-off this codebase avoids. The shape if it happens: one small module in
-      `TabWidth.h`'s mutex-guarded-static pattern covering all five, a
-      `ned/set-glyph "wrap-continuation" "⤷"`-style binding, and validation that the
-      replacement is a single-width codepoint — a double- or zero-width glyph in the
-      digits column shifts the whole gutter. A maybe rather than an open item because
-      nobody has yet wanted a different character, only a different weight, and the
-      theme already provides that.
+### LSP
 
-- [ ] **Split BufferView's prompt/session machine out, with its LSP pickers** — the
-      BufferView decomposition (`Docs/BufferViewDecomposition.md`) shrank `BufferView.cpp`
-      from 16,823 lines to ~1,700 and `Paint` from 1,597 to 459, but `BufferView.h` is
-      still ~4,000 lines and 198 members. Its plan's phase 5 said to fix that by
-      extracting `LspFeatures`. That boundary was measured and rejected: 9 of the LSP
-      functions *set* `inputMode_` and 17 read it, because most LSP features **are**
-      prompts (code-action select, go-to-definition select, peek, document/workspace
-      symbols, rename). Extracting them by protocol would bounce callbacks across a
-      boundary for what is one interaction, and the sub-clusters that genuinely are
-      ambient (hover, document highlight, signature help — 61 of 83 functions never touch
-      session state) are ~4 members each and do not justify a class plus a callback
-      struct.
-      The boundary that would work is by *role* rather than by protocol: lift the
-      prompt/session state machine (`inputMode_`, `prompt_`, the four shared drivers, the
-      per-session state) into its own type and take the LSP pickers with it, leaving
-      BufferView with the widget and its key/mouse entry points. That is a bigger piece
-      of design than the plan describes and is the reason this is a maybe rather than an
-      open item — it is worth doing only if the header actually starts costing time, not
-      merely because it is long.
+- [ ] **Quick-fix marker coverage.** Selection-scoped refactors and source actions light
+      nothing, and neither do prose (harper-ls) fixes. The latter needs a second viewport
+      request on the prose connection. `C-c C-a` reaches all of them at point.
+- [ ] **Async server→client requests.** `window/showMessageRequest` always answers null,
+      because `Client::RequestHandler` is synchronous. `window/showDocument` drops the
+      column and `takeFocus`. Justified by a server whose question matters.
+- [ ] **Dynamic registration beyond `didChangeWatchedFiles`/`didSave`.** For example,
+      on-type formatting triggers are read from `initialize` only.
+- [ ] **Semantic tokens overriding a grammar `comment`.** Decide the policy when a server
+      actually recolours one.
+- [ ] **New-subdirectory watch latency.** The tree snapshot refreshes every ~30 s. Reacting
+      to `IN_ISDIR` creates needs a `mkdir -p` rescan and rename bookkeeping. Justified
+      if the delay annoys.
+- [ ] **Widening the project-wide problem list.** Three directions: coverage (a crawl or
+      headless opens, for quiet servers), cold start (persist the store, which needs
+      staleness solved first), and staleness (re-resolve `{line, character}` against the
+      file on disk instead of flagging it). Justified when a server in use is that quiet,
+      or when the stale flag becomes noise.
+- [ ] **LSP broker pre-warming** of recent projects at `ned --foreground`. Blocked on
+      argv, because server commands exist only in a live `init.janet`. Needs a
+      `(root, language) → argv` state file written by interactive attaches.
+- [ ] **Language servers for Markdown fences and Org `#+BEGIN_SRC` blocks**, like HTML's
+      embedded documents. Justified when someone wants diagnostics in literate files.
+- [ ] **`dap_get_pointer_graph` MCP tool.** First extract
+      `BufferView::ExpandPointerGraphNode`'s traversal into a UI-free helper. A column
+      for `goto_location` is the same kind of add.
 
-- [ ] **Merge-aware cross-session undo** — persistent undo (`Editor/PersistentUndo.h`,
-      shipped 2026-08-25) content-gates: on reopen, restores the full tree only if the
-      file's current on-disk content exactly matches some node already in the persisted
-      tree (any node, not just the tip — covers "quit without saving" for free); no
-      match at all just discards the persisted history outright and the buffer starts
-      fresh. The fancier version would three-way-merge a genuinely novel external change
-      into the persisted history instead of discarding it (base = last-persisted content,
-      ours = tree tip, theirs = fresh disk content), reusing `Text/ThreeWayMerge.h`/
-      `Editor/AutoMerge.h`'s existing machinery to splice one merge node onto the old tip.
-      Deferred because it means synthesizing an undo node for content the user never
-      actually typed — a real risk of `undo` doing something surprising later — worth it
-      only if the content-gate default proves too lossy in practice.
-- [ ] **AI edit-prediction** (Zed's Zeta: predicting the next multi-line edit from
-      cursor/edit history, distinct from LSP-driven completion or ACP's chat) has no
-      equivalent here. A different feature from everything `Acp/` already provides, and
-      probably needs some model-serving backend of its own — worth naming as a conscious
-      gap rather than assuming ACP already covers "AI in the editor." ACP has since
-      specified exactly this (`nes/*` suggestions over `document/*` sync, stable in SDK
-      1.5.1), which would settle the backend fork below once an agent ned runs
-      implements it; claude-agent-acp 0.84 doesn't. Sketched further 2026-09-07, still
-      unscoped:
-      - **The backend is the real fork.** Reusing `Editor/Acp/` costs no new
-        infrastructure and already talks to a live agent, but ACP is conversational
-        request/response — latency is seconds, which is fine for an explicit
-        "predict my next edit" command and wrong for anything that fires as you type. The
-        alternative is a dedicated fast path (a small HTTP client, or a local model), which
-        gets the latency but adds a subsystem plus a credentials/config story ned doesn't
-        have today. Likely order: prove the predictions are worth anything via the cheap
-        explicit-command-over-ACP version *before* building latency infrastructure for
-        them.
-      - **Two pieces already exist.** `Text/LineDiff.h`'s `UnifiedDiff` (built for the ACP
-        edit preview) is exactly the recent-edits-as-a-diff prompt input this needs, and
-        `UndoTree` supplies the history behind it.
-      - **The genuinely new work is rendering.** Nothing draws a multi-line inline
-        suggestion — ghost text was removed from completion in favor of `ListPopup`
-        (`completion-popup`), so a multi-line ghost overlay is a new `BufferView` paint
-        path, not a revival of the old one.
-- [ ] **Open-source game-dev platform support** (raised 2026-09-03, explicitly a list to
-      pick from, not a commitment to any of it). The real fork in each candidate is
-      whether it needs a *new base language* ned doesn't speak yet, or whether it rides
-      on one already planned above — worth deciding by language, not by engine:
-      - **Godot** (GDScript, optionally C# via Mono) — the most popular open-source
-        engine, so the strongest adoption case. Needs a GDScript tree-sitter grammar (a
-        community one exists; verify current maintainer/repo before wiring it in, same
-        caveat as Kotlin's above) plus the same highlight/fold/indent/tags checklist.
-        Real open question, not yet verified live: Godot 4's built-in GDScript language
-        server reportedly speaks LSP over a TCP socket to a *running Godot editor
-        instance*, not as a spawned stdio subprocess — if true, that's a genuine
-        mismatch with `Lsp/Transport.h`'s subprocess-+-pipes assumption and would need a
-        real transport-layer addition (a raw-socket `Transport`), not just a
-        `ned/set-lsp-command` entry. Confirm before scoping.
-      - **Bevy** (Rust, no visual editor — code-first ECS) — needs nothing
-        Bevy-specific; general Rust language support shipped 2026-09-04, so this is now
-        just `rust-analyzer` + `lldb-dap`/`codelldb` config, the same as any other
-        already-bundled language.
-      - **LÖVE (Love2D)** and **Defold** (both Lua-based, open source, no bundled mode
-        for Lua at all today) — gated on general Lua support, not engine-specific work.
-        `lua-language-server` already understands both frameworks' APIs via
-        community-maintained meta/addon files.
-      - **C#** (needed for Godot-via-Mono) — bundled language support shipped, see the
-        Language Intelligence section above; `OmniSharp`/`csharp-ls` are the LSP options,
-        config-only, not touched by that work.
-      - **GDevelop** — event-based, largely no-code; not a natural fit for a text editor
-        regardless of open-source status. Listed only to record it was considered and
-        set aside.
-      - **Game-dev debugging**: Bevy (Rust) and LÖVE/Defold (Lua, via
-        `local-lua-debugger-vscode`) both debug through the ordinary
-        `ned/set-dap-adapter` mechanism once their language support lands, nothing
-        game-specific needed; Godot/GDScript is the one real unknown — verify whether
-        Godot 4 exposes a real DAP-speaking debug adapter at all before assuming this is
-        just a config entry (may share the LSP transport quirk noted above).
-        Collaboration/multi-client synced debugging (a bespoke sketch-annotation,
-        synced-viewing feature seen in some existing GDB frontends) doesn't fit ned's
-        single-user terminal model — considered and set aside, not planned.
-- [ ] **LSP broker pre-warming** (split out from "LSP broker server mode" above,
-      2026-09-16) — warm the N most-recently-used projects' language servers when
-      `ned --foreground` starts, using `Editor/Project/Registry.h`'s existing
-      `lastUsed`-ordered `ListProjects()` as the recency source (no new tracking
-      needed for that half). Blocked on argv, not on root detection: root-marker
-      detection (`Editor/Lsp/RootResolver.h`, finding `compile_commands.json`/
-      `Cargo.toml`/etc.) is pure filesystem logic and could run headlessly today, but
-      the per-language server *command* (`Editor/Lsp/ServerConfig.h`) is populated only
-      by a live interactive `ned` process's `ned/set-lsp-command` Janet calls, and that
-      file states as deliberate policy that nothing is bundled/auto-detected for any
-      language (same convention as `TaskConfig.h`/`Dap/Config.h`) — a prewarm-only bundled
-      table would be a real, called-out exception to that policy, not a small addition.
-      Needs a `(root, language) -> argv` persistence mechanism (each real interactive
-      attach writing its resolved config to a small state file the daemon can read at
-      its own startup) before this can be built without either violating that policy or
-      guessing.
-- [ ] Raw per-file `.gcov` output has no parser — `Editor/Coverage/OutputParser.h`
-      handles lcov's `.info` format only (which covers `lcov`, `llvm-cov export
-      -format=lcov`, and `gcovr --lcov`). `.gcov` is a directory-scan problem rather than
-      the single-document parse every other `Editor/*OutputParser.h` does, so it was left
-      out deliberately; revisit only if `.info` proves insufficient in practice.
+### Editing & UI
+
+- [ ] **Span-aware rows in `ListPopupRow` and `TableView` cells.** This unblocks a
+      highlighted search-everywhere preview and coloured table cells.
+- [ ] **TableView**: remember sort order across restarts, and let columns be resized or
+      reordered by hand. Justified when a panel wants it.
+- [ ] **Colour swatches**: `lab()`/`lch()`/`oklab()`/`oklch()` need a gamut-mapping
+      policy first, because round-tripping would clip P3 colours. The 8 KiB per-line
+      scan cap misses minified CSS; lifting it means windowing on horizontal scroll.
+- [ ] **Buffer-word completion for huge buffers**, via a viewport-windowed scan.
+- [ ] **Excerpt-scoped search** for `next-error`, dabbrev and Vim `/`. Only isearch and
+      query-replace honour `ExcerptBodyRanges` today.
+- [ ] **Merge view base pane.** `MergeViewSession` already derives it from diff3 markers.
+- [ ] **Merge-conflict chrome with no VCS verdict** falls back to marker text, and `C-c x`
+      ignores the verdict. Revisit if a custom provider can't express "unmerged", or if
+      "chips gone but `C-c x o` worked" reads as a bug.
+- [ ] **Status gutter per-pane frontier.** Today closing a pane never commits, and two
+      panes on one log share a frontier.
+- [ ] **`describe-bindings` for a mode the pane isn't showing.**
+- [ ] **Debugger**: a `Manager`-side variables cache shared by `DebugPanel` and inline
+      values; inline values for fields and watches (key on `evaluateName`); and a popup
+      for debug-console completion instead of readline-style listing.
+- [ ] **Bracketed-paste multi-cursor distribution.** A terminal paste inserts at one point
+      only. Justified if multi-cursor editing and paste are used together.
+- [ ] **`Keymap::Bind` enforcing reachability.** `AmbiguousBindings()` is test-only
+      today. Changes `Bind`'s signature, including `ned/define-key`.
+- [ ] **Configurable indicator glyphs** (fold `…`, truncation `»`, indent guide `│`, wrap
+      `↳`, no-EOL `¬`): one mutex-guarded module plus `ned/set-glyph`, validated as
+      single-width. Justified when someone wants a different character rather than a
+      different weight.
+- [ ] **A settings surface beyond hand-written `init.janet`**, generalizing the theme
+      editor's live editing. Unscoped.
+- [ ] **Split BufferView's prompt/session machine out**, taking the LSP pickers with it.
+      Extracting `LspFeatures` by protocol was measured and rejected, because most LSP
+      features *are* prompts. Justified when `BufferView.h` starts costing time.
+- [ ] **Merge-aware cross-session undo.** Three-way-merge a novel on-disk change into the
+      persisted tree instead of discarding it. Risky: it synthesizes an undo node the
+      user never typed. Justified if the content gate proves too lossy.
+- [ ] **Anchors Janet surface.** There's no RAII handle, so a leaking script leaks
+      forever. Justified when a plugin wants to mark a position.
+
+### Refactoring tools
+
+- [ ] **Import fixup off the main thread.** It takes ~1.2 s in the worst case (renaming
+      `Mode.h`). Justified when a real repository makes the pause visible.
+- [ ] **External-move review as a status-line prompt** instead of switching the pane
+      unprompted. Justified if branch switches make it grate.
+- [ ] **Project-wide watching for external moves.** Today a move is only paired when
+      both ends are directories of open buffers.
+
+### Language coverage misses
+
+`Docs/LanguageMatrix.md` is the gap tracker. These are the known misses below its
+granularity. Each is justified when one turns up in real use.
+- [ ] **Charset edges**: BOM-less UTF-16 gains a BOM on save; a huge UTF-16 file is
+      refused; an `.editorconfig` charset stated before `init.janet` disables it has
+      already decoded.
+- [ ] **Mixed tabs and spaces** (GNU C: 2-column indent levels, 8-column tabs). Needs a
+      tab width separate from `IndentStyle::width`.
+- [ ] **Locals forms that decline**: Lisp destructuring, fish `set -l -x`/`read -l`,
+      use-before-binding in whole-scope languages, Perl lexical `my sub`, Markdown
+      reference links.
+- [ ] **change-signature misses**: a Kotlin interface listed before the superclass,
+      static C# extension calls, Ruby/Crystal bare `super`, unapplied or infix function
+      references, and infix Haskell equations.
+- [ ] **Imports that name no single file**: C#/F#/Vala namespaces, Elixir multi-alias,
+      Ada case mismatches, external Bazel repositories, Scala selector/rename imports,
+      Org `[[file:]]` links, CMake variables, include globs, Just `mod name`, Nim
+      `pkg/[a, b]`. Also source roots read from the build (Cabal, `elm.json`,
+      Maven/Gradle, rebar).
+- [ ] **Tests with no name to run by**: D `unittest` without a UDA, MATLAB `%%` sections,
+      and judge's top-level `test` forms.
+- [ ] **Native formatter parity** with gofmt alignment, gofmt/black redundant parens,
+      rustfmt/Prettier width wrapping, rustfmt `where`, JS/shared/`overrides` Prettier
+      configs, C#'s finer brace categories, Vala call spacing, perltidy paren tightness,
+      the proto blank-line cap, and Scala braced bodies. An external formatter is what
+      makes a file canonical.
+- [ ] **Code-block definitions in Markdown/Org outlines** (`:injected-symbols`).
+- [ ] **Raw `.gcov` output.** Only lcov `.info` is parsed.
+- [ ] **Godot**: the grammar is live, but Godot 4's language server reportedly speaks
+      LSP over TCP to a running editor, and its debug adapter is unverified. Confirm both
+      before scoping a socket `Transport` (`Docs/LanguageCoverage.md`).
+- [ ] **Carbon**: watch, don't wire. Pre-0.1; the admission trigger is in
+      `Docs/LanguageCoverage.md`.
+- [ ] **Android device tooling**: `adb logcat` streaming, and install-and-run on a
+      device. Justified when shelled-out `gradlew`/`adb` tasks prove too manual.
+
+### Issue trackers & VCS
+
+- [ ] **A generic async external record source** (`Provider` + `Runner` + registry),
+      extracted only if the tracker and VCS copies genuinely agree.
+- [ ] **Tracker rough edges**: a panel added from the REPL doesn't appear on the rail
+      until restart; two repositories' `#12` share one buffer (qualify as
+      `owner/repo#12`); Jira search stops at 100 issues; Jira scoped tokens need the
+      `api.atlassian.com` gateway.
+- [ ] **Board panels**: GitHub Projects (GraphQL) and Jira agile boards, for when column
+      order matters more than status grouping.
+- [ ] **Generalize the VCS provider shape** past version control (cloud CLIs, Terraform,
+      Docker).
+
+### ACP
+
+- [ ] **Panel extras**: PR-style review comments on an agent's diff fed back as a
+      prompt; transcript search and timestamps.
+- [ ] **Subagents as child sessions** (`clientCapabilities.subagents`, SDK PR #1992;
+      codex-acp sends it). Per-session routing already exists. Justified when an agent in
+      use sends it.
+- [ ] **Spec surface Claude never exercises**, each justified when an agent in use needs
+      it: `terminal/*` (M/L — terminal-per-id lifetime plus a transcript embed),
+      `plan_update`/`plan_removed`, `mcp/connect`, audio content, and opencode's
+      `todowrite`/exit-code shapes. Gemini CLI and Codex API keys already work through an
+      `env` prefix on the agent's argv.
 
 ## Won't Do (at Least Not Soon)
 
-- **Org Babel** — subsystem-sized, and arbitrary code execution triggered by opening a
-  text file: a security surface to design around deliberately, not bolt on. If this
-  ever gets revisited, the rich-output-rendering half of "Jupyter Notebooks" above
-  (table/image/text cell rendering) is the natural substrate to reuse rather than a
-  second bespoke renderer — see that section's own note.
-- **Org table formula/spreadsheet engine** — a small programming language of its own.
-- **Org export backends / publishing pipeline** — each a standalone tool-sized effort.
-- **Alt+Click cursor creation** — mouse-dependent in a terminal app where SSH/tmux
-  mouse passthrough is unreliable; keyboard multi-cursor commands cover it.
-- **X11 primary-selection support for middle-click paste** — `Editor/Clipboard.h`'s
-  `PasteFromPrimarySelection`/`ResolvedPrimarySelectionPasteCommand` are deliberately
-  Wayland-only (`wl-paste --primary`), a stated user preference given X11's declining
-  share; no xclip/xsel `-selection primary` fallback.
-- **Bundling or requiring a JVM** for anything (heavy checkers like `ltex-ls` stay
-  opt-in user configuration).
-- **Accessibility (screen-reader support)** — a Notcurses raw-cell-grid TUI has no
-  accessibility tree of any kind; not evaluated or pursued. Named here so it's a
-  conscious gap rather than an oversight (2026-08-25 audit).
-
-
-### Potentionally forever skipping -- reasons recorded in case these get re-opened:
-
-- [ ] `inlayHint/resolve` -- **closed 2026-09-23 on a measurement.**
-    `Tools/lsp-capability-probe.py --require inlayHintProvider` against every
-    installed server: clangd and typescript-language-server advertise a bare
-    `true` (no `resolveProvider`), gopls advertises `{}` (same), and
-    lua-language-server is the only one that sets `resolveProvider: true`. A
-    live probe against clangd (a real parameter-hint request on a two-argument
-    call) confirms the bare-`true` case isn't hiding an inline tooltip either
-    -- the response carries `label`/`kind`/padding and nothing else. Building
-    this would mean parsing `InlayHint::tooltip`/`raw`, a capability extractor,
-    a `ResolveInlayHint` request, and -- the actually expensive part -- teaching
-    the mouse-hover popup to hit-test `RenderedVirtualText` spans instead of
-    just buffer byte offsets (`RequestHoverAtOffset` only does the latter
-    today), all to light up for one installed server with an unverified
-    payload even there. Reopen only on evidence a server actually installed
-    here returns a real tooltip through it.
-- [ ] `workspace/diagnostic` -- **closed 2026-09-22 on a measurement, and the gap it
-    described was closed by another route.** No installed server advertises it:
-    rust-analyzer, the only one here implementing pull diagnostics at all, sets
-    `diagnosticProvider.workspaceDiagnostics: false`, and clangd/gopls/pylsp/
-    typescript-language-server/lua-language-server/phpactor/jdtls/harper-ls declare no
-    `diagnosticProvider` whatsoever (`Tools/lsp-capability-probe.py`). Worth knowing
-    for the next pass: ned's existing `textDocument/diagnostic` path is therefore
-    also unexercised against everything installed except rust-analyzer.
-    What the entry actually wanted -- a problem list that is not limited to open
-    buffers -- shipped instead off the *push* side, slug for `git log --grep=`:
-    `keep diagnostics for files with no open buffer`. Servers already volunteer
-    findings about files nobody opened (measured: rust-analyzer via cargo check,
-    gopls per package) and ned was discarding them for want of a `text::Buffer` to
-    hang them on. Reopen only if a server turns up that implements the request AND
-    reports something its own publishes do not.
-
-- [ ] `textDocument/foldingRange` -- ned folds from its own grammar (`ImprintFold.h`), for
-    every language, with no server required. Worth revisiting only for a language that
-    has a server but no ned grammar.
-- [ ] `textDocument/selectionRange` -- ned already has a native equivalent, for the same
-    reason folding does: `expand-selection`/`shrink-selection` (`M-=`/`M--`, slug for
-    `git log --grep=`: `structural-selection-expansion`) walk the enclosing named-node
-    chain of ned's own tree, so they work in every parsed language, offline, with no
-    server -- where the request would hand the feature only to whoever happens to run a
-    server that implements it. `Mode::expandSelection` adds a step no grammar has a node
-    for (the interior of a delimited body, expand-region's "inside pairs") off the
-    imprint table. The `selectionRange` hits in `Lsp/Content.h` are `DocumentSymbol`'s
-    unrelated field of that name. Revisit only if a server proves it knows something the
-    tree doesn't.
-- [ ] `textDocument/moniker` -- cross-repository symbol identity, useful only with an
-    index ned has no consumer for.
-- [ ] `textDocument/inlineValue` -- **closed 2026-09-22 on a measurement, after being
-    built up to and then measured out of.** ned already owns both ends (a DAP session
-    knows the values, the inlay-hint path draws inline text), and the half that needed
-    no server shipped the same day -- slug for `git log --grep=`:
-    `inline-debug-values-scoped`. What killed the LSP half is what the request
-    actually returns. Of its three result variants, only
-    `InlineValueEvaluatableExpression` is beyond a parse tree (it needs a DAP
-    `evaluate` per expression per stop, plus the async cache that implies);
-    `InlineValueText` is a string the server composed; and
-    `InlineValueVariableLookup` is "look this name up in the debugger", which is
-    exactly `Dap::Manager::FrameLocals` plus the scope resolution ned now does
-    natively. Asked against a real PHP file, phpactor answered with seven results, all
-    seven `InlineValueVariableLookup` -- nothing ned does not already compute for
-    itself, for one language, at the cost of a round trip per viewport. Adopting it
-    would be a strict downgrade.
-    The capability hunt behind that, so nobody repeats it: probe with
-    `Tools/lsp-capability-probe.py --require inlineValueProvider`. Ruled out --
-    clangd 23, gopls, pylsp, typescript-language-server, lua-language-server,
-    harper-ls, and (the obvious guess, wrong) jdtls, checked including dynamic
-    registration, the form jdtls uses for eight other capabilities and which would
-    make a static-only probe report a false negative. The five real implementations,
-    found by searching for who SETS the capability rather than who declares the type
-    (ocaml-lsp, nim langserver and elixir-ls only declare it): phpactor,
-    AdaCore's `ada_language_server`, the Dart analysis server, `FsAutoComplete`, and
-    R's `languageserver`.
-    Reopen only on evidence that some server returns
-    `InlineValueEvaluatableExpression` in practice -- that is the one variant that
-    would buy something, and the four implementations other than phpactor were not
-    measured. `workspace/inlineValue/refresh` would be a fifth `RefreshKind`, and the
-    request needs `context.frameId`/`stoppedLocation` from DAP, a fact `Lsp::Manager`
-    cannot reach today.
-- [ ] `notebookDocument/*` -- no notebook editing surface exists to sync.
-- [ ] `textDocument/inlineCompletion` -- ACP is ned's answer to this shape.
-- [ ] Minor interop note, not a ned defect: ned answers `workspace/configuration` with
-    JSON `null` per unmatched section, which the spec allows; harper-ls rejects it with
-    "Settings must be an object" on every request. Only worth revisiting if a second
-    server objects.
+- **Org Babel** — arbitrary code execution from opening a text file. If it is ever
+  revisited, reuse the Jupyter rich-output renderer.
+- **Org table formula engine** and **Org export/publishing** — each is tool-sized.
+- **Plugin marketplace/registry** — it implies a supply-chain trust problem. The model is
+  Janet plus `ProjectTrust`-gated project plugins.
+- **Hosted session sharing** (OpenCode-style) — it needs a backend, and ned is
+  local-first.
+- **Alt+Click cursor creation** — mouse-only; keyboard multi-cursor covers it.
+- **X11 primary selection** — middle-click paste is Wayland-only by preference.
+- **Bundling or requiring a JVM.**
+- **Screen-reader accessibility** — a raw-cell-grid TUI has no accessibility tree.
+- **`C-x` as the Emacs prefix under Vim mode** — it's Vim's decrement. `C-w` and
+  `:sp`/`:vs`/`:on` cover window management.
+- **Answering OSC 52 clipboard queries from terminal subprocesses** — it would hand the
+  clipboard to every subprocess, and xterm's default doesn't answer either.
+- **`libned` as a shared library** — the static `ned_lib` serves every consumer,
+  including the headless agent.
+- **LSP requests measured out** (probe with `Tools/lsp-capability-probe.py --require
+  <capability>`, and include dynamic registration):
+  - `inlayHint/resolve` — only lua-language-server sets `resolveProvider`. Reopen on a
+    server installed here that returns a real tooltip.
+  - `workspace/diagnostic` — no installed server advertises it. The problem list
+    covers files with no buffer through push diagnostics instead.
+  - `textDocument/inlineValue` — phpactor returns only `VariableLookup`, which ned
+    already computes natively. Reopen on a server that returns
+    `InlineValueEvaluatableExpression`.
+  - `foldingRange` and `selectionRange` — ned's own tree does both, offline, for every
+    language.
+  - `moniker` — no index consumer. `inlineCompletion` — ACP is the answer.
+    `notebookDocument/*` — no notebook surface.
+  - `willSave`/`willSaveWaitUntil` — ned runs its own format-on-save pipeline.
+  - harper-ls rejects a `null` answer to `workspace/configuration` and logs on
+    `didSave`. Both are its quirks; revisit only if a second server does the same.
 
 ## Notes for Whoever Builds Next
 
