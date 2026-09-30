@@ -6,15 +6,21 @@
 #include <string>
 #include <vector>
 
+#include "Editor/Tracker/IssueBuffer.h"
 #include "Editor/Tracker/Registry.h"
 #include "Editor/Tracker/Runner.h"
+#include "Text/Buffer.h"
+#include "Text/BufferList.h"
 #include "UI/EventLoop.h"
 
 using Catch::Matchers::ContainsSubstring;
 using ned::editor::tracker::CommandSpec;
+using ned::editor::tracker::Comment;
 using ned::editor::tracker::Connection;
 using ned::editor::tracker::FinishList;
+using ned::editor::tracker::FinishView;
 using ned::editor::tracker::Issue;
+using ned::editor::tracker::IssueDetail;
 using ned::editor::tracker::Panel;
 using ned::editor::tracker::Provider;
 using ned::editor::tracker::Runner;
@@ -29,7 +35,7 @@ namespace {
 
 class StubProvider : public Provider {
   public:
-    explicit StubProvider(std::vector<std::string> argv = {"sleep", "5"}) : argv_(std::move(argv)) {
+    explicit StubProvider(std::vector<std::string> argv = {"sleep", "5"}, bool hasView = true) : argv_(std::move(argv)), hasView_(hasView) {
     }
 
     [[nodiscard]] CommandSpec ListArgv(const Connection& connection, const std::string& query) const override {
@@ -48,11 +54,34 @@ class StubProvider : public Provider {
         return {Issue{.key = "NED-1", .title = output}};
     }
 
+    [[nodiscard]] std::optional<CommandSpec> ViewArgv(const Connection& connection, const std::string& key) const override {
+        if (!hasView_) {
+            return std::nullopt;
+        }
+        if (key == "THROW-1") {
+            throw std::runtime_error("bad key");
+        }
+        lastConnection = connection;
+        lastKey        = key;
+        return CommandSpec{argv_};
+    }
+
+    // The view knows the body and a fresher status; everything else is left
+    // for the listed row to fill.
+    [[nodiscard]] IssueDetail ParseView(const std::string& output) const override {
+        if (output == "garbage") {
+            throw std::runtime_error("unparseable");
+        }
+        return IssueDetail{.issue = Issue{.status = "Done"}, .body = output, .comments = {Comment{.author = "ann", .body = "ok"}}};
+    }
+
     mutable Connection  lastConnection;
     mutable std::string lastQuery;
+    mutable std::string lastKey;
 
   private:
     std::vector<std::string> argv_;
+    bool                     hasView_ = true;
 };
 
 struct RegistryResetGuard {
@@ -216,4 +245,147 @@ TEST_CASE("Runner::RequestIssues reports a throwing argv builder and an unstarta
         // A failed start leaves nothing behind to block a retry.
         CHECK(Request(runner, "Mine").error == outcome.error);
     }
+}
+
+TEST_CASE("The registry caches each panel's last fetch and lists every known issue once", "[Tracker]") {
+    RegistryResetGuard guard;
+    tracker::AddPanel(Panel{.name = "Mine", .connection = "work"});
+    tracker::AddPanel(Panel{.name = "Team", .connection = "work"});
+
+    CHECK(tracker::KnownIssues().empty());
+    tracker::SetPanelIssues("Team", {Issue{.key = "NED-2", .title = "team copy"}, Issue{.key = "NED-3"}});
+    tracker::SetPanelIssues("Mine", {Issue{.key = "NED-1"}, Issue{.key = "NED-2", .title = "mine copy"}});
+    // A panel that isn't declared contributes nothing.
+    tracker::SetPanelIssues("Ghost", {Issue{.key = "NED-9"}});
+
+    CHECK(tracker::PanelIssues("Mine").size() == 2);
+    const std::vector<Issue> known = tracker::KnownIssues();
+    REQUIRE(known.size() == 3);
+    CHECK(known[0].key == "NED-1");
+    CHECK(known[1] == Issue{.key = "NED-2", .title = "mine copy"});
+    CHECK(known[2].key == "NED-3");
+
+    tracker::RemovePanel("Mine");
+    CHECK(tracker::PanelIssues("Mine").empty());
+    CHECK(tracker::KnownIssues().size() == 2);
+    tracker::ClearRegistry();
+    CHECK(tracker::PanelIssues("Team").empty());
+}
+
+TEST_CASE("FinishView fills what the detail view left empty from the listed row", "[Tracker]") {
+    const StubProvider provider;
+    const Issue        listed{.key = "NED-1", .title = "Crash", .status = "Open", .labels = {"bug"}, .url = "https://x/NED-1"};
+
+    SECTION("exit 0 merges") {
+        const auto result = FinishView(provider, listed, "the body", 0);
+        REQUIRE(result);
+        CHECK(result->issue == Issue{.key = "NED-1", .title = "Crash", .status = "Done", .labels = {"bug"}, .url = "https://x/NED-1"});
+        CHECK(result->body == "the body");
+        CHECK(result->comments.size() == 1);
+    }
+    SECTION("failures name the issue") {
+        const auto failed = FinishView(provider, listed, "HTTP 401\n", 22);
+        REQUIRE_FALSE(failed);
+        CHECK(failed.error() == "tracker issue \"NED-1\": fetch failed (exit 22): HTTP 401");
+        const auto unparsed = FinishView(provider, listed, "garbage", 0);
+        REQUIRE_FALSE(unparsed);
+        CHECK(unparsed.error() == "tracker issue \"NED-1\": unparseable");
+    }
+}
+
+TEST_CASE("Runner::RequestIssue fetches through the panel's connection", "[Tracker]") {
+    RegistryResetGuard guard;
+    ned::ui::EventLoop eventLoop;
+    Runner             runner(eventLoop);
+    const Issue        listed{.key = "NED-1", .title = "Crash"};
+
+    std::optional<IssueDetail> detail;
+    std::optional<std::string> error;
+    const auto                 request = [&](const Issue& issue) {
+        detail.reset();
+        error.reset();
+        runner.RequestIssue(
+            "Mine", issue, [&](IssueDetail d) { detail = std::move(d); }, [&](std::string e) { error = std::move(e); });
+    };
+
+    SECTION("an unresolvable panel is reported") {
+        request(listed);
+        CHECK(error == "no tracker panel named \"Mine\"");
+    }
+    SECTION("a provider without a detail view completes at once with the listed row") {
+        RegisterStubPanel(std::make_shared<StubProvider>(std::vector<std::string>{"sleep", "5"}, /*hasView=*/false));
+        request(listed);
+        REQUIRE(detail);
+        CHECK(*detail == IssueDetail{.issue = listed});
+    }
+    SECTION("a detail view spawns, and a second request for the same issue is refused") {
+        auto provider = std::make_shared<StubProvider>();
+        RegisterStubPanel(provider);
+        request(listed);
+        CHECK_FALSE(detail);
+        CHECK_FALSE(error);
+        CHECK(provider->lastKey == "NED-1");
+        CHECK(provider->lastConnection.name == "work");
+        // Keyed apart from the panel's own list fetch.
+        CHECK_FALSE(runner.IsFetching("Mine"));
+
+        request(listed);
+        CHECK(error == "tracker issue \"NED-1\" is already fetching");
+        request(Issue{.key = "NED-2"});
+        CHECK_FALSE(error);
+    }
+    SECTION("a throwing argv builder is reported") {
+        RegisterStubPanel(std::make_shared<StubProvider>());
+        request(Issue{.key = "THROW-1"});
+        CHECK(error == "tracker issue \"THROW-1\": bad key");
+    }
+}
+
+TEST_CASE("RenderIssue lays an issue out as Markdown", "[Tracker]") {
+    const IssueDetail full{.issue    = Issue{.key      = "NED-7",
+                                             .title    = "Rail tooltip clips",
+                                             .status   = "In Progress",
+                                             .assignee = "Ann",
+                                             .labels   = {"ui", "bug"},
+                                             .url      = "https://x/NED-7",
+                                             .updated  = "2026-09-29"},
+                           .body     = "It clips.\r\nOn resize.\r\n\r\n",
+                           .comments = {Comment{.author = "Bo", .created = "2026-09-28", .body = "Seen it.\n"}, Comment{.body = "+1"}}};
+    CHECK(tracker::RenderIssue(full) == "# NED-7: Rail tooltip clips\n"
+                                        "\n"
+                                        "- **Status:** In Progress\n"
+                                        "- **Assignee:** Ann\n"
+                                        "- **Labels:** ui, bug\n"
+                                        "- **Updated:** 2026-09-29\n"
+                                        "- **URL:** <https://x/NED-7>\n"
+                                        "\n"
+                                        "It clips.\n"
+                                        "On resize.\n"
+                                        "\n"
+                                        "## Comments (2)\n"
+                                        "\n"
+                                        "### Bo — 2026-09-28\n"
+                                        "\n"
+                                        "Seen it.\n"
+                                        "\n"
+                                        "### (unknown)\n"
+                                        "\n"
+                                        "+1\n");
+
+    CHECK(tracker::RenderIssue(IssueDetail{.issue = Issue{.key = "#42"}}) == "# #42\n\n\n_No description._\n");
+}
+
+TEST_CASE("ShowIssue rewrites one read-only buffer per issue", "[Tracker]") {
+    ned::text::BufferList bufferList;
+    ned::text::Buffer&    first = tracker::ShowIssue(bufferList, IssueDetail{.issue = Issue{.key = "NED-1"}, .body = "v1"});
+    CHECK(first.Name() == "*issue NED-1*");
+    CHECK(first.ReadOnly());
+    CHECK(first.Text().find("v1") != std::string::npos);
+
+    ned::text::Buffer& again = tracker::ShowIssue(bufferList, IssueDetail{.issue = Issue{.key = "NED-1"}, .body = "v2"});
+    CHECK(&again == &first);
+    CHECK(again.ReadOnly());
+    CHECK(again.Text().find("v1") == std::string::npos);
+    CHECK(again.Text().find("v2") != std::string::npos);
+    CHECK(again.Point() == 0);
 }

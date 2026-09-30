@@ -40,6 +40,19 @@ ProjectSettings LoadProjectSettings(const std::filesystem::path& root) {
                 }
             }
         }
+        if (parsed.contains("trackerPanels") && parsed["trackerPanels"].is_array()) {
+            for (const nlohmann::json& entry : parsed["trackerPanels"]) {
+                if (!entry.is_object() || !entry.contains("name") || !entry["name"].is_string() || !entry.contains("connection") ||
+                    !entry["connection"].is_string()) {
+                    continue;
+                }
+                const auto text = [&entry](const char* key) {
+                    return entry.contains(key) && entry[key].is_string() ? entry[key].get<std::string>() : std::string();
+                };
+                settings.trackerPanels.push_back(
+                    tracker::Panel{.name = text("name"), .connection = text("connection"), .query = text("query"), .glyph = text("glyph")});
+            }
+        }
         if (parsed.contains("lspInitializationOptions") && parsed["lspInitializationOptions"].is_object()) {
             for (const auto& [language, options] : parsed["lspInitializationOptions"].items()) {
                 settings.lspInitializationOptionsByLanguage.emplace(language, options);

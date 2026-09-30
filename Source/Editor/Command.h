@@ -120,6 +120,11 @@ enum class InteractiveRequest { None,
                                 // everything else the debugger knows.
                                 ToggleDebugPanel,
                                 FocusDebugPanel,
+                                // Issue-tracker panels: pick one by name and
+                                // focus it; pick a fetched issue and insert
+                                // its key at point.
+                                FocusTrackerPanel,
+                                TrackerInsertIssueKey,
                                 // org-agenda follow-up: another one-shot direct action, same
                                 // shape as ToggleProjectSidebar -- BufferView builds and
                                 // switches to a synthesized "*agenda*" buffer.

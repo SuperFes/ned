@@ -162,3 +162,27 @@ TEST_CASE("LoadProjectSettings resolves acpAdditionalDirectories against root", 
 
     std::filesystem::remove_all(root);
 }
+
+TEST_CASE("LoadProjectSettings reads trackerPanels, skipping entries without a name and connection", "[ProjectSettings]") {
+    const std::filesystem::path root = MakeTempRoot("ned_project_settings_test_tracker_panels");
+    {
+        std::ofstream file(root / ".ned" / "settings.json");
+        file << R"json({"trackerPanels": [
+            {"name": "Sprint", "connection": "work", "query": "sprint in openSprints()", "glyph": "S"},
+            {"name": "Bare", "connection": "gh"},
+            {"name": "No connection"},
+            {"connection": "work"},
+            "not an object",
+            {"name": "Odd", "connection": "gh", "query": 5}
+        ]})json";
+    }
+
+    const ProjectSettings settings = LoadProjectSettings(root);
+    REQUIRE(settings.trackerPanels.size() == 3);
+    CHECK(settings.trackerPanels[0] ==
+          ned::editor::tracker::Panel{.name = "Sprint", .connection = "work", .query = "sprint in openSprints()", .glyph = "S"});
+    CHECK(settings.trackerPanels[1] == ned::editor::tracker::Panel{.name = "Bare", .connection = "gh"});
+    CHECK(settings.trackerPanels[2] == ned::editor::tracker::Panel{.name = "Odd", .connection = "gh"});
+
+    std::filesystem::remove_all(root);
+}

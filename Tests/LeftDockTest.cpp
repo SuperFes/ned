@@ -574,3 +574,27 @@ TEST_CASE("Hovering a rail row reports that panel's name beside the row", "[Left
     REQUIRE(reports.size() == 7);
     REQUIRE_FALSE(reports[6]);
 }
+
+TEST_CASE("A panel is reported shown when it is first painted as the active one", "[LeftDock]") {
+    Fixture                  f;
+    std::vector<std::size_t> shown;
+    f.dock.SetOnPanelShown([&shown](std::size_t id) { shown.push_back(id); });
+    const std::size_t filesId = f.dock.AddPanel(U'F', "Files", f.files);
+    const std::size_t vcsId   = f.dock.AddPanel(U'V', "VCS", f.vcs);
+    CHECK(shown.empty());
+
+    f.Paint();
+    f.Paint();
+    CHECK(shown == std::vector<std::size_t>{filesId});
+
+    f.dock.SwitchTo(vcsId);
+    f.Paint();
+    CHECK(shown == std::vector<std::size_t>{filesId, vcsId});
+
+    // Hidden and back again counts as shown again.
+    f.dock.SetCollapsed(true);
+    f.Paint();
+    f.dock.SetCollapsed(false);
+    f.Paint();
+    CHECK(shown == std::vector<std::size_t>{filesId, vcsId, vcsId});
+}

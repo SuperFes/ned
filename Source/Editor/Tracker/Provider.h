@@ -8,6 +8,7 @@
 #ifndef NED_EDITOR_TRACKER_PROVIDER_H
 #define NED_EDITOR_TRACKER_PROVIDER_H
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,25 @@ struct Issue {
     std::string              updated;
 
     bool operator==(const Issue&) const = default;
+};
+
+struct Comment {
+    std::string author;
+    std::string created;
+    std::string body;
+
+    bool operator==(const Comment&) const = default;
+};
+
+// One issue as its own buffer shows it. body and comment bodies are text
+// the provider has already flattened (Markdown for GitHub; Jira's ADF is
+// the provider's to render).
+struct IssueDetail {
+    Issue                issue;
+    std::string          body;
+    std::vector<Comment> comments;
+
+    bool operator==(const IssueDetail&) const = default;
 };
 
 // A named tracker instance. The token is never stored: tokenCommand is run
@@ -61,6 +81,11 @@ class Provider {
 
     [[nodiscard]] virtual CommandSpec        ListArgv(const Connection& connection, const std::string& query) const = 0;
     [[nodiscard]] virtual std::vector<Issue> ParseList(const std::string& output) const                             = 0;
+
+    // std::nullopt when the provider has no detail view: an issue buffer
+    // then shows only what the list already fetched.
+    [[nodiscard]] virtual std::optional<CommandSpec> ViewArgv(const Connection& connection, const std::string& key) const = 0;
+    [[nodiscard]] virtual IssueDetail                ParseView(const std::string& output) const                           = 0;
 };
 
 } // namespace ned::editor::tracker

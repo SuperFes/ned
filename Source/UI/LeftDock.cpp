@@ -264,6 +264,10 @@ void LeftDock::SetOnRailHoverChanged(std::function<void(std::optional<RailHover>
     onRailHoverChanged_ = std::move(handler);
 }
 
+void LeftDock::SetOnPanelShown(std::function<void(std::size_t)> handler) {
+    onPanelShown_ = std::move(handler);
+}
+
 void LeftDock::UpdateRailHover(const MouseEvent& rawMouse) {
     const Box&                 own = Box_();
     const int                  row = rawMouse.at.y - own.y_min;
@@ -368,12 +372,20 @@ void LeftDock::Paint(Canvas c) {
     }
 
     if (collapsed_ || entries_.empty()) {
+        shownId_.reset();
         return;
     }
 
     const Entry* activeEntry = FindEntry(active_);
     if (activeEntry == nullptr) {
+        shownId_.reset();
         return;
+    }
+    if (shownId_ != active_) {
+        shownId_ = active_;
+        if (onPanelShown_) {
+            onPanelShown_(active_);
+        }
     }
 
     // click-to-focus follow-up: the whole frame takes the accent brush

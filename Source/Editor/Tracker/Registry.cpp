@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <map>
 #include <mutex>
+#include <set>
 #include <utility>
 
 namespace ned::editor::tracker {
@@ -14,7 +15,8 @@ namespace {
         std::map<std::string, std::shared_ptr<const Provider>> providers;
         std::map<std::string, Connection>                      connections;
         // Declaration order is rail order.
-        std::vector<Panel> panels;
+        std::vector<Panel>                        panels;
+        std::map<std::string, std::vector<Issue>> issuesByPanel;
     };
 
     State& Registry() {
@@ -68,6 +70,7 @@ void AddPanel(Panel panel) {
 bool RemovePanel(const std::string& name) {
     State&                state = Registry();
     const std::lock_guard lock(state.mutex);
+    state.issuesByPanel.erase(name);
     return std::erase_if(state.panels, [&name](const Panel& panel) { return panel.name == name; }) != 0;
 }
 
@@ -87,12 +90,45 @@ std::vector<Panel> Panels() {
     return state.panels;
 }
 
+void SetPanelIssues(const std::string& panelName, std::vector<Issue> issues) {
+    State&                state = Registry();
+    const std::lock_guard lock(state.mutex);
+    state.issuesByPanel[panelName] = std::move(issues);
+}
+
+std::vector<Issue> PanelIssues(const std::string& panelName) {
+    State&                state = Registry();
+    const std::lock_guard lock(state.mutex);
+    const auto            found = state.issuesByPanel.find(panelName);
+    return found != state.issuesByPanel.end() ? found->second : std::vector<Issue>{};
+}
+
+std::vector<Issue> KnownIssues() {
+    State&                state = Registry();
+    const std::lock_guard lock(state.mutex);
+    std::vector<Issue>    known;
+    std::set<std::string> seen;
+    for (const Panel& panel : state.panels) {
+        const auto found = state.issuesByPanel.find(panel.name);
+        if (found == state.issuesByPanel.end()) {
+            continue;
+        }
+        for (const Issue& issue : found->second) {
+            if (seen.insert(issue.key).second) {
+                known.push_back(issue);
+            }
+        }
+    }
+    return known;
+}
+
 void ClearRegistry() {
     State&                state = Registry();
     const std::lock_guard lock(state.mutex);
     state.providers.clear();
     state.connections.clear();
     state.panels.clear();
+    state.issuesByPanel.clear();
 }
 
 } // namespace ned::editor::tracker

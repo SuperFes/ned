@@ -27,6 +27,7 @@
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
 #include "Editor/TabWidth.h"
+#include "Editor/Tracker/IssueBuffer.h"
 #include "Text/ConflictHunk.h"
 
 namespace ned::ui {
@@ -558,6 +559,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnAcpPickerRequest(onAcpPickerRequest_);
     pane->Buffer().SetOnDapConsoleToggle(onDapConsoleToggle_);
     pane->Buffer().SetOnJanetReplToggle(onJanetReplToggle_);
+    pane->Buffer().SetOnFocusTrackerPanel(onFocusTrackerPanel_);
     pane->Buffer().SetOnRunReplRequest(onRunReplRequest_);
     pane->Buffer().SetOnDapThreadsToggle(onDapThreadsToggle_);
     pane->Buffer().SetOnBufferListToggle(onBufferListToggle_);
@@ -710,6 +712,13 @@ void WindowManager::SetOnJanetReplToggle(std::function<void()> onToggle) {
     onJanetReplToggle_ = std::move(onToggle);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnJanetReplToggle(onJanetReplToggle_);
+    }
+}
+
+void WindowManager::SetOnFocusTrackerPanel(std::function<void(const std::string&)> handler) {
+    onFocusTrackerPanel_ = std::move(handler);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnFocusTrackerPanel(onFocusTrackerPanel_);
     }
 }
 
@@ -1182,6 +1191,18 @@ void WindowManager::RequestDebugPanelTextEntry(std::string label, std::string in
     }
     TakeFocus();
     pane->Buffer().BeginDebugPanelTextEntry(std::move(label), std::move(initialText), std::move(onAccept));
+}
+
+void WindowManager::RequestShowIssue(const editor::tracker::IssueDetail& detail) {
+    Pane* pane = FocusedPane();
+    if (pane == nullptr && !Leaves().empty()) {
+        pane = Leaves().front();
+    }
+    if (pane == nullptr) {
+        return;
+    }
+    pane->ActiveBufferRef().Set(editor::tracker::ShowIssue(bufferList_, detail));
+    pane->Buffer().TakeFocus();
 }
 
 void WindowManager::RequestOpenBinaryFile(const std::filesystem::path& path) {

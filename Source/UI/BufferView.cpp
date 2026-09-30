@@ -225,6 +225,10 @@ void BufferView::SetOnJanetReplToggle(std::function<void()> handler) {
     onJanetReplToggle_ = std::move(handler);
 }
 
+void BufferView::SetOnFocusTrackerPanel(std::function<void(const std::string&)> handler) {
+    onFocusTrackerPanel_ = std::move(handler);
+}
+
 void BufferView::SetOnRunReplRequest(std::function<void(const std::string&)> handler) {
     onRunReplRequest_ = std::move(handler);
 }
@@ -569,6 +573,11 @@ bool BufferView::HandleChord(const editor::KeyChord& chord) {
 
         case InputMode::BookmarkJump:
             HandleBookmarkJumpKey(chord);
+            ClampPointToNarrowing();
+            return true;
+
+        case InputMode::Choice:
+            HandleChoiceKey(chord);
             ClampPointToNarrowing();
             return true;
 

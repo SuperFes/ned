@@ -984,7 +984,7 @@ The popup is never one source: a language server's items, snippet triggers for t
 
 `ned/tracker-register-provider`
 
-:   Register an issue-tracker plugin: (name callbacks). name is letters, digits, '-' or '_'. callbacks is a struct/table with :list-argv, taking a connection struct (:name :provider :url :email -- never a token) and a panel's query string and returning the argv of the command that lists its issues, and :parse-list, taking that command's output and returning an array of issue tables (:key :title :status :assignee :labels :url :updated; :labels is an array of strings). ned runs the command itself. Re-registering name replaces the previous provider.
+:   Register an issue-tracker plugin: (name callbacks). name is letters, digits, '-' or '_'. callbacks is a struct/table with :list-argv, taking a connection struct (:name :provider :url :email -- never a token) and a panel's query string and returning the argv of the command that lists its issues, and :parse-list, taking that command's output and returning an array of issue tables (:key :title :status :assignee :labels :url :updated; :labels is an array of strings). Optionally :view-argv, taking a connection struct and an issue key and returning the argv that fetches that one issue, with :parse-view, taking its output and returning one issue table plus :body and :comments (an array of :author :created :body tables); without them an issue's buffer shows only what the list fetched. ned runs the commands itself. Re-registering name replaces the previous provider.
 
 `ned/vcs-register-provider`
 

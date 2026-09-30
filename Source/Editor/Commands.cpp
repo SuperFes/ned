@@ -2829,6 +2829,20 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::FocusDebugPanel;
                       });
 
+    registry.Register("tracker-panel",
+                      "Pick an issue-tracker panel by name and move keyboard focus into it (Enter opens an issue's "
+                      "buffer, 'o' opens it in the browser, 'w'/'W' copy its key/URL, 'g' refreshes, Left/Right "
+                      "collapse/expand a status, Escape or C-g returns to the editor).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::FocusTrackerPanel;
+                      });
+    registry.Register("tracker-insert-issue-key",
+                      "Pick one of the issues the tracker panels have fetched and insert its key at point -- a "
+                      "commit message's issue reference, say.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::TrackerInsertIssueKey;
+                      });
+
     // session-persistence slice 3: creates the project's .ned/ directory --
     // the strictly-opt-in marker nothing else ever creates -- so the
     // session moves to <root>/.ned/session.json and a .ned/init.janet can

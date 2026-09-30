@@ -50,6 +50,7 @@
 #include "Editor/Register.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/TestRun/TestRunner.h"
+#include "Editor/Tracker/Provider.h"
 #include "Editor/Vcs/Runner.h"
 #include "EventLoop.h"
 #include "HugeFileLoader.h"
@@ -335,6 +336,9 @@ class WindowManager {
     // handler (main.cpp's toggle over the PanelDock-hosted JanetReplPanel)
     // lives above this class entirely.
     void SetOnJanetReplToggle(std::function<void()> onToggle);
+
+    // tracker-panel's commit, forwarded to every pane present and future.
+    void SetOnFocusTrackerPanel(std::function<void(const std::string&)> handler);
 
     // REPL-engine follow-up: run-repl's own forwarding hook -- unlike the
     // toggles here, this carries the REPL name BufferView already validated
@@ -666,6 +670,9 @@ class WindowManager {
     // focused pane (the first leaf when a panel has focus), taking focus.
     void RequestAcpReview(std::string title, std::vector<editor::acp::TurnFile> files);
     void RequestDebugPanelTextEntry(std::string label, std::string initialText, std::function<void(std::string)> onAccept);
+    // Shows an issue's buffer in the focused pane (the first leaf when a
+    // panel has focus) and focuses it.
+    void RequestShowIssue(const editor::tracker::IssueDetail& detail);
 
     // named-projects follow-up: same "route to whichever pane is currently
     // focused" shape as RequestOpenBinaryFile just above -- wired to
@@ -1001,6 +1008,7 @@ class WindowManager {
     std::function<bool()>                              acpPanelFocused_;           // see SetAcpPanelFocusChecker
     std::function<void()>                              onDapConsoleToggle_;        // see SetOnDapConsoleToggle
     std::function<void()>                              onJanetReplToggle_;         // see SetOnJanetReplToggle
+    std::function<void(const std::string&)>            onFocusTrackerPanel_;       // see SetOnFocusTrackerPanel
     std::function<void(const std::string&)>            onRunReplRequest_;          // see SetOnRunReplRequest
     std::function<void()>                              onDapThreadsToggle_;        // see SetOnDapThreadsToggle
     std::function<void()>                              onDapThreadsRefreshNeeded_; // see SetOnDapThreadsRefreshNeeded

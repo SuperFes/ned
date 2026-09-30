@@ -56,6 +56,26 @@ namespace {
         return labels;
     }
 
+    editor::tracker::Issue IssueFields(Janet entry) {
+        return editor::tracker::Issue{
+            .key      = TextField(entry, "key"),
+            .title    = TextField(entry, "title"),
+            .status   = TextField(entry, "status"),
+            .assignee = TextField(entry, "assignee"),
+            .labels   = LabelsField(entry),
+            .url      = TextField(entry, "url"),
+            .updated  = TextField(entry, "updated"),
+        };
+    }
+
+    bool IsDictionary(Janet value) {
+        return janet_checktype(value, JANET_TABLE) || janet_checktype(value, JANET_STRUCT);
+    }
+
+    bool IsCallable(Janet value) {
+        return janet_checktype(value, JANET_FUNCTION) || janet_checktype(value, JANET_CFUNCTION);
+    }
+
     Janet ConnectionStruct(const editor::tracker::Connection& connection) {
         JanetKV* fields = janet_struct_begin(4);
         janet_struct_put(fields, janet_ckeywordv("name"), StringValue(connection.name));
@@ -68,7 +88,7 @@ namespace {
 } // namespace
 
 JanetTrackerProvider::JanetTrackerProvider(JanetTable* env, std::string name, Janet callbacks) : env_(env), name_(std::move(name)) {
-    if (!janet_checktype(callbacks, JANET_TABLE) && !janet_checktype(callbacks, JANET_STRUCT)) {
+    if (!IsDictionary(callbacks)) {
         throw std::runtime_error("ned: tracker-register-provider expects a struct/table of callbacks keyed by keyword");
     }
     // The name becomes part of a Janet symbol that is evaluated as source.
@@ -80,11 +100,23 @@ JanetTrackerProvider::JanetTrackerProvider(JanetTable* env, std::string name, Ja
     }
     for (const char* key : {"list-argv", "parse-list"}) {
         const Janet callback = janet_get(callbacks, janet_ckeywordv(key));
-        if (!janet_checktype(callback, JANET_FUNCTION) && !janet_checktype(callback, JANET_CFUNCTION)) {
+        if (!IsCallable(callback)) {
             throw std::runtime_error("ned: tracker provider \"" + name_ + "\" needs a :" + key + " function");
         }
         janet_def(env_, CallbackName(name_, key).c_str(), callback, "");
     }
+    // The detail view is optional, but half of it is a plugin bug.
+    const Janet viewArgv  = janet_get(callbacks, janet_ckeywordv("view-argv"));
+    const Janet parseView = janet_get(callbacks, janet_ckeywordv("parse-view"));
+    if (janet_checktype(viewArgv, JANET_NIL) && janet_checktype(parseView, JANET_NIL)) {
+        return;
+    }
+    if (!IsCallable(viewArgv) || !IsCallable(parseView)) {
+        throw std::runtime_error("ned: tracker provider \"" + name_ + "\" needs :view-argv and :parse-view together, as functions");
+    }
+    janet_def(env_, CallbackName(name_, "view-argv").c_str(), viewArgv, "");
+    janet_def(env_, CallbackName(name_, "parse-view").c_str(), parseView, "");
+    hasView_ = true;
 }
 
 Janet JanetTrackerProvider::Call(const std::string& callback, std::initializer_list<Janet> args) const {
@@ -121,20 +153,41 @@ std::vector<editor::tracker::Issue> JanetTrackerProvider::ParseList(const std::s
     std::vector<editor::tracker::Issue> issues;
     issues.reserve(static_cast<std::size_t>(count));
     for (std::int32_t i = 0; i < count; ++i) {
-        if (!janet_checktype(items[i], JANET_TABLE) && !janet_checktype(items[i], JANET_STRUCT)) {
-            continue;
+        if (IsDictionary(items[i])) {
+            issues.push_back(IssueFields(items[i]));
         }
-        issues.push_back(editor::tracker::Issue{
-            .key      = TextField(items[i], "key"),
-            .title    = TextField(items[i], "title"),
-            .status   = TextField(items[i], "status"),
-            .assignee = TextField(items[i], "assignee"),
-            .labels   = LabelsField(items[i]),
-            .url      = TextField(items[i], "url"),
-            .updated  = TextField(items[i], "updated"),
-        });
     }
     return issues;
+}
+
+std::optional<editor::tracker::CommandSpec> JanetTrackerProvider::ViewArgv(const editor::tracker::Connection& connection,
+                                                                           const std::string&                 key) const {
+    if (!hasView_) {
+        return std::nullopt;
+    }
+    const Janet result = Call(CallbackName(name_, "view-argv"), {ConnectionStruct(connection), StringValue(key)});
+    return editor::tracker::CommandSpec{FromJanet<std::vector<std::string>>(result)};
+}
+
+editor::tracker::IssueDetail JanetTrackerProvider::ParseView(const std::string& output) const {
+    const Janet result = Call(CallbackName(name_, "parse-view"), {StringValue(output)});
+    if (!IsDictionary(result)) {
+        throw std::runtime_error("tracker provider \"" + name_ + "\": :parse-view must return an issue table");
+    }
+    editor::tracker::IssueDetail detail{.issue = IssueFields(result), .body = TextField(result, "body")};
+
+    const Janet* comments = nullptr;
+    std::int32_t count    = 0;
+    if (janet_indexed_view(janet_get(result, janet_ckeywordv("comments")), &comments, &count)) {
+        for (std::int32_t i = 0; i < count; ++i) {
+            if (IsDictionary(comments[i])) {
+                detail.comments.push_back(editor::tracker::Comment{.author  = TextField(comments[i], "author"),
+                                                                   .created = TextField(comments[i], "created"),
+                                                                   .body    = TextField(comments[i], "body")});
+            }
+        }
+    }
+    return detail;
 }
 
 } // namespace ned::janet

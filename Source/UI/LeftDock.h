@@ -189,6 +189,12 @@ class LeftDock : public Widget {
     };
     void SetOnRailHoverChanged(std::function<void(std::optional<RailHover>)> handler);
 
+    // Called with a panel's id when it comes on screen: painted as the
+    // active panel after some other panel was, or after the dock was
+    // collapsed. Fired from Paint, so a handler with real work to do should
+    // defer it. Unset is a safe no-op.
+    void SetOnPanelShown(std::function<void(std::size_t)> handler);
+
     void Paint(Canvas c) override;
     bool OnEvent(const Event& event) override;
     void OnResize(Size previous) override;
@@ -232,6 +238,7 @@ class LeftDock : public Widget {
     std::size_t        active_ = 0; // an Entry::id, not a rail row -- see ActivePanel's doc comment
     std::string                preferred_;
     std::optional<std::size_t> hoveredId_;
+    std::optional<std::size_t> shownId_; // see SetOnPanelShown
 
     int  width_     = 30; // total width including the rail -- see Width()
     bool collapsed_ = false;
@@ -248,6 +255,7 @@ class LeftDock : public Widget {
     std::function<void(bool)>        onCollapseCommitted_;
     std::function<void(std::size_t)> onActivePanelCommitted_;
     std::function<void(std::optional<RailHover>)> onRailHoverChanged_;
+    std::function<void(std::size_t)>              onPanelShown_;
 };
 
 } // namespace ned::ui

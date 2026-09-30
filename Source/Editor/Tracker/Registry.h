@@ -30,7 +30,15 @@ bool                               RemovePanel(const std::string& name);
 [[nodiscard]] std::optional<Panel> FindPanel(const std::string& name);
 [[nodiscard]] std::vector<Panel>   Panels();
 
-// Test-only: empties providers, connections and panels.
+// The last successful fetch of each panel, so anything that wants "issues
+// I've seen" (an issue-key picker) needn't refetch. Removing a panel drops
+// its issues.
+void                             SetPanelIssues(const std::string& panelName, std::vector<Issue> issues);
+[[nodiscard]] std::vector<Issue> PanelIssues(const std::string& panelName);
+// Every cached issue once, first occurrence wins, in panel order.
+[[nodiscard]] std::vector<Issue> KnownIssues();
+
+// Test-only: empties providers, connections, panels and cached issues.
 void ClearRegistry();
 
 } // namespace ned::editor::tracker

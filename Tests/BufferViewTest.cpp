@@ -57,6 +57,7 @@
 #include "Editor/StatusGutterSettings.h"
 #include "Editor/TabWidth.h"
 #include "Editor/TestRun/TestResultsBuffer.h"
+#include "Editor/Tracker/Registry.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/Provider.h"
 #include "Editor/Vim/GlobalMarks.h"
@@ -16483,4 +16484,64 @@ TEST_CASE("Typing at the ACP agent prompt fills the prompt, not the buffer", "[B
     REQUIRE(fixture.statusMessage.find("ACP agent: buf") != std::string::npos);
     view.OnEvent(ned::ui::test::Ctrl('g'));
     ned::editor::acp::SetAcpAgentCommand("bufferview-agent-prompt", {});
+}
+
+TEST_CASE("tracker-insert-issue-key picks a fetched issue and inserts its key at point", "[BufferView]") {
+    ned::editor::tracker::ClearRegistry();
+    Fixture fixture;
+    fixture.buffer.InsertAtPoint("fix: ");
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 5});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "tracker-insert-issue-key");
+    view.OnEvent(ned::ui::test::Return());
+    CHECK(fixture.statusMessage == "No issues fetched yet -- open a tracker panel first");
+
+    ned::editor::tracker::AddPanel(ned::editor::tracker::Panel{.name = "Mine", .connection = "work"});
+    ned::editor::tracker::SetPanelIssues("Mine", {ned::editor::tracker::Issue{.key = "NED-1", .title = "Crash on save"},
+                                                  ned::editor::tracker::Issue{.key = "NED-22", .title = "Tooltip clips"}});
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "tracker-insert-issue-key");
+    view.OnEvent(ned::ui::test::Return());
+    CHECK(fixture.statusMessage.starts_with("Insert issue key: "));
+    // Titles are searchable, not just keys.
+    TypeText(view, "tooltip");
+    view.OnEvent(ned::ui::test::Return());
+    CHECK(fixture.buffer.Text() == "fix: NED-22");
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "tracker-insert-issue-key");
+    view.OnEvent(ned::ui::test::Return());
+    view.OnEvent(ned::ui::test::Escape());
+    CHECK(fixture.statusMessage == "Insert issue key cancelled.");
+    CHECK(fixture.buffer.Text() == "fix: NED-22");
+
+    ned::editor::tracker::ClearRegistry();
+}
+
+TEST_CASE("tracker-panel hands the chosen panel's name to the focus hook", "[BufferView]") {
+    ned::editor::tracker::ClearRegistry();
+    Fixture             fixture;
+    ned::ui::BufferView view = fixture.View();
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 5});
+    std::vector<std::string> focused;
+    view.SetOnFocusTrackerPanel([&focused](const std::string& name) { focused.push_back(name); });
+
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "tracker-panel");
+    view.OnEvent(ned::ui::test::Return());
+    CHECK(fixture.statusMessage == "No tracker panels -- see ned/add-tracker-panel");
+
+    ned::editor::tracker::AddPanel(ned::editor::tracker::Panel{.name = "Sprint", .connection = "work"});
+    ned::editor::tracker::AddPanel(ned::editor::tracker::Panel{.name = "Bugs", .connection = "gh"});
+    view.OnEvent(ned::ui::test::Alt('x'));
+    TypeText(view, "tracker-panel");
+    view.OnEvent(ned::ui::test::Return());
+    TypeText(view, "bug");
+    view.OnEvent(ned::ui::test::Return());
+    CHECK(focused == std::vector<std::string>{"Bugs"});
+
+    ned::editor::tracker::ClearRegistry();
 }

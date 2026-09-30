@@ -276,6 +276,7 @@ add_library(ned_lib STATIC
         Editor/Vcs/ConflictedFiles.cpp
         Editor/Vcs/Sequence.cpp
         Editor/Vcs/Runner.cpp
+        Editor/Tracker/IssueBuffer.cpp
         Editor/Tracker/Registry.cpp
         Editor/Tracker/Runner.cpp
         Editor/Process/ChildProcess.cpp
@@ -487,6 +488,7 @@ add_library(ned_lib STATIC
         UI/BufferListPanel.cpp
         UI/DapThreadsPanel.cpp
         UI/DebugPanel.cpp
+        UI/TrackerPanel.cpp
         UI/ModifierTap.cpp
         UI/BufferView.cpp
         UI/BufferView/Paint.cpp

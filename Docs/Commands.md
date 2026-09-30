@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-359 commands.
+361 commands.
 
 ## `acp-close-session`
 
@@ -1667,6 +1667,14 @@ Show or hide a background highlight on trailing whitespace (spaces/tabs after th
 Key: `C-c V`
 
 Show or hide the left-side VCS status panel (staged/unstaged/untracked files); collapses the project sidebar if it's currently shown in the same slot.
+
+## `tracker-insert-issue-key`
+
+Pick one of the issues the tracker panels have fetched and insert its key at point -- a commit message's issue reference, say.
+
+## `tracker-panel`
+
+Pick an issue-tracker panel by name and move keyboard focus into it (Enter opens an issue's buffer, 'o' opens it in the browser, 'w'/'W' copy its key/URL, 'g' refreshes, Left/Right collapse/expand a status, Escape or C-g returns to the editor).
 
 ## `transpose-chars`
 

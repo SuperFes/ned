@@ -356,6 +356,7 @@ add_executable(ned_tests
             JanetReplPanelTest.cpp
             DapThreadsPanelTest.cpp
             DebugPanelTest.cpp
+            TrackerPanelTest.cpp
             ChildProcessTest.cpp
             TaskConfigTest.cpp
             TaskProcessTest.cpp

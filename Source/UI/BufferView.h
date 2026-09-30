@@ -283,6 +283,17 @@ class BufferView : public Widget {
     // follows every accept would cancel it immediately.
     void BeginDebugPanelTextEntry(std::string label, std::string initialText, std::function<void(std::string)> onAccept);
 
+    // A fuzzy pick over choices the caller supplies, for a caller with no
+    // prompt of its own (a panel, a command whose choices aren't a fixed
+    // table here). commit runs after the session ends with the chosen
+    // string. Empty choices report emptyMessage and start nothing.
+    void BeginChoicePrompt(std::string label, std::vector<std::string> choices, std::string emptyMessage,
+                           std::function<void(const std::string&)> commit);
+
+    // tracker-panel's commit: main.cpp owns the panels, so this only names
+    // one. Unset is a safe no-op.
+    void SetOnFocusTrackerPanel(std::function<void(const std::string&)> handler);
+
     // Opens the ACP compose buffer (Editor/Acp/Compose.h) in this pane --
     // `seed` as its text when it's created, its existing draft otherwise --
     // with `callbacks` answering its C-c C-c / C-c C-k.
@@ -1397,6 +1408,8 @@ class BufferView : public Widget {
                            // theme names, plus live preview of the highlighted
                            // candidate (see HandleSelectThemeKey below).
                            SelectTheme,
+                           // BeginChoicePrompt's caller-supplied pick list.
+                           Choice,
                            // prefix-argument follow-up: reading a C-u numeric
                            // argument -- same multi-keystroke session shape as
                            // Isearch*, driven by HandlePrefixArgumentKey via
@@ -2639,6 +2652,7 @@ class BufferView : public Widget {
     [[nodiscard]] bufferview::FuzzyPrompt BufferCharsetPrompt();
     [[nodiscard]] bufferview::FuzzyPrompt BookmarkJumpPrompt();
     [[nodiscard]] bufferview::FuzzyPrompt SelectThemePrompt();
+    [[nodiscard]] bufferview::FuzzyPrompt ChoicePrompt();
 
     // Applies a theme by name and offers to write it to init.janet -- shared
     // by the select-theme picker's own commit and search-everywhere's Theme
@@ -2798,6 +2812,8 @@ class BufferView : public Widget {
     // by the desktop probe).
     void HandleSelectThemeKey(const editor::KeyChord& chord);
     void RefreshSelectThemeStatus();
+    void HandleChoiceKey(const editor::KeyChord& chord);
+    void RefreshChoiceStatus();
     void ApplySelectedThemePreview();
 
     // Shared by OnKeyEvent's Normal-mode tail (Dispatcher::Feed) and
@@ -4250,6 +4266,7 @@ class BufferView : public Widget {
     std::function<void(editor::acp::PanelPicker)>                  onAcpPickerRequest_;    // see SetOnAcpPickerRequest
     std::function<void()>                              onDapConsoleToggle_;    // see SetOnDapConsoleToggle
     std::function<void()>                              onJanetReplToggle_;     // see SetOnJanetReplToggle
+    std::function<void(const std::string&)>                        onFocusTrackerPanel_;   // see SetOnFocusTrackerPanel
     std::function<void(const std::string&)>            onRunReplRequest_;      // see SetOnRunReplRequest
     std::function<void()>                              onDapThreadsToggle_;    // see SetOnDapThreadsToggle
     std::function<void()>                              onBufferListToggle_;    // see SetOnBufferListToggle
@@ -5323,6 +5340,10 @@ class BufferView : public Widget {
     bufferview::CandidateList vimExCommandList_;
     bool                      vimExCompletionShown_ = false; // see RefreshVimExCompletion
     bufferview::CandidateList vcsBranchList_;
+    // See BeginChoicePrompt.
+    bufferview::CandidateList               choiceList_;
+    std::string                             choiceLabel_;
+    std::function<void(const std::string&)> choiceCommit_;
 
     // search-everywhere follow-up: this session's own equivalent of the
     // CandidateList members above -- see BuildSearchEverywhereCandidates'

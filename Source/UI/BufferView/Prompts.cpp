@@ -21,6 +21,7 @@
 #include "Editor/HeaderSource.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/TabWidth.h"
+#include "Editor/Tracker/Registry.h"
 #include "Editor/Vim/ExCommandTable.h"
 #include "Text/BinaryDetect.h"
 
@@ -744,6 +745,38 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 vcsPanel_->TakeFocus();
             }
             return;
+        case editor::InteractiveRequest::FocusTrackerPanel: {
+            std::vector<std::string> names;
+            for (const editor::tracker::Panel& panel : editor::tracker::Panels()) {
+                names.push_back(panel.name);
+            }
+            BeginChoicePrompt("Tracker panel", std::move(names), "No tracker panels -- see ned/add-tracker-panel",
+                              [this](const std::string& name) {
+                                  if (onFocusTrackerPanel_) {
+                                      onFocusTrackerPanel_(name);
+                                  }
+                              });
+            return;
+        }
+        case editor::InteractiveRequest::TrackerInsertIssueKey: {
+            std::vector<std::string> choices;
+            for (const editor::tracker::Issue& issue : editor::tracker::KnownIssues()) {
+                choices.push_back(issue.title.empty() ? issue.key : issue.key + "  " + issue.title);
+            }
+            BeginChoicePrompt("Insert issue key", std::move(choices), "No issues fetched yet -- open a tracker panel first",
+                              [this](const std::string& choice) {
+                                  // Keys never contain spaces: "PROJ-12", "#42".
+                                  const std::string key    = choice.substr(0, choice.find(' '));
+                                  text::Buffer&     buffer = activeBuffer_.Get();
+                                  if (buffer.ReadOnly()) {
+                                      statusMessage_ = "Buffer is read-only";
+                                      return;
+                                  }
+                                  buffer.InsertAtPoint(key);
+                                  statusMessage_.clear();
+                              });
+            return;
+        }
         case editor::InteractiveRequest::FocusDebugPanel:
             // Same shape as FocusVcsPanel above, mirrored.
             if (leftDock_ != nullptr && debugPanel_ != nullptr) {
@@ -5285,6 +5318,41 @@ void BufferView::ActivateProjectAndReport(const std::filesystem::path& root) {
 // bookmarkCandidates_ (Editor/Bookmark.h's sorted name list). Enter jumps
 // (bookmarkPromptAction_ == Jump) or deletes (== Delete) the selected name.
 
+void BufferView::BeginChoicePrompt(std::string label, std::vector<std::string> choices, std::string emptyMessage,
+                                   std::function<void(const std::string&)> commit) {
+    if (choices.empty()) {
+        statusMessage_ = std::move(emptyMessage);
+        return;
+    }
+    choiceList_.Reset(std::move(choices));
+    choiceLabel_  = std::move(label);
+    choiceCommit_ = std::move(commit);
+    inputMode_    = InputMode::Choice;
+    prompt_.emplace(choiceLabel_ + ": ");
+    choiceList_.SelectTop();
+    RefreshChoiceStatus();
+}
+
+bufferview::FuzzyPrompt BufferView::ChoicePrompt() {
+    return {.list          = &choiceList_,
+            .cancelMessage = choiceLabel_ + " cancelled.",
+            .emptyMessage  = [](const std::string& query) { return "Nothing matching \"" + query + "\""; },
+            // A copy: commit runs after the session ends and a new prompt
+            // may replace choiceCommit_ from inside it.
+            .commit = [commit = choiceCommit_](const std::string& selected) {
+                if (commit) {
+                    commit(selected);
+                } }};
+}
+
+void BufferView::RefreshChoiceStatus() {
+    RefreshFuzzyPrompt(ChoicePrompt());
+}
+
+void BufferView::HandleChoiceKey(const editor::KeyChord& chord) {
+    HandleFuzzyPromptKey(ChoicePrompt(), chord);
+}
+
 void BufferView::RefreshBookmarkJumpStatus() {
     RefreshFuzzyPrompt(BookmarkJumpPrompt());
 }
@@ -5440,6 +5508,16 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
             HandleBookmarkJumpKey(enter);
             return;
         }
+        case InputMode::Choice: {
+            const std::vector<std::string>& ranked   = choiceList_.Refiltered(prompt_->Text());
+            const auto                      resolved = ResolveFuzzyCandidateRowIndex(index, choiceList_.Selection(), ranked.size());
+            if (!resolved) {
+                return;
+            }
+            choiceList_.SelectIndex(*resolved);
+            HandleChoiceKey(enter);
+            return;
+        }
         case InputMode::SelectTheme: {
             const std::vector<std::string>& ranked   = selectThemeList_.Refiltered(prompt_->Text());
             const auto                      resolved = ResolveFuzzyCandidateRowIndex(index, selectThemeList_.Selection(), ranked.size());
@@ -5573,6 +5651,9 @@ void BufferView::ScrollCandidatePopup(int steps) {
                 break;
             case InputMode::SelectTheme:
                 HandleSelectThemeKey(nav);
+                break;
+            case InputMode::Choice:
+                HandleChoiceKey(nav);
                 break;
             case InputMode::LspGotoSymbol:
                 HandleDocumentSymbolKey(nav);

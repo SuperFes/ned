@@ -1294,6 +1294,14 @@ for the live keymap stack.
 
 :   Show or hide the left-side VCS status panel (staged/unstaged/untracked files); collapses the project sidebar if it's currently shown in the same slot.
 
+`tracker-insert-issue-key`
+
+:   Pick one of the issues the tracker panels have fetched and insert its key at point -- a commit message's issue reference, say.
+
+`tracker-panel`
+
+:   Pick an issue-tracker panel by name and move keyboard focus into it (Enter opens an issue's buffer, 'o' opens it in the browser, 'w'/'W' copy its key/URL, 'g' refreshes, Left/Right collapse/expand a status, Escape or C-g returns to the editor).
+
 `transpose-chars` (`C-t`)
 
 :   Interchange the graphemes around point, moving forward.

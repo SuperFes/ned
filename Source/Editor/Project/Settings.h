@@ -9,7 +9,7 @@
 // CachedGitIgnoreMatcher), since this is only consulted on an interactive
 // link-open, not a hot path.
 //
-// v1 scope: five fields.
+// v1 scope: six fields.
 //
 // includePaths -- extra directories Link.cpp's ResolveFileLink searches for a
 // non-project-relative include/import target (an angle-form C/C++ #include, a
@@ -59,7 +59,12 @@
 // agent may read and edit (session/new's additionalDirectories), resolved relative
 // to root like includePaths.
 //
-// All five default a mode/language/section with no entry to "nothing configured"
+// trackerPanels -- issue panels (Tracker/Provider.h's Panel: name, connection,
+// query, glyph) that exist only while this project is open. The connection is
+// named, never defined, here: connections carry a token command and stay in
+// init.janet.
+//
+// All six default a mode/language/section with no entry to "nothing configured"
 // -- the same convention everywhere else in this codebase (GitIgnoreMatcher's
 // missing .gitignore, Mode::fold's empty function, ...).
 //
@@ -74,6 +79,8 @@
 #include <vector>
 
 #include <nlohmann/json.hpp>
+
+#include "Editor/Tracker/Provider.h"
 
 namespace ned::editor {
 
@@ -98,6 +105,7 @@ struct ProjectSettings {
     nlohmann::json                                                      lspWorkspaceConfiguration = nlohmann::json::object();
     std::unordered_map<std::string, ImportResolutionOverride>           importResolutionByLanguage;
     std::vector<std::filesystem::path>                                  acpAdditionalDirectories;
+    std::vector<tracker::Panel>                                         trackerPanels;
 };
 
 // Convenience accessor: settings.includePathsByMode[modeName], or an empty list if

@@ -63,6 +63,7 @@
 #include "Editor/Indent.h"
 #include "Editor/Keymap.h"
 #include "Editor/KeymapStyle.h"
+#include "Editor/Link.h"
 #include "Editor/Lsp/BrokerConnect.h"
 #include "Editor/Lsp/BrokerMain.h"
 #include "Editor/Lsp/BrokerSocketPath.h"
@@ -81,6 +82,7 @@
 #include "Editor/Project/Registry.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Session.h"
+#include "Editor/Project/Settings.h"
 #include "Editor/Project/Trust.h"
 #include "Editor/Project/Undo.h"
 #include "Editor/PromptHistory.h"
@@ -98,6 +100,8 @@
 #include "Editor/TestRun/TestResultsBuffer.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/ThemeSetting.h"
+#include "Editor/Tracker/Registry.h"
+#include "Editor/Tracker/Runner.h"
 #include "Editor/TransientSession.h"
 #include "Editor/Variables.h"
 #include "Editor/Vcs/Runner.h"
@@ -113,6 +117,7 @@
 #include "Text/BufferList.h"
 #include "Text/DisplayWidth.h"
 #include "Text/KillRing.h"
+#include "Text/Utf8.h"
 
 #include "UI/AcpPanel.h"
 #include "UI/ActiveBuffer.h"
@@ -139,6 +144,7 @@
 #include "UI/ThemePaints.h"
 #include "UI/ThemeRegistry.h"
 #include "UI/ThemeResolve.h"
+#include "UI/TrackerPanel.h"
 #include "UI/VcsDiffPreview.h"
 #include "UI/VcsPanel.h"
 #include "UI/WindowManager.h"
@@ -1565,6 +1571,70 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // on or the session ends.
     dapManager.SetOnSessionStateChanged(
         [panel = &debugPanel](ned::editor::dap::Manager::SessionState) { panel->NotifySessionStateChanged(); });
+
+    // Issue-tracker panels, below the built-in ones in declaration order:
+    // init.janet's (already loaded) and then the project's own. A project
+    // switch re-execs, so project panels never need removing.
+    for (ned::editor::tracker::Panel& panel : ned::editor::LoadProjectSettings(projectRoot).trackerPanels) {
+        ned::editor::tracker::AddPanel(std::move(panel));
+    }
+    ned::editor::tracker::Runner                        trackerRunner(eventLoop);
+    std::vector<std::unique_ptr<ned::ui::TrackerPanel>> trackerPanels;
+    std::map<std::size_t, ned::ui::TrackerPanel*>       trackerPanelsByDockId;
+    for (const ned::editor::tracker::Panel& declared : ned::editor::tracker::Panels()) {
+        auto                   owned = std::make_unique<ned::ui::TrackerPanel>(theme, declared.name);
+        ned::ui::TrackerPanel* panel = owned.get();
+        panel->Tree().SetDrawBorder(false);
+        panel->SetOnFetchRequested([&trackerRunner, panel] {
+            trackerRunner.RequestIssues(
+                panel->Name(), [panel](std::vector<ned::editor::tracker::Issue> issues) { panel->ShowIssues(std::move(issues)); },
+                [panel](std::string error) { panel->ShowError(std::move(error)); });
+        });
+        panel->SetOnOpenIssue([&trackerRunner, &statusMessage, panel, wm = windowManager.get(),
+                               dock = leftDock.get()](const ned::editor::tracker::Issue& issue) {
+            statusMessage = "Fetching " + issue.key + "...";
+            trackerRunner.RequestIssue(
+                panel->Name(), issue,
+                [&statusMessage, wm, dock](const ned::editor::tracker::IssueDetail& detail) {
+                    statusMessage.clear();
+                    wm->RequestShowIssue(detail);
+                    dock->NoteFocusReturned();
+                },
+                [&statusMessage](std::string error) { statusMessage = std::move(error); });
+        });
+        panel->SetOnOpenUrl([&statusMessage](const std::string& url) {
+            if (!ned::editor::link::OpenUrl(url)) {
+                statusMessage = "No URL opener -- see ned/set-url-open-command";
+            }
+        });
+        panel->SetOnCopy([&killRing](std::string text) { killRing.Kill(std::move(text)); });
+        panel->SetOnMessage([&statusMessage](std::string message) { statusMessage = std::move(message); });
+        panel->SetOnCancel([wm = windowManager.get(), dock = leftDock.get()] {
+            wm->TakeFocus();
+            dock->NoteFocusReturned();
+        });
+        // nf-fa-ticket unless the panel names its own.
+        const char32_t glyph = declared.glyph.empty() ? U'\uF145' : ned::text::DecodeCodepointUtf8(declared.glyph, 0);
+
+        trackerPanelsByDockId.emplace(leftDock->AddPanel(glyph, declared.name, panel->Tree()), panel);
+        trackerPanels.push_back(std::move(owned));
+    }
+    // Deferred: this fires from the dock's Paint, and a fetch spawns a process.
+    leftDock->SetOnPanelShown([&eventLoop, &trackerPanelsByDockId](std::size_t id) {
+        if (const auto found = trackerPanelsByDockId.find(id); found != trackerPanelsByDockId.end()) {
+            eventLoop.Post([panel = found->second] { panel->NotifyShown(); });
+        }
+    });
+    windowManager->SetOnFocusTrackerPanel([&trackerPanels, &statusMessage, dock = leftDock.get()](const std::string& name) {
+        const auto found = std::ranges::find(trackerPanels, name, [](const auto& panel) { return panel->Name(); });
+        if (found == trackerPanels.end()) {
+            // Added from the REPL after startup: the rail is built once.
+            statusMessage = "Tracker panel \"" + name + "\" isn't on the rail yet -- restart ned";
+            return;
+        }
+        dock->PrepareForKeyboardFocus(&(*found)->Tree());
+        (*found)->Tree().TakeFocus();
+    });
 
     // ACP client slice 2: same "constructed here, needs a real EventLoop&"
     // shape as dapManager just above, and the same "wired into

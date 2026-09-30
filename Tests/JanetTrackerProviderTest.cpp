@@ -10,8 +10,10 @@
 #include "JanetTestSupport.h"
 
 using Catch::Matchers::ContainsSubstring;
+using ned::editor::tracker::Comment;
 using ned::editor::tracker::Connection;
 using ned::editor::tracker::Issue;
+using ned::editor::tracker::IssueDetail;
 using ned::editor::tracker::Panel;
 using ned::janet::Environment;
 using ned::janet::InstallEditorBindings;
@@ -108,6 +110,53 @@ TEST_CASE("ned/tracker-register-provider adapts :list-argv and :parse-list", "[J
     CHECK(issues[1].url.empty());
 
     CHECK_THROWS_WITH(provider->ParseList("not json"), ContainsSubstring("invalid JSON"));
+}
+
+TEST_CASE("ned/tracker-register-provider adapts the optional :view-argv and :parse-view", "[JanetTrackerProvider]") {
+    RegistryResetGuard guard;
+    Environment&       env = BoundEnvironment();
+
+    env.DoString(R"(
+      (ned/tracker-register-provider "stub-view"
+        {:list-argv (fn [c q] [])
+         :parse-list (fn [o] [])
+         :view-argv (fn [connection key] ["gh" "issue" "view" key "--repo" (connection :url)])
+         :parse-view (fn [output]
+                       (def issue (ned/json-decode output))
+                       {:key (issue :number) :title (issue :title) :body (issue :body)
+                        :comments (array/concat
+                                    (map (fn [c] {:author ((c :author) :login) :created (c :createdAt) :body (c :body)})
+                                         (issue :comments))
+                                    @["skipped"])})})
+      (ned/tracker-register-provider "list-only" {:list-argv (fn [c q] []) :parse-list (fn [o] [])})
+    )");
+
+    const auto provider = tracker::FindProvider("stub-view");
+    REQUIRE(provider);
+    const auto argv = provider->ViewArgv(Connection{.name = "gh", .url = "o/r"}, "42");
+    REQUIRE(argv);
+    CHECK(argv->argv == std::vector<std::string>{"gh", "issue", "view", "42", "--repo", "o/r"});
+
+    const IssueDetail detail = provider->ParseView(R"({"number": 42, "title": "Crash", "body": "Steps",
+        "comments": [{"author": {"login": "ann"}, "createdAt": "2026-09-29", "body": "Same here"}]})");
+    CHECK(detail.issue.key == "42");
+    CHECK(detail.issue.title == "Crash");
+    CHECK(detail.body == "Steps");
+    REQUIRE(detail.comments.size() == 1);
+    CHECK(detail.comments[0] == Comment{.author = "ann", .created = "2026-09-29", .body = "Same here"});
+
+    const auto listOnly = tracker::FindProvider("list-only");
+    REQUIRE(listOnly);
+    CHECK_FALSE(listOnly->ViewArgv(Connection{}, "1"));
+
+    CHECK_THROWS_WITH(env.DoString(R"((ned/tracker-register-provider "half-view"
+                                        {:list-argv (fn [c q] []) :parse-list (fn [o] []) :view-argv (fn [c k] [])}))"),
+                      ContainsSubstring(":view-argv and :parse-view together"));
+    CHECK(tracker::FindProvider("half-view") == nullptr);
+
+    env.DoString(R"((ned/tracker-register-provider "bad-view"
+                     {:list-argv (fn [c q] []) :parse-list (fn [o] []) :view-argv (fn [c k] []) :parse-view (fn [o] 5)}))");
+    CHECK_THROWS_WITH(tracker::FindProvider("bad-view")->ParseView("x"), ContainsSubstring(":parse-view must return an issue table"));
 }
 
 TEST_CASE("ned/tracker-register-provider rejects incomplete providers and unsafe names", "[JanetTrackerProvider]") {

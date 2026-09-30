@@ -1101,21 +1101,22 @@ The shape, agreed 2026-09-29:
   `SetPreferredPanel` (so a project's panel comes back active when the project does), and
   a rail tooltip naming each panel.
 - The provider seam is in (`Editor/Tracker/`, `Janet/JanetTrackerProvider.h`):
-  `ned/tracker-register-provider` (`:list-argv`/`:parse-list`), `ned/set-tracker-connection`,
-  `ned/add-tracker-panel`, `ned/json-decode`, and `tracker::Runner::RequestIssues`. Nothing
-  constructs a `Runner` or reads the panel registry yet -- that is Stage 3. Transport is
+  `ned/tracker-register-provider` (`:list-argv`/`:parse-list`, optional
+  `:view-argv`/`:parse-view`), `ned/set-tracker-connection`, `ned/add-tracker-panel`,
+  `ned/json-decode`, and `tracker::Runner`. Transport is
   **`gh`/`curl` argv from Janet, JSON parsed in Janet**; a C++ HTTP client (libcurl) and an
   MCP client stay rejected unless that demonstrably hurts -- ned's MCP side is a server
   (`Mcp/BridgeServer`), and a client would hand the user's credentials to another process.
   Output is TaskProcess's merged stdout+stderr: fine while a successful `gh`/`curl -sS` run
   writes nothing to stderr, revisit if one does.
 
-**Stage 3 -- the panel.**
-- [ ] A tracker panel listing a query's issues: refresh, open in the browser, open a
-      read-only `*issue KEY*` buffer. Project-scoped panels from `.ned/settings.json`.
-      Stub-tested.
-- [ ] A keyboard path to any panel by name (a picker over the rail), since the mouse is
-      never the only way to a control and twenty glyphs aren't memorable.
+- The panels are in (`UI/TrackerPanel.h`): one per declared panel, issues grouped under
+  collapsible statuses, fetched the first time a panel is shown; `RET` opens a read-only
+  Markdown `*issue KEY*` buffer, `o` the browser, `w`/`W` copy key/URL. `trackerPanels`
+  in `.ned/settings.json`; `tracker-panel` picks one by name; `tracker-insert-issue-key`
+  inserts a fetched issue's key at point, off the registry's per-panel issue cache.
+  Live-checked against `gh` on a public repo. A panel added from the REPL after startup
+  isn't on the rail until a restart -- worth fixing only if that turns out to bite.
 
 **Stage 4 -- GitHub provider.**
 - [ ] `tracker-github.janet` over `gh issue list/view --json` -- `gh` owns login and
@@ -1125,7 +1126,9 @@ The shape, agreed 2026-09-29:
 
 **Stage 5 -- Jira Cloud provider.**
 - [ ] `tracker-jira.janet` over `/rest/api/3/search/jql` and `/rest/agile/1.0` boards,
-      Basic auth from the email plus an API token.
+      Basic auth from the email plus an API token. Also the connection's project keys
+      (`/rest/api/3/project/search`) -- the `PROJ` in `PROJ-123`, which is what key
+      completion (Stage 6) triggers on.
 - [ ] **A token must never reach an argv** -- `/proc/<pid>/cmdline` is world-readable.
       `curl -K` from a mkstemp'd config file (`FormatOnSave`'s temp-file precedent).
       **Store nothing**: the token comes from a command (`pass`, `secret-tool lookup`, an
@@ -1134,13 +1137,29 @@ The shape, agreed 2026-09-29:
       issue buffers need an ADF-to-text renderer.
 
 **Stage 6 -- actions, and the parts that belong in a buffer rather than a panel.**
-- [ ] Transition, assign, comment. A comment is *text*, so it gets a real buffer with a
-      real mode, the way `COMMIT_EDITMSG` already does (`Vcs/Runner.h`'s
-      `kVcsCommitMessageFilename`) -- not a one-line prompt. Jira comments need ADF
-      written, not only read.
-- [ ] Branch-name-from-issue, and the reverse: an issue key in the mode line when the
-      current branch names one. Both ride `Vcs/Runner` and the existing mode-line
-      indicator slots.
+The user's priorities, in order: issue keys in commits, responding to issues, moving
+their status; then time tracking.
+- [ ] Transition, assign, comment. Transitions are the tracker's own list (Jira
+      `/issue/{key}/transitions`; GitHub close/reopen), picked with `BeginChoicePrompt`.
+      A comment is *text*, so it gets a real buffer with a real mode, the way
+      `COMMIT_EDITMSG` already does (`Vcs/Runner.h`'s `kVcsCommitMessageFilename`) --
+      not a one-line prompt. Jira comments need ADF written, not only read.
+- [ ] Commits: branch-name-from-issue, and the reverse -- the current branch's issue key
+      in the mode line and seeded into `COMMIT_EDITMSG`. Both ride `Vcs/Runner` and the
+      existing mode-line indicator slots. Jira's smart commits (`KEY #comment ...`,
+      `#time 1h`, `#done`) are Jira's own and only work where the repo host is linked to
+      Jira -- document them, don't reimplement them.
+- [ ] Issue-key completion anywhere -- a commit, a code comment, a README. Triggered by
+      a known project key plus `-` (Stage 5's project keys) or by `#` in a project with
+      a github.com remote, and offering *my* issues rather than every issue: a
+      per-connection "mine" query (`assignee = currentUser() OR watcher =
+      currentUser()`, `involves:@me`), cached like the panel cache, not the panels'
+      contents. The same keys become links (`Editor/Link.h`) that open `*issue KEY*`.
+- [ ] Time tracking through Org clocking: clocking in on an issue makes or reuses an Org
+      heading carrying the issue key and connection as properties, and clocking out
+      offers to post the interval as a Jira worklog (`POST /issue/{key}/worklog`,
+      `timeSpentSeconds` + `started`). GitHub has no time tracking. Org clock reports
+      then roll up by issue for free.
 
 **Stage 7 -- extract what the panels share.**
 - [ ] A generic **record list/table** widget. `TreeView` covers hierarchies and
