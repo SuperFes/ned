@@ -6,7 +6,6 @@
 #include <cstring>
 #include <ctime>
 #include <system_error>
-#include <unordered_set>
 
 #include "Editor/BufferSave.h"
 #include "Editor/Dap/Manager.h"
@@ -24,6 +23,7 @@
 #include "Editor/Vcs/Runner.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
+#include "Text/PerBufferMap.h"
 
 namespace ned::editor::mcp {
 
@@ -193,7 +193,7 @@ Json ToolRegistry::ApplyAndSave(const lsp::Manager::ResolvedRename& edit, const 
         return Json{{"error", "\"" + label + "\" has no edit ned can apply."}};
     }
 
-    std::unordered_set<const text::Buffer*> dirtyBefore;
+    text::PerBufferSet<const text::Buffer*> dirtyBefore;
     for (const std::unique_ptr<text::Buffer>& buffer : bufferList_.Buffers()) {
         if (buffer->Modified()) {
             dirtyBefore.insert(buffer.get());
