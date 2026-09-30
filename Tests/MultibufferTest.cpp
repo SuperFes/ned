@@ -4,6 +4,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -28,6 +29,7 @@ using ned::editor::multibuffer::PreviousExcerptBodyStart;
 using ned::editor::multibuffer::ReadExcerptText;
 using ned::editor::multibuffer::RevertExcerptAtOffset;
 using ned::editor::multibuffer::RevertExcerptsForFileAtOffset;
+using ned::editor::multibuffer::SetMultibufferIndexFor;
 using ned::text::Buffer;
 using ned::text::BufferList;
 
@@ -148,6 +150,19 @@ TEST_CASE("MultibufferIndexFor / SpanAtOffset map composite offsets back to thei
 
     // Past the end of the composite content resolves to nothing.
     REQUIRE(index->SpanAtOffset(multibuffer.Text().size() + 100) == nullptr);
+}
+
+TEST_CASE("A buffer at a freed multibuffer's address has no MultibufferIndex", "[Multibuffer]") {
+    std::optional<ned::text::Buffer> slot;
+    slot.emplace("*multibuffer*");
+    const ned::text::Buffer* address = &*slot;
+    SetMultibufferIndexFor(*slot, {});
+    REQUIRE(MultibufferIndexFor(*slot) != nullptr);
+    slot.reset(); // freed without ClearMultibufferIndexFor
+
+    slot.emplace("plain");
+    REQUIRE(&*slot == address);
+    REQUIRE(MultibufferIndexFor(*slot) == nullptr);
 }
 
 TEST_CASE("BuildMultibuffer tags header and rule lines with their own LineTint", "[Multibuffer]") {

@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <stdexcept>
 
 #include "Editor/LanguageRegistry.h"
@@ -17,6 +18,7 @@ using ned::editor::ModeByName;
 using ned::editor::ModeForBuffer;
 using ned::editor::ModeForFileOverride;
 using ned::editor::ModeForPath;
+using ned::editor::SetChosenModeForBuffer;
 using ned::editor::SetModeForExtension;
 using ned::editor::SetModeForFilename;
 
@@ -217,6 +219,20 @@ TEST_CASE("CachedModeForBuffer falls back to FundamentalMode for a path-less buf
     ned::text::Buffer scratch("scratch");
     REQUIRE(CachedModeForBuffer(scratch).name == "fundamental-mode");
     ClearModeCacheFor(scratch);
+}
+
+TEST_CASE("A buffer at a freed buffer's address inherits neither its cached nor its chosen mode", "[ModeOverrides]") {
+    std::optional<ned::text::Buffer> slot;
+    slot.emplace("reused-address-first");
+    const ned::text::Buffer* address = &*slot;
+    REQUIRE(SetChosenModeForBuffer(*slot, "cpp-mode"));
+    REQUIRE(CachedModeForBuffer(*slot).name == "cpp-mode");
+    slot.reset(); // freed without ClearModeCacheFor
+
+    slot.emplace(ned::text::Buffer::NewFile("/some/path/reused-address.json"));
+    REQUIRE(&*slot == address);
+    REQUIRE(CachedModeForBuffer(*slot).name == "json-mode");
+    ClearModeCacheFor(*slot);
 }
 
 TEST_CASE("CachedModeForBuffer returns a manually pre-inserted (prewarmed) Mode instead of resolving fresh",

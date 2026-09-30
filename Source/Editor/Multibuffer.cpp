@@ -5,7 +5,6 @@
 #include <map>
 #include <sstream>
 #include <stdexcept>
-#include <unordered_map>
 
 #include "MultibufferFoldSettings.h"
 #include "MultibufferLimits.h"
@@ -13,6 +12,7 @@
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/FilePreservation.h"
+#include "Text/PerBufferMap.h"
 
 namespace ned::editor::multibuffer {
 
@@ -48,32 +48,29 @@ LineTint MultibufferIndex::TintForLine(std::size_t compositeLine) const {
 
 namespace {
 
-    // Buffer* identity -> its MultibufferIndex. See this header's own doc
-    // comment for why this isn't mutex-guarded the way the process-wide
-    // settings modules elsewhere in Editor/ are.
-    std::unordered_map<const text::Buffer*, MultibufferIndex>& Registry() {
-        static std::unordered_map<const text::Buffer*, MultibufferIndex> registry;
+    // See this header's own doc comment for why this isn't mutex-guarded
+    // the way the process-wide settings modules elsewhere in Editor/ are.
+    text::PerBufferMap<MultibufferIndex>& Registry() {
+        static text::PerBufferMap<MultibufferIndex> registry;
         return registry;
     }
 
 } // namespace
 
 MultibufferIndex* MultibufferIndexFor(const text::Buffer& buffer) {
-    auto&      registry = Registry();
-    const auto it       = registry.find(&buffer);
-    return it == registry.end() ? nullptr : &it->second;
+    return Registry().Find(buffer);
 }
 
 void SetMultibufferIndexFor(text::Buffer& buffer, MultibufferIndex index) {
-    Registry()[&buffer] = std::move(index);
+    Registry().Set(buffer, std::move(index));
 }
 
 void ClearMultibufferIndexFor(const text::Buffer& buffer) {
-    Registry().erase(&buffer);
+    Registry().Erase(buffer);
 }
 
 void ClearRegistryForTesting() {
-    Registry().clear();
+    Registry().Clear();
 }
 
 std::vector<std::pair<std::size_t, std::size_t>> FoldableExcerptBlocks(const MultibufferIndex& index) {

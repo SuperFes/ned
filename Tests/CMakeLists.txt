@@ -62,6 +62,7 @@ add_executable(ned_tests
             BufferTest.cpp
             CharsetTest.cpp
             FileUriTest.cpp
+            PerBufferMapTest.cpp
             BufferHugeFileTest.cpp
             DiskSpaceTest.cpp
             BufferSaveEquivalenceTest.cpp
