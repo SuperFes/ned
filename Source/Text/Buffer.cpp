@@ -989,6 +989,14 @@ std::size_t Buffer::InstanceId() const {
     return InstanceId_;
 }
 
+void Buffer::AttachEntryOwner(BufferEntryOwner& owner) const {
+    EntryOwners_.Add(owner, this);
+}
+
+void Buffer::DetachEntryOwner(const BufferEntryOwner& owner) const {
+    EntryOwners_.Remove(owner);
+}
+
 std::size_t Buffer::Point() const {
     return Point_;
 }

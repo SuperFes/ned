@@ -34,11 +34,11 @@ namespace {
     std::unordered_map<std::string, std::string> g_extensionOverrides;
     std::unordered_map<std::string, std::string> g_filenameOverrides;
     // See CachedModeForBuffer's doc comment in the header.
-    text::PerBufferMap<Mode> g_modeCache;
+    text::PerBufferMap<Mode> g_modeCache{&g_mutex};
 
     // set-mode's choice per buffer: outlives cache flushes (a language
     // registration clears g_modeCache), dropped with the buffer.
-    text::PerBufferMap<std::string> g_chosenModes;
+    text::PerBufferMap<std::string> g_chosenModes{&g_mutex};
 
     // The bundled definitions' extensions -> mode name, keyed with the
     // leading dot (std::filesystem::path::extension()'s own form). Derived

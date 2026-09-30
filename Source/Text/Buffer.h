@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "AnchorSet.h"
+#include "BufferEntryOwners.h"
 #include "Charset.h"
 #include "EditJournal.h"
 #include "FileConventions.h"
@@ -689,6 +690,11 @@ class Buffer {
     // Preserved by a move (the same logical buffer, relocated) since
     // nothing overrides the implicitly-generated move constructor.
     [[nodiscard]] std::size_t InstanceId() const;
+
+    // For PerBufferMap: owner holds an entry keyed by this buffer's address
+    // and is told when the buffer is destroyed.
+    void AttachEntryOwner(BufferEntryOwner& owner) const;
+    void DetachEntryOwner(const BufferEntryOwner& owner) const;
 
     [[nodiscard]] std::size_t Point() const;
     void                      SetPoint(std::size_t byteOffset);
@@ -1572,6 +1578,10 @@ class Buffer {
     std::size_t SeenGeneration_  = 0;
     bool        UnseenTracking_  = false;
     bool        SeenBaseline_    = false;
+
+    // Last, so it is destroyed first: owners are told while the rest of the
+    // buffer is still intact.
+    mutable BufferEntryOwners EntryOwners_;
 };
 
 } // namespace ned::text

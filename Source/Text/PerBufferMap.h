@@ -1,31 +1,49 @@
 //
-// A map from a live Buffer to per-buffer state. Keyed by address, but an
-// entry only belongs to a buffer whose InstanceId() matches the one it was
-// stored under: a buffer freed without its entry being erased must not hand
-// that entry to whatever is later allocated at the same address.
+// A map from a live Buffer to per-buffer state. Entries are keyed by
+// address and erased when their buffer is destroyed, however it is
+// destroyed, so a buffer allocated later at the same address never
+// inherits one. An entry also remembers its buffer's InstanceId(): a buffer
+// move-assigned into takes on the source's identity, and the entry stored
+// for the old one no longer applies.
+//
+// Not thread-safe; the owner's own discipline applies. A buffer is erased
+// on the thread that destroys it, under `guard` when one is given.
 //
 
 #ifndef NED_TEXT_PER_BUFFER_MAP_H
 #define NED_TEXT_PER_BUFFER_MAP_H
 
 #include <cstddef>
+#include <mutex>
 #include <unordered_map>
 #include <utility>
 
 #include "Text/Buffer.h"
+#include "Text/BufferEntryOwners.h"
 
 namespace ned::text {
 
 template <typename T>
-class PerBufferMap {
+class PerBufferMap final : public BufferEntryOwner {
   public:
-    // buffer's entry, or nullptr; a stale entry at buffer's address is dropped.
+    explicit PerBufferMap(std::mutex* guard = nullptr) : guard_(guard) {
+    }
+
+    PerBufferMap(const PerBufferMap&)            = delete;
+    PerBufferMap& operator=(const PerBufferMap&) = delete;
+
+    ~PerBufferMap() {
+        Clear();
+    }
+
+    // buffer's entry, or nullptr.
     [[nodiscard]] T* Find(const Buffer& buffer) {
         const auto it = entries_.find(&buffer);
         if (it == entries_.end()) {
             return nullptr;
         }
         if (it->second.instanceId != buffer.InstanceId()) {
+            buffer.DetachEntryOwner(*this);
             entries_.erase(it);
             return nullptr;
         }
@@ -33,11 +51,14 @@ class PerBufferMap {
     }
 
     T& Set(const Buffer& buffer, T value) {
-        Entry& entry = entries_.insert_or_assign(&buffer, Entry{buffer.InstanceId(), std::move(value)}).first->second;
-        return entry.value;
+        const auto [it, inserted] = entries_.insert_or_assign(&buffer, Entry{buffer.InstanceId(), std::move(value)});
+        if (inserted) {
+            buffer.AttachEntryOwner(*this);
+        }
+        return it->second.value;
     }
 
-    // Stores value only when buffer has no live entry.
+    // Stores value only when buffer has no entry.
     T& SetIfAbsent(const Buffer& buffer, T value) {
         if (T* existing = Find(buffer)) {
             return *existing;
@@ -46,15 +67,29 @@ class PerBufferMap {
     }
 
     void Erase(const Buffer& buffer) {
-        entries_.erase(&buffer);
+        if (entries_.erase(&buffer) > 0) {
+            buffer.DetachEntryOwner(*this);
+        }
     }
 
     void Clear() {
+        for (const auto& [buffer, entry] : entries_) {
+            buffer->DetachEntryOwner(*this);
+        }
         entries_.clear();
     }
 
     [[nodiscard]] std::size_t Size() const {
         return entries_.size();
+    }
+
+    void ForgetBuffer(const Buffer* buffer) override {
+        if (guard_ != nullptr) {
+            const std::lock_guard lock(*guard_);
+            entries_.erase(buffer);
+            return;
+        }
+        entries_.erase(buffer);
     }
 
   private:
@@ -64,6 +99,7 @@ class PerBufferMap {
     };
 
     std::unordered_map<const Buffer*, Entry> entries_;
+    std::mutex*                              guard_;
 };
 
 } // namespace ned::text
