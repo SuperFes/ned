@@ -416,7 +416,18 @@ void ModeLine::Paint(Canvas c) {
         // then the rest sorted for a stable order.
         const std::vector<std::string> activeKeys = lspManager_->ActiveServerKeysForBuffer(buffer);
         const std::string              hostKey    = editor::LanguageKeyForMode(mode_);
-        if (activeKeys.size() <= 1) {
+        if (activeKeys.size() == 1 && activeKeys.front() != hostKey) {
+            // The one synced server isn't the language's own: a Markdown file
+            // with no Markdown server still has the prose checker. A host
+            // server that failed to start stays visible beside it.
+            if (auto entry = entryFor(hostKey, hostKey)) {
+                lspEntries.push_back(std::move(*entry));
+            }
+            if (auto entry = entryFor(activeKeys.front(), activeKeys.front())) {
+                lspEntries.push_back(std::move(*entry));
+            }
+        }
+        else if (activeKeys.size() <= 1) {
             if (auto entry = entryFor(hostKey, std::string(editor::lsp::kLspActivityName))) {
                 lspEntries.push_back(std::move(*entry));
             }

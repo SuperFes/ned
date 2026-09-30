@@ -562,6 +562,31 @@ TEST_CASE("ModeLine renders the single-glyph indicator unchanged when only one s
     REQUIRE(row.find("c ●") == std::string::npos); // the multi-glyph "<key> <glyph>" shape must not appear here
 }
 
+TEST_CASE("ModeLine shows the prose checker when it is the only server a buffer has", "[ModeLine]") {
+    ned::text::BufferList     bufferList;
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(bufferList, eventLoop);
+    FakeServer                prose = FakeServer::Create(manager, std::string(ned::editor::lsp::kProseLanguageKey), eventLoop);
+
+    ned::text::Buffer& buffer = bufferList.OpenOrCreateFile(std::filesystem::temp_directory_path() / "ned-modeline-prose-only-test.md");
+    manager.SyncBuffer(buffer, "markdown"); // no Markdown server, so only the prose checker is synced
+    REQUIRE(manager.ActiveServerKeysForBuffer(buffer) == std::vector<std::string>{std::string(ned::editor::lsp::kProseLanguageKey)});
+
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::MarkdownMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+    modeLine.SetLspManager(&manager);
+
+    ned::ui::Screen screen = MakeScreen(200, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 199, .y_min = 0, .y_max = 0});
+    modeLine.Paint(canvas);
+
+    const std::string row = RowText(screen, 0, 200);
+    REQUIRE(row.find("prose ●") != std::string::npos);
+    REQUIRE(row.find("LSP") == std::string::npos); // named, since it isn't the language's own server
+}
+
 TEST_CASE("ModeLine shows one glyph per active server when more than one is synced for the buffer",
           "[ModeLine][EmbeddedDocuments]") {
     ned::text::BufferList        bufferList;
