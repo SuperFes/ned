@@ -111,6 +111,7 @@
 #include "Text/BinaryDetect.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
+#include "Text/DisplayWidth.h"
 #include "Text/KillRing.h"
 
 #include "UI/AcpPanel.h"
@@ -145,11 +146,6 @@
 using namespace ned::ui;
 
 namespace {
-
-// debug-panel: "no such panel registered yet" for a LeftDock panel id whose
-// registration happens later in main() than the callback that has to
-// recognize it. LeftDock's own ids start at 0 and only ever grow.
-constexpr std::size_t kUnregisteredPanelId = static_cast<std::size_t>(-1);
 
 // `ned --foreground`: the always-on daemon, and the one instance rule that
 // makes "always-on" mean anything.
@@ -1096,7 +1092,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // font, renders as tofu/boxes without one). The rail is a small,
     // easily reverted spot to opt into that tradeoff; nothing else in
     // this codebase follows suit.
-    const std::size_t filesPanelId = leftDock->AddPanel(U'', "Files", *projectSidebar);
+    leftDock->AddPanel(U'', "Files", *projectSidebar);
     windowManager->SetLeftDock(leftDock.get());
 
     // sidebar-keyboard-focus follow-up: Escape/C-g (or Enter opening a
@@ -1195,7 +1191,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
 
     // nerd-font-glyph follow-up: git-branch glyph (U+F418) -- see the
     // Files panel's own comment just above.
-    const std::size_t vcsPanelId = leftDock->AddPanel(U'', "VCS", *vcsPanel);
+    leftDock->AddPanel(U'', "VCS", *vcsPanel);
 
     // unified-left-dock follow-up: chained with LeftDock::NoteFocusReturned,
     // ProjectSidebar's own SetOnFocusReturn precedent just above.
@@ -1207,30 +1203,19 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     vcsPanel->SetOnAction(
         [wm = windowManager.get()](ned::ui::VcsPanelAction action) { wm->RequestVcsPanelAction(action); });
 
-    // Remembers which of the dock's two panels was last deliberately made
-    // active (a rail-glyph click, or the toggle-project-sidebar/
-    // toggle-vcs-panel commands going through it) -- restored below,
-    // ProjectSidebar/VcsPanel's own former "vcs-panel-visible" tie-break
-    // variable's real replacement now that there's one dock, not two
-    // independently-hidden widgets.
-    // debug-panel: filled in when that panel registers, which can only
-    // happen further down (it needs dapManager, which needs the EventLoop).
-    // Captured by reference for the same reason every other long-lived
-    // callback here captures a main() local by reference.
-    std::size_t debugPanelId = kUnregisteredPanelId;
-    leftDock->SetOnActivePanelCommitted([filesPanelId, vcsPanelId, &debugPanelId](std::size_t id) {
-        if (id == vcsPanelId) {
-            ned::editor::SetVariable("left-panel-active", "vcs");
-        }
-        else if (id == debugPanelId) {
-            ned::editor::SetVariable("left-panel-active", "debug");
-        }
-        else if (id == filesPanelId) {
-            ned::editor::SetVariable("left-panel-active", "sidebar");
-        }
+    // Remembers which panel was last deliberately made active (a rail-glyph
+    // click, or a toggle-*-panel command going through it), by name, so a
+    // panel that registers later -- the debug panel below, a project's
+    // tracker panels -- is restored as it registers.
+    leftDock->SetOnActivePanelCommitted([dock = leftDock.get()](std::size_t id) {
+        ned::editor::SetVariable("left-panel-active", dock->PanelName(id));
     });
-    if (ned::editor::Variable("left-panel-active") == "vcs") {
-        leftDock->SwitchTo(vcsPanelId); // silent -- Files (the default) already committed nothing to overwrite
+    if (std::optional<std::string> remembered = ned::editor::Variable("left-panel-active")) {
+        // Earlier versions stored a fixed key rather than the panel's name.
+        static const std::map<std::string, std::string, std::less<>> kLegacyKeys{
+            {"sidebar", "Files"}, {"vcs", "VCS"}, {"debug", "Debug"}};
+        const auto legacy = kLegacyKeys.find(*remembered);
+        leftDock->SetPreferredPanel(legacy != kLegacyKeys.end() ? legacy->second : *remembered);
     }
 
     tabBar->SetOnCloseRequest(
@@ -1551,7 +1536,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // panel (ProjectSidebar and VcsPanel own no frame either) -- a TreeView
     // defaults to drawing its own, which would be a second border inside it.
     debugPanel.Tree().SetDrawBorder(false);
-    debugPanelId = leftDock->AddPanel(U'', "Debug", debugPanel.Tree());
+    leftDock->AddPanel(U'', "Debug", debugPanel.Tree());
     debugPanel.Tree().SetOnCancel([wm = windowManager.get(), dock = leftDock.get()] {
         wm->TakeFocus();
         dock->NoteFocusReturned();
@@ -1580,9 +1565,6 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // on or the session ends.
     dapManager.SetOnSessionStateChanged(
         [panel = &debugPanel](ned::editor::dap::Manager::SessionState) { panel->NotifySessionStateChanged(); });
-    if (ned::editor::Variable("left-panel-active") == "debug") {
-        leftDock->SwitchTo(debugPanelId); // silent, same as the VCS restore above
-    }
 
     // ACP client slice 2: same "constructed here, needs a real EventLoop&"
     // shape as dapManager just above, and the same "wired into
@@ -2638,6 +2620,28 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         }
     });
 
+    // The left dock's rail shows only glyphs; hovering one names its panel
+    // in a one-row box beside that rail row.
+    ned::ui::ListPopup railTooltip(theme);
+    std::string        railTooltipName;
+    overlays.Add(railTooltip, [panel = &railTooltip, &railTooltipName](Size size) {
+        const ned::ui::Point origin = panel->Anchor().value_or(ned::ui::Point{});
+        const int            width  = std::min(size.width, ned::text::StringColumns(railTooltipName) + 4);
+        const int            xMin   = std::clamp(origin.x, 0, std::max(0, size.width - width));
+        const int            yMin   = std::clamp(origin.y - 1, 0, std::max(0, size.height - 3));
+        return Box{.x_min = xMin, .x_max = xMin + width - 1, .y_min = yMin, .y_max = std::min(size.height - 1, yMin + 2)};
+    });
+    leftDock->SetOnRailHoverChanged(
+        [&overlays, panel = &railTooltip, &railTooltipName](std::optional<ned::ui::LeftDock::RailHover> hover) {
+            if (!hover) {
+                overlays.Hide(*panel);
+                return;
+            }
+            railTooltipName = hover->name;
+            panel->SetModel(ned::ui::ListPopupModel{.anchor = hover->anchor, .previewText = std::move(hover->name)});
+            overlays.Show(*panel);
+        });
+
     // peek-definition follow-up: same anchored-under-point, non-focusable shape
     // as completionPopup just above (BufferView keeps focus, drives content via
     // HandlePeekDefinitionKey) -- wider, since a source line needs real room
@@ -3318,6 +3322,14 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     ned::ui::ModifierTapDetector modifierTapDetector;
     callbacks.onEvent = [&](const Event& event) {
         if (event.is_mouse()) {
+            // The rail tooltip is informational: the mouse reaching it hides it
+            // and passes through, so the dock sees the mouse leave its rail.
+            if (overlays.IsVisible(railTooltip)) {
+                const MouseEvent mouse = event.mouse();
+                if (railTooltip.Box_().Contain(mouse.at.x, mouse.at.y)) {
+                    overlays.Hide(railTooltip);
+                }
+            }
             // A visible overlay owns clicks inside its own Box; everything
             // else keeps the broadcast dispatch (Container::OnEvent
             // forwards to every active leaf) several widgets actively

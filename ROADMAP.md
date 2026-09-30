@@ -1075,98 +1075,103 @@ Explicitly *not* pulled from prior research: OpenCode's session-sharing (needs a
 backend, out of scope for a local-first editor) and a unified command palette (a stated
 non-goal, see below).
 
-### Issue Tracker Integration (Jira First) — and the Widget Layer It Forces
+### Issue Tracker Integration (Jira + GitHub) — and the Widget Layer It Forces
 
-Wanted for real, daily use: a company Jira board reachable from inside ned, not a browser
-tab beside it. The end state everyone pictures is "write a widget in Janet and dock it",
-and that end state is genuinely several subsystems away — ned has no HTTP client, no
-secret handling, no record-list widget, and **no UI surface in Janet at all** (220
-`Register<>` bindings, of which exactly six touch the UI layer, and all six are settings:
-four theme colors and two ACP dock placements — nothing constructs a widget, a row, or a
-key). So this is staged deliberately: build one bespoke panel that is actually useful,
-let a second consumer show up, extract only what they share, and reach the scripting
-surface last. Every generic layer in this codebase arrived that way and none of them
-arrived first — `PanelDock` after three panels had each reinvented the tab strip,
-`FramedConnection` after three protocol clients had each rebuilt the same read loop,
-`CacheStamp` after the same validity check had been written out fourteen times.
+Wanted for real, daily use: two Jira Cloud sites (one primary) and GitHub issues,
+reachable from inside ned rather than a browser tab beside it. Nothing here writes to a
+tracker until the actions stage; every provider can be live-tested read-only against the
+user's own sites and repos. The end state everyone pictures is "write a widget in Janet
+and dock it", and that is still several subsystems away -- no record-list widget and
+**no UI surface in Janet at all** -- so the staging stays: concrete panels first, a
+generic layer only once they show what they share, the scripting surface last. Every
+generic layer in this codebase arrived that way (`PanelDock`, `FramedConnection`,
+`CacheStamp`).
 
-**Stage 0 — transport.** Three shapes, genuinely decidable now rather than later:
-- [ ] **(a) `curl` argv from Janet, JSON parsed in Janet.** Exactly the VCS provider
-      template (`Source/Janet/JanetVcsProvider.h`, `Source/Janet/Plugins/vcs-git.janet`):
-      Janet builds an argv and parses stdout, C++ owns spawning (`Tasks/TaskProcess.h`)
-      and the main-thread callback discipline. Zero new C++ dependency, and the provider
-      registry already proves a Janet table of callbacks can back a C++ interface.
-      Leaning this first.
-- [ ] **(b) A real HTTP client in C++** (libcurl, or cpr over it) — a Gentoo package per
-      the `system-libs-over-fetchcontent` call, buying proper async, connection reuse and
-      streaming. Worth it only once (a) demonstrably hurts.
-- [ ] **(c) MCP client.** Tempting, because Atlassian ships an MCP server and ned already
-      speaks MCP — but it speaks it in the wrong direction. `Editor/Mcp/BridgeServer.h` is
-      a *server*, serving ned's own tools to the ACP agent; being a client is a new
-      subsystem, and it hands the user's Jira credentials to somebody else's process.
-- [ ] JSON is already solved either way — `nlohmann::json` is a system dependency and is
-      what LSP/DAP/MCP all use.
+The shape, agreed 2026-09-29:
+- **Connection**: a named tracker instance -- provider, URL, and for Jira the account
+  email plus a token *command*. Global, defined once in `init.janet`.
+- **Panel**: a named view over one connection (a board, a saved JQL/`gh` search,
+  "assigned to me"), with its own rail glyph. Any number per connection, across any
+  number of connections -- the left rail has room for twenty.
+- **Project scope is where a panel is declared**: `init.janet` panels are always there;
+  `.ned/settings.json` panels exist only while that project is active and leave the rail
+  on a switch. GitHub panels also appear with no configuration at all when the project's
+  git remote is on github.com and `gh` is logged in (the provider's `:detect`).
+- `LeftDock` is ready for this: `RemovePanel`, panels restored by name through
+  `SetPreferredPanel` (so a project's panel comes back active when the project does), and
+  a rail tooltip naming each panel.
 
-**Stage 0b — credentials, which ned has no answer to at all.** Nothing in this codebase
-reads or writes a secret today, so this is a genuine design decision and not a detail of
-stage 1.
-- [ ] **A token must never reach an argv** — `/proc/<pid>/cmdline` is world-readable.
-      `curl -K -` from a mkstemp'd config file is the shape that works (`FormatOnSave`'s
-      own temp-file precedent, the same one `RequestHunkApply` uses for patches).
-- [ ] Strong lean: **store nothing.** Take a *command* that prints the token
-      (`ned/set-jira-token-command`, the shape `ned/set-format-command` and
-      `ned/set-url-open-command` already establish), so `pass`, `gh auth token`,
-      `secret-tool lookup` or a bare env var all work and ned owns no secret. A 0600 file
-      under `$XDG_STATE_HOME/ned/` is the fallback if that proves too fiddly — but a
-      plaintext token in editor state is a real thing to be reluctant about, and
-      `--transient` would have to exclude it.
+**Stage 2 -- tracker model and provider seam.**
+- [ ] `Editor/Tracker/`: a neutral issue record (key, title, status, assignee, labels,
+      URL, updated), `ned/tracker-register-provider` taking one keyword table the way
+      `ned/vcs-register-provider` does (`JanetVcsProvider.h`), and a runner that fetches
+      off the main thread the way `Vcs/Runner` does.
+- [ ] `ned/set-tracker-connection` and `ned/add-tracker-panel`. Tested against a stub
+      provider.
+- [ ] Transport is (a) below; (b) and (c) stay rejected unless (a) demonstrably hurts:
+      - **(a) `gh`/`curl` argv from Janet, JSON parsed in Janet** -- the VCS provider
+        template: Janet builds an argv and parses stdout, C++ owns spawning and the
+        main-thread callback discipline. No new C++ dependency.
+      - **(b) A real HTTP client in C++** (libcurl) -- buys async, connection reuse and
+        streaming.
+      - **(c) MCP client** -- ned speaks MCP in the wrong direction (`Mcp/BridgeServer`
+        is a server), and it would hand the user's credentials to another process.
 
-**Stage 1 — one bespoke panel, hardcoded, actually useful.** Built the way `VcsPanel`
-was: a concrete C++ `Widget` with its own rows, keys and context menu, hosted in the
-existing `LeftDock`/`PanelDock` (both already take a new panel without new host plumbing).
-Read-only to start — my issues, a board's columns, one issue's detail.
-- [ ] Scope by what a board actually needs, not by REST endpoint coverage. Jira's API is
-      enormous and almost all of it is irrelevant to "what am I working on".
-- [ ] A `jira::Provider`/`jira::Runner` split mirroring `Editor/Vcs/` — this is the third
-      time that exact async-external-tool shape will have been written, which is the
-      evidence Stage 3 needs rather than something to pre-empt here.
+**Stage 3 -- the panel.**
+- [ ] A tracker panel listing a query's issues: refresh, open in the browser, open a
+      read-only `*issue KEY*` buffer. Project-scoped panels from `.ned/settings.json`.
+      Stub-tested.
+- [ ] A keyboard path to any panel by name (a picker over the rail), since the mouse is
+      never the only way to a control and twenty glyphs aren't memorable.
 
-**Stage 2 — actions, and the parts that belong in a buffer rather than a panel.**
+**Stage 4 -- GitHub provider.**
+- [ ] `tracker-github.janet` over `gh issue list/view --json` -- `gh` owns login and
+      tokens, so ned stores nothing. Issues first; Projects boards (GraphQL, and `gh`
+      needs the `project` scope) only if columns are wanted.
+- [ ] `:detect` from the project's github.com remote, adding its panels automatically.
+
+**Stage 5 -- Jira Cloud provider.**
+- [ ] `tracker-jira.janet` over `/rest/api/3/search/jql` and `/rest/agile/1.0` boards,
+      Basic auth from the email plus an API token.
+- [ ] **A token must never reach an argv** -- `/proc/<pid>/cmdline` is world-readable.
+      `curl -K` from a mkstemp'd config file (`FormatOnSave`'s temp-file precedent).
+      **Store nothing**: the token comes from a command (`pass`, `secret-tool lookup`, an
+      env var), the shape `ned/set-format-command` established.
+- [ ] Descriptions and comments are Atlassian Document Format (a JSON tree), not text:
+      issue buffers need an ADF-to-text renderer.
+
+**Stage 6 -- actions, and the parts that belong in a buffer rather than a panel.**
 - [ ] Transition, assign, comment. A comment is *text*, so it gets a real buffer with a
       real mode, the way `COMMIT_EDITMSG` already does (`Vcs/Runner.h`'s
-      `kVcsCommitMessageFilename`) — not a one-line prompt.
+      `kVcsCommitMessageFilename`) -- not a one-line prompt. Jira comments need ADF
+      written, not only read.
 - [ ] Branch-name-from-issue, and the reverse: an issue key in the mode line when the
       current branch names one. Both ride `Vcs/Runner` and the existing mode-line
-      indicator slots; neither needs anything new.
+      indicator slots.
 
-**Stage 3 — extract, once there are two real consumers.** What Stages 1-2 will have made
-concrete, and deliberately not before:
-- [ ] A generic **record list/table** widget. `TreeView` already covers hierarchies
-      (`lsp-call-type-hierarchy`'s own "real widget" call) and `ListPopup` covers
-      transient pick-lists; a persistent, sortable, column-aligned list of external
-      records is the thing neither is. The `ListPopupRow` span-awareness cut
+**Stage 7 -- extract what the panels share.**
+- [ ] A generic **record list/table** widget. `TreeView` covers hierarchies and
+      `ListPopup` transient pick-lists; a persistent, sortable, column-aligned list of
+      external records is the thing neither is. The `ListPopupRow` span-awareness cut
       (Editor Ergonomics, above) is the same gap seen from the other side.
-- [ ] A generic **async external record source** — the `Provider` + `Runner` +
-      registry triple, extracted only if the Jira copy and the VCS copy genuinely agree.
-      The `FramedConnection` finding elsewhere in this file is the cautionary version:
-      three copies of a shape can still be three different shapes.
+- [ ] A generic **async external record source** -- the `Provider` + `Runner` +
+      registry triple -- extracted only if the tracker copy and the VCS copy genuinely
+      agree. The `FramedConnection` finding elsewhere in this file is the cautionary
+      version: three copies of a shape can still be three different shapes.
 
-**Stage 4 — the Janet widget surface. Last, and declarative, not immediate-mode.**
-- [ ] `Widget`'s contract is `Paint(Canvas)` + `OnEvent(Event)` — a per-frame, per-cell
+**Stage 8 -- the Janet widget surface. Last, and declarative, not immediate-mode.**
+- [ ] `Widget`'s contract is `Paint(Canvas)` + `OnEvent(Event)` -- a per-frame, per-cell
       API. Handing Janet a `Canvas` would put the scripting boundary at per-cell
-      granularity, which is the wrong place for it for the same reason dynamic dispatch
-      per element is (`CLAUDE.md`'s dispatch note). The shape that works is the one this
-      codebase already uses everywhere it crosses that boundary: **Janet returns a model,
-      C++ paints it** — `ListPopupModel`, `VcsPanelContextMenuTarget` and
-      `JanetVcsProvider`'s callback table are all already that split.
-- [ ] Which means the real deliverable here is a *model vocabulary* (rows, columns,
-      actions, key bindings, a refresh callback), not a rendering API — and that
-      vocabulary is only designable once Stage 3 has said what two real panels have in
-      common.
-- [ ] Jank changes none of this (Maybelist, below): the boundary's shape is the problem,
-      not the language on the far side of it.
-- [ ] Note the 1.0 freeze commitment applies the moment any of this ships as `ned/*` —
-      which is an argument for reaching Stage 4 late and with evidence, not early.
+      granularity, the wrong place for it for the same reason dynamic dispatch per
+      element is. The shape that works is the one this codebase already uses everywhere
+      it crosses that boundary: **Janet returns a model, C++ paints it** --
+      `ListPopupModel`, `VcsPanelContextMenuTarget` and `JanetVcsProvider`'s callback
+      table are all already that split.
+- [ ] So the deliverable is a *model vocabulary* (rows, columns, actions, key bindings,
+      a refresh callback), not a rendering API, designable only once Stage 7 has said
+      what real panels have in common. Jank changes none of this (Maybelist, below).
+- [ ] The 1.0 freeze commitment applies the moment any of this ships as `ned/*` -- an
+      argument for reaching this stage late and with evidence.
 
 ### Documentation & Companion Tooling
 

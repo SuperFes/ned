@@ -22,11 +22,54 @@ LeftDock::LeftDock(const Theme& theme) : theme_(theme) {
 
 std::size_t LeftDock::AddPanel(char32_t glyph, std::string name, Widget& content) {
     const std::size_t id = nextId_++;
+    const bool        preferred = !preferred_.empty() && name == preferred_;
     entries_.push_back(Entry{.id = id, .glyph = glyph, .name = std::move(name), .content = &content});
     if (entries_.size() == 1) {
         active_ = id; // the first registered panel starts active
     }
+    if (preferred) {
+        SwitchTo(id);
+    }
     return id;
+}
+
+void LeftDock::RemovePanel(std::size_t id) {
+    const auto it = std::ranges::find(entries_, id, &Entry::id);
+    if (it == entries_.end()) {
+        return;
+    }
+    // Focus can't stay on a widget that is no longer reachable.
+    if (it->content != nullptr && it->content->Focused()) {
+        it->content->OnFocusPreempted();
+    }
+    if (hoveredId_ == id) {
+        hoveredId_.reset();
+        if (onRailHoverChanged_) {
+            onRailHoverChanged_(std::nullopt);
+        }
+    }
+    const bool wasActive = id == active_;
+    entries_.erase(it);
+    if (wasActive && !entries_.empty()) {
+        SwitchTo(entries_.front().id);
+    }
+}
+
+std::optional<std::size_t> LeftDock::FindPanel(std::string_view name) const {
+    const auto it = std::ranges::find(entries_, name, &Entry::name);
+    return it != entries_.end() ? std::optional(it->id) : std::nullopt;
+}
+
+std::string LeftDock::PanelName(std::size_t id) const {
+    const Entry* entry = FindEntry(id);
+    return entry != nullptr ? entry->name : std::string();
+}
+
+void LeftDock::SetPreferredPanel(std::string name) {
+    preferred_ = std::move(name);
+    if (const std::optional<std::size_t> id = FindPanel(preferred_)) {
+        SwitchTo(*id);
+    }
 }
 
 LeftDock::Entry* LeftDock::FindEntry(std::size_t id) {
@@ -74,6 +117,7 @@ void LeftDock::CommitSwitchTo(std::size_t id) {
         return;
     }
     SwitchTo(id);
+    preferred_ = FindEntry(id)->name;
     if (onActivePanelCommitted_) {
         onActivePanelCommitted_(active_);
     }
@@ -216,6 +260,33 @@ void LeftDock::SetOnActivePanelCommitted(std::function<void(std::size_t)> handle
     onActivePanelCommitted_ = std::move(handler);
 }
 
+void LeftDock::SetOnRailHoverChanged(std::function<void(std::optional<RailHover>)> handler) {
+    onRailHoverChanged_ = std::move(handler);
+}
+
+void LeftDock::UpdateRailHover(const MouseEvent& rawMouse) {
+    const Box&                 own = Box_();
+    const int                  row = rawMouse.at.y - own.y_min;
+    std::optional<std::size_t> hovered;
+    if (rawMouse.at.x >= own.x_min && rawMouse.at.x < own.x_min + kRailWidth && rawMouse.at.x <= own.x_max && row >= 0 &&
+        rawMouse.at.y <= own.y_max && static_cast<std::size_t>(row) < entries_.size()) {
+        hovered = entries_[static_cast<std::size_t>(row)].id;
+    }
+    if (hovered == hoveredId_) {
+        return;
+    }
+    hoveredId_ = hovered;
+    if (!onRailHoverChanged_) {
+        return;
+    }
+    if (!hovered) {
+        onRailHoverChanged_(std::nullopt);
+        return;
+    }
+    onRailHoverChanged_(RailHover{.name   = entries_[static_cast<std::size_t>(row)].name,
+                                  .anchor = Point{.x = own.x_min + kRailWidth, .y = rawMouse.at.y}});
+}
+
 Box LeftDock::ContentBox() const {
     const Box& own = Box_();
     return Box{.x_min = own.x_min + kRailWidth, .x_max = own.x_max, .y_min = own.y_min, .y_max = own.y_max};
@@ -329,6 +400,14 @@ bool LeftDock::OnEvent(const Event& event) {
         return false; // no keyboard plumbing through this class -- see this file's own header comment
     }
     const MouseEvent rawMouse = event.mouse();
+    // Mouse events are broadcast to every widget, so this also sees the
+    // mouse leave the rail for somewhere else entirely. A bare hover decodes
+    // as button=None/motion=Released on this backend (see
+    // BufferView::MaybeScheduleHover), a drag as Moved.
+    if (rawMouse.motion == MouseEvent::Motion::Moved ||
+        (rawMouse.button == MouseEvent::Button::None && rawMouse.motion == MouseEvent::Motion::Released)) {
+        UpdateRailHover(rawMouse);
+    }
 
     // ProjectSidebar/PanelDock's own resize-drag shape: Moved/Released are
     // handled against the *global* mouse position before the local-bounds

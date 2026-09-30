@@ -110,7 +110,7 @@ void DrawBorderTitle(Canvas& c, const std::string& title, const Brush& titleBrus
     // never touching the last two columns (one trailing line glyph plus the
     // top-right corner keeps the frame readable on both sides of the text).
     const int maxTextColumns = width - 4;
-    if (maxTextColumns <= 0) {
+    if (maxTextColumns <= 0 || title.empty()) {
         return;
     }
     const std::string padded = " " + title + " ";

@@ -47,7 +47,9 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Theme.h"
@@ -66,10 +68,25 @@ class LeftDock : public Widget {
     // active by construction (SwitchTo/ActivePanel() default to id 0).
     // Returns a stable id (PanelDock::AddPanel's own precedent) -- not a
     // rail row position, so a caller should hold onto it rather than assume
-    // it equals registration order forever (no RemovePanel exists yet;
-    // unlike PanelDock's tabs, a registered left panel isn't expected to
-    // come and go at runtime the way a terminal tab does).
+    // it equals registration order forever. A panel named by
+    // SetPreferredPanel becomes active as it registers.
     std::size_t AddPanel(char32_t glyph, std::string name, Widget& content);
+
+    // Unregisters a panel whose content is going away (a project-scoped
+    // panel on a project switch). Removing the active panel silently
+    // activates the first remaining one; the preferred name is kept, so the
+    // panel comes back active if it registers again. A no-op if `id` isn't
+    // registered.
+    void RemovePanel(std::size_t id);
+
+    // Panels are identified across restarts by name, since ids depend on
+    // registration order and panels can register at any time.
+    [[nodiscard]] std::optional<std::size_t> FindPanel(std::string_view name) const;
+    [[nodiscard]] std::string                PanelName(std::size_t id) const;
+
+    // The panel to show when it registers or is already registered: the
+    // restored "last deliberately chosen" panel. CommitSwitchTo updates it.
+    void SetPreferredPanel(std::string name);
 
     [[nodiscard]] std::size_t ActivePanel() const {
         return active_;
@@ -162,6 +179,16 @@ class LeftDock : public Widget {
     // choose not to persist every click.
     void SetOnActivePanelCommitted(std::function<void(std::size_t)> handler);
 
+    // The rail shows only glyphs, so hovering a rail row reports the
+    // panel's name and an absolute anchor just right of that row, for a
+    // tooltip; std::nullopt when the mouse leaves the rail's rows. Unset is
+    // a safe no-op.
+    struct RailHover {
+        std::string name;
+        Point       anchor;
+    };
+    void SetOnRailHoverChanged(std::function<void(std::optional<RailHover>)> handler);
+
     void Paint(Canvas c) override;
     bool OnEvent(const Event& event) override;
     void OnResize(Size previous) override;
@@ -197,10 +224,14 @@ class LeftDock : public Widget {
     void BeginResize(int globalMouseX);
     void CommitCollapsed(bool collapsed); // SetCollapsed + onCollapseCommitted_, ProjectSidebar's own split
 
+    void UpdateRailHover(const MouseEvent& rawMouse);
+
     const Theme&       theme_;
     std::vector<Entry> entries_;
     std::size_t        nextId_ = 0;
     std::size_t        active_ = 0; // an Entry::id, not a rail row -- see ActivePanel's doc comment
+    std::string                preferred_;
+    std::optional<std::size_t> hoveredId_;
 
     int  width_     = 30; // total width including the rail -- see Width()
     bool collapsed_ = false;
@@ -216,6 +247,7 @@ class LeftDock : public Widget {
     std::function<void(int)>         onWidthCommitted_;
     std::function<void(bool)>        onCollapseCommitted_;
     std::function<void(std::size_t)> onActivePanelCommitted_;
+    std::function<void(std::optional<RailHover>)> onRailHoverChanged_;
 };
 
 } // namespace ned::ui

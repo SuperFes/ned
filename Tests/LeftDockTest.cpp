@@ -441,3 +441,136 @@ TEST_CASE("Mouse events never forward to content while collapsed", "[LeftDock]")
     REQUIRE_FALSE(f.dock.OnEvent(MousePress(10, 3)));
     REQUIRE(f.files.localEvents.empty());
 }
+
+TEST_CASE("RemovePanel falls back to the first remaining panel only when the active one goes", "[LeftDock]") {
+    Fixture           f;
+    FakePanel         tracker{"T"};
+    const std::size_t filesId   = f.dock.AddPanel(U'F', "Files", f.files);
+    const std::size_t vcsId     = f.dock.AddPanel(U'V', "VCS", f.vcs);
+    const std::size_t trackerId = f.dock.AddPanel(U'T', "Sprint", tracker);
+
+    f.dock.SwitchTo(vcsId);
+    f.dock.RemovePanel(trackerId);
+    REQUIRE(f.dock.PanelCount() == 2);
+    REQUIRE(f.dock.ActivePanel() == vcsId);
+
+    f.dock.RemovePanel(vcsId);
+    REQUIRE(f.dock.ActivePanel() == filesId);
+    REQUIRE_FALSE(f.dock.FindPanel("VCS"));
+
+    // The rail closes up: Files is the only row left.
+    f.Paint();
+    REQUIRE(f.screen.PixelAt(1, 0).character == "F");
+    REQUIRE(f.screen.PixelAt(1, 1).character == " ");
+
+    f.dock.RemovePanel(vcsId); // already gone
+    REQUIRE(f.dock.PanelCount() == 1);
+}
+
+TEST_CASE("RemovePanel preempts focus held by the removed panel's content", "[LeftDock]") {
+    Fixture f;
+    f.dock.AddPanel(U'F', "Files", f.files);
+    const std::size_t vcsId = f.dock.AddPanel(U'V', "VCS", f.vcs);
+    f.vcs.TakeFocus();
+
+    f.dock.RemovePanel(vcsId);
+    REQUIRE(f.vcs.focusPreemptedCount == 1);
+    REQUIRE(f.files.focusPreemptedCount == 0);
+}
+
+TEST_CASE("LeftDock finds panels by name", "[LeftDock]") {
+    Fixture           f;
+    const std::size_t filesId = f.dock.AddPanel(U'F', "Files", f.files);
+    const std::size_t vcsId   = f.dock.AddPanel(U'V', "VCS", f.vcs);
+
+    REQUIRE(f.dock.FindPanel("VCS") == vcsId);
+    REQUIRE(f.dock.FindPanel("Files") == filesId);
+    REQUIRE_FALSE(f.dock.FindPanel("Debug"));
+    REQUIRE(f.dock.PanelName(vcsId) == "VCS");
+    REQUIRE(f.dock.PanelName(99).empty());
+}
+
+TEST_CASE("A preferred panel becomes active whenever it registers", "[LeftDock]") {
+    Fixture   f;
+    FakePanel tracker{"T"};
+    f.dock.SetPreferredPanel("Sprint");
+    const std::size_t filesId = f.dock.AddPanel(U'F', "Files", f.files);
+    REQUIRE(f.dock.ActivePanel() == filesId);
+
+    std::size_t trackerId = f.dock.AddPanel(U'T', "Sprint", tracker);
+    REQUIRE(f.dock.ActivePanel() == trackerId);
+
+    // Leaving and re-entering the project that owns it brings it back.
+    f.dock.RemovePanel(trackerId);
+    REQUIRE(f.dock.ActivePanel() == filesId);
+    trackerId = f.dock.AddPanel(U'T', "Sprint", tracker);
+    REQUIRE(f.dock.ActivePanel() == trackerId);
+
+    // A deliberate switch replaces the preference; a silent one doesn't.
+    const std::size_t vcsId = f.dock.AddPanel(U'V', "VCS", f.vcs);
+    f.dock.SwitchTo(filesId);
+    f.dock.RemovePanel(trackerId);
+    trackerId = f.dock.AddPanel(U'T', "Sprint", tracker);
+    REQUIRE(f.dock.ActivePanel() == trackerId);
+
+    std::size_t committed = 99;
+    f.dock.SetOnActivePanelCommitted([&](std::size_t id) { committed = id; });
+    f.dock.CommitSwitchTo(vcsId);
+    REQUIRE(committed == vcsId);
+    f.dock.RemovePanel(trackerId);
+    f.dock.AddPanel(U'T', "Sprint", tracker);
+    REQUIRE(f.dock.ActivePanel() == vcsId);
+}
+
+TEST_CASE("SetPreferredPanel switches silently to an already registered panel", "[LeftDock]") {
+    Fixture f;
+    f.dock.AddPanel(U'F', "Files", f.files);
+    const std::size_t vcsId     = f.dock.AddPanel(U'V', "VCS", f.vcs);
+    bool              committed = false;
+    f.dock.SetOnActivePanelCommitted([&](std::size_t) { committed = true; });
+
+    f.dock.SetPreferredPanel("VCS");
+    REQUIRE(f.dock.ActivePanel() == vcsId);
+    REQUIRE_FALSE(committed);
+}
+
+TEST_CASE("Hovering a rail row reports that panel's name beside the row", "[LeftDock]") {
+    Fixture f;
+    f.dock.AddPanel(U'F', "Files", f.files);
+    const std::size_t vcsId = f.dock.AddPanel(U'V', "VCS", f.vcs);
+    f.Paint();
+
+    std::vector<std::optional<LeftDock::RailHover>> reports;
+    f.dock.SetOnRailHoverChanged([&](std::optional<LeftDock::RailHover> hover) { reports.push_back(std::move(hover)); });
+
+    f.dock.OnEvent(MouseMove(1, 1));
+    REQUIRE(reports.size() == 1);
+    REQUIRE(reports[0]);
+    REQUIRE(reports[0]->name == "VCS");
+    REQUIRE(reports[0]->anchor.x == 3);
+    REQUIRE(reports[0]->anchor.y == 1);
+
+    // Moving within the same row reports nothing new.
+    f.dock.OnEvent(MouseMove(2, 1));
+    REQUIRE(reports.size() == 1);
+
+    // A bare hover, as the terminal backend actually reports one.
+    f.dock.OnEvent(ned::ui::test::Mouse(1, 0, MouseEvent::Button::None, MouseEvent::Motion::Released));
+    REQUIRE(reports.size() == 2);
+    REQUIRE(reports[1]->name == "Files");
+
+    // Below the last rail row, and outside the dock entirely, both clear it.
+    f.dock.OnEvent(MouseMove(1, 5));
+    REQUIRE(reports.size() == 3);
+    REQUIRE_FALSE(reports[2]);
+    f.dock.OnEvent(MouseMove(1, 1));
+    f.dock.OnEvent(MouseMove(kWidth + 5, 1));
+    REQUIRE(reports.size() == 5);
+    REQUIRE_FALSE(reports[4]);
+
+    // Removing the hovered panel clears it too.
+    f.dock.OnEvent(MouseMove(1, 1));
+    f.dock.RemovePanel(vcsId);
+    REQUIRE(reports.size() == 7);
+    REQUIRE_FALSE(reports[6]);
+}
