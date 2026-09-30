@@ -38,19 +38,34 @@ namespace {
         return maxAgeDays;
     }
 
-    // Lsp defaults hidden (the noisy source, per this feature's own design
-    // discussion); every other category defaults visible.
-    std::array<bool, 8>& CategoryVisibleStorage() {
-        static std::array<bool, 8> visible = {
-            true,  // General
-            true,  // Janet
-            false, // Lsp
-            true,  // Dap
-            true,  // Acp
-            true,  // Vcs
-            true,  // Task
-            true,  // Subprocess
-        };
+    // Lsp is the noisy source.
+    constexpr bool DefaultCategoryVisible(LogCategory category) {
+        switch (category) {
+            case LogCategory::Lsp:
+                return false;
+            case LogCategory::General:
+            case LogCategory::Janet:
+            case LogCategory::Dap:
+            case LogCategory::Acp:
+            case LogCategory::Vcs:
+            case LogCategory::Task:
+            case LogCategory::Tracker:
+            case LogCategory::Subprocess:
+                return true;
+        }
+        return true;
+    }
+
+    constexpr std::array<bool, kLogCategoryCount> DefaultCategoryVisibility() {
+        std::array<bool, kLogCategoryCount> visible{};
+        for (std::size_t i = 0; i < visible.size(); ++i) {
+            visible[i] = DefaultCategoryVisible(static_cast<LogCategory>(i));
+        }
+        return visible;
+    }
+
+    std::array<bool, kLogCategoryCount>& CategoryVisibleStorage() {
+        static std::array<bool, kLogCategoryCount> visible = DefaultCategoryVisibility();
         return visible;
     }
 
@@ -450,16 +465,7 @@ void ResetDiagnosticsLogForTesting() {
     MaxEntriesStorage()      = 5000;
     MaxAgeDaysStorage()      = 14;
     GenerationStorage()      = 0;
-    CategoryVisibleStorage() = {
-        true,
-        true,
-        false,
-        true,
-        true,
-        true,
-        true,
-        true,
-    };
+    CategoryVisibleStorage() = DefaultCategoryVisibility();
     LastPruneStorage().reset();
     HasUnseenStorage() = false;
 }

@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -11,6 +12,7 @@
 
 using ned::editor::AcknowledgeDiagnosticsLogEntry;
 using ned::editor::HasUnseenDiagnosticsLogEntry;
+using ned::editor::kLogCategoryCount;
 using ned::editor::LogCategory;
 using ned::editor::LogCategoryFromString;
 using ned::editor::LogCategoryToString;
@@ -117,6 +119,19 @@ TEST_CASE("Lsp defaults hidden, every other category defaults visible", "[Diagno
     REQUIRE(LogCategoryVisible(LogCategory::Task));
     REQUIRE(LogCategoryVisible(LogCategory::Tracker));
     REQUIRE(LogCategoryVisible(LogCategory::Subprocess));
+}
+
+TEST_CASE("SetLogCategoryVisible on one category leaves every other category unchanged", "[DiagnosticsLog]") {
+    const LogSandbox sandbox("ned_difflog_test_isolation");
+    for (std::size_t toggled = 0; toggled < kLogCategoryCount; ++toggled) {
+        const auto category = static_cast<LogCategory>(toggled);
+        SetLogCategoryVisible(category, !LogCategoryVisible(category));
+        for (std::size_t other = 0; other < kLogCategoryCount; ++other) {
+            const bool expected = (other == toggled) != (static_cast<LogCategory>(other) != LogCategory::Lsp);
+            REQUIRE(LogCategoryVisible(static_cast<LogCategory>(other)) == expected);
+        }
+        SetLogCategoryVisible(category, !LogCategoryVisible(category));
+    }
 }
 
 TEST_CASE("SetLogCategoryVisible round-trips and only bumps the generation on real change", "[DiagnosticsLog]") {

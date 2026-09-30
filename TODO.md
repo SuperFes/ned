@@ -20,6 +20,12 @@ about features. Declaring it makes breaking any of them a major-version event. C
 
 - [ ] **Snippet variables inside a placeholder's default** (`${1:$TM_FILENAME}`) don't
       resolve. Only a top-level `$`/`${` reference does.
+- [ ] **Local-scope resolution differs between Debug and release builds** for fsharp,
+      julia, ocaml and swift. Their `*-mode binds …` locals tests fail only in
+      `build-sanitize`: fsharp's parameter `x` resolves 7 occurrences instead of 2. No
+      sanitizer report fires, and the path is `ModeByName` + `localScopes` over a string,
+      so suspect uninitialized state or `NDEBUG`-dependent logic in the grammar or scope
+      engine.
 
 ## Unverified Against Real Environments
 
