@@ -9,6 +9,7 @@
 
 #include <unistd.h>
 
+#include "BoundedRead.h"
 #include "Editor/Acp/Client.h"
 #include "Editor/Acp/Config.h"
 #include "Editor/Acp/Manager.h"
@@ -51,7 +52,7 @@ struct MessageReader {
                 return Json::parse(line);
             }
             char          chunk[512];
-            const ssize_t n = ::read(fd, chunk, sizeof(chunk));
+            const ssize_t n = ned::test::BoundedRead(fd, chunk, sizeof(chunk));
             if (n <= 0) {
                 break;
             }

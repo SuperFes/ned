@@ -9,6 +9,7 @@
 
 #include <unistd.h>
 
+#include "BoundedRead.h"
 #include "Editor/Lsp/Transport.h"
 #include "Editor/Protocol/FramedConnection.h"
 #include "UI/EventLoop.h"
@@ -63,7 +64,7 @@ std::string ReadRawFrameBody(int fd) {
     std::string all;
     char        buffer[256];
     for (int i = 0; i < 4; ++i) {
-        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        const ssize_t n = ned::test::BoundedRead(fd, buffer, sizeof(buffer));
         if (n <= 0) {
             break;
         }

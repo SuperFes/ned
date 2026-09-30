@@ -18,6 +18,7 @@
 #include <optional>
 #include <string>
 
+#include "BoundedRead.h"
 #include "Editor/ClassFileSyncSettings.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
@@ -193,7 +194,7 @@ std::string ReadRawLspFrame(int fd) {
         if (NoFrameArrives(fd)) {
             break;
         }
-        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        const ssize_t n = ned::test::BoundedRead(fd, buffer, sizeof(buffer));
         if (n <= 0) {
             break;
         }

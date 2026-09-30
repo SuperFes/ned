@@ -322,6 +322,7 @@ add_executable(ned_tests
             VcsRowStatusTest.cpp
             VcsSequenceTest.cpp
             BackgroundActivityTest.cpp
+            BoundedReadTest.cpp
             AcpTransportTest.cpp
             AcpClientTest.cpp
             AcpConfigTest.cpp

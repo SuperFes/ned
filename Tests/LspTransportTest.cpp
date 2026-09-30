@@ -9,6 +9,7 @@
 
 #include <unistd.h>
 
+#include "BoundedRead.h"
 #include "Editor/Lsp/Transport.h"
 
 using ned::editor::lsp::Transport;
@@ -217,7 +218,7 @@ TEST_CASE("Transport captures stderr on its own pipe, separate from stdout, when
     std::string collected;
     char        buffer[256];
     while (collected.find("err line 2\n") == std::string::npos) {
-        const ssize_t n = ::read(transport.StderrFd(), buffer, sizeof(buffer));
+        const ssize_t n = ned::test::BoundedRead(transport.StderrFd(), buffer, sizeof(buffer));
         REQUIRE(n > 0);
         collected.append(buffer, static_cast<std::size_t>(n));
     }

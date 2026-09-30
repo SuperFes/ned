@@ -11,6 +11,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "BoundedRead.h"
 #include "Editor/Process/ChildProcess.h"
 
 using ned::editor::process::ChildProcess;
@@ -183,7 +184,7 @@ TEST_CASE("StderrMode::Capture routes stderr onto its own pipe, separate from st
     REQUIRE(child.ReadSome() == "out\n");
 
     char          buffer[64] = {};
-    const ssize_t n          = ::read(child.StderrFd(), buffer, sizeof(buffer));
+    const ssize_t n          = ned::test::BoundedRead(child.StderrFd(), buffer, sizeof(buffer));
     REQUIRE(n > 0);
     REQUIRE(std::string(buffer, static_cast<std::size_t>(n)) == "err\n");
 }

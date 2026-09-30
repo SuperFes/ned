@@ -16,6 +16,7 @@
 #include <poll.h>
 #include <unistd.h>
 
+#include "BoundedRead.h"
 #include "Editor/Acp/Client.h"
 #include "Editor/Acp/Config.h"
 #include "Editor/Acp/Manager.h"
@@ -550,7 +551,7 @@ std::string ReadRawLspFrame(int fd) {
     std::string all;
     char        buffer[512];
     for (int i = 0; i < 4; ++i) {
-        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        const ssize_t n = ned::test::BoundedRead(fd, buffer, sizeof(buffer));
         if (n <= 0) {
             break;
         }
@@ -768,7 +769,7 @@ struct FakeDapAdapter {
                 }
             }
             char          chunk[512];
-            const ssize_t n = ::read(adapterStdinRead, chunk, sizeof(chunk));
+            const ssize_t n = ned::test::BoundedRead(adapterStdinRead, chunk, sizeof(chunk));
             if (n <= 0) {
                 break;
             }
@@ -829,7 +830,7 @@ struct FakeAcpAgent {
                 return ned::editor::acp::Json::parse(line);
             }
             char          chunk[512];
-            const ssize_t n = ::read(agentStdinRead, chunk, sizeof(chunk));
+            const ssize_t n = ned::test::BoundedRead(agentStdinRead, chunk, sizeof(chunk));
             if (n <= 0) {
                 break;
             }

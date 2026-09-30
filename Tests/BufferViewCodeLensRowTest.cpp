@@ -10,6 +10,7 @@
 
 #include <unistd.h>
 
+#include "BoundedRead.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
@@ -117,7 +118,7 @@ struct FrameReader {
                 return *framed;
             }
             char          buffer[4096];
-            const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+            const ssize_t n = ned::test::BoundedRead(fd, buffer, sizeof(buffer));
             if (n <= 0) {
                 break;
             }

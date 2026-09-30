@@ -9,6 +9,7 @@
 #include <optional>
 #include <string>
 
+#include "BoundedRead.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
@@ -94,7 +95,7 @@ std::string ReadRawLspFrame(int fd) {
     std::string all;
     char        buffer[512];
     for (int i = 0; i < 4; ++i) {
-        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        const ssize_t n = ned::test::BoundedRead(fd, buffer, sizeof(buffer));
         if (n <= 0) {
             break;
         }

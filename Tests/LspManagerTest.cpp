@@ -13,6 +13,7 @@
 #include <poll.h>
 #include <unistd.h>
 
+#include "BoundedRead.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Lsp/BackgroundSync.h"
 #include "Editor/Lsp/Client.h"
@@ -103,7 +104,7 @@ std::string ReadRawFrame(int fd) {
     std::string all;
     char        buffer[512];
     for (int i = 0; i < 4; ++i) {
-        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        const ssize_t n = ned::test::BoundedRead(fd, buffer, sizeof(buffer));
         if (n <= 0) {
             break;
         }
@@ -161,7 +162,7 @@ std::string ReadRawFramesUntil(int fd, std::size_t frameCount) {
     std::string all;
     char        buffer[512];
     for (int i = 0; i < 8; ++i) {
-        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        const ssize_t n = ned::test::BoundedRead(fd, buffer, sizeof(buffer));
         if (n <= 0) {
             break;
         }
@@ -187,11 +188,8 @@ struct ProjectRootGuard {
     }
 };
 
-// prose-checking follow-up: asserting "nothing was ever sent" can't use
-// ReadRawFrame's own blocking ::read (it would hang forever on a fd that
-// legitimately never gets written to -- the case under test). A short,
-// bounded poll() is the deliberate exception to this file's otherwise
-// blocking-read style, used only here.
+// Asserting "nothing was ever sent" can't use ReadRawFrame, which fails the
+// test when nothing arrives -- the case under test here.
 bool NoFrameArrives(int fd) {
     pollfd pfd{.fd = fd, .events = POLLIN, .revents = 0};
     return ::poll(&pfd, 1, 200) == 0; // 0 == timed out, nothing readable

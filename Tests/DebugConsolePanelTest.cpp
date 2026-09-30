@@ -14,6 +14,7 @@
 
 #include <unistd.h>
 
+#include "BoundedRead.h"
 #include "Editor/Dap/Client.h"
 #include "Editor/Dap/Config.h"
 #include "Editor/Dap/Manager.h"
@@ -61,7 +62,7 @@ struct FrameReader {
                 }
             }
             char          chunk[512];
-            const ssize_t n = ::read(fd, chunk, sizeof(chunk));
+            const ssize_t n = ned::test::BoundedRead(fd, chunk, sizeof(chunk));
             if (n <= 0) {
                 break;
             }

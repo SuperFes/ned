@@ -9,6 +9,7 @@
 
 #include <unistd.h>
 
+#include "BoundedRead.h"
 #include "Editor/Acp/Client.h"
 #include "Editor/Acp/Transport.h"
 #include "UI/EventLoop.h"
@@ -60,7 +61,7 @@ std::string ReadRawMessage(int fd) {
     std::string all;
     char        buffer[256];
     for (int i = 0; i < 8; ++i) {
-        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        const ssize_t n = ned::test::BoundedRead(fd, buffer, sizeof(buffer));
         if (n <= 0) {
             break;
         }

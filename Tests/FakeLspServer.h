@@ -16,6 +16,7 @@
 
 #include <unistd.h>
 
+#include "BoundedRead.h"
 #include "Editor/Lsp/Client.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Lsp/Transport.h"
@@ -76,7 +77,7 @@ struct FakeLspServer {
                     return body;
                 }
             }
-            const ssize_t n = ::read(serverStdinRead, chunk, sizeof(chunk));
+            const ssize_t n = ned::test::BoundedRead(serverStdinRead, chunk, sizeof(chunk));
             REQUIRE(n > 0);
             pending_.append(chunk, static_cast<std::size_t>(n));
         }

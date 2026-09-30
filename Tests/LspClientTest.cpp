@@ -10,6 +10,7 @@
 #include <poll.h>
 #include <unistd.h>
 
+#include "BoundedRead.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Lsp/Client.h"
 #include "Editor/Lsp/Transport.h"
@@ -107,7 +108,7 @@ std::string ReadRawFrame(int fd) {
     // a short, bounded number of reads is enough without needing a real
     // Content-Length-aware loop here.
     for (int i = 0; i < 4; ++i) {
-        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        const ssize_t n = ned::test::BoundedRead(fd, buffer, sizeof(buffer));
         if (n <= 0) {
             break;
         }
@@ -166,7 +167,7 @@ std::vector<Json> ReadQueuedFrames(int fd, std::size_t count) {
         if (framesSoFar >= count) {
             break;
         }
-        const ssize_t n = ::read(fd, buffer, sizeof(buffer));
+        const ssize_t n = ned::test::BoundedRead(fd, buffer, sizeof(buffer));
         if (n <= 0) {
             break;
         }
@@ -632,7 +633,7 @@ TEST_CASE("Frames enqueued while a write is stalled still arrive, in order, once
     std::string all;
     char        buffer[4096];
     for (int i = 0; i < 200; ++i) { // generous cap; stops as soon as every frame's been seen
-        const ssize_t n = ::read(fixture.serverStdinRead, buffer, sizeof(buffer));
+        const ssize_t n = ned::test::BoundedRead(fixture.serverStdinRead, buffer, sizeof(buffer));
         if (n <= 0) {
             break;
         }
