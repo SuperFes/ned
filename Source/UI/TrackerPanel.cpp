@@ -1,7 +1,11 @@
 #include "TrackerPanel.h"
 
 #include <algorithm>
+#include <ctime>
+#include <iterator>
 #include <utility>
+
+#include "Editor/Timestamp.h"
 
 namespace ned::ui {
 
@@ -13,13 +17,11 @@ namespace {
 
 } // namespace
 
-TrackerPanel::TrackerPanel(const Theme& theme, std::string panelName) : theme_(theme), panelName_(std::move(panelName)), tree_(theme) {
-    tree_.SetOnSelectionChanged([this](std::size_t index) { selectedIndex_ = index; });
-    tree_.SetOnActivate([this](std::size_t index) { HandleActivate(index); });
-    tree_.SetOnToggleExpand([this](std::size_t index) { SetStatusCollapsed(index, false); });
-    tree_.SetOnCollapseRequested([this](std::size_t index) { SetStatusCollapsed(index, true); });
-    tree_.SetOnKey([this](const editor::KeyChord& chord) { HandleKey(chord); });
-    tree_.SetOnCancel([this] {
+TrackerPanel::TrackerPanel(const Theme& theme, std::string panelName) : theme_(theme), panelName_(std::move(panelName)), table_(theme),
+                                                                        now_([] { return static_cast<std::int64_t>(std::time(nullptr)); }) {
+    table_.SetOnActivate([this](const std::string& key) { HandleActivate(key); });
+    table_.SetOnKey([this](const editor::KeyChord& chord) { HandleKey(chord); });
+    table_.SetOnCancel([this] {
         if (onCancel_) {
             onCancel_();
         }
@@ -27,8 +29,8 @@ TrackerPanel::TrackerPanel(const Theme& theme, std::string panelName) : theme_(t
     Rebuild();
 }
 
-TreeView& TrackerPanel::Tree() {
-    return tree_;
+TableView& TrackerPanel::Table() {
+    return table_;
 }
 
 void TrackerPanel::NotifyShown() {
@@ -93,122 +95,91 @@ void TrackerPanel::SetOnCancel(std::function<void()> handler) {
     onCancel_ = std::move(handler);
 }
 
+void TrackerPanel::SetClock(std::function<std::int64_t()> now) {
+    now_ = std::move(now);
+    Rebuild();
+}
+
 void TrackerPanel::Report(std::string message) {
     if (onMessage_) {
         onMessage_(std::move(message));
     }
 }
 
-const editor::tracker::Issue* TrackerPanel::IssueAt(std::size_t index) const {
-    if (index >= rows_.size() || rows_[index].kind != Row::Kind::Issue) {
+const editor::tracker::Issue* TrackerPanel::SelectedIssue() const {
+    const std::optional<std::string> key = table_.SelectedRowId();
+    if (!key) {
         return nullptr;
     }
-    return &issues_[rows_[index].issue];
+    const auto found = std::ranges::find(issues_, *key, &editor::tracker::Issue::key);
+    return found == issues_.end() ? nullptr : &*found;
 }
 
 void TrackerPanel::Rebuild() {
-    rows_.clear();
-    TreeViewModel model;
-    model.title = panelName_;
-
-    const auto placeholder = [&](std::string text) {
-        rows_.push_back(Row{.kind = Row::Kind::Placeholder});
-        model.rows.push_back(TreeRow{.label = std::move(text), .labelForeground = theme_.indentGuideForeground, .hasChildren = false});
+    table::Model model;
+    model.title   = panelName_;
+    model.loading = state_ == State::Loading;
+    model.columns = {
+        table::Column{.id = "key", .header = "Key", .maxWidth = 16},
+        table::Column{.id = "title", .header = "Title", .width = table::Column::Width::Flex, .minWidth = 8},
+        table::Column{.id = "assignee", .header = "Assignee", .maxWidth = 16, .dropPriority = 2},
+        table::Column{.id              = "age",
+                      .header          = "Age",
+                      .align           = table::Align::Right,
+                      .dropPriority    = 1,
+                      .descendingFirst = true},
     };
 
     if (state_ == State::NotFetched) {
-        placeholder("Press g to load");
+        model.placeholder = "Press g to load";
     }
     else if (state_ == State::Loading && issues_.empty()) {
-        placeholder("Loading…");
+        model.placeholder = "Loading…";
     }
     else if (state_ == State::Failed) {
-        placeholder("Fetch failed -- g to retry");
+        model.placeholder = "Fetch failed -- g to retry";
     }
-    else if (issues_.empty()) {
-        placeholder("(no issues)");
+    else {
+        model.placeholder = "(no issues)";
     }
 
     // Statuses in order of first appearance: the tracker's own sort (most
     // recently updated, usually) decides which group comes first.
-    std::vector<std::string> statuses;
+    const std::int64_t now = now_();
     for (const editor::tracker::Issue& issue : issues_) {
-        if (std::ranges::find(statuses, issue.status) == statuses.end()) {
-            statuses.push_back(issue.status);
+        auto group = std::ranges::find(model.groups, "status:" + issue.status, &table::Group::id);
+        if (group == model.groups.end()) {
+            model.groups.push_back(table::Group{.id = "status:" + issue.status, .label = StatusLabel(issue.status)});
+            group = std::prev(model.groups.end());
         }
-    }
-    for (const std::string& status : statuses) {
-        const auto count = std::ranges::count(issues_, status, &editor::tracker::Issue::status);
-        const bool open  = !collapsedStatuses_.contains(status);
-        rows_.push_back(Row{.kind = Row::Kind::StatusHeader, .status = status});
-        model.rows.push_back(TreeRow{.label           = StatusLabel(status),
-                                     .right           = std::to_string(count),
-                                     .rightForeground = theme_.indentGuideForeground,
-                                     .hasChildren     = true,
-                                     .expanded        = open,
-                                     .loading         = state_ == State::Loading});
-        if (!open) {
-            continue;
+        // Sorted by the time itself, not its label: newest is the largest.
+        table::Cell age{.foreground = theme_.indentGuideForeground};
+        if (const std::optional<std::int64_t> updated = editor::ParseIso8601(issue.updated)) {
+            age.text       = editor::CompactAge(now - *updated);
+            age.sortNumber = *updated;
         }
-        for (std::size_t i = 0; i < issues_.size(); ++i) {
-            if (issues_[i].status != status) {
-                continue;
-            }
-            rows_.push_back(Row{.kind = Row::Kind::Issue, .status = status, .issue = i});
-            model.rows.push_back(TreeRow{.label = issues_[i].key + "  " + issues_[i].title, .depth = 1, .hasChildren = false});
-        }
+        group->rows.push_back(table::Row{.id    = issue.key,
+                                         .cells = {table::Cell{.text = issue.key},
+                                                   table::Cell{.text = issue.title},
+                                                   table::Cell{.text = issue.assignee, .foreground = theme_.indentGuideForeground},
+                                                   std::move(age)}});
     }
-
-    if (!model.rows.empty()) {
-        selectedIndex_      = std::min(selectedIndex_, model.rows.size() - 1);
-        model.selectedIndex = selectedIndex_;
+    for (table::Group& group : model.groups) {
+        group.right = std::to_string(group.rows.size());
     }
-    tree_.SetModel(std::move(model));
+    table_.SetModel(std::move(model));
 }
 
-void TrackerPanel::HandleActivate(std::size_t index) {
-    if (index >= rows_.size()) {
+void TrackerPanel::HandleActivate(const std::string& key) {
+    if (key.empty()) {
+        if (state_ == State::NotFetched || state_ == State::Failed) {
+            Refresh();
+        }
         return;
     }
-    selectedIndex_ = index;
-    const Row& row = rows_[index];
-    switch (row.kind) {
-        case Row::Kind::StatusHeader:
-            SetStatusCollapsed(index, !collapsedStatuses_.contains(row.status));
-            return;
-        case Row::Kind::Issue:
-            if (onOpenIssue_) {
-                onOpenIssue_(issues_[row.issue]);
-            }
-            return;
-        case Row::Kind::Placeholder:
-            if (state_ == State::NotFetched || state_ == State::Failed) {
-                Refresh();
-            }
-            return;
-    }
-}
-
-void TrackerPanel::SetStatusCollapsed(std::size_t index, bool collapsed) {
-    if (index >= rows_.size() || rows_[index].kind == Row::Kind::Placeholder) {
-        return;
-    }
-    const std::string status = rows_[index].status;
-    if (collapsed) {
-        collapsedStatuses_.insert(status);
-    }
-    else {
-        collapsedStatuses_.erase(status);
-    }
-    // Collapsing from inside a group lands on its header rather than on
-    // whatever row slides up under the selection.
-    Rebuild();
-    const auto header = std::ranges::find_if(rows_, [&status](const Row& row) {
-        return row.kind == Row::Kind::StatusHeader && row.status == status;
-    });
-    if (header != rows_.end()) {
-        selectedIndex_ = static_cast<std::size_t>(header - rows_.begin());
-        Rebuild();
+    const auto found = std::ranges::find(issues_, key, &editor::tracker::Issue::key);
+    if (found != issues_.end() && onOpenIssue_) {
+        onOpenIssue_(*found);
     }
 }
 
@@ -216,8 +187,7 @@ void TrackerPanel::HandleKey(const editor::KeyChord& chord) {
     if (chord.Control || chord.Meta) {
         return;
     }
-    const std::size_t                   index = tree_.SelectedRow().value_or(selectedIndex_);
-    const editor::tracker::Issue* const issue = IssueAt(index);
+    const editor::tracker::Issue* const issue = SelectedIssue();
     switch (chord.Codepoint) {
         case U'g':
             Refresh();

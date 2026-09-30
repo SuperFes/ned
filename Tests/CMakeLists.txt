@@ -364,6 +364,7 @@ add_executable(ned_tests
             DapThreadsPanelTest.cpp
             DebugPanelTest.cpp
             TrackerPanelTest.cpp
+            TimestampTest.cpp
             TrackerGithubPluginTest.cpp
             TrackerJiraPluginTest.cpp
             ChildProcessTest.cpp

@@ -1590,7 +1590,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     for (const ned::editor::tracker::Panel& declared : ned::editor::tracker::Panels()) {
         auto                   owned = std::make_unique<ned::ui::TrackerPanel>(theme, declared.name);
         ned::ui::TrackerPanel* panel = owned.get();
-        panel->Tree().SetDrawBorder(false);
+        panel->Table().SetDrawBorder(false);
         panel->SetOnFetchRequested([&trackerRunner, panel] {
             trackerRunner.RequestIssues(
                 panel->Name(), [panel](std::vector<ned::editor::tracker::Issue> issues) { panel->ShowIssues(std::move(issues)); },
@@ -1627,7 +1627,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         // nf-fa-ticket unless the panel names its own.
         const char32_t glyph = declared.glyph.empty() ? U'\uF145' : ned::text::DecodeCodepointUtf8(declared.glyph, 0);
 
-        trackerPanelsByDockId.emplace(leftDock->AddPanel(glyph, declared.name, panel->Tree()), panel);
+        trackerPanelsByDockId.emplace(leftDock->AddPanel(glyph, declared.name, panel->Table()), panel);
         trackerPanels.push_back(std::move(owned));
     }
     // For the mode line's issue key.
@@ -1655,8 +1655,8 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
             statusMessage = "Tracker panel \"" + name + "\" isn't on the rail yet -- restart ned";
             return;
         }
-        dock->PrepareForKeyboardFocus(&(*found)->Tree());
-        (*found)->Tree().TakeFocus();
+        dock->PrepareForKeyboardFocus(&(*found)->Table());
+        (*found)->Table().TakeFocus();
     });
 
     // ACP client slice 2: same "constructed here, needs a real EventLoop&"
