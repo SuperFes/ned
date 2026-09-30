@@ -34,11 +34,11 @@ namespace {
     std::unordered_map<std::string, std::string> g_extensionOverrides;
     std::unordered_map<std::string, std::string> g_filenameOverrides;
     // See CachedModeForBuffer's doc comment in the header.
-    text::PerBufferMap<Mode> g_modeCache{&g_mutex};
+    text::PerBufferMap<Mode, const text::Buffer*> g_modeCache{&g_mutex};
 
     // set-mode's choice per buffer: outlives cache flushes (a language
     // registration clears g_modeCache), dropped with the buffer.
-    text::PerBufferMap<std::string> g_chosenModes{&g_mutex};
+    text::PerBufferMap<std::string, const text::Buffer*> g_chosenModes{&g_mutex};
 
     // The bundled definitions' extensions -> mode name, keyed with the
     // leading dot (std::filesystem::path::extension()'s own form). Derived
@@ -156,13 +156,13 @@ namespace {
 
 void ClearAllModeCaches() {
     const std::lock_guard lock(g_mutex);
-    g_modeCache.Clear();
+    g_modeCache.clear();
 }
 
 void RegisterMode(const std::string& name, Mode mode) {
     const std::lock_guard lock(g_mutex);
     g_registeredModes.insert_or_assign(name, std::move(mode));
-    g_modeCache.Clear();
+    g_modeCache.clear();
 }
 
 std::optional<Mode> ModeByName(const std::string& name) {
@@ -181,13 +181,13 @@ std::optional<Mode> ModeByName(const std::string& name) {
 void SetModeForExtension(const std::string& extension, const std::string& modeName) {
     const std::lock_guard lock(g_mutex);
     g_extensionOverrides.insert_or_assign(StripLeadingDot(extension), modeName);
-    g_modeCache.Clear(); // see RegisterMode's own comment on why
+    g_modeCache.clear(); // see RegisterMode's own comment on why
 }
 
 void SetModeForFilename(const std::string& filename, const std::string& modeName) {
     const std::lock_guard lock(g_mutex);
     g_filenameOverrides.insert_or_assign(filename, modeName);
-    g_modeCache.Clear(); // see RegisterMode's own comment on why
+    g_modeCache.clear(); // see RegisterMode's own comment on why
 }
 
 std::optional<Mode> ModeForFileOverride(const std::filesystem::path& path) {
@@ -332,8 +332,8 @@ Mode ModeForBuffer(const text::Buffer& buffer) {
 Mode CachedModeForBuffer(const text::Buffer& buffer) {
     {
         const std::lock_guard lock(g_mutex);
-        if (const Mode* cached = g_modeCache.Find(buffer)) {
-            return *cached;
+        if (const auto it = g_modeCache.find(&buffer); it != g_modeCache.end()) {
+            return it->second;
         }
     }
     // Built with g_mutex released -- ModeForBuffer (via ModeForPath/
@@ -345,20 +345,20 @@ Mode CachedModeForBuffer(const text::Buffer& buffer) {
     std::optional<std::string> chosen;
     {
         const std::lock_guard lock(g_mutex);
-        if (const std::string* chosenName = g_chosenModes.Find(buffer)) {
-            chosen = *chosenName;
+        if (const auto it = g_chosenModes.find(&buffer); it != g_chosenModes.end()) {
+            chosen = it->second;
         }
     }
     std::optional<Mode>   chosenMode = chosen ? ModeByName(*chosen) : std::nullopt;
     Mode                  mode       = chosenMode ? std::move(*chosenMode) : ModeForBuffer(buffer);
     const std::lock_guard lock(g_mutex);
-    return g_modeCache.Set(buffer, std::move(mode));
+    return g_modeCache.insert_or_assign(&buffer, std::move(mode)).first->second;
 }
 
 void ClearModeCacheFor(const text::Buffer& buffer) {
     const std::lock_guard lock(g_mutex);
-    g_modeCache.Erase(buffer);
-    g_chosenModes.Erase(buffer);
+    g_modeCache.erase(&buffer);
+    g_chosenModes.erase(&buffer);
 }
 
 bool SetChosenModeForBuffer(const text::Buffer& buffer, const std::string& modeName) {
@@ -367,8 +367,8 @@ bool SetChosenModeForBuffer(const text::Buffer& buffer, const std::string& modeN
         return false;
     }
     const std::lock_guard lock(g_mutex);
-    g_chosenModes.Set(buffer, modeName);
-    g_modeCache.Set(buffer, std::move(*mode));
+    g_chosenModes.insert_or_assign(&buffer, modeName);
+    g_modeCache.insert_or_assign(&buffer, std::move(*mode));
     return true;
 }
 
@@ -393,7 +393,7 @@ std::vector<std::string> ModeNames() {
 
 void InsertPrewarmedMode(const text::Buffer& buffer, Mode mode) {
     const std::lock_guard lock(g_mutex);
-    g_modeCache.SetIfAbsent(buffer, std::move(mode));
+    g_modeCache.try_emplace(&buffer, std::move(mode));
 }
 
 } // namespace ned::editor

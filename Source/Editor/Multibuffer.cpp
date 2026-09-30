@@ -50,27 +50,28 @@ namespace {
 
     // See this header's own doc comment for why this isn't mutex-guarded
     // the way the process-wide settings modules elsewhere in Editor/ are.
-    text::PerBufferMap<MultibufferIndex>& Registry() {
-        static text::PerBufferMap<MultibufferIndex> registry;
+    text::PerBufferMap<MultibufferIndex, const text::Buffer*>& Registry() {
+        static text::PerBufferMap<MultibufferIndex, const text::Buffer*> registry;
         return registry;
     }
 
 } // namespace
 
 MultibufferIndex* MultibufferIndexFor(const text::Buffer& buffer) {
-    return Registry().Find(buffer);
+    const auto it = Registry().find(&buffer);
+    return it == Registry().end() ? nullptr : &it->second;
 }
 
 void SetMultibufferIndexFor(text::Buffer& buffer, MultibufferIndex index) {
-    Registry().Set(buffer, std::move(index));
+    Registry().insert_or_assign(&buffer, std::move(index));
 }
 
 void ClearMultibufferIndexFor(const text::Buffer& buffer) {
-    Registry().Erase(buffer);
+    Registry().erase(&buffer);
 }
 
 void ClearRegistryForTesting() {
-    Registry().Clear();
+    Registry().clear();
 }
 
 std::vector<std::pair<std::size_t, std::size_t>> FoldableExcerptBlocks(const MultibufferIndex& index) {

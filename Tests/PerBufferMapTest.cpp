@@ -11,32 +11,35 @@
 
 using ned::text::Buffer;
 using ned::text::PerBufferMap;
+using ned::text::PerBufferSet;
 
-TEST_CASE("PerBufferMap finds what was set for a buffer and nothing for another", "[PerBufferMap]") {
+TEST_CASE("PerBufferMap finds what was stored for a buffer and nothing for another", "[PerBufferMap]") {
     PerBufferMap<std::string> map;
     Buffer                    a("a");
     Buffer                    b("b");
-    map.Set(a, "for a");
+    map[&a] = "for a";
 
-    REQUIRE(map.Find(a) != nullptr);
-    REQUIRE(*map.Find(a) == "for a");
-    REQUIRE(map.Find(b) == nullptr);
+    REQUIRE(map.contains(&a));
+    REQUIRE(map.find(&a)->second == "for a");
+    REQUIRE(map.at(&a) == "for a");
+    REQUIRE(map.find(&b) == map.end());
 
-    map.Erase(a);
-    REQUIRE(map.Find(a) == nullptr);
+    REQUIRE(map.erase(&a) == 1);
+    REQUIRE(map.erase(&a) == 0);
+    REQUIRE(map.empty());
 }
 
 TEST_CASE("PerBufferMap drops a buffer's entry the moment the buffer is destroyed", "[PerBufferMap]") {
     PerBufferMap<std::string> map;
     Buffer                    kept("kept");
-    map.Set(kept, "kept's entry");
+    map[&kept] = "kept's entry";
     {
         Buffer temporary("temporary");
-        map.Set(temporary, "temporary's entry");
-        REQUIRE(map.Size() == 2);
+        map.insert({&temporary, "temporary's entry"});
+        REQUIRE(map.size() == 2);
     }
-    REQUIRE(map.Size() == 1);
-    REQUIRE(*map.Find(kept) == "kept's entry");
+    REQUIRE(map.size() == 1);
+    REQUIRE(map.find(&kept)->second == "kept's entry");
 }
 
 TEST_CASE("PerBufferMap never hands a freed buffer's entry to a new buffer at the same address", "[PerBufferMap]") {
@@ -45,92 +48,122 @@ TEST_CASE("PerBufferMap never hands a freed buffer's entry to a new buffer at th
 
     slot.emplace("first");
     const Buffer* address = &*slot;
-    map.Set(*slot, "first's entry");
+    map[&*slot]           = "first's entry";
     slot.reset();
 
     slot.emplace("second");
     REQUIRE(&*slot == address);
-    REQUIRE(map.Find(*slot) == nullptr);
+    REQUIRE_FALSE(map.contains(&*slot));
 }
 
-TEST_CASE("PerBufferMap forgets a buffer in every map holding it", "[PerBufferMap]") {
+TEST_CASE("PerBufferMap forgets a buffer in every container holding it", "[PerBufferMap]") {
     PerBufferMap<std::string> names;
     PerBufferMap<int>         counts;
+    PerBufferSet<>            seen;
     {
-        Buffer buffer("both");
-        names.Set(buffer, "name");
-        counts.Set(buffer, 1);
+        Buffer buffer("everywhere");
+        names[&buffer]  = "name";
+        counts[&buffer] = 1;
+        seen.insert(&buffer);
     }
-    REQUIRE(names.Size() == 0);
-    REQUIRE(counts.Size() == 0);
+    REQUIRE(names.empty());
+    REQUIRE(counts.empty());
+    REQUIRE(seen.empty());
 }
 
 TEST_CASE("PerBufferMap destroyed before its buffers leaves them safe to destroy", "[PerBufferMap]") {
     Buffer                    buffer("outlives the map");
     PerBufferMap<std::string> survivor;
-    survivor.Set(buffer, "survivor");
+    survivor[&buffer] = "survivor";
     {
         PerBufferMap<std::string> shortLived;
-        shortLived.Set(buffer, "short-lived");
+        shortLived[&buffer] = "short-lived";
     }
     // The buffer's destruction must only reach `survivor`; ASan flags a
     // call into the destroyed map.
-    REQUIRE(*survivor.Find(buffer) == "survivor");
+    REQUIRE(survivor.find(&buffer)->second == "survivor");
 }
 
 TEST_CASE("PerBufferMap erase and clear stop the buffer from reaching the map", "[PerBufferMap]") {
     PerBufferMap<std::string> map;
     {
-        Buffer erased("erased");
+        Buffer erasedByKey("erased by key");
+        Buffer erasedByIterator("erased by iterator");
         Buffer cleared("cleared");
-        map.Set(erased, "x");
-        map.Erase(erased);
-        map.Set(cleared, "y");
-        map.Clear();
-        map.Set(erased, "again");
-        REQUIRE(map.Size() == 1);
+        map[&erasedByKey]      = "x";
+        map[&erasedByIterator] = "y";
+        map.erase(&erasedByKey);
+        map.erase(map.find(&erasedByIterator));
+        map[&cleared] = "z";
+        map.clear();
+        map[&erasedByKey] = "again";
+        REQUIRE(map.size() == 1);
     }
-    REQUIRE(map.Size() == 0);
+    REQUIRE(map.empty());
 }
 
 TEST_CASE("PerBufferMap keys a moved buffer's entry to the object at the original address", "[PerBufferMap]") {
     PerBufferMap<std::string> map;
     auto                      source = std::make_unique<Buffer>("source");
-    map.Set(*source, "source's entry");
+    map[source.get()]                = "source's entry";
 
     Buffer moved(std::move(*source));
-    REQUIRE(map.Find(moved) == nullptr);
-    REQUIRE(map.Size() == 1);
+    REQUIRE_FALSE(map.contains(&moved));
+    REQUIRE(map.size() == 1);
 
     source.reset();
-    REQUIRE(map.Size() == 0);
+    REQUIRE(map.empty());
 }
 
-TEST_CASE("PerBufferMap drops an entry once its buffer is move-assigned another identity", "[PerBufferMap]") {
+TEST_CASE("PerBufferMap drops a buffer's entry when the buffer is assigned over", "[PerBufferMap]") {
     PerBufferMap<std::string> map;
     Buffer                    target("target");
-    map.Set(target, "target's entry");
+    Buffer                    source("source");
+    map[&target] = "target's entry";
+    map[&source] = "source's entry";
 
-    target = Buffer("replacement");
-    REQUIRE(map.Find(target) == nullptr);
-    REQUIRE(map.Size() == 0);
+    target = std::move(source);
+    REQUIRE_FALSE(map.contains(&target));
+    REQUIRE(map.contains(&source));
 }
 
-TEST_CASE("PerBufferMap::SetIfAbsent keeps a live entry and fills a missing one", "[PerBufferMap]") {
+TEST_CASE("PerBufferMap try_emplace keeps a live entry and fills a missing one", "[PerBufferMap]") {
     PerBufferMap<std::string> map;
     Buffer                    buffer("buffer");
-    REQUIRE(map.SetIfAbsent(buffer, "first") == "first");
-    REQUIRE(map.SetIfAbsent(buffer, "ignored") == "first");
+    REQUIRE(map.try_emplace(&buffer, "first").second);
+    REQUIRE_FALSE(map.try_emplace(&buffer, "ignored").second);
+    REQUIRE(map.find(&buffer)->second == "first");
+}
+
+TEST_CASE("PerBufferMap keyed by const Buffer* drops entries the same way", "[PerBufferMap]") {
+    PerBufferMap<int, const Buffer*> map;
+    {
+        const Buffer buffer("const");
+        map[&buffer] = 1;
+        REQUIRE(map.size() == 1);
+    }
+    REQUIRE(map.empty());
+}
+
+TEST_CASE("PerBufferSet inserts a buffer once and forgets it when destroyed", "[PerBufferMap]") {
+    PerBufferSet<> set;
+    {
+        Buffer buffer("member");
+        REQUIRE(set.insert(&buffer).second);
+        REQUIRE_FALSE(set.insert(&buffer).second);
+        REQUIRE(set.contains(&buffer));
+    }
+    REQUIRE(set.empty());
 }
 
 TEST_CASE("PerBufferMap takes its guard while forgetting a destroyed buffer", "[PerBufferMap]") {
     std::mutex                guard;
     PerBufferMap<std::string> map(&guard);
     auto                      buffer = std::make_unique<Buffer>("guarded");
-    map.Set(*buffer, "entry");
+    map[buffer.get()]                = "entry";
 
     buffer.reset();
-    REQUIRE(map.Size() == 0);
+    REQUIRE(map.empty());
     // Not left locked.
     REQUIRE(guard.try_lock());
     guard.unlock();

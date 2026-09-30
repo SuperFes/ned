@@ -23,10 +23,10 @@ class BufferEntryOwner {
     ~BufferEntryOwner() = default;
 };
 
-// A Buffer's record of the owners holding an entry under its address.
-// Copies and moves start empty, and assignment keeps the target's record:
-// an entry belongs to whatever object sits at its key's address, not to the
-// contents that were copied or moved into it.
+// A Buffer's record of the owners holding an entry under its address. An
+// entry belongs to the object at that address, not to its contents: copies
+// and moves start with no record, and assigning over a buffer drops the
+// entries stored for what was there.
 class BufferEntryOwners {
   public:
     BufferEntryOwners() = default;
@@ -34,17 +34,21 @@ class BufferEntryOwners {
     }
     BufferEntryOwners(BufferEntryOwners&& /*other*/) noexcept {
     }
-    BufferEntryOwners& operator=(const BufferEntryOwners& /*other*/) noexcept {
+    BufferEntryOwners& operator=(const BufferEntryOwners& other) noexcept {
+        if (this != &other) {
+            ForgetAll();
+        }
         return *this;
     }
-    BufferEntryOwners& operator=(BufferEntryOwners&& /*other*/) noexcept {
+    BufferEntryOwners& operator=(BufferEntryOwners&& other) noexcept {
+        if (this != &other) {
+            ForgetAll();
+        }
         return *this;
     }
 
     ~BufferEntryOwners() {
-        for (const auto& [owner, key] : std::exchange(owners_, {})) {
-            owner->ForgetBuffer(key);
-        }
+        ForgetAll();
     }
 
     void Add(BufferEntryOwner& owner, const Buffer* key) {
@@ -56,6 +60,12 @@ class BufferEntryOwners {
     }
 
   private:
+    void ForgetAll() {
+        for (const auto& [owner, key] : std::exchange(owners_, {})) {
+            owner->ForgetBuffer(key);
+        }
+    }
+
     std::vector<std::pair<BufferEntryOwner*, const Buffer*>> owners_;
 };
 
