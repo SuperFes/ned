@@ -48,6 +48,11 @@ Janet ToJanet(const std::optional<int>& value);
 // codebase to return a container rather than a scalar.
 Janet ToJanet(const std::vector<std::string>& value);
 
+// Identity, so a binding can build and return an arbitrary Janet value.
+inline Janet ToJanet(Janet value) {
+    return value;
+}
+
 // Shared ownership of a Janet value kept alive against Janet's GC
 // (janet_gcroot/janet_gcunroot) for as long as any copy of this survives.
 // Needed whenever C++ code holds onto a Janet value (e.g. a callback

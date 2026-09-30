@@ -1100,22 +1100,15 @@ The shape, agreed 2026-09-29:
 - `LeftDock` is ready for this: `RemovePanel`, panels restored by name through
   `SetPreferredPanel` (so a project's panel comes back active when the project does), and
   a rail tooltip naming each panel.
-
-**Stage 2 -- tracker model and provider seam.**
-- [ ] `Editor/Tracker/`: a neutral issue record (key, title, status, assignee, labels,
-      URL, updated), `ned/tracker-register-provider` taking one keyword table the way
-      `ned/vcs-register-provider` does (`JanetVcsProvider.h`), and a runner that fetches
-      off the main thread the way `Vcs/Runner` does.
-- [ ] `ned/set-tracker-connection` and `ned/add-tracker-panel`. Tested against a stub
-      provider.
-- [ ] Transport is (a) below; (b) and (c) stay rejected unless (a) demonstrably hurts:
-      - **(a) `gh`/`curl` argv from Janet, JSON parsed in Janet** -- the VCS provider
-        template: Janet builds an argv and parses stdout, C++ owns spawning and the
-        main-thread callback discipline. No new C++ dependency.
-      - **(b) A real HTTP client in C++** (libcurl) -- buys async, connection reuse and
-        streaming.
-      - **(c) MCP client** -- ned speaks MCP in the wrong direction (`Mcp/BridgeServer`
-        is a server), and it would hand the user's credentials to another process.
+- The provider seam is in (`Editor/Tracker/`, `Janet/JanetTrackerProvider.h`):
+  `ned/tracker-register-provider` (`:list-argv`/`:parse-list`), `ned/set-tracker-connection`,
+  `ned/add-tracker-panel`, `ned/json-decode`, and `tracker::Runner::RequestIssues`. Nothing
+  constructs a `Runner` or reads the panel registry yet -- that is Stage 3. Transport is
+  **`gh`/`curl` argv from Janet, JSON parsed in Janet**; a C++ HTTP client (libcurl) and an
+  MCP client stay rejected unless that demonstrably hurts -- ned's MCP side is a server
+  (`Mcp/BridgeServer`), and a client would hand the user's credentials to another process.
+  Output is TaskProcess's merged stdout+stderr: fine while a successful `gh`/`curl -sS` run
+  writes nothing to stderr, revisit if one does.
 
 **Stage 3 -- the panel.**
 - [ ] A tracker panel listing a query's issues: refresh, open in the browser, open a

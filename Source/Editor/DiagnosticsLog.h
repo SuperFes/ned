@@ -46,6 +46,7 @@ enum class LogCategory { General,
                          Acp,
                          Vcs,
                          Task,
+                         Tracker,
                          Subprocess };
 
 enum class LogSeverity { Info,

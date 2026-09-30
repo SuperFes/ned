@@ -96,6 +96,7 @@ add_executable(ned_tests
             ScriptingSessionTest.cpp
             EditorBindingsTest.cpp
             JanetVcsProviderTest.cpp
+            JanetTrackerProviderTest.cpp
             GitVcsPluginTest.cpp
             InitFileTest.cpp
             TestEvents.cpp
@@ -308,6 +309,7 @@ add_executable(ned_tests
             VcsProviderRegistryTest.cpp
             DiffPatchTest.cpp
             VcsRunnerTest.cpp
+            TrackerTest.cpp
             VcsRowStatusTest.cpp
             VcsSequenceTest.cpp
             BackgroundActivityTest.cpp

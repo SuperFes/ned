@@ -92,6 +92,7 @@
 #include "Editor/TestRun/TestOutputParser.h"
 #include "Editor/ThemeSetting.h"
 #include "Editor/ToolchainIncludePaths.h"
+#include "Editor/Tracker/Registry.h"
 #include "Editor/TrimOnSave.h"
 #include "Editor/Vcs/ProviderRegistry.h"
 #include "Editor/Vcs/Sequence.h"
@@ -100,7 +101,9 @@
 #include "Editor/WhitespaceSettings.h"
 #include "Editor/WrapIndent.h"
 #include "Editor/WrapOverrides.h"
+#include "JanetTrackerProvider.h"
 #include "JanetVcsProvider.h"
+#include "Json.h"
 #include "Text/BufferList.h"
 #include "Text/FilePreservation.h"
 #include "Value.h"
@@ -1718,6 +1721,69 @@ namespace {
         editor::vcs::ClearProviderCache();
     }
 
+    void NedTrackerRegisterProvider(std::string name, Janet callbacks) {
+        if (!g_env) {
+            throw std::runtime_error("ned: janet environment not installed");
+        }
+        editor::tracker::RegisterProvider(name, std::make_shared<JanetTrackerProvider>(g_env, name, callbacks));
+    }
+
+    // "" for an absent option; anything present must be a string.
+    std::string OptionalStringOption(Janet options, const char* key, const char* binding) {
+        const Janet value = janet_get(options, janet_ckeywordv(key));
+        if (janet_checktype(value, JANET_NIL)) {
+            return {};
+        }
+        if (!janet_checktype(value, JANET_STRING)) {
+            throw std::runtime_error(std::string("ned: ") + binding + " :" + key + " must be a string");
+        }
+        return FromJanet<std::string>(value);
+    }
+
+    std::string RequiredStringOption(Janet options, const char* key, const char* binding) {
+        std::string value = OptionalStringOption(options, key, binding);
+        if (value.empty()) {
+            throw std::runtime_error(std::string("ned: ") + binding + " needs a :" + key);
+        }
+        return value;
+    }
+
+    void RequireOptionsTable(Janet options, const char* binding) {
+        if (!janet_checktype(options, JANET_TABLE) && !janet_checktype(options, JANET_STRUCT)) {
+            throw std::runtime_error(std::string("ned: ") + binding + " expects a struct/table of options");
+        }
+    }
+
+    void NedSetTrackerConnection(std::string name, Janet options) {
+        constexpr const char* kBinding = "set-tracker-connection";
+        RequireOptionsTable(options, kBinding);
+        editor::tracker::Connection connection{
+            .name     = std::move(name),
+            .provider = RequiredStringOption(options, "provider", kBinding),
+            .url      = OptionalStringOption(options, "url", kBinding),
+            .email    = OptionalStringOption(options, "email", kBinding),
+        };
+        if (const Janet command = janet_get(options, janet_ckeywordv("token-command")); !janet_checktype(command, JANET_NIL)) {
+            connection.tokenCommand = FromJanet<std::vector<std::string>>(command);
+        }
+        editor::tracker::SetConnection(std::move(connection));
+    }
+
+    void NedAddTrackerPanel(std::string name, Janet options) {
+        constexpr const char* kBinding = "add-tracker-panel";
+        RequireOptionsTable(options, kBinding);
+        editor::tracker::AddPanel(editor::tracker::Panel{
+            .name       = std::move(name),
+            .connection = RequiredStringOption(options, "connection", kBinding),
+            .query      = OptionalStringOption(options, "query", kBinding),
+            .glyph      = OptionalStringOption(options, "glyph", kBinding),
+        });
+    }
+
+    Janet NedJsonDecode(std::string text) {
+        return JsonToJanet(text);
+    }
+
 } // namespace
 
 void InstallEditorBindings(Environment& env) {
@@ -1947,7 +2013,7 @@ void InstallEditorBindings(Environment& env) {
         "Enter always runs the line as typed.");
     env.Register<&NedSetLogCategoryVisible>(
         "ned", "set-log-category-visible",
-        "Show/hide one category (\"general\"/\"janet\"/\"lsp\"/\"dap\"/\"acp\"/\"vcs\"/\"task\"/\"subprocess\") in the "
+        "Show/hide one category (\"general\"/\"janet\"/\"lsp\"/\"dap\"/\"acp\"/\"vcs\"/\"task\"/\"tracker\"/\"subprocess\") in the "
         "*Messages* buffer -- \"lsp\" defaults hidden, everything else visible.");
     env.Register<&NedSetLogMaxEntries>(
         "ned", "set-log-max-entries",
@@ -2855,6 +2921,30 @@ void InstallEditorBindings(Environment& env) {
         "'not supported by this provider' when invoked. The actual subprocess is run by ned itself, never by the "
         "plugin -- these callbacks only build argv and parse already-captured output. Re-registering name replaces "
         "the previous provider.");
+
+    env.Register<&NedTrackerRegisterProvider>(
+        "ned", "tracker-register-provider",
+        "Register an issue-tracker plugin: (name callbacks). name is letters, digits, '-' or '_'. callbacks is a "
+        "struct/table with :list-argv, taking a connection struct (:name :provider :url :email -- never a token) and "
+        "a panel's query string and returning the argv of the command that lists its issues, and :parse-list, taking "
+        "that command's output and returning an array of issue tables (:key :title :status :assignee :labels :url "
+        ":updated; :labels is an array of strings). ned runs the command itself. Re-registering name replaces the "
+        "previous provider.");
+    env.Register<&NedSetTrackerConnection>(
+        "ned", "set-tracker-connection",
+        "Define a named tracker connection: (name options), options being :provider (a name given to "
+        "ned/tracker-register-provider), :url, :email, and :token-command, an argv array whose output is the API "
+        "token -- ned stores no token. Re-setting name replaces it.");
+    env.Register<&NedAddTrackerPanel>(
+        "ned", "add-tracker-panel",
+        "Add a named issue panel: (name options), options being :connection (a ned/set-tracker-connection name), "
+        ":query (handed to the provider verbatim -- JQL for Jira, a search string for GitHub) and :glyph (its rail "
+        "icon). Names resolve when the panel is fetched, so declaration order doesn't matter. Re-adding name "
+        "replaces that panel in place.");
+    env.Register<&NedJsonDecode>(
+        "ned", "json-decode",
+        "Parse JSON text into Janet values: objects become tables keyed by keyword, arrays become arrays, null "
+        "becomes nil (a null member is left out of its table). Errors on malformed JSON.");
 }
 
 } // namespace ned::janet

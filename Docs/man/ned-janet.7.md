@@ -12,6 +12,10 @@ configuration is Janet code, and these are the bindings it calls.
 
 # BINDINGS
 
+`ned/add-tracker-panel`
+
+:   Add a named issue panel: (name options), options being :connection (a ned/set-tracker-connection name), :query (handed to the provider verbatim -- JQL for Jira, a search string for GitHub) and :glyph (its rail icon). Names resolve when the panel is fetched, so declaration order doesn't matter. Re-adding name replaces that panel in place.
+
 `ned/auto-header-guard-enabled`
 
 :   Whether ned/set-auto-header-guard is currently on.
@@ -159,6 +163,10 @@ configuration is Janet code, and these are the bindings it calls.
 `ned/insert`
 
 :   Insert text at point.
+
+`ned/json-decode`
+
+:   Parse JSON text into Janet values: objects become tables keyed by keyword, arrays become arrays, null becomes nil (a null member is left out of its table). Errors on malformed JSON.
 
 `ned/list-backups`
 
@@ -570,7 +578,7 @@ configuration is Janet code, and these are the bindings it calls.
 
 `ned/set-log-category-visible`
 
-:   Show/hide one category ("general"/"janet"/"lsp"/"dap"/"acp"/"vcs"/"task"/"subprocess") in the *Messages* buffer -- "lsp" defaults hidden, everything else visible.
+:   Show/hide one category ("general"/"janet"/"lsp"/"dap"/"acp"/"vcs"/"task"/"tracker"/"subprocess") in the *Messages* buffer -- "lsp" defaults hidden, everything else visible.
 
 `ned/set-log-max-entries`
 
@@ -878,6 +886,10 @@ The popup is never one source: a language server's items, snippet triggers for t
 
 :   Select the startup theme by name (e.g. "dark", "light", "gruvbox-dark"). Beats the desktop probe; an unknown name is reported at startup and falls back. Empty string clears the preference.
 
+`ned/set-tracker-connection`
+
+:   Define a named tracker connection: (name options), options being :provider (a name given to ned/tracker-register-provider), :url, :email, and :token-command, an argv array whose output is the API token -- ned stores no token. Re-setting name replaces it.
+
 `ned/set-trailing-whitespace-highlight-enabled`
 
 :   Enable/disable a subtle background highlight on trailing whitespace (spaces/tabs after the last non-whitespace character on a line). Default false, matching Emacs' own opt-in show-trailing-whitespace precedent rather than VSCode/Sublime's forced-on default.
@@ -969,6 +981,10 @@ The popup is never one source: a language server's items, snippet triggers for t
 `ned/theme-surface`
 
 :   Set one part of one themed surface: (ned/theme-surface "popup" "fill" "y $bg/78 3 $bg/52"). Parts are "fill", "border" and "text"; the spec is the same paint grammar ned/theme-gradient takes. Surface names come from the UI layer ("buffer", "buffer.current_line", "modeline", "tab.active", "panel", "popup", ...); an unknown name or part is reported at startup.
+
+`ned/tracker-register-provider`
+
+:   Register an issue-tracker plugin: (name callbacks). name is letters, digits, '-' or '_'. callbacks is a struct/table with :list-argv, taking a connection struct (:name :provider :url :email -- never a token) and a panel's query string and returning the argv of the command that lists its issues, and :parse-list, taking that command's output and returning an array of issue tables (:key :title :status :assignee :labels :url :updated; :labels is an array of strings). ned runs the command itself. Re-registering name replaces the previous provider.
 
 `ned/vcs-register-provider`
 

@@ -276,6 +276,8 @@ add_library(ned_lib STATIC
         Editor/Vcs/ConflictedFiles.cpp
         Editor/Vcs/Sequence.cpp
         Editor/Vcs/Runner.cpp
+        Editor/Tracker/Registry.cpp
+        Editor/Tracker/Runner.cpp
         Editor/Process/ChildProcess.cpp
         Editor/Acp/Transport.cpp
         Editor/Acp/Client.cpp
@@ -448,6 +450,8 @@ add_library(ned_lib STATIC
         Janet/Environment.cpp
         Janet/EditorBindings.cpp
         Janet/JanetVcsProvider.cpp
+        Janet/JanetTrackerProvider.cpp
+        Janet/Json.cpp
         Janet/PluginLoader.cpp
         Janet/InitFile.cpp
         UI/KeyTranslation.cpp

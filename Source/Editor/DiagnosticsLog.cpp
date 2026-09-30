@@ -297,6 +297,8 @@ std::optional<LogCategory> LogCategoryFromString(std::string_view name) {
         return LogCategory::Vcs;
     if (name == "task")
         return LogCategory::Task;
+    if (name == "tracker")
+        return LogCategory::Tracker;
     if (name == "subprocess")
         return LogCategory::Subprocess;
     return std::nullopt;
@@ -318,6 +320,8 @@ std::string_view LogCategoryToString(LogCategory category) {
             return "vcs";
         case LogCategory::Task:
             return "task";
+        case LogCategory::Tracker:
+            return "tracker";
         case LogCategory::Subprocess:
             return "subprocess";
     }
