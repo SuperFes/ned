@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -231,6 +232,28 @@ TEST_CASE("Two breakpoints relocating onto one line collapse to one", "[Dap]") {
     manager.TrackBuffer(buffer);
 
     REQUIRE(manager.BreakpointsForFile(path) == std::vector<std::size_t>{2});
+}
+
+TEST_CASE("A buffer at a freed tracked buffer's address anchors its breakpoints afresh", "[Dap]") {
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(eventLoop);
+
+    const std::filesystem::path      path = std::filesystem::current_path() / "dap-anchored-reuse.c";
+    std::optional<ned::text::Buffer> slot;
+    slot.emplace(BufferFor(path, "one\ntwo\nthree\nfour\n"));
+    const ned::text::Buffer* address = &*slot;
+
+    REQUIRE(manager.ToggleBreakpoint(path, 3));
+    manager.TrackBuffer(*slot);
+    slot.reset(); // destroyed without NotifyBufferClosed
+
+    slot.emplace(BufferFor(path, "one\ntwo\nthree\nfour\n"));
+    REQUIRE(&*slot == address);
+    // An anchor of the new buffer's own, which may reuse the old one's id.
+    (void)slot->CreateAnchor(0);
+    manager.TrackBuffer(*slot);
+
+    REQUIRE(manager.BreakpointsForFile(path) == std::vector<std::size_t>{3});
 }
 
 TEST_CASE("An untracked file's breakpoints are left exactly as stored", "[Dap]") {

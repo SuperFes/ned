@@ -50,6 +50,7 @@
 
 #include "Editor/ProcessTimeouts.h"
 #include "Text/Buffer.h"
+#include "Text/PerBufferMap.h"
 #include "UI/EventLoop.h"
 
 #include "Client.h"
@@ -901,7 +902,7 @@ class Manager {
         std::string                                       key;
         std::unordered_map<std::uint64_t, text::AnchorId> anchors;
     };
-    std::unordered_map<text::Buffer*, TrackedSource> trackedSources_;
+    text::PerBufferMap<TrackedSource>                trackedSources_;
     std::uint64_t                                    nextBreakpointId_ = 1;
 
     // Creates anchors for breakpoints that have none, resolves the ones that do back
