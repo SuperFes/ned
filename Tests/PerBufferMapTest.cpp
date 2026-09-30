@@ -1,8 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <regex>
 #include <string>
 #include <utility>
 
@@ -167,4 +170,34 @@ TEST_CASE("PerBufferMap takes its guard while forgetting a destroyed buffer", "[
     // Not left locked.
     REQUIRE(guard.try_lock());
     guard.unlock();
+}
+
+// A container keyed by a raw Buffer* keeps its entries after the buffer is
+// freed, and hands them to the next buffer allocated at that address.
+TEST_CASE("No source file keys a container by a raw Buffer*", "[PerBufferMap]") {
+    namespace fs          = std::filesystem;
+    const fs::path   root = fs::path(NED_REPO_ROOT) / "Source";
+    const std::regex rawKey(R"(\b(unordered_)?(multi)?(map|set)\s*<\s*(const\s+)?((ned::)?text::)?Buffer\s*(const\s*)?\*)");
+
+    std::string offenders;
+    for (const auto& entry : fs::recursive_directory_iterator(root)) {
+        const fs::path& path = entry.path();
+        if (!entry.is_regular_file() || (path.extension() != ".h" && path.extension() != ".cpp") ||
+            path.filename() == "PerBufferMap.h") {
+            continue;
+        }
+        std::ifstream in(path);
+        std::string   line;
+        for (std::size_t number = 1; std::getline(in, line); ++number) {
+            if (const auto comment = line.find("//"); comment != std::string::npos) {
+                line.erase(comment);
+            }
+            if (line.find("Buffer") != std::string::npos && std::regex_search(line, rawKey)) {
+                offenders += fs::relative(path, root).generic_string() + ":" + std::to_string(number) + "\n";
+            }
+        }
+    }
+    INFO("Use text::PerBufferMap / text::PerBufferSet instead:\n"
+         << offenders);
+    REQUIRE(offenders.empty());
 }
