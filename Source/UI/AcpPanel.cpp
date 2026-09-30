@@ -21,6 +21,7 @@
 #include "KeyTranslation.h"
 #include "Text/Base64.h"
 #include "Text/DisplayWidth.h"
+#include "Text/FileUri.h"
 #include "Text/Utf8.h"
 
 namespace ned::ui {
@@ -1491,7 +1492,7 @@ std::vector<editor::acp::Manager::PromptAttachment> AcpPanel::ResolveMentionAtta
     if (const std::optional<std::size_t> pos = FindMentionToken(text, "@buffer")) {
         text::Buffer&     buffer  = activeBufferProvider_().Get();
         const std::string name    = buffer.Path() ? buffer.Path()->filename().string() : buffer.Name();
-        const std::string uri     = buffer.Path() ? "file://" + buffer.Path()->string() : "ned-buffer://" + buffer.Name();
+        const std::string uri     = buffer.Path() ? text::PathToFileUri(*buffer.Path()) : "ned-buffer://" + buffer.Name();
         std::string       content = buffer.Text();
         if (content.size() > kMaxAttachmentBytes) {
             const std::size_t totalBytes = content.size();
@@ -1511,7 +1512,7 @@ std::vector<editor::acp::Manager::PromptAttachment> AcpPanel::ResolveMentionAtta
             const std::size_t endLine   = buffer.Content().ByteOffsetToLine(end) + 1;
             const std::string fileLabel = buffer.Path() ? buffer.Path()->filename().string() : buffer.Name();
             const std::string name      = fileLabel + "#L" + std::to_string(startLine) + "-" + std::to_string(endLine);
-            const std::string uri       = buffer.Path() ? "file://" + buffer.Path()->string() : "ned-buffer://" + buffer.Name();
+            const std::string uri       = buffer.Path() ? text::PathToFileUri(*buffer.Path()) : "ned-buffer://" + buffer.Name();
             attachments.push_back({.uri = uri, .name = name, .mimeType = "", .text = selection});
             text.replace(*pos, std::string_view("@selection").size(), "[attached: " + name + "]");
         }
@@ -1543,7 +1544,7 @@ void AcpPanel::AppendFileMentionLinks(const std::string& text, std::vector<edito
             continue; // not a file -- an @-handle or plain text, left alone
         }
         seen.push_back(mention);
-        attachments.push_back({.uri = "file://" + path.lexically_normal().string(), .name = mention, .link = true});
+        attachments.push_back({.uri = text::PathToFileUri(path.lexically_normal()), .name = mention, .link = true});
     }
 }
 

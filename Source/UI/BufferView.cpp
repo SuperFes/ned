@@ -7,6 +7,8 @@
 
 #include "UI/BufferView/Internal.h"
 
+#include "Text/FileUri.h"
+
 namespace ned::ui {
 
 // The file-local helpers these definitions call live in BufferView/Internal.h
@@ -1852,7 +1854,7 @@ void BufferView::SendResultLineToAgent() {
     }
 
     const editor::acp::Manager::PromptAttachment attachment{
-        .uri      = "file://" + std::filesystem::absolute(loc->path).string(),
+        .uri      = text::PathToFileUri(std::filesystem::absolute(loc->path)),
         .name     = loc->path.string() + ":" + std::to_string(loc->lineNumber),
         .mimeType = "",
         .text     = excerpt.empty() ? "(source unavailable)" : excerpt,

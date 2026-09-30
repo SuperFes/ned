@@ -46,6 +46,7 @@ target_link_libraries(ned-langc PRIVATE ned_grammar_compile)
 add_library(ned_lib STATIC
         Application.cpp
         Text/Base64.cpp
+        Text/FileUri.cpp
         Text/Rope.cpp
         Text/RopeStorage.cpp
         Text/SavePlan.cpp

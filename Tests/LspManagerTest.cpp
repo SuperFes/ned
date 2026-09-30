@@ -3189,6 +3189,13 @@ TEST_CASE("BuildInitializeParams absolutizes a relative rootUri", "[Lsp]") {
     REQUIRE(rootUri.find("relative/dir") != std::string::npos);
 }
 
+TEST_CASE("BuildInitializeParams percent-encodes a rootUri with special characters", "[Lsp]") {
+    const Json params = ned::editor::lsp::BuildInitializeParams(std::filesystem::path("/my project/#1"));
+
+    REQUIRE(params["rootUri"].get<std::string>() == "file:///my%20project/%231");
+    REQUIRE(params["workspaceFolders"][0]["uri"].get<std::string>() == "file:///my%20project/%231");
+}
+
 TEST_CASE("BuildInitializeParams sends rootUri null for an empty project root", "[Lsp]") {
     // A real SIGABRT from a core dump: an empty ProjectRoot() reached
     // PathToUri, whose absolute("") throws, with no catch anywhere above

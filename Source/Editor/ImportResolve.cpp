@@ -19,6 +19,7 @@
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Settings.h"
 #include "Editor/ToolchainIncludePaths.h"
+#include "Text/FileUri.h"
 
 namespace ned::editor {
 
@@ -86,11 +87,8 @@ namespace {
             if (!package.is_object() || package.value("name", "") != name) {
                 continue;
             }
-            std::string rootUri = package.value("rootUri", "");
-            if (rootUri.rfind("file://", 0) == 0) {
-                rootUri.erase(0, 7);
-            }
-            std::filesystem::path root(rootUri);
+            const std::string     rootUri = package.value("rootUri", "");
+            std::filesystem::path root    = text::FileUriToPath(rootUri).value_or(std::filesystem::path(rootUri));
             if (root.is_relative()) {
                 root = configFile.parent_path() / root;
             }

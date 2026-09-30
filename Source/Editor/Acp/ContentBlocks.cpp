@@ -2,6 +2,8 @@
 
 #include <cstdio>
 
+#include "Text/FileUri.h"
+
 namespace ned::editor::acp {
 
 namespace {
@@ -142,34 +144,8 @@ void AppendAttachmentName(std::string& text, const std::string& name) {
 }
 
 std::optional<std::string> FileUriPath(std::string_view uri) {
-    constexpr std::string_view kPrefix = "file://";
-    if (!uri.starts_with(kPrefix)) {
-        return std::nullopt;
-    }
-    uri.remove_prefix(kPrefix.size());
-    auto hex = [](char c) -> int {
-        if (c >= '0' && c <= '9') {
-            return c - '0';
-        }
-        if (c >= 'a' && c <= 'f') {
-            return c - 'a' + 10;
-        }
-        if (c >= 'A' && c <= 'F') {
-            return c - 'A' + 10;
-        }
-        return -1;
-    };
-    std::string path;
-    for (std::size_t i = 0; i < uri.size(); ++i) {
-        if (uri[i] == '%' && i + 2 < uri.size() && hex(uri[i + 1]) >= 0 && hex(uri[i + 2]) >= 0) {
-            path += static_cast<char>(hex(uri[i + 1]) * 16 + hex(uri[i + 2]));
-            i += 2;
-        }
-        else {
-            path += uri[i];
-        }
-    }
-    return path;
+    const std::optional<std::filesystem::path> path = text::FileUriToPath(uri);
+    return path ? std::optional<std::string>(path->string()) : std::nullopt;
 }
 
 std::string ContentText(const Json& blocks) {

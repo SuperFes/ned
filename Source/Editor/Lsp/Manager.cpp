@@ -26,6 +26,7 @@
 #include "Text/BinaryDetect.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
+#include "Text/FileUri.h"
 #include "Text/Rope.h"
 #include "Text/RopeStorage.h"
 #include "Text/Utf8.h"
@@ -49,12 +50,6 @@ namespace {
     // the giveup threshold, just no longer within the same video frame.
     constexpr std::chrono::milliseconds kRespawnCooldown{1000};
 
-    // v1: no percent-encoding of special characters in the path -- every
-    // path this touches (an open Buffer's own Path(), editor::ProjectRoot())
-    // is already a real filesystem path this process itself resolved, not
-    // untrusted input, so the common case (no space/unicode-heavy path)
-    // round-trips correctly; a path containing characters that need real
-    // percent-encoding is a known, documented gap, not silently assumed away.
     std::string PathToUri(const std::filesystem::path& path) {
         // Absolutized here rather than assumed: a buffer opened via a
         // relative CLI argument (`ned demo.cpp`) keeps that relative Path(),
@@ -68,40 +63,13 @@ namespace {
         // whole editor (a real SIGABRT from a core dump, not hypothetical).
         std::error_code             ec;
         const std::filesystem::path absolute = std::filesystem::absolute(path, ec);
-        return "file://" + (ec ? path : absolute).lexically_normal().string();
+        return text::PathToFileUri((ec ? path : absolute).lexically_normal());
     }
 
+    // Servers do percent-encode: clangd reports libstdc++ headers as
+    // ".../g%2B%2B-v16/algorithm".
     std::optional<std::filesystem::path> UriToPath(const std::string& uri) {
-        constexpr std::string_view kPrefix = "file://";
-        if (uri.rfind(kPrefix, 0) != 0) {
-            return std::nullopt;
-        }
-        // documentLink follow-up: percent-decode. A file: URI's path is
-        // percent-encoded per RFC 3986, and real servers do encode it --
-        // found live, not assumed: clangd reports every system include's
-        // target under this machine's own libstdc++ directory as
-        // ".../g%2B%2B-v16/algorithm", which as a literal path exists
-        // nowhere. Undecoded, every URI-carrying response (definition,
-        // references, rename, documentLink) silently missed any path
-        // containing a character outside the unreserved set. A stray '%'
-        // that isn't followed by two hex digits is kept verbatim rather
-        // than treated as a parse failure -- a filename may legitimately
-        // contain one.
-        const std::string encoded = uri.substr(kPrefix.size());
-        std::string       decoded;
-        decoded.reserve(encoded.size());
-        for (std::size_t i = 0; i < encoded.size(); ++i) {
-            const auto isHex = [](char c) {
-                return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-            };
-            if (encoded[i] == '%' && i + 2 < encoded.size() && isHex(encoded[i + 1]) && isHex(encoded[i + 2])) {
-                decoded.push_back(static_cast<char>(std::stoi(encoded.substr(i + 1, 2), nullptr, 16)));
-                i += 2;
-                continue;
-            }
-            decoded.push_back(encoded[i]);
-        }
-        return std::filesystem::path(decoded);
+        return text::FileUriToPath(uri);
     }
 
     // project-settings-lsp-init-options follow-up. Resolves a dotted "section"

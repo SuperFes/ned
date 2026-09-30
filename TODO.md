@@ -18,9 +18,6 @@ about features. Declaring it makes breaking any of them a major-version event. C
 
 ## Correctness
 
-- [ ] **`PathToUri` doesn't percent-encode** (`Lsp/Manager.cpp`), but `UriToPath` decodes.
-      A project path containing a space, `#` or `?` sends an invalid URI in every
-      `didOpen`. Encode on the way out, with a round-trip test.
 - [ ] **Snippet variables inside a placeholder's default** (`${1:$TM_FILENAME}`) don't
       resolve. Only a top-level `$`/`${` reference does.
 
