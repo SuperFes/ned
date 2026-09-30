@@ -7,6 +7,7 @@
 #include "Text/BufferList.h"
 #include "UI/BufferListPanel.h"
 #include "UI/Theme.h"
+#include "UI/Widget.h"
 
 namespace {
 
@@ -205,13 +206,70 @@ TEST_CASE("BufferListPanel a left-column click toggles the mark under it without
     panel.Popup().TakeFocus();
     panel.Popup().SetBox_(ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 5});
 
-    // Row 1 (local y=2) is "two"; local x=2 is the D (kill-mark) glyph.
+    // Under the border and the column header, local y=3 is "two"; local
+    // x=2 is its D (kill-mark) glyph.
     REQUIRE(panel.Popup().OnEvent(
-        ned::ui::test::Mouse(2, 2, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
+        ned::ui::test::Mouse(2, 3, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
     REQUIRE_FALSE(switched); // marked, not switched-to
 
     std::vector<std::string> closingNames;
     panel.SetOnBufferClosing([&](ned::text::Buffer& buffer) { closingNames.push_back(buffer.Name()); });
     REQUIRE(panel.Popup().OnEvent(ned::ui::test::Character('x')));
     REQUIRE(closingNames == std::vector<std::string>{"two"});
+}
+
+TEST_CASE("BufferListPanel shows marks, name and size in columns", "[BufferListPanel]") {
+    Fixture            fixture;
+    ned::text::Buffer& one = fixture.bufferList.CreateBuffer("one");
+    one.InsertAtPoint("hello");
+    ned::text::Buffer& two = fixture.bufferList.CreateBuffer("two");
+    two.SetReadOnly(true);
+
+    ned::ui::BufferListPanel panel(fixture.theme, fixture.bufferList);
+    panel.Show();
+    panel.Popup().TakeFocus();
+    panel.Popup().SetBox_(ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 5});
+    REQUIRE(panel.Popup().OnEvent(ned::ui::test::Character('d')));
+
+    ned::ui::Screen screen(30, 6);
+    panel.Popup().Paint(ned::ui::Canvas(screen, panel.Popup().Box_()));
+    const auto row = [&](int y) {
+        std::string text;
+        for (int x = 1; x < 29; ++x) {
+            text += screen.PixelAt(x, y).character;
+        }
+        return text;
+    };
+    // Too narrow for File: that column drops first.
+    CHECK(row(1) == "      Buffer           Size ");
+    CHECK(row(2) == " D *  one                5B ");
+    CHECK(row(3) == "    % two                0B ");
+}
+
+TEST_CASE("BufferListPanel marks step down the list as sorted", "[BufferListPanel]") {
+    Fixture fixture;
+    fixture.bufferList.CreateBuffer("b");
+    fixture.bufferList.CreateBuffer("a");
+    fixture.bufferList.CreateBuffer("c");
+
+    ned::ui::BufferListPanel panel(fixture.theme, fixture.bufferList);
+    ned::text::Buffer*       switched = nullptr;
+    panel.SetOnRequestSwitchToBuffer([&](ned::text::Buffer& buffer) { switched = &buffer; });
+    panel.Show();
+    panel.Popup().TakeFocus();
+
+    // S sorts by name (the marks column isn't sortable): a, b, c. The
+    // selection stays on b, the record it was on.
+    REQUIRE(panel.Popup().OnEvent(ned::ui::test::Character('S')));
+    REQUIRE(panel.Popup().SelectedRowId() == "b");
+    REQUIRE(panel.Popup().OnEvent(ned::ui::test::Home()));
+    REQUIRE(panel.Popup().OnEvent(ned::ui::test::Character('d'))); // a, then on to b
+    REQUIRE(panel.Popup().OnEvent(ned::ui::test::Character('d'))); // b
+    REQUIRE(panel.Popup().OnEvent(ned::ui::test::Character('3'))); // the third as sorted
+    REQUIRE(switched == fixture.bufferList.Find("c"));
+
+    std::vector<std::string> closingNames;
+    panel.SetOnBufferClosing([&](ned::text::Buffer& buffer) { closingNames.push_back(buffer.Name()); });
+    REQUIRE(panel.Popup().OnEvent(ned::ui::test::Character('x')));
+    CHECK(closingNames == std::vector<std::string>{"b", "a"});
 }

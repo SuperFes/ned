@@ -1,7 +1,11 @@
 #include "BufferListPanel.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <string_view>
 #include <utility>
 
 #include "Editor/BufferSave.h"
@@ -32,19 +36,32 @@ namespace {
         return buf;
     }
 
+    std::string DisplayPath(const std::filesystem::path& path) {
+        std::string text = path.string();
+        if (const char* home = std::getenv("HOME"); home != nullptr && *home != '\0') {
+            const std::string_view prefix(home);
+            if (text.starts_with(prefix) && (text.size() == prefix.size() || text[prefix.size()] == '/')) {
+                return "~" + text.substr(prefix.size());
+            }
+        }
+        return text;
+    }
+
+    constexpr std::size_t kMarksColumn = 0;
+
 } // namespace
 
-BufferListPanel::BufferListPanel(const Theme& theme, text::BufferList& bufferList) : bufferList_(bufferList), popup_(theme) {
-    popup_.SetFocusable(true);
-    popup_.SetOnHighlightChange([this](std::size_t index) { selectedIndex_ = index; });
-    popup_.SetOnActivate([this](std::size_t index) { HandleActivate(index); });
-    popup_.SetOnCancel([this] { HandleCancel(); });
-    popup_.SetOnKey([this](const editor::KeyChord& chord) { HandleKey(chord); });
-    popup_.SetOnLeftColumnClick([this](std::size_t index, int columnOffset) { ToggleMarkAt(index, columnOffset); });
+BufferListPanel::BufferListPanel(const Theme& theme, text::BufferList& bufferList) : theme_(theme), bufferList_(bufferList), table_(theme) {
+    table_.SetDigitActivate(true);
+    table_.SetOnActivate([this](const std::string& name) { HandleActivate(name); });
+    table_.SetOnCancel([this] { HandleCancel(); });
+    table_.SetOnKey([this](const editor::KeyChord& chord) { HandleKey(chord); });
+    table_.SetOnCellClick(
+        [this](const std::string& name, std::size_t column, int offset) { return HandleCellClick(name, column, offset); });
 }
 
-ListPopup& BufferListPanel::Popup() {
-    return popup_;
+TableView& BufferListPanel::Popup() {
+    return table_;
 }
 
 void BufferListPanel::SetOnRequestSwitchToBuffer(std::function<void(text::Buffer&)> handler) {
@@ -91,42 +108,65 @@ void BufferListPanel::Refresh() {
         markedKill_.push_back(wasKill);
         markedSave_.push_back(wasSave);
     }
-
-    selectedIndex_ = rows_.empty() ? 0 : std::min(selectedIndex_, rows_.size() - 1);
     RefreshDisplay();
 }
 
 void BufferListPanel::RefreshDisplay() {
-    ListPopupModel model;
-    model.title = confirming_ ? "Kill buffers? (y/n)" : "Buffers";
-    model.rows.reserve(rows_.size());
+    table::Model model;
+    model.title   = confirming_ ? "Kill buffers? (y/n)" : "Buffers";
+    model.columns = {
+        table::Column{.id = "marks", .sortable = false},
+        table::Column{.id = "name", .header = "Buffer", .width = table::Column::Width::Flex, .minWidth = 8},
+        table::Column{.id              = "size",
+                      .header          = "Size",
+                      .align           = table::Align::Right,
+                      .dropPriority    = 1,
+                      .descendingFirst = true},
+        table::Column{.id = "file", .header = "File", .width = table::Column::Width::Flex, .minWidth = 12, .dropPriority = 2},
+    };
+    model.groups.emplace_back();
     for (std::size_t i = 0; i < rows_.size(); ++i) {
         const text::Buffer& buffer = *rows_[i];
-        std::string         left;
-        left += markedKill_[i] ? 'D' : ' ';
-        left += markedSave_[i] ? 'S' : ' ';
-        left += buffer.Modified() ? '*' : ' ';
+        std::string         marks;
+        marks += markedKill_[i] ? 'D' : ' ';
+        marks += markedSave_[i] ? 'S' : ' ';
+        marks += buffer.Modified() ? '*' : ' ';
+        marks += buffer.ReadOnly() ? '%' : ' ';
 
-        std::string right = FormatBufferSize(buffer.Size());
-        if (buffer.ReadOnly()) {
-            right += " RO";
-        }
-
-        model.rows.push_back(
-            {.left = left, .main = buffer.Name(), .accented = markedKill_[i] || markedSave_[i], .right = right});
+        const bool marked = markedKill_[i] || markedSave_[i];
+        model.groups[0].rows.push_back(table::Row{
+            .id    = buffer.Name(),
+            .cells = {table::Cell{.text       = std::move(marks),
+                                  .foreground = marked ? std::optional<Color>(theme_.borderAccent.foreground) : std::nullopt,
+                                  .bold       = marked},
+                      table::Cell{.text = buffer.Name()},
+                      table::Cell{.text       = FormatBufferSize(buffer.Size()),
+                                  .sortNumber = static_cast<std::int64_t>(buffer.Size())},
+                      table::Cell{.text       = buffer.Path() ? DisplayPath(*buffer.Path()) : std::string(),
+                                  .foreground = theme_.indentGuideForeground}}});
     }
-    if (!rows_.empty()) {
-        model.selectedIndex = selectedIndex_;
-    }
-    popup_.SetModel(std::move(model));
+    table_.SetModel(std::move(model));
 }
 
-void BufferListPanel::HandleActivate(std::size_t index) {
-    if (confirming_ || index >= rows_.size()) {
+std::optional<std::size_t> BufferListPanel::IndexOf(const std::string& name) const {
+    const auto found = std::ranges::find(rows_, name, &text::Buffer::Name);
+    if (found == rows_.end()) {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(found - rows_.begin());
+}
+
+std::optional<std::size_t> BufferListPanel::SelectedIndex() const {
+    const std::optional<std::string> name = table_.SelectedRowId();
+    return name ? IndexOf(*name) : std::nullopt;
+}
+
+void BufferListPanel::HandleActivate(const std::string& name) {
+    if (confirming_) {
         return; // Enter/digit-pick is meaningless mid-confirmation
     }
-    if (onRequestSwitchTo_) {
-        onRequestSwitchTo_(*rows_[index]);
+    if (const std::optional<std::size_t> index = IndexOf(name); index && onRequestSwitchTo_) {
+        onRequestSwitchTo_(*rows_[*index]);
     }
 }
 
@@ -153,52 +193,51 @@ void BufferListPanel::HandleKey(const editor::KeyChord& chord) {
         return; // any other key is ignored while confirming
     }
 
-    if (rows_.empty()) {
-        return;
-    }
-
-    if (chord.Codepoint == U'd') {
-        markedKill_[selectedIndex_] = true;
-        selectedIndex_              = std::min(selectedIndex_ + 1, rows_.size() - 1);
-        RefreshDisplay();
-    }
-    else if (chord.Codepoint == U's') {
-        markedSave_[selectedIndex_] = true;
-        selectedIndex_              = std::min(selectedIndex_ + 1, rows_.size() - 1);
-        RefreshDisplay();
-    }
-    else if (chord.Codepoint == U'u') {
-        markedKill_[selectedIndex_] = false;
-        markedSave_[selectedIndex_] = false;
-        selectedIndex_              = std::min(selectedIndex_ + 1, rows_.size() - 1);
-        RefreshDisplay();
-    }
-    else if (chord.Codepoint == U'x') {
+    const std::optional<std::size_t> selected = SelectedIndex();
+    if (chord.Codepoint == U'x') {
         BeginExecute();
     }
     else if (chord.Codepoint == U'g') {
         Refresh();
     }
+    else if (selected && (chord.Codepoint == U'd' || chord.Codepoint == U's' || chord.Codepoint == U'u')) {
+        if (chord.Codepoint == U'd') {
+            markedKill_[*selected] = true;
+        }
+        else if (chord.Codepoint == U's') {
+            markedSave_[*selected] = true;
+        }
+        else {
+            markedKill_[*selected] = false;
+            markedSave_[*selected] = false;
+        }
+        RefreshDisplay();
+        table_.MoveSelection(1);
+    }
 }
 
-void BufferListPanel::ToggleMarkAt(std::size_t index, int columnOffset) {
+bool BufferListPanel::HandleCellClick(const std::string& name, std::size_t column, int offset) {
+    if (column != kMarksColumn) {
+        return false;
+    }
     // Mid-confirmation, a click's only sane targets are y/n, which the
     // mouse doesn't drive at all -- ignore rather than let a mark toggle
     // silently invalidate pendingKill_ underneath the pending y/n prompt.
-    if (confirming_ || index >= rows_.size()) {
-        return;
+    const std::optional<std::size_t> index = IndexOf(name);
+    if (confirming_ || !index) {
+        return true;
     }
-    selectedIndex_ = index;
-    if (columnOffset == 0) {
-        markedKill_[index] = !markedKill_[index];
+    if (offset == 0) {
+        markedKill_[*index] = !markedKill_[*index];
     }
-    else if (columnOffset == 1) {
-        markedSave_[index] = !markedSave_[index];
+    else if (offset == 1) {
+        markedSave_[*index] = !markedSave_[*index];
     }
     else {
-        return; // the modified `*` glyph -- not a mark, not a click target
+        return true; // the modified/read-only flags aren't marks
     }
     RefreshDisplay();
+    return true;
 }
 
 void BufferListPanel::BeginExecute() {

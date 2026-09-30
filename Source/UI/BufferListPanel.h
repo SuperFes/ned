@@ -1,21 +1,14 @@
 //
-// generic-popup follow-up: an ibuffer/dired-style buffer-list panel -- the
-// focus-mode ListPopup's first real consumer. Owns one ListPopup (via
-// Popup()) for the actual rendering/navigation/digit-jump/Enter/Escape
-// contract, layering buffer-management semantics on top through
-// ListPopup::SetOnActivate/SetOnCancel/SetOnKey/SetOnLeftColumnClick:
+// An ibuffer/dired-style buffer list: a TableView (via Popup()) of every
+// open buffer -- marks, name, size, file -- with buffer management layered
+// on through its SetOnActivate/SetOnCancel/SetOnKey/SetOnCellClick:
 //
 //  - d marks the selected buffer for kill and advances the selection
-//    (Emacs dired/ibuffer's own convention); s marks it for save the same
-//    way; u clears whichever mark(s) that row has. g refreshes the row
-//    list from BufferList (marks survive a refresh, matched by buffer
-//    identity). A click directly on the D or S glyph (ListPopup's
-//    SetOnLeftColumnClick, buffer-list-panel-mouse-mark follow-up) toggles
-//    that one mark without moving the selection off whatever a click on
-//    the buffer name itself would have picked -- a click on the third
-//    (modified `*`) glyph is not a mark target and falls through to
-//    nothing, same as clicking the row's own name would (see
-//    ToggleMarkAt).
+//    (dired/ibuffer's own convention); s marks it for save the same way; u
+//    clears whichever mark(s) that row has. g refreshes the list from
+//    BufferList (marks survive a refresh, matched by buffer identity). A
+//    click on the D or S glyph toggles that one mark instead of switching
+//    to the buffer.
 //  - x executes: every save-marked buffer is written to disk immediately
 //    (non-destructive, no confirmation) via Editor/BufferSave.h's
 //    WriteBufferToDisk -- the same helper save-buffer/save-some-buffers use
@@ -24,19 +17,17 @@
 //    (self-contained -- Popup() already owns real keyboard focus, so no
 //    InteractiveRequest plumbing is needed); y/n during that confirmation
 //    is read directly, not through the normal d/u/s/x/g dispatch.
-//  - Enter, or a digit key (1-9, ListPopup's own single-keystroke
-//    direct-pick contract), switches straight to that row's buffer via
-//    SetOnRequestSwitchToBuffer and expects the caller to hide/return focus
-//    in response (main.cpp's toggle lambda does this the same way it does
-//    for TerminalPanel/AcpPanel).
-//  - Escape/C-g (ListPopup's own quit contract) either cancels an in-
-//    progress kill confirmation, or -- if not confirming -- fires
-//    SetOnCancel for the caller to hide/return focus the same way.
+//  - Enter, or a digit key (1-9, the Nth row as currently sorted),
+//    switches straight to that row's buffer via SetOnRequestSwitchToBuffer
+//    and expects the caller to hide/return focus in response.
+//  - Escape/C-g either cancels an in-progress kill confirmation, or -- if
+//    not confirming -- fires SetOnCancel for the caller to hide/return
+//    focus the same way.
 //
-// Each row's `right` column (buffer-list-panel-columns follow-up) shows a
-// human-readable byte size plus " RO" when the buffer is read-only -- the
-// two facts a plain text::Buffer can report about itself with no access to
-// a Mode/WindowManager (which this panel deliberately has neither of).
+// The marks column is ibuffer's: D kill, S save, * modified, % read-only.
+// Size and file are the facts a plain text::Buffer can report about itself
+// with no access to a Mode/WindowManager (which this panel deliberately has
+// neither of).
 //
 // A batch kill goes through SetOnBufferClosing (fired once per closed
 // buffer, right before BufferList::Close) rather than
@@ -56,11 +47,12 @@
 
 #include <cstddef>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "Editor/Key.h"
-#include "ListPopup.h"
+#include "TableView.h"
 #include "Text/BufferList.h"
 #include "Theme.h"
 
@@ -74,8 +66,8 @@ class BufferListPanel {
 
     // The actual Widget to register with OverlayHost::Add/Show/Hide/
     // SetFocusReturn and to call TakeFocus() on -- this class itself is a
-    // plain controller, not a Widget, since ListPopup already is one.
-    [[nodiscard]] ListPopup& Popup();
+    // plain controller, not a Widget, since TableView already is one.
+    [[nodiscard]] TableView& Popup();
 
     // Rebuilds the row list from BufferList and resets any in-progress kill
     // confirmation -- call before showing the panel (main.cpp's toggle
@@ -103,13 +95,13 @@ class BufferListPanel {
     void SetOnMessage(std::function<void(std::string)> handler);
 
   private:
+    const Theme&      theme_;
     text::BufferList& bufferList_;
-    ListPopup         popup_;
+    TableView         table_;
 
-    std::vector<text::Buffer*> rows_;       // this Show()/Refresh()'s buffer order, index-parallel to popup_'s rows
+    std::vector<text::Buffer*> rows_;       // BufferList's order as of the last Refresh(); ids are buffer names
     std::vector<bool>          markedKill_; // index-parallel to rows_ -- d/D
     std::vector<bool>          markedSave_; // index-parallel to rows_ -- s/S
-    std::size_t                selectedIndex_ = 0;
 
     bool                       confirming_ = false;
     std::vector<text::Buffer*> pendingKill_; // computed by x, executed on 'y'
@@ -120,12 +112,15 @@ class BufferListPanel {
     std::function<void(std::string)>   onMessage_;
 
     void Refresh();        // rebuilds rows_/markedKill_/markedSave_ from bufferList_, preserving marks by identity
-    void RefreshDisplay(); // pushes rows_/markedKill_/markedSave_/selectedIndex_ into popup_'s model
+    void RefreshDisplay(); // pushes rows_/markedKill_/markedSave_ into table_'s model
 
-    void HandleActivate(std::size_t index);
+    [[nodiscard]] std::optional<std::size_t> IndexOf(const std::string& name) const;
+    [[nodiscard]] std::optional<std::size_t> SelectedIndex() const;
+
+    void HandleActivate(const std::string& name);
     void HandleCancel();
     void HandleKey(const editor::KeyChord& chord);
-    void ToggleMarkAt(std::size_t index, int columnOffset); // left-column click -- see this file's own header comment
+    bool HandleCellClick(const std::string& name, std::size_t column, int offset);
 
     void BeginExecute(); // x -- saves every markedSave_ row immediately, then either kills markedKill_ rows or starts confirmation
     void ExecuteKill();  // the actual batch close, once confirmed (or nothing needed confirming)
