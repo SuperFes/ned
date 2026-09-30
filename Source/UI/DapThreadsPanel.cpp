@@ -5,20 +5,19 @@
 
 namespace ned::ui {
 
-DapThreadsPanel::DapThreadsPanel(const Theme& theme, editor::dap::Manager& dapManager) : dapManager_(dapManager), popup_(theme) {
-    popup_.SetFocusable(true);
-    popup_.SetOnHighlightChange([this](std::size_t index) { selectedIndex_ = index; });
-    popup_.SetOnActivate([this](std::size_t index) { HandleActivate(index); });
-    popup_.SetOnCancel([this] {
+DapThreadsPanel::DapThreadsPanel(const Theme& theme, editor::dap::Manager& dapManager) : theme_(theme), dapManager_(dapManager), table_(theme) {
+    table_.SetDigitActivate(true);
+    table_.SetOnActivate([this](const std::string& id) { HandleActivate(id); });
+    table_.SetOnCancel([this] {
         if (onCancel_) {
             onCancel_();
         }
     });
-    popup_.SetOnKey([this](const editor::KeyChord& chord) { HandleKey(chord); });
+    table_.SetOnKey([this](const editor::KeyChord& chord) { HandleKey(chord); });
 }
 
-ListPopup& DapThreadsPanel::Popup() {
-    return popup_;
+TableView& DapThreadsPanel::Popup() {
+    return table_;
 }
 
 void DapThreadsPanel::SetOnMessage(std::function<void(std::string)> handler) {
@@ -30,54 +29,53 @@ void DapThreadsPanel::SetOnCancel(std::function<void()> handler) {
 }
 
 void DapThreadsPanel::Show() {
-    selectedIndex_ = 0;
+    landOnCurrent_ = true;
     Refresh();
 }
 
 void DapThreadsPanel::Refresh() {
     dapManager_.RequestThreads([this](std::vector<editor::dap::Manager::Thread> threads) {
-        rows_          = std::move(threads);
-        selectedIndex_ = rows_.empty() ? 0 : std::min(selectedIndex_, rows_.size() - 1);
-        // Land on the thread the debuggee is actually stopped/inspecting on
-        // the very first fetch after opening (selectedIndex_ still at its
-        // Show()-reset 0) -- a later Refresh() (the stop-triggered one)
-        // deliberately leaves whatever row the user has scrolled to alone.
-        if (selectedIndex_ == 0) {
-            const int current = dapManager_.FocusedThreadId();
-            for (std::size_t i = 0; i < rows_.size(); ++i) {
-                if (rows_[i].id == current) {
-                    selectedIndex_ = i;
-                    break;
-                }
-            }
-        }
+        rows_ = std::move(threads);
         RefreshDisplay();
+        // The thread the debuggee is stopped/inspecting on, the first time
+        // after opening; a later (stop-triggered) refresh leaves the
+        // selection wherever the user put it.
+        if (landOnCurrent_) {
+            landOnCurrent_ = false;
+            table_.SelectRow(std::to_string(dapManager_.FocusedThreadId()));
+        }
     });
 }
 
 void DapThreadsPanel::RefreshDisplay() {
-    ListPopupModel model;
-    model.title = "Threads";
-    model.rows.reserve(rows_.size());
+    table::Model model;
+    model.title       = "Threads";
+    model.placeholder = "(no threads)";
+    model.columns     = {
+        table::Column{.id = "current", .sortable = false},
+        table::Column{.id = "name", .header = "Thread", .width = table::Column::Width::Flex, .minWidth = 6},
+        table::Column{.id = "id", .header = "Id", .align = table::Align::Right},
+    };
+    model.groups.emplace_back();
     const int current = dapManager_.FocusedThreadId();
     for (const editor::dap::Manager::Thread& thread : rows_) {
         const bool isCurrent = thread.id == current;
-        model.rows.push_back({.left     = isCurrent ? "→" : "",
-                              .main     = thread.name,
-                              .accented = isCurrent,
-                              .right    = "#" + std::to_string(thread.id)});
+        model.groups[0].rows.push_back(table::Row{
+            .id    = std::to_string(thread.id),
+            .cells = {table::Cell{.text = isCurrent ? "→" : "", .foreground = theme_.borderAccent.foreground, .bold = true},
+                      table::Cell{.text = thread.name},
+                      table::Cell{.text = "#" + std::to_string(thread.id), .sortNumber = thread.id}}});
     }
-    if (!rows_.empty()) {
-        model.selectedIndex = selectedIndex_;
-    }
-    popup_.SetModel(std::move(model));
+    table_.SetModel(std::move(model));
 }
 
-void DapThreadsPanel::HandleActivate(std::size_t index) {
-    if (index >= rows_.size()) {
+void DapThreadsPanel::HandleActivate(const std::string& id) {
+    const auto found =
+        std::ranges::find_if(rows_, [&id](const editor::dap::Manager::Thread& thread) { return std::to_string(thread.id) == id; });
+    if (found == rows_.end()) {
         return;
     }
-    const editor::dap::Manager::Thread thread = rows_[index];
+    const editor::dap::Manager::Thread thread = *found;
     dapManager_.SelectThread(thread.id, [this, name = thread.name](bool success) {
         if (onMessage_) {
             onMessage_(success ? ("Selected thread: " + name) : "Failed to select thread.");

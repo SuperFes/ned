@@ -174,12 +174,14 @@ TEST_CASE("DapThreadsPanel Show lists every thread and marks the current one", "
     fixture.AnswerThreadsRequest();
     fixture.Paint();
 
-    REQUIRE(fixture.RowText(1).find("main") != std::string::npos);
-    REQUIRE(fixture.RowText(1).find("#1") != std::string::npos);
-    REQUIRE(fixture.RowText(1).find("\xe2\x86\x92") != std::string::npos); // -> marks thread 1, the current one
-    REQUIRE(fixture.RowText(2).find("worker") != std::string::npos);
-    REQUIRE(fixture.RowText(2).find("#2") != std::string::npos);
-    REQUIRE(fixture.RowText(2).find("\xe2\x86\x92") == std::string::npos);
+    // Row 1 is the column header.
+    REQUIRE(fixture.RowText(1).find("Thread") != std::string::npos);
+    REQUIRE(fixture.RowText(2).find("main") != std::string::npos);
+    REQUIRE(fixture.RowText(2).find("#1") != std::string::npos);
+    REQUIRE(fixture.RowText(2).find("\xe2\x86\x92") != std::string::npos); // -> marks thread 1, the current one
+    REQUIRE(fixture.RowText(3).find("worker") != std::string::npos);
+    REQUIRE(fixture.RowText(3).find("#2") != std::string::npos);
+    REQUIRE(fixture.RowText(3).find("\xe2\x86\x92") == std::string::npos);
 
     SetLaunchConfig("dap-threads-panel-test-list", "");
 }
@@ -209,7 +211,7 @@ TEST_CASE("DapThreadsPanel Enter selects the highlighted row's thread", "[DapThr
     REQUIRE(message == "Selected thread: worker");
 
     fixture.Paint();
-    REQUIRE(fixture.RowText(2).find("\xe2\x86\x92") != std::string::npos); // -> moved to thread 2's row
+    REQUIRE(fixture.RowText(3).find("\xe2\x86\x92") != std::string::npos); // -> moved to thread 2's row
 
     SetLaunchConfig("dap-threads-panel-test-select", "");
 }
@@ -243,8 +245,8 @@ TEST_CASE("DapThreadsPanel Refresh with no session reports an empty list", "[Dap
     fixture.panel.Show();
     fixture.Paint();
 
-    // No rows at all -- row 1 is just the left/right border columns around
-    // blank interior, not empty outright (Popup()'s own bordered-box shape).
-    REQUIRE(fixture.RowText(1).find("main") == std::string::npos);
-    REQUIRE(fixture.RowText(1).find('#') == std::string::npos);
+    // No rows at all: the header, then the placeholder.
+    REQUIRE(fixture.RowText(2).find("(no threads)") != std::string::npos);
+    REQUIRE(fixture.RowText(2).find("main") == std::string::npos);
+    REQUIRE(fixture.RowText(2).find('#') == std::string::npos);
 }

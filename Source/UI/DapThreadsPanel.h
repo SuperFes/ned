@@ -1,9 +1,8 @@
 //
 // Debugging wishlist: a dedicated live thread window (gf/GDBFrontend audit,
-// ROADMAP.md's own entry) -- BufferListPanel's exact controller-plus-
-// focus-mode-ListPopup shape (a plain, non-Widget controller owning one
-// ListPopup via Popup(), driven through SetOnHighlightChange/SetOnActivate/
-// SetOnCancel rather than a bespoke Paint()/OnEvent() override), applied to
+// ROADMAP.md's own entry) -- BufferListPanel's controller-over-TableView
+// shape (a plain, non-Widget controller owning one TableView via Popup(),
+// driven through its SetOnActivate/SetOnCancel/SetOnKey), applied to
 // Manager::RequestThreads/SelectThread instead of BufferList.
 //
 // Unlike dap-select-thread's one-shot numbered picker (BufferView::
@@ -35,7 +34,7 @@
 
 #include "Editor/Dap/Manager.h"
 #include "Editor/Key.h"
-#include "ListPopup.h"
+#include "TableView.h"
 #include "Theme.h"
 
 namespace ned::ui {
@@ -49,15 +48,15 @@ class DapThreadsPanel {
     // The actual Widget to register with OverlayHost::Add/Show/Hide/
     // SetFocusReturn and to call TakeFocus() on -- BufferListPanel's own
     // "this class is a plain controller, not a Widget" shape.
-    [[nodiscard]] ListPopup& Popup();
+    [[nodiscard]] TableView& Popup();
 
-    // Rebuilds the row list and resets selection to the current thread (if
-    // any) -- call before showing the panel (main.cpp's toggle lambda calls
-    // this, then Popup().TakeFocus()).
+    // Rebuilds the row list and moves the selection to the current thread
+    // (if any) once it arrives -- call before showing the panel (main.cpp's
+    // toggle lambda calls this, then Popup().TakeFocus()).
     void Show();
 
-    // Re-fetches the row list from Manager without resetting selection
-    // (clamped if the new list is shorter) -- called by Show() and by
+    // Re-fetches the row list from Manager, leaving the selection on the
+    // thread it was on -- called by Show() and by
     // WindowManager::SetOnDapThreadsRefreshNeeded's wiring on every stop
     // event while the panel may or may not be visible.
     void Refresh();
@@ -73,17 +72,18 @@ class DapThreadsPanel {
     void SetOnCancel(std::function<void()> handler);
 
   private:
+    const Theme&          theme_;
     editor::dap::Manager& dapManager_;
-    ListPopup                popup_;
+    TableView             table_;
 
-    std::vector<editor::dap::Manager::Thread> rows_; // this Show()/Refresh()'s thread order, index-parallel to popup_'s rows
-    std::size_t                                  selectedIndex_ = 0;
+    std::vector<editor::dap::Manager::Thread> rows_;                  // this Show()/Refresh()'s thread order; row ids are thread ids
+    bool                                      landOnCurrent_ = false; // set by Show(), spent by the next fetch
 
     std::function<void(std::string)> onMessage_;
     std::function<void()>            onCancel_;
 
-    void RefreshDisplay(); // pushes rows_/selectedIndex_ into popup_'s model, marking Manager::CurrentThreadId()'s own row
-    void HandleActivate(std::size_t index);
+    void RefreshDisplay(); // pushes rows_ into table_'s model, marking Manager::FocusedThreadId()'s own row
+    void HandleActivate(const std::string& id);
     void HandleKey(const editor::KeyChord& chord);
 };
 
