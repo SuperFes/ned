@@ -67,6 +67,7 @@
 // enough, unlike the rest of this header's Buffer/BufferList usage (all
 // by-reference parameters).
 #include "Text/Buffer.h"
+#include "Text/PerBufferMap.h"
 
 namespace ned::text {
 class BufferList;
@@ -1983,7 +1984,7 @@ class Manager {
         std::size_t lastSaveGeneration = 0;
         bool        existedOnDisk      = false;
     };
-    std::unordered_map<text::Buffer*, FileExistence> fileExistence_;
+    text::PerBufferMap<FileExistence> fileExistence_;
 
     // Sends didCreateFiles the first time a save turns a buffer with no
     // file on disk into one with a file. Called from SyncBuffer, the one
@@ -2101,7 +2102,7 @@ class Manager {
     // (an embedded document shares its host buffer's root, never its own
     // embedded language's, see SyncBuffer's own doc comment). Erased in
     // NotifyBufferClosed.
-    std::unordered_map<text::Buffer*, std::filesystem::path> bufferResolvedRoot_;
+    text::PerBufferMap<std::filesystem::path> bufferResolvedRoot_;
 
     // graceful-lsp-shutdown follow-up: languages whose current clients_
     // entry is a connection to an already-running LSP broker daemon rather
@@ -2121,20 +2122,20 @@ class Manager {
     // checker), each tracking its own didOpen/version/lastSyncedGeneration
     // independently. Was a flat unordered_map<Buffer*, BufferSyncState>
     // before this could ever be true.
-    std::unordered_map<text::Buffer*, std::unordered_map<std::string, BufferSyncState>> bufferState_;
+    text::PerBufferMap<std::unordered_map<std::string, BufferSyncState>> bufferState_;
 
     // huge-file-lsp-gate follow-up: which huge buffers have already gotten
     // their one-time "no LSP/prose sync" LogError -- SyncBuffer checks/
     // inserts into this instead of logging on every skipped call (every
     // Paint() while the buffer is focused). Erased in NotifyBufferClosed.
-    std::unordered_set<text::Buffer*> hugeSyncSkipNotified_;
+    text::PerBufferSet<> hugeSyncSkipNotified_;
 
     // prose-checking follow-up: per-buffer, per-source-language diagnostics
     // -- what makes merging possible instead of each server's own
     // publishDiagnostics wholesale-replacing whatever the other server just
     // reported. PushMergedDiagnostics flattens this into the vector that
     // actually reaches buffer.SetDiagnostics.
-    std::unordered_map<text::Buffer*, std::unordered_map<std::string, DiagnosticSlice>> diagnosticsBySource_;
+    text::PerBufferMap<std::unordered_map<std::string, DiagnosticSlice>> diagnosticsBySource_;
 
     // project-wide-diagnostics follow-up: the same per-source merge as
     // diagnosticsBySource_ just above, for files with no buffer to hang it
@@ -2179,14 +2180,14 @@ class Manager {
     // kProseLanguageKey," which stopped being unambiguous the moment an
     // embedded key could also live in that same map. Erased in
     // NotifyBufferClosed.
-    std::unordered_map<text::Buffer*, std::string> primaryServerKey_;
+    text::PerBufferMap<std::string> primaryServerKey_;
 
     // embedded-language-documents follow-up: every server key
     // SyncEmbeddedDocuments currently manages for buffer -- what lets a
     // later call notice a key has disappeared (its only region was deleted)
     // and tear it down, rather than leaving a phantom document and stale
     // diagnostics behind forever. Erased in NotifyBufferClosed.
-    std::unordered_map<text::Buffer*, std::unordered_set<std::string>> embeddedServerKeys_;
+    text::PerBufferMap<std::unordered_set<std::string>> embeddedServerKeys_;
 
     // embedded-language-documents follow-up: per-buffer, per-embedded-key
     // owned byte ranges (host-buffer coordinates) -- consulted by
@@ -2195,7 +2196,7 @@ class Manager {
     // shouldn't be surfacing real diagnostics). Absent for the primary
     // language and kProseLanguageKey, which own the whole buffer. Erased in
     // NotifyBufferClosed.
-    std::unordered_map<text::Buffer*, std::unordered_map<std::string, std::vector<std::pair<std::size_t, std::size_t>>>>
+    text::PerBufferMap<std::unordered_map<std::string, std::vector<std::pair<std::size_t, std::size_t>>>>
         embeddedOwnedRanges_;
 
     // diagnostics-debounce follow-up: one debounce timer per buffer with a
@@ -2206,7 +2207,7 @@ class Manager {
     // further publish for that buffer. NotifyBufferClosed erases (and so
     // cancels) a buffer's entry before it can fire against a Buffer* that
     // may no longer be valid.
-    std::unordered_map<text::Buffer*, ned::ui::DeadlineTimer> diagnosticsDebounceTimers_;
+    text::PerBufferMap<ned::ui::DeadlineTimer> diagnosticsDebounceTimers_;
 
     // prose-check-composer follow-up: CheckComposerProseText's own state --
     // composerProseBuffer_ is lazily constructed on first use and lives for
@@ -2234,7 +2235,7 @@ class Manager {
     // independently. NotifyBufferClosed erases a buffer's whole entry
     // before any of its timers could fire against a dead buffer -- same
     // rationale as diagnosticsDebounceTimers_ just above.
-    std::unordered_map<text::Buffer*, std::unordered_map<std::string, ned::ui::DeadlineTimer>> syncDebounceTimers_;
+    text::PerBufferMap<std::unordered_map<std::string, ned::ui::DeadlineTimer>> syncDebounceTimers_;
 
     // RequestViewportFeatures' own state. ArmedViewportRequest is the
     // (server, content generation, viewport) pair a buffer most recently
@@ -2254,7 +2255,7 @@ class Manager {
 
         [[nodiscard]] bool operator==(const ArmedViewportRequest&) const = default;
     };
-    std::unordered_map<text::Buffer*, ArmedViewportRequest>                  armedViewportRequests_;
+    text::PerBufferMap<ArmedViewportRequest> armedViewportRequests_;
 
     // The one triple a buffer has already been granted a retry for, so a
     // declined request is re-asked exactly once rather than forever. This is
@@ -2266,10 +2267,10 @@ class Manager {
     // genuine change (an edit, a scroll) is a different triple and gets its
     // own retry; a server-initiated refresh clears this outright, since that
     // is the server itself saying the answer is different now.
-    std::unordered_map<text::Buffer*, ArmedViewportRequest>                  retriedViewportRequests_;
-    std::unordered_map<text::Buffer*, ned::ui::DeadlineTimer>                viewportRequestTimers_;
-    std::unordered_set<text::Buffer*>                                        viewportRequestPending_;
-    std::unordered_map<text::Buffer*, std::chrono::steady_clock::time_point> lastViewportRequestAt_;
+    text::PerBufferMap<ArmedViewportRequest>                  retriedViewportRequests_;
+    text::PerBufferMap<ned::ui::DeadlineTimer>                viewportRequestTimers_;
+    text::PerBufferSet<>                                      viewportRequestPending_;
+    text::PerBufferMap<std::chrono::steady_clock::time_point> lastViewportRequestAt_;
 
     // Sends the three requests request describes, or returns false having
     // sent nothing because the buffer or its server has moved on -- see
@@ -2365,17 +2366,17 @@ class Manager {
     // only consulted by the full/delta path (generation alone is enough to
     // dedup a whole-document request); range mode has its own
     // requestedRange_ triple just below.
-    std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensRequestedGeneration_;
-    std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensRequestCounter_;
-    mutable std::unordered_map<text::Buffer*, std::vector<editor::HighlightSpan>> semanticTokenSpans_;
+    text::PerBufferMap<std::size_t>                                semanticTokensRequestedGeneration_;
+    text::PerBufferMap<std::size_t>                                semanticTokensRequestCounter_;
+    mutable text::PerBufferMap<std::vector<editor::HighlightSpan>> semanticTokenSpans_;
     // The content generation semanticTokenSpans_ above is resolved against --
     // both the cheap did-anything-change gate and the point CarryForward
     // replays the buffer's edits from. Distinct from semanticTokensGeneration_
     // right below, which is a cache *invalidation* counter for BufferView's
     // highlight cache: this one moves with the content, that one only when a
     // real response lands.
-    mutable std::unordered_map<text::Buffer*, std::size_t>                semanticTokenSpansContentGeneration_;
-    std::unordered_map<text::Buffer*, std::size_t>                        semanticTokensGeneration_;
+    mutable text::PerBufferMap<std::size_t> semanticTokenSpansContentGeneration_;
+    text::PerBufferMap<std::size_t>         semanticTokensGeneration_;
 
     // What has actually been asked about, so it is never asked about twice.
     // Shared by the two viewport-ranged requests (inlayHint,
@@ -2418,7 +2419,7 @@ class Manager {
     // inlayHintsUnsupported_/pullDiagnosticsUnsupported_/codeLensUnsupported_
     // already establish, keyed by serverKey, erased in ClientDisconnected
     // (a respawned server gets one fresh attempt at both).
-    std::unordered_map<text::Buffer*, ViewportCoverage>                                  semanticTokensCoverage_;
+    text::PerBufferMap<ViewportCoverage>                                                 semanticTokensCoverage_;
     std::unordered_set<std::string>                                                      semanticTokensRangeUnsupported_;
     std::unordered_set<std::string>                                                      semanticTokensFullDeltaUnsupported_;
 
@@ -2437,7 +2438,7 @@ class Manager {
         std::string                resultId;
         std::vector<std::uint32_t> rawData;
     };
-    std::unordered_map<text::Buffer*, PreviousSemanticTokens> previousSemanticTokens_;
+    text::PerBufferMap<PreviousSemanticTokens> previousSemanticTokens_;
 
     // buffer-anchored-lsp-results follow-up. The one translation layer every
     // positional result this class holds goes through, replacing the
@@ -2605,11 +2606,11 @@ class Manager {
     // (anchors relocated) or revision_ moved (a response merged). The
     // rebuild is a linear copy, never a re-sort: relocation is monotonic, so
     // anchors sorted at merge time stay sorted.
-    std::unordered_map<text::Buffer*, ViewportCoverage>                                  inlayHintCoverage_;
-    std::unordered_map<text::Buffer*, std::size_t>                                       inlayHintsRequestCounter_;
-    std::unordered_map<text::Buffer*, std::vector<AnchoredInlayHint>>                    inlayHintAnchors_;
-    std::unordered_map<text::Buffer*, std::size_t>                                       inlayHintRevision_;
-    mutable std::unordered_map<text::Buffer*, InlayHintView>                             inlayHintView_;
+    text::PerBufferMap<ViewportCoverage>                                                 inlayHintCoverage_;
+    text::PerBufferMap<std::size_t>                                                      inlayHintsRequestCounter_;
+    text::PerBufferMap<std::vector<AnchoredInlayHint>>                                   inlayHintAnchors_;
+    text::PerBufferMap<std::size_t>                                                      inlayHintRevision_;
+    mutable text::PerBufferMap<InlayHintView>                                            inlayHintView_;
     std::unordered_set<std::string>                                                      inlayHintsUnsupported_;
 
     // An inlay hint's own anchor policy. Right gravity because a hint renders
@@ -2632,23 +2633,23 @@ class Manager {
     // cached set forward on read -- see its definition for why the catch-up
     // lives there rather than at each edit. Manager is main-thread only, so
     // there is no synchronisation question behind this.
-    mutable std::unordered_map<text::Buffer*, std::size_t>                               codeLensSpansGeneration_;
-    std::unordered_map<text::Buffer*, std::size_t>                                       codeLensRequestedGeneration_;
-    std::unordered_map<text::Buffer*, std::size_t>                                       codeLensRequestCounter_;
-    mutable std::unordered_map<text::Buffer*, std::vector<ResolvedCodeLens>>             codeLensSpans_;
+    mutable text::PerBufferMap<std::size_t>                                              codeLensSpansGeneration_;
+    text::PerBufferMap<std::size_t>                                                      codeLensRequestedGeneration_;
+    text::PerBufferMap<std::size_t>                                                      codeLensRequestCounter_;
+    mutable text::PerBufferMap<std::vector<ResolvedCodeLens>>                            codeLensSpans_;
     std::unordered_set<std::string>                                                      codeLensUnsupported_;
     // documentColor follow-up: the same five-member set the code lenses use,
     // minus a revision counter of its own -- an answer landing moves
     // virtualTextRevision_, since a swatch cell can push a wrapped line onto
     // another row.
-    mutable std::unordered_map<text::Buffer*, std::size_t>                        documentColorGeneration_;
-    std::unordered_map<text::Buffer*, std::size_t>                                documentColorRequestedGeneration_;
-    std::unordered_map<text::Buffer*, std::size_t>                                documentColorRequestCounter_;
-    mutable std::unordered_map<text::Buffer*, std::vector<ResolvedDocumentColor>> documentColorSpans_;
+    mutable text::PerBufferMap<std::size_t>                                       documentColorGeneration_;
+    text::PerBufferMap<std::size_t>                                               documentColorRequestedGeneration_;
+    text::PerBufferMap<std::size_t>                                               documentColorRequestCounter_;
+    mutable text::PerBufferMap<std::vector<ResolvedDocumentColor>>                documentColorSpans_;
     std::unordered_set<std::string>                                               documentColorUnsupported_;
     // See VirtualTextRevision. Values come from one manager-wide counter so
     // none is ever handed out twice.
-    std::unordered_map<text::Buffer*, std::size_t> virtualTextRevision_;
+    text::PerBufferMap<std::size_t>                virtualTextRevision_;
     std::size_t                                    virtualTextResultCount_ = 0;
     // Bumped every time codeLensSpans_ is REPLACED, which
     // codeLensSpansGeneration_ cannot stand in for (that one tracks the
@@ -2656,7 +2657,7 @@ class Manager {
     // with the vector left in place). An in-flight codeLens/resolve holds it
     // to tell "my entry is still at that index" from "the whole set was
     // answered again while I waited".
-    std::unordered_map<text::Buffer*, std::size_t> codeLensRevision_;
+    text::PerBufferMap<std::size_t> codeLensRevision_;
 
     // code-action-hints follow-up. coverage_/requestCounter_/unsupported_
     // are the same three gates inlayHintCoverage_ and its siblings are.
@@ -2672,12 +2673,12 @@ class Manager {
     // in RequestCodeActionHints; PushMergedDiagnostics is what actually
     // re-arms the request, since the armed-viewport dedup would otherwise
     // see an unchanged (generation, viewport) pair and never fire again.
-    std::unordered_map<text::Buffer*, ViewportCoverage>                    codeActionHintCoverage_;
-    std::unordered_map<text::Buffer*, std::size_t>                         codeActionHintRequestCounter_;
-    std::unordered_map<text::Buffer*, std::size_t>                         codeActionHintDiagnosticsGeneration_;
-    std::unordered_map<text::Buffer*, std::size_t>                         codeActionHintRevision_;
-    mutable std::unordered_map<text::Buffer*, std::size_t>                 codeActionHintSpansGeneration_;
-    mutable std::unordered_map<text::Buffer*, std::vector<CodeActionHint>> codeActionHintSpans_;
+    text::PerBufferMap<ViewportCoverage>                                   codeActionHintCoverage_;
+    text::PerBufferMap<std::size_t>                                        codeActionHintRequestCounter_;
+    text::PerBufferMap<std::size_t>                                        codeActionHintDiagnosticsGeneration_;
+    text::PerBufferMap<std::size_t>                                        codeActionHintRevision_;
+    mutable text::PerBufferMap<std::size_t>                                codeActionHintSpansGeneration_;
+    mutable text::PerBufferMap<std::vector<CodeActionHint>>                codeActionHintSpans_;
     std::unordered_set<std::string>                                        codeActionHintsUnsupported_;
 
     // SettleCoverage against this buffer's code-action-hint coverage --

@@ -520,6 +520,33 @@ TEST_CASE("SyncBuffer's didOpen is sent immediately, never debounced", "[Lsp]") 
     REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["method"] == "textDocument/didOpen");
 }
 
+TEST_CASE("A buffer at a freed synced buffer's address gets its own didOpen", "[Lsp]") {
+    BufferList            bufferList;
+    ned::ui::EventLoop    eventLoop;
+    Manager               manager(bufferList, eventLoop);
+    Client*               client = nullptr;
+    FakeServer            server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    std::optional<Buffer> slot;
+
+    const std::filesystem::path firstPath = std::filesystem::temp_directory_path() / "ned-lsp-manager-reuse-first.txt";
+    slot.emplace(Buffer::NewFile(firstPath));
+    const Buffer* address = &*slot;
+    manager.SyncBuffer(*slot, "test-lang");
+    ReadRawFrame(server.serverStdinRead);
+    slot.reset(); // destroyed without NotifyBufferClosed
+
+    const std::filesystem::path secondPath = std::filesystem::temp_directory_path() / "ned-lsp-manager-reuse-second.txt";
+    slot.emplace(Buffer::NewFile(secondPath));
+    REQUIRE(&*slot == address);
+    manager.SyncBuffer(*slot, "test-lang");
+
+    REQUIRE_FALSE(NoFrameArrives(server.serverStdinRead));
+    const std::string raw   = ReadRawFrame(server.serverStdinRead);
+    const Json        frame = Json::parse(raw.substr(raw.find("\r\n\r\n") + 4));
+    REQUIRE(frame["method"] == "textDocument/didOpen");
+    REQUIRE(frame["params"]["textDocument"]["uri"].get<std::string>().ends_with("/ned-lsp-manager-reuse-second.txt"));
+}
+
 TEST_CASE("SyncBuffer debounces a rapid burst of edits into a single didChange with the final content", "[Lsp]") {
     // sync-debounce follow-up: the user's own reported bug, made concrete --
     // a burst of edits with no pause between them (well within
