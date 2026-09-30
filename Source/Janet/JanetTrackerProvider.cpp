@@ -108,15 +108,22 @@ JanetTrackerProvider::JanetTrackerProvider(JanetTable* env, std::string name, Ja
     // The detail view is optional, but half of it is a plugin bug.
     const Janet viewArgv  = janet_get(callbacks, janet_ckeywordv("view-argv"));
     const Janet parseView = janet_get(callbacks, janet_ckeywordv("parse-view"));
-    if (janet_checktype(viewArgv, JANET_NIL) && janet_checktype(parseView, JANET_NIL)) {
-        return;
+    if (!janet_checktype(viewArgv, JANET_NIL) || !janet_checktype(parseView, JANET_NIL)) {
+        if (!IsCallable(viewArgv) || !IsCallable(parseView)) {
+            throw std::runtime_error("ned: tracker provider \"" + name_ + "\" needs :view-argv and :parse-view together, as functions");
+        }
+        janet_def(env_, CallbackName(name_, "view-argv").c_str(), viewArgv, "");
+        janet_def(env_, CallbackName(name_, "parse-view").c_str(), parseView, "");
+        hasView_ = true;
     }
-    if (!IsCallable(viewArgv) || !IsCallable(parseView)) {
-        throw std::runtime_error("ned: tracker provider \"" + name_ + "\" needs :view-argv and :parse-view together, as functions");
+    const Janet detect = janet_get(callbacks, janet_ckeywordv("detect"));
+    if (!janet_checktype(detect, JANET_NIL)) {
+        if (!IsCallable(detect)) {
+            throw std::runtime_error("ned: tracker provider \"" + name_ + "\" :detect must be a function");
+        }
+        janet_def(env_, CallbackName(name_, "detect").c_str(), detect, "");
+        hasDetect_ = true;
     }
-    janet_def(env_, CallbackName(name_, "view-argv").c_str(), viewArgv, "");
-    janet_def(env_, CallbackName(name_, "parse-view").c_str(), parseView, "");
-    hasView_ = true;
 }
 
 Janet JanetTrackerProvider::Call(const std::string& callback, std::initializer_list<Janet> args) const {
@@ -188,6 +195,46 @@ editor::tracker::IssueDetail JanetTrackerProvider::ParseView(const std::string& 
         }
     }
     return detail;
+}
+
+std::vector<editor::tracker::Detected> JanetTrackerProvider::Detect(const std::vector<std::string>& remoteUrls) const {
+    if (!hasDetect_) {
+        return {};
+    }
+    JanetArray* urls = janet_array(static_cast<std::int32_t>(remoteUrls.size()));
+    for (const std::string& url : remoteUrls) {
+        janet_array_push(urls, StringValue(url));
+    }
+    const Janet  result = Call(CallbackName(name_, "detect"), {janet_wrap_array(urls)});
+    const Janet* items  = nullptr;
+    std::int32_t count  = 0;
+    if (!janet_indexed_view(result, &items, &count)) {
+        throw std::runtime_error("tracker provider \"" + name_ + "\": :detect must return an array of connection tables");
+    }
+    std::vector<editor::tracker::Detected> detected;
+    for (std::int32_t i = 0; i < count; ++i) {
+        if (!IsDictionary(items[i])) {
+            continue;
+        }
+        editor::tracker::Detected found{.connection = {.name     = TextField(items[i], "name"),
+                                                       .provider = name_,
+                                                       .url      = TextField(items[i], "url"),
+                                                       .email    = TextField(items[i], "email")}};
+        const Janet*              panels     = nullptr;
+        std::int32_t              panelCount = 0;
+        if (janet_indexed_view(janet_get(items[i], janet_ckeywordv("panels")), &panels, &panelCount)) {
+            for (std::int32_t j = 0; j < panelCount; ++j) {
+                if (IsDictionary(panels[j])) {
+                    found.panels.push_back(editor::tracker::Panel{.name       = TextField(panels[j], "name"),
+                                                                  .connection = found.connection.name,
+                                                                  .query      = TextField(panels[j], "query"),
+                                                                  .glyph      = TextField(panels[j], "glyph")});
+                }
+            }
+        }
+        detected.push_back(std::move(found));
+    }
+    return detected;
 }
 
 } // namespace ned::janet

@@ -75,6 +75,15 @@ struct CommandSpec {
     std::vector<std::string> argv;
 };
 
+// A connection a provider recognized in the project's git remotes, with the
+// panels to show for it. Each panel's connection is connection.name.
+struct Detected {
+    Connection         connection;
+    std::vector<Panel> panels;
+
+    bool operator==(const Detected&) const = default;
+};
+
 class Provider {
   public:
     virtual ~Provider() = default;
@@ -86,6 +95,10 @@ class Provider {
     // then shows only what the list already fetched.
     [[nodiscard]] virtual std::optional<CommandSpec> ViewArgv(const Connection& connection, const std::string& key) const = 0;
     [[nodiscard]] virtual IssueDetail                ParseView(const std::string& output) const                           = 0;
+
+    // Given the project's git remote URLs; empty when the provider
+    // recognizes none, or detects nothing at all.
+    [[nodiscard]] virtual std::vector<Detected> Detect(const std::vector<std::string>& remoteUrls) const = 0;
 };
 
 } // namespace ned::editor::tracker

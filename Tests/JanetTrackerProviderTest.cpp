@@ -225,3 +225,34 @@ TEST_CASE("ned/set-tracker-connection and ned/add-tracker-panel fill the registr
     CHECK_FALSE(tracker::FindConnection("bad"));
     CHECK_FALSE(tracker::FindPanel("bad"));
 }
+
+TEST_CASE("ned/tracker-register-provider adapts the optional :detect", "[JanetTrackerProvider]") {
+    RegistryResetGuard guard;
+    Environment&       env = BoundEnvironment();
+
+    env.DoString(R"(
+      (ned/tracker-register-provider "stub-detect"
+        {:list-argv (fn [c q] [])
+         :parse-list (fn [o] [])
+         :detect (fn [urls]
+                   [{:name (string "found:" (first urls)) :url "https://example.com/r"
+                     :panels [{:name "Open" :query "is:open" :glyph "G"} "skipped" {:name "Bare"}]}
+                    "skipped"])})
+    )");
+    const auto provider = tracker::FindProvider("stub-detect");
+    REQUIRE(provider);
+    const std::vector<tracker::Detected> found = provider->Detect({"git@example.com:r"});
+    REQUIRE(found.size() == 1);
+    CHECK(found[0].connection == Connection{.name = "found:git@example.com:r", .provider = "stub-detect", .url = "https://example.com/r"});
+    CHECK(found[0].panels == std::vector<Panel>{{.name = "Open", .connection = "found:git@example.com:r", .query = "is:open", .glyph = "G"},
+                                                {.name = "Bare", .connection = "found:git@example.com:r"}});
+
+    env.DoString(R"((ned/tracker-register-provider "no-detect" {:list-argv (fn [c q] []) :parse-list (fn [o] [])}))");
+    CHECK(tracker::FindProvider("no-detect")->Detect({"url"}).empty());
+
+    env.DoString(R"((ned/tracker-register-provider "bad-detect" {:list-argv (fn [c q] []) :parse-list (fn [o] []) :detect (fn [u] "no")}))");
+    CHECK_THROWS_WITH(tracker::FindProvider("bad-detect")->Detect({"url"}), ContainsSubstring(":detect must return an array"));
+
+    CHECK_THROWS_WITH(env.DoString(R"((ned/tracker-register-provider "x" {:list-argv (fn [c q] []) :parse-list (fn [o] []) :detect 1}))"),
+                      ContainsSubstring(":detect must be a function"));
+}

@@ -20,7 +20,7 @@ std::string ReadBundledPlugin(std::string_view name) {
 }
 
 void LoadBundledPlugins(Environment& env) {
-    for (const char* name : {"vcs-git", "gradients", "languages"}) {
+    for (const char* name : {"vcs-git", "gradients", "languages", "tracker-github"}) {
         env.DoString(ReadBundledPlugin(name), std::string(name) + ".janet");
     }
 }

@@ -100,6 +100,7 @@
 #include "Editor/TestRun/TestResultsBuffer.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/ThemeSetting.h"
+#include "Editor/Tracker/Detect.h"
 #include "Editor/Tracker/Registry.h"
 #include "Editor/Tracker/Runner.h"
 #include "Editor/TransientSession.h"
@@ -1573,10 +1574,14 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         [panel = &debugPanel](ned::editor::dap::Manager::SessionState) { panel->NotifySessionStateChanged(); });
 
     // Issue-tracker panels, below the built-in ones in declaration order:
-    // init.janet's (already loaded) and then the project's own. A project
-    // switch re-execs, so project panels never need removing.
+    // init.janet's (already loaded), the project's own, then any its git
+    // remotes imply. A project switch re-execs, so project panels never
+    // need removing.
     for (ned::editor::tracker::Panel& panel : ned::editor::LoadProjectSettings(projectRoot).trackerPanels) {
         ned::editor::tracker::AddPanel(std::move(panel));
+    }
+    if (ned::editor::tracker::AutoDetect()) {
+        ned::editor::tracker::AddDetectedPanels(ned::editor::tracker::GitRemoteUrls(projectRoot));
     }
     ned::editor::tracker::Runner                        trackerRunner(eventLoop);
     std::vector<std::unique_ptr<ned::ui::TrackerPanel>> trackerPanels;

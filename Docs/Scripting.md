@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-245 bindings.
+247 bindings.
 
 ## `ned/add-tracker-panel`
 
@@ -68,6 +68,10 @@ Delete the grapheme cluster at point.
 ## `ned/file-naming-case-convention`
 
 The language's own overridden new-file case-convention name, or nil if unset.
+
+## `ned/find-executable`
+
+Return the full path of an executable found on $PATH (or name itself, if it contains a '/' and is executable), else nil.
 
 ## `ned/format-align-enabled`
 
@@ -879,6 +883,10 @@ Parse this file's contents after a test run exits instead of the run's own stdou
 
 Select the startup theme by name (e.g. "dark", "light", "gruvbox-dark"). Beats the desktop probe; an unknown name is reported at startup and falls back. Empty string clears the preference.
 
+## `ned/set-tracker-auto-detect`
+
+Enable/disable tracker panels added at startup from the project's git remotes (default true) -- a github.com remote gets an issues panel when gh is installed. A connection or panel you declare yourself under the same name always wins over a detected one.
+
 ## `ned/set-tracker-connection`
 
 Define a named tracker connection: (name options), options being :provider (a name given to ned/tracker-register-provider), :url, :email, and :token-command, an argv array whose output is the API token -- ned stores no token. Re-setting name replaces it.
@@ -977,7 +985,7 @@ Set one part of one themed surface: (ned/theme-surface "popup" "fill" "y $bg/78 
 
 ## `ned/tracker-register-provider`
 
-Register an issue-tracker plugin: (name callbacks). name is letters, digits, '-' or '_'. callbacks is a struct/table with :list-argv, taking a connection struct (:name :provider :url :email -- never a token) and a panel's query string and returning the argv of the command that lists its issues, and :parse-list, taking that command's output and returning an array of issue tables (:key :title :status :assignee :labels :url :updated; :labels is an array of strings). Optionally :view-argv, taking a connection struct and an issue key and returning the argv that fetches that one issue, with :parse-view, taking its output and returning one issue table plus :body and :comments (an array of :author :created :body tables); without them an issue's buffer shows only what the list fetched. ned runs the commands itself. Re-registering name replaces the previous provider.
+Register an issue-tracker plugin: (name callbacks). name is letters, digits, '-' or '_'. callbacks is a struct/table with :list-argv, taking a connection struct (:name :provider :url :email -- never a token) and a panel's query string and returning the argv of the command that lists its issues, and :parse-list, taking that command's output and returning an array of issue tables (:key :title :status :assignee :labels :url :updated; :labels is an array of strings). Optionally :view-argv, taking a connection struct and an issue key and returning the argv that fetches that one issue, with :parse-view, taking its output and returning one issue table plus :body and :comments (an array of :author :created :body tables); without them an issue's buffer shows only what the list fetched. Optionally :detect, taking an array of the project's git remote URLs and returning an array of connection tables (:name :url :email, plus :panels, an array of :name :query :glyph tables) to add at startup; see ned/set-tracker-auto-detect. ned runs the commands itself. Re-registering name replaces the previous provider.
 
 ## `ned/vcs-register-provider`
 

@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "Editor/Tracker/Detect.h"
 #include "Editor/Tracker/IssueBuffer.h"
 #include "Editor/Tracker/Registry.h"
 #include "Editor/Tracker/Runner.h"
@@ -17,6 +18,7 @@ using Catch::Matchers::ContainsSubstring;
 using ned::editor::tracker::CommandSpec;
 using ned::editor::tracker::Comment;
 using ned::editor::tracker::Connection;
+using ned::editor::tracker::Detected;
 using ned::editor::tracker::FinishList;
 using ned::editor::tracker::FinishView;
 using ned::editor::tracker::Issue;
@@ -75,9 +77,20 @@ class StubProvider : public Provider {
         return IssueDetail{.issue = Issue{.status = "Done"}, .body = output, .comments = {Comment{.author = "ann", .body = "ok"}}};
     }
 
-    mutable Connection  lastConnection;
-    mutable std::string lastQuery;
-    mutable std::string lastKey;
+    [[nodiscard]] std::vector<Detected> Detect(const std::vector<std::string>& remoteUrls) const override {
+        if (throwOnDetect) {
+            throw std::runtime_error("detector broke");
+        }
+        lastRemotes = remoteUrls;
+        return detected;
+    }
+
+    mutable Connection               lastConnection;
+    mutable std::string              lastQuery;
+    mutable std::string              lastKey;
+    mutable std::vector<std::string> lastRemotes;
+    std::vector<Detected>            detected;
+    bool                             throwOnDetect = false;
 
   private:
     std::vector<std::string> argv_;
@@ -388,4 +401,62 @@ TEST_CASE("ShowIssue rewrites one read-only buffer per issue", "[Tracker]") {
     CHECK(again.Text().find("v1") == std::string::npos);
     CHECK(again.Text().find("v2") != std::string::npos);
     CHECK(again.Point() == 0);
+}
+
+TEST_CASE("ParseRemoteUrls reads each URL of git remote -v once", "[Tracker]") {
+    const std::string output = "origin\tgit@github.com:me/ned.git (fetch)\n"
+                               "origin\tgit@github.com:me/ned.git (push)\n"
+                               "upstream\thttps://github.com/org/ned (fetch)\n"
+                               "upstream\thttps://github.com/org/ned (push)\n"
+                               "local\t/srv/git/my repo (fetch)\n"
+                               "garbage line\n";
+    CHECK(tracker::ParseRemoteUrls(output) ==
+          std::vector<std::string>{"git@github.com:me/ned.git", "https://github.com/org/ned", "/srv/git/my repo"});
+    CHECK(tracker::ParseRemoteUrls("").empty());
+}
+
+TEST_CASE("AddDetectedPanels registers what providers find, never over configuration", "[Tracker]") {
+    RegistryResetGuard guard;
+    auto               provider = std::make_shared<StubProvider>();
+    provider->detected          = {
+        Detected{.connection = Connection{.name = "github.com/org/ned", .provider = "stub", .url = "https://github.com/org/ned"},
+                 .panels     = {Panel{.name = "org/ned", .glyph = "G"}, Panel{.name = "Mine", .query = "involves:@me"}}},
+        Detected{.connection = Connection{.name = "taken", .provider = "stub"}, .panels = {Panel{.name = "never"}}},
+    };
+    tracker::RegisterProvider("stub", provider);
+    tracker::SetConnection(Connection{.name = "taken", .provider = "stub", .url = "mine"});
+    tracker::AddPanel(Panel{.name = "Mine", .connection = "taken", .query = "declared"});
+
+    const std::vector<std::string> remotes{"git@github.com:org/ned.git"};
+    CHECK(tracker::AddDetectedPanels(remotes) == std::vector<std::string>{"org/ned"});
+    CHECK(provider->lastRemotes == remotes);
+
+    CHECK(tracker::FindConnection("github.com/org/ned")->url == "https://github.com/org/ned");
+    CHECK(tracker::FindConnection("taken")->url == "mine");
+    CHECK(tracker::FindPanel("org/ned") == Panel{.name = "org/ned", .connection = "github.com/org/ned", .glyph = "G"});
+    CHECK(tracker::FindPanel("Mine")->query == "declared");
+    CHECK_FALSE(tracker::FindPanel("never"));
+}
+
+TEST_CASE("AddDetectedPanels skips a throwing provider and an empty remote list", "[Tracker]") {
+    RegistryResetGuard guard;
+    auto               broken = std::make_shared<StubProvider>();
+    broken->throwOnDetect     = true;
+    auto working              = std::make_shared<StubProvider>();
+    working->detected         = {Detected{.connection = Connection{.name = "c", .provider = "working"}, .panels = {Panel{.name = "p"}}}};
+    tracker::RegisterProvider("broken", broken);
+    tracker::RegisterProvider("working", working);
+
+    CHECK(tracker::AddDetectedPanels({}).empty());
+    CHECK(tracker::Panels().empty());
+    CHECK(tracker::AddDetectedPanels({"url"}) == std::vector<std::string>{"p"});
+}
+
+TEST_CASE("Tracker auto-detect is on until turned off", "[Tracker]") {
+    RegistryResetGuard guard;
+    CHECK(tracker::AutoDetect());
+    tracker::SetAutoDetect(false);
+    CHECK_FALSE(tracker::AutoDetect());
+    tracker::ClearRegistry();
+    CHECK(tracker::AutoDetect());
 }

@@ -18,37 +18,8 @@ namespace ned::ui {
 
 namespace {
 
-    using ned::editor::process::ChildProcess;
     using ned::editor::process::ResolveExecutable;
-
-    // Runs argv to completion and returns its stdout iff it exits 0 --
-    // nullopt on any failure (not found, spawn error, non-zero exit),
-    // mirroring ProjectSearch.cpp's own RunCapturingStdout contract, just
-    // built on the shared ChildProcess primitive instead of a second
-    // hand-rolled posix_spawn (this file has no rg-style "must avoid one
-    // extra fork" performance constraint -- a probe that runs once at
-    // startup, not per keystroke).
-    std::optional<std::string> RunCapturingStdout(const std::vector<std::string>& argv) {
-        if (!ResolveExecutable(argv.front())) {
-            return std::nullopt;
-        }
-        try {
-            ChildProcess child(argv);
-            std::string  output;
-            std::string  chunk;
-            while (!(chunk = child.ReadSome()).empty()) {
-                output += chunk;
-            }
-            const std::optional<int> exitCode = child.WaitForExit();
-            if (exitCode && *exitCode == 0) {
-                return output;
-            }
-        }
-        catch (const std::runtime_error&) {
-            // Not found, pipe/spawn failure -- treated identically to "not installed".
-        }
-        return std::nullopt;
-    }
+    using ned::editor::process::RunCapturingStdout;
 
     std::uint8_t FloatToByte(double f) {
         return static_cast<std::uint8_t>(std::lround(std::clamp(f, 0.0, 1.0) * 255.0));

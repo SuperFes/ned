@@ -17,6 +17,7 @@ namespace {
         // Declaration order is rail order.
         std::vector<Panel>                        panels;
         std::map<std::string, std::vector<Issue>> issuesByPanel;
+        bool                                      autoDetect = true;
     };
 
     State& Registry() {
@@ -37,6 +38,17 @@ std::shared_ptr<const Provider> FindProvider(const std::string& name) {
     const std::lock_guard lock(state.mutex);
     const auto            found = state.providers.find(name);
     return found != state.providers.end() ? found->second : nullptr;
+}
+
+std::vector<std::shared_ptr<const Provider>> Providers() {
+    State&                                       state = Registry();
+    const std::lock_guard                        lock(state.mutex);
+    std::vector<std::shared_ptr<const Provider>> providers;
+    providers.reserve(state.providers.size());
+    for (const auto& [name, provider] : state.providers) {
+        providers.push_back(provider);
+    }
+    return providers;
 }
 
 void SetConnection(Connection connection) {
@@ -122,6 +134,18 @@ std::vector<Issue> KnownIssues() {
     return known;
 }
 
+void SetAutoDetect(bool enabled) {
+    State&                state = Registry();
+    const std::lock_guard lock(state.mutex);
+    state.autoDetect = enabled;
+}
+
+bool AutoDetect() {
+    State&                state = Registry();
+    const std::lock_guard lock(state.mutex);
+    return state.autoDetect;
+}
+
 void ClearRegistry() {
     State&                state = Registry();
     const std::lock_guard lock(state.mutex);
@@ -129,6 +153,7 @@ void ClearRegistry() {
     state.connections.clear();
     state.panels.clear();
     state.issuesByPanel.clear();
+    state.autoDetect = true;
 }
 
 } // namespace ned::editor::tracker

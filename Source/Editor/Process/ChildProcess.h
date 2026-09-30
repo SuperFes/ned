@@ -188,6 +188,11 @@ class ChildProcess {
     pid_t pid_      = -1;
 };
 
+// Runs argv to completion, blocking, and returns its stdout iff it exits 0;
+// std::nullopt on any failure (not installed, spawn error, non-zero exit).
+// For short startup probes only -- there is no timeout.
+[[nodiscard]] std::optional<std::string> RunCapturingStdout(const std::vector<std::string>& argv);
+
 } // namespace ned::editor::process
 
 #endif // NED_EDITOR_PROCESS_CHILDPROCESS_H

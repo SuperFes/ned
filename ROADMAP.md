@@ -1118,11 +1118,14 @@ The shape, agreed 2026-09-29:
   Live-checked against `gh` on a public repo. A panel added from the REPL after startup
   isn't on the rail until a restart -- worth fixing only if that turns out to bite.
 
-**Stage 4 -- GitHub provider.**
-- [ ] `tracker-github.janet` over `gh issue list/view --json` -- `gh` owns login and
-      tokens, so ned stores nothing. Issues first; Projects boards (GraphQL, and `gh`
-      needs the `project` scope) only if columns are wanted.
-- [ ] `:detect` from the project's github.com remote, adding its panels automatically.
+- GitHub is in (`Plugins/tracker-github.janet`, bundled): `gh issue list/view --json`,
+  `gh` owning the login, a panel's query handed to `--search` verbatim. A provider's
+  optional `:detect` is shown the project's `git remote -v` URLs at startup
+  (`Tracker/Detect.h`), so every github.com remote gets a panel when `gh` is installed;
+  `ned/set-tracker-auto-detect` turns that off, and a declared name always wins. Keys are
+  `#N`, so two GitHub repositories' `#12` share one `*issue #12*` buffer and one
+  `tracker-insert-issue-key` entry -- qualify them (`owner/repo#12`) if that bites.
+  Projects boards (GraphQL, the `project` scope) wait until columns are wanted.
 
 **Stage 5 -- Jira Cloud provider.**
 - [ ] `tracker-jira.janet` over `/rest/api/3/search/jql` and `/rest/agile/1.0` boards,

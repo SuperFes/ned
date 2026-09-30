@@ -433,4 +433,26 @@ void ChildProcess::Kill() noexcept {
     }
 }
 
+std::optional<std::string> RunCapturingStdout(const std::vector<std::string>& argv) {
+    if (argv.empty() || !ResolveExecutable(argv.front())) {
+        return std::nullopt;
+    }
+    try {
+        ChildProcess child(argv);
+        std::string  output;
+        std::string  chunk;
+        while (!(chunk = child.ReadSome()).empty()) {
+            output += chunk;
+        }
+        const std::optional<int> exitCode = child.WaitForExit();
+        if (exitCode && *exitCode == 0) {
+            return output;
+        }
+    }
+    catch (const std::runtime_error&) {
+        // Pipe or spawn failure: indistinguishable from "not installed" to a probe.
+    }
+    return std::nullopt;
+}
+
 } // namespace ned::editor::process

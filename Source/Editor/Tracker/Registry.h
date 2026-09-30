@@ -20,6 +20,8 @@ namespace ned::editor::tracker {
 // Re-registering a name replaces it; a plugin reloading is expected use.
 void                                          RegisterProvider(const std::string& name, std::shared_ptr<const Provider> provider);
 [[nodiscard]] std::shared_ptr<const Provider> FindProvider(const std::string& name);
+// Every registered provider, ordered by name.
+[[nodiscard]] std::vector<std::shared_ptr<const Provider>> Providers();
 
 void                                    SetConnection(Connection connection);
 [[nodiscard]] std::optional<Connection> FindConnection(const std::string& name);
@@ -38,7 +40,13 @@ void                             SetPanelIssues(const std::string& panelName, st
 // Every cached issue once, first occurrence wins, in panel order.
 [[nodiscard]] std::vector<Issue> KnownIssues();
 
-// Test-only: empties providers, connections, panels and cached issues.
+// Whether providers may add panels for the project's git remotes at
+// startup. On by default.
+void               SetAutoDetect(bool enabled);
+[[nodiscard]] bool AutoDetect();
+
+// Test-only: empties providers, connections, panels and cached issues,
+// and turns auto-detect back on.
 void ClearRegistry();
 
 } // namespace ned::editor::tracker

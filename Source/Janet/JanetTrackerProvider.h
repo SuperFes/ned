@@ -8,6 +8,9 @@
 //   :view-argv  (fn [connection key] argv)     optional, with :parse-view
 //   :parse-view (fn [output] issue)            an issue table plus :body and
 //               :comments, each a table of :author :created :body
+//   :detect     (fn [remote-urls] found)       optional; each found entry a
+//               connection table (:name :url :email) whose :panels are
+//               tables of :name :query :glyph
 // Callbacks are bound under generated names and invoked via janet_dostring,
 // the same way JanetVcsProvider calls its plugin (see its header for why
 // not janet_pcall), so every call must run on the main thread.
@@ -37,13 +40,15 @@ class JanetTrackerProvider : public editor::tracker::Provider {
     [[nodiscard]] std::optional<editor::tracker::CommandSpec> ViewArgv(const editor::tracker::Connection& connection,
                                                                        const std::string&                 key) const override;
     [[nodiscard]] editor::tracker::IssueDetail                ParseView(const std::string& output) const override;
+    [[nodiscard]] std::vector<editor::tracker::Detected>      Detect(const std::vector<std::string>& remoteUrls) const override;
 
   private:
     [[nodiscard]] Janet Call(const std::string& callback, std::initializer_list<Janet> args) const;
 
     JanetTable* env_;
     std::string name_;
-    bool        hasView_ = false;
+    bool        hasView_   = false;
+    bool        hasDetect_ = false;
 };
 
 } // namespace ned::janet

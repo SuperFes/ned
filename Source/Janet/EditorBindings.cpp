@@ -65,6 +65,7 @@
 #include "Editor/OrgCapture.h"
 #include "Editor/PageScroll.h"
 #include "Editor/PersistentUndo.h"
+#include "Editor/Process/ChildProcess.h"
 #include "Editor/ProcessTimeouts.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Session.h"
@@ -1780,6 +1781,14 @@ namespace {
         });
     }
 
+    void NedSetTrackerAutoDetect(bool enabled) {
+        editor::tracker::SetAutoDetect(enabled);
+    }
+
+    std::optional<std::string> NedFindExecutable(std::string name) {
+        return editor::process::ResolveExecutable(name);
+    }
+
     Janet NedJsonDecode(std::string text) {
         return JsonToJanet(text);
     }
@@ -2931,8 +2940,10 @@ void InstallEditorBindings(Environment& env) {
         ":updated; :labels is an array of strings). Optionally :view-argv, taking a connection struct and an issue "
         "key and returning the argv that fetches that one issue, with :parse-view, taking its output and returning "
         "one issue table plus :body and :comments (an array of :author :created :body tables); without them an "
-        "issue's buffer shows only what the list fetched. ned runs the commands itself. Re-registering name "
-        "replaces the previous provider.");
+        "issue's buffer shows only what the list fetched. Optionally :detect, taking an array of the project's git "
+        "remote URLs and returning an array of connection tables (:name :url :email, plus :panels, an array of :name "
+        ":query :glyph tables) to add at startup; see ned/set-tracker-auto-detect. ned runs the commands itself. "
+        "Re-registering name replaces the previous provider.");
     env.Register<&NedSetTrackerConnection>(
         "ned", "set-tracker-connection",
         "Define a named tracker connection: (name options), options being :provider (a name given to "
@@ -2944,6 +2955,15 @@ void InstallEditorBindings(Environment& env) {
         ":query (handed to the provider verbatim -- JQL for Jira, a search string for GitHub) and :glyph (its rail "
         "icon). Names resolve when the panel is fetched, so declaration order doesn't matter. Re-adding name "
         "replaces that panel in place.");
+    env.Register<&NedSetTrackerAutoDetect>(
+        "ned", "set-tracker-auto-detect",
+        "Enable/disable tracker panels added at startup from the project's git remotes (default true) -- a "
+        "github.com remote gets an issues panel when gh is installed. A connection or panel you declare yourself "
+        "under the same name always wins over a detected one.");
+    env.Register<&NedFindExecutable>(
+        "ned", "find-executable",
+        "Return the full path of an executable found on $PATH (or name itself, if it contains a '/' and is "
+        "executable), else nil.");
     env.Register<&NedJsonDecode>(
         "ned", "json-decode",
         "Parse JSON text into Janet values: objects become tables keyed by keyword, arrays become arrays, null "
