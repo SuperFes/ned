@@ -113,7 +113,6 @@ void Minimap::ReleasePlane() const {
 }
 
 void Minimap::ClearBufferCache(text::Buffer& buffer) {
-    highlightCacheByBuffer_.erase(&buffer);
     if (cacheBuffer_ == &buffer) {
         cacheBuffer_ = nullptr;
     }

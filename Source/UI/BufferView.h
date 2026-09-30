@@ -94,6 +94,7 @@
 #include "Text/ConflictHunk.h"
 #include "Text/DisplayWidth.h"
 #include "Text/KillRing.h"
+#include "Text/PerBufferMap.h"
 #include "Theme.h"
 #include "TreeView.h"
 #include "UI/BufferView/CacheStamp.h"
@@ -4417,7 +4418,7 @@ class BufferView : public Widget {
         std::string                           modeName;
         std::vector<editor::EmbeddedDocument> documents;
     };
-    std::unordered_map<text::Buffer*, EmbeddedDocumentCacheEntry> embeddedDocumentCacheByBuffer_;
+    text::PerBufferMap<EmbeddedDocumentCacheEntry>                embeddedDocumentCacheByBuffer_;
     void                                                          EnsureEmbeddedDocumentCache();
 
     // exhaustive-highlighting follow-up: Theme::BrushFor(cls, captureId)

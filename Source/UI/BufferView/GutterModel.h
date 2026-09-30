@@ -41,6 +41,7 @@
 #include "Text/Buffer.h"
 #include "Text/ConflictHunk.h"
 #include "Text/ITextStorage.h"
+#include "Text/PerBufferMap.h"
 #include "UI/BufferView/CacheStamp.h"
 #include "UI/BufferView/EditorContext.h"
 
@@ -270,7 +271,7 @@ class GutterModel {
         std::size_t                                      windowEnd   = 0;
         std::vector<std::pair<std::size_t, std::size_t>> ranges;
     };
-    mutable std::unordered_map<text::Buffer*, FoldableBlocksEntry> foldableBlocksByBuffer_;
+    mutable text::PerBufferMap<FoldableBlocksEntry> foldableBlocksByBuffer_;
 
     mutable CacheStamp                                                                         foldEntriesStamp_;
     mutable std::vector<FoldGutterEntry>                                                       foldEntries_;
