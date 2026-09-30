@@ -6,7 +6,9 @@
 #include <cstring>
 #include <ctime>
 #include <system_error>
+#include <unordered_set>
 
+#include "Editor/BufferSave.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Lsp/Content.h"
@@ -129,6 +131,13 @@ namespace {
         return args[key].get<long long>();
     }
 
+    Json ToToolResult(const Json& outcome) {
+        if (outcome.contains("error")) {
+            return MakeTextToolResult(outcome["error"].get<std::string>(), true);
+        }
+        return MakeTextToolResult(outcome.dump());
+    }
+
 } // namespace
 
 Json MakeTextToolResult(std::string text, bool isError) {
@@ -170,6 +179,113 @@ void ToolRegistry::CallTool(const std::string& name, const Json& arguments, Resu
         return;
     }
     it->handler(arguments, callback);
+}
+
+void ToolRegistry::SetEditorHooks(EditorHooks hooks) {
+    editorHooks_ = std::move(hooks);
+}
+
+Json ToolRegistry::ApplyAndSave(const lsp::Manager::ResolvedRename& edit, const std::string& label) const {
+    if (!editorHooks_.applyWorkspaceEdit) {
+        return Json{{"error", "Applying edits isn't available in this ned session."}};
+    }
+    if (edit.touchesUnsupportedForm || !edit.hasEdit) {
+        return Json{{"error", "\"" + label + "\" has no edit ned can apply."}};
+    }
+
+    std::unordered_set<const text::Buffer*> dirtyBefore;
+    for (const std::unique_ptr<text::Buffer>& buffer : bufferList_.Buffers()) {
+        if (buffer->Modified()) {
+            dirtyBefore.insert(buffer.get());
+        }
+    }
+    if (!editorHooks_.applyWorkspaceEdit(edit, label)) {
+        return Json{{"error", "\"" + label + "\" was not applied: a file it names couldn't be opened, created, moved or deleted."}};
+    }
+
+    std::vector<std::filesystem::path> touched;
+    for (const lsp::Manager::ResolvedRenameEdit& fileEdit : edit.edits) {
+        touched.push_back(fileEdit.path);
+    }
+    for (const lsp::Manager::ResolvedDocumentChangeOp& op : edit.documentChangeOps) {
+        if (op.kind != lsp::DocumentChangeOp::Kind::DeleteFile) {
+            touched.push_back(op.path);
+        }
+    }
+    std::sort(touched.begin(), touched.end());
+    touched.erase(std::unique(touched.begin(), touched.end()), touched.end());
+
+    Json saved       = Json::array();
+    Json leftUnsaved = Json::array();
+    Json saveFailed  = Json::array();
+    for (const std::filesystem::path& path : touched) {
+        text::Buffer* buffer = bufferList_.FindByPath(path);
+        if (!buffer || buffer->IsLoading() || !buffer->Modified()) {
+            continue;
+        }
+        if (dirtyBefore.contains(buffer)) {
+            leftUnsaved.push_back(path.string());
+            continue;
+        }
+        try {
+            WriteBufferToDisk(*buffer);
+            saved.push_back(path.string());
+        }
+        catch (const std::exception& e) {
+            saveFailed.push_back(Json{{"file", path.string()}, {"error", e.what()}});
+        }
+    }
+    Json outcome = Json{{"applied", label}, {"saved", saved}};
+    if (!leftUnsaved.empty()) {
+        outcome["unsavedBecauseUserHadEdits"] = leftUnsaved;
+    }
+    if (!saveFailed.empty()) {
+        outcome["saveFailed"] = saveFailed;
+    }
+    return outcome;
+}
+
+void ToolRegistry::ApplyCodeAction(const std::string& file, const text::Buffer* buffer, const lsp::CodeAction& action,
+                                   const ResultCallback& callback) const {
+    if (action.touchesUnsupportedForm) {
+        callback(MakeTextToolResult("\"" + action.title + "\" uses an edit form ned can't apply.", true));
+        return;
+    }
+    if (!action.hasEdit && !action.command) {
+        callback(MakeTextToolResult("\"" + action.title + "\" has no edit or command to apply.", true));
+        return;
+    }
+
+    Json outcome = Json::object();
+    if (action.hasEdit) {
+        const std::optional<lsp::Manager::ResolvedRename> edit = lsp::Manager::ResolveCodeActionWorkspaceEdit(action);
+        if (!edit) {
+            callback(MakeTextToolResult("\"" + action.title + "\" names a file ned can't resolve -- not applied.", true));
+            return;
+        }
+        if (edit->hasEdit) {
+            outcome = ApplyAndSave(*edit, action.title);
+            if (outcome.contains("error")) {
+                callback(ToToolResult(outcome));
+                return;
+            }
+        }
+    }
+    if (!action.command) {
+        callback(ToToolResult(outcome));
+        return;
+    }
+
+    text::Buffer* target = FindOpenBuffer(bufferList_, file);
+    if (target != buffer) {
+        callback(MakeTextToolResult("Buffer was closed before \"" + action.title + "\"'s command could run.", true));
+        return;
+    }
+    lspManager_.ExecuteCommand(*target, {}, action.command->name, action.command->arguments,
+                               [callback, outcome, command = action.command->name](bool ok) mutable {
+                                   outcome["command"] = Json{{"name", command}, {"succeeded", ok}};
+                                   callback(MakeTextToolResult(outcome.dump(), !ok));
+                               });
 }
 
 void ToolRegistry::RegisterBuiltinTools() {
@@ -405,23 +521,7 @@ void ToolRegistry::RegisterBuiltinTools() {
     // acp-mcp-tool-bridge-remainder follow-up. Every tool below still reuses
     // an existing manager call unchanged -- the only new shared code this
     // slice needed was extracting Editor/Lsp/EditApply.h out of
-    // BufferView.cpp (format_buffer's own apply step). Two things were
-    // deliberately NOT added here after checking the real APIs against
-    // ROADMAP's own aspirational list:
-    //   - rename_symbol/code_actions stay listing/preview-only
-    //     (preview_rename, code_actions below) rather than actually
-    //     applying anything: a real apply needs BufferView::ApplyProjectEdit's
-    //     multi-file transaction machinery (ProjectUndoManager recording,
-    //     file create/rename/delete via DocumentChangeOp) -- genuinely
-    //     BufferView/WindowManager-coupled, not a thin wrapper the way
-    //     everything else here is. Same open gap as goto(file,line)
-    //     navigation, not attempted in this slice either.
-    //   - Org capture_note was dropped entirely: OrgCapture::InsertCapture
-    //     only supports a template whose text is fixed at Janet-registration
-    //     time ("%?" just marks where point lands after expansion) -- there
-    //     is no way to inject agent-supplied free text into a capture
-    //     through the existing API, so a faithful capture_note tool needs a
-    //     small OrgCapture.h capability addition first, not just a wrapper.
+    // BufferView.cpp (format_buffer's own apply step).
 
     RegisterTool(
         "git_stage", "Stage a file's changes for the next commit.",
@@ -650,7 +750,7 @@ void ToolRegistry::RegisterBuiltinTools() {
     RegisterTool(
         "code_actions",
         "List the LSP code actions (quick fixes/refactorings) available at a position in a file already open in ned. Read-only -- "
-        "lists titles only, does not apply any of them.",
+        "apply one with apply_code_action.",
         Json{
             {"type", "object"},
             {"properties",
@@ -690,7 +790,7 @@ void ToolRegistry::RegisterBuiltinTools() {
     RegisterTool(
         "preview_rename",
         "Preview an LSP rename at a position in a file already open in ned -- lists which files and how many edits would be "
-        "touched. Read-only -- does not apply the rename; use ned's own lsp-rename command (or ask the user) to actually do it.",
+        "touched. Read-only -- rename_symbol applies it.",
         Json{
             {"type", "object"},
             {"properties",
@@ -734,6 +834,162 @@ void ToolRegistry::RegisterBuiltinTools() {
                 }
                 callback(MakeTextToolResult(Json{{"preview", true}, {"filesTouched", files}}.dump()));
             });
+        });
+
+    const Json positionSchema = Json{
+        {"file", {{"type", "string"}, {"description", "Path to the file, absolute or relative to the project root."}}},
+        {"line", {{"type", "integer"}, {"description", "1-indexed line number."}}},
+        {"column", {{"type", "integer"}, {"description", "1-indexed column (UTF-16 code unit offset within the line)."}}},
+    };
+    const std::string savePolicy =
+        " Applied in ned as one undoable step; every touched file is saved, except one the user already had unsaved changes "
+        "in, which is left modified for them to save.";
+
+    Json renameProperties       = positionSchema;
+    renameProperties["newName"] = Json{{"type", "string"}, {"description", "The new name for the symbol."}};
+    RegisterTool(
+        "rename_symbol",
+        "Rename the symbol at a position in a file already open in ned, through its LSP server, in every file the server says "
+        "refers to it." +
+            savePolicy,
+        Json{
+            {"type", "object"},
+            {"properties", renameProperties},
+            {"required", Json::array({"file", "line", "column", "newName"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto file    = RequireString(args, "file");
+            const auto line    = RequireInt(args, "line");
+            const auto col     = RequireInt(args, "column");
+            const auto newName = RequireString(args, "newName");
+            if (!file || !line || !col || !newName) {
+                callback(MakeTextToolResult("Missing required argument(s): file, line, column, newName", true));
+                return;
+            }
+            if (!editorHooks_.applyWorkspaceEdit) {
+                callback(MakeTextToolResult("Applying edits isn't available in this ned session.", true));
+                return;
+            }
+            text::Buffer* buffer = FindOpenBuffer(bufferList_, *file);
+            if (!buffer) {
+                callback(MakeTextToolResult("File is not open in ned: " + *file, true));
+                return;
+            }
+            const std::size_t byteOffset = lsp::PositionToByte(
+                buffer->Content(), lsp::Position{static_cast<std::size_t>(*line - 1), static_cast<std::size_t>(*col - 1)});
+            lspManager_.RequestRename(*buffer, byteOffset, *newName,
+                                      [this, callback, label = "Rename to " + *newName](std::optional<lsp::Manager::ResolvedRename> result) {
+                                          if (!result || !result->hasEdit) {
+                                              callback(MakeTextToolResult("Rename failed, or is not supported at this position.", true));
+                                              return;
+                                          }
+                                          callback(ToToolResult(ApplyAndSave(*result, label)));
+                                      });
+        });
+
+    Json actionProperties     = positionSchema;
+    actionProperties["title"] = Json{{"type", "string"}, {"description", "The action's exact title, as code_actions lists it."}};
+    RegisterTool(
+        "apply_code_action",
+        "Apply one LSP code action (quick fix/refactoring) at a position in a file already open in ned, chosen by its exact title "
+        "from code_actions. An action that runs a server command reports whether the command succeeded; edits the server makes "
+        "while running it are left unsaved." +
+            savePolicy,
+        Json{
+            {"type", "object"},
+            {"properties", actionProperties},
+            {"required", Json::array({"file", "line", "column", "title"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto file  = RequireString(args, "file");
+            const auto line  = RequireInt(args, "line");
+            const auto col   = RequireInt(args, "column");
+            const auto title = RequireString(args, "title");
+            if (!file || !line || !col || !title) {
+                callback(MakeTextToolResult("Missing required argument(s): file, line, column, title", true));
+                return;
+            }
+            if (!editorHooks_.applyWorkspaceEdit) {
+                callback(MakeTextToolResult("Applying edits isn't available in this ned session.", true));
+                return;
+            }
+            text::Buffer* buffer = FindOpenBuffer(bufferList_, *file);
+            if (!buffer) {
+                callback(MakeTextToolResult("File is not open in ned: " + *file, true));
+                return;
+            }
+            const std::size_t byteOffset = lsp::PositionToByte(
+                buffer->Content(), lsp::Position{static_cast<std::size_t>(*line - 1), static_cast<std::size_t>(*col - 1)});
+            // Listed afresh rather than remembered from code_actions: an action
+            // is only valid against the text it was computed for.
+            lspManager_.RequestCodeActions(
+                *buffer, byteOffset, byteOffset, [this, callback, file = *file, title = *title, buffer](std::vector<lsp::CodeAction> actions) {
+                    const auto chosen =
+                        std::find_if(actions.begin(), actions.end(), [&](const lsp::CodeAction& action) { return action.title == title; });
+                    if (chosen == actions.end()) {
+                        Json available = Json::array();
+                        for (const lsp::CodeAction& action : actions) {
+                            available.push_back(action.title);
+                        }
+                        callback(MakeTextToolResult("No code action titled \"" + title + "\" here. Available: " + available.dump(), true));
+                        return;
+                    }
+                    text::Buffer* target = FindOpenBuffer(bufferList_, file);
+                    if (target != buffer) {
+                        callback(MakeTextToolResult("Buffer was closed before the code actions arrived.", true));
+                        return;
+                    }
+                    if (!chosen->resolvable) {
+                        ApplyCodeAction(file, buffer, *chosen, callback);
+                        return;
+                    }
+                    lspManager_.ResolveCodeAction(*target, *chosen, [this, callback, file, buffer, action = *chosen](std::optional<lsp::CodeAction> resolved) {
+                        if (!resolved || (!resolved->hasEdit && !resolved->command)) {
+                            callback(MakeTextToolResult("\"" + action.title + "\" could not be resolved.", true));
+                            return;
+                        }
+                        // Resolve only promises to fill in the edit.
+                        if (!resolved->command && action.command) {
+                            resolved->command = action.command;
+                        }
+                        ApplyCodeAction(file, buffer, *resolved, callback);
+                    });
+                });
+        });
+
+    Json gotoProperties = positionSchema;
+    gotoProperties.erase("column");
+    RegisterTool(
+        "goto_location",
+        "Show the user a file at a line in ned's editor, opening it if needed. The editor only moves while the user is in the "
+        "agent panel, never while they're working in a buffer.",
+        Json{
+            {"type", "object"},
+            {"properties", gotoProperties},
+            {"required", Json::array({"file", "line"})},
+        },
+        [this](const Json& args, const ResultCallback& callback) {
+            const auto file = RequireString(args, "file");
+            const auto line = RequireInt(args, "line");
+            if (!file || !line || *line < 1) {
+                callback(MakeTextToolResult("Missing or invalid required argument(s): file, line (1 or more)", true));
+                return;
+            }
+            if (!editorHooks_.visitLocation) {
+                callback(MakeTextToolResult("Navigation isn't available in this ned session.", true));
+                return;
+            }
+            const std::filesystem::path path = ResolveArgPath(*file);
+            std::error_code             error;
+            if (!std::filesystem::is_regular_file(path, error)) {
+                callback(MakeTextToolResult("No such file: " + *file, true));
+                return;
+            }
+            if (!editorHooks_.visitLocation(path, static_cast<std::size_t>(*line))) {
+                callback(MakeTextToolResult("Not shown: the user is working in the editor, not the agent panel."));
+                return;
+            }
+            callback(MakeTextToolResult("Showing " + path.string() + ":" + std::to_string(*line) + "."));
         });
 
     RegisterTool(

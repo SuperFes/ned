@@ -1052,13 +1052,12 @@ after an earlier reply through `_meta.jetbrains.air.fork`, every other agent fro
       reserved border the way `ProjectSidebar`'s divider column does (right-dock mode
       stays a fully separate, byte-for-byte-unchanged standalone overlay from the
       `PanelDock`-hosted bottom-dock mode).
-- [ ] **Real rename/code-action apply + `goto(file, line)` navigation** — all three
-      need a live `WindowManager`/`BufferView` (`ApplyProjectEdit`'s multi-file
-      transaction machinery for the first two — `ProjectUndoManager` recording, file
-      create/rename/delete via `DocumentChangeOp`; `BufferView::JumpToPathLine` for the
-      third) that `McpToolRegistry` doesn't have and doesn't currently reach. Not a
-      thin wrapper the way everything shipped so far is — a real follow-up, not
-      attempted here.
+- [ ] The MCP `rename_symbol`/`apply_code_action`/`goto_location` tools shipped -- slug for
+      `git log --grep=`: `mcp-apply-goto`. Limits, each deliberate: an edit applied through
+      them isn't in the ACP turn's rewind snapshots (the tool call names no files, same gap
+      as a shell command's edits); edits a code action's *command* makes arrive as a
+      server-pushed `workspace/applyEdit` and stay unsaved, since only the action's own
+      edit is known to the tool; `goto_location` takes a line, not a column.
 - [ ] **A `dap_get_pointer_graph`-shaped MCP tool** — the pointer-graph/memory/
       disassembly/thread/function-and-exception-breakpoint surface stayed out of the DAP
       tool set on purpose (not part of the ask/step/inspect loop that slice targeted),

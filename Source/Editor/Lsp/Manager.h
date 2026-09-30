@@ -521,6 +521,11 @@ class Manager {
     [[nodiscard]] static std::optional<std::vector<ResolvedDocumentChangeOp>>
     ResolveDocumentChangeOps(const std::vector<DocumentChangeOp>& ops);
 
+    // Both of a code action's edit forms, resolved together into the shape
+    // every apply path takes. hasEdit is false for an action carrying only a
+    // command; nullopt if any touched file fails to resolve.
+    [[nodiscard]] static std::optional<ResolvedRename> ResolveCodeActionWorkspaceEdit(const CodeAction& action);
+
     // prepareRename follow-up. Sent before lsp-rename opens its "New name:"
     // prompt, so the prompt can be prefilled with the symbol's own current
     // text and skipped entirely when the server has a considered opinion

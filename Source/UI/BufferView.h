@@ -738,6 +738,8 @@ class BufferView : public Widget {
     // applied, which the caller reports back to the server as the spec's
     // own {applied: bool} response.
     [[nodiscard]] bool ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label);
+    // ApplyServerPushedWorkspaceEdit for an edit an ACP agent requested.
+    [[nodiscard]] bool ApplyAgentWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label);
 
     // session-persistence slice 3: asks the user whether to load a
     // project's own .ned/init.janet -- a y/n/a prompt in the

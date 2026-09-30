@@ -32,19 +32,19 @@
 #ifndef NED_EDITOR_MCP_TOOLREGISTRY_H
 #define NED_EDITOR_MCP_TOOLREGISTRY_H
 
+#include <filesystem>
 #include <functional>
 #include <string>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
+#include "Editor/Lsp/Manager.h"
+
 namespace ned::text {
+class Buffer;
 class BufferList;
 } // namespace ned::text
-
-namespace ned::editor::lsp {
-class Manager;
-} // namespace ned::editor::lsp
 
 namespace ned::editor::vcs {
 class Runner;
@@ -77,6 +77,19 @@ struct ToolDescriptor {
 // hand-building the envelope inline.
 [[nodiscard]] Json MakeTextToolResult(std::string text, bool isError = false);
 
+// What a tool needs from the window layer, which this registry can't reach:
+// a workspace edit applies through a pane (resource ops, project undo), and
+// navigation moves one. Set after the WindowManager exists; a tool whose
+// hook is unset reports itself unavailable.
+struct EditorHooks {
+    // Applies `edit` as one undoable step, labelled `label`; false if
+    // nothing was applied.
+    std::function<bool(const lsp::Manager::ResolvedRename& edit, const std::string& label)> applyWorkspaceEdit;
+    // Shows `path` at `line` (1-indexed); false if the editor declined to
+    // move, e.g. because the user is typing in it.
+    std::function<bool(const std::filesystem::path& path, std::size_t line)> visitLocation;
+};
+
 class ToolRegistry {
   public:
     ToolRegistry(text::BufferList& bufferList, lsp::Manager& lspManager, vcs::Runner& vcsRunner, testrun::TestRunner& testRunner,
@@ -100,6 +113,8 @@ class ToolRegistry {
 
     [[nodiscard]] bool HasTool(const std::string& name) const;
 
+    void SetEditorHooks(EditorHooks hooks);
+
   private:
     using Handler = std::function<void(const Json& arguments, const ResultCallback& callback)>;
 
@@ -111,11 +126,24 @@ class ToolRegistry {
     void RegisterTool(std::string name, std::string description, Json inputSchema, Handler handler);
     void RegisterBuiltinTools();
 
+    // Applies `edit` through the hook, then saves each touched buffer that
+    // had no unsaved changes beforehand -- an agent expects its edits on
+    // disk, but a user's in-progress edits are never saved behind them.
+    // Returns a summary object, or {"error": ...} when nothing was applied.
+    [[nodiscard]] Json ApplyAndSave(const lsp::Manager::ResolvedRename& edit, const std::string& label) const;
+
+    // The tail of apply_code_action once the action is final: its edit
+    // first, then its command, spec order. `buffer` is the one the action
+    // was requested against, re-confirmed open via `file` before use.
+    void ApplyCodeAction(const std::string& file, const text::Buffer* buffer, const lsp::CodeAction& action,
+                         const ResultCallback& callback) const;
+
     text::BufferList&    bufferList_;
     lsp::Manager&     lspManager_;
     vcs::Runner&      vcsRunner_;
     testrun::TestRunner& testRunner_;
     dap::Manager&     dapManager_;
+    EditorHooks          editorHooks_;
     std::vector<Entry>   entries_;
 };
 

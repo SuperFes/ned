@@ -4889,6 +4889,29 @@ Manager::ResolveDocumentChangeOps(const std::vector<DocumentChangeOp>& ops) {
     return resolved;
 }
 
+std::optional<Manager::ResolvedRename> Manager::ResolveCodeActionWorkspaceEdit(const CodeAction& action) {
+    ResolvedRename resolved;
+    if (!action.hasEdit) {
+        return resolved;
+    }
+    if (!action.edits.empty()) {
+        std::optional<std::vector<ResolvedRenameEdit>> edits = ResolveCodeActionEdits(action);
+        if (!edits) {
+            return std::nullopt;
+        }
+        resolved.edits = std::move(*edits);
+    }
+    if (!action.documentChangeOps.empty()) {
+        std::optional<std::vector<ResolvedDocumentChangeOp>> ops = ResolveDocumentChangeOps(action.documentChangeOps);
+        if (!ops) {
+            return std::nullopt;
+        }
+        resolved.documentChangeOps = std::move(*ops);
+    }
+    resolved.hasEdit = !resolved.edits.empty() || !resolved.documentChangeOps.empty();
+    return resolved;
+}
+
 namespace {
     // formatting follow-up: fixed per plan decision -- this codebase has no
     // per-buffer tabs-vs-spaces concept yet, so insertSpaces is hardcoded

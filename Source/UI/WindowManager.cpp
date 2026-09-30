@@ -1267,10 +1267,21 @@ void WindowManager::StartDeleteFileAt(const std::filesystem::path& path) {
 }
 
 bool WindowManager::ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label) {
-    if (Pane* pane = FocusedPane()) {
-        return pane->Buffer().ApplyServerPushedWorkspaceEdit(edit, label);
+    // A panel holding focus leaves no focused pane, and the edit still has
+    // to land -- the first leaf is as good a host as any.
+    Pane* pane = FocusedPane();
+    if (pane == nullptr && !Leaves().empty()) {
+        pane = Leaves().front();
     }
-    return false; // no pane focused anywhere -- nowhere to route this
+    return pane != nullptr && pane->Buffer().ApplyServerPushedWorkspaceEdit(edit, label);
+}
+
+bool WindowManager::ApplyAgentWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label) {
+    Pane* pane = FocusedPane();
+    if (pane == nullptr && !Leaves().empty()) {
+        pane = Leaves().front();
+    }
+    return pane != nullptr && pane->Buffer().ApplyAgentWorkspaceEdit(edit, label);
 }
 
 void WindowManager::TriggerSwitchProject() {

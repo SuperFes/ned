@@ -121,7 +121,7 @@ TEST_CASE("BridgeServer serves initialize, tools/list, and tools/call over a rea
     const Json listResponse = Json::parse(listLine);
     REQUIRE(listResponse.at("id") == 2);
     const Json& tools = listResponse.at("result").at("tools");
-    REQUIRE(tools.size() == 37);
+    REQUIRE(tools.size() == fixture.registry.ListTools().size());
     bool foundGetTestResults = false;
     for (const Json& tool : tools) {
         if (tool.at("name") == "get_test_results") {

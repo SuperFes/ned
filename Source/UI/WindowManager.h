@@ -642,10 +642,13 @@ class WindowManager {
     // currently focused" shape as RequestOpenBinaryFile just above -- wired
     // to Manager::SetApplyEditHandler (see SetLspManager below) so a
     // server-pushed workspace/applyEdit request applies against the focused
-    // pane's own BufferView. Returns false (never applied) if no pane is
-    // focused anywhere, the honest "nowhere to route this" answer the
-    // spec's own {applied: bool} response expects.
+    // pane's own BufferView, or the first leaf while a panel holds focus.
+    // Returns false (never applied) when there is no pane at all, the
+    // honest "nowhere to route this" answer the spec's own {applied: bool}
+    // response expects.
     [[nodiscard]] bool ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label);
+    // The same apply for an edit an ACP agent asked for through an MCP tool.
+    [[nodiscard]] bool ApplyAgentWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label);
 
     // VCS side panel: same "route to whichever pane is currently focused"
     // shape as RequestOpenBinaryFile just above -- wired to

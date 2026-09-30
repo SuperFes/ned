@@ -1987,6 +1987,19 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         }
         wm->RequestVisitLocation(location.path, location.line ? *location.line + 1 : 1);
     });
+    // goto_location honours the same rule as following.
+    mcpToolRegistry.SetEditorHooks({
+        .applyWorkspaceEdit = [wm = windowManager.get()](const ned::editor::lsp::Manager::ResolvedRename& edit,
+                                                         const std::string&                               label) { return wm->ApplyAgentWorkspaceEdit(edit, label); },
+        .visitLocation =
+            [wm = windowManager.get(), &acpPanel](const std::filesystem::path& path, std::size_t line) {
+                if (!acpPanel.Focused()) {
+                    return false;
+                }
+                wm->RequestVisitLocation(path, line);
+                return true;
+            },
+    });
     acpPanel.SetOnForwardChord([wm = windowManager.get()](const ned::editor::KeyChord& chord) { return wm->DispatchGlobalChord(chord); });
     acpPanel.SetOnReviewRequest([wm = windowManager.get()](std::string title, std::vector<ned::editor::acp::TurnFile> files) {
         wm->RequestAcpReview(std::move(title), std::move(files));

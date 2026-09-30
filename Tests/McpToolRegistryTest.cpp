@@ -5,14 +5,19 @@
 #include <fstream>
 #include <string>
 
+#include <stdlib.h>
+
+#include "Editor/Backup.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/DiagnosticsLog.h"
+#include "Editor/Lsp/EditApply.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Mcp/ToolRegistry.h"
 #include "Editor/OrgCapture.h"
 #include "Editor/Project/Root.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/Vcs/Runner.h"
+#include "FakeLspServer.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "UI/EventLoop.h"
@@ -52,6 +57,65 @@ std::string ResultText(const ned::editor::mcp::Json& result) {
     return result.at("content").at(0).at("text").get<std::string>();
 }
 
+using ned::editor::mcp::Json;
+using ResolvedRename = ned::editor::lsp::Manager::ResolvedRename;
+
+struct TempDir {
+    std::filesystem::path path;
+    TempDir() {
+        std::string pattern = (std::filesystem::temp_directory_path() / "ned-mcp-apply-XXXXXX").string();
+        REQUIRE(::mkdtemp(pattern.data()) != nullptr);
+        path = pattern;
+    }
+    ~TempDir() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+    }
+};
+
+// Saves made by the tools under test must not leave backup versions in the
+// real state directory.
+struct BackupsOff {
+    bool previous = ned::editor::BackupVersionsEnabled();
+    BackupsOff() {
+        ned::editor::SetBackupVersionsEnabled(false);
+    }
+    ~BackupsOff() {
+        ned::editor::SetBackupVersionsEnabled(previous);
+    }
+};
+
+std::filesystem::path WriteFile(const std::filesystem::path& path, const std::string& content) {
+    std::ofstream out(path, std::ios::binary);
+    out << content;
+    return path;
+}
+
+std::string ReadFile(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+// Stands in for the pane: opens each touched file and applies its edits.
+ned::editor::mcp::EditorHooks ApplyingHooks(BufferList& bufferList, std::vector<std::string>& labels) {
+    return {.applyWorkspaceEdit = [&bufferList, &labels](const ResolvedRename& edit, const std::string& label) {
+        labels.push_back(label);
+        for (const auto& fileEdit : edit.edits) {
+            ned::editor::lsp::ApplyWorkspaceTextEdits(bufferList.OpenOrCreateFile(fileEdit.path), fileEdit.edits);
+        }
+        return true;
+    }};
+}
+
+Json ReplaceEdit(int line, int startCharacter, int endCharacter, const std::string& newText) {
+    return Json{{"range", {{"start", {{"line", line}, {"character", startCharacter}}}, {"end", {{"line", line}, {"character", endCharacter}}}}},
+                {"newText", newText}};
+}
+
+Json Response(const Json& request, Json result) {
+    return Json{{"jsonrpc", "2.0"}, {"id", request.at("id")}, {"result", std::move(result)}};
+}
+
 } // namespace
 
 TEST_CASE("ToolRegistry::ListTools reports every built-in tool", "[Mcp]") {
@@ -79,6 +143,9 @@ TEST_CASE("ToolRegistry::ListTools reports every built-in tool", "[Mcp]") {
         "format_buffer",
         "code_actions",
         "preview_rename",
+        "rename_symbol",
+        "apply_code_action",
+        "goto_location",
         "get_diagnostics_log",
         "dap_list_breakpoints",
         "dap_set_breakpoint",
@@ -599,4 +666,233 @@ TEST_CASE("dap_list_watches reports set watches with their history", "[Mcp][Dap]
         REQUIRE_FALSE(parsed[0].contains("history")); // never stopped yet -- no history recorded
     });
     REQUIRE(invoked);
+}
+
+TEST_CASE("rename_symbol and apply_code_action report unavailable before the editor hooks are set", "[Mcp]") {
+    Fixture fixture;
+    for (const char* tool : {"rename_symbol", "apply_code_action"}) {
+        bool invoked = false;
+        fixture.registry.CallTool(tool, Json{{"file", "a.txt"}, {"line", 1}, {"column", 1}, {"newName", "x"}, {"title", "x"}},
+                                  [&](Json result) {
+                                      invoked = true;
+                                      REQUIRE(IsError(result));
+                                      REQUIRE(ResultText(result).find("isn't available") != std::string::npos);
+                                  });
+        REQUIRE(invoked);
+    }
+}
+
+TEST_CASE("rename_symbol applies the server's edit, saving only files that had no unsaved changes", "[Mcp]") {
+    Fixture    fixture;
+    TempDir    dir;
+    BackupsOff backupsOff;
+    const auto ownPath   = WriteFile(dir.path / "own.txt", "old_name here\n");
+    const auto cleanPath = WriteFile(dir.path / "clean.txt", "use old_name\n");
+    const auto dirtyPath = WriteFile(dir.path / "dirty.txt", "old_name again\n");
+
+    Buffer& own   = fixture.bufferList.OpenOrCreateFile(ownPath);
+    Buffer& dirty = fixture.bufferList.OpenOrCreateFile(dirtyPath);
+    dirty.SetPoint(dirty.Content().ByteLength());
+    dirty.InsertAtPoint("user typing");
+    // clean.txt is deliberately not open: the rename opens it.
+
+    std::vector<std::string> labels;
+    fixture.registry.SetEditorHooks(ApplyingHooks(fixture.bufferList, labels));
+
+    ned::editor::lsp::Client* client = nullptr;
+    auto                      server = ned::test::FakeLspServer::Create(fixture.lspManager, "test-lang", fixture.eventLoop, client);
+    fixture.lspManager.SyncBuffer(own, "test-lang");
+
+    bool invoked = false;
+    Json outcome;
+    fixture.registry.CallTool("rename_symbol", Json{{"file", ownPath.string()}, {"line", 1}, {"column", 1}, {"newName", "new_name"}},
+                              [&](Json result) {
+                                  invoked = true;
+                                  REQUIRE_FALSE(IsError(result));
+                                  outcome = Json::parse(ResultText(result));
+                              });
+
+    const Json request = server.ReadRequest("textDocument/rename");
+    REQUIRE(request["params"]["newName"] == "new_name");
+    client->DispatchFrame(Response(request, {{"changes",
+                                              {
+                                                  {"file://" + ownPath.string(), Json::array({ReplaceEdit(0, 0, 8, "new_name")})},
+                                                  {"file://" + cleanPath.string(), Json::array({ReplaceEdit(0, 4, 12, "new_name")})},
+                                                  {"file://" + dirtyPath.string(), Json::array({ReplaceEdit(0, 0, 8, "new_name")})},
+                                              }}})
+                              .dump());
+
+    REQUIRE(invoked);
+    REQUIRE(labels == std::vector<std::string>{"Rename to new_name"});
+    REQUIRE(ReadFile(ownPath) == "new_name here\n");
+    REQUIRE(ReadFile(cleanPath) == "use new_name\n");
+    REQUIRE_FALSE(own.Modified());
+
+    // The user's own unsaved edit is never written behind their back.
+    REQUIRE(ReadFile(dirtyPath) == "old_name again\n");
+    REQUIRE(dirty.Modified());
+    REQUIRE(dirty.Text() == "new_name again\nuser typing");
+
+    REQUIRE(outcome.at("saved").size() == 2);
+    REQUIRE(outcome.at("unsavedBecauseUserHadEdits") == Json::array({dirtyPath.string()}));
+    REQUIRE_FALSE(outcome.contains("saveFailed"));
+}
+
+TEST_CASE("rename_symbol reports an edit the pane refused as an error", "[Mcp]") {
+    Fixture    fixture;
+    TempDir    dir;
+    const auto path   = WriteFile(dir.path / "own.txt", "old_name\n");
+    Buffer&    buffer = fixture.bufferList.OpenOrCreateFile(path);
+    fixture.registry.SetEditorHooks({.applyWorkspaceEdit = [](const ResolvedRename&, const std::string&) { return false; }});
+
+    ned::editor::lsp::Client* client = nullptr;
+    auto                      server = ned::test::FakeLspServer::Create(fixture.lspManager, "test-lang", fixture.eventLoop, client);
+    fixture.lspManager.SyncBuffer(buffer, "test-lang");
+
+    bool invoked = false;
+    fixture.registry.CallTool("rename_symbol", Json{{"file", path.string()}, {"line", 1}, {"column", 1}, {"newName", "new_name"}},
+                              [&](Json result) {
+                                  invoked = true;
+                                  REQUIRE(IsError(result));
+                                  REQUIRE(ResultText(result).find("was not applied") != std::string::npos);
+                              });
+    const Json request = server.ReadRequest("textDocument/rename");
+    client->DispatchFrame(
+        Response(request, {{"changes", {{"file://" + path.string(), Json::array({ReplaceEdit(0, 0, 8, "new_name")})}}}}).dump());
+
+    REQUIRE(invoked);
+    REQUIRE(ReadFile(path) == "old_name\n");
+}
+
+TEST_CASE("apply_code_action applies the action with the given title and saves the file", "[Mcp]") {
+    Fixture    fixture;
+    TempDir    dir;
+    BackupsOff backupsOff;
+    const auto path   = WriteFile(dir.path / "own.txt", "bad_code\n");
+    Buffer&    buffer = fixture.bufferList.OpenOrCreateFile(path);
+
+    std::vector<std::string> labels;
+    fixture.registry.SetEditorHooks(ApplyingHooks(fixture.bufferList, labels));
+
+    ned::editor::lsp::Client* client = nullptr;
+    auto                      server = ned::test::FakeLspServer::Create(fixture.lspManager, "test-lang", fixture.eventLoop, client);
+    fixture.lspManager.SyncBuffer(buffer, "test-lang");
+
+    const std::string uri     = "file://" + path.string();
+    const Json        actions = Json::array({
+        {{"title", "Something else"}, {"edit", {{"changes", {{uri, Json::array({ReplaceEdit(0, 0, 3, "odd")})}}}}}},
+        {{"title", "Fix the code"}, {"edit", {{"changes", {{uri, Json::array({ReplaceEdit(0, 0, 3, "good")})}}}}}},
+    });
+
+    SECTION("an exact title is applied") {
+        bool invoked = false;
+        fixture.registry.CallTool("apply_code_action", Json{{"file", path.string()}, {"line", 1}, {"column", 1}, {"title", "Fix the code"}},
+                                  [&](Json result) {
+                                      invoked = true;
+                                      REQUIRE_FALSE(IsError(result));
+                                  });
+        client->DispatchFrame(Response(server.ReadRequest("textDocument/codeAction"), actions).dump());
+
+        REQUIRE(invoked);
+        REQUIRE(labels == std::vector<std::string>{"Fix the code"});
+        REQUIRE(ReadFile(path) == "good_code\n");
+    }
+
+    SECTION("an unknown title applies nothing and lists what is available") {
+        bool invoked = false;
+        fixture.registry.CallTool("apply_code_action", Json{{"file", path.string()}, {"line", 1}, {"column", 1}, {"title", "Fix"}},
+                                  [&](Json result) {
+                                      invoked = true;
+                                      REQUIRE(IsError(result));
+                                      REQUIRE(ResultText(result).find("\"Fix the code\"") != std::string::npos);
+                                  });
+        client->DispatchFrame(Response(server.ReadRequest("textDocument/codeAction"), actions).dump());
+
+        REQUIRE(invoked);
+        REQUIRE(labels.empty());
+        REQUIRE(ReadFile(path) == "bad_code\n");
+    }
+}
+
+TEST_CASE("apply_code_action resolves an edit-less action, applies it, then runs its command", "[Mcp]") {
+    Fixture    fixture;
+    TempDir    dir;
+    BackupsOff backupsOff;
+    const auto path   = WriteFile(dir.path / "own.txt", "bad_code\n");
+    Buffer&    buffer = fixture.bufferList.OpenOrCreateFile(path);
+
+    std::vector<std::string> labels;
+    fixture.registry.SetEditorHooks(ApplyingHooks(fixture.bufferList, labels));
+
+    ned::editor::lsp::Client* client = nullptr;
+    auto                      server = ned::test::FakeLspServer::Create(fixture.lspManager, "test-lang", fixture.eventLoop, client);
+    fixture.lspManager.SyncBuffer(buffer, "test-lang");
+
+    bool invoked = false;
+    Json outcome;
+    fixture.registry.CallTool("apply_code_action", Json{{"file", path.string()}, {"line", 1}, {"column", 1}, {"title", "Fix and log"}},
+                              [&](Json result) {
+                                  invoked = true;
+                                  REQUIRE_FALSE(IsError(result));
+                                  outcome = Json::parse(ResultText(result));
+                              });
+
+    const Json unresolved = {{"title", "Fix and log"}, {"kind", "quickfix"}, {"data", 7}};
+    client->DispatchFrame(Response(server.ReadRequest("textDocument/codeAction"), Json::array({unresolved})).dump());
+    // An action whose command is listed but whose edit isn't yet.
+    const Json resolveRequest = server.ReadRequest("codeAction/resolve");
+    REQUIRE(resolveRequest["params"]["data"] == 7);
+    Json resolved       = unresolved;
+    resolved["edit"]    = {{"changes", {{"file://" + path.string(), Json::array({ReplaceEdit(0, 0, 3, "good")})}}}};
+    resolved["command"] = {{"title", "log"}, {"command", "fixer.log"}, {"arguments", Json::array({1})}};
+    client->DispatchFrame(Response(resolveRequest, resolved).dump());
+
+    REQUIRE_FALSE(invoked); // still waiting on the command
+    REQUIRE(ReadFile(path) == "good_code\n");
+
+    const Json commandRequest = server.ReadRequest("workspace/executeCommand");
+    REQUIRE(commandRequest["params"]["command"] == "fixer.log");
+    client->DispatchFrame(Response(commandRequest, nullptr).dump());
+
+    REQUIRE(invoked);
+    REQUIRE(outcome.at("applied") == "Fix and log");
+    REQUIRE(outcome.at("command") == Json{{"name", "fixer.log"}, {"succeeded", true}});
+}
+
+TEST_CASE("goto_location checks the file, then defers to the editor's decision to move", "[Mcp]") {
+    Fixture    fixture;
+    TempDir    dir;
+    const auto path = WriteFile(dir.path / "shown.txt", "one\ntwo\n");
+
+    const auto call = [&](const Json& args) {
+        Json got;
+        fixture.registry.CallTool("goto_location", args, [&](Json result) { got = std::move(result); });
+        REQUIRE_FALSE(got.is_null());
+        return got;
+    };
+
+    REQUIRE(ResultText(call(Json{{"file", path.string()}, {"line", 2}})).find("isn't available") != std::string::npos);
+
+    std::optional<std::pair<std::filesystem::path, std::size_t>> visited;
+    bool                                                         allow = true;
+    fixture.registry.SetEditorHooks({.visitLocation = [&](const std::filesystem::path& target, std::size_t line) {
+        if (allow) {
+            visited = {target, line};
+        }
+        return allow;
+    }});
+
+    REQUIRE(IsError(call(Json{{"file", (dir.path / "missing.txt").string()}, {"line", 1}})));
+    REQUIRE(IsError(call(Json{{"file", path.string()}, {"line", 0}})));
+    REQUIRE_FALSE(visited);
+
+    REQUIRE_FALSE(IsError(call(Json{{"file", path.string()}, {"line", 2}})));
+    REQUIRE(visited);
+    REQUIRE(visited->first == std::filesystem::weakly_canonical(path));
+    REQUIRE(visited->second == 2);
+
+    allow               = false;
+    const Json declined = call(Json{{"file", path.string()}, {"line", 1}});
+    REQUIRE_FALSE(IsError(declined));
+    REQUIRE(ResultText(declined).find("Not shown") != std::string::npos);
 }

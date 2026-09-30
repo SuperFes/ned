@@ -1396,27 +1396,12 @@ void BufferView::ApplyCodeAction(const editor::lsp::CodeAction& action) {
     // own edits -- a real refactor.extract/rewrite shape, not just a rename)
     // resolves and applies through the same ApplyResolvedWorkspaceEdit path.
     if (action.hasEdit && (!action.edits.empty() || !action.documentChangeOps.empty())) {
-        editor::lsp::Manager::ResolvedRename resolved;
-        if (!action.edits.empty()) {
-            const std::optional<std::vector<editor::lsp::Manager::ResolvedRenameEdit>> resolvedEdits =
-                editor::lsp::Manager::ResolveCodeActionEdits(action);
-            if (!resolvedEdits) {
-                statusMessage_ = "\"" + action.title + "\" names a file this editor can't resolve -- not applied.";
-                return;
-            }
-            resolved.edits = std::move(*resolvedEdits);
+        const std::optional<editor::lsp::Manager::ResolvedRename> resolved = editor::lsp::Manager::ResolveCodeActionWorkspaceEdit(action);
+        if (!resolved) {
+            statusMessage_ = "\"" + action.title + "\" names a file this editor can't resolve -- not applied.";
+            return;
         }
-        if (!action.documentChangeOps.empty()) {
-            const std::optional<std::vector<editor::lsp::Manager::ResolvedDocumentChangeOp>> resolvedOps =
-                editor::lsp::Manager::ResolveDocumentChangeOps(action.documentChangeOps);
-            if (!resolvedOps) {
-                statusMessage_ = "\"" + action.title + "\" names a file this editor can't resolve -- not applied.";
-                return;
-            }
-            resolved.documentChangeOps = std::move(*resolvedOps);
-        }
-        resolved.hasEdit = !resolved.edits.empty() || !resolved.documentChangeOps.empty();
-        if (!ApplyResolvedWorkspaceEdit(resolved, "Applied \"" + action.title + "\".")) {
+        if (!ApplyResolvedWorkspaceEdit(*resolved, "Applied \"" + action.title + "\".")) {
             return; // ReportError/statusMessage_ already surfaced the failure
         }
     }
@@ -2413,6 +2398,10 @@ bool BufferView::TryReviewRename(const editor::lsp::Manager::ResolvedRename& res
 
 bool BufferView::ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label) {
     return ApplyResolvedWorkspaceEdit(edit, "Applied \"" + label + "\" (server request).");
+}
+
+bool BufferView::ApplyAgentWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label) {
+    return ApplyResolvedWorkspaceEdit(edit, "Applied \"" + label + "\" (agent request).");
 }
 
 bool BufferView::ApplyResolvedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, std::string description) {
