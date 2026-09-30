@@ -232,6 +232,14 @@ void ModeLine::Paint(Canvas c) {
         }
     }
 
+    // The issue the current branch is for.
+    std::string issueKeySuffix;
+    if (issueKeyProvider_) {
+        if (const std::optional<std::string> key = issueKeyProvider_()) {
+            issueKeySuffix = "  " + *key;
+        }
+    }
+
     // crlf-handling follow-up: always shown (not gated behind a Set*
     // provider like embeddedLanguageSuffix above) -- ModeLine already has
     // direct buffer access for everything else on this line, and unlike an
@@ -300,7 +308,7 @@ void ModeLine::Paint(Canvas c) {
     const std::string text = buffer.IsLoading() ? "  " + buffer.Name() + loadingText
                                                 : "  " + modifiedMarker + buffer.Name() + "   L" + std::to_string(line + 1) +
                                                       ":C" + std::to_string(col + 1) + "  (" + mode_.name + ")" + embeddedLanguageSuffix +
-                                                      indentStyleSuffix + lineEndingSuffix + savingSuffix;
+                                                      issueKeySuffix + indentStyleSuffix + lineEndingSuffix + savingSuffix;
 
     // background-activity-spinner follow-up: one column-per-entry cell list
     // instead of the raw byte string above, so the spinner's multi-byte
@@ -544,6 +552,10 @@ void ModeLine::SetLspManager(editor::lsp::Manager* lspManager) {
 
 void ModeLine::SetLanguageAtPointProvider(std::function<std::optional<std::string>()> provider) {
     languageAtPointProvider_ = std::move(provider);
+}
+
+void ModeLine::SetIssueKeyProvider(std::function<std::optional<std::string>()> provider) {
+    issueKeyProvider_ = std::move(provider);
 }
 
 } // namespace ned::ui

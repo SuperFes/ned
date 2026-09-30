@@ -50,7 +50,9 @@
 #include "Editor/Register.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/TestRun/TestRunner.h"
+#include "Editor/Tracker/IssueAction.h"
 #include "Editor/Tracker/Provider.h"
+#include "Editor/Tracker/Runner.h"
 #include "Editor/Vcs/Runner.h"
 #include "EventLoop.h"
 #include "HugeFileLoader.h"
@@ -510,6 +512,8 @@ class WindowManager {
     [[nodiscard]] bool HasFocusedPane();
 
     void SetVcsRunner(editor::vcs::Runner* vcsRunner);
+    void SetTrackerRunner(editor::tracker::Runner* trackerRunner);
+    void SetOnIssueChanged(std::function<void(const std::string&)> handler);
 
     // DAP client slice 1: same "forwarded to every pane, present and
     // future" shape as SetLspManager/SetTaskRunner above -- plus this is
@@ -673,6 +677,8 @@ class WindowManager {
     // Shows an issue's buffer in the focused pane (the first leaf when a
     // panel has focus) and focuses it.
     void RequestShowIssue(const editor::tracker::IssueDetail& detail);
+    // BufferView::BeginIssueAction in the focused pane, which takes focus.
+    void RequestIssueAction(editor::tracker::IssueAction action, const editor::tracker::Issue& issue);
 
     // named-projects follow-up: same "route to whichever pane is currently
     // focused" shape as RequestOpenBinaryFile just above -- wired to
@@ -993,6 +999,7 @@ class WindowManager {
     editor::tasks::TaskRunner*                         taskRunner_     = nullptr;
     editor::testrun::TestRunner*                       testRunner_     = nullptr; // see SetTestRunner
     editor::vcs::Runner*                            vcsRunner_      = nullptr;
+    editor::tracker::Runner*                           trackerRunner_  = nullptr;
     editor::dap::Manager*                           dapManager_     = nullptr;  // see SetDapManager
     editor::acp::Manager*                           acpManager_     = nullptr;  // see SetAcpManager
     std::optional<std::string>                         lastAcpAgentSeed_;          // see SetLastKnownAcpAgent
@@ -1009,6 +1016,7 @@ class WindowManager {
     std::function<void()>                              onDapConsoleToggle_;        // see SetOnDapConsoleToggle
     std::function<void()>                              onJanetReplToggle_;         // see SetOnJanetReplToggle
     std::function<void(const std::string&)>            onFocusTrackerPanel_;       // see SetOnFocusTrackerPanel
+    std::function<void(const std::string&)>            onIssueChanged_;            // see SetOnIssueChanged
     std::function<void(const std::string&)>            onRunReplRequest_;          // see SetOnRunReplRequest
     std::function<void()>                              onDapThreadsToggle_;        // see SetOnDapThreadsToggle
     std::function<void()>                              onDapThreadsRefreshNeeded_; // see SetOnDapThreadsRefreshNeeded

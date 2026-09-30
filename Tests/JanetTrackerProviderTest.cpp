@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "Editor/Tracker/IssueKey.h"
 #include "Editor/Tracker/Registry.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
@@ -61,6 +62,18 @@ TEST_CASE("ned/json-decode maps JSON onto Janet values", "[JanetTrackerProvider]
     CHECK(EvalString(env, "(string (length (ned/json-decode `[1, null]`)))") == "2");
 
     CHECK_THROWS_WITH(env.DoString("(ned/json-decode `{\"unterminated\": `)"), ContainsSubstring("invalid JSON"));
+}
+
+TEST_CASE("ned/json-encode writes Janet values as JSON", "[JanetTrackerProvider]") {
+    Environment& env = BoundEnvironment();
+
+    CHECK(EvalString(env, R"((ned/json-encode {:b [1 2.5 nil true] :a "x\"y" "c" :kw}))") == R"({"a":"x\"y","b":[1,2.5,null,true],"c":"kw"})");
+    CHECK(EvalString(env, "(ned/json-encode @[])") == "[]");
+    CHECK(EvalString(env, "(ned/json-encode @{})") == "{}");
+    CHECK(EvalString(env, "(ned/json-encode 1790000000000)") == "1790000000000");
+    CHECK(EvalString(env, "(string (get-in (ned/json-decode (ned/json-encode {:t [{:u 1}]})) [:t 0 :u]))") == "1");
+    CHECK_THROWS_WITH(env.DoString("(ned/json-encode {:f print})"), ContainsSubstring("as JSON"));
+    CHECK_THROWS_WITH(env.DoString("(ned/json-encode {1 2})"), ContainsSubstring("object key"));
 }
 
 TEST_CASE("ned/tracker-register-provider adapts :list-argv and :parse-list", "[JanetTrackerProvider]") {
@@ -159,6 +172,87 @@ TEST_CASE("ned/tracker-register-provider adapts the optional :view-argv and :par
     CHECK_THROWS_WITH(tracker::FindProvider("bad-view")->ParseView("x"), ContainsSubstring(":parse-view must return an issue table"));
 }
 
+TEST_CASE("An argv callback may ask for curl credentials with a table", "[JanetTrackerProvider]") {
+    RegistryResetGuard guard;
+    Environment&       env = BoundEnvironment();
+
+    env.DoString(R"(
+      (ned/tracker-register-provider "curl-stub"
+        {:list-argv (fn [c q] {:argv ["curl" (c :url)] :curl-credentials true})
+         :parse-list (fn [o] [])
+         :view-argv (fn [c k] {:argv ["curl" k]})
+         :parse-view (fn [o] {})})
+    )");
+    const auto provider = tracker::FindProvider("curl-stub");
+    REQUIRE(provider);
+
+    const tracker::CommandSpec list = provider->ListArgv(Connection{.url = "https://x"}, "");
+    CHECK(list.argv == std::vector<std::string>{"curl", "https://x"});
+    CHECK(list.curlCredentials);
+
+    const auto view = provider->ViewArgv(Connection{}, "K-1");
+    REQUIRE(view);
+    CHECK(view->argv == std::vector<std::string>{"curl", "K-1"});
+    CHECK_FALSE(view->curlCredentials);
+
+    // A plain array never asks for credentials.
+    env.DoString(R"((ned/tracker-register-provider "plain" {:list-argv (fn [c q] ["gh"]) :parse-list (fn [o] [])}))");
+    CHECK_FALSE(tracker::FindProvider("plain")->ListArgv(Connection{}, "").curlCredentials);
+}
+
+TEST_CASE("ned/tracker-register-provider adapts the optional actions", "[JanetTrackerProvider]") {
+    RegistryResetGuard guard;
+    Environment&       env = BoundEnvironment();
+
+    env.DoString(R"(
+      (ned/tracker-register-provider "acts"
+        {:list-argv (fn [c q] ["list" q])
+         :parse-list (fn [o] [])
+         :transitions-argv (fn [c k] ["transitions" k])
+         :parse-transitions (fn [o] [{:id 31 :name "Done"} {:id "11" :name "To Do"} "junk"])
+         :transition-argv (fn [c k id] ["transition" k id])
+         :comment-argv (fn [c k body] {:argv ["comment" k "--body-file" "{input-file}"] :input (string "<" body ">")})
+         :worklog-argv (fn [c k started seconds] ["worklog" k (string started) (string seconds)])
+         :project-keys-argv (fn [c] ["projects" (c :url)])
+         :parse-project-keys (fn [o] ["DEV" :not-a-string "OPS"])
+         :mine-query (fn [c] (string "mine of " (c :name)))})
+    )");
+    const auto provider = tracker::FindProvider("acts");
+    REQUIRE(provider);
+    const Connection connection{.name = "work", .url = "https://x"};
+
+    CHECK(provider->Supports(tracker::Capability::Transition));
+    CHECK(provider->Supports(tracker::Capability::Comment));
+    CHECK(provider->Supports(tracker::Capability::Worklog));
+    CHECK(provider->Supports(tracker::Capability::ProjectKeys));
+    CHECK(provider->Supports(tracker::Capability::Mine));
+    CHECK_FALSE(provider->Supports(tracker::Capability::Assign));
+
+    CHECK(provider->TransitionsArgv(connection, "DEV-1").argv == std::vector<std::string>{"transitions", "DEV-1"});
+    CHECK(provider->ParseTransitions("") ==
+          std::vector<tracker::Choice>{tracker::Choice{.id = "31", .name = "Done"}, tracker::Choice{.id = "11", .name = "To Do"}});
+    CHECK(provider->TransitionArgv(connection, "DEV-1", "31").argv == std::vector<std::string>{"transition", "DEV-1", "31"});
+
+    const tracker::CommandSpec comment = provider->CommentArgv(connection, "DEV-1", "hi");
+    CHECK(comment.argv == std::vector<std::string>{"comment", "DEV-1", "--body-file", "{input-file}"});
+    CHECK(comment.input == "<hi>");
+
+    CHECK(provider->WorklogArgv(connection, "DEV-1", tracker::Worklog{.started = 1790000000, .seconds = 5400}).argv ==
+          std::vector<std::string>{"worklog", "DEV-1", "1790000000", "5400"});
+    CHECK(provider->ProjectKeysArgv(connection).argv == std::vector<std::string>{"projects", "https://x"});
+    CHECK(provider->ParseProjectKeys("") == std::vector<std::string>{"DEV", "OPS"});
+    CHECK(provider->MineQuery(connection) == "mine of work");
+
+    // A fixed query needs no function.
+    env.DoString(R"((ned/tracker-register-provider "fixed" {:list-argv (fn [c q] []) :parse-list (fn [o] []) :mine-query "involves:@me"}))");
+    CHECK(tracker::FindProvider("fixed")->MineQuery(connection) == "involves:@me");
+
+    CHECK_THROWS_WITH(env.DoString(R"((ned/tracker-register-provider "half-acts"
+                                       {:list-argv (fn [c q] []) :parse-list (fn [o] []) :transitions-argv (fn [c k] [])}))"),
+                      ContainsSubstring(":transitions-argv, :parse-transitions, :transition-argv together"));
+    CHECK(tracker::FindProvider("half-acts") == nullptr);
+}
+
 TEST_CASE("ned/tracker-register-provider rejects incomplete providers and unsafe names", "[JanetTrackerProvider]") {
     RegistryResetGuard guard;
     Environment&       env = BoundEnvironment();
@@ -255,4 +349,19 @@ TEST_CASE("ned/tracker-register-provider adapts the optional :detect", "[JanetTr
 
     CHECK_THROWS_WITH(env.DoString(R"((ned/tracker-register-provider "x" {:list-argv (fn [c q] []) :parse-list (fn [o] []) :detect 1}))"),
                       ContainsSubstring(":detect must be a function"));
+}
+
+TEST_CASE("ned/set-tracker-commit-seed sets each seed, defaulting what it leaves out", "[JanetTrackerProvider]") {
+    Environment& env = BoundEnvironment();
+
+    env.DoString(R"((ned/set-tracker-commit-seed {:key "[{key}] " :numeric-key ""}))");
+    CHECK(tracker::CommitSeed("DEV-1") == "[DEV-1] ");
+    CHECK(tracker::CommitSeed("#4").empty());
+
+    env.DoString(R"((ned/set-tracker-commit-seed {:numeric-key "Fixes {key}"}))");
+    CHECK(tracker::CommitSeed("DEV-1") == "DEV-1 ");
+    CHECK(tracker::CommitSeed("#4") == "Fixes #4");
+
+    env.DoString(R"((ned/set-tracker-commit-seed {}))");
+    CHECK(tracker::CommitSeed("#4") == "\n\nRefs #4");
 }

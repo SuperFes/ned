@@ -44,6 +44,14 @@ std::string IssueBufferName(const std::string& key) {
     return "*issue " + key + "*";
 }
 
+std::optional<std::string> IssueKeyOfBufferName(const std::string& name) {
+    constexpr std::string_view kPrefix = "*issue ";
+    if (name.size() <= kPrefix.size() + 1 || !name.starts_with(kPrefix) || !name.ends_with('*')) {
+        return std::nullopt;
+    }
+    return name.substr(kPrefix.size(), name.size() - kPrefix.size() - 1);
+}
+
 std::string RenderIssue(const IssueDetail& detail) {
     const Issue& issue = detail.issue;
     std::string  out   = "# " + issue.key + (issue.title.empty() ? "" : ": " + issue.title) + "\n\n";

@@ -5,8 +5,8 @@
 namespace ned::editor::tasks {
 
 TaskProcess::TaskProcess(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop, std::function<void(std::string_view)> onOutput,
-                         std::function<void(std::optional<int>)> onExit) : child_(std::move(argv), process::StderrMode::MergeWithStdout), eventLoop_(eventLoop), onOutput_(std::move(onOutput)),
-                                                                           onExit_(std::move(onExit)) {
+                         std::function<void(std::optional<int>)> onExit, process::StderrMode stderrMode) : child_(std::move(argv), stderrMode), eventLoop_(eventLoop), onOutput_(std::move(onOutput)),
+                                                                                                           onExit_(std::move(onExit)) {
     StartReadLoop();
 }
 

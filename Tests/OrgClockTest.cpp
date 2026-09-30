@@ -205,3 +205,21 @@ TEST_CASE("TotalClockedMinutesForSubtree rolls up a parent's own time plus every
     CHECK(TotalClockedMinutesForSubtree(text, tree[0].children[0]).count() == 60); // Child A alone
     CHECK(TotalClockedMinutesForSubtree(text, tree[0].children[1]).count() == 15); // Child B has none of its own, Grandchild has 0:15
 }
+
+TEST_CASE("ClockInAtPoint puts the LOGBOOK after a property drawer that ends the buffer", "[Org][Clock]") {
+    SECTION("with a trailing newline") {
+        Buffer buffer("test", Rope("* Task\n:PROPERTIES:\n:ISSUE: DEV-1\n:END:\n"));
+        buffer.SetPoint(2);
+        REQUIRE(ClockInAtPoint(buffer, TestNow(9, 15)).status == ClockInStatus::Ok);
+        CHECK(buffer.Text() == "* Task\n:PROPERTIES:\n:ISSUE: DEV-1\n:END:\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 09:15]\n:END:\n");
+    }
+    SECTION("without one") {
+        Buffer buffer("test", Rope("* Task\n:PROPERTIES:\n:ISSUE: DEV-1\n:END:"));
+        buffer.SetPoint(2);
+        REQUIRE(ClockInAtPoint(buffer, TestNow(9, 15)).status == ClockInStatus::Ok);
+        CHECK(buffer.Text() == "* Task\n:PROPERTIES:\n:ISSUE: DEV-1\n:END:\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 09:15]\n:END:\n");
+    }
+    const auto running = CurrentlyRunningClock("* Task\n:PROPERTIES:\n:ISSUE: DEV-1\n:END:\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 09:15]\n:END:\n");
+    REQUIRE(running);
+    CHECK(ned::editor::org::ClockTimePoint(running->start) == TestNow(9, 15));
+}

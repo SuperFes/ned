@@ -7,6 +7,7 @@
 #ifndef NED_EDITOR_TRACKER_ISSUEBUFFER_H
 #define NED_EDITOR_TRACKER_ISSUEBUFFER_H
 
+#include <optional>
 #include <string>
 
 #include "Provider.h"
@@ -19,6 +20,8 @@ class BufferList;
 namespace ned::editor::tracker {
 
 [[nodiscard]] std::string IssueBufferName(const std::string& key);
+// IssueBufferName's inverse: the key of an issue buffer's name.
+[[nodiscard]] std::optional<std::string> IssueKeyOfBufferName(const std::string& name);
 
 [[nodiscard]] std::string RenderIssue(const IssueDetail& detail);
 

@@ -7,6 +7,10 @@
 //
 
 #include "Editor/Format.h"
+#include "Editor/Tracker/IssueBuffer.h"
+#include "Editor/Tracker/IssueKey.h"
+#include "Editor/Tracker/KeyCompletion.h"
+#include "Editor/Tracker/Registry.h"
 #include "UI/BufferView/Internal.h"
 
 namespace ned::ui {
@@ -51,6 +55,20 @@ void BufferView::RequestCompletionAtPoint(const std::string& triggerCharacter) {
     }
     text::Buffer&     buffer = activeBuffer_.Get();
     const std::size_t point  = buffer.Point();
+
+    // Any completion is a chance to learn the project keys a key is typed
+    // with, before one is.
+    if (trackerRunner_ != nullptr) {
+        editor::tracker::RefreshKeyCaches(*trackerRunner_);
+    }
+    // A key being typed is its own context: only the user's issues complete it.
+    if (const auto keyStart = IssueKeyPrefixStartAt(buffer, point)) {
+        completionPrefixRule_ = CompletionPrefixRule::IssueKey;
+        ShowCompletions(editor::tracker::IssueKeyCompletions(editor::tracker::MineIssues(),
+                                                             buffer.Content().Substring(*keyStart, point - *keyStart)),
+                        /*isIncomplete=*/false, point, *keyStart);
+        return;
+    }
 
     // embedded-language-documents follow-up: an empty serverKey means point
     // isn't inside an embedded region -- use the host language's own key,
@@ -295,7 +313,71 @@ std::size_t BufferView::CurrentCompletionPrefixStart(const text::Buffer& buffer,
     if (completionPrefixRule_ == CompletionPrefixRule::JanetSymbol) {
         return editor::JanetSymbolPrefixStart(buffer.Text(), point);
     }
+    if (completionPrefixRule_ == CompletionPrefixRule::IssueKey) {
+        // Anything that ends the key -- a space, a letter -- moves this to
+        // point, which is what dismisses the session.
+        return IssueKeyPrefixStartAt(buffer, point).value_or(point);
+    }
     return WordPrefixStart(buffer.Content(), point);
+}
+
+std::optional<std::size_t> BufferView::IssueKeyPrefixStartAt(const text::Buffer& buffer, std::size_t point) const {
+    if (editor::tracker::Connections().empty()) {
+        return std::nullopt;
+    }
+    // A key is short; this is all the line before point that can hold one.
+    constexpr std::size_t     kLookBehind = 64;
+    const text::ITextStorage& content     = buffer.Content();
+    const std::size_t         lineStart   = content.LineToByteOffset(content.ByteOffsetToLine(point));
+    const std::size_t         from        = std::max(lineStart, point > kLookBehind ? point - kLookBehind : 0);
+    const auto                start       = editor::tracker::IssueKeyPrefixStart(content.Substring(from, point - from),
+                                                                                 editor::tracker::KnownProjectKeys(), editor::tracker::AnyNumericKeys());
+    if (!start) {
+        return std::nullopt;
+    }
+    return from + *start;
+}
+
+bool BufferView::OpenIssueKeyAtPoint() {
+    if (editor::tracker::Connections().empty()) {
+        return false;
+    }
+    const text::Buffer&       buffer    = activeBuffer_.Get();
+    const text::ITextStorage& content   = buffer.Content();
+    const std::size_t         point     = buffer.Point();
+    const std::size_t         line      = content.ByteOffsetToLine(point);
+    const std::size_t         lineStart = content.LineToByteOffset(line);
+    const std::size_t         lineEnd   = (line + 1 < content.LineCount()) ? content.LineToByteOffset(line + 1) - 1 : content.ByteLength();
+    const auto                found     = editor::tracker::IssueKeyAt(content.Substring(lineStart, lineEnd - lineStart), point - lineStart,
+                                                                      editor::tracker::KnownProjectKeys(), editor::tracker::AnyNumericKeys());
+    if (!found) {
+        return false;
+    }
+    const std::optional<std::string> connection = editor::tracker::ConnectionForKey(found->key);
+    if (!connection) {
+        statusMessage_ = "No tracker connection knows " + found->key;
+        return true;
+    }
+    if (trackerRunner_ == nullptr) {
+        statusMessage_ = "no tracker runner configured";
+        return true;
+    }
+    editor::tracker::Issue listed{.key = found->key};
+    for (const auto& known : {editor::tracker::KnownIssues(), editor::tracker::MineIssues()}) {
+        if (const auto it = std::ranges::find(known, found->key, &editor::tracker::Issue::key); it != known.end()) {
+            listed = *it;
+            break;
+        }
+    }
+    statusMessage_ = "Fetching " + found->key + "...";
+    trackerRunner_->RequestIssueOn(
+        *connection, listed,
+        [this](const editor::tracker::IssueDetail& detail) {
+            activeBuffer_.Set(editor::tracker::ShowIssue(bufferList_, detail));
+            statusMessage_.clear();
+        },
+        [this](std::string error) { statusMessage_ = std::move(error); });
+    return true;
 }
 
 void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std::size_t generationBefore) {
@@ -351,6 +433,20 @@ void BufferView::MaybeScheduleAutoCompletion(const editor::KeyChord& chord, std:
     }
     if (chord.Control || chord.Meta || chord.Special != editor::SpecialKey::None) {
         return; // only plain self-insert keystrokes schedule automatic completion
+    }
+    // An issue key being typed completes wherever it is -- a comment, a
+    // string, a commit message -- and its digits are what narrow it, so
+    // neither the trigger-character gate nor the suppression below applies.
+    if (contentChanged && IssueKeyPrefixStartAt(buffer, buffer.Point())) {
+        if (eventLoop_) {
+            const std::chrono::milliseconds delay(editor::lsp::CompletionDebounceMs());
+            completionDebounceDeadline_ = std::chrono::steady_clock::now() + delay;
+            completionDebounceTimer_.Arm(*eventLoop_, delay, [this] {
+                completionDebounceDeadline_.reset();
+                RequestCompletionAtPoint({});
+            });
+        }
+        return;
     }
     // completion-auto-trigger-gate follow-up: only a word-continuation
     // keystroke (an identifier the user is actively typing) or a real
@@ -2699,6 +2795,9 @@ void BufferView::OpenLinkAtPointWithoutLsp() {
         // the same line).
     }
 
+    if (OpenIssueKeyAtPoint()) {
+        return;
+    }
     const auto detected = editor::link::DetectLinkAtPoint(buffer.Text(), buffer.Point());
     if (!detected) {
         statusMessage_ = "No link at point.";

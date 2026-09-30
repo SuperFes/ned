@@ -213,6 +213,9 @@ class Runner {
     // still mutually exclusive against a plain commit/amend/extend.
     void RequestRewordCommit(const std::string& message, std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchList(std::function<void(std::vector<BranchEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    // Lists branches only to record the current one (Vcs/CurrentBranch.h);
+    // onDone runs once it has, and not at all if listing fails.
+    void RefreshCurrentBranch(std::function<void()> onDone = {});
     void RequestBranchSwitch(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestBranchCreate(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
 

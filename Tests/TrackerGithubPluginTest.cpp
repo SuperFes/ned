@@ -86,6 +86,7 @@ const Connection kRepo{.name = "github.com/cli/cli", .provider = "github", .url 
 TEST_CASE("tracker-github lists through gh issue list", "[TrackerGithub]") {
     RegistryResetGuard guard;
     const auto         github = LoadGithubProvider();
+    CHECK(github->NumericKeys());
 
     const std::vector<std::string> base{"gh", "issue", "list", "--repo", "github.com/cli/cli", "--limit", "100", "--json",
                                         "number,title,state,assignees,labels,url,updatedAt"};
@@ -168,4 +169,59 @@ TEST_CASE("tracker-github detects github.com remotes when gh is installed", "[Tr
         FakePath path(false);
         CHECK(github->Detect(remotes).empty());
     }
+}
+
+TEST_CASE("tracker-github comments through gh with the body in a file", "[TrackerGithub]") {
+    RegistryResetGuard guard;
+    const auto         github = LoadGithubProvider();
+    REQUIRE(github->Supports(tracker::Capability::Comment));
+
+    const tracker::CommandSpec spec = github->CommentArgv(kRepo, "#42", "Thanks!\n\n- a");
+    CHECK(spec.argv == std::vector<std::string>{"gh", "issue", "comment", "42", "--repo", "github.com/cli/cli", "--body-file", "{input-file}"});
+    CHECK(spec.input == "Thanks!\n\n- a");
+    CHECK_FALSE(spec.curlCredentials);
+
+    CHECK_THROWS_WITH(github->CommentArgv(kRepo, "#4x", "x"), ContainsSubstring("isn't a GitHub issue number"));
+    CHECK_THROWS(github->CommentArgv(kRepo, "#", "x"));
+}
+
+TEST_CASE("tracker-github closes and reopens through gh", "[TrackerGithub]") {
+    RegistryResetGuard guard;
+    const auto         github = LoadGithubProvider();
+    REQUIRE(github->Supports(tracker::Capability::Transition));
+
+    CHECK(github->TransitionsArgv(kRepo, "#42").argv ==
+          std::vector<std::string>{"gh", "issue", "view", "42", "--repo", "github.com/cli/cli", "--json", "state"});
+    CHECK(github->ParseTransitions(R"({"state": "OPEN"})") ==
+          std::vector<tracker::Choice>{{.id = "close-completed", .name = "Close as completed"},
+                                       {.id = "close-not-planned", .name = "Close as not planned"}});
+    CHECK(github->ParseTransitions(R"({"state": "CLOSED"})") == std::vector<tracker::Choice>{{.id = "reopen", .name = "Reopen"}});
+
+    CHECK(github->TransitionArgv(kRepo, "#42", "close-not-planned").argv ==
+          std::vector<std::string>{"gh", "issue", "close", "42", "--repo", "github.com/cli/cli", "--reason", "not planned"});
+    CHECK(github->TransitionArgv(kRepo, "#42", "reopen").argv ==
+          std::vector<std::string>{"gh", "issue", "reopen", "42", "--repo", "github.com/cli/cli"});
+    CHECK_THROWS_WITH(github->TransitionArgv(kRepo, "#42", "delete"), ContainsSubstring("unknown GitHub issue transition"));
+}
+
+TEST_CASE("tracker-github assigns anyone gh says may have the issue, you first", "[TrackerGithub]") {
+    RegistryResetGuard guard;
+    const auto         github = LoadGithubProvider();
+    REQUIRE(github->Supports(tracker::Capability::Assign));
+
+    CHECK(github->AssigneesArgv(kRepo, "#42").argv == std::vector<std::string>{"gh", "api", "--hostname", "github.com", "--paginate", "--jq",
+                                                                               ".[].login", "repos/cli/cli/assignees"});
+    CHECK(github->AssigneesArgv(Connection{.url = "https://ghe.example.com/team/app"}, "#42").argv[3] == "ghe.example.com");
+    CHECK(github->ParseAssignees("mislav\nsamcoe\n\n") ==
+          std::vector<tracker::Choice>{{.id = "@me", .name = "Me"}, {.id = "mislav", .name = "mislav"}, {.id = "samcoe", .name = "samcoe"}});
+    CHECK(github->AssignArgv(kRepo, "#42", "@me").argv ==
+          std::vector<std::string>{"gh", "issue", "edit", "42", "--repo", "github.com/cli/cli", "--add-assignee", "@me"});
+}
+
+TEST_CASE("tracker-github lists the issues involving the user and has no project keys", "[TrackerGithub]") {
+    RegistryResetGuard guard;
+    const auto         github = LoadGithubProvider();
+    CHECK(github->MineQuery(kRepo) == "involves:@me");
+    CHECK_FALSE(github->Supports(tracker::Capability::ProjectKeys));
+    CHECK_FALSE(github->Supports(tracker::Capability::Worklog));
 }

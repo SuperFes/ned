@@ -12,8 +12,10 @@ int CompletionSourceRank(CompletionSource source) {
             return 2;
         case CompletionSource::BufferWord:
             return 3;
+        case CompletionSource::IssueKey:
+            return 4;
     }
-    return 4;
+    return 5;
 }
 
 std::string_view CompletionSourceLabel(CompletionSource source) {
@@ -26,6 +28,8 @@ std::string_view CompletionSourceLabel(CompletionSource source) {
             return "janet";
         case CompletionSource::BufferWord:
             return "buffer";
+        case CompletionSource::IssueKey:
+            return "issue";
     }
     return {};
 }

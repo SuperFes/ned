@@ -21,6 +21,9 @@
 #include "Editor/Project/Root.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
+#include "Editor/Tracker/IssueKey.h"
+#include "Editor/Tracker/Registry.h"
+#include "Editor/Vcs/CurrentBranch.h"
 #include "Editor/Vcs/Provider.h"
 #include "Editor/Vcs/ProviderRegistry.h"
 #include "Editor/Vcs/Runner.h"
@@ -469,4 +472,88 @@ TEST_CASE("vcs-sequence steps with a provider missing the vocabulary report its 
         view.RunVcsSequenceStepForTesting(step);
         REQUIRE(fixture.statusMessage == "sequence state not supported by this provider");
     }
+}
+
+namespace {
+
+// A tracker connection and a branch that names DEV-450.
+struct IssueBranchGuard {
+    IssueBranchGuard() {
+        ned::editor::tracker::ClearRegistry();
+        ned::editor::tracker::SetConnection(ned::editor::tracker::Connection{.name = "work", .provider = "jira"});
+        ned::editor::vcs::SetCurrentBranch("/repo", "feature/DEV-450-login");
+    }
+    ~IssueBranchGuard() {
+        ned::editor::tracker::ClearRegistry();
+        ned::editor::vcs::ClearCurrentBranches();
+        ned::editor::tracker::SetCommitSeeds(std::string(ned::editor::tracker::kDefaultCommitSeed),
+                                             std::string(ned::editor::tracker::kDefaultNumericCommitSeed));
+    }
+};
+
+} // namespace
+
+TEST_CASE("A branch naming an issue seeds a new commit message with its key", "[BufferView][Vcs][Tracker]") {
+    Fixture             fixture;
+    CommitTempFileGuard tempGuard;
+    ProjectRootGuard    rootGuard("/repo");
+    IssueBranchGuard    branchGuard;
+    ned::editor::vcs::ClearRegistry();
+    ned::ui::EventLoop       eventLoop;
+    ned::editor::vcs::Runner runner(eventLoop);
+    BufferView               view = fixture.View();
+    view.SetVcsRunner(&runner);
+
+    SECTION("point lands after the key") {
+        view.BeginVcsCommitMessageForTesting();
+        ned::text::Buffer* commitBuffer = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
+        REQUIRE(commitBuffer != nullptr);
+        CHECK(commitBuffer->Text() == "DEV-450 " + std::string(ned::editor::vcs::kVcsCommitMessageTemplate));
+        CHECK(commitBuffer->Point() == 8);
+
+        SECTION("the key alone is no message") {
+            view.FinishVcsCommitMessageForTesting();
+            CHECK(fixture.statusMessage == "Empty commit message -- not committing.");
+        }
+        SECTION("anything typed after it is") {
+            commitBuffer->InsertAtPoint("Fix the login");
+            view.FinishVcsCommitMessageForTesting();
+            CHECK(fixture.statusMessage == "vcs commit: no vcs provider registered for this project");
+        }
+    }
+    SECTION("a seed with a body leaves point on the empty subject line") {
+        ned::editor::tracker::SetCommitSeeds("\n\nRefs {key}", "");
+        view.BeginVcsCommitMessageForTesting();
+        ned::text::Buffer* commitBuffer = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
+        REQUIRE(commitBuffer != nullptr);
+        CHECK(commitBuffer->Text().starts_with("\n\nRefs DEV-450\n# Please enter"));
+        CHECK(commitBuffer->Point() == 0);
+        view.FinishVcsCommitMessageForTesting();
+        CHECK(fixture.statusMessage == "Empty commit message -- not committing.");
+    }
+    SECTION("a branch naming no issue seeds nothing") {
+        ned::editor::vcs::SetCurrentBranch("/repo", "main");
+        view.BeginVcsCommitMessageForTesting();
+        ned::text::Buffer* commitBuffer = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
+        REQUIRE(commitBuffer != nullptr);
+        CHECK(commitBuffer->Text() == std::string(ned::editor::vcs::kVcsCommitMessageTemplate));
+    }
+}
+
+TEST_CASE("Making a branch for an issue prefills the new branch's name", "[BufferView][Vcs][Tracker]") {
+    Fixture          fixture;
+    ProjectRootGuard rootGuard("/repo");
+    ned::editor::vcs::ClearRegistry();
+    ned::ui::EventLoop       eventLoop;
+    ned::editor::vcs::Runner runner(eventLoop);
+    BufferView               view = fixture.View();
+
+    view.BeginIssueAction(ned::editor::tracker::IssueAction::CreateBranch,
+                          ned::editor::tracker::Issue{.key = "DEV-450", .title = "Fix the login"});
+    CHECK(fixture.statusMessage == "no vcs runner configured");
+
+    view.SetVcsRunner(&runner);
+    view.BeginIssueAction(ned::editor::tracker::IssueAction::CreateBranch,
+                          ned::editor::tracker::Issue{.key = "DEV-450", .title = "Fix the login"});
+    CHECK(fixture.statusMessage.starts_with("New branch: DEV-450-fix-the-login"));
 }

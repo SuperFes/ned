@@ -1,16 +1,18 @@
 #include "Runner.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <vector>
 
 #include <unistd.h>
 
+#include "CurrentBranch.h"
 #include "DiffPatch.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Tasks/TaskProcess.h"
-#include "Text/Buffer.h"
 #include "ProviderRegistry.h"
+#include "Text/Buffer.h"
 
 namespace ned::editor::vcs {
 
@@ -560,10 +562,21 @@ void Runner::RequestBranchList(std::function<void(std::vector<BranchEntry>)> onC
     RunProviderOperation(
         "branch listing", "branch-list:" + root.string(),
         [&root](Provider& provider) { return provider.BranchListArgv(root); },
-        [onComplete = std::move(onComplete)](Provider& provider, std::string output) {
-            onComplete(provider.ParseBranchList(output));
+        [root, onComplete = std::move(onComplete)](Provider& provider, std::string output) {
+            std::vector<BranchEntry> branches = provider.ParseBranchList(output);
+            const auto               current  = std::ranges::find(branches, true, &BranchEntry::current);
+            SetCurrentBranch(root, current != branches.end() ? std::optional(current->name) : std::nullopt);
+            onComplete(std::move(branches));
         },
         std::move(onError));
+}
+
+void Runner::RefreshCurrentBranch(std::function<void()> onDone) {
+    RequestBranchList([onDone](const std::vector<BranchEntry>&) {
+        if (onDone) {
+            onDone();
+        }
+    });
 }
 
 void Runner::RequestBranchSwitch(const std::string& name, std::function<void()> onSuccess,
@@ -572,7 +585,11 @@ void Runner::RequestBranchSwitch(const std::string& name, std::function<void()> 
     RunProviderOperation(
         "branch switch", "branch-switch:" + root.string(),
         [&root, &name](Provider& provider) { return provider.BranchSwitchArgv(root, name); },
-        [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
+        [root, name, onSuccess = std::move(onSuccess)](Provider&, std::string) {
+            SetCurrentBranch(root, name);
+            onSuccess();
+        },
+        std::move(onError));
 }
 
 void Runner::RequestBranchCreate(const std::string& name, std::function<void()> onSuccess,
@@ -581,7 +598,11 @@ void Runner::RequestBranchCreate(const std::string& name, std::function<void()> 
     RunProviderOperation(
         "branch creation", "branch-create:" + root.string(),
         [&root, &name](Provider& provider) { return provider.BranchCreateArgv(root, name); },
-        [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
+        [root, name, onSuccess = std::move(onSuccess)](Provider&, std::string) {
+            SetCurrentBranch(root, name);
+            onSuccess();
+        },
+        std::move(onError));
 }
 
 void Runner::RequestRevert(const std::filesystem::path& path, std::function<void()> onSuccess,

@@ -77,6 +77,10 @@ void TrackerPanel::SetOnOpenUrl(std::function<void(const std::string&)> handler)
     onOpenUrl_ = std::move(handler);
 }
 
+void TrackerPanel::SetOnIssueAction(std::function<void(editor::tracker::IssueAction, const editor::tracker::Issue&)> handler) {
+    onIssueAction_ = std::move(handler);
+}
+
 void TrackerPanel::SetOnCopy(std::function<void(std::string)> handler) {
     onCopy_ = std::move(handler);
 }
@@ -224,6 +228,23 @@ void TrackerPanel::HandleKey(const editor::KeyChord& chord) {
             }
             else if (onOpenUrl_) {
                 onOpenUrl_(issue->url);
+            }
+            return;
+        case U'b':
+        case U'c':
+        case U's':
+        case U'a':
+        case U'i':
+            if (issue == nullptr) {
+                Report("Not on an issue");
+            }
+            else if (onIssueAction_) {
+                onIssueAction_(chord.Codepoint == U'b'   ? editor::tracker::IssueAction::CreateBranch
+                               : chord.Codepoint == U'c' ? editor::tracker::IssueAction::Comment
+                               : chord.Codepoint == U's' ? editor::tracker::IssueAction::Transition
+                               : chord.Codepoint == U'a' ? editor::tracker::IssueAction::Assign
+                                                         : editor::tracker::IssueAction::ClockIn,
+                               *issue);
             }
             return;
         case U'w':

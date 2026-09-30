@@ -1294,13 +1294,45 @@ for the live keymap stack.
 
 :   Show or hide the left-side VCS status panel (staged/unstaged/untracked files); collapses the project sidebar if it's currently shown in the same slot.
 
+`tracker-assign`
+
+:   Assign an issue -- the one whose buffer this is, else one picked from the fetched issues -- to someone the tracker says may have it, yourself listed first.
+
+`tracker-clock-in`
+
+:   Clock in on an issue -- the one whose buffer this is, else one picked from the fetched issues -- under its own heading in the issues Org file (see ned/set-tracker-clock-file), made the first time.
+
+`tracker-clock-out`
+
+:   Clock out of the running Org clock -- this buffer's, else the issues Org file's -- offering to log the time to the issue's tracker when the heading is an issue's.
+
+`tracker-comment`
+
+:   Write a comment on an issue -- the one whose buffer this is, else one picked from the fetched issues -- in a *comment KEY* buffer, as Markdown: C-c C-c posts it, C-c C-k discards it.
+
+`tracker-comment-abort`
+
+:   Discard the comment being written (bound C-c C-k in *comment KEY*).
+
+`tracker-comment-finish`
+
+:   Post the comment being written (bound C-c C-c in *comment KEY*).
+
+`tracker-create-branch`
+
+:   Create and switch to a branch for an issue -- the one whose buffer this is, else one picked from the fetched issues -- its name prefilled from the issue's key and title.
+
 `tracker-insert-issue-key`
 
 :   Pick one of the issues the tracker panels have fetched and insert its key at point -- a commit message's issue reference, say.
 
 `tracker-panel`
 
-:   Pick an issue-tracker panel by name and move keyboard focus into it (Enter opens an issue's buffer, 'o' opens it in the browser, 'w'/'W' copy its key/URL, 'g' refreshes, Left/Right collapse/expand a status, Escape or C-g returns to the editor).
+:   Pick an issue-tracker panel by name and move keyboard focus into it (Enter opens an issue's buffer, 'o' opens it in the browser, 'b' makes a branch for it, 'c' comments on it, 's' changes its status, 'a' assigns it, 'i' clocks in on it, 'w'/'W' copy its key/URL, 'g' refreshes, Left/Right collapse/expand a status, Escape or C-g returns to the editor).
+
+`tracker-set-status`
+
+:   Move an issue -- the one whose buffer this is, else one picked from the fetched issues -- to another status, picked from the tracker's own transitions.
 
 `transpose-chars` (`C-t`)
 

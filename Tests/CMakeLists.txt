@@ -310,6 +310,11 @@ add_executable(ned_tests
             DiffPatchTest.cpp
             VcsRunnerTest.cpp
             TrackerTest.cpp
+            TrackerCredentialsTest.cpp
+            TrackerClockingTest.cpp
+            TrackerIssueKeyTest.cpp
+            TrackerKeyCompletionTest.cpp
+            BufferViewTrackerTest.cpp
             VcsRowStatusTest.cpp
             VcsSequenceTest.cpp
             BackgroundActivityTest.cpp
@@ -358,6 +363,7 @@ add_executable(ned_tests
             DebugPanelTest.cpp
             TrackerPanelTest.cpp
             TrackerGithubPluginTest.cpp
+            TrackerJiraPluginTest.cpp
             ChildProcessTest.cpp
             TaskConfigTest.cpp
             TaskProcessTest.cpp

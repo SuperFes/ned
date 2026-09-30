@@ -275,9 +275,16 @@ add_library(ned_lib STATIC
         Editor/Vcs/RowStatus.cpp
         Editor/Vcs/ConflictedFiles.cpp
         Editor/Vcs/Sequence.cpp
+        Editor/Vcs/CurrentBranch.cpp
         Editor/Vcs/Runner.cpp
+        Editor/Tracker/Clocking.cpp
+        Editor/Tracker/CommentBuffer.cpp
+        Editor/Tracker/Credentials.cpp
+        Editor/Tracker/PrivateFile.cpp
         Editor/Tracker/Detect.cpp
         Editor/Tracker/IssueBuffer.cpp
+        Editor/Tracker/IssueKey.cpp
+        Editor/Tracker/KeyCompletion.cpp
         Editor/Tracker/Registry.cpp
         Editor/Tracker/Runner.cpp
         Editor/Process/ChildProcess.cpp

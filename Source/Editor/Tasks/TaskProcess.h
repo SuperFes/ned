@@ -44,9 +44,11 @@ class TaskProcess {
     // exitCode is the process's real exit code, or std::nullopt if it was
     // terminated by a signal (Cancel(), most commonly). eventLoop must
     // outlive this TaskProcess, same requirement Client's own
-    // constructor documents.
+    // constructor documents. stderrMode Discard keeps a command's
+    // diagnostics out of output that must stay clean (a printed token).
     TaskProcess(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop, std::function<void(std::string_view chunk)> onOutput,
-                std::function<void(std::optional<int> exitCode)> onExit);
+                std::function<void(std::optional<int> exitCode)> onExit,
+                process::StderrMode                              stderrMode = process::StderrMode::MergeWithStdout);
 
     ~TaskProcess() = default; // member destruction order does the real work -- see header comment
 

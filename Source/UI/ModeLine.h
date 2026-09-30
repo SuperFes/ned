@@ -62,6 +62,10 @@ class ModeLine : public Widget {
     // ordinary single-language case).
     void SetLanguageAtPointProvider(std::function<std::optional<std::string>()> provider);
 
+    // The issue key the project's current branch names, shown after the
+    // mode. Unset means none is shown.
+    void SetIssueKeyProvider(std::function<std::optional<std::string>()> provider);
+
   private:
     // The travelling background-activity band, painted over the mode line's
     // own fill and under its glyphs. See the definition for why it shares the
@@ -74,6 +78,7 @@ class ModeLine : public Widget {
     std::function<bool()>                       focusProvider_;
     editor::lsp::Manager*                    lspManager_ = nullptr;
     std::function<std::optional<std::string>()> languageAtPointProvider_;
+    std::function<std::optional<std::string>()> issueKeyProvider_;
 
     // minimum-visible-duration follow-up: every activity seen recently,
     // each held and re-shown for kMinimumVisibleDuration after it leaves

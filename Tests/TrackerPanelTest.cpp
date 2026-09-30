@@ -35,6 +35,9 @@ struct Fixture {
     std::vector<std::string> opened;
     std::vector<std::string> urls;
     std::vector<std::string> copied;
+    std::vector<std::string> branchesFor;
+    std::vector<std::string> commentsFor;
+    std::vector<std::string> otherActions;
     std::vector<std::string> messages;
     int                      cancels = 0;
 
@@ -46,6 +49,23 @@ struct Fixture {
         panel.SetOnOpenIssue([this](const Issue& issue) { opened.push_back(issue.key); });
         panel.SetOnOpenUrl([this](const std::string& url) { urls.push_back(url); });
         panel.SetOnCopy([this](std::string text) { copied.push_back(std::move(text)); });
+        panel.SetOnIssueAction([this](ned::editor::tracker::IssueAction action, const Issue& issue) {
+            if (action == ned::editor::tracker::IssueAction::CreateBranch) {
+                branchesFor.push_back(issue.key);
+            }
+            if (action == ned::editor::tracker::IssueAction::Comment) {
+                commentsFor.push_back(issue.key);
+            }
+            if (action == ned::editor::tracker::IssueAction::Transition) {
+                otherActions.push_back("status " + issue.key);
+            }
+            if (action == ned::editor::tracker::IssueAction::Assign) {
+                otherActions.push_back("assign " + issue.key);
+            }
+            if (action == ned::editor::tracker::IssueAction::ClockIn) {
+                otherActions.push_back("clock " + issue.key);
+            }
+        });
         panel.SetOnMessage([this](std::string message) { messages.push_back(std::move(message)); });
         panel.SetOnCancel([this] { ++cancels; });
     }
@@ -198,4 +218,23 @@ TEST_CASE("A failed fetch keeps the last good listing", "[TrackerPanel]") {
     const std::string rows = f.AllRows();
     CHECK(rows.find("NED-1") != std::string::npos);
     CHECK(rows.find("Fetch failed") == std::string::npos);
+}
+
+TEST_CASE("b, c, s, a and i on an issue row ask for an action on it", "[TrackerPanel]") {
+    Fixture f;
+    f.panel.NotifyShown();
+    f.panel.ShowIssues(SampleIssues());
+
+    f.Press(test::Character('b')); // the status header
+    CHECK(f.branchesFor.empty());
+    CHECK(f.messages.back() == "Not on an issue");
+    f.Down(1);
+    f.Press(test::Character('b'));
+    CHECK(f.branchesFor == std::vector<std::string>{"NED-1"});
+    f.Press(test::Character('c'));
+    CHECK(f.commentsFor == std::vector<std::string>{"NED-1"});
+    f.Press(test::Character('s'));
+    f.Press(test::Character('a'));
+    f.Press(test::Character('i'));
+    CHECK(f.otherActions == std::vector<std::string>{"status NED-1", "assign NED-1", "clock NED-1"});
 }

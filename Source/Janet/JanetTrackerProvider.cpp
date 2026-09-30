@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <stdexcept>
+#include <string_view>
 
 #include "Environment.h"
 #include "Value.h"
@@ -72,6 +73,23 @@ namespace {
         return janet_checktype(value, JANET_TABLE) || janet_checktype(value, JANET_STRUCT);
     }
 
+    // An argv array, or {:argv [...] :curl-credentials true} for a curl
+    // command the Runner authenticates (Provider.h's CommandSpec).
+    editor::tracker::CommandSpec CommandSpecFrom(Janet result) {
+        if (IsDictionary(result)) {
+            editor::tracker::CommandSpec spec{
+                .argv            = FromJanet<std::vector<std::string>>(janet_get(result, janet_ckeywordv("argv"))),
+                .curlCredentials = janet_truthy(janet_get(result, janet_ckeywordv("curl-credentials"))) != 0,
+            };
+            const Janet input = janet_get(result, janet_ckeywordv("input"));
+            if (!janet_checktype(input, JANET_NIL)) {
+                spec.input = FromJanet<std::string>(input);
+            }
+            return spec;
+        }
+        return editor::tracker::CommandSpec{.argv = FromJanet<std::vector<std::string>>(result)};
+    }
+
     bool IsCallable(Janet value) {
         return janet_checktype(value, JANET_FUNCTION) || janet_checktype(value, JANET_CFUNCTION);
     }
@@ -83,6 +101,36 @@ namespace {
         janet_struct_put(fields, janet_ckeywordv("url"), StringValue(connection.url));
         janet_struct_put(fields, janet_ckeywordv("email"), StringValue(connection.email));
         return janet_wrap_struct(janet_struct_end(fields));
+    }
+
+    // The callbacks each capability needs, all of them or none.
+    struct CapabilityCallbacks {
+        editor::tracker::Capability        capability;
+        std::initializer_list<const char*> keys;
+    };
+    const CapabilityCallbacks kCapabilityCallbacks[] = {
+        {editor::tracker::Capability::Transition, {"transitions-argv", "parse-transitions", "transition-argv"}},
+        {editor::tracker::Capability::Assign, {"assignees-argv", "parse-assignees", "assign-argv"}},
+        {editor::tracker::Capability::Comment, {"comment-argv"}},
+        {editor::tracker::Capability::Worklog, {"worklog-argv"}},
+        {editor::tracker::Capability::ProjectKeys, {"project-keys-argv", "parse-project-keys"}},
+        {editor::tracker::Capability::Mine, {"mine-query"}},
+    };
+
+    std::vector<editor::tracker::Choice> ChoicesFrom(const std::string& provider, const char* callback, Janet result) {
+        const Janet* items = nullptr;
+        std::int32_t count = 0;
+        if (!janet_indexed_view(result, &items, &count)) {
+            throw std::runtime_error("tracker provider \"" + provider + "\": :" + callback + " must return an array of :id :name tables");
+        }
+        std::vector<editor::tracker::Choice> choices;
+        for (std::int32_t i = 0; i < count; ++i) {
+            if (IsDictionary(items[i])) {
+                choices.push_back(editor::tracker::Choice{
+                    .id = TextField(items[i], "id"), .name = TextField(items[i], "name"), .email = TextField(items[i], "email")});
+            }
+        }
+        return choices;
     }
 
 } // namespace
@@ -124,6 +172,108 @@ JanetTrackerProvider::JanetTrackerProvider(JanetTable* env, std::string name, Ja
         janet_def(env_, CallbackName(name_, "detect").c_str(), detect, "");
         hasDetect_ = true;
     }
+    numericKeys_ = janet_truthy(janet_get(callbacks, janet_ckeywordv("numeric-keys"))) != 0;
+    for (const CapabilityCallbacks& group : kCapabilityCallbacks) {
+        std::size_t present = 0;
+        for (const char* key : group.keys) {
+            present += janet_checktype(janet_get(callbacks, janet_ckeywordv(key)), JANET_NIL) ? 0 : 1;
+        }
+        if (present == 0) {
+            continue;
+        }
+        std::string names;
+        for (const char* key : group.keys) {
+            names += (names.empty() ? ":" : ", :") + std::string(key);
+        }
+        for (const char* key : group.keys) {
+            const Janet callback = janet_get(callbacks, janet_ckeywordv(key));
+            // :mine-query may be a fixed query rather than a function of the connection.
+            const bool fixedQuery = std::string_view(key) == "mine-query" && janet_checktype(callback, JANET_STRING);
+            if (!IsCallable(callback) && !fixedQuery) {
+                throw std::runtime_error("ned: tracker provider \"" + name_ + "\" needs " + names + " together, as functions");
+            }
+            janet_def(env_, CallbackName(name_, key).c_str(), callback, "");
+        }
+        capabilities_.insert(group.capability);
+    }
+}
+
+bool JanetTrackerProvider::Supports(editor::tracker::Capability capability) const {
+    return capabilities_.contains(capability);
+}
+
+editor::tracker::CommandSpec JanetTrackerProvider::TransitionsArgv(const editor::tracker::Connection& connection,
+                                                                   const std::string&                 key) const {
+    return CommandSpecFrom(Call(CallbackName(name_, "transitions-argv"), {ConnectionStruct(connection), StringValue(key)}));
+}
+
+std::vector<editor::tracker::Choice> JanetTrackerProvider::ParseTransitions(const std::string& output) const {
+    return ChoicesFrom(name_, "parse-transitions", Call(CallbackName(name_, "parse-transitions"), {StringValue(output)}));
+}
+
+editor::tracker::CommandSpec JanetTrackerProvider::TransitionArgv(const editor::tracker::Connection& connection, const std::string& key,
+                                                                  const std::string& transitionId) const {
+    return CommandSpecFrom(
+        Call(CallbackName(name_, "transition-argv"), {ConnectionStruct(connection), StringValue(key), StringValue(transitionId)}));
+}
+
+editor::tracker::CommandSpec JanetTrackerProvider::AssigneesArgv(const editor::tracker::Connection& connection,
+                                                                 const std::string&                 key) const {
+    return CommandSpecFrom(Call(CallbackName(name_, "assignees-argv"), {ConnectionStruct(connection), StringValue(key)}));
+}
+
+std::vector<editor::tracker::Choice> JanetTrackerProvider::ParseAssignees(const std::string& output) const {
+    return ChoicesFrom(name_, "parse-assignees", Call(CallbackName(name_, "parse-assignees"), {StringValue(output)}));
+}
+
+editor::tracker::CommandSpec JanetTrackerProvider::AssignArgv(const editor::tracker::Connection& connection, const std::string& key,
+                                                              const std::string& userId) const {
+    return CommandSpecFrom(Call(CallbackName(name_, "assign-argv"), {ConnectionStruct(connection), StringValue(key), StringValue(userId)}));
+}
+
+editor::tracker::CommandSpec JanetTrackerProvider::CommentArgv(const editor::tracker::Connection& connection, const std::string& key,
+                                                               const std::string& body) const {
+    return CommandSpecFrom(Call(CallbackName(name_, "comment-argv"), {ConnectionStruct(connection), StringValue(key), StringValue(body)}));
+}
+
+editor::tracker::CommandSpec JanetTrackerProvider::WorklogArgv(const editor::tracker::Connection& connection, const std::string& key,
+                                                               const editor::tracker::Worklog& worklog) const {
+    return CommandSpecFrom(Call(CallbackName(name_, "worklog-argv"),
+                                {ConnectionStruct(connection), StringValue(key), janet_wrap_number(static_cast<double>(worklog.started)),
+                                 janet_wrap_number(static_cast<double>(worklog.seconds))}));
+}
+
+editor::tracker::CommandSpec JanetTrackerProvider::ProjectKeysArgv(const editor::tracker::Connection& connection) const {
+    return CommandSpecFrom(Call(CallbackName(name_, "project-keys-argv"), {ConnectionStruct(connection)}));
+}
+
+std::vector<std::string> JanetTrackerProvider::ParseProjectKeys(const std::string& output) const {
+    const Janet  result = Call(CallbackName(name_, "parse-project-keys"), {StringValue(output)});
+    const Janet* items  = nullptr;
+    std::int32_t count  = 0;
+    if (!janet_indexed_view(result, &items, &count)) {
+        throw std::runtime_error("tracker provider \"" + name_ + "\": :parse-project-keys must return an array of strings");
+    }
+    std::vector<std::string> keys;
+    for (std::int32_t i = 0; i < count; ++i) {
+        if (janet_checktype(items[i], JANET_STRING)) {
+            keys.push_back(FromJanet<std::string>(items[i]));
+        }
+    }
+    return keys;
+}
+
+std::string JanetTrackerProvider::MineQuery(const editor::tracker::Connection& connection) const {
+    const std::string name = CallbackName(name_, "mine-query");
+    Janet             query;
+    if (janet_resolve(env_, janet_csymbol(name.c_str()), &query) == JANET_BINDING_DEF && janet_checktype(query, JANET_STRING)) {
+        return FromJanet<std::string>(query);
+    }
+    const Janet result = Call(name, {ConnectionStruct(connection)});
+    if (!janet_checktype(result, JANET_STRING)) {
+        throw std::runtime_error("tracker provider \"" + name_ + "\": :mine-query must return a query string");
+    }
+    return FromJanet<std::string>(result);
 }
 
 Janet JanetTrackerProvider::Call(const std::string& callback, std::initializer_list<Janet> args) const {
@@ -147,7 +297,7 @@ Janet JanetTrackerProvider::Call(const std::string& callback, std::initializer_l
 editor::tracker::CommandSpec JanetTrackerProvider::ListArgv(const editor::tracker::Connection& connection,
                                                             const std::string&                 query) const {
     const Janet result = Call(CallbackName(name_, "list-argv"), {ConnectionStruct(connection), StringValue(query)});
-    return editor::tracker::CommandSpec{FromJanet<std::vector<std::string>>(result)};
+    return CommandSpecFrom(result);
 }
 
 std::vector<editor::tracker::Issue> JanetTrackerProvider::ParseList(const std::string& output) const {
@@ -173,7 +323,7 @@ std::optional<editor::tracker::CommandSpec> JanetTrackerProvider::ViewArgv(const
         return std::nullopt;
     }
     const Janet result = Call(CallbackName(name_, "view-argv"), {ConnectionStruct(connection), StringValue(key)});
-    return editor::tracker::CommandSpec{FromJanet<std::vector<std::string>>(result)};
+    return CommandSpecFrom(result);
 }
 
 editor::tracker::IssueDetail JanetTrackerProvider::ParseView(const std::string& output) const {

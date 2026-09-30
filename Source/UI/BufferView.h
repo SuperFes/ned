@@ -74,6 +74,10 @@
 #include "Editor/Snippet.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/TestRun/TestRunner.h"
+#include "Editor/Tracker/Clocking.h"
+#include "Editor/Tracker/IssueAction.h"
+#include "Editor/Tracker/Provider.h"
+#include "Editor/Tracker/Runner.h"
 #include "Editor/Vcs/Provider.h"
 #include "Editor/Vcs/Runner.h"
 #include "Editor/Vim/Engine.h"
@@ -287,12 +291,31 @@ class BufferView : public Widget {
     // prompt of its own (a panel, a command whose choices aren't a fixed
     // table here). commit runs after the session ends with the chosen
     // string. Empty choices report emptyMessage and start nothing.
+    // keepOrder lists the choices as given (the tracker's own workflow
+    // order, "yourself" first) rather than alphabetically; typing still
+    // filters them.
     void BeginChoicePrompt(std::string label, std::vector<std::string> choices, std::string emptyMessage,
-                           std::function<void(const std::string&)> commit);
+                           std::function<void(const std::string&)> commit, bool keepOrder = false);
 
     // tracker-panel's commit: main.cpp owns the panels, so this only names
     // one. Unset is a safe no-op.
     void SetOnFocusTrackerPanel(std::function<void(const std::string&)> handler);
+
+    // An action on issue, picked from a tracker panel or by a tracker-*
+    // command (see WithTargetIssue).
+    void BeginIssueAction(editor::tracker::IssueAction action, const editor::tracker::Issue& issue);
+
+    // What tracker actions and comments run through. Unset reports "no
+    // tracker runner configured".
+    void SetTrackerRunner(editor::tracker::Runner* trackerRunner);
+    // After an action changed issue key, for whatever lists it (the panels).
+    void SetOnIssueChanged(std::function<void(const std::string&)> handler);
+    // PickIssueChoice's second half, as if the tracker had answered with
+    // choices: the EventLoop tests never run can't deliver them.
+    void BeginIssueChoicePromptForTesting(bool transition, const std::string& key, const std::string& connection,
+                                          std::vector<editor::tracker::Choice> choices) {
+        BeginIssueChoicePrompt(transition, key, connection, std::move(choices));
+    }
 
     // Opens the ACP compose buffer (Editor/Acp/Compose.h) in this pane --
     // `seed` as its text when it's created, its existing draft otherwise --
@@ -2814,6 +2837,27 @@ class BufferView : public Widget {
     void RefreshSelectThemeStatus();
     void HandleChoiceKey(const editor::KeyChord& chord);
     void RefreshChoiceStatus();
+    // Runs act on the issue a tracker-* command means: the one whose buffer
+    // is active, else one picked (under label) from the fetched issues.
+    void WithTargetIssue(std::string label, std::function<void(const editor::tracker::Issue&)> act);
+    // C-c C-c (post) / C-c C-k (discard) in a *comment KEY* buffer.
+    void FinishTrackerComment(bool post);
+    // Fetches the transitions (or assignable users) of key and moves (or
+    // assigns) it to the one picked.
+    void PickIssueChoice(bool transition, const std::string& key);
+    // tracker-clock-in: key's heading in the issues Org file, made if need
+    // be, clocked in and shown.
+    void ClockInOnIssue(const editor::tracker::Issue& issue);
+    // tracker-clock-out, and org-clock-out on an issue's heading.
+    void ClockOutOfIssue();
+    void OfferWorklog(const editor::tracker::IssueClock& clock);
+    void BeginIssueChoicePrompt(bool transition, const std::string& key, const std::string& connection,
+                                std::vector<editor::tracker::Choice> choices);
+    // Refetches key's issue buffer, if one is open, after acting on it.
+    void RefreshIssueBuffer(const std::string& connectionName, const std::string& key);
+    // Plain letters act on the issue in its own read-only buffer: the
+    // content-scoped keys HandleConflictQuickKey established.
+    bool HandleIssueQuickKey(const editor::KeyChord& chord);
     void ApplySelectedThemePreview();
 
     // Shared by OnKeyEvent's Normal-mode tail (Dispatcher::Feed) and
@@ -3986,6 +4030,7 @@ class BufferView : public Widget {
     editor::ProjectUndoManager*           projectUndo_             = nullptr; // see SetProjectUndo
     editor::testrun::TestRunner*          testRunner_              = nullptr; // see SetTestRunner
     editor::vcs::Runner*               vcsRunner_               = nullptr; // see SetVcsRunner
+    editor::tracker::Runner*              trackerRunner_           = nullptr; // see SetTrackerRunner
     // VcsPanel amend follow-up: set by BeginVcsCommitMessage, consumed (and
     // reset to Commit) by FinishVcsCommitMessage -- which of
     // RequestCommit/RequestAmendCommit/RequestRewordCommit to fire. Only
@@ -3993,6 +4038,9 @@ class BufferView : public Widget {
     // AbortVcsCommitMessage resets it too, so no stale mode can survive
     // into a later plain commit.
     VcsCommitMode                         pendingCommitMode_       = VcsCommitMode::Commit;
+    // What a plain commit's buffer was seeded with (Tracker/IssueKey.h's
+    // CommitSeed): a message that is only this is no message.
+    std::string                           pendingCommitSeed_;
     editor::dap::Manager*              dapManager_              = nullptr; // see SetDapManager
     editor::acp::Manager*              acpManager_              = nullptr; // see SetAcpManager
     const janet::Environment*             janetEnv_                = nullptr; // see SetJanetEnvironment
@@ -4267,6 +4315,7 @@ class BufferView : public Widget {
     std::function<void()>                              onDapConsoleToggle_;    // see SetOnDapConsoleToggle
     std::function<void()>                              onJanetReplToggle_;     // see SetOnJanetReplToggle
     std::function<void(const std::string&)>                        onFocusTrackerPanel_;   // see SetOnFocusTrackerPanel
+    std::function<void(const std::string&)>                        onIssueChanged_;        // see SetOnIssueChanged
     std::function<void(const std::string&)>            onRunReplRequest_;      // see SetOnRunReplRequest
     std::function<void()>                              onDapThreadsToggle_;    // see SetOnDapThreadsToggle
     std::function<void()>                              onBufferListToggle_;    // see SetOnBufferListToggle
@@ -4803,11 +4852,18 @@ class BufferView : public Widget {
     // class's own source-selection policy (LSP/dabbrev vs. Janet bindings),
     // not something a pure session should know about.
     enum class CompletionPrefixRule { Word,
-                                      JanetSymbol };
+                                      JanetSymbol,
+                                      IssueKey };
     CompletionPrefixRule completionPrefixRule_ = CompletionPrefixRule::Word;
 
     // completionPrefixRule_ applied at an arbitrary point.
     [[nodiscard]] std::size_t CurrentCompletionPrefixStart(const text::Buffer& buffer, std::size_t point) const;
+    // Where an issue key being typed before point starts (Tracker/
+    // KeyCompletion.h), when a tracker is configured and one is.
+    [[nodiscard]] std::optional<std::size_t> IssueKeyPrefixStartAt(const text::Buffer& buffer, std::size_t point) const;
+    // open-link-at-point's issue-key tier: fetches and shows the key under
+    // point. False when there is none, for the next tier to try.
+    bool OpenIssueKeyAtPoint();
 
     // completion-popup follow-up: the screen-absolute anchor last sent to
     // onCompletionChanged_, so Paint() can cheaply detect "point's on-screen

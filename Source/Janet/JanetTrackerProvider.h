@@ -11,6 +11,19 @@
 //   :detect     (fn [remote-urls] found)       optional; each found entry a
 //               connection table (:name :url :email) whose :panels are
 //               tables of :name :query :glyph
+// and, optionally, the actions (Provider.h's Capability), each group all
+// or nothing:
+//   :transitions-argv (fn [connection key]) + :parse-transitions (fn [output])
+//               -> :id :name tables, + :transition-argv (fn [connection key id])
+//   :assignees-argv / :parse-assignees / :assign-argv, the same shape
+//   :comment-argv (fn [connection key markdown-body])
+//   :worklog-argv (fn [connection key started-epoch-seconds seconds])
+//   :project-keys-argv (fn [connection]) + :parse-project-keys (fn [output])
+//               -> strings
+//   :mine-query (fn [connection]) -> a :list-argv query, or just the string
+// :numeric-keys true says the tracker's keys are "#42", not PROJ-42.
+// An argv callback returns an argv array or a table of :argv plus
+// :curl-credentials and :input (Provider.h's CommandSpec).
 // Callbacks are bound under generated names and invoked via janet_dostring,
 // the same way JanetVcsProvider calls its plugin (see its header for why
 // not janet_pcall), so every call must run on the main thread.
@@ -22,7 +35,9 @@
 #include <janet.h>
 
 #include <optional>
+#include <set>
 #include <string>
+#include <vector>
 
 #include "Editor/Tracker/Provider.h"
 
@@ -42,6 +57,29 @@ class JanetTrackerProvider : public editor::tracker::Provider {
     [[nodiscard]] editor::tracker::IssueDetail                ParseView(const std::string& output) const override;
     [[nodiscard]] std::vector<editor::tracker::Detected>      Detect(const std::vector<std::string>& remoteUrls) const override;
 
+    [[nodiscard]] bool Supports(editor::tracker::Capability capability) const override;
+    [[nodiscard]] bool NumericKeys() const override {
+        return numericKeys_;
+    }
+
+    [[nodiscard]] editor::tracker::CommandSpec         TransitionsArgv(const editor::tracker::Connection& connection,
+                                                                       const std::string&                 key) const override;
+    [[nodiscard]] std::vector<editor::tracker::Choice> ParseTransitions(const std::string& output) const override;
+    [[nodiscard]] editor::tracker::CommandSpec         TransitionArgv(const editor::tracker::Connection& connection, const std::string& key,
+                                                                      const std::string& transitionId) const override;
+    [[nodiscard]] editor::tracker::CommandSpec         AssigneesArgv(const editor::tracker::Connection& connection,
+                                                                     const std::string&                 key) const override;
+    [[nodiscard]] std::vector<editor::tracker::Choice> ParseAssignees(const std::string& output) const override;
+    [[nodiscard]] editor::tracker::CommandSpec         AssignArgv(const editor::tracker::Connection& connection, const std::string& key,
+                                                                  const std::string& userId) const override;
+    [[nodiscard]] editor::tracker::CommandSpec         CommentArgv(const editor::tracker::Connection& connection, const std::string& key,
+                                                                   const std::string& body) const override;
+    [[nodiscard]] editor::tracker::CommandSpec         WorklogArgv(const editor::tracker::Connection& connection, const std::string& key,
+                                                                   const editor::tracker::Worklog& worklog) const override;
+    [[nodiscard]] editor::tracker::CommandSpec         ProjectKeysArgv(const editor::tracker::Connection& connection) const override;
+    [[nodiscard]] std::vector<std::string>             ParseProjectKeys(const std::string& output) const override;
+    [[nodiscard]] std::string                          MineQuery(const editor::tracker::Connection& connection) const override;
+
   private:
     [[nodiscard]] Janet Call(const std::string& callback, std::initializer_list<Janet> args) const;
 
@@ -49,6 +87,9 @@ class JanetTrackerProvider : public editor::tracker::Provider {
     std::string name_;
     bool        hasView_   = false;
     bool        hasDetect_ = false;
+    bool        numericKeys_ = false;
+
+    std::set<editor::tracker::Capability> capabilities_;
 };
 
 } // namespace ned::janet

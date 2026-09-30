@@ -1388,8 +1388,8 @@ namespace {
         if (!bodyStart)
             return std::nullopt;
         if (const auto drawer = ParsePropertyDrawer(bufferText, headline)) {
-            if (drawer->endByte >= bufferText.size())
-                return std::nullopt; // the property drawer is the buffer's own last content -- nothing can follow
+            if (drawer->endByte >= bufferText.size() && !bufferText.ends_with('\n'))
+                return std::nullopt; // ":END:" is the buffer's last line, with no newline to follow it
             return drawer->endByte;
         }
         return bodyStart;
@@ -1887,8 +1887,10 @@ ClockInResult ClockInAtPoint(text::Buffer& buffer, std::chrono::system_clock::ti
             // The headline (or its planning/property block) is the
             // buffer's very last line with no trailing newline yet -- add
             // one first, same fallback SetProperty's own drawer-creation
-            // path takes.
-            buffer.InsertAt(headline->lineEndByte, "\n" + newDrawer);
+            // path takes. After the property drawer, if that is the last
+            // line, so the drawer stays the headline's next line.
+            const auto properties = ParsePropertyDrawer(buffer.Text(), *headline);
+            buffer.InsertAt(properties ? properties->endByte : headline->lineEndByte, "\n" + newDrawer);
         }
     }
     return {ClockInStatus::Ok, {}};
@@ -1937,6 +1939,11 @@ std::optional<RunningClock> CurrentlyRunningClock(std::string_view bufferText, c
         }
     }
     return std::nullopt;
+}
+
+std::chrono::system_clock::time_point ClockTimePoint(const OrgTimestamp& timestamp) {
+    using namespace std::chrono;
+    return sys_days{timestamp.date} + hours{timestamp.hour.value_or(0)} + minutes{timestamp.minute.value_or(0)};
 }
 
 std::chrono::minutes ElapsedMinutes(const OrgTimestamp& start, std::chrono::system_clock::time_point now) {

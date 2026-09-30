@@ -42,6 +42,9 @@ enum class CompletionSource {
     Lsp,
     JanetBinding,
     BufferWord,
+    // An issue tracker's key ("DEV-450", "#42"). Never merged with the
+    // others: a key being typed is its own completion context.
+    IssueKey,
 };
 
 // Lower sorts first. Declared here rather than inside the merge so the

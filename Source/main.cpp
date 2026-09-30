@@ -1584,6 +1584,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         ned::editor::tracker::AddDetectedPanels(ned::editor::tracker::GitRemoteUrls(projectRoot));
     }
     ned::editor::tracker::Runner                        trackerRunner(eventLoop);
+    windowManager->SetTrackerRunner(&trackerRunner);
     std::vector<std::unique_ptr<ned::ui::TrackerPanel>> trackerPanels;
     std::map<std::size_t, ned::ui::TrackerPanel*>       trackerPanelsByDockId;
     for (const ned::editor::tracker::Panel& declared : ned::editor::tracker::Panels()) {
@@ -1612,6 +1613,11 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
                 statusMessage = "No URL opener -- see ned/set-url-open-command";
             }
         });
+        panel->SetOnIssueAction([wm = windowManager.get(), dock = leftDock.get()](ned::editor::tracker::IssueAction  action,
+                                                                                  const ned::editor::tracker::Issue& issue) {
+            wm->RequestIssueAction(action, issue);
+            dock->NoteFocusReturned();
+        });
         panel->SetOnCopy([&killRing](std::string text) { killRing.Kill(std::move(text)); });
         panel->SetOnMessage([&statusMessage](std::string message) { statusMessage = std::move(message); });
         panel->SetOnCancel([wm = windowManager.get(), dock = leftDock.get()] {
@@ -1624,10 +1630,22 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         trackerPanelsByDockId.emplace(leftDock->AddPanel(glyph, declared.name, panel->Tree()), panel);
         trackerPanels.push_back(std::move(owned));
     }
+    // For the mode line's issue key.
+    if (!ned::editor::tracker::Connections().empty()) {
+        vcsRunner.RefreshCurrentBranch();
+    }
     // Deferred: this fires from the dock's Paint, and a fetch spawns a process.
     leftDock->SetOnPanelShown([&eventLoop, &trackerPanelsByDockId](std::size_t id) {
         if (const auto found = trackerPanelsByDockId.find(id); found != trackerPanelsByDockId.end()) {
             eventLoop.Post([panel = found->second] { panel->NotifyShown(); });
+        }
+    });
+    // An action changed an issue: the panels listing it are stale.
+    windowManager->SetOnIssueChanged([&trackerPanels](const std::string& key) {
+        for (const auto& panel : trackerPanels) {
+            if (std::ranges::contains(ned::editor::tracker::PanelIssues(panel->Name()), key, &ned::editor::tracker::Issue::key)) {
+                panel->Refresh();
+            }
         }
     });
     windowManager->SetOnFocusTrackerPanel([&trackerPanels, &statusMessage, dock = leftDock.get()](const std::string& name) {

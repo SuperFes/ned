@@ -8,8 +8,11 @@
 #ifndef NED_EDITOR_TRACKER_PROVIDER_H
 #define NED_EDITOR_TRACKER_PROVIDER_H
 
+#include <cstdint>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ned::editor::tracker {
@@ -71,8 +74,49 @@ struct Panel {
     bool operator==(const Panel&) const = default;
 };
 
+// With curlCredentials, argv is a curl command that authenticates as the
+// connection: the Runner runs its :token-command first and appends
+// `-K <file>` naming a config that carries the email and token.
+//
+// With input, the Runner writes it to a private temporary file and puts
+// that file's path wherever an argv element says {input-file} -- a comment
+// body is too long, and too arbitrary, for an argv of its own.
 struct CommandSpec {
-    std::vector<std::string> argv;
+    std::vector<std::string>   argv;
+    bool                       curlCredentials = false;
+    std::optional<std::string> input;
+};
+
+inline constexpr std::string_view kInputFilePlaceholder = "{input-file}";
+
+// Something a provider offers to pick from: a status transition, an
+// assignable user. id goes back to the provider; name is what's shown.
+// email, for a user, is how the connection's own user is recognized.
+struct Choice {
+    std::string id;
+    std::string name;
+    std::string email;
+
+    bool operator==(const Choice&) const = default;
+};
+
+// Time spent on an issue: started is seconds since the epoch.
+struct Worklog {
+    std::int64_t started = 0;
+    std::int64_t seconds = 0;
+
+    bool operator==(const Worklog&) const = default;
+};
+
+// What a provider may do beyond listing and viewing issues. Each has its
+// own callbacks, called only when Supports says so.
+enum class Capability {
+    Transition,  // TransitionsArgv/ParseTransitions + TransitionArgv
+    Assign,      // AssigneesArgv/ParseAssignees + AssignArgv
+    Comment,     // CommentArgv
+    Worklog,     // WorklogArgv
+    ProjectKeys, // ProjectKeysArgv/ParseProjectKeys
+    Mine,        // MineQuery
 };
 
 // A connection a provider recognized in the project's git remotes, with the
@@ -99,6 +143,70 @@ class Provider {
     // Given the project's git remote URLs; empty when the provider
     // recognizes none, or detects nothing at all.
     [[nodiscard]] virtual std::vector<Detected> Detect(const std::vector<std::string>& remoteUrls) const = 0;
+
+    [[nodiscard]] virtual bool Supports(Capability /*capability*/) const {
+        return false;
+    }
+
+    // Whether issue keys are bare numbers written "#42" (GitHub) rather
+    // than PROJ-42 (Jira).
+    [[nodiscard]] virtual bool NumericKeys() const {
+        return false;
+    }
+
+    // An action's command succeeds or fails by its exit status; its output
+    // is only shown when it fails.
+    [[nodiscard]] virtual CommandSpec TransitionsArgv(const Connection& /*connection*/, const std::string& /*key*/) const {
+        throw Unsupported();
+    }
+    [[nodiscard]] virtual std::vector<Choice> ParseTransitions(const std::string& /*output*/) const {
+        throw Unsupported();
+    }
+    [[nodiscard]] virtual CommandSpec TransitionArgv(const Connection& /*connection*/, const std::string& /*key*/,
+                                                     const std::string& /*transitionId*/) const {
+        throw Unsupported();
+    }
+
+    [[nodiscard]] virtual CommandSpec AssigneesArgv(const Connection& /*connection*/, const std::string& /*key*/) const {
+        throw Unsupported();
+    }
+    [[nodiscard]] virtual std::vector<Choice> ParseAssignees(const std::string& /*output*/) const {
+        throw Unsupported();
+    }
+    [[nodiscard]] virtual CommandSpec AssignArgv(const Connection& /*connection*/, const std::string& /*key*/,
+                                                 const std::string& /*userId*/) const {
+        throw Unsupported();
+    }
+
+    // body is Markdown; a tracker that wants something else converts it.
+    [[nodiscard]] virtual CommandSpec CommentArgv(const Connection& /*connection*/, const std::string& /*key*/,
+                                                  const std::string& /*body*/) const {
+        throw Unsupported();
+    }
+
+    [[nodiscard]] virtual CommandSpec WorklogArgv(const Connection& /*connection*/, const std::string& /*key*/,
+                                                  const Worklog& /*worklog*/) const {
+        throw Unsupported();
+    }
+
+    // The prefixes the connection's issue keys start with ("DEV" for DEV-12).
+    [[nodiscard]] virtual CommandSpec ProjectKeysArgv(const Connection& /*connection*/) const {
+        throw Unsupported();
+    }
+    [[nodiscard]] virtual std::vector<std::string> ParseProjectKeys(const std::string& /*output*/) const {
+        throw Unsupported();
+    }
+
+    // A ListArgv query for the issues that are the user's own: assigned to
+    // or watched by them.
+    [[nodiscard]] virtual std::string MineQuery(const Connection& /*connection*/) const {
+        throw Unsupported();
+    }
+
+  private:
+    [[nodiscard]] static std::logic_error Unsupported() {
+        return std::logic_error("the tracker provider doesn't support this");
+    }
 };
 
 } // namespace ned::editor::tracker

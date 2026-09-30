@@ -59,6 +59,8 @@
 #include "Text/ThreeWayMerge.h"
 #include "Text/Utf8.h"
 #include "ToolchainIncludePaths.h"
+#include "Tracker/Clocking.h"
+#include "Tracker/CommentBuffer.h"
 #include "TransientSession.h"
 #include "Vcs/Runner.h"
 #include "WhitespaceSettings.h"
@@ -2831,7 +2833,8 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
 
     registry.Register("tracker-panel",
                       "Pick an issue-tracker panel by name and move keyboard focus into it (Enter opens an issue's "
-                      "buffer, 'o' opens it in the browser, 'w'/'W' copy its key/URL, 'g' refreshes, Left/Right "
+                      "buffer, 'o' opens it in the browser, 'b' makes a branch for it, 'c' comments on it, 's' changes "
+                      "its status, 'a' assigns it, 'i' clocks in on it, 'w'/'W' copy its key/URL, 'g' refreshes, Left/Right "
                       "collapse/expand a status, Escape or C-g returns to the editor).",
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::FocusTrackerPanel;
@@ -2842,6 +2845,60 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::TrackerInsertIssueKey;
                       });
+    registry.Register("tracker-create-branch",
+                      "Create and switch to a branch for an issue -- the one whose buffer this is, else one picked "
+                      "from the fetched issues -- its name prefilled from the issue's key and title.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::TrackerCreateBranch;
+                      });
+    registry.Register("tracker-comment",
+                      "Write a comment on an issue -- the one whose buffer this is, else one picked from the fetched "
+                      "issues -- in a *comment KEY* buffer, as Markdown: C-c C-c posts it, C-c C-k discards it.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::TrackerComment;
+                      });
+    registry.Register("tracker-set-status",
+                      "Move an issue -- the one whose buffer this is, else one picked from the fetched issues -- to "
+                      "another status, picked from the tracker's own transitions.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::TrackerSetStatus;
+                      });
+    registry.Register("tracker-assign",
+                      "Assign an issue -- the one whose buffer this is, else one picked from the fetched issues -- to "
+                      "someone the tracker says may have it, yourself listed first.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::TrackerAssign;
+                      });
+    registry.Register("tracker-clock-in",
+                      "Clock in on an issue -- the one whose buffer this is, else one picked from the fetched issues -- "
+                      "under its own heading in the issues Org file (see ned/set-tracker-clock-file), made the first time.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::TrackerClockIn;
+                      });
+    registry.Register("tracker-clock-out",
+                      "Clock out of the running Org clock -- this buffer's, else the issues Org file's -- offering to log "
+                      "the time to the issue's tracker when the heading is an issue's.",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::TrackerClockOut;
+                      });
+    registry.Register("tracker-comment-finish", "Post the comment being written (bound C-c C-c in *comment KEY*).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::TrackerCommentFinish;
+                      });
+    registry.Register("tracker-comment-abort", "Discard the comment being written (bound C-c C-k in *comment KEY*).",
+                      [](CommandContext& context) {
+                          context.interactiveRequest = InteractiveRequest::TrackerCommentAbort;
+                      });
+    {
+        // Keymap-only, like acp-compose-mode: the comment buffer has no
+        // path for a filename rule to match, so it is chosen on creation.
+        Mode commentMode;
+        commentMode.name      = std::string(tracker::kCommentModeName);
+        commentMode.wrapLines = true;
+        commentMode.keymap.Bind(ParseKeySequence("C-c C-c"), "tracker-comment-finish");
+        commentMode.keymap.Bind(ParseKeySequence("C-c C-k"), "tracker-comment-abort");
+        RegisterMode(std::string(tracker::kCommentModeName), std::move(commentMode));
+    }
 
     // session-persistence slice 3: creates the project's .ned/ directory --
     // the strictly-opt-in marker nothing else ever creates -- so the
@@ -4335,6 +4392,11 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     });
     registry.Register("org-clock-out", "Clock out of whichever headline currently has a running clock.",
                       [](CommandContext& context) {
+                          // An issue's heading clocks out through the tracker, which offers the worklog.
+                          if (tracker::RunningIssueClock(context.buffer.Text())) {
+                              context.interactiveRequest = InteractiveRequest::TrackerClockOut;
+                              return;
+                          }
                           if (org::ClockOut(context.buffer) == org::ClockOutStatus::NoRunningClock && context.message) {
                               *context.message = "No running clock.";
                           }

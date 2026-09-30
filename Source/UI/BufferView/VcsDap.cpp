@@ -6,6 +6,9 @@
 // watches/memory/disassembly/pointer-graph/thread+filter selection.
 //
 
+#include "Editor/Tracker/IssueKey.h"
+#include "Editor/Tracker/KeyCompletion.h"
+#include "Editor/Tracker/Registry.h"
 #include "Editor/Vcs/Sequence.h"
 #include "UI/BufferView/Internal.h"
 
@@ -473,6 +476,23 @@ void BufferView::RefreshVcsStatusBuffer() {
         [this](std::vector<editor::vcs::StatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/false); });
 }
 
+namespace {
+
+    // The seed for the current branch's issue key, "" without one.
+    std::string CurrentCommitSeed() {
+        const std::optional<std::string> key = editor::tracker::CurrentIssueKey();
+        return key ? editor::tracker::CommitSeed(*key) : std::string();
+    }
+
+    // Point lands at the end of the seed's first line: after "DEV-450 ", or
+    // on the empty subject line above a seeded body.
+    void SeedCommitBuffer(text::Buffer& buffer, const std::string& seed) {
+        buffer.InsertAtPoint(seed + std::string(editor::vcs::kVcsCommitMessageTemplate));
+        buffer.SetPoint(std::min(seed.find('\n'), seed.size()));
+    }
+
+} // namespace
+
 void BufferView::BeginVcsCommitMessage(VcsCommitMode mode) {
     if (!vcsRunner_) {
         statusMessage_ = "no vcs runner configured";
@@ -494,10 +514,32 @@ void BufferView::BeginVcsCommitMessage(VcsCommitMode mode) {
     }
     if (mode == VcsCommitMode::Commit) {
         text::Buffer& commitBuffer = bufferList_.OpenOrCreateFile(path);
-        commitBuffer.InsertAtPoint(editor::vcs::kVcsCommitMessageTemplate);
-        commitBuffer.SetPoint(0);
+        pendingCommitSeed_         = CurrentCommitSeed();
+        SeedCommitBuffer(commitBuffer, pendingCommitSeed_);
         pendingCommitMode_ = VcsCommitMode::Commit;
         activeBuffer_.Set(commitBuffer);
+        // A commit message is where issue keys get typed most.
+        if (trackerRunner_ != nullptr) {
+            editor::tracker::RefreshKeyCaches(*trackerRunner_);
+        }
+        // The recorded branch is stale after a switch made outside ned, so
+        // look again, and reseed if nothing has been typed yet.
+        if (editor::tracker::Connections().empty()) {
+            return;
+        }
+        vcsRunner_->RefreshCurrentBranch([this, path] {
+            text::Buffer* buffer = bufferList_.FindByPath(path);
+            if (buffer == nullptr || buffer->Text() != pendingCommitSeed_ + std::string(editor::vcs::kVcsCommitMessageTemplate)) {
+                return;
+            }
+            const std::string seed = CurrentCommitSeed();
+            if (seed == pendingCommitSeed_) {
+                return;
+            }
+            buffer->DeleteRange(0, buffer->Content().ByteLength());
+            pendingCommitSeed_ = seed;
+            SeedCommitBuffer(*buffer, pendingCommitSeed_);
+        });
         return;
     }
     // Amend/Reword: seed with the previous commit's own message first
@@ -531,8 +573,11 @@ void BufferView::FinishVcsCommitMessage() {
     const std::string   message      = editor::vcs::ExtractCommitMessage(commitBuffer.Text());
     const VcsCommitMode mode         = pendingCommitMode_;
     pendingCommitMode_               = VcsCommitMode::Commit;
+    // Only the issue key the buffer was seeded with is no message either.
+    const bool onlySeed = !pendingCommitSeed_.empty() && message == editor::vcs::ExtractCommitMessage(pendingCommitSeed_);
+    pendingCommitSeed_.clear();
     CloseVcsCommitMessageBuffer(commitBuffer);
-    if (message.empty()) {
+    if (message.empty() || onlySeed) {
         statusMessage_ = "Empty commit message -- not committing.";
     }
     else if (!vcsRunner_) {
@@ -569,6 +614,7 @@ void BufferView::FinishVcsCommitMessage() {
 
 void BufferView::AbortVcsCommitMessage() {
     pendingCommitMode_ = VcsCommitMode::Commit;
+    pendingCommitSeed_.clear();
     CloseVcsCommitMessageBuffer(activeBuffer_.Get());
     statusMessage_ = "Commit aborted.";
 }

@@ -1127,42 +1127,42 @@ The shape, agreed 2026-09-29:
   `tracker-insert-issue-key` entry -- qualify them (`owner/repo#12`) if that bites.
   Projects boards (GraphQL, the `project` scope) wait until columns are wanted.
 
-**Stage 5 -- Jira Cloud provider.**
-- [ ] `tracker-jira.janet` over `/rest/api/3/search/jql` and `/rest/agile/1.0` boards,
-      Basic auth from the email plus an API token. Also the connection's project keys
-      (`/rest/api/3/project/search`) -- the `PROJ` in `PROJ-123`, which is what key
-      completion (Stage 6) triggers on.
-- [ ] **A token must never reach an argv** -- `/proc/<pid>/cmdline` is world-readable.
-      `curl -K` from a mkstemp'd config file (`FormatOnSave`'s temp-file precedent).
-      **Store nothing**: the token comes from a command (`pass`, `secret-tool lookup`, an
-      env var), the shape `ned/set-format-command` established.
-- [ ] Descriptions and comments are Atlassian Document Format (a JSON tree), not text:
-      issue buffers need an ADF-to-text renderer.
+- Jira Cloud is in (`Plugins/tracker-jira.janet`, bundled): curl over
+  `/rest/api/3/search/jql` (a panel's query is JQL; empty means my unresolved issues) and
+  `/rest/api/3/issue/KEY`, descriptions and comments rendered from ADF to Markdown in
+  Janet. An argv callback may return `{:argv [...] :curl-credentials true}`; the Runner
+  then runs the connection's `:token-command` (stderr dropped, output never shown), writes
+  `user = "email:token"` to a 0600 mkstemp file in `$XDG_RUNTIME_DIR` (`Tracker/Credentials.h`)
+  and appends `-K <file>`, removing it when curl exits -- the token never reaches an argv
+  or Janet. Only classic API tokens (Basic auth against the site); scoped tokens need the
+  `api.atlassian.com/ex/jira/<cloudId>` gateway -- add it if a site forces them. Search
+  returns the first 100 issues; paging waits until a panel wants more.
 
-**Stage 6 -- actions, and the parts that belong in a buffer rather than a panel.**
-The user's priorities, in order: issue keys in commits, responding to issues, moving
-their status; then time tracking.
-- [ ] Transition, assign, comment. Transitions are the tracker's own list (Jira
-      `/issue/{key}/transitions`; GitHub close/reopen), picked with `BeginChoicePrompt`.
-      A comment is *text*, so it gets a real buffer with a real mode, the way
-      `COMMIT_EDITMSG` already does (`Vcs/Runner.h`'s `kVcsCommitMessageFilename`) --
-      not a one-line prompt. Jira comments need ADF written, not only read.
-- [ ] Commits: branch-name-from-issue, and the reverse -- the current branch's issue key
-      in the mode line and seeded into `COMMIT_EDITMSG`. Both ride `Vcs/Runner` and the
-      existing mode-line indicator slots. Jira's smart commits (`KEY #comment ...`,
-      `#time 1h`, `#done`) are Jira's own and only work where the repo host is linked to
-      Jira -- document them, don't reimplement them.
-- [ ] Issue-key completion anywhere -- a commit, a code comment, a README. Triggered by
-      a known project key plus `-` (Stage 5's project keys) or by `#` in a project with
-      a github.com remote, and offering *my* issues rather than every issue: a
-      per-connection "mine" query (`assignee = currentUser() OR watcher =
-      currentUser()`, `involves:@me`), cached like the panel cache, not the panels'
-      contents. The same keys become links (`Editor/Link.h`) that open `*issue KEY*`.
-- [ ] Time tracking through Org clocking: clocking in on an issue makes or reuses an Org
-      heading carrying the issue key and connection as properties, and clocking out
-      offers to post the interval as a Jira worklog (`POST /issue/{key}/worklog`,
-      `timeSpentSeconds` + `started`). GitHub has no time tracking. Org clock reports
-      then roll up by issue for free.
+- Actions are in. A provider's optional callbacks (`Tracker/Provider.h`'s `Capability`)
+  list transitions and assignable users, move, assign, comment, log work, list project
+  keys and name a "mine" query; `:input` text reaches a command through a private file
+  named by `{input-file}` in its argv. From a panel row (`b` `c` `s` `a` `i`), an
+  `*issue KEY*` buffer (the same plain letters, `g` refetches), or `tracker-*` commands:
+  - Keys in commits: `Vcs/CurrentBranch.h` records the branch whenever `Vcs/Runner`
+    lists, switches or creates one; its key (`DEV-450-...`, or `42-...` for a `#`-key
+    tracker) shows in the mode line and seeds a new `COMMIT_EDITMSG`
+    (`ned/set-tracker-commit-seed`). `tracker-create-branch` prefills `KEY-short-title`.
+    A branch switched outside ned shows up on the next list; the commit buffer re-checks.
+    Jira's smart commits (`KEY #comment`, `#time 1h`, `#done`) are Jira's own, working
+    only where the repository host is linked to Jira.
+  - Comments are written as Markdown in `*comment KEY*` (keymap-only
+    `tracker-comment-mode`, so no Markdown highlighting there); Jira's is converted to ADF
+    in Janet, and the buffer stays until the post lands.
+  - Status and assignee are picked from the tracker's own lists, in its order, yourself
+    first. The panels listing a changed issue refetch.
+  - Key completion: `KEY-` for a known project key, or `#` with a `#`-key tracker,
+    completes from each connection's "mine" issues (assigned or watched; GitHub's
+    `involves:@me`), cached per connection and refetched after five minutes, in any
+    buffer -- comments and strings included. The same keys open `*issue KEY*` through
+    `open-link-at-point`.
+  - Time: `tracker-clock-in` clocks in under the issue's heading (`:ISSUE:`/`:TRACKER:`)
+    in `$XDG_DATA_HOME/ned/issues.org` (`ned/set-tracker-clock-file`); clocking out of
+    such a heading offers the interval as a Jira worklog. GitHub has no time tracking.
 
 **Stage 7 -- extract what the panels share.**
 - [ ] A generic **record list/table** widget. `TreeView` covers hierarchies and
@@ -1245,6 +1245,13 @@ just fixing-and-forgetting or letting it fade from memory between sessions. Fixe
 are removed once shipped rather than kept as a writeup here — see `git log --grep=flak`
 for closed-issue history.
 
+- **Org clock and agenda timestamps are UTC.** `TimestampFromTimePoint` and "today"
+  (`Org.cpp`, `Project/Agenda.cpp`, the deadline prompt) floor `system_clock` to days, so a
+  CLOCK line reads 17:05 at 10:05 in UTC-7, and "today" turns over at UTC midnight. Real
+  Org writes local time. Internally consistent -- durations are right, and a tracker
+  worklog reads the start back through `org::ClockTimePoint` -- but a fix to local time
+  must move all of them together, and existing files' clock lines would shift by the
+  offset.
 - **F# grammar: application and infix share a precedence, and EOF needs a newline.**
   `1 + f a` parses as `(1 + f) a` (`_low_prec_app` and `infix_expression` are both
   `prec-left 16`; raising application conflicts with `tuple_expression` and
@@ -1352,6 +1359,10 @@ Ideas worth remembering but not worth scoping yet — too undecided for "Open It
 not disliked enough for "Won't do". Promote or delete on revisit rather than letting
 these accumulate detail in place.
 
+- [ ] **Jira agile boards as panels** (`/rest/agile/1.0/board/{id}/issue`, columns from
+      its configuration). A JQL panel already covers a board's filter
+      (`sprint in openSprints() AND project = X`). Justified when a board's column order,
+      rather than status grouping, is what's wanted.
 - [ ] **ACP panel extras past the next batch** (from the same 2026-09-29 survey):
       PR-style review comments on an agent's diff fed back as a prompt; transcript
       search and timestamps. (Fork and parallel sessions are under "ACP protocol

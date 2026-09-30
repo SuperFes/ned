@@ -54,6 +54,49 @@
   ["gh" "issue" "view" (string/trim key "#") "--repo" (github/repo-arg connection)
    "--json" github/view-fields])
 
+(defn- github/number
+  "The issue number of key, #42 or 42, for a command that changes the issue."
+  [key]
+  (def number (string/trim (string/trim key) "#"))
+  (unless (and (not (empty? number)) (all |(<= 48 $ 57) number))
+    (error (string "\"" key "\" isn't a GitHub issue number")))
+  number)
+
+(defn- github/transitions-argv [connection key]
+  ["gh" "issue" "view" (github/number key) "--repo" (github/repo-arg connection) "--json" "state"])
+
+(defn- github/parse-transitions [output]
+  (if (= ((ned/json-decode output) :state) "OPEN")
+    [{:id "close-completed" :name "Close as completed"} {:id "close-not-planned" :name "Close as not planned"}]
+    [{:id "reopen" :name "Reopen"}]))
+
+(defn- github/transition-argv [connection key id]
+  (def target [(github/number key) "--repo" (github/repo-arg connection)])
+  (case id
+    "close-completed" ["gh" "issue" "close" ;target "--reason" "completed"]
+    "close-not-planned" ["gh" "issue" "close" ;target "--reason" "not planned"]
+    "reopen" ["gh" "issue" "reopen" ;target]
+    (error (string "unknown GitHub issue transition \"" id "\""))))
+
+(defn- github/assignees-argv [connection key]
+  # gh api wants OWNER/REPO in the path, and the host apart.
+  (def parts (string/split "/" (github/repo-arg connection)))
+  (def [owner repo] (slice parts -3))
+  (def host (if (= (length parts) 3) (parts 0) "github.com"))
+  ["gh" "api" "--hostname" host "--paginate" "--jq" ".[].login" (string "repos/" owner "/" repo "/assignees")])
+
+(defn- github/parse-assignees [output]
+  [{:id "@me" :name "Me"}
+   ;(map (fn [login] {:id login :name login})
+         (filter |(not (empty? $)) (map string/trim (string/split "\n" output))))])
+
+(defn- github/assign-argv [connection key id]
+  ["gh" "issue" "edit" (github/number key) "--repo" (github/repo-arg connection) "--add-assignee" id])
+
+(defn- github/comment-argv [connection key body]
+  {:argv ["gh" "issue" "comment" (github/number key) "--repo" (github/repo-arg connection) "--body-file" "{input-file}"]
+   :input body})
+
 (defn- github/parse-view [output]
   (def i (ned/json-decode output))
   (merge (github/issue i)
@@ -92,4 +135,13 @@
    :parse-list github/parse-list
    :view-argv github/view-argv
    :parse-view github/parse-view
-   :detect github/detect})
+   :detect github/detect
+   :numeric-keys true
+   :comment-argv github/comment-argv
+   :transitions-argv github/transitions-argv
+   :parse-transitions github/parse-transitions
+   :transition-argv github/transition-argv
+   :assignees-argv github/assignees-argv
+   :parse-assignees github/parse-assignees
+   :assign-argv github/assign-argv
+   :mine-query "involves:@me"})

@@ -21,8 +21,14 @@
 #include "Editor/HeaderSource.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/TabWidth.h"
+#include "Editor/Tracker/Clocking.h"
+#include "Editor/Tracker/CommentBuffer.h"
+#include "Editor/Tracker/IssueBuffer.h"
+#include "Editor/Tracker/IssueKey.h"
+#include "Editor/Tracker/KeyCompletion.h"
 #include "Editor/Tracker/Registry.h"
 #include "Editor/Vim/ExCommandTable.h"
+#include "Editor/Vim/Settings.h"
 #include "Text/BinaryDetect.h"
 
 namespace ned::ui {
@@ -777,6 +783,40 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                               });
             return;
         }
+        case editor::InteractiveRequest::TrackerCreateBranch:
+            WithTargetIssue("Branch for issue", [this](const editor::tracker::Issue& issue) {
+                BeginIssueAction(editor::tracker::IssueAction::CreateBranch, issue);
+            });
+            return;
+        case editor::InteractiveRequest::TrackerComment:
+            WithTargetIssue("Comment on issue", [this](const editor::tracker::Issue& issue) {
+                BeginIssueAction(editor::tracker::IssueAction::Comment, issue);
+            });
+            return;
+        case editor::InteractiveRequest::TrackerSetStatus:
+            WithTargetIssue("Status of issue", [this](const editor::tracker::Issue& issue) {
+                BeginIssueAction(editor::tracker::IssueAction::Transition, issue);
+            });
+            return;
+        case editor::InteractiveRequest::TrackerAssign:
+            WithTargetIssue("Assign issue", [this](const editor::tracker::Issue& issue) {
+                BeginIssueAction(editor::tracker::IssueAction::Assign, issue);
+            });
+            return;
+        case editor::InteractiveRequest::TrackerClockIn:
+            WithTargetIssue("Clock in on issue", [this](const editor::tracker::Issue& issue) {
+                BeginIssueAction(editor::tracker::IssueAction::ClockIn, issue);
+            });
+            return;
+        case editor::InteractiveRequest::TrackerClockOut:
+            ClockOutOfIssue();
+            return;
+        case editor::InteractiveRequest::TrackerCommentFinish:
+            FinishTrackerComment(true);
+            return;
+        case editor::InteractiveRequest::TrackerCommentAbort:
+            FinishTrackerComment(false);
+            return;
         case editor::InteractiveRequest::FocusDebugPanel:
             // Same shape as FocusVcsPanel above, mirrored.
             if (leftDock_ != nullptr && debugPanel_ != nullptr) {
@@ -5318,13 +5358,347 @@ void BufferView::ActivateProjectAndReport(const std::filesystem::path& root) {
 // bookmarkCandidates_ (Editor/Bookmark.h's sorted name list). Enter jumps
 // (bookmarkPromptAction_ == Jump) or deletes (== Delete) the selected name.
 
+void BufferView::WithTargetIssue(std::string label, std::function<void(const editor::tracker::Issue&)> act) {
+    const std::vector<editor::tracker::Issue> known = editor::tracker::KnownIssues();
+    if (const auto key = editor::tracker::IssueKeyOfBufferName(activeBuffer_.Get().Name())) {
+        const auto found = std::ranges::find(known, *key, &editor::tracker::Issue::key);
+        act(found != known.end() ? *found : editor::tracker::Issue{.key = *key});
+        return;
+    }
+    std::vector<std::string> choices;
+    for (const editor::tracker::Issue& issue : known) {
+        choices.push_back(issue.title.empty() ? issue.key : issue.key + "  " + issue.title);
+    }
+    BeginChoicePrompt(std::move(label), std::move(choices), "No issues fetched yet -- open a tracker panel first", [known, act = std::move(act)](const std::string& choice) {
+                          // Keys never contain spaces: "PROJ-12", "#42".
+                          const std::string key   = choice.substr(0, choice.find(' '));
+                          const auto        found = std::ranges::find(known, key, &editor::tracker::Issue::key);
+                          if (found != known.end()) {
+                              act(*found);
+                          } },
+                      /*keepOrder=*/true);
+}
+
+void BufferView::BeginIssueAction(editor::tracker::IssueAction action, const editor::tracker::Issue& issue) {
+    switch (action) {
+        case editor::tracker::IssueAction::CreateBranch:
+            BeginVcsCreateBranchPrompt();
+            if (inputMode_ == InputMode::VcsCreateBranch && prompt_) {
+                prompt_->SetText(editor::tracker::BranchNameForIssue(issue));
+                statusMessage_ = prompt_->StatusText();
+            }
+            return;
+        case editor::tracker::IssueAction::Comment: {
+            const auto connection = editor::tracker::ConnectionForAction(issue.key, editor::tracker::Capability::Comment);
+            if (!connection) {
+                statusMessage_ = connection.error();
+                return;
+            }
+            const std::string name   = editor::tracker::CommentBufferName(issue.key);
+            text::Buffer*     buffer = bufferList_.Find(name);
+            if (buffer == nullptr) {
+                buffer = &bufferList_.CreateBuffer(name);
+                // Before the switch: the pane resolves its keymap from the
+                // buffer's mode the moment it shows it.
+                editor::SetChosenModeForBuffer(*buffer, std::string(editor::tracker::kCommentModeName));
+            }
+            editor::tracker::AttachComment(*buffer, editor::tracker::CommentTarget{.connection = *connection, .key = issue.key});
+            activeBuffer_.Set(*buffer);
+            statusMessage_ = "Comment on " + issue.key + " in Markdown -- C-c C-c posts it, C-c C-k discards it";
+            return;
+        }
+        case editor::tracker::IssueAction::Transition:
+        case editor::tracker::IssueAction::Assign:
+            PickIssueChoice(action == editor::tracker::IssueAction::Transition, issue.key);
+            return;
+        case editor::tracker::IssueAction::ClockIn:
+            ClockInOnIssue(issue);
+            return;
+    }
+}
+
+void BufferView::ClockInOnIssue(const editor::tracker::Issue& issue) {
+    const std::optional<std::string> connection = editor::tracker::ConnectionForKey(issue.key);
+    if (!connection) {
+        statusMessage_ = "No tracker connection knows " + issue.key;
+        return;
+    }
+    text::Buffer* clockBuffer = nullptr;
+    try {
+        const std::filesystem::path path = editor::tracker::ClockFile();
+        std::filesystem::create_directories(path.parent_path());
+        clockBuffer = &bufferList_.OpenOrCreateFile(path);
+    }
+    catch (const std::exception& e) {
+        ReportError(e.what());
+        return;
+    }
+    clockBuffer->SetPoint(editor::tracker::EnsureIssueHeading(*clockBuffer, issue, *connection));
+    const editor::org::ClockInResult result = editor::org::ClockInAtPoint(*clockBuffer);
+    // Shown, so its mode line carries the running clock.
+    activeBuffer_.Set(*clockBuffer);
+    switch (result.status) {
+        case editor::org::ClockInStatus::Ok:
+            statusMessage_ = "Clocked in on " + issue.key + ".";
+            break;
+        case editor::org::ClockInStatus::AlreadyRunningHere:
+            statusMessage_ = "Already clocked in on " + issue.key + ".";
+            break;
+        case editor::org::ClockInStatus::AlreadyRunningElsewhere:
+            statusMessage_ = "Already clocked in on \"" + result.otherHeadlineTitle + "\"; clock out first.";
+            break;
+        case editor::org::ClockInStatus::NotOnHeadline:
+            statusMessage_ = "Couldn't find " + issue.key + "'s heading.";
+            break;
+    }
+}
+
+void BufferView::ClockOutOfIssue() {
+    // This buffer's clock, else the issues file's, open or not.
+    text::Buffer* buffer = &activeBuffer_.Get();
+    if (!editor::org::CurrentlyRunningClock(buffer->Text())) {
+        buffer = nullptr;
+        try {
+            const std::filesystem::path path = editor::tracker::ClockFile();
+            buffer                           = bufferList_.FindByPath(path);
+            if (buffer == nullptr && std::filesystem::exists(path)) {
+                buffer = &bufferList_.OpenOrCreateFile(path);
+            }
+        }
+        catch (const std::exception& e) {
+            ReportError(e.what());
+            return;
+        }
+    }
+    if (buffer == nullptr || !editor::org::CurrentlyRunningClock(buffer->Text())) {
+        statusMessage_ = "No running clock.";
+        return;
+    }
+    const auto                                       now   = std::chrono::system_clock::now();
+    const std::optional<editor::tracker::IssueClock> clock = editor::tracker::RunningIssueClock(buffer->Text(), now);
+    (void)editor::org::ClockOut(*buffer, now);
+    if (!clock) {
+        statusMessage_ = "Clocked out.";
+        return;
+    }
+    OfferWorklog(*clock);
+}
+
+void BufferView::OfferWorklog(const editor::tracker::IssueClock& clock) {
+    const std::string duration = editor::tracker::ClockDuration(clock.worklog.seconds);
+    if (clock.worklog.seconds < 60) {
+        statusMessage_ = "Clocked out of " + clock.key + " inside a minute -- nothing to log.";
+        return;
+    }
+    const std::string connection = clock.connection.empty() ? editor::tracker::ConnectionForKey(clock.key).value_or("") : clock.connection;
+    const auto        found      = editor::tracker::FindConnection(connection);
+    const auto        provider   = found ? editor::tracker::FindProvider(found->provider) : nullptr;
+    if (!provider || !provider->Supports(editor::tracker::Capability::Worklog) || trackerRunner_ == nullptr) {
+        // GitHub has no time tracking: the Org clock is the whole record.
+        statusMessage_ = "Clocked out of " + clock.key + " after " + duration + ".";
+        return;
+    }
+    const std::string logIt = "Log " + duration + " to " + clock.key;
+    BeginChoicePrompt("Clocked out of " + clock.key + " after " + duration, {logIt, "Don't log it"}, {}, [this, clock, connection, duration, logIt](const std::string& picked) {
+                          if (picked != logIt) {
+                              statusMessage_ = "Not logged.";
+                              return;
+                          }
+                          statusMessage_ = "Logging " + duration + " to " + clock.key + "...";
+                          trackerRunner_->PostWorklog(
+                              connection, clock.key, clock.worklog,
+                              [this, clock, connection, duration] {
+                                  statusMessage_ = "Logged " + duration + " to " + clock.key + ".";
+                                  RefreshIssueBuffer(connection, clock.key);
+                                  if (onIssueChanged_) {
+                                      onIssueChanged_(clock.key);
+                                  }
+                              },
+                              [this](std::string error) { statusMessage_ = std::move(error); }); },
+                      /*keepOrder=*/true);
+}
+
+void BufferView::PickIssueChoice(bool transition, const std::string& key) {
+    const auto connection =
+        editor::tracker::ConnectionForAction(key, transition ? editor::tracker::Capability::Transition : editor::tracker::Capability::Assign);
+    if (!connection) {
+        statusMessage_ = connection.error();
+        return;
+    }
+    if (trackerRunner_ == nullptr) {
+        statusMessage_ = "no tracker runner configured";
+        return;
+    }
+    statusMessage_ = (transition ? "Fetching the statuses " : "Fetching who ") + key + (transition ? " can move to..." : " can be assigned to...");
+
+    auto pick = [this, key, connection = *connection, transition](std::vector<editor::tracker::Choice> choices) {
+        BeginIssueChoicePrompt(transition, key, connection, std::move(choices));
+    };
+    auto onError = [this](std::string error) { statusMessage_ = std::move(error); };
+    if (transition) {
+        trackerRunner_->RequestTransitions(*connection, key, pick, onError);
+    }
+    else {
+        trackerRunner_->RequestAssignees(*connection, key, pick, onError);
+    }
+}
+
+void BufferView::BeginIssueChoicePrompt(bool transition, const std::string& key, const std::string& connection,
+                                        std::vector<editor::tracker::Choice> choices) {
+    if (inputMode_ != InputMode::Normal) {
+        statusMessage_ = key + ": busy with another prompt, try again";
+        return;
+    }
+    // The prompt picks by name, so a repeated name carries its id.
+    std::vector<std::string> names;
+    for (const editor::tracker::Choice& choice : choices) {
+        const bool repeated = std::ranges::count(choices, choice.name, &editor::tracker::Choice::name) > 1;
+        names.push_back(repeated ? choice.name + " [" + choice.id + "]" : choice.name);
+    }
+    BeginChoicePrompt(
+        (transition ? "Move " : "Assign ") + key + " to", names, "Nothing to pick for " + key,
+        [this, key, connection, transition, choices, names](const std::string& picked) {
+            const auto at = std::ranges::find(names, picked);
+            if (at == names.end()) {
+                return;
+            }
+            const editor::tracker::Choice& choice = choices[static_cast<std::size_t>(at - names.begin())];
+            const std::string              done   = transition          ? key + " → " + choice.name + "."
+                                                    : choice.id.empty() ? key + " unassigned."
+                                                                        : key + " assigned to " + choice.name + ".";
+            auto                           onDone = [this, key, connection, done] {
+                statusMessage_ = done;
+                RefreshIssueBuffer(connection, key);
+                if (onIssueChanged_) {
+                    onIssueChanged_(key);
+                }
+            };
+            auto onError   = [this](std::string error) { statusMessage_ = std::move(error); };
+            statusMessage_ = (transition ? "Moving " : "Assigning ") + key + "...";
+            if (transition) {
+                trackerRunner_->Transition(connection, key, choice, onDone, onError);
+            }
+            else {
+                trackerRunner_->Assign(connection, key, choice, onDone, onError);
+            }
+        },
+        /*keepOrder=*/true);
+}
+
+void BufferView::SetOnIssueChanged(std::function<void(const std::string&)> handler) {
+    onIssueChanged_ = std::move(handler);
+}
+
+void BufferView::SetTrackerRunner(editor::tracker::Runner* trackerRunner) {
+    trackerRunner_ = trackerRunner;
+}
+
+void BufferView::FinishTrackerComment(bool post) {
+    text::Buffer&                                       buffer = activeBuffer_.Get();
+    const std::optional<editor::tracker::CommentTarget> target = editor::tracker::FindComment(buffer);
+    if (!target) {
+        statusMessage_ = "Not a tracker comment buffer.";
+        return;
+    }
+    if (!post) {
+        editor::tracker::DetachComment(buffer);
+        CloseBufferNow(buffer);
+        statusMessage_ = "Comment discarded.";
+        return;
+    }
+    const std::string text = editor::tracker::CommentText(buffer.Text());
+    if (text.empty()) {
+        statusMessage_ = "Empty comment -- not posting.";
+        return;
+    }
+    if (trackerRunner_ == nullptr) {
+        statusMessage_ = "no tracker runner configured";
+        return;
+    }
+    // The buffer stays until the post lands, so a failed one loses nothing.
+    statusMessage_ = "Posting the comment on " + target->key + "...";
+    trackerRunner_->PostComment(
+        target->connection, target->key, text,
+        [this, target = *target, instance = buffer.InstanceId()] {
+            text::Buffer* posted = bufferList_.Find(editor::tracker::CommentBufferName(target.key));
+            if (posted != nullptr && posted->InstanceId() == instance) {
+                editor::tracker::DetachComment(*posted);
+                CloseBufferNow(*posted);
+            }
+            statusMessage_ = "Commented on " + target.key + ".";
+            RefreshIssueBuffer(target.connection, target.key);
+            if (onIssueChanged_) {
+                onIssueChanged_(target.key);
+            }
+        },
+        [this](std::string error) { statusMessage_ = std::move(error); });
+}
+
+void BufferView::RefreshIssueBuffer(const std::string& connectionName, const std::string& key) {
+    if (trackerRunner_ == nullptr || bufferList_.Find(editor::tracker::IssueBufferName(key)) == nullptr) {
+        return;
+    }
+    const std::vector<editor::tracker::Issue> known = editor::tracker::KnownIssues();
+    const auto                                found = std::ranges::find(known, key, &editor::tracker::Issue::key);
+    trackerRunner_->RequestIssueOn(
+        connectionName, found != known.end() ? *found : editor::tracker::Issue{.key = key},
+        [this](const editor::tracker::IssueDetail& detail) { (void)editor::tracker::ShowIssue(bufferList_, detail); },
+        [this](std::string error) { statusMessage_ = std::move(error); });
+}
+
+bool BufferView::HandleIssueQuickKey(const editor::KeyChord& chord) {
+    if (chord.Control || chord.Meta || !dispatcher_.Pending().empty() || editor::vim::ModeEnabled()) {
+        return false;
+    }
+    const text::Buffer& buffer = activeBuffer_.Get();
+    if (!buffer.ReadOnly()) {
+        return false;
+    }
+    const std::optional<std::string> key = editor::tracker::IssueKeyOfBufferName(buffer.Name());
+    if (!key) {
+        return false;
+    }
+    std::optional<editor::tracker::IssueAction> action;
+    switch (chord.Codepoint) {
+        case U'b':
+            action = editor::tracker::IssueAction::CreateBranch;
+            break;
+        case U'c':
+            action = editor::tracker::IssueAction::Comment;
+            break;
+        case U's':
+            action = editor::tracker::IssueAction::Transition;
+            break;
+        case U'a':
+            action = editor::tracker::IssueAction::Assign;
+            break;
+        case U'i':
+            action = editor::tracker::IssueAction::ClockIn;
+            break;
+        case U'g':
+            if (const auto connection = editor::tracker::ConnectionForIssue(*key)) {
+                statusMessage_ = "Refreshing " + *key + "...";
+                RefreshIssueBuffer(*connection, *key);
+            }
+            else {
+                statusMessage_ = "no tracker panel has fetched " + *key;
+            }
+            return true;
+        default:
+            return false;
+    }
+    WithTargetIssue({}, [this, action = *action](const editor::tracker::Issue& issue) { BeginIssueAction(action, issue); });
+    return true;
+}
+
 void BufferView::BeginChoicePrompt(std::string label, std::vector<std::string> choices, std::string emptyMessage,
-                                   std::function<void(const std::string&)> commit) {
+                                   std::function<void(const std::string&)> commit, bool keepOrder) {
     if (choices.empty()) {
         statusMessage_ = std::move(emptyMessage);
         return;
     }
-    choiceList_.Reset(std::move(choices));
+    const std::size_t pinned = keepOrder ? choices.size() : 0;
+    choiceList_.Reset(std::move(choices), {}, pinned);
     choiceLabel_  = std::move(label);
     choiceCommit_ = std::move(commit);
     inputMode_    = InputMode::Choice;

@@ -125,6 +125,14 @@ enum class InteractiveRequest { None,
                                 // its key at point.
                                 FocusTrackerPanel,
                                 TrackerInsertIssueKey,
+                                TrackerCreateBranch,
+                                TrackerComment,
+                                TrackerCommentFinish,
+                                TrackerCommentAbort,
+                                TrackerSetStatus,
+                                TrackerAssign,
+                                TrackerClockIn,
+                                TrackerClockOut,
                                 // org-agenda follow-up: another one-shot direct action, same
                                 // shape as ToggleProjectSidebar -- BufferView builds and
                                 // switches to a synthesized "*agenda*" buffer.

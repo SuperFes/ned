@@ -759,6 +759,9 @@ bool BufferView::HandleChord(const editor::KeyChord& chord) {
     if (HandleConflictQuickKey(chord)) {
         return true;
     }
+    if (HandleIssueQuickKey(chord)) {
+        return true;
+    }
     if (HandleMultibufferQuickKey(chord)) {
         return true;
     }

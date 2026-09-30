@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "Editor/Key.h"
+#include "Editor/Tracker/IssueAction.h"
 #include "Editor/Tracker/Provider.h"
 #include "Theme.h"
 #include "TreeView.h"
@@ -49,6 +50,9 @@ class TrackerPanel {
     void SetOnOpenIssue(std::function<void(const editor::tracker::Issue&)> handler);
     // 'o' on an issue that has a URL.
     void SetOnOpenUrl(std::function<void(const std::string&)> handler);
+    // An action key on an issue: 'b' makes a branch for it, 'c' comments,
+    // 's' changes its status, 'a' assigns it, 'i' clocks in on it.
+    void SetOnIssueAction(std::function<void(editor::tracker::IssueAction, const editor::tracker::Issue&)> handler);
     // 'w' (the key) and 'W' (the URL): text for the kill ring.
     void SetOnCopy(std::function<void(std::string)> handler);
     void SetOnMessage(std::function<void(std::string)> handler);
@@ -85,6 +89,7 @@ class TrackerPanel {
     std::function<void()>                              onFetchRequested_;
     std::function<void(const editor::tracker::Issue&)> onOpenIssue_;
     std::function<void(const std::string&)>            onOpenUrl_;
+    std::function<void(editor::tracker::IssueAction, const editor::tracker::Issue&)> onIssueAction_;
     std::function<void(std::string)>                   onCopy_;
     std::function<void(std::string)>                   onMessage_;
     std::function<void()>                              onCancel_;

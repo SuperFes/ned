@@ -93,6 +93,8 @@
 #include "Editor/TestRun/TestOutputParser.h"
 #include "Editor/ThemeSetting.h"
 #include "Editor/ToolchainIncludePaths.h"
+#include "Editor/Tracker/Clocking.h"
+#include "Editor/Tracker/IssueKey.h"
 #include "Editor/Tracker/Registry.h"
 #include "Editor/TrimOnSave.h"
 #include "Editor/Vcs/ProviderRegistry.h"
@@ -1785,12 +1787,31 @@ namespace {
         editor::tracker::SetAutoDetect(enabled);
     }
 
+    void NedSetTrackerClockFile(std::string path) {
+        editor::tracker::SetClockFile(std::move(path));
+    }
+
+    void NedSetTrackerCommitSeed(Janet options) {
+        constexpr const char* kBinding = "set-tracker-commit-seed";
+        RequireOptionsTable(options, kBinding);
+        const auto seed = [&options, kBinding](const char* key, std::string_view fallback) {
+            return janet_checktype(janet_get(options, janet_ckeywordv(key)), JANET_NIL) ? std::string(fallback)
+                                                                                        : OptionalStringOption(options, key, kBinding);
+        };
+        editor::tracker::SetCommitSeeds(seed("key", editor::tracker::kDefaultCommitSeed),
+                                        seed("numeric-key", editor::tracker::kDefaultNumericCommitSeed));
+    }
+
     std::optional<std::string> NedFindExecutable(std::string name) {
         return editor::process::ResolveExecutable(name);
     }
 
     Janet NedJsonDecode(std::string text) {
         return JsonToJanet(text);
+    }
+
+    std::string NedJsonEncode(Janet value) {
+        return JanetToJson(value);
     }
 
 } // namespace
@@ -2943,12 +2964,24 @@ void InstallEditorBindings(Environment& env) {
         "issue's buffer shows only what the list fetched. Optionally :detect, taking an array of the project's git "
         "remote URLs and returning an array of connection tables (:name :url :email, plus :panels, an array of :name "
         ":query :glyph tables) to add at startup; see ned/set-tracker-auto-detect. ned runs the commands itself. "
-        "Re-registering name replaces the previous provider.");
+        "Either argv callback may instead return {:argv [...] :curl-credentials true} for a curl command that "
+        "authenticates as the connection: ned runs its :token-command and hands curl the email and token through a "
+        "-K config file, so the token never reaches an argv or the plugin; :input text is written to a private "
+        "temporary file whose path replaces {input-file} in the argv. Optional actions, each group all or nothing: "
+        ":transitions-argv (connection key) with :parse-transitions (output -> an array of :id :name tables) and "
+        ":transition-argv (connection key id); :assignees-argv, :parse-assignees and :assign-argv, the same shape; "
+        ":comment-argv (connection key markdown-body); :worklog-argv (connection key started-epoch-seconds seconds); "
+        ":project-keys-argv (connection) with :parse-project-keys (output -> an array of key prefixes like \"DEV\"); "
+        ":mine-query, a :list-argv query (or a function of the connection returning one) for the issues assigned to "
+        "or watched by you. An action succeeds when its command exits 0. :numeric-keys true says the tracker's issue "
+        "keys are numbers written #42 rather than PROJ-42. Re-registering name replaces the previous "
+        "provider.");
     env.Register<&NedSetTrackerConnection>(
         "ned", "set-tracker-connection",
         "Define a named tracker connection: (name options), options being :provider (a name given to "
         "ned/tracker-register-provider), :url, :email, and :token-command, an argv array whose output is the API "
-        "token -- ned stores no token. Re-setting name replaces it.");
+        "token -- ned runs it for each fetch that needs the token, never shows its output, and stores no token. "
+        "Re-setting name replaces it.");
     env.Register<&NedAddTrackerPanel>(
         "ned", "add-tracker-panel",
         "Add a named issue panel: (name options), options being :connection (a ned/set-tracker-connection name), "
@@ -2960,6 +2993,17 @@ void InstallEditorBindings(Environment& env) {
         "Enable/disable tracker panels added at startup from the project's git remotes (default true) -- a "
         "github.com remote gets an issues panel when gh is installed. A connection or panel you declare yourself "
         "under the same name always wins over a detected one.");
+    env.Register<&NedSetTrackerClockFile>(
+        "ned", "set-tracker-clock-file",
+        "Set the Org file tracker-clock-in makes an issue's heading in (default $XDG_DATA_HOME/ned/issues.org; \"\" "
+        "restores it). The heading carries :ISSUE: and :TRACKER: properties; clocking out of it offers to post the "
+        "time as the tracker's worklog.");
+    env.Register<&NedSetTrackerCommitSeed>(
+        "ned", "set-tracker-commit-seed",
+        "Set what a new commit message starts with when the current branch names an issue: (options), :key for a "
+        "PROJ-123 key (default \"{key} \") and :numeric-key for a #42 one (default \"\\n\\nRefs {key}\", in the body, "
+        "since git drops a first line starting with '#'). {key} is replaced by the key and point lands at the end of "
+        "the seed's first line; \"\" seeds nothing, and an option left out goes back to its default.");
     env.Register<&NedFindExecutable>(
         "ned", "find-executable",
         "Return the full path of an executable found on $PATH (or name itself, if it contains a '/' and is "
@@ -2968,6 +3012,11 @@ void InstallEditorBindings(Environment& env) {
         "ned", "json-decode",
         "Parse JSON text into Janet values: objects become tables keyed by keyword, arrays become arrays, null "
         "becomes nil (a null member is left out of its table). Errors on malformed JSON.");
+    env.Register<&NedJsonEncode>(
+        "ned", "json-encode",
+        "Write a Janet value as JSON text: tables and structs become objects (keys must be keywords, strings or "
+        "symbols), arrays and tuples arrays, nil null, keywords and symbols strings; a whole number is written "
+        "without a fraction. Errors on anything else, such as a function.");
 }
 
 } // namespace ned::janet

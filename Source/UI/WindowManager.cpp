@@ -27,7 +27,9 @@
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
 #include "Editor/TabWidth.h"
+#include "Editor/Tracker/CommentBuffer.h"
 #include "Editor/Tracker/IssueBuffer.h"
+#include "Editor/Tracker/IssueKey.h"
 #include "Text/ConflictHunk.h"
 
 namespace ned::ui {
@@ -251,6 +253,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     // reasoning as SetFocusProvider just above -- shows which embedded
     // language (if any) governs this pane's buffer at its current point.
     modeLine_->SetLanguageAtPointProvider([view = bufferView_.get()] { return view->EmbeddedLanguageAtPoint(); });
+    modeLine_->SetIssueKeyProvider([] { return editor::tracker::CurrentIssueKey(); });
     bufferView_->SetMinimap(minimap_.get(), &scrollColumn_);
     // Minimap widget follow-up: exactly one of the two ever occupies row_'s
     // trailing column -- seeded here from the process-wide setting, kept in
@@ -560,6 +563,8 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetOnDapConsoleToggle(onDapConsoleToggle_);
     pane->Buffer().SetOnJanetReplToggle(onJanetReplToggle_);
     pane->Buffer().SetOnFocusTrackerPanel(onFocusTrackerPanel_);
+    pane->Buffer().SetTrackerRunner(trackerRunner_);
+    pane->Buffer().SetOnIssueChanged(onIssueChanged_);
     pane->Buffer().SetOnRunReplRequest(onRunReplRequest_);
     pane->Buffer().SetOnDapThreadsToggle(onDapThreadsToggle_);
     pane->Buffer().SetOnBufferListToggle(onBufferListToggle_);
@@ -712,6 +717,20 @@ void WindowManager::SetOnJanetReplToggle(std::function<void()> onToggle) {
     onJanetReplToggle_ = std::move(onToggle);
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetOnJanetReplToggle(onJanetReplToggle_);
+    }
+}
+
+void WindowManager::SetTrackerRunner(editor::tracker::Runner* trackerRunner) {
+    trackerRunner_ = trackerRunner;
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetTrackerRunner(trackerRunner_);
+    }
+}
+
+void WindowManager::SetOnIssueChanged(std::function<void(const std::string&)> handler) {
+    onIssueChanged_ = std::move(handler);
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetOnIssueChanged(onIssueChanged_);
     }
 }
 
@@ -1203,6 +1222,18 @@ void WindowManager::RequestShowIssue(const editor::tracker::IssueDetail& detail)
     }
     pane->ActiveBufferRef().Set(editor::tracker::ShowIssue(bufferList_, detail));
     pane->Buffer().TakeFocus();
+}
+
+void WindowManager::RequestIssueAction(editor::tracker::IssueAction action, const editor::tracker::Issue& issue) {
+    Pane* pane = FocusedPane();
+    if (pane == nullptr && !Leaves().empty()) {
+        pane = Leaves().front();
+    }
+    if (pane == nullptr) {
+        return;
+    }
+    pane->Buffer().TakeFocus();
+    pane->Buffer().BeginIssueAction(action, issue);
 }
 
 void WindowManager::RequestOpenBinaryFile(const std::filesystem::path& path) {
@@ -2224,6 +2255,7 @@ void WindowManager::ReassignPanesShowing(text::Buffer& closingBuffer, Pane* skip
     // a buffer it merely visited in the past, not just its current one.
     editor::ClearModeCacheFor(closingBuffer);
     (void)editor::acp::DetachCompose(closingBuffer); // closed without C-c C-c/C-c C-k: forgotten, see Compose.h
+    editor::tracker::DetachComment(closingBuffer);
     editor::acp::DetachReview(closingBuffer);
     for (Pane* pane : Leaves()) {
         pane->ClearBufferCaches(closingBuffer);

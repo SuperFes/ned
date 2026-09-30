@@ -734,6 +734,11 @@ struct RunningClock {
 // fresh on every call rather than ticked/cached anywhere (a UI caller
 // re-reads this once per repaint, the same direct now()-read ModeLine's
 // own spinner frame already is).
+// The instant a CLOCK: timestamp names, read the way ClockInAtPoint/
+// ClockOut write one from a system_clock time point -- so a clock's start
+// round-trips to the time it was taken.
+[[nodiscard]] std::chrono::system_clock::time_point ClockTimePoint(const OrgTimestamp& timestamp);
+
 [[nodiscard]] std::chrono::minutes ElapsedMinutes(const OrgTimestamp&                   start,
                                                   std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
 

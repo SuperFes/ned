@@ -20,8 +20,9 @@ namespace ned::janet {
 // Evaluates every bundled plugin in env: vcs-git (the reference
 // ned/vcs-register-provider implementation for git), gradients (the array
 // sugar over ned/theme-gradient plus the preset paints, Docs/Translucency.md),
-// languages (the bundled capture classifiers) and tracker-github (the `gh`
-// issue-tracker provider). Called from main.cpp
+// languages (the bundled capture classifiers), tracker-github (the `gh`
+// issue-tracker provider) and tracker-jira (Jira Cloud over curl). Called
+// from main.cpp
 // right after InstallEditorBindings and before LoadInitFile, so a user's
 // own init.janet can override or unregister a bundled registration
 // afterward. Propagates Environment::DoString's exception on a Janet-level
