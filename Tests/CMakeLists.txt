@@ -257,6 +257,7 @@ add_executable(ned_tests
             ListPopupTest.cpp
             TreeViewTest.cpp
             TableLayoutTest.cpp
+            TableViewTest.cpp
             BufferListPanelTest.cpp
             MinimapTest.cpp
             OverlayTest.cpp

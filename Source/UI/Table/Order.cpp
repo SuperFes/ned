@@ -68,7 +68,8 @@ namespace {
 
 int CompareCells(const Cell& a, const Cell& b) {
     if (a.sortNumber && b.sortNumber) {
-        return *a.sortNumber < *b.sortNumber ? -1 : *a.sortNumber > *b.sortNumber ? 1 : 0;
+        return *a.sortNumber < *b.sortNumber ? -1 : *a.sortNumber > *b.sortNumber ? 1
+                                                                                  : 0;
     }
     if (a.sortNumber || b.sortNumber) {
         return a.sortNumber ? -1 : 1;

@@ -494,6 +494,7 @@ add_library(ned_lib STATIC
         UI/TreeView.cpp
         UI/Table/Layout.cpp
         UI/Table/Order.cpp
+        UI/TableView.cpp
         UI/MemoryImageView.cpp
         UI/BufferListPanel.cpp
         UI/DapThreadsPanel.cpp

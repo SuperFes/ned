@@ -117,10 +117,10 @@ TEST_CASE("Text compares case-insensitively with digit runs as numbers", "[Table
 TEST_CASE("Rows sort within their groups, stably, with blanks last both ways", "[TableLayout]") {
     Model model;
     model.columns = {Column{.id = "key"}, Column{.id = "age", .descendingFirst = true}, Column{.id = "flag", .sortable = false}};
-    model.groups  = {Group{.id    = "open",
-                           .rows  = {MakeRow("NED-10", {{.text = "NED-10"}, {.text = "2d", .sortNumber = 200}}),
-                                     MakeRow("NED-9", {{.text = "NED-9"}, {}}),
-                                     MakeRow("NED-2", {{.text = "NED-2"}, {.text = "1h", .sortNumber = 300}})}},
+    model.groups  = {Group{.id   = "open",
+                           .rows = {MakeRow("NED-10", {{.text = "NED-10"}, {.text = "2d", .sortNumber = 200}}),
+                                    MakeRow("NED-9", {{.text = "NED-9"}, {}}),
+                                    MakeRow("NED-2", {{.text = "NED-2"}, {.text = "1h", .sortNumber = 300}})}},
                      Group{.id = "done", .rows = {MakeRow("NED-1", {{.text = "NED-1"}, {.text = "5w", .sortNumber = 100}})}}};
 
     CHECK(RowIds(model, ned::ui::table::BuildLines(model, std::nullopt, {})) ==
