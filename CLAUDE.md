@@ -9,9 +9,10 @@ Emacs-class feature parity with Janet filling the role Elisp plays in Emacs — 
 is scriptable throughout (buffers, commands, keymaps, modes, LSP/DAP/VCS/task-runner
 config), not a C++ app with a config file bolted on. Its TUI is rendered directly on
 **Notcurses** (`Source/UI/`, `ned::ui` namespace) — a from-scratch widget/layout/event-loop
-layer this project owns, not a wrapper around a higher-level TUI framework. See
-`ROADMAP.md` for open work; it's pruned to current open items only, with completed work's
-design history left in git log rather than duplicated here.
+layer this project owns, not a wrapper around a higher-level TUI framework. `ROADMAP.md`
+is the public feature list (shipped and planned); `TODO.md` holds committed work and known
+issues, `MAYBE.md` speculative and rejected ideas. Completed work's design history lives in
+git log rather than in any of them.
 
 This file documents current architecture only. It does not narrate how things got this
 way (migrations, phase numbers, "was X, changed to Y") — that history is in `git log`
@@ -56,6 +57,5 @@ everything clean and tidy will keep the code easy to work on.
 - **Mutex-guarded static state for process-wide settings.** The dominant pattern for
 - **`Set*`/register-then-connect widget wiring.** UI widgets are constructed with only
 
-See `ROADMAP.md` for open work and `git log`/`git show <rev>:ROADMAP.md` for the design
-history of completed features (pruned out of this file and out of `ROADMAP.md` itself as
-of 2026-08-20).
+See `TODO.md` for open work and `git log`/`git show <rev>:ROADMAP.md` for the design
+history of completed features.

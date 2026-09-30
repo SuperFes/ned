@@ -14,7 +14,7 @@ blockers are not "can it be embedded" -- they are memory footprint, a
 garbage-collector/threading contract ned currently violates 39 times over, and 0.1-alpha
 API ergonomics.
 
-Tracked as a Maybelist entry in `ROADMAP.md`; this file is the evidence behind it.
+Tracked as a Maybelist entry in `MAYBE.md`; this file is the evidence behind it.
 
 ## The findings
 

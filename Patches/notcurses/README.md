@@ -60,8 +60,8 @@ git am /path/to/ned/Patches/notcurses/*.patch
 
 ## Upstreaming
 
-Not submitted anywhere yet — a deliberate choice, tracked in `ROADMAP.md`'s
-"Notcurses Patches Worth Upstreaming" watch list. 0001 and 0002 were verified
+Not submitted anywhere yet — a deliberate choice, tracked in `TODO.md`'s
+"Notcurses Patches to Upstream" section. 0001 and 0002 were verified
 still-reproducible against upstream `master` as of 2026-09-06 and appear to be
 unreported. 0003 relates to upstream issue
 [#2704](https://github.com/dankamongmen/notcurses/issues/2704), but takes a

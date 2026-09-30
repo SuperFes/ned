@@ -54,5 +54,5 @@ Everything documented here is also discoverable from inside the editor itself:
 - Source: [github.com/SuperFes/ned](https://github.com/SuperFes/ned)
 - Developer-facing design docs (architecture deep dives, capability audits): the
   [Developer Docs](../../dev/) book, built from the same repository.
-- Open work and design rationale for planned features: `ROADMAP.md` in the repository
-  root.
+- Shipped and planned features: `ROADMAP.md` in the repository root (open work in
+  `TODO.md`, speculative ideas in `MAYBE.md`).

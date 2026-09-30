@@ -25,7 +25,7 @@ dives and capability audits), both built from this repository on every push.
   multiple cursors** — the core Emacs-class editing vocabulary.
 - **Janet scripting throughout** — commands, keybindings, modes, and most editor
   settings are reachable from a `~/.config/ned/init.janet`.
-- **Syntax highlighting, folding, and smart indentation** for 74 bundled languages on
+- **Syntax highlighting, folding, and smart indentation** for 120 bundled languages and file formats on
   ned's own parsing engine and query matcher (grammars are data, compiled by ned's own
   generator -- no tree-sitter dependency) — see
   [Language Support](https://superfes.github.io/ned/user/language-support.html) — with
@@ -50,7 +50,7 @@ dives and capability audits), both built from this repository on every push.
   files, point, and window layout per project), and a handful of bundled/clonable
   color themes — see [Theming](https://superfes.github.io/ned/user/theming.html).
 
-See [`ROADMAP.md`](ROADMAP.md) for what's still open.
+See [`ROADMAP.md`](ROADMAP.md) for shipped and planned features.
 
 ## Requirements
 
@@ -83,7 +83,7 @@ Run the test suite with `ctest --test-dir build`.
 
 Under active development. Real, daily-usable, and extensively tested (4400+ tests via
 `ctest`), but pre-1.0 — the Janet API surface, config file formats, and keybindings may
-still change. See [`ROADMAP.md`](ROADMAP.md) for what's open next.
+still change. See [`ROADMAP.md`](ROADMAP.md) for what's next.
 
 ## License
 
