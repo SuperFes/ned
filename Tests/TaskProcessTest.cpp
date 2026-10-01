@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -8,6 +11,7 @@
 #include <vector>
 
 #include <signal.h>
+#include <unistd.h>
 
 #include "Editor/Tasks/TaskProcess.h"
 #include "UI/EventLoop.h"
@@ -114,4 +118,42 @@ TEST_CASE("A TaskProcess destroyed with its output still queued delivers nothing
 
     CHECK(outputs == 0);
     CHECK(exits == 0);
+}
+
+// A task can leave behind a process outside its group (setsid) that still
+// holds the output pipe; killing the task's group never closes it.
+TEST_CASE("Destroying a TaskProcess returns promptly while a detached grandchild holds its output open", "[Tasks][Lifetime]") {
+    ned::ui::EventLoop          eventLoop;
+    const std::filesystem::path pidFile = std::filesystem::temp_directory_path() / ("ned-task-grandchild-" + std::to_string(::getpid()));
+    std::filesystem::remove(pidFile);
+
+    std::optional<TaskProcess> process(
+        std::in_place, std::vector<std::string>{"sh", "-c", "setsid sleep 30 & echo $! > '" + pidFile.string() + "'; exec sleep 100"}, eventLoop,
+        [](std::string_view) {}, [](std::optional<int>) {});
+
+    pid_t grandchild = -1;
+    for (int attempt = 0; attempt < 200 && grandchild <= 0; ++attempt) {
+        std::ifstream in(pidFile);
+        if (!(in >> grandchild)) {
+            grandchild = -1;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    REQUIRE(grandchild > 0);
+
+    std::atomic<bool> destroyed{false};
+    std::thread       destroyer([&] {
+        process.reset();
+        destroyed = true;
+    });
+    const auto        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!destroyed && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    const bool prompt = destroyed.load();
+    ::kill(grandchild, SIGKILL); // also what unblocks a hung destroyer
+    destroyer.join();
+    std::filesystem::remove(pidFile);
+
+    REQUIRE(prompt);
 }

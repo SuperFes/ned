@@ -4,16 +4,10 @@
 // blocking-read loop marshaling frames onto the main thread via
 // ned::ui::EventLoop::Post, a second jthread draining the server/agent/
 // adapter's stderr, a third jthread draining an async write queue, a
-// shared_ptr<bool> alive_ use-after-free guard, and a load-bearing member-
-// declaration order defended only by a comment repeated in three files
-// (readThread_/stderrThread_ declared before transport_ so its destructor's
-// fd-close is what unblocks their blocking reads; writeThread_ declared
-// *after* transport_, the opposite relationship, so a graceful-shutdown
-// drain still has a live transport to write through when it stops).
-// Reordering two members in any one of the three call sites this replaces
-// produced a hang, not a compile error -- this class exists so that
-// invariant is enforced in exactly one place instead of re-derived per
-// protocol.
+// shared_ptr<bool> alive_ use-after-free guard, and a teardown order that,
+// gotten wrong, hangs rather than failing to compile -- this class exists so
+// that order lives in exactly one place, ~FramedConnection, instead of being
+// re-derived per protocol.
 //
 // This is the machinery only -- no JSON-RPC, no seq/type envelope, no
 // request/response correlation. Each of Lsp::Client/Dap::Client/Acp::Client
@@ -36,6 +30,9 @@
 //   - std::optional<std::string> ReadFrame(std::chrono::milliseconds stallTimeout) const
 //   - void WriteFrame(std::string_view payload, std::chrono::milliseconds stallTimeout) const
 //   - int StderrFd() const noexcept
+//   - std::string ReadStderr() const -- empty at EOF or once closed
+//   - void Close() noexcept -- wakes every read in progress without
+//     destroying the transport
 //   - const std::string& ProcessLabel() const noexcept
 // -- exactly lsp::Transport's existing surface, which dap::Client already
 // reuses verbatim; acp::Transport is renamed (ReadMessage/WriteMessage ->
@@ -67,9 +64,6 @@
 #include <string_view>
 #include <thread>
 #include <vector>
-
-#include <cerrno>
-#include <unistd.h>
 
 #include "Editor/DiagnosticsLog.h"
 #include "UI/EventLoop.h"
@@ -109,14 +103,17 @@ class FramedConnection {
         StartWriteLoop();
     }
 
-    // lsp-use-after-free follow-up: must be the first statement -- see this
-    // file's own header comment on alive_. Member destruction order (below)
-    // does the rest of the real teardown work: writeThread_ destructs (and
-    // joins, possibly draining) before transport_, whose destructor then
-    // closes the fds that unblock readThread_/stderrThread_'s in-flight
-    // blocking reads so their own destructors' joins return promptly.
+    // lsp-use-after-free follow-up: alive_ must be cleared first -- see this
+    // file's own header comment. Then the writer, so a graceful-shutdown
+    // drain still has a live transport; then the hang-up that wakes both
+    // readers; transport_ itself is destroyed only once no thread uses it.
+    // Assigning an empty jthread requests a stop and joins.
     ~FramedConnection() {
         *alive_ = false;
+        writeThread_ = std::jthread();
+        transport_.Close();
+        readThread_   = std::jthread();
+        stderrThread_ = std::jthread();
     }
 
     FramedConnection(const FramedConnection&)            = delete;
@@ -170,11 +167,9 @@ class FramedConnection {
   private:
     void StartReadLoop() {
         // closed-connection-never-parks follow-up: the stop token is
-        // genuinely consulted rather than ignored. std::jthread's destructor
-        // requests a stop before it joins, so a read thread the scheduler
-        // has not yet run by the time its owner is destroyed exits here
-        // instead of entering a read against an already-torn-down
-        // transport_.
+        // genuinely consulted rather than ignored, so a read thread the
+        // scheduler has not yet run by the time its owner is destroyed exits
+        // here instead of entering a read at all.
         readThread_ = std::jthread([this](const std::stop_token& stopToken) {
             while (!stopToken.stop_requested()) {
                 std::optional<std::string> frame;
@@ -195,9 +190,9 @@ class FramedConnection {
                 }
                 if (!frame) {
                     // EOF -- the process exited (or this object is being
-                    // destroyed: transport_'s destructor closing this end's
-                    // fds is exactly what makes the blocking ReadFrame()
-                    // call above finally return). alive_ is what makes that
+                    // destroyed: the destructor's transport_.Close() is
+                    // what makes the blocking ReadFrame() call above
+                    // finally return). alive_ is what makes that
                     // safe, not an assumption about when this callback runs
                     // relative to destruction.
                     eventLoop_.Post([this, alive = alive_] {
@@ -237,32 +232,27 @@ class FramedConnection {
     }
 
     void StartStderrReadLoop() {
-        const int fd = transport_.StderrFd();
-        if (fd < 0) {
+        if (transport_.StderrFd() < 0) {
             return; // not captured
         }
 
-        // Captured by value below rather than read from transport_ inside
-        // the background thread's own lambda -- transport_'s public methods
-        // are main-thread-only by this class's own threading contract; a
-        // raw fd and a plain string carry no such restriction.
+        // Captured by value: the label is read here, on the main thread.
         std::string label = transport_.ProcessLabel();
 
-        stderrThread_ = std::jthread([this, fd, label = std::move(label)](std::stop_token) {
+        stderrThread_ = std::jthread([this, label = std::move(label)](std::stop_token) {
             std::string buffered;
-            char        chunk[4096];
             while (true) {
-                const ssize_t result = ::read(fd, chunk, sizeof(chunk));
-                if (result < 0) {
-                    if (errno == EINTR) {
-                        continue;
-                    }
+                std::string chunk;
+                try {
+                    chunk = transport_.ReadStderr();
+                }
+                catch (const std::exception&) {
                     return; // a genuine read error here is rare and non-actionable -- the stdout loop's own EOF/malformed-frame path is what reports the real disconnect
                 }
-                if (result == 0) {
+                if (chunk.empty()) {
                     return; // EOF -- process exited, or this object is being destroyed
                 }
-                buffered.append(chunk, static_cast<std::size_t>(result));
+                buffered += chunk;
 
                 std::size_t newline;
                 while ((newline = buffered.find('\n')) != std::string::npos) {
@@ -319,26 +309,21 @@ class FramedConnection {
     // lsp-use-after-free follow-up: see this file's own header comment.
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 
-    // Member order is load-bearing -- see this file's own header comment.
-    // Do not reorder any of the five members below.
-    std::jthread readThread_;   // declared before transport_
-    std::jthread stderrThread_; // ditto
+    // The threads are stopped and joined in ~FramedConnection's body, before
+    // any member is destroyed.
+    std::jthread readThread_;
+    std::jthread stderrThread_;
     TransportT   transport_;
 
     ned::ui::EventLoop& eventLoop_;
 
-    // writeThread_ is declared *after* transport_ (opposite of
-    // readThread_/stderrThread_ above) so it destructs (and, if
-    // PrepareForGracefulShutdown was called, drains) *before* transport_
-    // does. writeMutex_/writeCv_/writeQueue_/drainQueueOnStop_ must outlive
-    // writeThread_, so they're declared ahead of it here.
     std::mutex writeMutex_;
     // condition_variable_any, not condition_variable: plain
     // condition_variable::wait never wakes on request_stop() alone --
     // condition_variable_any's stop_token-aware wait(lock, stopToken,
     // predicate) overload registers its own internal stop_callback that
     // does the notifying, which is what makes ~FramedConnection()'s
-    // implicit join() on writeThread_ return promptly instead of hanging
+    // join of writeThread_ return promptly instead of hanging
     // whenever the writer is idly waiting on an empty queue at destruction
     // time.
     std::condition_variable_any writeCv_;

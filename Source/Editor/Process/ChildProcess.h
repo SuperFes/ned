@@ -17,7 +17,9 @@
 #ifndef NED_EDITOR_PROCESS_CHILDPROCESS_H
 #define NED_EDITOR_PROCESS_CHILDPROCESS_H
 
+#include <atomic>
 #include <chrono>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -47,6 +49,13 @@ enum class StderrMode { Discard,
 // before forking (a $PATH walk isn't async-signal-safe).
 [[nodiscard]] std::optional<std::string> ResolveExecutable(const std::string& name);
 
+// Threading: reads, waits, WriteAll, Kill and CloseConnection may run on
+// different threads at once. Construction, moves and destruction may not --
+// an owner with threads on this object calls CloseConnection, joins them,
+// and only then destroys it. Descriptors therefore stay open until the
+// destructor, so a thread still inside a call can never touch a descriptor
+// number the process has since reused, and the child is reaped through a
+// pidfd, so no wait or signal can reach a recycled pid.
 class ChildProcess {
   public:
     // argv[0] is resolved against $PATH (or treated as a literal path if it
@@ -62,8 +71,10 @@ class ChildProcess {
     // subprocess involved). pid, if given, is reaped/killed by the
     // destructor the same way the process-spawning constructor's child is;
     // -1 (the default) means "no process to manage," skipping that logic
-    // entirely.
-    ChildProcess(int readFd, int writeFd, pid_t pid = -1) noexcept;
+    // entirely. pid must be this process's own unreaped child. Throws
+    // std::runtime_error, after releasing the fds and killing pid, if the
+    // descriptors this class needs of its own can't be created.
+    ChildProcess(int readFd, int writeFd, pid_t pid = -1);
 
     ~ChildProcess();
 
@@ -84,9 +95,15 @@ class ChildProcess {
 
     // One ::read() call's worth of bytes (retrying on EINTR) -- NOT
     // frame-shaped, just whatever the kernel currently has buffered. Returns
-    // an empty string on EOF (the child exited and closed its end). Throws
-    // std::runtime_error on a genuine read error.
+    // an empty string on EOF (the child exited and closed its end, or a pty
+    // master's EIO, which is how a pty reports the same thing) or once the
+    // connection is closed. Throws std::runtime_error on a genuine read
+    // error.
     [[nodiscard]] std::string ReadSome() const;
+
+    // ReadSome() against the StderrMode::Capture pipe; empty at once when
+    // stderr isn't captured.
+    [[nodiscard]] std::string ReadSomeStderr() const;
 
     // subprocess-hang-protection follow-up. True if the read end has data
     // (or EOF) ready within timeout; false if it timed out with nothing
@@ -95,9 +112,9 @@ class ChildProcess {
     // Throws std::runtime_error on a genuine poll() error.
     //
     // closed-connection-never-parks follow-up: false is also returned
-    // immediately, without polling at all, once the connection is closed
-    // (CloseConnection()/~ChildProcess having set readFd_ to -1, or a
-    // moved-from instance). poll(2) *ignores* a negative fd rather than
+    // immediately once the connection is closed (CloseConnection(), or a
+    // moved-from instance), and a wait already in progress returns false
+    // the moment CloseConnection() runs. poll(2) *ignores* a negative fd rather than
     // failing on it -- it just reports revents == 0 for that entry -- so a
     // one-entry pollfd set whose only fd is -1 parks for the full timeout,
     // and the unbounded (negative-timeout) first-byte wait every framing
@@ -141,51 +158,68 @@ class ChildProcess {
     // duplicate.
     [[nodiscard]] int StderrFd() const noexcept;
 
+    // The child's pid as spawned, for logging; -1 if there is none. Stays
+    // the same after the child is reaped.
     [[nodiscard]] pid_t Pid() const noexcept;
 
     // Blocks until the child exits and reaps it, returning its exit code --
-    // or std::nullopt if it was terminated by a signal (e.g. via Kill()) or
-    // there is no managed process to begin with (pid_ <= 0). Meant to be
-    // called once, right after ReadSome() has observed EOF (so the child has
-    // almost certainly already exited and this returns promptly) -- doing
-    // the reap here, rather than leaving it to the destructor, is what lets
-    // a caller (TaskProcess) learn the real exit code instead of the
-    // destructor's own reap discarding it. Safe to call even if Kill() was
-    // called first -- Kill() already reaps and sets pid_ to -1, so this
-    // simply returns nullopt immediately in that case, same as the
-    // destructor's own pid_ <= 0 check.
+    // or std::nullopt if it was terminated by a signal (e.g. via Kill()),
+    // there is no managed process, or the connection was closed first (the
+    // child is then left to the destructor). Doing the reap here, rather
+    // than leaving it to the destructor, is what lets a caller (TaskProcess)
+    // learn the real exit code. Safe to call alongside Kill() on another
+    // thread, and again after the child is reaped: the outcome is kept.
     std::optional<int> WaitForExit() noexcept;
 
-    // Sends SIGKILL and blocks until the child is reaped -- for explicit,
-    // user-triggered cancellation (e.g. cancel-task), as opposed to the
-    // destructor's own graceful-then-forceful teardown. A no-op if there is
-    // no managed process (pid_ <= 0, e.g. this ChildProcess was built via
-    // the raw-fd constructor with no pid, or Kill() was already called).
-    // Does not close the fds -- ReadSome()/the destructor still observe a
-    // clean EOF once the kernel tears down the killed process's own fd
+    // Sends SIGKILL to the child's process group and waits, bounded, for it
+    // to be reaped -- for explicit, user-triggered cancellation (e.g.
+    // cancel-task), as opposed to the destructor's own graceful-then-
+    // forceful teardown. A no-op if there is no managed process or it is
+    // already reaped. Does not close the fds -- ReadSome() still observes
+    // a clean EOF once the kernel tears down the killed process's own fd
     // table, same as any other process exit.
     void Kill() noexcept;
 
-    // broker-reader-deadlock follow-up. Closes this object's own fds in
-    // place -- exactly what the destructor does to them (shutdown() then
-    // close(), see ~ChildProcess()'s own comment on why both) -- without
-    // reaping/killing the child and without destroying the object. Exists
-    // for the "wake a reader thread blocked in a read on another thread"
-    // idiom: destroying the whole ChildProcess out from under that reader
-    // does wake it, but the reader then returns into a freed object, so the
-    // owner must be able to close the connection while the reader still
-    // holds a reference and let the last reference do the real teardown.
-    // Idempotent; safe to call with a reader parked in a blocking read (the
-    // shutdown() is what unblocks it) and safe to call before the
-    // destructor, which simply finds the fds already closed and goes
-    // straight to reaping the child.
+    // broker-reader-deadlock follow-up. Hangs up without destroying the
+    // object: every read, wait and write in progress on another thread
+    // returns as at EOF, and every later one does so at once. Sockets are
+    // also shut down, so a peer sees the hang-up. The descriptors stay open
+    // and the child is left alone until the destructor -- see the class
+    // comment. Idempotent.
     void CloseConnection() noexcept;
 
   private:
+    // The wake eventfd and, given a pid, its pidfd; on failure releases
+    // everything this object holds, kills the child, and throws.
+    void OpenControlFds();
+
+    [[nodiscard]] std::string ReadSomeFrom(int fd) const;
+    // Polls fd (and the hang-up signal) for events; false on timeout or
+    // once the connection is closed.
+    [[nodiscard]] bool WaitFor(int fd, short events, std::chrono::milliseconds timeout) const;
+    // True once the child has exited (reaped or not) within timeout.
+    [[nodiscard]] bool WaitChildExited(std::chrono::milliseconds timeout) const;
+    void               SignalGroupIfUnreaped(int signal) noexcept;
+    void               ReapIfExited() noexcept;
+    // The destructor's work, shared with move assignment.
+    void Release() noexcept;
+
     int   writeFd_  = -1;
     int   readFd_   = -1;
     int   stderrFd_ = -1; // lsp-stderr-capture follow-up -- see StderrFd()
     pid_t pid_      = -1;
+    int   pidFd_    = -1;
+    // An eventfd made readable by CloseConnection, polled alongside every
+    // wait so the hang-up wakes it.
+    int               wakeFd_ = -1;
+    std::atomic<bool> closed_ = false;
+
+    // Guards the reap: the child is reaped once, under this lock, and is
+    // signalled only under it while still unreaped -- an unreaped child's
+    // pid and process group can't be reused.
+    mutable std::mutex reapMutex_;
+    bool               reaped_ = false;
+    std::optional<int> exitCode_;
 };
 
 // Runs argv to completion, blocking, and returns its stdout iff it exits 0;

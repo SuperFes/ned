@@ -11,14 +11,9 @@
 //   ReadSome), marshaling each chunk onto the main thread via
 //   ned::ui::EventLoop::Post. Every public method here only ever runs on
 //   the main thread.
-// - Member declaration order below is load-bearing: destroying child_
-//   (which happens before readThread_, since child_ is declared *after*
-//   readThread_ and C++ destroys members in reverse declaration order) is
-//   what makes readThread_'s own destructor-driven request_stop()+join()
-//   actually terminate promptly -- ChildProcess's destructor closes this
-//   end's fds and kills+reaps the child, which is what makes the
-//   background thread's in-flight blocking ReadSome() call finally return
-//   (EOF). A stop_token alone cannot interrupt a blocking read().
+// - The destructor hangs up child_, which wakes the read loop, and joins
+//   it before child_ itself is destroyed -- see ChildProcess's threading
+//   note. A stop_token alone cannot interrupt a blocking read().
 //
 
 #ifndef NED_EDITOR_TASKS_TASKPROCESS_H
@@ -51,7 +46,7 @@ class TaskProcess {
                 std::function<void(std::optional<int> exitCode)> onExit,
                 process::StderrMode                              stderrMode = process::StderrMode::MergeWithStdout);
 
-    ~TaskProcess() = default; // member destruction order does the real work -- see header comment
+    ~TaskProcess();
 
     TaskProcess(const TaskProcess&)            = delete;
     TaskProcess& operator=(const TaskProcess&) = delete;
@@ -81,7 +76,7 @@ class TaskProcess {
 
     // Drops output and exit already posted when this process is destroyed.
     editor::LifetimeGuard lifetime_;
-    std::jthread          readThread_; // declared before child_ -- see header comment
+    std::jthread          readThread_;
     process::ChildProcess child_;
 
     ned::ui::EventLoop& eventLoop_;

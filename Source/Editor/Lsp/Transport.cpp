@@ -171,6 +171,10 @@ int Transport::StderrFd() const noexcept {
     return child_.StderrFd();
 }
 
+std::string Transport::ReadStderr() const {
+    return child_.ReadSomeStderr();
+}
+
 const std::string& Transport::ProcessLabel() const noexcept {
     return processLabel_;
 }

@@ -1,7 +1,6 @@
 #include "PtyProcess.h"
 
 #include <algorithm>
-#include <cerrno>
 #include <stdexcept>
 #include <utility>
 
@@ -113,42 +112,29 @@ PtyProcess::~PtyProcess() {
     // Runs before the member destructors that do the real teardown -- see
     // the header comment for why queued Posts must be defused first.
     *alive_ = false;
+    child_.CloseConnection();
+    if (readThread_.joinable()) {
+        readThread_.join();
+    }
 }
 
 void PtyProcess::StartReadLoop() {
     // Mirrors TaskProcess::StartReadLoop -- see that function's comment for
-    // why the thread starts in the constructor body. The read itself is raw
-    // ::read rather than ChildProcess::ReadSome because a pty master's
-    // routine end-of-life signal is EIO (child exited, slave side gone), not
-    // the 0-byte EOF a pipe reports -- ReadSome would throw on it. Every
-    // posted lambda carries the alive_ flag -- see ~PtyProcess.
+    // why the thread starts in the constructor body. Every posted lambda
+    // carries the alive_ flag -- see ~PtyProcess.
     readThread_ = std::jthread([this](std::stop_token) {
         while (true) {
-            char          buffer[4096];
-            const ssize_t count = ::read(child_.ReadFd(), buffer, sizeof buffer);
-            if (count < 0 && errno == EINTR) {
-                continue;
+            std::string chunk;
+            try {
+                chunk = child_.ReadSome(); // a pty's EIO at the shell's exit reads as EOF
             }
-            if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-                // write-side-hang-protection follow-up: the master fd is
-                // dup()'d between child_'s read and write halves (see
-                // SpawnPty below), so WriteAll's own O_NONBLOCK (needed to
-                // keep a stalled shell's write from hanging the main
-                // thread) makes this read end non-blocking too. Wait for
-                // real readability before retrying, exactly mirroring the
-                // blocking read this loop was written to expect -- a
-                // negative timeout is WaitReadable's own "block forever"
-                // sentinel (poll(2)'s convention), matching idle-shell
-                // silence being perfectly normal here.
-                if (!child_.WaitReadable(std::chrono::milliseconds(-1))) {
-                    break; // a negative timeout never times out, so this is the closed-connection case -- the same teardown exit EOF/EIO below takes
-                }
-                continue;
+            catch (const std::exception&) {
+                break;
             }
-            if (count <= 0) {
-                break; // EOF, EIO (the pty flavor of EOF), or shutdown fd teardown
+            if (chunk.empty()) {
+                break; // EOF, or this PtyProcess is being destroyed
             }
-            eventLoop_.Post([this, alive = alive_, chunk = std::string(buffer, static_cast<std::size_t>(count))] {
+            eventLoop_.Post([this, alive = alive_, chunk = std::move(chunk)] {
                 if (*alive) {
                     DispatchOutput(chunk);
                 }

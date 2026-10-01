@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <optional>
@@ -221,4 +222,34 @@ TEST_CASE("A stderr line posted before the connection is destroyed is still logg
     REQUIRE(entry != entries.end());
     REQUIRE(entry->category == LogCategory::Dap);
     REQUIRE(entry->severity == ned::editor::LogSeverity::Error);
+}
+
+// A peer that keeps its end open says nothing about this side wanting to
+// stop; teardown must not depend on the peer hanging up first.
+TEST_CASE("FramedConnection is destroyed promptly while its peer keeps the pipes open", "[FramedConnection][Lifetime]") {
+    ned::ui::EventLoop eventLoop;
+    int                oursWritesHere[2];
+    int                oursReadsHere[2];
+    REQUIRE(::pipe(oursWritesHere) == 0);
+    REQUIRE(::pipe(oursReadsHere) == 0);
+
+    std::optional<FramedConnection<Transport>> connection(std::in_place, Transport(oursReadsHere[0], oursWritesHere[1]), eventLoop,
+                                                          ConnectionFixture::MakeOptions());
+    std::this_thread::sleep_for(std::chrono::milliseconds(100)); // the read loop is parked on the pipe
+
+    std::atomic<bool> destroyed{false};
+    std::thread       destroyer([&] {
+        connection.reset();
+        destroyed = true;
+    });
+    const auto        deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!destroyed && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    const bool prompt = destroyed.load();
+    ::close(oursReadsHere[1]); // the peer hanging up is what unblocks a hung destroyer
+    destroyer.join();
+    ::close(oursWritesHere[0]);
+
+    REQUIRE(prompt);
 }

@@ -59,7 +59,7 @@ class Transport {
     // subprocess involved). pid, if given, is reaped/killed by the
     // destructor the same way the process-spawning constructor's child is;
     // -1 (the default) means "no process to manage."
-    Transport(int readFd, int writeFd, pid_t pid = -1) noexcept;
+    Transport(int readFd, int writeFd, pid_t pid = -1);
 
     ~Transport() = default; // ChildProcess's own destructor does the real work
 
@@ -97,11 +97,15 @@ class Transport {
     // header comment).
     [[nodiscard]] std::optional<std::string> ReadFrame(std::chrono::milliseconds stallTimeout = ProtocolReadStallTimeoutMs()) const;
 
+    // See Lsp/Transport.h's identical Close() doc comment.
+    void Close() noexcept;
+
     [[nodiscard]] pid_t Pid() const noexcept;
 
     // lsp-stderr-capture follow-up (extended to ACP): see Lsp/Transport.h's
-    // identical StderrFd() doc comment.
-    [[nodiscard]] int StderrFd() const noexcept;
+    // identical StderrFd() and ReadStderr() doc comments.
+    [[nodiscard]] int         StderrFd() const noexcept;
+    [[nodiscard]] std::string ReadStderr() const;
 
     // lsp-stderr-capture follow-up (extended to ACP): see Lsp/Transport.h's
     // identical ProcessLabel() doc comment.

@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -266,15 +267,88 @@ TEST_CASE("ChildProcess::CloseConnection unblocks a concurrent reader without de
 
     // Still a live object with valid state -- not a husk the caller has to
     // avoid touching -- and its destructor still reaps the child.
-    REQUIRE(child.ReadFd() == -1);
-    REQUIRE(child.WriteFd() == -1);
+    REQUIRE(child.ReadSome().empty());
+    REQUIRE_THROWS_AS(child.WriteAll("late", std::chrono::milliseconds(1000)), std::runtime_error);
 }
 
 TEST_CASE("ChildProcess::CloseConnection is idempotent and safe before the destructor", "[Process]") {
     ChildProcess child({"cat"});
     child.CloseConnection();
     child.CloseConnection(); // must not double-close a recycled fd number
-    REQUIRE(child.ReadFd() == -1);
+    REQUIRE_FALSE(child.WaitReadable(std::chrono::milliseconds(0)));
+}
+
+namespace {
+
+// Polls flag for up to limit -- a test that would otherwise hang fails instead.
+bool BecomesTrueWithin(const std::atomic<bool>& flag, std::chrono::milliseconds limit) {
+    const auto deadline = std::chrono::steady_clock::now() + limit;
+    while (!flag.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return flag.load();
+}
+
+} // namespace
+
+// The child need not cooperate: sleep never reads stdin and holds its
+// stdout open, so only the connection itself can wake the reader.
+TEST_CASE("ChildProcess::CloseConnection wakes a reader while the child keeps its output open", "[Process]") {
+    ChildProcess child({"sleep", "100"});
+
+    std::atomic<bool> readerReturned{false};
+    std::thread       reader([&child, &readerReturned] {
+        (void)child.ReadSome();
+        readerReturned = true;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    child.CloseConnection();
+    const bool woke = BecomesTrueWithin(readerReturned, std::chrono::seconds(2));
+    if (!woke) {
+        child.Kill(); // unblocks the reader so the failure is reported rather than hung
+    }
+    reader.join();
+    REQUIRE(woke);
+}
+
+TEST_CASE("ChildProcess::WaitForExit returns once the connection is closed even though the child is still running", "[Process]") {
+    ChildProcess child({"sleep", "100"});
+
+    std::atomic<bool>  waiterReturned{false};
+    std::optional<int> exitCode = 0;
+    std::thread        waiter([&] {
+        exitCode       = child.WaitForExit();
+        waiterReturned = true;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    child.CloseConnection();
+    const bool woke = BecomesTrueWithin(waiterReturned, std::chrono::seconds(2));
+    if (!woke) {
+        child.Kill();
+    }
+    waiter.join();
+    REQUIRE(woke);
+    CHECK_FALSE(exitCode.has_value());
+}
+
+// The child is reaped exactly once, by whichever thread gets there first;
+// the other learns the outcome instead of waiting on a pid that is gone.
+TEST_CASE("ChildProcess::Kill returns promptly while another thread waits for the exit", "[Process]") {
+    ChildProcess child({"sleep", "100"});
+
+    std::optional<int> exitCode = 0;
+    std::thread        waiter([&] { exitCode = child.WaitForExit(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100)); // the waiter is parked first
+
+    const auto start = std::chrono::steady_clock::now();
+    child.Kill();
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    waiter.join();
+
+    CHECK(elapsed < std::chrono::seconds(1));
+    CHECK_FALSE(exitCode.has_value()); // killed by a signal, not a clean exit
 }
 
 // closed-connection-never-parks follow-up. The deterministic regression test

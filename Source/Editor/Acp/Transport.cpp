@@ -84,7 +84,7 @@ Transport::Transport(const std::vector<std::string>& argv, bool captureStderr) :
                                                                                  processLabel_(argv.empty() ? std::string() : BaseName(argv[0])) {
 }
 
-Transport::Transport(int readFd, int writeFd, pid_t pid) noexcept : child_(readFd, writeFd, pid) {
+Transport::Transport(int readFd, int writeFd, pid_t pid) : child_(readFd, writeFd, pid) {
 }
 
 void Transport::WriteFrame(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout) const {
@@ -100,12 +100,20 @@ std::optional<std::string> Transport::ReadFrame(std::chrono::milliseconds stallT
     return line;
 }
 
+void Transport::Close() noexcept {
+    child_.CloseConnection();
+}
+
 pid_t Transport::Pid() const noexcept {
     return child_.Pid();
 }
 
 int Transport::StderrFd() const noexcept {
     return child_.StderrFd();
+}
+
+std::string Transport::ReadStderr() const {
+    return child_.ReadSomeStderr();
 }
 
 const std::string& Transport::ProcessLabel() const noexcept {

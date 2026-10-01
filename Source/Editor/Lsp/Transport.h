@@ -133,6 +133,11 @@ class Transport {
     // comment for why no buffered-reader wrapper exists here either.
     [[nodiscard]] int StderrFd() const noexcept;
 
+    // Blocks for the next chunk of captured stderr; empty at EOF, once
+    // Close() runs, or when stderr isn't captured. Throws
+    // std::runtime_error on a genuine read error.
+    [[nodiscard]] std::string ReadStderr() const;
+
     // lsp-stderr-capture follow-up. argv[0]'s basename, captured at
     // construction -- lets a stderr line be tagged with which server
     // process produced it (e.g. "clangd: ...") without Client/Manager

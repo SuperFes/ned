@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -14,7 +15,9 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <spawn.h>
+#include <sys/eventfd.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -74,6 +77,14 @@ namespace {
         }
         return false;
     }
+
+    // How long a child gets to exit on its own after its stdin closes,
+    // before the destructor escalates -- a hung/misbehaving child must
+    // never hang editor shutdown.
+    constexpr std::chrono::milliseconds kExitGrace{200};
+    // How long a SIGKILLed child gets to be reaped -- see ReapAfterKill on
+    // why this is bounded at all.
+    constexpr std::chrono::milliseconds kKillReapBudget{3000};
 
 } // namespace
 
@@ -210,95 +221,109 @@ ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stde
     stderrFd_ = captureStderr ? stderrPipe[0] : -1;
     pid_      = childPid;
     SetNonBlocking(writeFd_);
+    OpenControlFds();
 }
 
-ChildProcess::ChildProcess(int readFd, int writeFd, pid_t pid) noexcept : writeFd_(writeFd), readFd_(readFd), pid_(pid) {
+ChildProcess::ChildProcess(int readFd, int writeFd, pid_t pid) : writeFd_(writeFd), readFd_(readFd), pid_(pid) {
     SetNonBlocking(writeFd_);
+    OpenControlFds();
+}
+
+void ChildProcess::OpenControlFds() {
+    wakeFd_ = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (wakeFd_ >= 0 && pid_ > 0) {
+        // Race-free: the child is ours and still unreaped. A raw syscall
+        // because glibc's <sys/pidfd.h> declares pidfd_open without C
+        // linkage.
+        pidFd_ = static_cast<int>(::syscall(SYS_pidfd_open, pid_, 0));
+    }
+    if (wakeFd_ >= 0 && (pid_ <= 0 || pidFd_ >= 0)) {
+        return;
+    }
+    const int error = errno;
+    if (pid_ > 0) {
+        int status = 0;
+        ::kill(-pid_, SIGKILL); // whole process group -- see the spawn site's own comment
+        ReapAfterKill(pid_, &status);
+    }
+    for (const int fd : {writeFd_, readFd_, stderrFd_, wakeFd_}) {
+        if (fd >= 0) {
+            ::close(fd);
+        }
+    }
+    throw std::runtime_error(std::string("ned: ChildProcess: ") + std::strerror(error));
 }
 
 void ChildProcess::CloseConnection() noexcept {
-    // shutdown() before close() on all three -- for a real spawned child's
-    // pipe fds this is a harmless ENOTSOCK no-op (pipes aren't sockets), but
-    // for the raw-fd constructor's socket case (LSP broker connect/accept:
-    // two independently-closeable dups of one connected AF_UNIX socket, no
-    // separate child process to reap) plain close() is not enough: closing
-    // one dup doesn't touch the shared socket's connection state while
-    // another dup keeps it alive, and even the final close() can't unblock a
-    // different thread already parked in a blocking read() on it, since that
-    // in-flight syscall holds its own reference until it returns -- exactly
-    // the close()-vs-shutdown() gotcha BrokerMain.cpp's own
-    // listen-socket/accept() teardown comment documents for the daemon side.
-    // shutdown(SHUT_RDWR) changes the socket's protocol state directly,
-    // unblocking a concurrent reader in any thread regardless of remaining
-    // fd references.
-    if (writeFd_ >= 0) {
-        ::shutdown(writeFd_, SHUT_RDWR);
-        ::close(writeFd_); // EOF on the child's stdin -- a well-behaved child treats this as a shutdown signal
+    if (closed_.exchange(true)) {
+        return;
     }
-    if (readFd_ >= 0) {
-        ::shutdown(readFd_, SHUT_RDWR);
-        ::close(readFd_);
+    // A socket (the raw-fd constructor's broker/bridge connections) is also
+    // shut down so its peer sees the hang-up; for a pipe this is a harmless
+    // ENOTSOCK. Neither frees a descriptor number.
+    for (const int fd : {writeFd_, readFd_, stderrFd_}) {
+        if (fd >= 0) {
+            ::shutdown(fd, SHUT_RDWR);
+        }
     }
-    if (stderrFd_ >= 0) {
-        ::shutdown(stderrFd_, SHUT_RDWR);
-        ::close(stderrFd_); // lsp-stderr-capture follow-up -- unblocks a stderr reader thread's blocking read via EOF, same as readFd_ above
+    if (wakeFd_ >= 0) {
+        const std::uint64_t one = 1;
+        (void)!::write(wakeFd_, &one, sizeof one);
     }
-    writeFd_  = -1;
-    readFd_   = -1;
-    stderrFd_ = -1;
+}
+
+void ChildProcess::Release() noexcept {
+    CloseConnection();
+    // EOF on the child's stdin is a well-behaved child's cue to exit; a
+    // child blocked writing its output gets SIGPIPE.
+    for (int* fd : {&writeFd_, &readFd_, &stderrFd_}) {
+        if (*fd >= 0) {
+            ::close(*fd);
+            *fd = -1;
+        }
+    }
+    if (pidFd_ >= 0) {
+        if (!WaitChildExited(kExitGrace)) {
+            SignalGroupIfUnreaped(SIGKILL);
+            (void)WaitChildExited(kKillReapBudget);
+        }
+        ReapIfExited();
+        ::close(pidFd_);
+        pidFd_ = -1;
+    }
+    if (wakeFd_ >= 0) {
+        ::close(wakeFd_);
+        wakeFd_ = -1;
+    }
+    pid_ = -1;
+    closed_.store(false);
+    reaped_ = false;
+    exitCode_.reset();
 }
 
 ChildProcess::~ChildProcess() {
-    CloseConnection(); // the fd half, factored out -- see its own doc comment
-    if (pid_ > 0) {
-        int status = 0;
-        // Bounded grace period for the child to exit on its own after the
-        // stdin-EOF above, before escalating -- a hung/misbehaving child
-        // must never hang editor shutdown.
-        bool reaped = false;
-        for (int attempt = 0; attempt < 20; ++attempt) {
-            if (::waitpid(pid_, &status, WNOHANG) == pid_) {
-                reaped = true;
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-        if (!reaped) {
-            ::kill(-pid_, SIGKILL); // whole process group -- see the spawn site's own comment
-            ReapAfterKill(pid_, &status);
-        }
-    }
+    Release();
 }
 
 ChildProcess::ChildProcess(ChildProcess&& other) noexcept
     : writeFd_(std::exchange(other.writeFd_, -1)), readFd_(std::exchange(other.readFd_, -1)),
-      stderrFd_(std::exchange(other.stderrFd_, -1)), pid_(std::exchange(other.pid_, -1)) {
+      stderrFd_(std::exchange(other.stderrFd_, -1)), pid_(std::exchange(other.pid_, -1)), pidFd_(std::exchange(other.pidFd_, -1)),
+      wakeFd_(std::exchange(other.wakeFd_, -1)), closed_(other.closed_.exchange(false)), reaped_(std::exchange(other.reaped_, false)),
+      exitCode_(std::exchange(other.exitCode_, std::nullopt)) {
 }
 
 ChildProcess& ChildProcess::operator=(ChildProcess&& other) noexcept {
     if (this != &other) {
-        // See ~ChildProcess()'s own comment on why shutdown() precedes close() here too.
-        if (writeFd_ >= 0) {
-            ::shutdown(writeFd_, SHUT_RDWR);
-            ::close(writeFd_);
-        }
-        if (readFd_ >= 0) {
-            ::shutdown(readFd_, SHUT_RDWR);
-            ::close(readFd_);
-        }
-        if (stderrFd_ >= 0) {
-            ::shutdown(stderrFd_, SHUT_RDWR);
-            ::close(stderrFd_);
-        }
-        if (pid_ > 0) {
-            int status = 0;
-            ::kill(-pid_, SIGKILL); // whole process group -- see the spawn site's own comment
-            ReapAfterKill(pid_, &status);
-        }
+        Release();
         writeFd_  = std::exchange(other.writeFd_, -1);
         readFd_   = std::exchange(other.readFd_, -1);
         stderrFd_ = std::exchange(other.stderrFd_, -1);
         pid_      = std::exchange(other.pid_, -1);
+        pidFd_    = std::exchange(other.pidFd_, -1);
+        wakeFd_   = std::exchange(other.wakeFd_, -1);
+        closed_   = other.closed_.exchange(false);
+        reaped_   = std::exchange(other.reaped_, false);
+        exitCode_ = std::exchange(other.exitCode_, std::nullopt);
     }
     return *this;
 }
@@ -307,6 +332,9 @@ void ChildProcess::WriteAll(std::string_view data, std::chrono::milliseconds tim
     std::size_t written = 0;
     while (written < data.size()) {
         if (!WaitWritable(timeout)) {
+            if (closed_.load()) {
+                throw std::runtime_error("ned: ChildProcess write after the connection closed");
+            }
             throw std::runtime_error("ned: ChildProcess write stalled (child not draining stdin)");
         }
         const ssize_t result = ::write(writeFd_, data.data() + written, data.size() - written);
@@ -321,29 +349,30 @@ void ChildProcess::WriteAll(std::string_view data, std::chrono::milliseconds tim
 }
 
 std::string ChildProcess::ReadSome() const {
-    if (readFd_ < 0) {
-        return {}; // closed/moved-from -- EOF, not an EBADF error; see WaitReadable's own header doc comment
-    }
+    return ReadSomeFrom(readFd_);
+}
+
+std::string ChildProcess::ReadSomeStderr() const {
+    return ReadSomeFrom(stderrFd_);
+}
+
+std::string ChildProcess::ReadSomeFrom(int fd) const {
     char buffer[4096];
     while (true) {
-        const ssize_t result = ::read(readFd_, buffer, sizeof(buffer));
+        // Always polls first, so a hang-up wakes the wait. The fd may also
+        // be non-blocking (it can share an open file description with a
+        // WriteAll-bearing writeFd_ -- see WriteAll's own doc comment), and
+        // the poll is what makes this block until data arrives regardless.
+        if (!WaitFor(fd, POLLIN, std::chrono::milliseconds(-1))) {
+            return {}; // a negative timeout never times out, so this is the closed-connection case -- report it as EOF
+        }
+        const ssize_t result = ::read(fd, buffer, sizeof(buffer));
         if (result < 0) {
-            if (errno == EINTR) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
                 continue;
             }
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // write-side-hang-protection follow-up: readFd_ may now be
-                // non-blocking (it can share an open file description with
-                // a WriteAll-bearing writeFd_ -- see that method's own doc
-                // comment), which would otherwise turn this method's
-                // documented "blocks until data" contract into a spurious
-                // immediate empty-handed return. WaitReadable's negative-
-                // timeout sentinel restores the real blocking-until-ready
-                // wait.
-                if (!WaitReadable(std::chrono::milliseconds(-1))) {
-                    return {}; // a negative timeout never times out, so this is the closed-connection case -- report it as EOF
-                }
-                continue;
+            if (errno == EIO) {
+                return {}; // a pty master's EOF: the slave side is gone
             }
             throw std::runtime_error(std::string("ned: ChildProcess read failed: ") + std::strerror(errno));
         }
@@ -354,38 +383,29 @@ std::string ChildProcess::ReadSome() const {
     }
 }
 
-bool ChildProcess::WaitReadable(std::chrono::milliseconds timeout) const {
-    if (readFd_ < 0) {
-        return false; // closed/moved-from -- see this method's own header doc comment on why polling a -1 fd parks instead of failing
+bool ChildProcess::WaitFor(int fd, short events, std::chrono::milliseconds timeout) const {
+    if (fd < 0 || closed_.load()) {
+        return false; // closed/moved-from -- see WaitReadable's own header doc comment on why polling a -1 fd parks instead of failing
     }
-    pollfd pfd{readFd_, POLLIN, 0};
+    pollfd fds[2] = {{fd, events, 0}, {wakeFd_, POLLIN, 0}};
     while (true) {
-        const int result = ::poll(&pfd, 1, static_cast<int>(timeout.count()));
+        const int result = ::poll(fds, 2, static_cast<int>(timeout.count()));
         if (result < 0) {
             if (errno == EINTR) {
                 continue;
             }
             throw std::runtime_error(std::string("ned: ChildProcess poll failed: ") + std::strerror(errno));
         }
-        return result > 0; // 0 == timed out, nothing ready
+        return fds[1].revents == 0 && fds[0].revents != 0; // nothing at all == timed out
     }
 }
 
+bool ChildProcess::WaitReadable(std::chrono::milliseconds timeout) const {
+    return WaitFor(readFd_, POLLIN, timeout);
+}
+
 bool ChildProcess::WaitWritable(std::chrono::milliseconds timeout) const {
-    if (writeFd_ < 0) {
-        return false; // ditto -- see WaitReadable's own guard above
-    }
-    pollfd pfd{writeFd_, POLLOUT, 0};
-    while (true) {
-        const int result = ::poll(&pfd, 1, static_cast<int>(timeout.count()));
-        if (result < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            throw std::runtime_error(std::string("ned: ChildProcess poll failed: ") + std::strerror(errno));
-        }
-        return result > 0; // 0 == timed out, nothing ready
-    }
+    return WaitFor(writeFd_, POLLOUT, timeout);
 }
 
 std::optional<std::string> ChildProcess::ReadSome(std::chrono::milliseconds timeout) const {
@@ -411,25 +431,71 @@ pid_t ChildProcess::Pid() const noexcept {
     return pid_;
 }
 
+bool ChildProcess::WaitChildExited(std::chrono::milliseconds timeout) const {
+    if (pidFd_ < 0) {
+        return true;
+    }
+    {
+        const std::lock_guard<std::mutex> lock(reapMutex_);
+        if (reaped_) {
+            return true;
+        }
+    }
+    pollfd pfd{pidFd_, POLLIN, 0}; // a pidfd turns readable when its process exits
+    while (true) {
+        const int result = ::poll(&pfd, 1, static_cast<int>(timeout.count()));
+        if (result < 0 && errno == EINTR) {
+            continue;
+        }
+        return result > 0;
+    }
+}
+
+void ChildProcess::SignalGroupIfUnreaped(int signal) noexcept {
+    const std::lock_guard<std::mutex> lock(reapMutex_);
+    if (pidFd_ >= 0 && !reaped_) {
+        ::kill(-pid_, signal); // whole process group -- see the spawn site's own comment
+    }
+}
+
+void ChildProcess::ReapIfExited() noexcept {
+    const std::lock_guard<std::mutex> lock(reapMutex_);
+    if (pidFd_ < 0 || reaped_) {
+        return;
+    }
+    siginfo_t info{};
+    const int result = ::waitid(P_PIDFD, static_cast<id_t>(pidFd_), &info, WEXITED | WNOHANG);
+    if (result == 0 && info.si_pid == 0) {
+        return; // still running
+    }
+    reaped_ = true; // or ECHILD: someone else's waitpid(-1) took it, and there is nothing left to reap
+    if (result == 0 && info.si_code == CLD_EXITED) {
+        exitCode_ = info.si_status;
+    }
+}
+
 std::optional<int> ChildProcess::WaitForExit() noexcept {
-    if (pid_ <= 0) {
+    if (pidFd_ < 0) {
         return std::nullopt;
     }
-    int status = 0;
-    ::waitpid(pid_, &status, 0);
-    pid_ = -1; // reaped -- destructor must not try again
-    if (WIFEXITED(status)) {
-        return WEXITSTATUS(status);
+    {
+        const std::lock_guard<std::mutex> lock(reapMutex_);
+        if (reaped_) {
+            return exitCode_;
+        }
     }
-    return std::nullopt; // terminated by a signal (e.g. Kill())
+    pollfd fds[2] = {{pidFd_, POLLIN, 0}, {wakeFd_, POLLIN, 0}};
+    while (::poll(fds, 2, -1) < 0 && errno == EINTR) {
+    }
+    ReapIfExited();
+    const std::lock_guard<std::mutex> lock(reapMutex_);
+    return reaped_ ? exitCode_ : std::nullopt;
 }
 
 void ChildProcess::Kill() noexcept {
-    if (pid_ > 0) {
-        int status = 0;
-        ::kill(-pid_, SIGKILL); // whole process group -- see the spawn site's own comment
-        ReapAfterKill(pid_, &status);
-        pid_ = -1; // reaped, or gave up and left a zombie for init -- either way, the destructor must not try again
+    SignalGroupIfUnreaped(SIGKILL);
+    if (WaitChildExited(kKillReapBudget)) {
+        ReapIfExited();
     }
 }
 

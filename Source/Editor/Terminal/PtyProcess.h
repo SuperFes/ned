@@ -14,15 +14,11 @@
 //   constructor, which provides WriteAll and the close-fds-then-grace-then-
 //   SIGKILL destructor unchanged -- closing the master is what delivers the
 //   shell its SIGHUP.
-// - The read loop calls ::read directly instead of ChildProcess::ReadSome: a
-//   pty master reports the child's exit as EIO, not a clean 0-byte EOF, and
-//   ReadSome would turn that routine shutdown signal into a thrown error.
 // - Resize (TIOCSWINSZ on the master) exists at all -- the kernel delivers
 //   the foreground process group its SIGWINCH from that ioctl.
 //
-// Member declaration order is load-bearing exactly as in TaskProcess:
-// readThread_ before child_, so child_'s destruction (fd close + child
-// teardown) is what unblocks the read loop for the jthread's own join.
+// Teardown matches TaskProcess: the destructor hangs up child_ and joins the
+// read loop before child_ is destroyed.
 //
 
 #ifndef NED_EDITOR_TERMINAL_PTYPROCESS_H
@@ -100,7 +96,7 @@ class PtyProcess {
 
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true); // see ~PtyProcess
 
-    std::jthread          readThread_; // declared before child_ -- see header comment
+    std::jthread          readThread_;
     process::ChildProcess child_;
 
     ned::ui::EventLoop& eventLoop_;

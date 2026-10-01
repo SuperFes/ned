@@ -10,6 +10,13 @@ TaskProcess::TaskProcess(std::vector<std::string> argv, ned::ui::EventLoop& even
     StartReadLoop();
 }
 
+TaskProcess::~TaskProcess() {
+    child_.CloseConnection();
+    if (readThread_.joinable()) {
+        readThread_.join();
+    }
+}
+
 void TaskProcess::StartReadLoop() {
     // child_ is already fully constructed by the time this runs (called
     // from the constructor *body*, after the member-initializer-list has
@@ -33,7 +40,7 @@ void TaskProcess::StartReadLoop() {
                 break;
             }
             if (chunk.empty()) {
-                break; // EOF -- the process exited (or this TaskProcess is being destroyed)
+                break; // EOF -- the process exited, or this TaskProcess is being destroyed
             }
             eventLoop_.Post(alive.Bind([this, chunk = std::move(chunk)] { DispatchOutput(chunk); }));
         }
