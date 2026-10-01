@@ -515,6 +515,32 @@ TEST_CASE("Dragging a tab over another reorders the BufferList through the regis
     REQUIRE(list.Buffers()[1].get() == &alpha);
 }
 
+// A buffer closed mid-drag (a key press, or a server's workspace edit, while
+// the button is still held) ends the drag rather than reordering by its
+// stale address.
+TEST_CASE("Dragging a tab whose buffer was closed mid-drag reorders nothing", "[TabBar]") {
+    ned::text::BufferList list;
+    list.CreateBuffer("alpha");
+    ned::text::Buffer& beta = list.CreateBuffer("beta");
+    list.CreateBuffer("gamma");
+
+    ned::ui::ActiveBuffer activeBuffer(beta);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 40);
+
+    int reorders = 0;
+    tabBar.SetOnReorder([&reorders](ned::text::Buffer&, std::size_t) { ++reorders; });
+
+    tabBar.OnEvent(MousePress(2, 0)); // press on alpha's body starts the drag
+    activeBuffer.Set(beta);
+    list.Close("alpha");
+    tabBar.OnEvent(ned::ui::test::Mouse(12, 0, ned::ui::MouseEvent::Button::Left,
+                                        ned::ui::MouseEvent::Motion::Moved)); // over gamma
+
+    CHECK(reorders == 0);
+}
+
 TEST_CASE("Dragging a tab past the last tab moves it to the end", "[TabBar]") {
     ned::text::BufferList list;
     ned::text::Buffer&    alpha = list.CreateBuffer("alpha");

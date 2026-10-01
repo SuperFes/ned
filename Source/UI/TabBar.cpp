@@ -259,23 +259,29 @@ bool TabBar::OnEvent(const Event& event) {
     // this row's bounds -- LocalMouseEvent never delivered it, same
     // no-mouse-capture reality every drag in this codebase handles), ends
     // the drag.
-    if (dragBuffer_ != nullptr && mouse->motion == MouseEvent::Motion::Released) {
-        dragBuffer_ = nullptr;
+    if (!dragBuffer_.Empty() && mouse->motion == MouseEvent::Motion::Released) {
+        dragBuffer_ = {};
         return true;
     }
-    if (dragBuffer_ != nullptr && mouse->motion == MouseEvent::Motion::Moved) {
+    if (!dragBuffer_.Empty() && mouse->motion == MouseEvent::Motion::Moved) {
         if (mouse->button != MouseEvent::Button::Left) {
-            dragBuffer_ = nullptr;
+            dragBuffer_ = {};
             return false;
         }
         if (onReorder_) {
-            const int                    column = mouse->at.x + scrollOffset_;
-            const std::vector<TabLayout> layout = ComputeTabLayout();
+            const int                    column  = mouse->at.x + scrollOffset_;
+            const std::vector<TabLayout> layout  = ComputeTabLayout();
+            const auto                   dragged = std::find_if(layout.begin(), layout.end(),
+                                                                [this](const TabLayout& tab) { return dragBuffer_.Is(*tab.buffer); });
+            if (dragged == layout.end()) {
+                dragBuffer_ = {};
+                return true;
+            }
             for (std::size_t i = 0; i < layout.size(); ++i) {
                 const bool pastLastTab = (i + 1 == layout.size() && column >= layout[i].endColumn);
                 if ((column >= layout[i].startColumn && column < layout[i].endColumn) || pastLastTab) {
-                    if (layout[i].buffer != dragBuffer_) {
-                        onReorder_(*dragBuffer_, i);
+                    if (layout[i].buffer != dragged->buffer) {
+                        onReorder_(*dragged->buffer, i);
                     }
                     break;
                 }
@@ -311,7 +317,7 @@ bool TabBar::OnEvent(const Event& event) {
         return false;
     }
 
-    dragBuffer_             = nullptr;
+    dragBuffer_             = {};
     const int clickedColumn = mouse->at.x + scrollOffset_;
     for (const TabLayout& tab : ComputeTabLayout()) {
         if (clickedColumn == tab.closeColumn) {
@@ -333,7 +339,7 @@ bool TabBar::OnEvent(const Event& event) {
                 onRequestFocus_();
             }
             activeBufferProvider_().Set(*tab.buffer);
-            dragBuffer_ = tab.buffer;
+            dragBuffer_ = text::BufferIdentity(*tab.buffer);
             return true;
         }
     }

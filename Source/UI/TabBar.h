@@ -39,6 +39,7 @@
 
 #include "ActiveBuffer.h"
 #include "Text/Buffer.h"
+#include "Text/BufferIdentity.h"
 #include "Text/BufferList.h"
 #include "Theme.h"
 #include "Widget.h"
@@ -135,8 +136,9 @@ class TabBar : public Widget {
 
     // Tab-reorder follow-up: the buffer whose tab a left-press landed on,
     // tracked until the matching release so Moved events reorder it (see
-    // SetOnReorder). Never dereferenced without onReorder_ set.
-    text::Buffer* dragBuffer_ = nullptr;
+    // SetOnReorder). Found among the live tabs on every move, since it can
+    // be closed while the button is still held.
+    text::BufferIdentity dragBuffer_;
 
     std::function<void(text::Buffer&)>              onCloseRequest_;
     std::function<void(text::Buffer&, std::size_t)> onReorder_;            // see SetOnReorder
