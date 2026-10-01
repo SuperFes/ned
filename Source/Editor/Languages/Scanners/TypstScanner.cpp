@@ -2423,16 +2423,23 @@ static void vec_u32_push(struct vec_u32* self, uint32_t value) {
 static uint32_t vec_u32_pop(struct vec_u32* self) {
 	assert(self != NULL, "vec_u32_pop");
 	assert(self->len > 0, "vec_u32_pop: empty vec");
-	return self->vec[self->len--];
+	return self->vec[--self->len];
 }
-static size_t vec_u32_serialize(struct vec_u32* self, char* buffer) {
+// Writes at most `capacity` bytes: a stack too deep for that keeps its
+// outermost entries.
+static size_t vec_u32_serialize(struct vec_u32* self, char* buffer, size_t capacity) {
 	assert(self != NULL, "vec_u32_serialize");
+	size_t len = self->len;
+	const size_t fits = (capacity - sizeof len) / sizeof(uint32_t);
+	if (len > fits) {
+		len = fits;
+	}
 	size_t written = 0;
-	memcpy(buffer, &self->len, sizeof self->len);
-	written += sizeof self->len;
-	if (self->len > 0) {
-		memcpy(buffer + written, self->vec, self->len * sizeof(uint32_t));
-		written += self->len * sizeof(uint32_t);
+	memcpy(buffer, &len, sizeof len);
+	written += sizeof len;
+	if (len > 0) {
+		memcpy(buffer + written, self->vec, len * sizeof(uint32_t));
+		written += len * sizeof(uint32_t);
 	}
 	return written;
 }
@@ -2593,9 +2600,12 @@ static unsigned Serialize(
 ) {
     VoidPtr payload{payload_};
 	struct scanner* self = payload;
+	// Both stacks and the three flags share the engine's buffer; the first
+	// stack leaves room for the second one's length.
+	const size_t flags = 3;
 	size_t written = 0;
-	written += vec_u32_serialize(&self->indentation, buffer + written);
-	written += vec_u32_serialize(&self->containers, buffer + written);
+	written += vec_u32_serialize(&self->indentation, buffer + written, kSerializationBufferSize - flags - sizeof(size_t) - written);
+	written += vec_u32_serialize(&self->containers, buffer + written, kSerializationBufferSize - flags - written);
 	buffer[written++] = self->immediate;
 	buffer[written++] = self->heading_level;
 	buffer[written++] = self->line_start;

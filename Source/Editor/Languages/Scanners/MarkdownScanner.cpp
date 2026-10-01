@@ -257,6 +257,11 @@ static unsigned serialize(Scanner* s, char* buffer) {
     buffer[size++]      = (char)s->column;
     buffer[size++]      = (char)s->fenced_code_block_delimiter_length;
     size_t blocks_count = s->open_blocks.size;
+    // Blocks nested deeper than the engine's buffer holds keep the outermost.
+    const size_t fits = (kSerializationBufferSize - size) / sizeof(Block);
+    if (blocks_count > fits) {
+        blocks_count = fits;
+    }
     if (blocks_count > 0) {
         memcpy(&buffer[size], s->open_blocks.items,
                blocks_count * sizeof(Block));

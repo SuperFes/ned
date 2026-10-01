@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string_view>
 
 #include "Editor/Parse/Abi.h"
@@ -41,7 +42,10 @@ struct Lexer {
     bool             didGetColumn  = false;
     ColumnData       columnData;
 
-    char scratchBuffer[abi::kSerializationBufferSize];
+    // Its own allocation, so a scanner serializing past the end is caught by
+    // AddressSanitizer at the write instead of overwriting the engine's
+    // other members unseen.
+    std::unique_ptr<char[]> scratchBuffer = std::make_unique<char[]>(abi::kSerializationBufferSize);
 
     Lexer();
     ~Lexer();

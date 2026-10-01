@@ -3,6 +3,7 @@
 #include "Editor/Parse/LexDfa.h"
 
 #include <algorithm>
+#include <cstdlib>
 
 #include <cstring>
 #include <stdexcept>
@@ -300,7 +301,13 @@ void Engine::ExternalScannerDestroy() {
 }
 
 unsigned Engine::ExternalScannerSerialize() {
-    return language_->externalScanner.serialize(externalScannerPayload_, lexer_.scratchBuffer);
+    const unsigned length = language_->externalScanner.serialize(externalScannerPayload_, lexer_.scratchBuffer.get());
+    // A length past the buffer means the scanner already wrote past it;
+    // nothing after that point can be trusted.
+    if (length > abi::kSerializationBufferSize) {
+        std::abort();
+    }
+    return length;
 }
 
 void Engine::ExternalScannerDeserialize(Subtree externalToken) {
@@ -363,7 +370,7 @@ bool Engine::RepeatsEmptyTokenConfiguration(StackVersion version, std::uint32_t 
                                      static_cast<std::uint64_t>(stack_->DynamicPrecedence(version))})
         fingerprint = (fingerprint ^ part) * 0x100000001b3ull;
     for (unsigned i = 0; i < scannerStateLength; i++)
-        fingerprint = (fingerprint ^ static_cast<unsigned char>(lexer_.scratchBuffer[i])) * 0x100000001b3ull;
+        fingerprint = (fingerprint ^ static_cast<unsigned char>(lexer_.scratchBuffer.get()[i])) * 0x100000001b3ull;
 
     for (const EmptyTokenConfiguration& seen : emptyTokenConfigurations_) {
         if (seen.position == position && seen.fingerprint == fingerprint)
@@ -411,7 +418,7 @@ Subtree Engine::LexToken(StackVersion version, abi::StateId parseState) {
             if (foundToken) {
                 externalScannerStateLen = ExternalScannerSerialize();
                 externalScannerStateChanged =
-                    !SubtreeExternalScannerState(externalToken)->Eq(lexer_.scratchBuffer, externalScannerStateLen);
+                    !SubtreeExternalScannerState(externalToken)->Eq(lexer_.scratchBuffer.get(), externalScannerStateLen);
 
                 // Ignore classes of empty external tokens that would cause
                 // infinite loops (error recovery, extras).
@@ -502,7 +509,7 @@ Subtree Engine::LexToken(StackVersion version, abi::StateId parseState) {
 
         if (foundExternalToken) {
             auto* mutResult = const_cast<SubtreeHeapData*>(result.ptr);
-            mutResult->externalScannerState.Init(lexer_.scratchBuffer, externalScannerStateLen);
+            mutResult->externalScannerState.Init(lexer_.scratchBuffer.get(), externalScannerStateLen);
             mutResult->hasExternalScannerStateChange = externalScannerStateChanged;
         }
     }

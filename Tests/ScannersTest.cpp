@@ -190,3 +190,38 @@ TEST_CASE("Astro: a closing tag cut off at end of file closes an open custom ele
     CHECK(sexp.find("(end_tag") == std::string::npos);
     CHECK(sexp.find("(erroneous_end_tag") != std::string::npos);
 }
+
+// A scanner's serialized state must fit the fixed buffer the engine hands it,
+// however deep the nesting it tracks; the engine aborts on a scanner that
+// reports more. 300 levels outgrows the buffer for any four-byte-per-level
+// stack, opened through the constructs scanners keep stacks for.
+TEST_CASE("Every scanner's state fits the serialization buffer on deeply nested input", "[Scanners]") {
+    std::vector<std::string> inputs;
+    for (const std::string_view open : {"(", "[", "{", "<a>", "${", "#{", "<<EOF\n", "\"\"\"", "`", "/*", "-- [[", "```\n", "> ", "- "}) {
+        std::string text;
+        for (int depth = 0; depth < 300; ++depth) {
+            text += open;
+        }
+        inputs.push_back(text + "\n");
+    }
+    std::string indented;
+    for (int depth = 0; depth < 300; ++depth) {
+        indented += std::string(static_cast<std::size_t>(depth), ' ') + "x:\n";
+    }
+    inputs.push_back(indented);
+
+    for (const ned::editor::LanguageDefinition& definition : ned::editor::BundledLanguages()) {
+        if (definition.grammarless || FindBundledScanner(definition.name) == nullptr) {
+            continue;
+        }
+        const auto language = ned::editor::grammar::LanguageByName(definition.name);
+        if (!language) {
+            continue;
+        }
+        INFO("language: " << definition.name);
+        const ned::editor::grammar::Parser parser(*language);
+        for (const std::string& text : inputs) {
+            CHECK_FALSE(parser.Parse(text).IsNull());
+        }
+    }
+}
