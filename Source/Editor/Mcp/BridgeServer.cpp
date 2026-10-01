@@ -24,17 +24,24 @@ BridgeServer::BridgeServer(ToolRegistry& registry, ned::ui::EventLoop& eventLoop
 
 BridgeServer::~BridgeServer() {
     *alive_ = false;
+    // Wake the accept/read loop without freeing any descriptor it may still
+    // be using, join it, and only then close. The stop is requested first:
+    // a connection accepted after the hang-up below sees it and goes away.
+    acceptThread_.request_stop();
     if (listenFd_ >= 0) {
         ::shutdown(listenFd_, SHUT_RDWR);
+    }
+    {
+        const std::lock_guard<std::mutex> lock(connectionMutex_);
+        if (currentConnection_) {
+            currentConnection_->Close();
+        }
+    }
+    acceptThread_ = std::jthread();
+    if (listenFd_ >= 0) {
         ::close(listenFd_);
         listenFd_ = -1;
     }
-    if (const int connFd = currentConnFd_.load(); connFd >= 0) {
-        ::shutdown(connFd, SHUT_RDWR);
-    }
-    // acceptThread_'s own destructor (below, runs next) requests stop and
-    // joins -- the shutdown() calls above are what actually unblock its
-    // blocking accept()/read() so that join doesn't hang.
     std::error_code ec;
     if (!socketPath_.empty()) {
         std::filesystem::remove(socketPath_, ec); // best-effort; a stale socket file left behind is harmless (Start() rebinds over it next time)
@@ -95,9 +102,8 @@ void BridgeServer::AcceptLoop(std::stop_token stopToken) {
             if (errno == EINTR) {
                 continue;
             }
-            return; // listenFd_ was closed out from under us (destructor tearing down) or a genuine fatal error either way -- exit the loop
+            return; // listenFd_ was shut down (destructor tearing down) or a genuine fatal error either way -- exit the loop
         }
-        currentConnFd_.store(connFd);
         // A single accept()ed socket fd is used as both ends -- mirroring
         // `ned --lsp-broker-stop`'s own dup()-based one-shot socket write in
         // main.cpp -- since ChildProcess's destructor shuts down/closes
@@ -106,12 +112,25 @@ void BridgeServer::AcceptLoop(std::stop_token stopToken) {
         const int dupFd = ::dup(connFd);
         if (dupFd < 0) {
             ::close(connFd);
-            currentConnFd_.store(-1);
             continue;
         }
-        auto transport = std::make_shared<Transport>(connFd, dupFd, -1);
+        std::shared_ptr<Transport> transport;
+        try {
+            transport = std::make_shared<Transport>(connFd, dupFd, -1);
+        }
+        catch (const std::exception&) {
+            continue; // Transport released both fds
+        }
+        {
+            const std::lock_guard<std::mutex> lock(connectionMutex_);
+            if (stopToken.stop_requested()) {
+                return;
+            }
+            currentConnection_ = transport;
+        }
         ServeConnection(transport, stopToken);
-        currentConnFd_.store(-1);
+        const std::lock_guard<std::mutex> lock(connectionMutex_);
+        currentConnection_.reset();
     }
 }
 

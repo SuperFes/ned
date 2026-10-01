@@ -52,7 +52,7 @@ class Transport {
     // in main.cpp), or two ends of a pipe pair in a test. pid, if given, is
     // reaped/killed by the destructor the same way the process-spawning
     // constructor's child is; -1 (the default) means "no process to manage."
-    Transport(int readFd, int writeFd, pid_t pid = -1) noexcept;
+    Transport(int readFd, int writeFd, pid_t pid = -1);
 
     ~Transport() = default; // ChildProcess's own destructor does the real work
 
@@ -76,6 +76,10 @@ class Transport {
     [[nodiscard]] std::optional<std::string> ReadMessage(std::chrono::milliseconds stallTimeout = ProtocolReadStallTimeoutMs()) const;
 
     [[nodiscard]] pid_t Pid() const noexcept;
+
+    // Wakes a ReadMessage() in progress on another thread without destroying
+    // this object -- see ChildProcess::CloseConnection(). Idempotent.
+    void Close() noexcept;
 
   private:
     process::ChildProcess child_;

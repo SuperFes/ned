@@ -30,9 +30,9 @@
 #ifndef NED_EDITOR_MCP_BRIDGESERVER_H
 #define NED_EDITOR_MCP_BRIDGESERVER_H
 
-#include <atomic>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <stop_token>
 #include <thread>
 
@@ -54,12 +54,8 @@ class BridgeServer {
     // requirement every sibling manager in this codebase documents.
     BridgeServer(ToolRegistry& registry, ned::ui::EventLoop& eventLoop);
 
-    // Closes the listening socket and any live connection (unblocking the
-    // background accept/read loop via shutdown(2), not a second close of an
-    // fd Transport's own destructor still owns) before the jthread member's
-    // own destructor joins it -- the "close the fd the background thread is
-    // blocked on" pattern Client's own transport_/readThread_ member
-    // ordering already establishes.
+    // Hangs up the listening socket and any live connection, joins the
+    // background accept/read loop, then closes the socket.
     ~BridgeServer();
 
     BridgeServer(const BridgeServer&)            = delete;
@@ -91,9 +87,13 @@ class BridgeServer {
     ned::ui::EventLoop&   eventLoop_;
     std::filesystem::path socketPath_;
     int                   listenFd_ = -1;
-    std::atomic<int>      currentConnFd_{-1};
-    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
-    std::jthread          acceptThread_; // declared last: its destructor (auto stop+join) must run only after ~BridgeServer's body has already unblocked it
+    std::shared_ptr<bool> alive_    = std::make_shared<bool>(true);
+
+    // The connection the background thread is serving, for the destructor
+    // to hang up.
+    std::mutex                 connectionMutex_;
+    std::shared_ptr<Transport> currentConnection_;
+    std::jthread               acceptThread_;
 };
 
 } // namespace ned::editor::mcp

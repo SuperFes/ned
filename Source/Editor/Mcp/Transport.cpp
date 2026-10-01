@@ -58,7 +58,7 @@ namespace {
 Transport::Transport(const std::vector<std::string>& argv) : child_(argv, process::StderrMode::Discard) {
 }
 
-Transport::Transport(int readFd, int writeFd, pid_t pid) noexcept : child_(readFd, writeFd, pid) {
+Transport::Transport(int readFd, int writeFd, pid_t pid) : child_(readFd, writeFd, pid) {
 }
 
 void Transport::WriteMessage(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout) const {
@@ -76,6 +76,10 @@ std::optional<std::string> Transport::ReadMessage(std::chrono::milliseconds stal
 
 pid_t Transport::Pid() const noexcept {
     return child_.Pid();
+}
+
+void Transport::Close() noexcept {
+    child_.CloseConnection();
 }
 
 } // namespace ned::editor::mcp
