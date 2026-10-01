@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -198,4 +200,25 @@ TEST_CASE("Destroying a FramedConnection before its read thread has started does
         ::close(oursWritesHere[0]);
     }
     SUCCEED();
+}
+
+TEST_CASE("A stderr line posted before the connection is destroyed is still logged", "[Protocol]") {
+    ned::ui::EventLoop eventLoop;
+    auto               connection = std::make_unique<FramedConnection<Transport>>(
+        Transport({"sh", "-c", "echo framed-stderr-after-close >&2"}, /*captureStderr=*/true), eventLoop,
+        FramedConnection<Transport>::Options{LogCategory::Dap, "adapter", ned::editor::LogSeverity::Error});
+
+    // The line is posted from the stderr thread; it must reach the loop's
+    // queue before the connection goes.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    connection.reset();
+    (void)eventLoop.DrainPosted_();
+
+    const std::vector<ned::editor::LogEntry> entries = ned::editor::LogEntries();
+    const auto                               entry   = std::ranges::find_if(entries, [](const ned::editor::LogEntry& e) {
+        return e.message.find("framed-stderr-after-close") != std::string::npos;
+    });
+    REQUIRE(entry != entries.end());
+    REQUIRE(entry->category == LogCategory::Dap);
+    REQUIRE(entry->severity == ned::editor::LogSeverity::Error);
 }

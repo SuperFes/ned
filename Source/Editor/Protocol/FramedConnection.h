@@ -274,11 +274,14 @@ class FramedConnection {
                     if (line.empty()) {
                         continue; // a blank line between real diagnostic output isn't worth a log entry
                     }
-                    eventLoop_.Post([this, label, line = std::move(line)] {
+                    // By value, not through this: the line can still be
+                    // queued after the connection is destroyed.
+                    eventLoop_.Post([category = options_.logCategory, severity = options_.stderrSeverity, label,
+                                     line = std::move(line)] {
                         // diagnostics-log-rollup follow-up: LogMessage
                         // itself coalesces this against the immediately
                         // preceding entry when it repeats verbatim.
-                        LogMessage(options_.logCategory, options_.stderrSeverity, label.empty() ? line : label + ": " + line);
+                        LogMessage(category, severity, label.empty() ? line : label + ": " + line);
                     });
                 }
             }

@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <string>
+#include <thread>
 
 #include "Editor/Tasks/TaskConfig.h"
 #include "Editor/Tasks/TaskRunner.h"
@@ -79,4 +81,29 @@ TEST_CASE("CancelTask on a task that isn't running is a safe no-op", "[Tasks]") 
 
     runner.CancelTask("task-runner-test-never-started"); // must not throw/crash
     REQUIRE_FALSE(runner.IsRunning("task-runner-test-never-started"));
+}
+
+TEST_CASE("A task whose output buffer was closed mid-run streams into a recreated one", "[Tasks]") {
+    BufferList         bufferList;
+    ned::ui::EventLoop eventLoop;
+    TaskRunner         runner(bufferList, eventLoop);
+
+    SetTaskCommand("task-runner-test-closed-buffer", {"sh", "-c", "sleep 0.2; echo streamed"});
+    (void)runner.RunTask("task-runner-test-closed-buffer");
+    const std::string name = TaskOutputBufferName("task-runner-test-closed-buffer");
+    REQUIRE(bufferList.Close(name));
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (runner.IsRunning("task-runner-test-closed-buffer") && std::chrono::steady_clock::now() < deadline) {
+        (void)eventLoop.DrainPosted_();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    REQUIRE_FALSE(runner.IsRunning("task-runner-test-closed-buffer"));
+
+    const Buffer* recreated = bufferList.Find(name);
+    REQUIRE(recreated != nullptr);
+    REQUIRE(recreated->Text().find("streamed") != std::string::npos);
+    REQUIRE(recreated->Text().find("[exited 0]") != std::string::npos);
+
+    SetTaskCommand("task-runner-test-closed-buffer", {});
 }

@@ -63,6 +63,10 @@ class TaskRunner {
     [[nodiscard]] bool IsRunning(const std::string& name) const;
 
   private:
+    // Found by name on every call, so output from a run whose buffer was
+    // closed lands in a recreated one instead of a freed one.
+    text::Buffer& OutputBuffer(const std::string& name);
+
     text::BufferList&   bufferList_;
     ned::ui::EventLoop& eventLoop_;
 

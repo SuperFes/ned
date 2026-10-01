@@ -20,13 +20,18 @@ std::string TaskOutputBufferName(std::string_view name) {
 TaskRunner::TaskRunner(text::BufferList& bufferList, ned::ui::EventLoop& eventLoop) : bufferList_(bufferList), eventLoop_(eventLoop) {
 }
 
-text::Buffer* TaskRunner::RunTask(const std::string& name) {
+text::Buffer& TaskRunner::OutputBuffer(const std::string& name) {
     const std::string bufferName = TaskOutputBufferName(name);
-    text::Buffer*     buffer     = bufferList_.Find(bufferName);
-    if (!buffer) {
-        buffer = &bufferList_.CreateBuffer(bufferName);
-        buffer->SetReadOnly(true); // must be set before the first append -- AppendWhileReadOnly's own precondition
+    if (text::Buffer* buffer = bufferList_.Find(bufferName)) {
+        return *buffer;
     }
+    text::Buffer& buffer = bufferList_.CreateBuffer(bufferName);
+    buffer.SetReadOnly(true); // must be set before the first append -- AppendWhileReadOnly's own precondition
+    return buffer;
+}
+
+text::Buffer* TaskRunner::RunTask(const std::string& name) {
+    text::Buffer* buffer = &OutputBuffer(name);
 
     if (running_.contains(name)) {
         return buffer; // already running -- no-op, existing run keeps streaming into the same buffer
@@ -51,13 +56,13 @@ text::Buffer* TaskRunner::RunTask(const std::string& name) {
         auto accumulated = std::make_shared<std::string>();
         running_[name]   = std::make_unique<TaskProcess>(
             *argv, eventLoop_,
-            [buffer, accumulated](std::string_view chunk) {
-                buffer->AppendWhileReadOnly(chunk);
+            [this, name, accumulated](std::string_view chunk) {
+                OutputBuffer(name).AppendWhileReadOnly(chunk);
                 *accumulated += chunk;
             },
-            [this, name, buffer, accumulated](std::optional<int> exitCode) {
+            [this, name, accumulated](std::optional<int> exitCode) {
                 if (exitCode) {
-                    buffer->AppendWhileReadOnly("\n[exited " + std::to_string(*exitCode) + "]\n");
+                    OutputBuffer(name).AppendWhileReadOnly("\n[exited " + std::to_string(*exitCode) + "]\n");
                     // diagnostics-log-round-2 follow-up: a durable record of
                     // task failures alongside the buffer's own transient
                     // output -- 0 is success, so only a nonzero exit is
@@ -93,7 +98,7 @@ text::Buffer* TaskRunner::RunTask(const std::string& name) {
                     }
                 }
                 else {
-                    buffer->AppendWhileReadOnly("\n[cancelled]\n");
+                    OutputBuffer(name).AppendWhileReadOnly("\n[cancelled]\n");
                 }
                 running_.erase(name);
             });
