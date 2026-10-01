@@ -5,10 +5,13 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "Editor/Commands.h"
+#include "Editor/Lsp/Manager.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/Mode.h"
 #include "Editor/Project/Root.h"
@@ -19,6 +22,7 @@
 #include "Editor/Vcs/ProviderRegistry.h"
 #include "Editor/Vcs/Runner.h"
 #include "Editor/Vim/Settings.h"
+#include "FakeLspServer.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -1056,4 +1060,51 @@ TEST_CASE("DispatchGlobalChord gives the keyboard to a prompt it opens", "[Windo
     metaX.Meta      = true;
     REQUIRE_FALSE(manager.DispatchGlobalChord(metaX)); // M-x opens its prompt
     REQUIRE_FALSE(panel.Focused());
+}
+
+TEST_CASE("Cancelling a call hierarchy whose pane was closed hides it without reaching the pane",
+          "[WindowManager][Lifetime]") {
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_wm_hierarchy_owner_test.cpp";
+    Fixture                     fixture;
+    fixture.buffer.SetPath(path);
+    fixture.buffer.InsertAtPoint("callee();\n");
+    fixture.buffer.SetPoint(0);
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager lsp(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
+    ned::test::FakeLspServer  server = ned::test::FakeLspServer::Create(lsp, "fundamental", eventLoop, client);
+
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
+    manager.SetLspManager(&lsp);
+    std::vector<std::optional<ned::ui::TreeViewModel>> models;
+    manager.SetOnHierarchyChanged([&models](std::optional<ned::ui::TreeViewModel> model) { models.push_back(std::move(model)); });
+
+    ned::ui::Widget& root = manager.RootComponent();
+    ned::ui::Screen  screen(60, 10);
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")});
+    RenderFullScreen(root, screen); // syncs the buffer to the server
+    FeedSequence(root, {ned::ui::test::Ctrl('c'), ned::ui::test::Character("l"), ned::ui::test::Character("c")});
+
+    const ned::editor::lsp::Json prepare = server.ReadRequest("textDocument/prepareCallHierarchy");
+    const ned::editor::lsp::Json item    = {
+        {"name", "callee"},
+        {"kind", 12},
+        {"uri", "file://" + path.string()},
+        {"selectionRange", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 6}}}}},
+    };
+    client->DispatchFrame(
+        ned::editor::lsp::Json{{"jsonrpc", "2.0"}, {"id", prepare["id"]}, {"result", ned::editor::lsp::Json::array({item})}}.dump());
+    REQUIRE_FALSE(models.empty());
+    REQUIRE(models.back().has_value());
+
+    // The pane that showed the hierarchy goes; the overlay is still up.
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")});
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("1")});
+    REQUIRE(manager.WindowCount() == 1);
+
+    manager.HierarchyCancel();
+
+    REQUIRE_FALSE(models.back().has_value());
 }

@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "Buffer.h"
+#include "BufferIdentity.h"
 
 namespace ned::text {
 
@@ -64,6 +65,9 @@ class BufferList {
 
     [[nodiscard]] Buffer*       Find(const std::string& name);
     [[nodiscard]] const Buffer* Find(const std::string& name) const;
+
+    // The buffer identity names, while it is still open.
+    [[nodiscard]] Buffer* Find(const BufferIdentity& identity);
 
     // Path-associated buffer already open, if any -- compares
     // std::filesystem::weakly_canonical() of both sides (falling back to

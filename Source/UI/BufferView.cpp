@@ -268,6 +268,13 @@ void BufferView::ClearBufferCaches(text::Buffer& buffer) {
     ClearRenameProposals(buffer);
 }
 
+text::Buffer* BufferView::LiveBuffer(const text::BufferIdentity& identity) {
+    if (identity.Is(activeBuffer_.Get())) {
+        return &activeBuffer_.Get();
+    }
+    return bufferList_.Find(identity);
+}
+
 std::optional<std::string> BufferView::EmbeddedLanguageAtPoint() {
     EnsureEmbeddedDocumentCache();
     text::Buffer& buffer = activeBuffer_.Get();
@@ -1900,7 +1907,7 @@ void BufferView::RequestCloseBuffer(text::Buffer& buffer) {
         return;
     }
 
-    pendingClose_  = &buffer;
+    pendingClose_  = text::BufferIdentity(buffer);
     inputMode_     = InputMode::ConfirmCloseBuffer;
     statusMessage_ = "Buffer \"" + buffer.Name() + "\" has unsaved changes; close anyway? (y/n)";
 }

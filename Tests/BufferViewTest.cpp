@@ -6277,6 +6277,27 @@ TEST_CASE("RequestCloseBuffer on a modified buffer prompts, 'y' confirms the clo
     REQUIRE(fixture.bufferList.Find("other") == nullptr);
 }
 
+TEST_CASE("Confirming the close of a buffer already closed elsewhere leaves other buffers alone",
+          "[BufferView][BufferIdentity]") {
+    Fixture            fixture;
+    ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::text::Buffer& other   = fixture.bufferList.CreateBuffer("other");
+    other.InsertAtPoint("unsaved");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+
+    view.RequestCloseBuffer(other);
+    REQUIRE(fixture.bufferList.Close("other")); // closed from somewhere else while the prompt was up
+    ned::text::Buffer& third = fixture.bufferList.CreateBuffer("third");
+    third.InsertAtPoint("also unsaved");
+
+    view.OnEvent(ned::ui::test::Character("y"));
+
+    REQUIRE(fixture.bufferList.Find("third") == &third);
+    REQUIRE(fixture.bufferList.Find("scratch") == &scratch);
+}
+
 TEST_CASE("RequestCloseBuffer on a modified buffer prompts, 'n' cancels and keeps it", "[BufferView]") {
     Fixture            fixture;
     ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");

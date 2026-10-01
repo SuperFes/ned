@@ -733,3 +733,15 @@ TEST_CASE("MoveBufferToIndex reorders Buffers() in both directions and clamps", 
     REQUIRE_FALSE(list.MoveBufferToIndex(foreign, 0));
     REQUIRE(list.Count() == 3);
 }
+
+TEST_CASE("Find by identity names an open buffer and nothing once it is closed", "[BufferList][BufferIdentity]") {
+    BufferList                      list;
+    Buffer&                         buffer = list.CreateBuffer("identity");
+    const ned::text::BufferIdentity identity(buffer);
+
+    REQUIRE(list.Find(identity) == &buffer);
+
+    REQUIRE(list.Close("identity"));
+    REQUIRE(list.Find(identity) == nullptr);
+    REQUIRE(list.Find(ned::text::BufferIdentity()) == nullptr);
+}

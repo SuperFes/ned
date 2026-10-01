@@ -273,3 +273,47 @@ TEST_CASE("BufferListPanel marks step down the list as sorted", "[BufferListPane
     REQUIRE(panel.Popup().OnEvent(ned::ui::test::Character('x')));
     CHECK(closingNames == std::vector<std::string>{"b", "a"});
 }
+
+TEST_CASE("BufferListPanel Enter on a row whose buffer closed elsewhere switches to nothing",
+          "[BufferListPanel][BufferIdentity]") {
+    Fixture fixture;
+    fixture.bufferList.CreateBuffer("one");
+    fixture.bufferList.CreateBuffer("two");
+
+    ned::ui::BufferListPanel panel(fixture.theme, fixture.bufferList);
+    ned::text::Buffer*       switched = nullptr;
+    panel.SetOnRequestSwitchToBuffer([&](ned::text::Buffer& buffer) { switched = &buffer; });
+    panel.Show();
+    panel.Popup().TakeFocus();
+
+    REQUIRE(fixture.bufferList.Close("one"));
+    (void)fixture.bufferList.CreateBuffer("three");
+
+    (void)panel.Popup().OnEvent(ned::ui::test::Return());
+    REQUIRE(switched == nullptr);
+}
+
+TEST_CASE("BufferListPanel confirming a kill skips a marked buffer that closed elsewhere",
+          "[BufferListPanel][BufferIdentity]") {
+    Fixture            fixture;
+    ned::text::Buffer& one = fixture.bufferList.CreateBuffer("one");
+    ned::text::Buffer& two = fixture.bufferList.CreateBuffer("two");
+    one.InsertAtPoint("unsaved");
+    two.InsertAtPoint("unsaved");
+
+    ned::ui::BufferListPanel panel(fixture.theme, fixture.bufferList);
+    panel.Show();
+    panel.Popup().TakeFocus();
+
+    REQUIRE(panel.Popup().OnEvent(ned::ui::test::Character('d')));
+    REQUIRE(panel.Popup().OnEvent(ned::ui::test::Character('d')));
+    REQUIRE(panel.Popup().OnEvent(ned::ui::test::Character('x'))); // both modified: asks y/n
+
+    REQUIRE(fixture.bufferList.Close("one"));
+    ned::text::Buffer& three = fixture.bufferList.CreateBuffer("three");
+    three.InsertAtPoint("unsaved");
+
+    REQUIRE(panel.Popup().OnEvent(ned::ui::test::Character('y')));
+    REQUIRE(fixture.bufferList.Find("two") == nullptr);
+    REQUIRE(fixture.bufferList.Find("three") == &three);
+}

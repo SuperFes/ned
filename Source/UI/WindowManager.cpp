@@ -517,6 +517,17 @@ namespace {
         return std::nullopt;
     }
 
+    // The live pane behind a shared overlay. When that pane has closed, the
+    // overlay is hidden instead, since nothing is left to answer it.
+    template <typename Owner, typename Model>
+    Pane* LiveOverlayOwner(const Owner& owner, const std::function<void(std::optional<Model>)>& onChanged) {
+        Pane* const pane = owner.Get();
+        if (pane == nullptr && onChanged) {
+            onChanged(std::nullopt);
+        }
+        return pane;
+    }
+
 } // namespace
 
 WindowManager::WindowManager(text::Buffer& initialBuffer, text::KillRing& killRing, editor::RegisterTable& registers,
@@ -840,7 +851,7 @@ void WindowManager::SetOnContextMenuChanged(std::function<void(std::optional<Lis
 
 std::function<void(std::optional<TreeViewModel>)> WindowManager::WireHierarchyCallback(Pane* pane) {
     return [this, pane](std::optional<TreeViewModel> model) {
-        hierarchyOwnerPane_ = model ? pane : nullptr;
+        hierarchyOwner_ = model ? OverlayOwner(*pane) : OverlayOwner();
         if (onHierarchyChanged_) {
             onHierarchyChanged_(std::move(model));
         }
@@ -855,38 +866,38 @@ void WindowManager::SetOnHierarchyChanged(std::function<void(std::optional<TreeV
 }
 
 void WindowManager::HierarchyActivate(std::size_t index) {
-    if (hierarchyOwnerPane_) {
-        hierarchyOwnerPane_->Buffer().HierarchyActivate(index);
+    if (Pane* owner = LiveOverlayOwner(hierarchyOwner_, onHierarchyChanged_)) {
+        owner->Buffer().HierarchyActivate(index);
     }
 }
 
 void WindowManager::HierarchyToggleExpand(std::size_t index) {
-    if (hierarchyOwnerPane_) {
-        hierarchyOwnerPane_->Buffer().HierarchyToggleExpand(index);
+    if (Pane* owner = LiveOverlayOwner(hierarchyOwner_, onHierarchyChanged_)) {
+        owner->Buffer().HierarchyToggleExpand(index);
     }
 }
 
 void WindowManager::HierarchyCollapse(std::size_t index) {
-    if (hierarchyOwnerPane_) {
-        hierarchyOwnerPane_->Buffer().HierarchyCollapse(index);
+    if (Pane* owner = LiveOverlayOwner(hierarchyOwner_, onHierarchyChanged_)) {
+        owner->Buffer().HierarchyCollapse(index);
     }
 }
 
 void WindowManager::HierarchyCancel() {
-    if (hierarchyOwnerPane_) {
-        hierarchyOwnerPane_->Buffer().HierarchyCancel();
+    if (Pane* owner = LiveOverlayOwner(hierarchyOwner_, onHierarchyChanged_)) {
+        owner->Buffer().HierarchyCancel();
     }
 }
 
 void WindowManager::HierarchySelectionChanged(std::size_t index) {
-    if (hierarchyOwnerPane_) {
-        hierarchyOwnerPane_->Buffer().HierarchySelectionChanged(index);
+    if (Pane* owner = LiveOverlayOwner(hierarchyOwner_, onHierarchyChanged_)) {
+        owner->Buffer().HierarchySelectionChanged(index);
     }
 }
 
 std::function<void(std::optional<TreeViewModel>)> WindowManager::WirePointerGraphCallback(Pane* pane) {
     return [this, pane](std::optional<TreeViewModel> model) {
-        pointerGraphOwnerPane_ = model ? pane : nullptr;
+        pointerGraphOwner_ = model ? OverlayOwner(*pane) : OverlayOwner();
         if (onPointerGraphChanged_) {
             onPointerGraphChanged_(std::move(model));
         }
@@ -901,38 +912,38 @@ void WindowManager::SetOnPointerGraphChanged(std::function<void(std::optional<Tr
 }
 
 void WindowManager::PointerGraphActivate(std::size_t index) {
-    if (pointerGraphOwnerPane_) {
-        pointerGraphOwnerPane_->Buffer().PointerGraphActivate(index);
+    if (Pane* owner = LiveOverlayOwner(pointerGraphOwner_, onPointerGraphChanged_)) {
+        owner->Buffer().PointerGraphActivate(index);
     }
 }
 
 void WindowManager::PointerGraphToggleExpand(std::size_t index) {
-    if (pointerGraphOwnerPane_) {
-        pointerGraphOwnerPane_->Buffer().PointerGraphToggleExpand(index);
+    if (Pane* owner = LiveOverlayOwner(pointerGraphOwner_, onPointerGraphChanged_)) {
+        owner->Buffer().PointerGraphToggleExpand(index);
     }
 }
 
 void WindowManager::PointerGraphCollapse(std::size_t index) {
-    if (pointerGraphOwnerPane_) {
-        pointerGraphOwnerPane_->Buffer().PointerGraphCollapse(index);
+    if (Pane* owner = LiveOverlayOwner(pointerGraphOwner_, onPointerGraphChanged_)) {
+        owner->Buffer().PointerGraphCollapse(index);
     }
 }
 
 void WindowManager::PointerGraphCancel() {
-    if (pointerGraphOwnerPane_) {
-        pointerGraphOwnerPane_->Buffer().PointerGraphCancel();
+    if (Pane* owner = LiveOverlayOwner(pointerGraphOwner_, onPointerGraphChanged_)) {
+        owner->Buffer().PointerGraphCancel();
     }
 }
 
 void WindowManager::PointerGraphSelectionChanged(std::size_t index) {
-    if (pointerGraphOwnerPane_) {
-        pointerGraphOwnerPane_->Buffer().PointerGraphSelectionChanged(index);
+    if (Pane* owner = LiveOverlayOwner(pointerGraphOwner_, onPointerGraphChanged_)) {
+        owner->Buffer().PointerGraphSelectionChanged(index);
     }
 }
 
 std::function<void(std::optional<MemoryImageModel>)> WindowManager::WireMemoryImageCallback(Pane* pane) {
     return [this, pane](std::optional<MemoryImageModel> model) {
-        memoryImageOwnerPane_ = model ? pane : nullptr;
+        memoryImageOwner_ = model ? OverlayOwner(*pane) : OverlayOwner();
         if (onMemoryImageChanged_) {
             onMemoryImageChanged_(std::move(model));
         }
@@ -947,8 +958,8 @@ void WindowManager::SetOnMemoryImageChanged(std::function<void(std::optional<Mem
 }
 
 void WindowManager::MemoryImageCancel() {
-    if (memoryImageOwnerPane_) {
-        memoryImageOwnerPane_->Buffer().MemoryImageCancel();
+    if (Pane* owner = LiveOverlayOwner(memoryImageOwner_, onMemoryImageChanged_)) {
+        owner->Buffer().MemoryImageCancel();
     }
 }
 

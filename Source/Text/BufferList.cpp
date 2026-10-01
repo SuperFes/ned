@@ -274,6 +274,15 @@ Buffer* BufferList::Find(const std::string& name) {
     return nullptr;
 }
 
+Buffer* BufferList::Find(const BufferIdentity& identity) {
+    for (auto& buffer : buffers_) {
+        if (identity.Is(*buffer)) {
+            return buffer.get();
+        }
+    }
+    return nullptr;
+}
+
 const Buffer* BufferList::Find(const std::string& name) const {
     for (const auto& buffer : buffers_) {
         if (buffer->Name() == name) {

@@ -2148,7 +2148,7 @@ class BufferView : public Widget {
     struct HierarchySession {
         editor::ExpandableTree<editor::lsp::Manager::ResolvedHierarchyItem> tree;
         HierarchyDirection                                                     direction;
-        text::Buffer*                                                          buffer;
+        text::BufferIdentity                                                   buffer;
         std::string                                                            serverKey;
         std::string                                                            rootName; // for the TreeView's own border title
     };
@@ -2194,6 +2194,10 @@ class BufferView : public Widget {
     // the session the same way, only differing in whether a jump happens
     // first.
     void EndHierarchySession();
+
+    // The buffer identity names if it is still open -- the active buffer or
+    // one in bufferList_ -- or nullptr once it has closed.
+    [[nodiscard]] text::Buffer* LiveBuffer(const text::BufferIdentity& identity);
 
     // Debugging wishlist follow-up (pointer/linked-list graph view). Same
     // ExpandableTree-backed, TreeView-rendered browse-session shape as
@@ -4225,7 +4229,7 @@ class BufferView : public Widget {
     std::size_t                           promptHistoryIndex_ = kNoHistoryIndex;
     std::string                           promptHistoryStash_;
     std::optional<editor::ProjectReplace> projectReplace_;
-    text::Buffer*                         pendingClose_     = nullptr;               // buffer awaiting y/n in ConfirmCloseBuffer
+    text::BufferIdentity                  pendingClose_;                             // buffer awaiting y/n in ConfirmCloseBuffer
     TaskPromptAction                      taskPromptAction_ = TaskPromptAction::Run; // see InputMode::TaskName
 
     // open-binary-anyway follow-up: the path awaiting y/n in

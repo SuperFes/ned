@@ -87,19 +87,19 @@ void BufferListPanel::Show() {
 }
 
 void BufferListPanel::Refresh() {
-    const std::vector<text::Buffer*> previousRows = rows_;
-    const std::vector<bool>          previousKill = markedKill_;
-    const std::vector<bool>          previousSave = markedSave_;
+    const std::vector<text::BufferIdentity> previousRows = rows_;
+    const std::vector<bool>                 previousKill = markedKill_;
+    const std::vector<bool>                 previousSave = markedSave_;
 
     rows_.clear();
     markedKill_.clear();
     markedSave_.clear();
     for (const auto& buffer : bufferList_.Buffers()) {
-        rows_.push_back(buffer.get());
+        rows_.emplace_back(*buffer);
         bool wasKill = false;
         bool wasSave = false;
         for (std::size_t i = 0; i < previousRows.size(); ++i) {
-            if (previousRows[i] == buffer.get()) {
+            if (previousRows[i].Is(*buffer)) {
                 wasKill = i < previousKill.size() && previousKill[i];
                 wasSave = i < previousSave.size() && previousSave[i];
                 break;
@@ -112,6 +112,17 @@ void BufferListPanel::Refresh() {
 }
 
 void BufferListPanel::RefreshDisplay() {
+    std::vector<const text::Buffer*> live;
+    live.reserve(rows_.size());
+    for (const text::BufferIdentity& row : rows_) {
+        const text::Buffer* const buffer = bufferList_.Find(row);
+        if (buffer == nullptr) {
+            Refresh(); // a buffer closed elsewhere; Refresh rebuilds from live buffers only
+            return;
+        }
+        live.push_back(buffer);
+    }
+
     table::Model model;
     model.title   = confirming_ ? "Kill buffers? (y/n)" : "Buffers";
     model.columns = {
@@ -126,7 +137,7 @@ void BufferListPanel::RefreshDisplay() {
     };
     model.groups.emplace_back();
     for (std::size_t i = 0; i < rows_.size(); ++i) {
-        const text::Buffer& buffer = *rows_[i];
+        const text::Buffer& buffer = *live[i];
         std::string         marks;
         marks += markedKill_[i] ? 'D' : ' ';
         marks += markedSave_[i] ? 'S' : ' ';
@@ -149,11 +160,12 @@ void BufferListPanel::RefreshDisplay() {
 }
 
 std::optional<std::size_t> BufferListPanel::IndexOf(const std::string& name) const {
-    const auto found = std::ranges::find(rows_, name, &text::Buffer::Name);
-    if (found == rows_.end()) {
-        return std::nullopt;
+    for (std::size_t i = 0; i < rows_.size(); ++i) {
+        if (const text::Buffer* const buffer = bufferList_.Find(rows_[i]); buffer != nullptr && buffer->Name() == name) {
+            return i;
+        }
     }
-    return static_cast<std::size_t>(found - rows_.begin());
+    return std::nullopt;
 }
 
 std::optional<std::size_t> BufferListPanel::SelectedIndex() const {
@@ -166,7 +178,9 @@ void BufferListPanel::HandleActivate(const std::string& name) {
         return; // Enter/digit-pick is meaningless mid-confirmation
     }
     if (const std::optional<std::size_t> index = IndexOf(name); index && onRequestSwitchTo_) {
-        onRequestSwitchTo_(*rows_[*index]);
+        if (text::Buffer* const buffer = bufferList_.Find(rows_[*index])) {
+            onRequestSwitchTo_(*buffer);
+        }
     }
 }
 
@@ -253,7 +267,11 @@ void BufferListPanel::BeginExecute() {
             continue;
         }
         markedSave_[i]            = false;
-        text::Buffer& buffer      = *rows_[i];
+        text::Buffer* const live  = bufferList_.Find(rows_[i]);
+        if (live == nullptr) {
+            continue;
+        }
+        text::Buffer& buffer      = *live;
         const auto    noteFailure = [&](const std::string& reason) {
             saveFailures += (saveFailures.empty() ? "" : ", ") + buffer.Name() + " (" + reason + ")";
         };
@@ -282,7 +300,7 @@ void BufferListPanel::BeginExecute() {
 
     pendingKill_.clear();
     for (std::size_t i = 0; i < rows_.size(); ++i) {
-        if (markedKill_[i]) {
+        if (markedKill_[i] && bufferList_.Find(rows_[i]) != nullptr) {
             pendingKill_.push_back(rows_[i]);
         }
     }
@@ -290,8 +308,10 @@ void BufferListPanel::BeginExecute() {
         return;
     }
 
-    const bool anyModified =
-        std::any_of(pendingKill_.begin(), pendingKill_.end(), [](const text::Buffer* buffer) { return buffer->Modified(); });
+    const bool anyModified = std::ranges::any_of(pendingKill_, [this](const text::BufferIdentity& identity) {
+        const text::Buffer* const buffer = bufferList_.Find(identity);
+        return buffer != nullptr && buffer->Modified();
+    });
     if (anyModified) {
         confirming_ = true;
         RefreshDisplay();
@@ -302,7 +322,11 @@ void BufferListPanel::BeginExecute() {
 
 void BufferListPanel::ExecuteKill() {
     confirming_ = false;
-    for (text::Buffer* buffer : pendingKill_) {
+    for (const text::BufferIdentity& identity : pendingKill_) {
+        text::Buffer* const buffer = bufferList_.Find(identity);
+        if (buffer == nullptr) {
+            continue; // closed elsewhere while the confirmation was up
+        }
         if (onBufferClosing_) {
             onBufferClosing_(*buffer);
         }

@@ -2402,7 +2402,7 @@ void BufferView::EndInteractiveSession() {
     promptHistoryIndex_ = kNoHistoryIndex;
     promptHistoryStash_.clear();
     projectReplace_.reset();
-    pendingClose_ = nullptr;
+    pendingClose_ = {};
     pendingBinaryOpenPath_.clear();
     pendingOpenProjectRoot_.clear(); // session state, cleared with the rest of it
     pendingZapToCharAppend_ = false;
@@ -3684,8 +3684,10 @@ bufferview::ConfirmPrompt BufferView::ConfirmQuitPrompt() {
 bufferview::ConfirmPrompt BufferView::ConfirmCloseBufferPrompt() {
     // Captured now: ending the session clears pendingClose_, and it must be
     // clear before CloseBufferNow touches the active buffer.
-    return {.cancelMessage = "Close cancelled.", .onConfirm = [this, buffer = pendingClose_] {
-                if (buffer != nullptr) {
+    return {.cancelMessage = "Close cancelled.", .onConfirm = [this, closing = pendingClose_] {
+                // Looked up rather than kept as a pointer: it may have been
+                // closed elsewhere while the prompt was up.
+                if (text::Buffer* const buffer = LiveBuffer(closing)) {
                     CloseBufferNow(*buffer);
                 }
             }};

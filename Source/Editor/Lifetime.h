@@ -24,6 +24,9 @@ namespace ned::editor {
 
 class LifetimeToken {
   public:
+    // Not from any guard, so never alive.
+    LifetimeToken() = default;
+
     [[nodiscard]] bool Alive() const {
         return !alive_.expired();
     }

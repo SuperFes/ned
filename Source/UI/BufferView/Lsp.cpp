@@ -1670,7 +1670,7 @@ void BufferView::RequestHierarchyAtPoint(HierarchyDirection direction) {
         // BufferView.h): more than one match is rare enough that taking
         // the first is an acceptable v1 cut.
         editor::lsp::Manager::ResolvedHierarchyItem root = std::move(items.front());
-        HierarchySession                            session{.direction = direction, .buffer = &activeBuffer_.Get(), .serverKey = serverKey, .rootName = root.item.name};
+        HierarchySession                            session{.direction = direction, .buffer = text::BufferIdentity(activeBuffer_.Get()), .serverKey = serverKey, .rootName = root.item.name};
         session.tree.Reset({std::move(root)});
         hierarchySession_       = std::move(session);
         hierarchySelectedIndex_ = 0;
@@ -1705,11 +1705,18 @@ void BufferView::ExpandHierarchyNode(std::size_t index) {
         return;
     }
 
+    text::Buffer* const live = LiveBuffer(session.buffer);
+    if (live == nullptr) {
+        statusMessage_ = "The hierarchy's buffer was closed.";
+        EndHierarchySession();
+        return;
+    }
+
     session.tree.BeginLoading(index);
     PushHierarchyModel(); // shows the loading glyph immediately
 
     const editor::lsp::HierarchyItem item       = session.tree.At(index).data.item;
-    text::Buffer&                    buffer     = *session.buffer;
+    text::Buffer&                    buffer     = *live;
     const std::string                serverKey  = session.serverKey;
     const HierarchyDirection         direction  = session.direction;
     const std::size_t                generation = hierarchyRequest_.Begin();

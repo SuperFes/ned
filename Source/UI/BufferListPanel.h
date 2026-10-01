@@ -99,12 +99,14 @@ class BufferListPanel {
     text::BufferList& bufferList_;
     TableView         table_;
 
-    std::vector<text::Buffer*> rows_;       // BufferList's order as of the last Refresh(); ids are buffer names
-    std::vector<bool>          markedKill_; // index-parallel to rows_ -- d/D
-    std::vector<bool>          markedSave_; // index-parallel to rows_ -- s/S
+    // Identities, not pointers: a buffer can close elsewhere while the panel
+    // is up. RowBuffer resolves one, or rebuilds rows_ when it has gone.
+    std::vector<text::BufferIdentity> rows_;       // BufferList's order as of the last Refresh(); ids are buffer names
+    std::vector<bool>                 markedKill_; // index-parallel to rows_ -- d/D
+    std::vector<bool>                 markedSave_; // index-parallel to rows_ -- s/S
 
-    bool                       confirming_ = false;
-    std::vector<text::Buffer*> pendingKill_; // computed by x, executed on 'y'
+    bool                              confirming_ = false;
+    std::vector<text::BufferIdentity> pendingKill_; // computed by x, executed on 'y'
 
     std::function<void(text::Buffer&)> onRequestSwitchTo_;
     std::function<void()>              onCancel_;

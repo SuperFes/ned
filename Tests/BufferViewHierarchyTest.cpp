@@ -288,3 +288,64 @@ TEST_CASE("HierarchyActivate jumps to the selected row's location and ends the s
     REQUIRE(&fixture.activeBuffer.Get() == &buffer);
     REQUIRE(buffer.Point() == 0); // selectionRange.start {0,0}
 }
+
+TEST_CASE("Expanding a hierarchy whose buffer was closed ends the session without touching the buffer",
+          "[BufferView][Hierarchy][Lsp][BufferIdentity]") {
+    Fixture                     fixture;
+    const std::filesystem::path path   = std::filesystem::temp_directory_path() / "ned_hierarchy_closed_test.cpp";
+    ned::text::Buffer&          buffer = fixture.bufferList.OpenOrCreateFile(path);
+    buffer.InsertAtPoint("callee();\n");
+    buffer.SetPoint(0);
+    fixture.activeBuffer.Set(buffer);
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
+    FakeLspServer             server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    ned::ui::Screen screenBuf(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    std::vector<std::optional<ned::ui::TreeViewModel>> pushedModels;
+    view.SetOnHierarchyChanged([&](std::optional<ned::ui::TreeViewModel> model) { pushedModels.push_back(std::move(model)); });
+
+    view.RequestHierarchyAtPointForTesting(BufferView::HierarchyDirection::IncomingCalls);
+    const std::string prepareRaw = ReadRawLspFrame(server.serverStdinRead);
+    const auto        rootItem   = ned::editor::lsp::Json{
+        {"name", "callee"},
+        {"kind", 12},
+        {"uri", "file://" + path.string()},
+        {"selectionRange", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 6}}}}},
+    };
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"}, {"id", LspRequestIdFromFrame(prepareRaw)}, {"result", ned::editor::lsp::Json::array({rootItem})}}
+                              .dump());
+    const std::string incomingRaw = ReadRawLspFrame(server.serverStdinRead);
+    const auto        callerItem  = ned::editor::lsp::Json{
+        {"name", "caller"},
+        {"kind", 12},
+        {"uri", "file://" + path.string()},
+        {"selectionRange", {{"start", {{"line", 0}, {"character", 0}}}, {"end", {{"line", 0}, {"character", 6}}}}},
+    };
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(incomingRaw)},
+        {"result", ned::editor::lsp::Json::array({{{"from", callerItem}, {"fromRanges", ned::editor::lsp::Json::array()}}})},
+    }
+                              .dump());
+    REQUIRE(pushedModels.back().has_value());
+    REQUIRE(pushedModels.back()->rows.size() == 2);
+
+    fixture.activeBuffer.Set(fixture.buffer);
+    REQUIRE(fixture.bufferList.Close(buffer.Name()));
+
+    view.HierarchyToggleExpand(1);
+
+    REQUIRE_FALSE(pushedModels.back().has_value());
+    REQUIRE(NoFrameArrives(server.serverStdinRead));
+}

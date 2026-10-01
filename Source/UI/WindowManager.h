@@ -42,6 +42,7 @@
 #include "Editor/Dispatcher.h"
 #include "Editor/FileWatch.h"
 #include "Editor/Keymap.h"
+#include "Editor/Lifetime.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/MergeView.h"
 #include "Editor/Mode.h"
@@ -158,6 +159,10 @@ class Pane {
     // merely visited it in the past.
     void ClearBufferCaches(text::Buffer& buffer);
 
+    [[nodiscard]] editor::LifetimeToken Lifetime() const {
+        return lifetime_.Token();
+    }
+
   private:
     ActiveBuffer                       activeBuffer_;
     editor::Mode                       mode_; // owned copy -- see the class comment above
@@ -186,6 +191,8 @@ class Pane {
     Container scrollColumn_;
     Container row_;
     Container component_;
+
+    editor::LifetimeGuard lifetime_; // last, so it expires first
 };
 
 // A recursive binary tree: a Leaf is one live Pane; a SplitBelow/SplitRight
@@ -436,7 +443,7 @@ class WindowManager {
     // shape the way SetOnCandidatesChanged/SetOnCompletionChanged above
     // are -- each pane's BufferView is wrapped in its own small forwarding
     // lambda (WireHierarchyCallback) that first records which Pane just
-    // showed/hid the shared TreeView overlay (hierarchyOwnerPane_) before
+    // showed/hid the shared TreeView overlay (hierarchyOwner_) before
     // calling the handler main.cpp gave here. That's what lets
     // HierarchyActivate/HierarchyToggleExpand/HierarchyCollapse/
     // HierarchyCancel/HierarchySelectionChanged below route back to the
@@ -448,7 +455,7 @@ class WindowManager {
     // SetOnHierarchyChanged's own doc comment.
     void SetOnHierarchyChanged(std::function<void(std::optional<TreeViewModel>)> onHierarchyChanged);
 
-    // Routes to hierarchyOwnerPane_ (see SetOnHierarchyChanged above), not
+    // Routes to hierarchyOwner_ (see SetOnHierarchyChanged above), not
     // FocusedPane() -- a no-op if no session is currently visible anywhere.
     // Wired to the shared TreeView overlay's own SetOnActivate/
     // SetOnToggleExpand/SetOnCollapseRequested/SetOnCancel/
@@ -465,11 +472,11 @@ class WindowManager {
     // hierarchy browser's (see main.cpp), not a reuse of the same one, since
     // Manager is a single global session rather than per-buffer/per-pane
     // the way LSP is; still needs the same owner-pane bookkeeping
-    // (pointerGraphOwnerPane_) for the same reason SetOnHierarchyChanged
+    // (pointerGraphOwner_) for the same reason SetOnHierarchyChanged
     // does -- see that method's own doc comment above.
     void SetOnPointerGraphChanged(std::function<void(std::optional<TreeViewModel>)> onPointerGraphChanged);
 
-    // Routes to pointerGraphOwnerPane_ (see SetOnPointerGraphChanged above),
+    // Routes to pointerGraphOwner_ (see SetOnPointerGraphChanged above),
     // not FocusedPane() -- HierarchyActivate/etc.'s own mirror, wired to the
     // pointer-graph TreeView overlay's own SetOnActivate/SetOnToggleExpand/
     // SetOnCollapseRequested/SetOnCancel/SetOnSelectionChanged in main.cpp.
@@ -481,7 +488,7 @@ class WindowManager {
 
     // Debugging wishlist follow-up (memory-as-image viewer):
     // SetOnPointerGraphChanged's own mirror for the read-only MemoryImageView
-    // overlay -- same owner-pane bookkeeping (memoryImageOwnerPane_), just a
+    // overlay -- same owner-pane bookkeeping (memoryImageOwner_), just a
     // single Cancel router instead of the five-method activate/expand/
     // collapse/selection set (there's nothing else to route: the overlay is
     // a static display, not a navigable list).
@@ -883,6 +890,23 @@ class WindowManager {
     [[nodiscard]] std::string AsyncSaveStatus() const;
 
   private:
+    // The pane that showed a shared overlay, held weakly: the pane can close
+    // while the overlay is still up.
+    class OverlayOwner {
+      public:
+        OverlayOwner() = default;
+        explicit OverlayOwner(Pane& pane) : pane_(&pane), alive_(pane.Lifetime()) {
+        }
+
+        [[nodiscard]] Pane* Get() const {
+            return alive_.Alive() ? pane_ : nullptr;
+        }
+
+      private:
+        Pane*                 pane_ = nullptr;
+        editor::LifetimeToken alive_;
+    };
+
     // Drops any asyncFileLoaders_ entries that have finished (AsyncFileLoader
     // ::Done()) -- called opportunistically whenever a new load starts,
     // rather than on a separate timer; there are only ever as many entries
@@ -1037,13 +1061,13 @@ class WindowManager {
     // call/type-hierarchy follow-up: onHierarchyChanged_ is the handler
     // main.cpp gave SetOnHierarchyChanged, called from inside each pane's
     // own per-pane wrapper (WireHierarchyCallback) rather than forwarded
-    // directly the way onCandidatesChanged_ is. hierarchyOwnerPane_ is
+    // directly the way onCandidatesChanged_ is. hierarchyOwner_ is
     // that wrapper's own bookkeeping: whichever Pane most recently showed
-    // (non-nullopt model) the shared overlay, cleared back to nullptr the
-    // moment any pane hides it (nullopt model) -- see SetOnHierarchyChanged's
+    // (non-nullopt model) the shared overlay, cleared the moment any pane
+    // hides it (nullopt model) -- see SetOnHierarchyChanged's
     // own doc comment for why FocusedPane() can't serve this role instead.
     std::function<void(std::optional<TreeViewModel>)> onHierarchyChanged_;
-    Pane*                                             hierarchyOwnerPane_ = nullptr;
+    OverlayOwner                                      hierarchyOwner_;
 
     // Builds the per-pane wrapper SetOnHierarchyChanged/MakePane both need
     // -- factored out so the two call sites can't drift apart.
@@ -1053,13 +1077,13 @@ class WindowManager {
     // above pair's own mirror, for the pointer-graph session's own shared
     // TreeView overlay.
     std::function<void(std::optional<TreeViewModel>)>               onPointerGraphChanged_;
-    Pane*                                                           pointerGraphOwnerPane_ = nullptr;
+    OverlayOwner                                                    pointerGraphOwner_;
     [[nodiscard]] std::function<void(std::optional<TreeViewModel>)> WirePointerGraphCallback(Pane* pane);
 
     // Debugging wishlist follow-up (memory-as-image viewer): the pair
     // above's own mirror, for the read-only MemoryImageView overlay.
     std::function<void(std::optional<MemoryImageModel>)>               onMemoryImageChanged_;
-    Pane*                                                              memoryImageOwnerPane_ = nullptr;
+    OverlayOwner                                                       memoryImageOwner_;
     [[nodiscard]] std::function<void(std::optional<MemoryImageModel>)> WireMemoryImageCallback(Pane* pane);
 
     // The layout a merge view replaced, rebuilt when it closes. Buffers are
