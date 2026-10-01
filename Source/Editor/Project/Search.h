@@ -28,6 +28,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <vector>
 
@@ -61,8 +62,10 @@ class SearchPatternError : public std::runtime_error {
 // backreferences, no lookaround), returning one SearchMatch per matching
 // line, in the order files are visited then top-to-bottom within each file.
 // Throws SearchPatternError on invalid pattern syntax. Returns an empty list
-// rather than throwing if root doesn't exist or can't be listed.
-[[nodiscard]] std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, const std::string& pattern);
+// rather than throwing if root doesn't exist or can't be listed, or once stop
+// is requested -- checked between files, so a cancelled search ends promptly.
+[[nodiscard]] std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, const std::string& pattern,
+                                                       const std::stop_token& stop = {});
 
 // live-buffer-search follow-up: the same search, but an open buffer's own
 // content is what gets searched instead of its file. Editing a file and then

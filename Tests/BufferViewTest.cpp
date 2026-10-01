@@ -8334,7 +8334,7 @@ TEST_CASE(
     // The typed query below is 3+ characters, which also satisfies
     // kMinSearchEverywhereTextQueryLength and would otherwise arm the
     // unrelated text-search category too (MaybeArmSearchEverywhereTextSearch),
-    // spawning its own detached background thread (RequestSearchEverywhereTextSearch)
+    // spawning its own background thread (RequestSearchEverywhereTextSearch)
     // that this test never waits for -- see the "background text search"
     // test below for the wait/drain that thread actually needs. This test
     // is scoped to workspace/symbol alone, so keep text search off entirely
@@ -8425,7 +8425,7 @@ TEST_CASE("search-everywhere debounces a background text search and Enter opens 
 
     std::this_thread::sleep_for(std::chrono::milliseconds(600)); // past the debounce
     REQUIRE(eventLoop.DrainPosted_());                           // runs the debounce timer's fire callback, which
-                                                                  // spawns (and detaches) the background search thread
+                                                                 // spawns the background search thread
 
     // That thread still needs to actually run SearchDirectory and Post its
     // result back -- a second, independent wait/drain from the debounce

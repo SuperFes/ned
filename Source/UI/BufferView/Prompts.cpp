@@ -4873,22 +4873,23 @@ void BufferView::RequestSearchEverywhereTextSearch() {
     const editor::LifetimeToken alive = lifetime_.Token();
     BufferView*                 self  = this;
 
-    // Deliberately detached, not joined anywhere: Editor::SearchDirectory
-    // has no stop-token to honor, so nothing would be gained by keeping a
-    // handle to this thread except the ability to block on it -- and
-    // blocking a tab-close on a full-corpus regex scan finishing is a much
-    // worse tradeoff than the alive-flag/stale-token checks below already
-    // cover. The disk-only overload is deliberate too: the live-buffer-aware
-    // one requires its BufferList snapshot to happen on the *calling*
-    // thread, which would be this background thread here, not the main
-    // thread BufferList is otherwise never touched from.
-    std::thread([loop, alive, self, token, root, pattern] {
+    // Replacing the thread stops and joins the previous search, which checks
+    // its stop token between files, so a superseded or closed search ends
+    // promptly instead of running on past this view. The disk-only overload
+    // is deliberate: the live-buffer-aware one requires its BufferList
+    // snapshot to happen on the *calling* thread, which would be this
+    // background thread here, not the main thread BufferList is otherwise
+    // never touched from.
+    searchEverywhereTextSearchThread_ = std::jthread([loop, alive, self, token, root, pattern](const std::stop_token& stop) {
         std::vector<editor::SearchMatch> matches;
         try {
-            matches = editor::SearchDirectory(root, pattern);
+            matches = editor::SearchDirectory(root, pattern, stop);
         }
         catch (const editor::SearchPatternError&) {
             return; // can't happen -- RE2::QuoteMeta always produces a valid literal pattern
+        }
+        if (stop.stop_requested()) {
+            return;
         }
         if (matches.size() > kMaxSearchEverywhereTextMatches) {
             matches.resize(kMaxSearchEverywhereTextMatches);
@@ -4896,7 +4897,7 @@ void BufferView::RequestSearchEverywhereTextSearch() {
         loop->Post(alive.Bind([self, token, matches = std::move(matches)] {
             self->ApplySearchEverywhereTextMatches(token, matches);
         }));
-    }).detach();
+    });
 }
 
 void BufferView::ApplySearchEverywhereTextMatches(bufferview::RequestSlot::Token          token,

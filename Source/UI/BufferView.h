@@ -25,6 +25,7 @@
 #include <set>
 #include <span>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -5442,6 +5443,7 @@ class BufferView : public Widget {
     bufferview::RequestSlot  searchEverywhereWorkspaceSymbolRequest_;
     DeadlineTimer            searchEverywhereTextSearchTimer_;
     bufferview::RequestSlot  searchEverywhereTextSearchRequest_;
+    std::jthread             searchEverywhereTextSearchThread_; // see RequestSearchEverywhereTextSearch
 
     bufferview::EditorContext context_;
 

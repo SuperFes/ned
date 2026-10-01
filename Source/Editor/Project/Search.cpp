@@ -32,7 +32,8 @@ namespace {
     // recursive_directory_iterator has no thread-safe way to be shared
     // across threads, and the walk itself was never the slow part (reading
     // + regex-matching every line of every file was).
-    std::vector<std::filesystem::path> CollectSearchableFiles(const std::filesystem::path& absoluteRoot) {
+    std::vector<std::filesystem::path> CollectSearchableFiles(const std::filesystem::path& absoluteRoot,
+                                                              const std::stop_token&       stop = {}) {
         std::vector<std::filesystem::path> files;
 
         std::error_code ec;
@@ -49,7 +50,7 @@ namespace {
         const GitIgnoreMatcher& gitIgnore = CachedGitIgnoreMatcher(absoluteRoot);
 
         for (; it != end; it.increment(ec)) {
-            if (ec) {
+            if (ec || stop.stop_requested()) {
                 break;
             }
 
@@ -282,7 +283,8 @@ namespace {
     std::vector<SearchMatch> SearchFilesParallel(const std::vector<std::filesystem::path>&           files,
                                                  const std::vector<const std::string*>&              liveText,
                                                  const std::vector<const std::vector<SearchMatch>*>& preScanned,
-                                                 const re2::RE2&                                     regex) {
+                                                 const re2::RE2&                                     regex,
+                                                 const std::stop_token&                              stop = {}) {
         if (files.empty()) {
             return {};
         }
@@ -301,7 +303,7 @@ namespace {
         auto worker = [&]() {
             for (;;) {
                 const std::size_t i = nextIndex.fetch_add(1, std::memory_order_relaxed);
-                if (i >= files.size()) {
+                if (i >= files.size() || stop.stop_requested()) {
                     return;
                 }
                 if (preScanned[i] != nullptr) {
@@ -327,6 +329,9 @@ namespace {
             // workers' destructor joins every thread here, before perFile is
             // read below.
         }
+        if (stop.stop_requested()) {
+            return {};
+        }
 
         std::size_t total = 0;
         for (const std::vector<SearchMatch>& m : perFile) {
@@ -343,7 +348,8 @@ namespace {
 
 } // namespace
 
-std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, const std::string& pattern) {
+std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, const std::string& pattern,
+                                         const std::stop_token& stop) {
     re2::RE2::Options options;
     // This is a live TUI app -- RE2's default logging on a parse failure
     // writes straight to stderr, which would corrupt the terminal display
@@ -362,9 +368,9 @@ std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, cons
         return {};
     }
 
-    std::vector<std::filesystem::path> files = CollectSearchableFiles(absoluteRoot);
+    std::vector<std::filesystem::path> files = CollectSearchableFiles(absoluteRoot, stop);
     return SearchFilesParallel(files, std::vector<const std::string*>(files.size(), nullptr),
-                               std::vector<const std::vector<SearchMatch>*>(files.size(), nullptr), regex);
+                               std::vector<const std::vector<SearchMatch>*>(files.size(), nullptr), regex, stop);
 }
 
 std::vector<SearchMatch> SearchFiles(const std::vector<std::filesystem::path>& files, const std::string& pattern,

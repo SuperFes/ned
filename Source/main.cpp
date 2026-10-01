@@ -546,6 +546,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
 
     Ned::Application::SetTitle("Ned");
 
+    // Declared first so it is destroyed last: the window tree, its panes'
+    // timers and the file watcher are declared below and post to the loop
+    // from their own threads until they are destroyed. Constructed further
+    // down, where the terminal is taken over.
+    std::optional<EventLoop> eventLoopStorage;
+
     ned::text::BufferList bufferList;
     std::string           statusMessage;
 
@@ -1382,7 +1388,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // alternate screen buffer, places the cursor, and starts reading stdin
     // (nothing may read stdin before this point -- EventLoop's constructor
     // is what calls notcurses_core_init, which is what starts doing so).
-    EventLoop eventLoop;
+    EventLoop& eventLoop = eventLoopStorage.emplace();
 
     // background-mode-prewarm follow-up: builds every already-open buffer's
     // Mode (tree-sitter parse included) on a background thread right now,
@@ -3609,13 +3615,9 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     static constexpr char kTitlePop[] = "\x1b[23;2t";
     std::ignore                       = ::write(STDOUT_FILENO, kTitlePop, sizeof(kTitlePop) - 1); // best-effort
 
-    // Pixel-blitter-minimap follow-up: must run before eventLoop itself is
-    // destroyed (which happens at this function's own closing brace,
-    // *before* windowManager -- windowManager was declared earlier in this
-    // function, so it's destroyed later, after ~EventLoop already called
-    // notcurses_stop -- see WindowManager::ReleaseMinimapPixelPlanes()'s own
-    // doc comment for why that ordering makes a plane torn down by
-    // ~Minimap() itself a real, confirmed SIGABRT).
+    // Pixel-blitter-minimap follow-up: planes are released while notcurses
+    // is still up -- see WindowManager::ReleaseMinimapPixelPlanes()'s own doc
+    // comment for the SIGABRT a plane torn down after notcurses_stop causes.
     windowManager->ReleaseMinimapPixelPlanes();
 
     // NED_DEBUG_SHUTDOWN (terminal-panel follow-up, mirroring

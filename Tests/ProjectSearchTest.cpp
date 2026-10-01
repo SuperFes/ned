@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <stop_token>
 #include <string>
 
 #include "Editor/Project/Search.h"
@@ -548,4 +549,21 @@ TEST_CASE("SearchFiles searches an open modified buffer's content instead of its
 TEST_CASE("SearchFiles reports an invalid pattern the same way SearchDirectory does", "[ProjectSearch]") {
     ned::text::BufferList bufferList;
     REQUIRE_THROWS_AS(SearchFiles({}, "(unclosed", bufferList), SearchPatternError);
+}
+
+TEST_CASE("SearchDirectory stops early and returns nothing once stop is requested", "[ProjectSearch]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_stopped";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    {
+        std::ofstream(dir / "a.txt") << "needle\n";
+    }
+
+    std::stop_source stop;
+    stop.request_stop();
+
+    REQUIRE(SearchDirectory(dir, "needle", stop.get_token()).empty());
+    REQUIRE(SearchDirectory(dir, "needle", std::stop_source().get_token()).size() == 1);
+
+    std::filesystem::remove_all(dir);
 }
