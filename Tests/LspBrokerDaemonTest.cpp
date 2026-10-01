@@ -7,7 +7,8 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
-#include <sstream>
+#include <mutex>
+#include <streambuf>
 #include <string>
 #include <thread>
 #include <vector>
@@ -80,6 +81,35 @@ BrokerDaemonOptions TestOptions(const std::filesystem::path& socketPath,
 // joining it would hang the whole test binary instead of failing one
 // TEST_CASE. The daemon is kept alive by the shared_ptr the thread
 // captured, so a detached thread never touches a destroyed object.
+// The daemon's threads log while the test reads what they logged, so the
+// capture is locked; a plain stringbuf would be a data race.
+class LockedStringBuf : public std::streambuf {
+  public:
+    [[nodiscard]] std::string Contents() {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        return text_;
+    }
+
+  protected:
+    int_type overflow(int_type ch) override {
+        if (!traits_type::eq_int_type(ch, traits_type::eof())) {
+            const std::lock_guard<std::mutex> lock(mutex_);
+            text_ += traits_type::to_char_type(ch);
+        }
+        return traits_type::not_eof(ch);
+    }
+
+    std::streamsize xsputn(const char* s, std::streamsize n) override {
+        const std::lock_guard<std::mutex> lock(mutex_);
+        text_.append(s, static_cast<std::size_t>(n));
+        return n;
+    }
+
+  private:
+    std::mutex  mutex_;
+    std::string text_;
+};
+
 struct DaemonHarness {
     // broker-info follow-up: what the daemon thread writes lives behind a
     // shared_ptr rather than in this struct. The destructor below detaches
@@ -98,7 +128,7 @@ struct DaemonHarness {
     std::shared_ptr<RunState>     state = std::make_shared<RunState>();
     std::thread                   thread;
     std::filesystem::path         socketPath;
-    std::stringstream             capturedLog;
+    LockedStringBuf               capturedLog;
     std::streambuf*               previousCerr = nullptr;
 
     explicit DaemonHarness(const std::string& suffix, std::chrono::milliseconds wholeDaemonIdleTimeout = std::chrono::seconds(1))
@@ -107,7 +137,7 @@ struct DaemonHarness {
         // The daemon logs to stderr by design; capture it so the test
         // output stays readable *and* so the assertions below can be
         // about what the daemon actually did, not just that it exited.
-        previousCerr = std::cerr.rdbuf(capturedLog.rdbuf());
+        previousCerr = std::cerr.rdbuf(&capturedLog);
         daemon       = std::make_shared<BrokerDaemon>(TestOptions(socketPath, wholeDaemonIdleTimeout));
         thread       = std::thread([held = daemon, state = state] {
             state->exitCode = held->Run();
@@ -153,7 +183,7 @@ struct DaemonHarness {
     }
 
     [[nodiscard]] std::string Log() {
-        return capturedLog.str();
+        return capturedLog.Contents();
     }
 };
 

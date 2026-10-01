@@ -5,6 +5,7 @@
 #include <cstring>
 #include <ctime>
 #include <iostream>
+#include <mutex>
 
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -58,6 +59,10 @@ namespace {
         ::localtime_r(&t, &tmBuf);
         char timeBuf[16];
         std::strftime(timeBuf, sizeof(timeBuf), "%H:%M:%S", &tmBuf);
+        // Called from every connection's thread; a stream's own state is not
+        // safe to share between threads.
+        static std::mutex                 logMutex;
+        const std::lock_guard<std::mutex> lock(logMutex);
         std::cerr << '[' << timeBuf << "] " << message << '\n';
     }
 
