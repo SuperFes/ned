@@ -289,7 +289,7 @@ bool Viewport::VisibleRowCountAtLeast(std::size_t startLine, std::size_t endLine
 
 void Viewport::EnsureTopLineValidForActiveBuffer() {
     text::Buffer& buffer = context_.activeBuffer.Get();
-    if (topLineValidatedBuffer_ == &buffer) {
+    if (topLineValidatedBuffer_.Is(buffer)) {
         // A place restored at construction was clamped by point's own line
         // rather than by MaxTopLine(), which was unknowable then (0x0 widget).
         // Redo it properly now that there is a size: a file that shrank
@@ -304,7 +304,7 @@ void Viewport::EnsureTopLineValidForActiveBuffer() {
         return;
     }
     topLineNeedsSizeClamp_  = false;
-    topLineValidatedBuffer_ = &buffer;
+    topLineValidatedBuffer_ = text::BufferIdentity(buffer);
     host_.dismissHover(); // hover-tooltips follow-up: a tooltip from the previous buffer means nothing here
     // session-persistence slice 1: a stored viewport for this buffer wins
     // over whatever topLine_ the previous buffer left behind -- this seam
@@ -682,7 +682,7 @@ void Viewport::RestoreInitialPlace() {
     // from the very first paint, which would otherwise reset topLine_ and throw
     // away any scroll a wheel or scroll-bar event made before that paint -- a
     // real regression this exact seeding once introduced, caught by a test.
-    topLineValidatedBuffer_ = &context_.activeBuffer.Get();
+    topLineValidatedBuffer_ = text::BufferIdentity(context_.activeBuffer.Get());
 
     // Clamped by the line point is on rather than MaxTopLine(), which is
     // meaningless here: the widget is still 0x0 at construction. A consistently

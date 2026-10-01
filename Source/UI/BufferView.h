@@ -91,6 +91,7 @@
 #include "ScrollArrowButton.h"
 #include "ScrollBar.h"
 #include "Text/Buffer.h"
+#include "Text/BufferIdentity.h"
 #include "Text/BufferList.h"
 #include "Text/ConflictHunk.h"
 #include "Text/DisplayWidth.h"
@@ -3988,7 +3989,7 @@ class BufferView : public Widget {
     // switch" precedent exactly -- avoids firing onActiveBufferChanged_
     // (and thus one redundant Mode rebuild) at startup, when the owning
     // Pane already constructed its Mode correctly for this same buffer.
-    text::Buffer* modeSyncBuffer_ = nullptr;
+    text::BufferIdentity modeSyncBuffer_;
 
     // initial-buffer-diff fix: which buffer the diff gutter was last
     // requested for -- deliberately NOT seeded at construction, unlike
@@ -3998,7 +3999,7 @@ class BufferView : public Widget {
     // buffer's diff request too (the file ned was launched on never got
     // markers until an edit/save fired one). See Paint()'s own comment at
     // the use site.
-    text::Buffer* diffSyncBuffer_ = nullptr;
+    text::BufferIdentity diffSyncBuffer_;
 
     std::size_t dragAnchor_ = 0; // point position at the last mouse press, for drag-selection
     // Double/triple-click word/line selection: mirrors ProjectSidebar's own

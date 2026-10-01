@@ -1111,8 +1111,8 @@ void BufferView::SyncScrollWidgets(std::size_t totalLines, std::size_t renderEnd
 void BufferView::SyncBufferSwitch() {
     text::Buffer& buffer = activeBuffer_.Get();
 
-    if (modeSyncBuffer_ != &buffer) {
-        modeSyncBuffer_ = &buffer;
+    if (!modeSyncBuffer_.Is(buffer)) {
+        modeSyncBuffer_ = text::BufferIdentity(buffer);
         if (onActiveBufferChanged_) {
             onActiveBufferChanged_(buffer);
         }
@@ -1147,8 +1147,8 @@ void BufferView::SyncBufferSwitch() {
     // gdb (RequestDiffForCurrentBuffer never called at all), not assumed.
     // diffSyncBuffer_ starts null instead, so a pane's very first Paint()
     // fetches its buffer's diff.
-    if (diffSyncBuffer_ != &buffer) {
-        diffSyncBuffer_ = &buffer;
+    if (!diffSyncBuffer_.Is(buffer)) {
+        diffSyncBuffer_ = text::BufferIdentity(buffer);
         diffLineKinds_.clear();
         RequestDiffForCurrentBuffer();
     }

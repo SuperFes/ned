@@ -63,6 +63,7 @@ add_library(ned_lib STATIC
         Text/UndoTree.cpp
         Text/KillRing.cpp
         Text/Buffer.cpp
+        Text/BufferIdentity.cpp
         Text/BufferList.cpp
         Text/BinaryDetect.cpp
         Text/LineDiff.cpp

@@ -167,12 +167,12 @@ const std::vector<text::ConflictHunk>& GutterModel::ConflictHunks() const {
 }
 
 void GutterModel::SetVcsConflictVerdict(const text::Buffer* buffer, VcsConflictVerdict verdict) {
-    vcsConflictBuffer_  = buffer;
+    vcsConflictBuffer_  = buffer != nullptr ? text::BufferIdentity(*buffer) : text::BufferIdentity();
     vcsConflictVerdict_ = verdict;
 }
 
 GutterModel::VcsConflictVerdict GutterModel::VcsConflictVerdictFor(const text::Buffer* buffer) const {
-    if (buffer == nullptr || buffer != vcsConflictBuffer_) {
+    if (buffer == nullptr || !vcsConflictBuffer_.Is(*buffer)) {
         return VcsConflictVerdict::Unknown;
     }
     return vcsConflictVerdict_;

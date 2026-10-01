@@ -38,6 +38,7 @@
 
 #include "Editor/Org.h"
 #include "Text/Buffer.h"
+#include "Text/BufferIdentity.h"
 #include "Text/ITextStorage.h"
 #include "UI/BufferView/CacheStamp.h"
 #include "UI/BufferView/EditorContext.h"
@@ -192,7 +193,7 @@ class Viewport {
     std::size_t leftColumn_ = 0;
     // Which buffer topLine_ was last validated against, so a genuine switch is
     // distinguishable from the first paint.
-    text::Buffer* topLineValidatedBuffer_ = nullptr;
+    text::BufferIdentity topLineValidatedBuffer_;
 
     // RestoreInitialPlace() runs before this widget has a size, so it cannot
     // clamp a restored topLine_ by MaxTopLine() -- it settles for point's own

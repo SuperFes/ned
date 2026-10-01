@@ -228,6 +228,7 @@ add_executable(ned_tests
             DesktopThemeProbeTest.cpp
             ActiveBufferTest.cpp
             CacheStampTest.cpp
+            BufferIdentityTest.cpp
             CandidateListTest.cpp
             RequestSlotTest.cpp
             LifetimeTest.cpp

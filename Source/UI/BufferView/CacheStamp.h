@@ -38,9 +38,7 @@
 #include <cstddef>
 #include <initializer_list>
 
-namespace ned::text {
-class Buffer;
-} // namespace ned::text
+#include "Text/BufferIdentity.h"
 
 namespace ned::ui::bufferview {
 
@@ -58,7 +56,7 @@ class CacheStamp {
 
     [[nodiscard]] static CacheStamp For(const text::Buffer* buffer, std::initializer_list<std::size_t> values) {
         CacheStamp stamp;
-        stamp.buffer_ = buffer;
+        stamp.buffer_ = buffer != nullptr ? text::BufferIdentity(*buffer) : text::BufferIdentity();
         stamp.count_  = std::min(values.size(), kMaxValues);
         std::copy_n(values.begin(), stamp.count_, stamp.values_.begin());
         return stamp;
@@ -68,7 +66,7 @@ class CacheStamp {
     // An empty stamp on either side never matches: a cache that was never
     // computed, or was explicitly invalidated, has to be rebuilt.
     [[nodiscard]] bool Matches(const CacheStamp& other) const {
-        if (buffer_ == nullptr || other.buffer_ == nullptr) {
+        if (buffer_.Empty() || other.buffer_.Empty()) {
             return false;
         }
         return buffer_ == other.buffer_ && count_ == other.count_ &&
@@ -86,11 +84,11 @@ class CacheStamp {
     // Whether this stamp is for that buffer, for the "drop the caches belonging
     // to a buffer that is going away" sweep. An empty stamp is for no buffer.
     [[nodiscard]] bool IsFor(const text::Buffer* buffer) const {
-        return buffer_ != nullptr && buffer_ == buffer;
+        return buffer != nullptr && buffer_.Is(*buffer);
     }
 
   private:
-    const text::Buffer*                 buffer_ = nullptr;
+    text::BufferIdentity                buffer_;
     std::array<std::size_t, kMaxValues> values_{};
     std::size_t                         count_ = 0;
 };

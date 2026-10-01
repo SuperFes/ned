@@ -116,7 +116,7 @@ void BufferView::DispatchDiffForTesting(std::vector<editor::vcs::DiffHunk> hunks
     // already set this); for a test injecting hunks directly it's what
     // keeps the next Paint() from immediately clearing them via that same
     // branch.
-    diffSyncBuffer_ = &activeBuffer_.Get();
+    diffSyncBuffer_ = text::BufferIdentity(activeBuffer_.Get());
     std::vector<std::pair<std::size_t, DiffLineKind>> kinds;
     std::vector<std::size_t>                          hunkStartLines;
     for (const editor::vcs::DiffHunk& hunk : hunks) {

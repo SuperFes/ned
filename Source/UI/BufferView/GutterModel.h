@@ -39,6 +39,7 @@
 #include "Editor/Mode.h"
 #include "Editor/TestRun/TestResult.h"
 #include "Text/Buffer.h"
+#include "Text/BufferIdentity.h"
 #include "Text/ConflictHunk.h"
 #include "Text/ITextStorage.h"
 #include "Text/PerBufferMap.h"
@@ -251,7 +252,7 @@ class GutterModel {
 
     mutable CacheStamp                      conflictHunkStamp_;
     mutable std::vector<text::ConflictHunk> conflictHunks_;
-    const text::Buffer*                     vcsConflictBuffer_  = nullptr;
+    text::BufferIdentity                    vcsConflictBuffer_;
     VcsConflictVerdict                      vcsConflictVerdict_ = VcsConflictVerdict::Unknown;
 
     mutable CacheStamp foldableBlocksStamp_;

@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <optional>
+
 #include "Text/Buffer.h"
 #include "UI/BufferView/CacheStamp.h"
 
@@ -46,6 +48,19 @@ TEST_CASE("A different buffer never matches, even at identical generations", "[C
     const CacheStamp stored = CacheStamp::For(&first, {0});
 
     REQUIRE_FALSE(stored.Matches(CacheStamp::For(&second, {0})));
+}
+
+TEST_CASE("A buffer opened where a closed one lived does not match its stamp", "[CacheStamp]") {
+    std::optional<Buffer> slot;
+    slot.emplace("closed");
+    const Buffer* const address = &*slot;
+    const CacheStamp    stored  = CacheStamp::For(address, {0});
+
+    slot.emplace("opened");
+    REQUIRE(&*slot == address);
+
+    REQUIRE_FALSE(stored.Matches(CacheStamp::For(&*slot, {0})));
+    REQUIRE_FALSE(stored.IsFor(&*slot));
 }
 
 TEST_CASE("Value count is part of the key", "[CacheStamp]") {

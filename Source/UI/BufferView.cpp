@@ -41,7 +41,7 @@ BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, edi
     // onActiveBufferChanged_: the buffer active at construction is already
     // reflected in whatever Mode the owning Pane constructed this
     // BufferView with, so the first Paint() must not re-fire the callback.
-    modeSyncBuffer_ = &activeBuffer_.Get();
+    modeSyncBuffer_ = text::BufferIdentity(activeBuffer_.Get());
 }
 
 // The scroll position lives in Viewport now; these stay on BufferView because
