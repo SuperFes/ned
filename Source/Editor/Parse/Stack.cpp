@@ -1,4 +1,5 @@
 #include "Editor/Parse/Stack.h"
+#include "Editor/Parse/Alloc.h"
 
 #include <cstdlib>
 
@@ -81,7 +82,7 @@ namespace {
 
     StackNode* StackNodeNew(StackNode* previousNode, Subtree subtree, bool isPending, abi::StateId state,
                             RawArray<StackNode*>* pool) {
-        StackNode* node = pool->size > 0 ? pool->Pop() : static_cast<StackNode*>(std::malloc(sizeof(StackNode)));
+        StackNode* node = pool->size > 0 ? pool->Pop() : static_cast<StackNode*>(CheckedMalloc(sizeof(StackNode)));
         *node           = StackNode{};
         node->refCount  = 1;
         node->linkCount = 0;
@@ -439,7 +440,7 @@ namespace {
 } // namespace
 
 void Stack::RecordSummary(StackVersion version, unsigned maxDepth) {
-    SummarizeSession session = {static_cast<StackSummary*>(std::malloc(sizeof(StackSummary))), maxDepth};
+    SummarizeSession session = {static_cast<StackSummary*>(CheckedMalloc(sizeof(StackSummary))), maxDepth};
     *session.summary         = StackSummary{};
     Iterate(
         version,

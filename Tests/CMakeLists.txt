@@ -231,6 +231,7 @@ add_executable(ned_tests
             BufferIdentityTest.cpp
             DefaultInitTest.cpp
             NoManualMemoryTest.cpp
+            ParseAllocTest.cpp
             CandidateListTest.cpp
             RequestSlotTest.cpp
             LifetimeTest.cpp

@@ -1,4 +1,5 @@
 #include "Editor/Parse/Green.h"
+#include "Editor/Parse/Alloc.h"
 
 #include <atomic>
 #include <cstdlib>
@@ -37,7 +38,7 @@ namespace {
 void ExternalScannerState::Init(const char* data, unsigned dataLength) {
     length = dataLength;
     if (dataLength > sizeof(shortData)) {
-        longData = static_cast<char*>(std::malloc(dataLength));
+        longData = static_cast<char*>(CheckedMalloc(dataLength));
         std::memcpy(longData, data, dataLength);
     }
     else {
@@ -58,7 +59,7 @@ bool ExternalScannerState::Eq(const char* buffer, unsigned bufferLength) const {
 ExternalScannerState ExternalScannerState::Copy() const {
     ExternalScannerState result = *this;
     if (length > sizeof(shortData)) {
-        result.longData = static_cast<char*>(std::malloc(length));
+        result.longData = static_cast<char*>(CheckedMalloc(length));
         std::memcpy(result.longData, longData, length);
     }
     return result;
@@ -76,7 +77,7 @@ void SubtreeArrayCopy(SubtreeArray self, SubtreeArray* dest) {
     dest->capacity = self.capacity;
     dest->contents = self.contents;
     if (self.capacity > 0) {
-        dest->contents = static_cast<Subtree*>(std::calloc(self.capacity, sizeof(Subtree)));
+        dest->contents = static_cast<Subtree*>(CheckedCalloc(self.capacity, sizeof(Subtree)));
         std::memcpy(dest->contents, self.contents, self.size * sizeof(Subtree));
         for (std::uint32_t i = 0; i < self.size; i++)
             SubtreeRetain(dest->contents[i]);
@@ -136,7 +137,7 @@ void SubtreePool::Delete() {
 SubtreeHeapData* SubtreePool::Allocate() {
     if (freeTrees.size > 0)
         return freeTrees.Pop().ptr;
-    return static_cast<SubtreeHeapData*>(std::malloc(sizeof(SubtreeHeapData)));
+    return static_cast<SubtreeHeapData*>(CheckedMalloc(sizeof(SubtreeHeapData)));
 }
 
 void SubtreePool::Free(SubtreeHeapData* tree) {
@@ -232,7 +233,7 @@ Subtree SubtreeNewError(SubtreePool* pool, std::int32_t lookaheadChar, Length pa
 
 MutableSubtree SubtreeClone(Subtree self) {
     const std::size_t allocSize   = SubtreeAllocSize(self.ptr->childCount);
-    auto*             newChildren = static_cast<Subtree*>(std::malloc(allocSize));
+    auto*             newChildren = static_cast<Subtree*>(CheckedMalloc(allocSize));
     Subtree*          oldChildren = SubtreeChildren(self);
     std::memcpy(newChildren, oldChildren, allocSize);
     auto* result = reinterpret_cast<SubtreeHeapData*>(&newChildren[self.ptr->childCount]);
@@ -417,7 +418,7 @@ MutableSubtree SubtreeNewNode(abi::Symbol symbol, SubtreeArray* children, unsign
     // Allocate the node's data at the end of the array of children.
     const std::size_t newByteSize = SubtreeAllocSize(children->size);
     if (children->capacity * sizeof(Subtree) < newByteSize) {
-        children->contents = static_cast<Subtree*>(std::realloc(children->contents, newByteSize));
+        children->contents = static_cast<Subtree*>(CheckedRealloc(children->contents, newByteSize));
         children->capacity = static_cast<std::uint32_t>(newByteSize / sizeof(Subtree));
     }
     auto* data = reinterpret_cast<SubtreeHeapData*>(&children->contents[children->size]);

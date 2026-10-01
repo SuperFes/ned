@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "Editor/Parse/Alloc.h"
 #include "Editor/Parse/Node.h"
 #include "Editor/Parse/RawArray.h"
 
@@ -72,8 +73,8 @@ class CursorStack {
     void Grow() {
         const std::uint32_t capacity = capacity_ * 2;
         auto* const         grown    = static_cast<TreeCursorEntry*>(
-            contents_ == inline_ ? std::malloc(capacity * sizeof(TreeCursorEntry))
-                                 : std::realloc(contents_, capacity * sizeof(TreeCursorEntry)));
+            contents_ == inline_ ? CheckedMalloc(capacity * sizeof(TreeCursorEntry))
+                                 : CheckedRealloc(contents_, capacity * sizeof(TreeCursorEntry)));
         if (contents_ == inline_) {
             std::memcpy(grown, inline_, size * sizeof(TreeCursorEntry));
         }

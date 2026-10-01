@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "Editor/Parse/Alloc.h"
+
 // A raw-buffer growable array, port of tree-sitter's array.h. Deliberately
 // not std::vector: Green.cpp's NewNode takes ownership of a SubtreeArray's
 // buffer and constructs the node header inside it (children-before-header
@@ -31,7 +33,7 @@ struct RawArray {
 
     void Reserve(std::uint32_t newCapacity) {
         if (newCapacity > capacity) {
-            contents = static_cast<T*>(std::realloc(contents, newCapacity * sizeof(T)));
+            contents = static_cast<T*>(CheckedRealloc(contents, newCapacity * sizeof(T)));
             capacity = newCapacity;
         }
     }

@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "Editor/Parse/Alloc.h"
+
 // The growable array a scanner keeps its state in (a stack of heredoc
 // delimiters, of indentation levels, of open brackets). Plain C-style
 // storage on purpose: a scanner's state is serialized as bytes and its
@@ -31,13 +33,13 @@ struct VoidPtr {
 };
 
 inline VoidPtr scanner_malloc(size_t size) {
-    return {std::malloc(size)};
+    return {CheckedMalloc(size)};
 }
 inline VoidPtr scanner_calloc(size_t count, size_t size) {
-    return {std::calloc(count, size)};
+    return {CheckedCalloc(count, size)};
 }
 inline VoidPtr scanner_realloc(void* pointer, size_t size) {
-    return {std::realloc(pointer, size)};
+    return {CheckedRealloc(pointer, size)};
 }
 
 #define Array(T)           \
@@ -116,10 +118,10 @@ inline void _array__erase(Array* self, size_t element_size, uint32_t index) {
 inline void _array__reserve(Array* self, size_t element_size, uint32_t new_capacity) {
     if (new_capacity > self->capacity) {
         if (self->contents) {
-            self->contents = std::realloc(self->contents, new_capacity * element_size);
+            self->contents = CheckedRealloc(self->contents, new_capacity * element_size);
         }
         else {
-            self->contents = std::malloc(new_capacity * element_size);
+            self->contents = CheckedMalloc(new_capacity * element_size);
         }
         self->capacity = new_capacity;
     }
