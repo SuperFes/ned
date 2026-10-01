@@ -77,10 +77,10 @@ void BufferView::RequestColorAtPoint() {
     // name this language has for the colour. The session therefore opens from
     // the callback, which runs immediately and synchronously when there is no
     // server to ask.
-    text::Buffer* const bufferPtr = &buffer;
-    const auto          open      = [this, bufferPtr, begin = found->begin, end = found->end, color = found->color,
-                                     current](const std::vector<std::string>& serverPresentations) {
-        if (bufferPtr != &activeBuffer_.Get() || inputMode_ != InputMode::Normal) {
+    const text::BufferIdentity bufferId(buffer);
+    const auto                 open = [this, bufferId, begin = found->begin, end = found->end, color = found->color,
+                                       current](const std::vector<std::string>& serverPresentations) {
+        if (!bufferId.Is(activeBuffer_.Get()) || inputMode_ != InputMode::Normal) {
             return; // the buffer or the prompt moved under the request
         }
 
@@ -191,7 +191,7 @@ void BufferView::RequestColorPicker() {
     const std::vector<editor::ColorLiteral> literals = ColorLiteralsInRange(buffer, content, lineStart, lineEnd);
     const editor::ColorLiteral* const       found    = editor::ColorLiteralContaining(literals, point);
 
-    pickerBuffer_ = &buffer;
+    pickerBuffer_ = text::BufferIdentity(buffer);
     pickerBegin_  = found != nullptr ? found->begin : point;
     pickerEnd_    = found != nullptr ? found->end : point;
 
@@ -212,7 +212,7 @@ void BufferView::ApplyPickedColor(const std::string& text) {
         return;
     }
     text::Buffer& buffer = activeBuffer_.Get();
-    if (pickerBuffer_ != &buffer || pickerEnd_ > buffer.Size() || pickerBegin_ > pickerEnd_) {
+    if (!pickerBuffer_.Is(buffer) || pickerEnd_ > buffer.Size() || pickerBegin_ > pickerEnd_) {
         statusMessage_ = "Colour literal is no longer there.";
         return;
     }

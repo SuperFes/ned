@@ -879,7 +879,7 @@ void BufferView::BeginLineRender(LineRenderState& state, std::size_t line, std::
         }
     }
     state.documentHighlightSpans.clear();
-    if (documentHighlight_ && documentHighlight_->buffer == &frame.buffer &&
+    if (documentHighlight_ && documentHighlight_->buffer.Is(frame.buffer) &&
         documentHighlight_->contentGeneration == frame.buffer.ContentGeneration()) {
         for (const auto& [start, end] : documentHighlight_->ranges) {
             if (start < lineEnd && end > lineStart) {
@@ -1960,7 +1960,7 @@ void BufferView::Paint(Canvas paneCanvas) {
     // sync with a scroll or edit it forgot to listen for.
     if (!mode_.highlight || buffer.ReadOnly() || buffer.Size() > editor::MaxHighlightBytes()) {
         highlightCacheRawSpans_.reset();
-        highlightCacheBuffer_ = nullptr;
+        highlightCacheBuffer_ = {};
         highlightCacheSpans_.clear();
     }
     else {
@@ -1996,7 +1996,7 @@ void BufferView::Paint(Canvas paneCanvas) {
             highlightCacheRawSpans_           = rawSpans;
             highlightCacheSemanticGeneration_ = semanticTokensGeneration;
         }
-        highlightCacheBuffer_ = &buffer;
+        highlightCacheBuffer_ = text::BufferIdentity(buffer);
     }
     const std::vector<editor::HighlightSpan>& highlightSpans = highlightCacheSpans_;
 
@@ -3006,7 +3006,7 @@ BufferView::ResolvedInlineDebugValues(const std::map<std::string, std::string>& 
                                       std::size_t stopLine, std::span<const editor::InlineDebugValueLine> lines) {
     const text::Buffer&    buffer = activeBuffer_.Get();
     InlineDebugValueCache& cache  = inlineDebugValueCache_;
-    if (cache.valid && cache.buffer == &buffer && cache.contentGeneration == buffer.ContentGeneration() &&
+    if (cache.valid && cache.buffer.Is(buffer) && cache.contentGeneration == buffer.ContentGeneration() &&
         cache.localsRevision == dapManager_->FrameLocalsRevision() && cache.stopKey == stopKey &&
         cache.stopLine == stopLine && cache.firstLine == lines.front().line && cache.lastLine == lines.back().line) {
         return cache.values;
@@ -3062,7 +3062,7 @@ BufferView::ResolvedInlineDebugValues(const std::map<std::string, std::string>& 
         stopRow < buffer.Content().LineCount() ? buffer.Content().LineToByteOffset(stopRow) : 0;
 
     cache.values            = editor::ResolveInlineDebugValues(text, captures, tier, locals, stopByte, lines);
-    cache.buffer            = &buffer;
+    cache.buffer            = text::BufferIdentity(buffer);
     cache.contentGeneration = buffer.ContentGeneration();
     cache.localsRevision    = dapManager_->FrameLocalsRevision();
     cache.stopKey           = stopKey;
@@ -3581,7 +3581,7 @@ bool BufferView::InActiveSnippetField(std::size_t byteOffset) const {
 }
 
 bool BufferView::InLineInspectHighlight(std::size_t byteOffset) const {
-    if (!lineInspect_ || lineInspect_->buffer != &activeBuffer_.Get() ||
+    if (!lineInspect_ || !lineInspect_->buffer.Is(activeBuffer_.Get()) ||
         lineInspect_->contentGeneration != activeBuffer_.Get().ContentGeneration()) {
         return false; // stale: buffer switched or content changed since dap-line-inspect ran
     }

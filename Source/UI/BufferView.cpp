@@ -255,9 +255,9 @@ void BufferView::SetOnPrefixHintChanged(std::function<void(std::optional<WhichKe
 void BufferView::ClearBufferCaches(text::Buffer& buffer) {
     editor::ForgetHighlightCacheBuffer(buffer);
     embeddedDocumentCacheByBuffer_.erase(&buffer);
-    if (highlightCacheBuffer_ == &buffer) {
+    if (highlightCacheBuffer_.Is(buffer)) {
         highlightCacheRawSpans_.reset();
-        highlightCacheBuffer_ = nullptr;
+        highlightCacheBuffer_ = {};
         highlightCacheSpans_.clear();
     }
     gutters_.ForgetBuffer(buffer);
@@ -1244,7 +1244,7 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
     // just clears the stale highlight once the buffer switched, its content
     // changed, or point left the inspected line, rather than scheduling a
     // fresh request.
-    if (lineInspect_ && (lineInspect_->buffer != &activeBuffer_.Get() ||
+    if (lineInspect_ && (!lineInspect_->buffer.Is(activeBuffer_.Get()) ||
                          lineInspect_->contentGeneration != activeBuffer_.Get().ContentGeneration() ||
                          activeBuffer_.Get().Content().ByteOffsetToLine(activeBuffer_.Get().Point()) != lineInspect_->line)) {
         lineInspect_.reset();
@@ -1328,7 +1328,7 @@ void BufferView::RequestQuickFixAtPoint() {
         return;
     }
     text::Buffer&       buffer     = activeBuffer_.Get();
-    text::Buffer* const bufferPtr  = &buffer;
+    const text::BufferIdentity bufferId(buffer);
     const std::size_t   point      = buffer.Point();
     const std::size_t   generation = codeActionRequest_.Begin();
 
@@ -1355,11 +1355,11 @@ void BufferView::RequestQuickFixAtPoint() {
     statusMessage_ = "Requesting quick fix...";
     lspManager_->RequestCodeActions(
         buffer, rangeStart, rangeEnd,
-        lifetime_.Bind([this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::CodeAction> actions) {
+        lifetime_.Bind([this, bufferId, point, generation, serverKey](std::vector<editor::lsp::CodeAction> actions) {
             if (codeActionRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
-            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+            if (!bufferId.Is(activeBuffer_.Get()) || activeBuffer_.Get().Point() != point) {
                 return; // buffer/point changed since the request was sent
             }
             codeActionServerKey_ = serverKey;

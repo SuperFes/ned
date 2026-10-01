@@ -66,8 +66,8 @@ void BufferView::RequestBlameForCurrentBuffer() {
     text::Buffer* buffer = &activeBuffer_.Get();
     vcsRunner_->RequestBlame(
         *buffer,
-        lifetime_.Bind([this, buffer](std::vector<editor::vcs::BlameLine> lines) {
-            if (&activeBuffer_.Get() != buffer) {
+        lifetime_.Bind([this, bufferId = text::BufferIdentity(*buffer)](std::vector<editor::vcs::BlameLine> lines) {
+            if (!bufferId.Is(activeBuffer_.Get())) {
                 return; // active buffer changed while the request was in flight -- discard, it's stale
             }
             DispatchBlameForTesting(std::move(lines)); // reused here too -- see its own doc comment
@@ -184,8 +184,8 @@ void BufferView::RequestDiffForCurrentBuffer() {
     text::Buffer* buffer = &activeBuffer_.Get();
     vcsRunner_->RequestDiff(
         *buffer,
-        lifetime_.Bind([this, buffer](std::vector<editor::vcs::DiffHunk> hunks) {
-            if (&activeBuffer_.Get() != buffer) {
+        lifetime_.Bind([this, bufferId = text::BufferIdentity(*buffer)](std::vector<editor::vcs::DiffHunk> hunks) {
+            if (!bufferId.Is(activeBuffer_.Get())) {
                 return; // active buffer changed while the request was in flight -- discard, it's stale
             }
             DispatchDiffForTesting(std::move(hunks)); // reused here too -- see its own doc comment
@@ -267,8 +267,8 @@ void BufferView::RequestConflictVerdictForCurrentBuffer() {
     const std::filesystem::path wanted = NormalizedForCompare(*buffer->Path());
 
     vcsRunner_->RequestStatus(
-        lifetime_.Bind([this, buffer, root, wanted](std::vector<editor::vcs::StatusEntry> entries) {
-            if (&activeBuffer_.Get() != buffer) {
+        lifetime_.Bind([this, bufferId = text::BufferIdentity(*buffer), root, wanted](std::vector<editor::vcs::StatusEntry> entries) {
+            if (!bufferId.Is(activeBuffer_.Get())) {
                 return; // active buffer changed while the request was in flight -- stale
             }
             const bool unmerged = std::any_of(entries.begin(), entries.end(),
@@ -281,8 +281,8 @@ void BufferView::RequestConflictVerdictForCurrentBuffer() {
             // we did receive is a real "no conflict here" -- an unmodified
             // tracked file whose committed content contains marker text
             // (documentation, a test fixture) is exactly that case.
-            ApplyConflictVerdict(buffer, unmerged ? bufferview::GutterModel::VcsConflictVerdict::Conflicted
-                                                   : bufferview::GutterModel::VcsConflictVerdict::Clean);
+            ApplyConflictVerdict(&activeBuffer_.Get(), unmerged ? bufferview::GutterModel::VcsConflictVerdict::Conflicted
+                                                                : bufferview::GutterModel::VcsConflictVerdict::Clean);
         }),
         [](const std::string&) {}); // silent, previous verdict stands -- see this method's own declaration
 }
@@ -308,8 +308,8 @@ void BufferView::RequestVcsBlameBuffer() {
     const std::filesystem::path path = *buffer->Path();
     vcsRunner_->RequestBlame(
         *buffer,
-        lifetime_.Bind([this, buffer, path](std::vector<editor::vcs::BlameLine> lines) {
-            if (&activeBuffer_.Get() == buffer) {
+        lifetime_.Bind([this, bufferId = text::BufferIdentity(*buffer), path](std::vector<editor::vcs::BlameLine> lines) {
+            if (bufferId.Is(activeBuffer_.Get())) {
                 // Populates the gutter for the still-active source buffer
                 // before BuildVcsBlameBuffer switches activeBuffer_ away
                 // from it -- see DispatchBlameForTesting's own doc comment.
@@ -1118,15 +1118,15 @@ void BufferView::ExpandVariableAtPoint() {
     const std::size_t indent    = parsed->indent;
     const std::size_t markerPos = lineText.rfind("[ref:"); // splice target -- guaranteed present, reference > 0 above
 
-    text::Buffer* const bufferPtr = &buffer;
+    const text::BufferIdentity bufferId(buffer);
     statusMessage_                = "Expanding...";
     dapManager_->RequestVariables(
         reference,
-        lifetime_.Bind([this, bufferPtr, line, lineText, markerPos, indent, reference](std::vector<editor::dap::Manager::Variable> variables) {
-            if (bufferPtr != &activeBuffer_.Get()) {
+        lifetime_.Bind([this, bufferId, line, lineText, markerPos, indent, reference](std::vector<editor::dap::Manager::Variable> variables) {
+            if (!bufferId.Is(activeBuffer_.Get())) {
                 return; // switched away while the request was in flight
             }
-            text::Buffer&             target        = *bufferPtr;
+            text::Buffer&             target        = activeBuffer_.Get();
             const text::ITextStorage& targetContent = target.Content();
             if (line >= targetContent.LineCount()) {
                 return;
@@ -1525,7 +1525,7 @@ void BufferView::SetVariableAtPoint() {
     const std::string name     = parsed->name;
 
     pendingDapSetVariable_ = PendingDapSetVariable{
-        .buffer = &buffer, .line = line, .lineText = lineText, .ownerRef = ownerRef, .name = name};
+        .buffer = text::BufferIdentity(buffer), .line = line, .lineText = lineText, .ownerRef = ownerRef, .name = name};
     inputMode_ = InputMode::DapSetVariableValue;
     prompt_.emplace("New value for " + name + ": ");
     statusMessage_ = prompt_->StatusText();
@@ -1546,15 +1546,15 @@ void BufferView::ToggleHexFormatAtPoint() {
     // means flip back to decimal, absent means switch to hex.
     const bool wantHex = lineText.find("  [hex]") == std::string::npos;
 
-    text::Buffer* const bufferPtr = &buffer;
+    const text::BufferIdentity bufferId(buffer);
     // Shared staleness guard both branches below use before splicing --
     // ExpandVariableAtPoint/SetVariableAtPoint's own "did the line change
     // while the request was in flight" check.
-    auto spliceIfUnchanged = [this, bufferPtr, line, lineText](const std::string& replacement) {
-        if (bufferPtr != &activeBuffer_.Get()) {
+    auto spliceIfUnchanged = [this, bufferId, line, lineText](const std::string& replacement) {
+        if (!bufferId.Is(activeBuffer_.Get())) {
             return; // switched away while the request was in flight
         }
-        const text::ITextStorage& targetContent = bufferPtr->Content();
+        const text::ITextStorage& targetContent = activeBuffer_.Get().Content();
         if (line >= targetContent.LineCount()) {
             return;
         }
@@ -1565,11 +1565,11 @@ void BufferView::ToggleHexFormatAtPoint() {
             statusMessage_ = "Debug line changed -- not reformatting.";
             return;
         }
-        const bool wasReadOnly = bufferPtr->ReadOnly();
-        bufferPtr->SetReadOnly(false);
-        bufferPtr->DeleteRange(targetLineStart, targetLineEnd - targetLineStart);
-        bufferPtr->InsertAt(targetLineStart, replacement);
-        bufferPtr->SetReadOnly(wasReadOnly);
+        const bool wasReadOnly = activeBuffer_.Get().ReadOnly();
+        activeBuffer_.Get().SetReadOnly(false);
+        activeBuffer_.Get().DeleteRange(targetLineStart, targetLineEnd - targetLineStart);
+        activeBuffer_.Get().InsertAt(targetLineStart, replacement);
+        activeBuffer_.Get().SetReadOnly(wasReadOnly);
         statusMessage_.clear();
     };
 
@@ -1616,8 +1616,8 @@ void BufferView::ToggleHexFormatAtPoint() {
     statusMessage_ = "Formatting...";
     dapManager_->RequestVariables(
         ownerRef,
-        lifetime_.Bind([this, bufferPtr, spliceIfUnchanged, name, ownerRef, indent, wantHex](std::vector<editor::dap::Manager::Variable> variables) {
-            if (bufferPtr != &activeBuffer_.Get()) {
+        lifetime_.Bind([this, bufferId, spliceIfUnchanged, name, ownerRef, indent, wantHex](std::vector<editor::dap::Manager::Variable> variables) {
+            if (!bufferId.Is(activeBuffer_.Get())) {
                 return; // switched away while the request was in flight
             }
             const auto it = std::find_if(variables.begin(), variables.end(),
@@ -1660,15 +1660,15 @@ void BufferView::ToggleWatchGraphAtPoint() {
     }
     const std::string expression = watches[watchIndex];
 
-    text::Buffer* const bufferPtr = &buffer;
+    const text::BufferIdentity bufferId(buffer);
     // ExpandVariableAtPoint/ToggleHexFormatAtPoint's own staleness-guarded
     // splice shape -- reject a splice if the line changed underneath an
     // in-flight request.
-    auto spliceIfUnchanged = [this, bufferPtr, line, lineText](const std::string& replacement) {
-        if (bufferPtr != &activeBuffer_.Get()) {
+    auto spliceIfUnchanged = [this, bufferId, line, lineText](const std::string& replacement) {
+        if (!bufferId.Is(activeBuffer_.Get())) {
             return; // switched away while the request was in flight
         }
-        const text::ITextStorage& targetContent = bufferPtr->Content();
+        const text::ITextStorage& targetContent = activeBuffer_.Get().Content();
         if (line >= targetContent.LineCount()) {
             return;
         }
@@ -1679,11 +1679,11 @@ void BufferView::ToggleWatchGraphAtPoint() {
             statusMessage_ = "Debug line changed -- not graphing.";
             return;
         }
-        const bool wasReadOnly = bufferPtr->ReadOnly();
-        bufferPtr->SetReadOnly(false);
-        bufferPtr->DeleteRange(targetLineStart, targetLineEnd - targetLineStart);
-        bufferPtr->InsertAt(targetLineStart, replacement);
-        bufferPtr->SetReadOnly(wasReadOnly);
+        const bool wasReadOnly = activeBuffer_.Get().ReadOnly();
+        activeBuffer_.Get().SetReadOnly(false);
+        activeBuffer_.Get().DeleteRange(targetLineStart, targetLineEnd - targetLineStart);
+        activeBuffer_.Get().InsertAt(targetLineStart, replacement);
+        activeBuffer_.Get().SetReadOnly(wasReadOnly);
         statusMessage_.clear();
     };
 
@@ -1706,8 +1706,8 @@ void BufferView::ToggleWatchGraphAtPoint() {
     statusMessage_ = "Graphing...";
     dapManager_->EvaluateWithReference(
         expression,
-        lifetime_.Bind([this, bufferPtr, spliceIfUnchanged, lineText](editor::dap::Manager::EvaluateResult result) {
-            if (bufferPtr != &activeBuffer_.Get()) {
+        lifetime_.Bind([this, bufferId, spliceIfUnchanged, lineText](editor::dap::Manager::EvaluateResult result) {
+            if (!bufferId.Is(activeBuffer_.Get())) {
                 return; // switched away while the request was in flight
             }
             if (!result.success || result.variablesReference <= 0) {
@@ -1759,9 +1759,9 @@ void BufferView::LineInspectAtPoint() {
         return;
     }
 
-    text::Buffer* const bufferPtr = &buffer;
-    lineInspect_                  = LineInspectState{
-        .buffer = bufferPtr, .contentGeneration = buffer.ContentGeneration(), .line = line, .ranges = candidates};
+    const text::BufferIdentity bufferId(buffer);
+    lineInspect_ = LineInspectState{
+        .buffer = bufferId, .contentGeneration = buffer.ContentGeneration(), .line = line, .ranges = candidates};
 
     statusMessage_ = "Inspecting...";
     // Same shared-counter fan-out-then-assemble shape ShowDebugInfo's own
@@ -1777,12 +1777,12 @@ void BufferView::LineInspectAtPoint() {
     for (std::size_t i = 0; i < candidates.size(); ++i) {
         const auto [start, end]      = candidates[i];
         const std::string expression = std::string(content.Substring(start, end - start));
-        dapManager_->Evaluate(expression, lifetime_.Bind([this, bufferPtr, texts, remaining, i, expression, capped](bool success, std::string text) {
+        dapManager_->Evaluate(expression, lifetime_.Bind([this, bufferId, texts, remaining, i, expression, capped](bool success, std::string text) {
             (*texts)[i] = expression + " = " + (success ? text : ("<" + text + ">"));
             if (--*remaining != 0) {
                 return;
             }
-            if (bufferPtr != &activeBuffer_.Get()) {
+            if (!bufferId.Is(activeBuffer_.Get())) {
                 return; // switched away while the requests were in flight
             }
             std::string message;

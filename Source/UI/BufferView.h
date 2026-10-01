@@ -4070,7 +4070,7 @@ class BufferView : public Widget {
     // viewport span is part of the key because scrolling asks about
     // different lines, not because anything else changed.
     struct InlineDebugValueCache {
-        const text::Buffer*                   buffer            = nullptr;
+        text::BufferIdentity                  buffer;
         std::size_t                           contentGeneration = 0;
         std::size_t                           localsRevision    = 0;
         std::string                           stopKey;
@@ -4130,7 +4130,7 @@ class BufferView : public Widget {
     // staleness-guard convention) and the parsed owner reference/variable
     // name. Valid only while inputMode_ == DapSetVariableValue.
     struct PendingDapSetVariable {
-        text::Buffer* buffer = nullptr;
+        text::BufferIdentity buffer;
         std::size_t   line   = 0;
         std::string   lineText;
         int           ownerRef = 0;
@@ -4395,7 +4395,7 @@ class BufferView : public Widget {
     // Which buffer highlightCacheSpans_ (below) belongs to -- ShouldSuppress
     // AutoCompletion (BufferView/Lsp.cpp) asks this before trusting those
     // spans for a syntax-class-at-point check.
-    const text::Buffer*                highlightCacheBuffer_ = nullptr;
+    text::BufferIdentity highlightCacheBuffer_;
     // rawSpans (tree-sitter) plus any LSP semantic-token spans appended on
     // top -- the actual per-frame paint/completion-suppression input.
     std::vector<editor::HighlightSpan> highlightCacheSpans_;
@@ -4448,7 +4448,7 @@ class BufferView : public Widget {
     // RunCommandAndHandleOutcome whenever a dispatched command's own
     // interactiveRequest isn't ExpandSelection/ShrinkSelection -- covers
     // ordinary typing/motion, which never touches interactiveRequest at all.
-    text::Buffer*                                    expansionHistoryBuffer_     = nullptr;
+    text::BufferIdentity                             expansionHistoryBuffer_;
     std::size_t                                      expansionHistoryGeneration_ = 0;
     std::vector<std::pair<std::size_t, std::size_t>> expansionHistory_;
 
@@ -4928,7 +4928,7 @@ class BufferView : public Widget {
     // the debounce and asks again within one window. Suppress-and-re-request
     // is the correct model here, not a gap in the translation layer.
     struct DocumentHighlightState {
-        text::Buffer*                                    buffer            = nullptr;
+        text::BufferIdentity                             buffer;
         std::size_t                                      contentGeneration = 0;
         std::size_t                                      requestPoint      = 0;
         std::vector<std::pair<std::size_t, std::size_t>> ranges;
@@ -4978,7 +4978,7 @@ class BufferView : public Widget {
     // of that request's own success/failure -- the highlight shows what was
     // inspected, not what resolved.
     struct LineInspectState {
-        text::Buffer*                                    buffer            = nullptr;
+        text::BufferIdentity                             buffer;
         std::size_t                                      contentGeneration = 0;
         std::size_t                                      line              = 0;
         std::vector<std::pair<std::size_t, std::size_t>> ranges;
@@ -5137,7 +5137,7 @@ class BufferView : public Widget {
     // list above, held separately because the picker is an overlay rather
     // than an inputMode_ -- nothing about the buffer's own input state says
     // one is open. Equal begin/end means "insert here", the no-literal case.
-    text::Buffer*                        pickerBuffer_ = nullptr;
+    text::BufferIdentity                 pickerBuffer_;
     std::size_t                          pickerBegin_  = 0;
     std::size_t                          pickerEnd_    = 0;
     bufferview::RequestSlot              codeActionRequest_;
@@ -5304,7 +5304,7 @@ class BufferView : public Widget {
     std::string                                renameOldName_;
     std::string                                renameNewName_;
     std::vector<editor::rename::ReviewExcerpt> renameProposals_;
-    const text::Buffer*                        renameProposalOwner_ = nullptr;
+    text::BufferIdentity                       renameProposalOwner_;
     // class-file-sync follow-up: the old/new name the review buffer above is
     // about, set by BuildRenameReview whichever tier called it -- distinct
     // from renameOldName_/renameNewName_, which are the SERVER request's own

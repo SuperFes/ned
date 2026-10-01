@@ -7413,6 +7413,51 @@ TEST_CASE("rename-file notifies a matching LSP server via willRenameFiles/didRen
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("rename-file leaves alone a buffer opened in place of one closed during willRenameFiles", "[BufferView][BufferIdentity]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_rename_closed";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    const std::filesystem::path from  = dir / "old.ts";
+    const std::filesystem::path to    = dir / "new.ts";
+    const std::filesystem::path other = dir / "other.ts";
+    {
+        std::ofstream(from) << "content";
+        std::ofstream(other) << "other";
+    }
+
+    Fixture                   fixture;
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    manager.SetFileOperationFiltersForTesting("fundamental", {.willRenameGlobs = {"**/*.ts"}, .didRenameGlobs = {"**/*.ts"}});
+    ned::editor::lsp::Client* client = nullptr;
+    FakeLspServer             server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    const std::string fromName = fixture.bufferList.OpenOrCreateFile(from).Name();
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('c'));
+    view.OnEvent(ned::ui::test::Ctrl('n'));
+    TypeText(view, from.string());
+    view.OnEvent(ned::ui::test::Return());
+    TypeText(view, to.string());
+    view.OnEvent(ned::ui::test::Return());
+
+    const std::string raw = ReadRawLspFrame(server.serverStdinRead);
+    REQUIRE(fixture.bufferList.Close(fromName));
+    ned::text::Buffer& reopened = fixture.bufferList.OpenOrCreateFile(other);
+
+    const auto response = ned::editor::lsp::Json{{"jsonrpc", "2.0"}, {"id", LspRequestIdFromFrame(raw)}, {"result", nullptr}};
+    client->DispatchFrame(response.dump());
+
+    REQUIRE(std::filesystem::exists(to));
+    REQUIRE(reopened.Path() == other);
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("rename-file reports an error and ends the session when the source doesn't exist", "[BufferView]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_rename_missing";
     std::filesystem::remove_all(dir);

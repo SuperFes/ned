@@ -161,7 +161,7 @@ void BufferView::HandleMultibufferApplyTargetKey(const editor::KeyChord& chord) 
     // the review buffer is still what is on screen, so the file that declared
     // the renamed type has to be recovered from the excerpt sources rather
     // than from the active buffer. Empty for every other kind of review.
-    if (renameProposalOwner_ == &activeBuffer_.Get()) {
+    if (renameProposalOwner_.Is(activeBuffer_.Get())) {
         ArmClassFileRenameOffer(editor::multibuffer::ExcerptSourcePaths(activeBuffer_.Get()), renameReviewOldName_,
                                 renameReviewNewName_);
     }
@@ -2190,7 +2190,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 return;
             }
             text::Buffer& buffer = activeBuffer_.Get();
-            if (expansionHistoryBuffer_ != &buffer || expansionHistoryGeneration_ != buffer.ContentGeneration()) {
+            if (!expansionHistoryBuffer_.Is(buffer) || expansionHistoryGeneration_ != buffer.ContentGeneration()) {
                 expansionHistory_.clear();
             }
             const auto [startByte, endByte]                                   = buffer.HasMark() ? buffer.Region() : std::pair{buffer.Point(), buffer.Point()};
@@ -2202,7 +2202,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             expansionHistory_.emplace_back(startByte, endByte);
             buffer.SetMark(expanded->first);
             buffer.SetPoint(expanded->second);
-            expansionHistoryBuffer_     = &buffer;
+            expansionHistoryBuffer_     = text::BufferIdentity(buffer);
             expansionHistoryGeneration_ = buffer.ContentGeneration();
             statusMessage_.clear();
             return;
@@ -2210,7 +2210,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::ShrinkSelection: {
             text::Buffer& buffer = activeBuffer_.Get();
             const bool    stale =
-                expansionHistoryBuffer_ != &buffer || expansionHistoryGeneration_ != buffer.ContentGeneration() || expansionHistory_.empty();
+                !expansionHistoryBuffer_.Is(buffer) || expansionHistoryGeneration_ != buffer.ContentGeneration() || expansionHistory_.empty();
             if (stale) {
                 statusMessage_ = "No selection to shrink to.";
                 return;
@@ -3122,7 +3122,7 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             statusMessage_ = "No debugger available.";
         }
         else {
-            text::Buffer* const bufferPtr = pendingDapSetVariable_->buffer;
+            const text::BufferIdentity bufferId  = pendingDapSetVariable_->buffer;
             const std::size_t   line      = pendingDapSetVariable_->line;
             const std::string   lineText  = pendingDapSetVariable_->lineText;
             const int           ownerRef  = pendingDapSetVariable_->ownerRef;
@@ -3130,15 +3130,15 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             statusMessage_                = "Setting " + name + "...";
             dapManager_->SetVariable(
                 ownerRef, name, input,
-                lifetime_.Bind([this, bufferPtr, line, lineText, name](editor::dap::Manager::SetVariableResult result) {
-                    if (bufferPtr != &activeBuffer_.Get()) {
+                lifetime_.Bind([this, bufferId, line, lineText, name](editor::dap::Manager::SetVariableResult result) {
+                    if (!bufferId.Is(activeBuffer_.Get())) {
                         return; // switched away while the request was in flight
                     }
                     if (!result.success) {
                         statusMessage_ = "Set variable failed: " + result.errorMessage;
                         return;
                     }
-                    text::Buffer&             target        = *bufferPtr;
+                    text::Buffer&             target        = activeBuffer_.Get();
                     const text::ITextStorage& targetContent = target.Content();
                     if (line >= targetContent.LineCount()) {
                         return;
@@ -4571,11 +4571,11 @@ void BufferView::CommitSearchEverywhereCandidate(const editor::SearchEverywhereC
                 // the jump outright.
                 const editor::SearchEverywhereLocation fallback     = *candidate.remoteLocation;
                 text::Buffer&                          buffer       = activeBuffer_.Get();
-                text::Buffer* const                    bufferPtr    = &buffer;
+                const text::BufferIdentity             bufferId(buffer);
                 lspManager_->ResolveWorkspaceSymbol(
                     buffer, searchEverywhereUnresolvedSymbols_[*candidate.remoteSymbolResolveToken],
-                    lifetime_.Bind([this, bufferPtr, fallback](std::optional<editor::lsp::Manager::SymbolResult> resolved) {
-                        if (bufferPtr != &activeBuffer_.Get()) {
+                    lifetime_.Bind([this, bufferId, fallback](std::optional<editor::lsp::Manager::SymbolResult> resolved) {
+                        if (!bufferId.Is(activeBuffer_.Get())) {
                             return; // buffer switched while the resolve was in flight
                         }
                         if (resolved) {
@@ -4606,12 +4606,12 @@ void BufferView::CommitSearchEverywhereCandidate(const editor::SearchEverywhereC
             // server that does want some answers with an error, which the
             // status line reports -- guessing at an argument shape would be
             // worse than saying plainly what the server said.
-            text::Buffer* const bufferPtr = &activeBuffer_.Get();
+            const text::BufferIdentity bufferId(activeBuffer_.Get());
             const std::string   command   = candidate.label;
             statusMessage_                = "Running " + command + "...";
-            lspManager_->ExecuteCommand(*bufferPtr, candidate.target, command, editor::lsp::Json::array(),
-                                        lifetime_.Bind([this, bufferPtr, command](bool ok) {
-                                            if (bufferPtr != &activeBuffer_.Get()) {
+            lspManager_->ExecuteCommand(activeBuffer_.Get(), candidate.target, command, editor::lsp::Json::array(),
+                                        lifetime_.Bind([this, bufferId, command](bool ok) {
+                                            if (!bufferId.Is(activeBuffer_.Get())) {
                                                 return; // active buffer changed since the request was sent
                                             }
                                             statusMessage_ = ok ? command + " done." : command + " failed.";
@@ -4799,18 +4799,18 @@ void BufferView::RequestSearchEverywhereWorkspaceSymbols() {
         return;
     }
     text::Buffer&                        buffer    = activeBuffer_.Get();
-    text::Buffer* const                  bufferPtr = &buffer;
+    const text::BufferIdentity           bufferId(buffer);
     const bufferview::RequestSlot::Token token     = searchEverywhereWorkspaceSymbolRequest_.Begin();
     const std::string                    serverKey = ResolvedLspServerKey(buffer.Point());
     const std::string                    query     = prompt_->Text();
 
     lspManager_->RequestWorkspaceSymbols(
         buffer, query,
-        lifetime_.Bind([this, bufferPtr, token, serverKey](std::vector<editor::lsp::Manager::SymbolResult> symbols) {
+        lifetime_.Bind([this, bufferId, token, serverKey](std::vector<editor::lsp::Manager::SymbolResult> symbols) {
             if (searchEverywhereWorkspaceSymbolRequest_.IsStale(token)) {
                 return; // superseded by a newer request
             }
-            if (inputMode_ != InputMode::SearchEverywhere || bufferPtr != &activeBuffer_.Get()) {
+            if (inputMode_ != InputMode::SearchEverywhere || !bufferId.Is(activeBuffer_.Get())) {
                 return; // session ended, or buffer switched, while this was in flight
             }
             EraseSearchEverywhereRemoteCandidates(editor::SearchEverywhereKind::Symbol);
@@ -4820,7 +4820,7 @@ void BufferView::RequestSearchEverywhereWorkspaceSymbols() {
             // came from the same connection.
             const std::string languageKey = serverKey.empty() ? editor::LanguageKeyForMode(mode_) : serverKey;
             const bool        canResolveRange =
-                lspManager_->WorkspaceSymbolProviderFor(lspManager_->ConnectionKeyForBuffer(*bufferPtr, languageKey))
+                lspManager_->WorkspaceSymbolProviderFor(lspManager_->ConnectionKeyForBuffer(activeBuffer_.Get(), languageKey))
                     .value_or(editor::lsp::WorkspaceSymbolProviderInfo{})
                     .resolveProvider;
             for (const editor::lsp::Manager::SymbolResult& symbol : symbols) {

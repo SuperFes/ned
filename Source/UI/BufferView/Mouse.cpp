@@ -154,7 +154,7 @@ void BufferView::RequestContextMenuCodeActions(std::size_t point) {
         return;
     }
     text::Buffer&       buffer     = activeBuffer_.Get();
-    text::Buffer* const bufferPtr  = &buffer;
+    const text::BufferIdentity bufferId(buffer);
     const std::size_t   generation = contextMenuCodeActionRequest_.Begin();
 
     // Same diagnostic-at-point range/server-routing preference as
@@ -177,14 +177,14 @@ void BufferView::RequestContextMenuCodeActions(std::size_t point) {
 
     lspManager_->RequestCodeActions(
         buffer, rangeStart, rangeEnd,
-        lifetime_.Bind([this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::CodeAction> actions) {
+        lifetime_.Bind([this, bufferId, point, generation, serverKey](std::vector<editor::lsp::CodeAction> actions) {
             if (contextMenuCodeActionRequest_.IsStale(generation)) {
                 return; // superseded by a newer right-click
             }
             if (inputMode_ != InputMode::ContextMenu) {
                 return; // menu cancelled/reopened elsewhere since
             }
-            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+            if (!bufferId.Is(activeBuffer_.Get()) || activeBuffer_.Get().Point() != point) {
                 return; // buffer/point changed since the request was sent -- see RequestCompletionAtPoint's own identical guard
             }
             if (actions.empty()) {

@@ -447,7 +447,7 @@ void BufferView::OpenLinkAtPoint() {
     }
 
     text::Buffer&       buffer     = activeBuffer_.Get();
-    text::Buffer* const bufferPtr  = &buffer;
+    const text::BufferIdentity bufferId(buffer);
     const std::size_t   point      = buffer.Point();
     const std::size_t   generation = documentLinkRequest_.Begin();
     // embedded-language-documents follow-up: an #include inside an embedded
@@ -457,11 +457,11 @@ void BufferView::OpenLinkAtPoint() {
 
     lspManager_->RequestDocumentLinks(
         buffer,
-        lifetime_.Bind([this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::Manager::ResolvedDocumentLink> links) {
+        lifetime_.Bind([this, bufferId, point, generation, serverKey](std::vector<editor::lsp::Manager::ResolvedDocumentLink> links) {
             if (documentLinkRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
-            if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+            if (!bufferId.Is(activeBuffer_.Get()) || activeBuffer_.Get().Point() != point) {
                 return; // buffer/point changed since the request was sent -- RequestDefinitionAtPoint's own guard
             }
             const auto covering = std::find_if(links.begin(), links.end(),
@@ -480,11 +480,11 @@ void BufferView::OpenLinkAtPoint() {
             // second round trip before it can be followed.
             lspManager_->ResolveDocumentLink(
                 activeBuffer_.Get(), *covering,
-                lifetime_.Bind([this, bufferPtr, point, generation](std::optional<editor::lsp::Manager::ResolvedDocumentLink> resolved) {
+                lifetime_.Bind([this, bufferId, point, generation](std::optional<editor::lsp::Manager::ResolvedDocumentLink> resolved) {
                     if (documentLinkRequest_.IsStale(generation)) {
                         return;
                     }
-                    if (bufferPtr != &activeBuffer_.Get() || activeBuffer_.Get().Point() != point) {
+                    if (!bufferId.Is(activeBuffer_.Get()) || activeBuffer_.Get().Point() != point) {
                         return;
                     }
                     if (!resolved || resolved->needsResolve) {

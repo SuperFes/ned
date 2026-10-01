@@ -433,3 +433,51 @@ TEST_CASE("open-link-at-point drops a documentLink response that arrives after t
 
     std::filesystem::remove_all(includeDir);
 }
+
+TEST_CASE("open-link-at-point drops a documentLink response for a buffer reopened at the same address",
+          "[BufferView][DocumentLink][BufferIdentity]") {
+    LspFixture    lsp("ned_bufferview_document_link_reopened_test.c", "#include \"dl-reopened.h\"\nint main() {}\n");
+    FakeLspServer server = FakeLspServer::Create(lsp.manager, "c", lsp.eventLoop, lsp.client);
+
+    const std::filesystem::path includeDir = std::filesystem::temp_directory_path() / "ned-document-link-reopened-include";
+    std::filesystem::create_directories(includeDir);
+    const std::filesystem::path target = includeDir / "dl-reopened.h";
+    WriteFile(target, "#pragma once\n");
+
+    const auto open = [&lsp](std::optional<Buffer>& slot) {
+        slot.emplace("reopened.c");
+        slot->SetPath(lsp.sourcePath);
+        slot->InsertAtPoint("#include \"dl-reopened.h\"\nint main() {}\n");
+        slot->SetPoint(12);
+    };
+
+    Fixture&              f = lsp.fixture;
+    std::optional<Buffer> slot;
+    open(slot);
+    f.activeBuffer.Set(*slot);
+
+    FrameReader               frames{server.serverStdinRead};
+    std::optional<BufferView> view;
+    view.emplace(f.activeBuffer, f.killRing, f.registers, f.promptHistory, f.bufferList, f.dispatcher, f.statusMessage, f.mode,
+                 f.theme);
+    lsp.Ready(*view, frames);
+    InvokeOpenLinkAtPoint(*view);
+
+    const Json          request = frames.WithMethod("textDocument/documentLink");
+    const Buffer* const closed  = &*slot;
+    open(slot); // closed and reopened while the server was still thinking
+    REQUIRE(&*slot == closed);
+
+    const Json response = {
+        {"jsonrpc", "2.0"},
+        {"id", request["id"]},
+        {"result", Json::array({{{"range", RangeJson(0, 9, 25)}, {"target", "file://" + target.string()}}})},
+    };
+    lsp.client->DispatchFrame(response.dump());
+
+    REQUIRE(&f.activeBuffer.Get() == &*slot);
+
+    view.reset();
+    f.activeBuffer.Set(lsp.SourceBuffer());
+    std::filesystem::remove_all(includeDir);
+}

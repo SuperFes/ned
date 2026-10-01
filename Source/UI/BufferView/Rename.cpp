@@ -433,7 +433,7 @@ std::optional<BufferView::ReviewCounts> BufferView::PresentReviewExcerpts(
     review.SetPoint(0);
 
     renameProposals_     = std::move(rows);
-    renameProposalOwner_ = &review;
+    renameProposalOwner_ = text::BufferIdentity(review);
     renameReviewOldName_.clear();
     renameReviewNewName_.clear();
 
@@ -450,7 +450,7 @@ std::optional<BufferView::ReviewCounts> BufferView::PresentReviewExcerpts(
 
 bool BufferView::HandleRenameReviewIncludeKey() {
     text::Buffer& review = activeBuffer_.Get();
-    if (renameProposalOwner_ != &review || renameProposals_.empty()) {
+    if (!renameProposalOwner_.Is(review) || renameProposals_.empty()) {
         return false;
     }
     const std::vector<text::Buffer::ExcerptRange>& ranges = review.ExcerptRanges();
@@ -497,9 +497,9 @@ bool BufferView::HandleRenameReviewIncludeKey() {
 }
 
 void BufferView::ClearRenameProposals(const text::Buffer& buffer) {
-    if (renameProposalOwner_ == &buffer) {
+    if (renameProposalOwner_.Is(buffer)) {
         renameProposals_.clear();
-        renameProposalOwner_ = nullptr;
+        renameProposalOwner_ = {};
         renameReviewOldName_.clear();
         renameReviewNewName_.clear();
     }
