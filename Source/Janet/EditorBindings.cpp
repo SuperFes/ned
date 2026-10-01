@@ -166,13 +166,9 @@ namespace {
     }
 
     // Registers fn (a Janet function value) as a named editor command. fn is
-    // bound into the environment under a generated name via janet_def rather
-    // than held as a RootedValue -- see the CAUTION comment on RootedValue in
-    // Value.h for why: invoking a rooted function later via janet_pcall is the
-    // specific combination that corrupts state in this Janet build. Routing
-    // invocation through janet_dostring on the generated name sidesteps that
-    // entirely and has been stress-tested (many commands, GC pressure,
-    // redefinition) without issue.
+    // bound into the environment under a generated name via janet_def, which
+    // keeps it reachable without a manual root, and invoked later through
+    // janet_dostring on that name.
     //
     // Precondition: name should be a valid Janet symbol fragment (no spaces or
     // parens) -- it's spliced directly into a generated form. Command names are
@@ -1039,9 +1035,8 @@ namespace {
 
     // Registers fn as the parser for a test format name, resolved by
     // TestRunner ahead of the built-in table (so a user parser may
-    // deliberately shadow a built-in name). Same janet_def-not-RootedValue
-    // invocation shape as NedRegisterCommand above -- see that function's
-    // comment and Value.h's CAUTION. The wrapped fn only ever runs on the
+    // deliberately shadow a built-in name). Same janet_def invocation shape
+    // as NedRegisterCommand above. The wrapped fn only ever runs on the
     // main thread (TestRunner documents this), which is what makes a Janet
     // callback legal here at all. A nil fn clears the registration.
     void NedRegisterTestParser(std::string name, Janet fn) {
@@ -1709,8 +1704,8 @@ namespace {
     // outright once the vocabulary grew to sixteen operations; a clean
     // break, not a compatibility shim, since the positional form was days
     // old with one caller). Each present callback is bound into the
-    // environment by JanetVcsProvider's own constructor (janet_def, not
-    // RootedValue -- see that class's header comment). Re-registering name
+    // environment by JanetVcsProvider's own constructor (janet_def -- see
+    // that class's header comment). Re-registering name
     // overwrites the previous provider, matching NedRegisterCommand's own
     // convention. Clears the provider-resolution cache afterward so a root
     // checked before this registration (and resolved to no provider, or a

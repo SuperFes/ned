@@ -59,18 +59,9 @@ inline Janet ToJanet(Janet value) {
 // function) across native-function calls, since Janet's collector can't see
 // C++-side storage on its own.
 //
-// CAUTION -- do not pair this with janet_pcall: empirically (see
-// Tests/ValueTest.cpp), this installed Janet build (1.32.1) corrupts state
-// when 3+ values are simultaneously janet_gcroot'd and one of them is later
-// invoked via janet_pcall -- it doesn't crash at root time, only later,
-// inside janet_pcall's fiber setup, which makes it easy to misattribute.
-// RootedValue by itself (holding/checking a value) is fine at any count;
-// the landmine is specifically root-count + pcall together. For anything
-// that needs to *call* a held Janet function repeatedly (e.g. a
-// Janet-defined command), bind it into the environment table under a
-// generated name via janet_def instead and invoke it through janet_dostring
-// -- reachability via the env table needs no manual rooting, and dostring's
-// execution path doesn't hit this bug (see EditorBindings.cpp).
+// To call a held function with janet_pcall, start its JanetFiber* out-
+// parameter null: pcall reads it as well as writing it, resetting and
+// reusing a fiber it finds there.
 class RootedValue {
   public:
     explicit RootedValue(Janet value);

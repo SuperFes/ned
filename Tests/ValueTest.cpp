@@ -4,6 +4,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Janet/Value.h"
@@ -96,4 +97,32 @@ TEST_CASE("RootedValue keeps its function alive across a GC cycle", "[Value]") {
     REQUIRE(stillFn == fn); // same object, not reallocated elsewhere
     REQUIRE(stillFn->def == originalDef);
     REQUIRE(stillFn->def->bytecode != nullptr);
+}
+
+// janet_pcall reuses *fiber when it is non-null, so the out-parameter must
+// start null; given that, any number of rooted functions call safely.
+TEST_CASE("Several rooted functions can each be called through janet_pcall across collections", "[Value]") {
+    JanetTable*                              env = ned_tests::TestEnvironment().Env();
+    std::vector<std::pair<RootedValue, int>> rooted;
+    for (int offset = 0; offset < 8; ++offset) {
+        Janet out;
+        REQUIRE(janet_dostring(env, ("(fn [x] (+ x " + std::to_string(offset) + "))").c_str(), "test", &out) == 0);
+        rooted.emplace_back(FromJanet<RootedValue>(out), offset);
+    }
+
+    for (int round = 0; round < 50; ++round) {
+        if (round == 25) {
+            rooted.erase(rooted.begin() + 1, rooted.begin() + 3); // unrooted out of order
+        }
+        janet_gcpressure(1 << 20);
+        Janet churn;
+        REQUIRE(janet_dostring(env, "(seq [i :range [0 200]] (string i))", "churn", &churn) == 0);
+        for (const auto& [function, offset] : rooted) {
+            const Janet argument = janet_wrap_number(round);
+            Janet       result;
+            JanetFiber* fiber = nullptr;
+            REQUIRE(janet_pcall(janet_unwrap_function(function.Get()), 1, &argument, &result, &fiber) == JANET_SIGNAL_OK);
+            REQUIRE(janet_unwrap_number(result) == round + offset);
+        }
+    }
 }

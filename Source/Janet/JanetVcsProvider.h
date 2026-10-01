@@ -41,12 +41,8 @@ namespace ned::janet {
 // place (Provider.h).
 //
 // Each present callback is bound into env under a generated name via
-// janet_def and invoked later through janet_dostring -- the same
-// "janet_def + janet_dostring, never RootedValue + janet_pcall" pattern
-// NedRegisterCommand (EditorBindings.cpp) already established, for the
-// same reason: this Janet build (1.32.1) corrupts state when a rooted
-// value is later invoked via janet_pcall (see Value.h's RootedValue
-// CAUTION comment).
+// janet_def and invoked later through janet_dostring -- the same pattern
+// NedRegisterCommand (EditorBindings.cpp) uses.
 //
 // Every method here is a synchronous janet_dostring call and must only
 // ever run on the thread that owns env (the main/UI thread) -- see
