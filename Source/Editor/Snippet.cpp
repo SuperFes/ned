@@ -49,10 +49,17 @@ namespace {
     std::optional<SnippetTransform>         ParseTransformSuffix(std::string_view body, std::size_t& pos);
     std::optional<std::vector<std::string>> ParseChoiceSuffix(std::string_view body, std::size_t& pos);
     std::string                             ApplyTransform(std::string_view fieldText, const SnippetTransform& transform);
-    std::string                             ResolveVariable(std::string_view name, std::string_view defaultText, bool hasDefault,
-                                                            const SnippetVariables& variables);
-    std::optional<std::string>              TryParseVariable(std::string_view body, std::size_t& pos,
-                                                             const SnippetVariables& variables);
+    std::string                             ResolveVariable(std::string_view name, const SnippetVariables& variables);
+
+    // A variable's expansion. `nested` is non-empty only when an unset
+    // variable fell back to a default holding tabstops; offsets are into
+    // `text`, the same shape a placeholder's content carries.
+    struct ExpandedVariable {
+        std::string             text;
+        std::vector<NestedStop> nested;
+    };
+    std::optional<ExpandedVariable> TryParseVariable(std::string_view body, std::size_t& pos,
+                                                     const SnippetVariables& variables, int depth);
 
     // Reads placeholder content from just past the ':' up to the matching
     // unescaped '}', consuming it. A variable resolves straight into the
@@ -83,8 +90,14 @@ namespace {
             }
             if (c == '$') {
                 std::size_t probe = pos;
-                if (auto variable = TryParseVariable(body, probe, variables)) {
-                    content += *variable;
+                if (auto variable = TryParseVariable(body, probe, variables, depth + 1)) {
+                    const std::size_t offset = content.size();
+                    content += variable->text;
+                    for (NestedStop& stop : variable->nested) {
+                        stop.start += offset;
+                        stop.end += offset;
+                        nested.push_back(std::move(stop));
+                    }
                     pos = probe;
                     continue;
                 }
@@ -382,25 +395,12 @@ namespace {
         return variables.*(it->second);
     }
 
-    // A known-but-empty value (no selection for TM_SELECTED_TEXT, an empty
-    // system clipboard, ...) is treated as "unset" the same as a genuinely
-    // absent one -- both fall back to the variable's own default when the
-    // body supplied one. A name this editor doesn't know at all falls back
-    // to its default, else the bare name itself (VSCode's own convention --
+    // A variable written without a default. A name this editor doesn't know
+    // at all resolves to the bare name itself (VSCode's own convention --
     // reads as an intentional placeholder rather than vanishing silently).
-    std::string ResolveVariable(std::string_view name, std::string_view defaultText, bool hasDefault,
-                                const SnippetVariables& variables) {
-        const std::optional<std::string> known = LookupKnownVariable(name, variables);
-        if (known && !known->empty()) {
-            return *known;
-        }
-        if (hasDefault) {
-            return std::string(defaultText);
-        }
-        if (known) {
-            return "";
-        }
-        return std::string(name);
+    std::string ResolveVariable(std::string_view name, const SnippetVariables& variables) {
+        std::optional<std::string> known = LookupKnownVariable(name, variables);
+        return known ? std::move(*known) : std::string(name);
     }
 
     // $NAME / ${NAME} / ${NAME:default} / ${NAME/regex/format/flags} -- the
@@ -409,13 +409,13 @@ namespace {
     // than becoming a SnippetField -- unlike a tabstop, a variable's value
     // never changes across a session's life, so there's nothing live to
     // track. On success advances pos past the whole construct and returns
-    // the resolved text; nullopt (pos untouched) when body[pos] isn't a
+    // the expansion; nullopt (pos untouched) when body[pos] isn't a
     // variable reference at all -- ParseTabstopAt's own contract, since the
     // two are tried in sequence against the same leading '$'.
-    std::optional<std::string> TryParseVariable(std::string_view body, std::size_t& pos,
-                                                const SnippetVariables& variables) {
+    std::optional<ExpandedVariable> TryParseVariable(std::string_view body, std::size_t& pos,
+                                                     const SnippetVariables& variables, int depth) {
         std::size_t p = pos + 1;
-        if (p >= body.size()) {
+        if (p >= body.size() || depth > kMaxNestingDepth) {
             return std::nullopt;
         }
         if (IsIdentifierStart(body[p])) {
@@ -425,7 +425,7 @@ namespace {
             }
             const std::string name(body.substr(start, p - start));
             pos = p;
-            return ResolveVariable(name, "", false, variables);
+            return ExpandedVariable{ResolveVariable(name, variables), {}};
         }
         if (body[p] != '{' || p + 1 >= body.size() || !IsIdentifierStart(body[p + 1])) {
             return std::nullopt;
@@ -441,7 +441,7 @@ namespace {
         }
         if (body[p] == '}') {
             pos = p + 1;
-            return ResolveVariable(name, "", false, variables);
+            return ExpandedVariable{ResolveVariable(name, variables), {}};
         }
         if (body[p] == '/') {
             const auto transform = ParseTransformSuffix(body, p);
@@ -449,32 +449,27 @@ namespace {
                 return std::nullopt;
             }
             pos = p;
-            return ApplyTransform(ResolveVariable(name, "", false, variables), *transform);
+            return ExpandedVariable{ApplyTransform(ResolveVariable(name, variables), *transform), {}};
         }
         if (body[p] != ':') {
             return std::nullopt;
         }
         ++p;
-        // Default text: a plain literal scan to the matching unescaped '}',
-        // deliberately not recursing into nested $-references the way a
-        // tabstop placeholder's ParsePlaceholderContent does -- a variable
-        // default naming another variable/tabstop is a rare enough
-        // construct that a documented v1 cut is the right call here.
-        std::string defaultText;
-        while (p < body.size() && body[p] != '}') {
-            if (body[p] == '\\' && p + 1 < body.size() && (body[p + 1] == '}' || body[p + 1] == '$' || body[p + 1] == '\\')) {
-                defaultText.push_back(body[p + 1]);
-                p += 2;
-                continue;
-            }
-            defaultText.push_back(body[p]);
-            ++p;
-        }
-        if (p >= body.size()) {
+        // The default is parsed even when the variable is set, since only a
+        // full parse finds its closing '}'. A known-but-empty value (no
+        // selection, an empty clipboard) counts as unset, and an unset
+        // variable is exactly its default spliced in place.
+        std::vector<NestedStop> nested;
+        auto                    content = ParsePlaceholderContent(body, p, nested, variables, depth);
+        if (!content) {
             return std::nullopt;
         }
-        pos = p + 1;
-        return ResolveVariable(name, defaultText, true, variables);
+        pos                              = p;
+        std::optional<std::string> known = LookupKnownVariable(name, variables);
+        if (known && !known->empty()) {
+            return ExpandedVariable{std::move(*known), {}};
+        }
+        return ExpandedVariable{std::move(*content), std::move(nested)};
     }
 
     std::string ApplyCase(std::string_view text, std::string_view modifier) {
@@ -677,8 +672,19 @@ ParsedSnippet ParseSnippet(std::string_view body, const SnippetVariables& variab
         }
         if (c == '$') {
             std::size_t probe = pos;
-            if (auto variable = TryParseVariable(body, probe, variables)) {
-                literal += *variable;
+            if (auto variable = TryParseVariable(body, probe, variables, 0)) {
+                std::size_t at = 0;
+                for (NestedStop& inner : variable->nested) {
+                    literal.append(variable->text, at, inner.start - at);
+                    flushLiteral();
+                    RawStop stop{inner.index, variable->text.substr(inner.start, inner.end - inner.start),
+                                 inner.hasPlaceholder};
+                    stop.transform = std::move(inner.transform);
+                    stop.nested    = std::move(inner.nested);
+                    pieces.push_back(Piece{true, "", std::move(stop)});
+                    at = inner.end;
+                }
+                literal.append(variable->text, at);
                 pos = probe;
                 continue;
             }

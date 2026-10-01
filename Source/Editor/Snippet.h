@@ -30,12 +30,15 @@
 // Nesting is capped at kMaxNestingDepth levels; past that the body falls
 // through as literal text like any other ill-formed input.
 //
-// Two v1 cuts remain. A variable reference nested inside another
-// placeholder's own default text doesn't resolve (only a top-level
-// `$`/`${` reference does), and a body spelling one index with two
-// different placeholders (`${2:A} ${1:foo ${2:bar}}`) renders the nested
-// occurrence with its own baked text until the first edit syncs the
-// mirrors -- both rare enough not to be worth the machinery.
+// A variable resolves anywhere a tabstop can appear, including inside a
+// placeholder. An unset variable's `${VAR:default}` is its default spliced
+// in place, so `${TM_SELECTED_TEXT:$0}` leaves a real stop when there's no
+// selection and drops it when there is one.
+//
+// One v1 cut remains: a body spelling one index with two different
+// placeholders (`${2:A} ${1:foo ${2:bar}}`) renders the nested occurrence
+// with its own baked text until the first edit syncs the mirrors -- rare
+// enough not to be worth the machinery.
 //
 
 #ifndef NED_EDITOR_SNIPPET_H

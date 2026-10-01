@@ -297,6 +297,67 @@ TEST_CASE("ParseSnippet carries a placeholder's resolved variable into its mirro
     REQUIRE(ParseSnippet("${1:$TM_FILENAME} $1", vars).text == "a.h a.h");
 }
 
+TEST_CASE("ParseSnippet splices an unset variable's default tabstop in as a real field", "[Snippet]") {
+    const ParsedSnippet parsed = ParseSnippet("[${TM_SELECTED_TEXT:$0}]");
+    REQUIRE(parsed.text == "[]");
+    REQUIRE(parsed.fields.size() == 1);
+    REQUIRE(FieldEquals(parsed.fields[0], 0, 1, 1));
+}
+
+TEST_CASE("ParseSnippet drops a set variable's default tabstop", "[Snippet]") {
+    ned::editor::SnippetVariables vars;
+    vars.selectedText          = "body";
+    const ParsedSnippet parsed = ParseSnippet("[${TM_SELECTED_TEXT:$0}]", vars);
+    REQUIRE(parsed.text == "[body]");
+    REQUIRE(parsed.fields.size() == 1);
+    REQUIRE(FieldEquals(parsed.fields[0], 0, 6, 6)); // the implicit final stop
+}
+
+TEST_CASE("ParseSnippet brace-matches a placeholder inside a variable's default", "[Snippet]") {
+    const ParsedSnippet parsed = ParseSnippet("${TM_SELECTED_TEXT:x${1:foo}y}!");
+    REQUIRE(parsed.text == "xfooy!");
+    REQUIRE(parsed.fields.size() == 2);
+    REQUIRE(FieldEquals(parsed.fields[0], 1, 1, 4));
+    REQUIRE(FieldEquals(parsed.fields[1], 0, 6, 6));
+}
+
+TEST_CASE("ParseSnippet resolves a variable inside another variable's default", "[Snippet]") {
+    ned::editor::SnippetVariables vars;
+    vars.filename = "main.cpp";
+    REQUIRE(ParseSnippet("${TM_SELECTED_TEXT:$TM_FILENAME}", vars).text == "main.cpp");
+    REQUIRE(ParseSnippet("${NOT_A_REAL_VAR:${TM_FILENAME}}", vars).text == "main.cpp");
+}
+
+TEST_CASE("ParseSnippet offsets a variable default's stop inside a placeholder", "[Snippet]") {
+    const ParsedSnippet parsed = ParseSnippet("${1:a ${CLIPBOARD:${2:b}}}");
+    REQUIRE(parsed.text == "a b");
+    REQUIRE(parsed.fields.size() == 3);
+    REQUIRE(FieldEquals(parsed.fields[0], 1, 0, 3));
+    REQUIRE(FieldEquals(parsed.fields[1], 2, 2, 3));
+    REQUIRE(FieldEquals(parsed.fields[2], 0, 3, 3));
+}
+
+TEST_CASE("ParseSnippet mirrors a tabstop defined inside a variable's default", "[Snippet]") {
+    REQUIRE(ParseSnippet("${TM_SELECTED_TEXT:${1:x}} $1").text == "x x");
+}
+
+TEST_CASE("ParseSnippet keeps escapes and unterminated defaults literal", "[Snippet]") {
+    REQUIRE(ParseSnippet("${TM_SELECTED_TEXT:a\\}b}").text == "a}b");
+    REQUIRE(ParseSnippet("${TM_SELECTED_TEXT:\\$1}").text == "$1");
+    REQUIRE(ParseSnippet("${TM_SELECTED_TEXT:open").text == "${TM_SELECTED_TEXT:open");
+}
+
+TEST_CASE("ParseSnippet treats variable defaults nested past the depth cap as literal", "[Snippet]") {
+    std::string body;
+    for (int i = 0; i < 20; ++i) {
+        body += "${TM_SELECTED_TEXT:";
+    }
+    body += "x";
+    body += std::string(20, '}');
+    const ParsedSnippet parsed = ParseSnippet(body);
+    REQUIRE_FALSE(parsed.text.empty()); // bounded recursion, no crash
+}
+
 TEST_CASE("ParseSnippet keeps an escaped dollar inside a placeholder literal", "[Snippet]") {
     ned::editor::SnippetVariables vars;
     vars.filename = "main.cpp";
