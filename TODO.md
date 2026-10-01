@@ -16,11 +16,6 @@ about features. Declaring it makes breaking any of them a major-version event. C
 - [ ] Release artifacts.
 - [ ] The mdBook site (`Docs/book.toml`) published.
 
-## Correctness
-
-- [ ] **Snippet variables inside a placeholder's default** (`${1:$TM_FILENAME}`) don't
-      resolve. Only a top-level `$`/`${` reference does.
-
 ## Unverified Against Real Environments
 
 - [ ] The six capability-gated DAP requests added with the debug panel (`modules`,

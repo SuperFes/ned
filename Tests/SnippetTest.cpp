@@ -263,6 +263,46 @@ TEST_CASE("ParseSnippet applies a transform to a variable", "[Snippet]") {
     REQUIRE(parsed.text == "MYCLASS");
 }
 
+TEST_CASE("ParseSnippet resolves a variable inside a placeholder's default", "[Snippet]") {
+    ned::editor::SnippetVariables vars;
+    vars.filename              = "main.cpp";
+    const ParsedSnippet parsed = ParseSnippet("${1:$TM_FILENAME}", vars);
+    REQUIRE(parsed.text == "main.cpp");
+    REQUIRE(parsed.fields.size() == 2);
+    REQUIRE(FieldEquals(parsed.fields[0], 1, 0, 8));
+    REQUIRE(FieldEquals(parsed.fields[1], 0, 8, 8));
+}
+
+TEST_CASE("ParseSnippet offsets a nested stop past a variable resolved before it", "[Snippet]") {
+    ned::editor::SnippetVariables vars;
+    vars.filenameBase          = "Widget";
+    const ParsedSnippet parsed = ParseSnippet("${1:${TM_FILENAME_BASE}::${2:run}}", vars);
+    REQUIRE(parsed.text == "Widget::run");
+    REQUIRE(parsed.fields.size() == 3);
+    REQUIRE(FieldEquals(parsed.fields[0], 1, 0, 11));
+    REQUIRE(FieldEquals(parsed.fields[1], 2, 8, 11));
+    REQUIRE(FieldEquals(parsed.fields[2], 0, 11, 11));
+}
+
+TEST_CASE("ParseSnippet applies a variable's default and transform inside a placeholder", "[Snippet]") {
+    ned::editor::SnippetVariables vars;
+    vars.filenameBase = "MyClass";
+    REQUIRE(ParseSnippet("${1:${TM_SELECTED_TEXT:none}}", vars).text == "none");
+    REQUIRE(ParseSnippet("${1:${TM_FILENAME_BASE/(.*)/${1:/upcase}/}}", vars).text == "MYCLASS");
+}
+
+TEST_CASE("ParseSnippet carries a placeholder's resolved variable into its mirror", "[Snippet]") {
+    ned::editor::SnippetVariables vars;
+    vars.filename = "a.h";
+    REQUIRE(ParseSnippet("${1:$TM_FILENAME} $1", vars).text == "a.h a.h");
+}
+
+TEST_CASE("ParseSnippet keeps an escaped dollar inside a placeholder literal", "[Snippet]") {
+    ned::editor::SnippetVariables vars;
+    vars.filename = "main.cpp";
+    REQUIRE(ParseSnippet("${1:\\$TM_FILENAME}", vars).text == "$TM_FILENAME");
+}
+
 // --- Tabstop transforms (`${N/regex/format/flags}`) -------------------------
 
 TEST_CASE("ParseSnippet applies an upcase transform to a tabstop mirror", "[Snippet]") {

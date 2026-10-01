@@ -44,20 +44,25 @@ namespace {
     // header promises.
     constexpr int kMaxNestingDepth = 8;
 
-    std::optional<RawStop>                  ParseTabstopAt(std::string_view body, std::size_t& pos, int depth = 0);
+    std::optional<RawStop>                  ParseTabstopAt(std::string_view body, std::size_t& pos,
+                                                           const SnippetVariables& variables, int depth = 0);
     std::optional<SnippetTransform>         ParseTransformSuffix(std::string_view body, std::size_t& pos);
     std::optional<std::vector<std::string>> ParseChoiceSuffix(std::string_view body, std::size_t& pos);
     std::string                             ApplyTransform(std::string_view fieldText, const SnippetTransform& transform);
     std::string                             ResolveVariable(std::string_view name, std::string_view defaultText, bool hasDefault,
                                                             const SnippetVariables& variables);
+    std::optional<std::string>              TryParseVariable(std::string_view body, std::size_t& pos,
+                                                             const SnippetVariables& variables);
 
     // Reads placeholder content from just past the ':' up to the matching
-    // unescaped '}', consuming it. A nested tabstop marker substitutes its
+    // unescaped '}', consuming it. A variable resolves straight into the
+    // content as literal text. A nested tabstop marker substitutes its
     // own placeholder text into the content and is recorded in `nested` at
     // the span that text occupies, so the stop survives as a real field.
     // nullopt when the closing '}' is missing.
     std::optional<std::string> ParsePlaceholderContent(std::string_view body, std::size_t& pos,
-                                                       std::vector<NestedStop>& nested, int depth) {
+                                                       std::vector<NestedStop>& nested,
+                                                       const SnippetVariables& variables, int depth) {
         std::string content;
         while (pos < body.size()) {
             const char c = body[pos];
@@ -78,7 +83,13 @@ namespace {
             }
             if (c == '$') {
                 std::size_t probe = pos;
-                if (auto inner = ParseTabstopAt(body, probe, depth + 1)) {
+                if (auto variable = TryParseVariable(body, probe, variables)) {
+                    content += *variable;
+                    pos = probe;
+                    continue;
+                }
+                probe = pos;
+                if (auto inner = ParseTabstopAt(body, probe, variables, depth + 1)) {
                     const std::size_t innerStart = content.size();
                     content += inner->placeholder;
                     nested.push_back(NestedStop{inner->index, innerStart, content.size(), inner->hasPlaceholder,
@@ -115,7 +126,8 @@ namespace {
     // Attempts to parse a tabstop marker at body[pos] (which is '$'). On
     // success advances pos past the marker; on failure leaves pos untouched
     // so the caller emits the '$' literally.
-    std::optional<RawStop> ParseTabstopAt(std::string_view body, std::size_t& pos, int depth) {
+    std::optional<RawStop> ParseTabstopAt(std::string_view body, std::size_t& pos, const SnippetVariables& variables,
+                                          int depth) {
         std::size_t p = pos + 1;
         if (p >= body.size() || depth > kMaxNestingDepth) {
             return std::nullopt;
@@ -163,7 +175,7 @@ namespace {
         }
         ++p;
         std::vector<NestedStop> nested;
-        auto                    content = ParsePlaceholderContent(body, p, nested, depth);
+        auto                    content = ParsePlaceholderContent(body, p, nested, variables, depth);
         if (!content) {
             return std::nullopt;
         }
@@ -671,7 +683,7 @@ ParsedSnippet ParseSnippet(std::string_view body, const SnippetVariables& variab
                 continue;
             }
             probe = pos;
-            if (auto stop = ParseTabstopAt(body, probe)) {
+            if (auto stop = ParseTabstopAt(body, probe, variables)) {
                 flushLiteral();
                 pieces.push_back(Piece{true, "", std::move(*stop)});
                 pos = probe;
