@@ -34,7 +34,7 @@ AsyncFileSaver::AsyncFileSaver(editor::AsyncSaveRequest request, text::BufferLis
         }
     };
 
-    thread_ = std::jthread([this, &eventLoop](std::stop_token) { Run(eventLoop); });
+    thread_ = std::jthread([this, &eventLoop, alive = lifetime_.Token()](std::stop_token) { Run(eventLoop, alive); });
 }
 
 AsyncFileSaver::~AsyncFileSaver() = default;
@@ -47,7 +47,7 @@ const std::string& AsyncFileSaver::BufferName() const {
     return bufferName_;
 }
 
-void AsyncFileSaver::Run(EventLoop& eventLoop) {
+void AsyncFileSaver::Run(EventLoop& eventLoop, const editor::LifetimeToken& alive) {
     std::string failure;
     try {
         editor::RunSavePlanWithBackup(plan_, bufferPath_);
@@ -60,7 +60,7 @@ void AsyncFileSaver::Run(EventLoop& eventLoop) {
     // every other reader of it lives. A buffer closed while the write ran
     // simply isn't found -- the file is written either way, which is what
     // the user asked for; there is just no buffer left to mark saved.
-    eventLoop.Post([this, failure = std::move(failure)]() mutable {
+    eventLoop.Post(alive.Bind([this, failure = std::move(failure)]() mutable {
         text::Buffer* buffer = bufferList_.Find(bufferName_);
         if (failure.empty()) {
             // Cleared even when the buffer is gone: what the exit code is
@@ -86,7 +86,7 @@ void AsyncFileSaver::Run(EventLoop& eventLoop) {
             }
         }
         done_ = true;
-    });
+    }));
 }
 
 } // namespace ned::ui

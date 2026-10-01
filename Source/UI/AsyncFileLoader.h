@@ -27,6 +27,7 @@
 #include <string>
 #include <thread>
 
+#include "Editor/Lifetime.h"
 #include "Text/BufferList.h"
 
 namespace ned::ui {
@@ -66,7 +67,7 @@ class AsyncFileLoader {
     [[nodiscard]] bool Done() const;
 
   private:
-    void Run(std::stop_token stopToken, std::filesystem::path path, EventLoop& eventLoop);
+    void Run(std::stop_token stopToken, std::filesystem::path path, EventLoop& eventLoop, const editor::LifetimeToken& alive);
 
     // Main thread only, from a posted callback: retires the placeholder a
     // failed load never filled in, and marks this loader finished. A
@@ -93,7 +94,8 @@ class AsyncFileLoader {
     // only blocking call is a plain regular-file read, which returns on its
     // own between chunks rather than needing to be interrupted, and the
     // stop_token is checked between chunks for a prompt-enough cancel.
-    std::jthread thread_;
+    editor::LifetimeGuard lifetime_; // results still queued when this is destroyed are dropped
+    std::jthread          thread_;
 };
 
 } // namespace ned::ui

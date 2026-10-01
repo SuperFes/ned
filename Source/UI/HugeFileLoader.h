@@ -41,6 +41,7 @@
 #include <string>
 #include <thread>
 
+#include "Editor/Lifetime.h"
 #include "Text/BufferList.h"
 
 namespace ned::ui {
@@ -79,7 +80,8 @@ class HugeFileLoader {
     [[nodiscard]] bool Done() const;
 
   private:
-    void Run(std::stop_token stopToken, std::filesystem::path path, bool allowBinary, EventLoop& eventLoop);
+    void Run(std::stop_token stopToken, std::filesystem::path path, bool allowBinary, EventLoop& eventLoop,
+             const editor::LifetimeToken& alive);
 
     // Main thread only, from a posted callback -- AsyncFileLoader::
     // DiscardPlaceholder's own contract, for the same reason.
@@ -117,7 +119,8 @@ class HugeFileLoader {
     // rather than needing to be interrupted, so the stop_token check
     // between groups is prompt enough; no stronger "unblock a stuck read"
     // trick needed.
-    std::jthread thread_;
+    editor::LifetimeGuard lifetime_; // results still queued when this is destroyed are dropped
+    std::jthread          thread_;
 };
 
 } // namespace ned::ui

@@ -30,7 +30,9 @@ AsyncFileLoader::AsyncFileLoader(text::Buffer& placeholder, text::BufferList& bu
     placeholder.SetLoadProgress(progress_);
 
     thread_ = std::jthread(
-        [this, path = std::move(path), &eventLoop](std::stop_token stopToken) { Run(stopToken, path, eventLoop); });
+        [this, path = std::move(path), &eventLoop, alive = lifetime_.Token()](std::stop_token stopToken) {
+            Run(stopToken, path, eventLoop, alive);
+        });
 }
 
 AsyncFileLoader::~AsyncFileLoader() {
@@ -53,10 +55,11 @@ void AsyncFileLoader::DiscardPlaceholder() {
     done_ = true;
 }
 
-void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path, EventLoop& eventLoop) {
+void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path, EventLoop& eventLoop,
+                          const editor::LifetimeToken& alive) {
     std::ifstream file(path, std::ios::binary);
     if (!file) {
-        eventLoop.Post([this] { DiscardPlaceholder(); });
+        eventLoop.Post(alive.Bind([this] { DiscardPlaceholder(); }));
         return;
     }
 
@@ -98,7 +101,7 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
         }
 
         if (file.bad()) {
-            eventLoop.Post([this] { DiscardPlaceholder(); });
+            eventLoop.Post(alive.Bind([this] { DiscardPlaceholder(); }));
             return;
         }
 
@@ -111,11 +114,11 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
             // detection/LineEndingKind() are only settled once, at
             // FinishLoad below, against the complete file.
             text::Rope preview(text::HasCarriageReturn(content) ? text::NormalizeToLf(content) : content);
-            eventLoop.Post([this, preview] {
+            eventLoop.Post(alive.Bind([this, preview] {
                 if (text::Buffer* buffer = bufferList_.Find(bufferName_)) {
                     buffer->ReplaceContentForLoad(preview);
                 }
-            });
+            }));
         }
 
         if (bytesRead < chunk.size()) {
@@ -134,7 +137,7 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
     const text::Charset    finalCharset   = charset.value_or(text::Charset::Utf8);
     const text::LineEnding detectedEnding = text::DetectLineEnding(content);
     text::Rope             finalContent(text::HasCarriageReturn(content) ? text::NormalizeToLf(content) : content);
-    eventLoop.Post([this, finalContent, detectedEnding, finalCharset, undecodable] {
+    eventLoop.Post(alive.Bind([this, finalContent, detectedEnding, finalCharset, undecodable] {
         if (text::Buffer* buffer = bufferList_.Find(bufferName_)) {
             if (undecodable) {
                 buffer->SetLikelyBinary(true);
@@ -142,7 +145,7 @@ void AsyncFileLoader::Run(std::stop_token stopToken, std::filesystem::path path,
             buffer->FinishLoad(finalContent, detectedEnding, finalCharset);
         }
         done_ = true;
-    });
+    }));
 }
 
 } // namespace ned::ui

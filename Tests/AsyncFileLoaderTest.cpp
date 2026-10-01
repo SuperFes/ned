@@ -16,9 +16,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <unistd.h>
 
@@ -140,4 +143,29 @@ TEST_CASE("An async load decodes a UTF-16 file, and keeps one that stops decodin
     CHECK(rawBinary);
 
     std::filesystem::remove_all(dir);
+}
+
+// The loader can be destroyed (purged, or the app exiting) while its last
+// result is still queued on the loop; that result must not run against it.
+TEST_CASE("A loader destroyed with its result still queued applies nothing", "[AsyncFileLoader][Lifetime]") {
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / ("ned_loader_destroyed_" + std::to_string(::getpid()) + ".txt");
+    std::ofstream(path) << "loaded\n";
+
+    ned::text::BufferList bufferList;
+    ned::ui::EventLoop    eventLoop;
+    ned::text::Buffer&    asyncPlaceholder = bufferList.CreateBuffer("async.txt");
+    ned::text::Buffer&    hugePlaceholder  = bufferList.CreateBuffer("huge.txt");
+
+    std::optional<ned::ui::AsyncFileLoader> async(std::in_place, asyncPlaceholder, bufferList, path, eventLoop, nullptr);
+    std::optional<ned::ui::HugeFileLoader>  huge(std::in_place, hugePlaceholder, bufferList, path, /*allowBinary=*/false,
+                                                 eventLoop, nullptr);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200)); // both results posted
+    async.reset();
+    huge.reset();
+    (void)eventLoop.DrainPosted_();
+
+    CHECK(asyncPlaceholder.Text().empty());
+    CHECK(hugePlaceholder.Text().empty());
+    std::filesystem::remove(path);
 }

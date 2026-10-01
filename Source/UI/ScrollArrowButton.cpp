@@ -74,20 +74,20 @@ void ScrollArrowButton::StartRepeating() {
     if (loop_ == nullptr) {
         return;
     }
-    repeatThread_ = std::jthread([this](const std::stop_token& stopToken) {
+    repeatThread_ = std::jthread([this, alive = lifetime_.Token()](const std::stop_token& stopToken) {
         while (!stopToken.stop_requested() && repeating_) {
             std::this_thread::sleep_for(kRepeatInterval);
             if (stopToken.stop_requested() || !repeating_) {
                 return;
             }
-            loop_->Post([this] {
+            loop_->Post(alive.Bind([this] {
                 if (repeating_ && enabled_ && onClick_) {
                     onClick_();
                 }
                 else {
                     repeating_ = false;
                 }
-            });
+            }));
         }
     });
 }

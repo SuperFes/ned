@@ -1,6 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
+#include <optional>
+#include <thread>
+
 #include "TestEvents.h"
+#include "UI/EventLoop.h"
 #include "UI/ScrollArrowButton.h"
 
 namespace {
@@ -173,4 +178,22 @@ TEST_CASE("A held press with no EventLoop registered stays 'repeating' but never
     button.OnEvent(MousePress(0, 0));
     REQUIRE(clicks == 1);
     REQUIRE(button.IsRepeating());
+}
+
+TEST_CASE("A repeat click queued before the button is destroyed does nothing", "[ScrollArrowButton][Lifetime]") {
+    ned::ui::EventLoop               loop;
+    const Brush                      brush{};
+    std::optional<ScrollArrowButton> button(std::in_place, U'▼', brush, brush);
+    PlaceAtOrigin(*button);
+    button->SetEventLoop(&loop);
+
+    int clicks = 0;
+    button->SetOnClick([&clicks] { ++clicks; });
+    button->OnEvent(MousePress(0, 0));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300)); // past at least one repeat interval
+    const int beforeDestroy = clicks;
+    button.reset();
+    (void)loop.DrainPosted_();
+
+    REQUIRE(clicks == beforeDestroy);
 }

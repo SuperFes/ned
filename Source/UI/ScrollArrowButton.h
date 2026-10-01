@@ -11,6 +11,7 @@
 #include <functional>
 #include <thread>
 
+#include "Editor/Lifetime.h"
 #include "EventLoop.h"
 #include "Theme.h"
 #include "Widget.h"
@@ -73,6 +74,7 @@ class ScrollArrowButton : public Widget {
     std::atomic<bool>     repeating_{false};
     std::function<void()> onClick_;
     EventLoop*            loop_ = nullptr;
+    editor::LifetimeGuard lifetime_; // repeat clicks still queued when this is destroyed are dropped
     std::jthread          repeatThread_;
 };
 

@@ -27,8 +27,8 @@ HugeFileLoader::HugeFileLoader(text::Buffer& placeholder, text::BufferList& buff
     }
     placeholder.SetLoadProgress(progress_);
 
-    thread_ = std::jthread([this, path = std::move(path), allowBinary, &eventLoop](std::stop_token stopToken) {
-        Run(stopToken, path, allowBinary, eventLoop);
+    thread_ = std::jthread([this, path = std::move(path), allowBinary, &eventLoop, alive = lifetime_.Token()](std::stop_token stopToken) {
+        Run(stopToken, path, allowBinary, eventLoop, alive);
     });
 }
 
@@ -52,7 +52,8 @@ void HugeFileLoader::DiscardPlaceholder() {
     done_ = true;
 }
 
-void HugeFileLoader::Run(std::stop_token stopToken, std::filesystem::path path, bool allowBinary, EventLoop& eventLoop) {
+void HugeFileLoader::Run(std::stop_token stopToken, std::filesystem::path path, bool allowBinary, EventLoop& eventLoop,
+                         const editor::LifetimeToken& alive) {
     std::shared_ptr<const text::MappedFile> mappedFile;
     try {
         mappedFile = std::make_shared<const text::MappedFile>(text::MappedFile::Open(path));
@@ -63,7 +64,7 @@ void HugeFileLoader::Run(std::stop_token stopToken, std::filesystem::path path, 
         // vanishingly small window between buffer creation and this mmap
         // open failing is the same accepted edge case AsyncFileLoader's own
         // ifstream-open failure already has).
-        eventLoop.Post([this] { DiscardPlaceholder(); });
+        eventLoop.Post(alive.Bind([this] { DiscardPlaceholder(); }));
         return;
     }
 
@@ -90,13 +91,13 @@ void HugeFileLoader::Run(std::stop_token stopToken, std::filesystem::path path, 
         if (!allowBinary) {
             const std::string_view chunk(mappedFile->Data() + offset, groupLength);
             if (text::HasCarriageReturn(chunk)) {
-                eventLoop.Post([this, path] {
+                eventLoop.Post(alive.Bind([this, path] {
                     editor::LogMessage(editor::LogCategory::General, editor::LogSeverity::Error,
                                        "ned: huge-file opening does not yet support CRLF/CR line endings (" + path.string() +
                                            ") -- \"" + bufferName_ +
                                            "\" is only partially loaded; save is disabled until this is resolved");
                     done_ = true;
-                });
+                }));
                 return; // leaves IsLoading() stuck true -- Buffer::SaveToFile's guard keeps a truncated save impossible
             }
         }
@@ -106,7 +107,7 @@ void HugeFileLoader::Run(std::stop_token stopToken, std::filesystem::path path, 
         progress_->bytesRead.fetch_add(groupLength, std::memory_order_relaxed);
         offset += groupLength;
 
-        eventLoop.Post([this, fragment] {
+        eventLoop.Post(alive.Bind([this, fragment] {
             text::Buffer* buffer = bufferList_.Find(bufferName_);
             if (!buffer) {
                 return; // closed mid-load -- safe no-op, same as AsyncFileLoader
@@ -130,19 +131,19 @@ void HugeFileLoader::Run(std::stop_token stopToken, std::filesystem::path path, 
                 buffer->AppendHugeLoadChunk(fragment);
             }
             expectedByteLength_ = buffer->Size();
-        });
+        }));
     }
 
     if (stopToken.stop_requested()) {
         return; // loader destroyed, buffer closed, undone-past-append stop, or app exiting -- nothing left to post
     }
 
-    eventLoop.Post([this] {
+    eventLoop.Post(alive.Bind([this] {
         if (text::Buffer* buffer = bufferList_.Find(bufferName_)) {
             buffer->FinishHugeLoad();
         }
         done_ = true;
-    });
+    }));
 }
 
 } // namespace ned::ui

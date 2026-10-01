@@ -32,6 +32,7 @@
 #include <thread>
 
 #include "Editor/BufferSave.h"
+#include "Editor/Lifetime.h"
 #include "Text/BufferList.h"
 
 namespace ned::ui {
@@ -66,7 +67,7 @@ class AsyncFileSaver {
     [[nodiscard]] const std::string& BufferName() const;
 
   private:
-    void Run(EventLoop& eventLoop);
+    void Run(EventLoop& eventLoop, const editor::LifetimeToken& alive);
 
     text::BufferList&                bufferList_;
     std::string                      bufferName_;
@@ -77,7 +78,8 @@ class AsyncFileSaver {
 
     // Declared last so it is joined first. Nothing requests a stop -- see
     // this file's header comment on why a save is never cancelled.
-    std::jthread thread_;
+    editor::LifetimeGuard lifetime_; // a result still queued when this is destroyed is dropped
+    std::jthread          thread_;
 };
 
 } // namespace ned::ui
