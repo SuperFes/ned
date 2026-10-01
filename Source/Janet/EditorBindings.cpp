@@ -314,6 +314,10 @@ namespace {
         editor::terminal::SetTerminalHeightPercent(static_cast<int>(percent));
     }
 
+    void NedSetTerminalApplicationTitles(bool enabled) {
+        editor::terminal::SetTerminalApplicationTitlesEnabled(enabled);
+    }
+
     // diagnostics-log follow-up: deliberately does NOT reach into
     // CurrentContext() to force an immediate "*Messages*" rebuild -- unlike
     // ned/insert and friends, this (like every other ned/set-* setting
@@ -2049,6 +2053,10 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedSetTerminalHeightPercent>(
         "ned", "set-terminal-height-percent",
         "Set how much of the screen the terminal drawer covers, as a percentage (default 40, clamped to 10-90).");
+    env.Register<&NedSetTerminalApplicationTitles>(
+        "ned", "set-terminal-application-titles",
+        "Enable or disable naming a terminal tab after the title its application sets (OSC 0/2 -- a shell prompt, "
+        "vim, ssh), truncated to 24 columns (default true). Disabled, the tab keeps its own label.");
     env.Register<&NedSetPageScrollFraction>(
         "ned", "set-page-scroll-fraction",
         "Set the fraction of the viewport height a page up/down moves (default 0.65, clamped to (0, 1]).");

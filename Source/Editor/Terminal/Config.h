@@ -1,8 +1,8 @@
 //
 // Terminal-panel display settings -- one process-wide choice, mutex-guarded
 // static state, mirroring TabWidth.h/ProjectRoot.h's exact pattern.
-// Configured from Janet (ned/set-terminal-height-percent); nothing built-in
-// changes it from the default.
+// Configured from Janet (ned/set-terminal-*); nothing built-in changes them
+// from their defaults.
 //
 
 #ifndef NED_EDITOR_TERMINAL_CONFIG_H
@@ -15,6 +15,11 @@ namespace ned::editor::terminal {
 // drawer is never useful).
 void              SetTerminalHeightPercent(int percent);
 [[nodiscard]] int TerminalHeightPercent();
+
+// Whether a title an application sets (OSC 0/2) names the terminal's tab.
+// Defaults to true; false keeps the panel's static label.
+void               SetTerminalApplicationTitlesEnabled(bool enabled);
+[[nodiscard]] bool TerminalApplicationTitlesEnabled();
 
 } // namespace ned::editor::terminal
 

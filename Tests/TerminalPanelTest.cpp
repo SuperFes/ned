@@ -523,6 +523,24 @@ TEST_CASE("TerminalPanel names its tab after the title an application sets", "[T
     REQUIRE(f.panel.Label() == "Terminal");
 }
 
+TEST_CASE("TerminalPanel keeps its label when application titles are disabled", "[TerminalPanel]") {
+    namespace terminal = ned::editor::terminal;
+    struct Restore {
+        ~Restore() {
+            terminal::SetTerminalApplicationTitlesEnabled(true);
+        }
+    } restore;
+
+    Fixture f;
+    f.panel.Feed("\x1b]0;~/Development\x07");
+    terminal::SetTerminalApplicationTitlesEnabled(false);
+    REQUIRE(f.panel.TitleText() == "Terminal");
+
+    // Re-enabling shows the title the application already set.
+    terminal::SetTerminalApplicationTitlesEnabled(true);
+    REQUIRE(f.panel.TitleText() == "~/Development");
+}
+
 TEST_CASE("TerminalPanel truncates an over-long application title", "[TerminalPanel]") {
     Fixture f;
     f.panel.Feed("\x1b]0;user@host:/very/long/path/that/keeps/going\x07");

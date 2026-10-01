@@ -9,6 +9,7 @@ namespace {
 
     std::mutex g_configMutex;
     int        g_terminalHeightPercent = 40;
+    bool       g_applicationTitles     = true;
 
 } // namespace
 
@@ -20,6 +21,16 @@ void SetTerminalHeightPercent(int percent) {
 int TerminalHeightPercent() {
     const std::lock_guard<std::mutex> lock(g_configMutex);
     return g_terminalHeightPercent;
+}
+
+void SetTerminalApplicationTitlesEnabled(bool enabled) {
+    const std::lock_guard<std::mutex> lock(g_configMutex);
+    g_applicationTitles = enabled;
+}
+
+bool TerminalApplicationTitlesEnabled() {
+    const std::lock_guard<std::mutex> lock(g_configMutex);
+    return g_applicationTitles;
 }
 
 } // namespace ned::editor::terminal

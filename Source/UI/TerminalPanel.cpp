@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Editor/Clipboard.h"
+#include "Editor/Terminal/Config.h"
 #include "KeyTranslation.h"
 #include "Text/DisplayWidth.h"
 #include "Text/Utf8.h"
@@ -163,7 +164,8 @@ std::string TerminalPanel::TitleText() const {
     // An application-set title (OSC 0/2 -- a shell's PS1, vim, ssh) names
     // the tab the way every terminal emulator does; the static label is the
     // fallback, and stays what Label() reports for uniquification.
-    std::string title = emulator_.Title().empty() ? label_ : TruncateToColumns(emulator_.Title(), kMaxTitleColumns);
+    const bool  useAppTitle = !emulator_.Title().empty() && editor::terminal::TerminalApplicationTitlesEnabled();
+    std::string title       = useAppTitle ? TruncateToColumns(emulator_.Title(), kMaxTitleColumns) : label_;
     if (exited_) {
         title += " (exited)";
     }

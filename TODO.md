@@ -29,8 +29,6 @@ about features. Declaring it makes breaking any of them a major-version event. C
 
 ## Editor & UI
 
-- [ ] **Setting for terminal application titles.** An OSC 0/2 title replaces the terminal
-      tab's label unconditionally (truncated to 24 columns). Add a `ned/set-*` toggle.
 - [ ] **Merge view: index-stage source.** Sides come from conflict markers today, so git's
       clean auto-merges aren't shown. Diff the `:1:`/`:2:`/`:3:` stages (a new Provider
       verb) against the merged buffer into the same `AlignedChunk` list. `DiffLines` is an

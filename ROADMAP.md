@@ -62,8 +62,7 @@ against.
 - ✅ **Colour swatches and a colour picker.**
 - ✅ **Reusable widgets**: `TableView` (sortable record tables) and `TreeView`.
 - ✅ **Mouse support** layered over keyboard commands, never replacing them.
-- 🔜 A setting for terminal application titles, and a resize border for a right-docked
-  agent panel.
+- 🔜 A resize border for a right-docked agent panel.
 - 💭 Styled spans in list and table rows, remembered table sort order, configurable
   indicator glyphs, and a settings UI.
 

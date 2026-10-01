@@ -874,6 +874,10 @@ The popup is never one source: a language server's items, snippet triggers for t
 
 :   Set the command run by run-task for a task name: (name argv), e.g. (ned/set-task-command "build" ["cmake" "--build" "."]). argv is an array or tuple of strings -- argv[0] the executable (resolved against $PATH), the rest its arguments. An empty argv clears the configured command for name.
 
+`ned/set-terminal-application-titles`
+
+:   Enable or disable naming a terminal tab after the title its application sets (OSC 0/2 -- a shell prompt, vim, ssh), truncated to 24 columns (default true). Disabled, the tab keeps its own label.
+
 `ned/set-terminal-height-percent`
 
 :   Set how much of the screen the terminal drawer covers, as a percentage (default 40, clamped to 10-90).
