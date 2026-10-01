@@ -97,6 +97,11 @@ class QueryReplace {
     [[nodiscard]] std::string StatusText() const;
     [[nodiscard]] std::size_t ReplacementCount() const;
 
+    // Whether this session runs over `buffer`.
+    [[nodiscard]] bool IsFor(const text::Buffer& buffer) const {
+        return &buffer == &buffer_;
+    }
+
   private:
     void FindNextMatch();
     // The scope ranges as of right now -- empty when scoping is off or the

@@ -2083,6 +2083,39 @@ TEST_CASE("BufferView highlights the current isearch match", "[BufferView]") {
     REQUIRE(screen.PixelAt(gutter + 15, 0).background_color == fixture.theme.background);             // ' ' before match
 }
 
+// A search or replace session keeps a reference to its buffer; one closed
+// out from under it (a failed load, a server's workspace edit) ends the
+// session rather than leaving the next keystroke to reach a freed buffer.
+TEST_CASE("Closing the buffer under an isearch or query-replace session ends it", "[BufferView]") {
+    for (const bool replace : {false, true}) {
+        Fixture            fixture;
+        ned::text::Buffer& doomed = fixture.bufferList.CreateBuffer("doomed");
+        ned::text::Buffer& other  = fixture.bufferList.CreateBuffer("other");
+        doomed.InsertAtPoint("the quick brown fox");
+        doomed.SetPoint(0);
+        fixture.activeBuffer.Set(doomed);
+
+        ned::ui::BufferView view = fixture.View();
+        view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+        if (replace) {
+            view.OnEvent(ned::ui::test::Alt('%'));
+        }
+        else {
+            view.OnEvent(ned::ui::test::Ctrl('s'));
+        }
+        view.OnEvent(ned::ui::test::Character("f"));
+        REQUIRE(view.Prompting());
+
+        view.NotifyBufferClosed(doomed);
+        fixture.activeBuffer.Set(other);
+        fixture.bufferList.Close("doomed");
+
+        CHECK_FALSE(view.Prompting());
+        view.OnEvent(ned::ui::test::Character("z"));
+        CHECK(other.Text() == "z");
+    }
+}
+
 TEST_CASE("key_press propagates the widget's real height as CommandContext::viewportHeight for paging", "[BufferView]") {
     Fixture fixture;
 

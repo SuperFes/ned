@@ -205,6 +205,10 @@ void BufferView::SetOnBufferClosed(std::function<void(text::Buffer&)> handler) {
 
 void BufferView::NotifyBufferClosed(text::Buffer& buffer) {
     vimEngine_.NotifyBufferClosed(buffer);
+    // These sessions hold the buffer by reference.
+    if ((search_ && search_->IsFor(buffer)) || (queryReplace_ && queryReplace_->IsFor(buffer))) {
+        EndInteractiveSession();
+    }
 }
 
 void BufferView::ReleaseVimAnchoredPositions() {

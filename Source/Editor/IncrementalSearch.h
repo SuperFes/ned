@@ -103,6 +103,11 @@ class IncrementalSearch {
     // and falls back to its plain, whole-query rendering.
     [[nodiscard]] std::size_t MatchedPrefixLength() const;
 
+    // Whether this session runs over `buffer`.
+    [[nodiscard]] bool IsFor(const text::Buffer& buffer) const {
+        return &buffer == &buffer_;
+    }
+
   private:
     // Whether [start, end) lies wholly inside one scope range -- always true
     // when scope_ is empty (the unscoped default).
