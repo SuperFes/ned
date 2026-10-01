@@ -173,3 +173,20 @@ TEST_CASE("F#: every DEDENT changes the scanner's serialized state", "[Scanners]
     CHECK((afterLength != sizeof(indented) || std::memcmp(after, indented, afterLength) != 0));
     scanner->destroy(payload);
 }
+
+// A tag name cut off by the end of the file is CUSTOM, like any name not in
+// the table, so an open custom element is implicitly closed the way HTML's
+// scanner closes it.
+TEST_CASE("Astro: a closing tag cut off at end of file closes an open custom element", "[Scanners]") {
+    const auto language = ned::editor::grammar::LanguageByName("astro");
+    REQUIRE(language.has_value());
+    const ned::editor::grammar::Parser parser(*language);
+
+    const std::string                text = "<my-el>x</";
+    const ned::editor::grammar::Tree tree = parser.Parse(text);
+    REQUIRE_FALSE(tree.IsNull());
+    const std::string sexp = ned::editor::parse::SubtreeToSexp(tree.Green().Root(), tree.Green().Language());
+    INFO(sexp);
+    CHECK(sexp.find("(end_tag") == std::string::npos);
+    CHECK(sexp.find("(erroneous_end_tag") != std::string::npos);
+}
