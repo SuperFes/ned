@@ -2,6 +2,9 @@
 
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <regex>
 #include <string>
 #include <string_view>
 
@@ -224,4 +227,36 @@ TEST_CASE("Every scanner's state fits the serialization buffer on deeply nested 
             CHECK_FALSE(parser.Parse(text).IsNull());
         }
     }
+}
+
+// The <cctype> classifiers take an unsigned char or EOF; a lookahead is any
+// codepoint, and glibc indexes its table with it, reading past the end. A
+// single Hangul syllable read as "space" there left Earthfile's whitespace
+// loop spinning without advancing.
+TEST_CASE("Earthfile: a non-ASCII character outside any construct parses", "[Scanners]") {
+    const auto language = ned::editor::grammar::LanguageByName("earthfile");
+    REQUIRE(language.has_value());
+    const ned::editor::grammar::Parser parser(*language);
+    CHECK_FALSE(parser.Parse("\xeb\x8c\xb8").IsNull());
+}
+
+TEST_CASE("Scanners classify a lookahead without the narrow <cctype> functions", "[Scanners]") {
+    const std::filesystem::path root = std::filesystem::path(NED_REPO_ROOT) / "Source/Editor/Languages/Scanners";
+    const std::regex            narrow(R"(\b(isspace|isdigit|isalpha|isalnum|isupper|islower|isxdigit|ispunct|isblank|tolower|toupper)\s*\()");
+    std::string                 offenders;
+    for (const auto& entry : std::filesystem::directory_iterator(root)) {
+        std::ifstream in(entry.path());
+        std::string   line;
+        for (std::size_t number = 1; std::getline(in, line); ++number) {
+            if (const auto comment = line.find("//"); comment != std::string::npos) {
+                line.erase(comment);
+            }
+            if (std::regex_search(line, narrow)) {
+                offenders += entry.path().filename().string() + ":" + std::to_string(number) + "\n";
+            }
+        }
+    }
+    INFO("Use scanner_isspace/scanner_isdigit or the isw* functions:\n"
+         << offenders);
+    CHECK(offenders.empty());
 }

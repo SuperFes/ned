@@ -80,7 +80,7 @@ static bool Scan(void *payload_, Lexer *lexer, const bool *valid_symbols) {
                             goto newline;
                         }
                         lexer->markEnd(lexer);
-                        if (!isdigit(lexer->lookahead) && (found_number_after_decimal || found_number_before_decimal)) {
+                        if (!scanner_isdigit(lexer->lookahead) && (found_number_after_decimal || found_number_before_decimal)) {
                             lexer->resultSymbol = FLOAT;
                             return true;
                         }
@@ -122,7 +122,7 @@ static bool Scan(void *payload_, Lexer *lexer, const bool *valid_symbols) {
                     }
                     break;
                 default:
-                    if (lexer->lookahead <= 255 && isdigit(lexer->lookahead)) {
+                    if (scanner_isdigit(lexer->lookahead)) {
                         advance(lexer);
                         if (found_decimal) {
                             found_number_after_decimal = true;

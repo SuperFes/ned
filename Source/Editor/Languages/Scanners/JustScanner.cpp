@@ -171,7 +171,7 @@ static bool Scan(void *payload_, Lexer *lexer,
   }
 
   if (valid_symbols[INDENT] || valid_symbols[DEDENT]) {
-    while (!lexer->eof(lexer) && isspace(lexer->lookahead)) {
+    while (!lexer->eof(lexer) && scanner_isspace(lexer->lookahead)) {
       switch (lexer->lookahead) {
       case '\n':
         if (valid_symbols[INDENT]) {

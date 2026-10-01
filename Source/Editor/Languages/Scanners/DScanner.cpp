@@ -544,7 +544,7 @@ Scan(
 		return (false);
 	}
 
-	if (c == '.' || isdigit(c)) {
+	if (c == '.' || scanner_isdigit(c)) {
 		return (match_number(lexer, valid));
 	}
 

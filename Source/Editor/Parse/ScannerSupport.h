@@ -32,6 +32,16 @@ struct VoidPtr {
     }
 };
 
+// The <cctype> classifiers take an unsigned char or EOF, and glibc indexes a
+// table with the argument; a lookahead is any codepoint. These answer for
+// ASCII and say no to everything else.
+inline bool scanner_isspace(int32_t c) {
+    return c == ' ' || (c >= '\t' && c <= '\r');
+}
+inline bool scanner_isdigit(int32_t c) {
+    return c >= '0' && c <= '9';
+}
+
 inline VoidPtr scanner_malloc(size_t size) {
     return {CheckedMalloc(size)};
 }

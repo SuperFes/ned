@@ -1198,7 +1198,7 @@ brace_start:
         advance(lexer);
         lexer->markEnd(lexer);
 
-        while (isdigit(lexer->lookahead)) {
+        while (scanner_isdigit(lexer->lookahead)) {
             advance(lexer);
         }
 
@@ -1212,7 +1212,7 @@ brace_start:
         }
         advance(lexer);
 
-        while (isdigit(lexer->lookahead)) {
+        while (scanner_isdigit(lexer->lookahead)) {
             advance(lexer);
         }
 

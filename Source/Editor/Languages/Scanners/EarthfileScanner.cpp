@@ -137,6 +137,7 @@ static bool Scan(void *payload_, Lexer *lexer, const bool *valid_symbols) {
         case '\n':
         case '\r':
         case '\f':
+        case '\v':
           advance(lexer);
           break;
 
@@ -145,7 +146,7 @@ static bool Scan(void *payload_, Lexer *lexer, const bool *valid_symbols) {
           skip(lexer);
           break;
       }
-    } while (!lexer->eof(lexer) && isspace(lexer->lookahead));
+    } while (!lexer->eof(lexer) && scanner_isspace(lexer->lookahead));
 
     if (lexer->eof(lexer)) {
       return handle_eof(lexer, scanner, valid_symbols);
