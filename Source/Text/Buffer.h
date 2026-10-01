@@ -1070,10 +1070,10 @@ class Buffer {
     // restore has no obviously-right answer, and the owning session treats
     // "ranges gone" as its cue to end).
     struct SnippetRange {
-        std::size_t id;           // stable identity across relocation
-        int         tabstopIndex; // 0 = final stop; mirrors share an index
-        std::size_t start;        // invariant: start <= end
-        std::size_t end;
+        std::size_t id{};           // stable identity across relocation
+        int         tabstopIndex{}; // 0 = final stop; mirrors share an index
+        std::size_t start{};        // invariant: start <= end
+        std::size_t end{};
         bool        active   = false;
         std::size_t parentId = 0; // enclosing range's id; 0 = none (ids start at 1)
 
@@ -1209,12 +1209,12 @@ class Buffer {
     // range across an edit when a fresh, correct set is coming right behind
     // it.
     struct Diagnostic {
-        std::size_t startByte;
-        std::size_t endByte;
+        std::size_t startByte{};
+        std::size_t endByte{};
         enum class Severity { Error,
                               Warning,
                               Information,
-                              Hint } severity;
+                              Hint } severity{};
         // prose-diagnostic-callout follow-up: distinguishes a real language
         // server's diagnostic from the prose/spell/grammar checker's (see
         // Editor/Lsp/Manager.h's kProseLanguageKey) -- BufferView renders

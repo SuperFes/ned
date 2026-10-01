@@ -66,7 +66,7 @@ enum class ParamOriginKind { Kept,
 // "text plus ranges, not pre-sliced strings" shape every other pure module
 // here follows.
 struct ParamOrigin {
-    ParamOriginKind kind;
+    ParamOriginKind kind{};
     std::size_t     oldIndex            = 0;
     std::size_t     newDefaultStartByte = 0;
     std::size_t     newDefaultEndByte   = 0;

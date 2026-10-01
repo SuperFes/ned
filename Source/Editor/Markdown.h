@@ -29,8 +29,8 @@ namespace ned::editor::markdown {
 struct Table {
     std::vector<std::vector<std::string>> rows;
     std::vector<table::Alignment>         columnAlignments;
-    std::size_t                           startLine;
-    std::size_t                           endLine; // exclusive
+    std::size_t                           startLine{};
+    std::size_t                           endLine{}; // exclusive
     // Kept through a realign: the indent that places the table (inside a
     // list item, it is what keeps the table there) and whether its rows are
     // written with edge pipes (GFM allows `a | b` as well as `| a | b |`).

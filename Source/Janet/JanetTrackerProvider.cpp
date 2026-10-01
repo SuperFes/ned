@@ -105,7 +105,7 @@ namespace {
 
     // The callbacks each capability needs, all of them or none.
     struct CapabilityCallbacks {
-        editor::tracker::Capability        capability;
+        editor::tracker::Capability        capability{};
         std::initializer_list<const char*> keys;
     };
     const CapabilityCallbacks kCapabilityCallbacks[] = {

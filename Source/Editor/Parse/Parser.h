@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
@@ -163,7 +164,7 @@ class Engine {
     const abi::LanguageData*    language_;
     Lexer                       lexer_;
     SubtreePool                 treePool_;
-    Stack*                      stack_;
+    std::unique_ptr<Stack>      stack_; // reset explicitly in ~Engine, before treePool_ goes
     RawArray<ReduceActionEntry> reduceActions_;
     Subtree                     finishedTree_ = kNullSubtree;
     SubtreeArray                trailingExtras_;

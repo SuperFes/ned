@@ -184,7 +184,7 @@ namespace {
     struct ParsedPropertyLine {
         std::string key;
         std::string value;
-        std::size_t valueStartInLine;
+        std::size_t valueStartInLine{};
     };
 
     // Matches ":KEY:value" / ":KEY: value" -- a leading ':', a key with no

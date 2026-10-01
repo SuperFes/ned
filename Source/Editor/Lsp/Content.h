@@ -771,9 +771,9 @@ struct PullDiagnosticItem {
 // PullDiagnosticItem's raw severity int already uses.
 struct SemanticToken {
     Position   start;
-    std::size_t   length;         // UTF-16 code units, same unit Position::character already uses
-    std::size_t   tokenTypeIndex; // index into the server's own legend.tokenTypes
-    std::uint32_t tokenModifiers; // bitset -- bit i set means legend.tokenModifiers[i] applies
+    std::size_t   length{};         // UTF-16 code units, same unit Position::character already uses
+    std::size_t   tokenTypeIndex{}; // index into the server's own legend.tokenTypes
+    std::uint32_t tokenModifiers{}; // bitset -- bit i set means legend.tokenModifiers[i] applies
 
     bool operator==(const SemanticToken&) const = default;
 };

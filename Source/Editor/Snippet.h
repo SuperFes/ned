@@ -97,9 +97,9 @@ inline constexpr std::size_t kNoParentField = static_cast<std::size_t>(-1);
 
 // One field occurrence in ParsedSnippet::text. index 0 is the final stop.
 struct SnippetField {
-    int         index;
-    std::size_t start; // byte offsets into ParsedSnippet::text; start <= end
-    std::size_t end;
+    int         index{};
+    std::size_t start{}; // byte offsets into ParsedSnippet::text; start <= end
+    std::size_t end{};
     // Set only on an occurrence that was itself written as
     // `${N/regex/format/flags}` -- a plain mirror (bare `$N`/`${N}`) or the
     // placeholder-carrying primary never carries one.

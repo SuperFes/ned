@@ -32,12 +32,12 @@ struct ConflictHunk {
         std::size_t end;
     };
 
-    std::size_t startByte; // the "<<<<<<< " marker's own line start
-    std::size_t endByte;   // one past the ">>>>>>> " marker's line (incl. its newline)
+    std::size_t startByte{}; // the "<<<<<<< " marker's own line start
+    std::size_t endByte{};   // one past the ">>>>>>> " marker's line (incl. its newline)
 
-    Range                oursRange;   // between "<<<<<<< " and the next marker
+    Range                oursRange{}; // between "<<<<<<< " and the next marker
     std::optional<Range> baseRange;   // diff3 "||||||| " section, if present
-    Range                theirsRange; // between "=======" and ">>>>>>> "
+    Range                theirsRange{}; // between "=======" and ">>>>>>> "
 };
 
 // Scans `text` for conflict-marker runs at line starts, in document order.

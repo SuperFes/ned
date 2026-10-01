@@ -385,8 +385,8 @@ class VcsPanel : public Widget {
         enum class Kind { SectionHeader,
                           Entry,
                           StashEntry };
-        Kind                       kind;
-        VcsPanelSection            section;
+        Kind                       kind{};
+        VcsPanelSection            section{};
         std::size_t                fileCount = 0;                                // SectionHeader only
         editor::ProjectTreeEntry   entry{};                                      // Entry only
         std::u32string             treePrefix;                                   // Entry only -- ProjectSidebar's own box-drawing tree connectors

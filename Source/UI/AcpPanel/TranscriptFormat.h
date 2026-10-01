@@ -39,10 +39,10 @@ enum class DisplayStyle { Plain,
 // the foreground; `syntaxClass` then recolours it from the syntax theme.
 // Spans are sorted and never overlap.
 struct InlineSpan {
-    int                                startColumn;
-    int                                columnCount;
-    bool                               bold;
-    bool                               code;
+    int                                startColumn{};
+    int                                columnCount{};
+    bool                               bold{};
+    bool                               code{};
     std::optional<editor::SyntaxClass> syntaxClass = std::nullopt;
     editor::CaptureId                  captureId   = editor::kNoCapture;
 };

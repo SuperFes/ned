@@ -154,20 +154,20 @@ void                                          SetTodoKeywords(std::vector<std::s
 // what actually distinguishes a headline from an indented list item; this
 // is real Org's own rule, not an invented simplification).
 struct Headline {
-    int                      level;       // number of leading stars, >= 1
+    int                      level{};     // number of leading stars, >= 1
     std::string              todoKeyword; // empty if the headline has none
     std::optional<char>      priority;    // 'A'-'Z' from a [#X] cookie; nullopt if none
     std::string              title;       // TODO keyword, priority cookie, and tags all stripped, trimmed
     std::vector<std::string> tags;        // from a trailing :tag1:tag2: block, in file order
-    std::size_t              lineNumber;  // 0-indexed, matching Buffer::ByteOffsetForLineAndColumn's own convention
-    std::size_t              lineStartByte;
-    std::size_t              lineEndByte; // exclusive, before the line's own trailing '\n' (if any)
+    std::size_t              lineNumber{}; // 0-indexed, matching Buffer::ByteOffsetForLineAndColumn's own convention
+    std::size_t              lineStartByte{};
+    std::size_t              lineEndByte{}; // exclusive, before the line's own trailing '\n' (if any)
     // Where the tags block (plus its own separating whitespace before it,
     // and any trailing whitespace after it) begins -- equal to lineEndByte
     // when there's no tags block at all, so SetHeadlineTags's own
     // delete/insert logic works identically either way (an empty
     // [tagsStartByte, lineEndByte) delete range is simply a no-op).
-    std::size_t tagsStartByte;
+    std::size_t tagsStartByte{};
 };
 
 // Scans every line of bufferText and returns the headlines found, in file
@@ -209,12 +209,12 @@ struct Headline {
 // shape ProjectTreeEntry already establishes for the (unrelated) project
 // file tree.
 struct Checkbox {
-    std::size_t indent;     // leading whitespace count
-    char        state;      // ' ' (unchecked), 'X' or 'x' (checked), or '-' (partial -- see ReflectParentCheckboxStates)
+    std::size_t indent{};   // leading whitespace count
+    char        state{};    // ' ' (unchecked), 'X' or 'x' (checked), or '-' (partial -- see ReflectParentCheckboxStates)
     std::string text;       // the item's own text, after "[state] "
-    std::size_t lineNumber; // 0-indexed
-    std::size_t stateByte;  // byte offset of the state character itself -- always exactly 1 byte, so toggling it in
-                            // place never shifts any other checkbox's own stateByte
+    std::size_t lineNumber{}; // 0-indexed
+    std::size_t stateByte{};  // byte offset of the state character itself -- always exactly 1 byte, so toggling it in
+                              // place never shifts any other checkbox's own stateByte
 };
 
 [[nodiscard]] std::vector<Checkbox> ParseCheckboxes(std::string_view bufferText);
@@ -360,8 +360,8 @@ bool CycleFoldAtPoint(text::Buffer& buffer, const std::vector<std::string>& todo
 struct OrgTable {
     std::vector<std::vector<std::string>> rows;
     std::vector<bool>                     isSeparatorRow;
-    std::size_t                           startLine;
-    std::size_t                           endLine; // exclusive
+    std::size_t                           startLine{};
+    std::size_t                           endLine{}; // exclusive
 };
 
 [[nodiscard]] std::optional<OrgTable> FindOrgTableAtPoint(const text::Buffer& buffer);
@@ -479,7 +479,7 @@ struct Link {
 // (FormatTimestamp recomputes it), never authoritative, the same way real
 // Org silently corrects a stale weekday on save rather than trusting it.
 struct OrgTimestamp {
-    std::chrono::year_month_day date;
+    std::chrono::year_month_day date{};
     std::optional<int>          hour;          // 0-23; nullopt means no time-of-day at all
     std::optional<int>          minute;        // always set together with hour
     std::optional<int>          endHour;       // a "14:00-15:30" range's own end; nullopt means no range
@@ -577,8 +577,8 @@ void SetPlanning(text::Buffer& buffer, const Headline& headline, const Planning&
 struct Property {
     std::string key;
     std::string value;
-    std::size_t lineStartByte;
-    std::size_t lineEndByte; // exclusive, before the line's own trailing '\n'
+    std::size_t lineStartByte{};
+    std::size_t lineEndByte{}; // exclusive, before the line's own trailing '\n'
     // Where `value` begins on the line -- equal to lineEndByte when the
     // property has no value at all. Kept distinct from a from-scratch
     // "KEY: " + value reconstruction so SetProperty's in-place rewrite of an
@@ -586,15 +586,15 @@ struct Property {
     // originally typed between the second ':' and the value, the same
     // "rewrite only the token itself" precedent tagsStartByte establishes
     // for SetHeadlineTags.
-    std::size_t valueStartByte;
+    std::size_t valueStartByte{};
 };
 
 // A ":PROPERTIES:" / ":END:" block. properties is in file order.
 struct PropertyDrawer {
     std::vector<Property> properties;
-    std::size_t           startByte;        // start of the ":PROPERTIES:" line itself
-    std::size_t           endLineStartByte; // start of the ":END:" line itself -- where SetProperty appends a new property
-    std::size_t           endByte;          // exclusive, one past the ":END:" line's own trailing '\n' (or buffer end)
+    std::size_t           startByte{};        // start of the ":PROPERTIES:" line itself
+    std::size_t           endLineStartByte{}; // start of the ":END:" line itself -- where SetProperty appends a new property
+    std::size_t           endByte{};          // exclusive, one past the ":END:" line's own trailing '\n' (or buffer end)
 };
 
 // headline's own drawer, if it has one -- the drawer must be the buffer's
@@ -658,8 +658,8 @@ struct ClockEntry {
     OrgTimestamp                        start;
     std::optional<OrgTimestamp>         end; // nullopt means still running
     std::optional<std::chrono::minutes> duration;
-    std::size_t                         lineStartByte;
-    std::size_t                         lineEndByte; // exclusive, before the line's own trailing '\n'
+    std::size_t                         lineStartByte{};
+    std::size_t                         lineEndByte{}; // exclusive, before the line's own trailing '\n'
 };
 
 // A ":LOGBOOK:" / ":END:" block holding zero or more ClockEntry lines --
@@ -667,9 +667,9 @@ struct ClockEntry {
 // each byte field is for. entries is in file order.
 struct LogbookDrawer {
     std::vector<ClockEntry> entries;
-    std::size_t             startByte;
-    std::size_t             endLineStartByte; // where a new CLOCK: line is inserted
-    std::size_t             endByte;
+    std::size_t             startByte{};
+    std::size_t             endLineStartByte{}; // where a new CLOCK: line is inserted
+    std::size_t             endByte{};
 };
 
 // headline's own LOGBOOK drawer, if it has one -- the drawer must be the

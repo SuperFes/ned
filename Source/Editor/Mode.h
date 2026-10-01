@@ -168,9 +168,9 @@ inline constexpr CaptureId kNoCapture = 0;
 // matching how a more specific/nested capture naturally sorts after a less
 // specific enclosing one when collected from a tree-sitter query cursor.
 struct HighlightSpan {
-    std::size_t startByte;
-    std::size_t endByte;
-    SyntaxClass syntaxClass;
+    std::size_t startByte{};
+    std::size_t endByte{};
+    SyntaxClass syntaxClass{};
     // Which query capture produced this span (kNoCapture for C++-synthesized
     // spans) -- what makes per-capture-name styling (SyntaxTheme.h's
     // ResolvedCaptureOverride) reachable from the render path; syntaxClass
@@ -509,8 +509,8 @@ enum class ParameterReceiver : std::uint8_t { None,
                                               Always };
 
 struct SignatureParameter {
-    std::size_t startByte;
-    std::size_t endByte;
+    std::size_t startByte{};
+    std::size_t endByte{};
     std::size_t nameStartByte   = 0;
     std::size_t nameEndByte     = 0;
     bool        hasDefaultValue = false;
@@ -589,8 +589,8 @@ using SignatureFunction = std::function<std::vector<SignatureMarker>(std::string
 // list, copying each kept argument's exact source text rather than
 // re-deriving it.
 struct CallArgument {
-    std::size_t startByte;
-    std::size_t endByte;
+    std::size_t startByte{};
+    std::size_t endByte{};
     // False for an argument bound by name or spread from a collection
     // (calls.janet's @argument.named/@argument.spread): its position says
     // nothing about which parameter it fills. A named one carries the name

@@ -34,7 +34,7 @@ namespace ned::editor::org {
 // One registered template. headline empty means "no headline target -- file
 // at the end of targetFile."
 struct CaptureTemplate {
-    char        key;
+    char        key{};
     std::string name;
     std::string targetFile;
     std::string templateText;

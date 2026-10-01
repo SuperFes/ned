@@ -40,7 +40,7 @@ namespace ned::editor {
 
 struct SearchMatch {
     std::filesystem::path file;       // always absolute, regardless of root's form
-    std::size_t           lineNumber; // 1-indexed
+    std::size_t           lineNumber{}; // 1-indexed
     std::string           lineText;
 };
 

@@ -1217,8 +1217,8 @@ struct CommandContext {
     // have different hangs (a wrapped continuation row against a line's
     // own first row, or two lines indented to different depths).
     struct VisualRow {
-        std::size_t start;
-        std::size_t end;
+        std::size_t start{};
+        std::size_t end{};
         int         hang = 0;
     };
     // visual-line-motion follow-up: set by the host UI before each dispatch

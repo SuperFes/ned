@@ -60,8 +60,8 @@ struct RenderedVirtualText {
 // a RenderedVirtualText: it occupies no columns of its own, so none of the
 // column arithmetic has to know about it.
 struct RenderedColorUnderlay {
-    std::size_t startByte;
-    std::size_t endByte; // exclusive
+    std::size_t startByte{};
+    std::size_t endByte{}; // exclusive
     Color       color;
 };
 
@@ -79,8 +79,8 @@ struct RenderedColorUnderlay {
 // content actually starts -- the same "one true source" discipline this
 // struct's own doc comment already establishes for startByte/endByte.
 struct WrapSegment {
-    std::size_t startByte;
-    std::size_t endByte;
+    std::size_t startByte{};
+    std::size_t endByte{};
     int         continuationIndent = 0;
 };
 

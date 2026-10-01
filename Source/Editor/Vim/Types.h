@@ -32,7 +32,7 @@ enum class Mode { Normal,
 // (Engine ignores linewise/inclusive when just moving point, not applying an
 // operator).
 struct MotionResult {
-    std::size_t target;
+    std::size_t target{};
     bool        linewise  = false; // whole-line motions (j/k/gg/G/{/}/...) -- operator acts on complete lines
     bool        inclusive = false; // charwise motions that include their own landing grapheme (f/t/e/$/%/...)
     bool        found     = true;  // false for a failed f/F/t/T (target char not found) -- motion/operator both no-op
@@ -41,8 +41,8 @@ struct MotionResult {
 // A text object's range, always [start, end) regardless of point's position relative to
 // it (TextObject.h's functions are the only source of these).
 struct ObjectRange {
-    std::size_t start;
-    std::size_t end;
+    std::size_t start{};
+    std::size_t end{};
     bool        linewise = false; // ip/ap
     bool        found    = true;  // false when no such object exists at point (e.g. i( outside any parens)
 };

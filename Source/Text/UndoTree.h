@@ -99,7 +99,7 @@ class UndoTree {
     // so Serialize() never actually runs against one, even though it would
     // compile and technically work (just slowly) if it did.
     struct SerializedNode {
-        std::size_t                id;
+        std::size_t                id{};
         std::optional<std::size_t> parentId;
         std::string                content;
         std::size_t                mostRecentChild = 0;

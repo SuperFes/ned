@@ -206,8 +206,8 @@ namespace {
     }
 
     struct HeaderMatch {
-        std::size_t              startOffset; // of the opening fence line
-        std::size_t              endOffset;   // one past the closing fence's newline
+        std::size_t              startOffset{}; // of the opening fence line
+        std::size_t              endOffset{};   // one past the closing fence's newline
         std::string              name;
         bool                     skip            = false;
         bool                     error           = false;

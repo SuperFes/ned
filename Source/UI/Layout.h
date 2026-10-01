@@ -57,7 +57,7 @@ struct SizeSpec {
 class Container : public Widget {
   public:
     struct Child {
-        Widget*  widget;
+        Widget*  widget{};
         SizeSpec size;
     };
 

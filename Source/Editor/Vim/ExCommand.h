@@ -24,8 +24,8 @@ namespace ned::editor::vim {
 
 struct ExRange {
     bool        present = false; // false: no range was typed -- command applies to the current line only
-    std::size_t startLine;       // 0-based, inclusive
-    std::size_t endLine;         // 0-based, inclusive
+    std::size_t startLine{};     // 0-based, inclusive
+    std::size_t endLine{};       // 0-based, inclusive
 };
 
 struct ExCommand {

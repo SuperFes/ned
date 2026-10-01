@@ -118,13 +118,13 @@ Engine::Engine(const void* language) : language_(static_cast<const abi::Language
     if (language_ == nullptr || language_->abiVersion != abi::kAbiVersion)
         throw std::runtime_error("parse::Engine: language tables are not version " + std::to_string(abi::kAbiVersion));
     treePool_ = SubtreePool::New(32);
-    stack_    = new Stack(&treePool_);
+    stack_    = std::make_unique<Stack>(&treePool_);
     reduceActions_.Reserve(4);
 }
 
 Engine::~Engine() {
     Reset();
-    delete stack_;
+    stack_.reset();
     SetCachedToken(0, kNullSubtree, kNullSubtree);
     treePool_.Delete();
     reduceActions_.Delete();

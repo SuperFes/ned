@@ -229,6 +229,8 @@ add_executable(ned_tests
             ActiveBufferTest.cpp
             CacheStampTest.cpp
             BufferIdentityTest.cpp
+            DefaultInitTest.cpp
+            NoManualMemoryTest.cpp
             CandidateListTest.cpp
             RequestSlotTest.cpp
             LifetimeTest.cpp

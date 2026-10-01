@@ -82,9 +82,9 @@ class GutterModel {
     };
 
     struct InlineDiagnostic {
-        text::Buffer::Diagnostic::Severity severity;
-        std::size_t                        startByte;
-        std::size_t                        endByte;
+        text::Buffer::Diagnostic::Severity severity{};
+        std::size_t                        startByte{};
+        std::size_t                        endByte{};
         std::string                        message;
     };
 

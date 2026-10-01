@@ -38,7 +38,7 @@ enum class AgendaSection { Overdue,
 struct AgendaItem {
     std::filesystem::path file;
     org::Headline         headline;
-    AgendaSection         section;
+    AgendaSection         section{};
 
     // Which of the headline's own planning entries `relevantDate` was
     // picked from -- a DEADLINE: is preferred over a SCHEDULED: when a

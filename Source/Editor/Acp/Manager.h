@@ -134,7 +134,7 @@ class Manager {
                           Notice,
                           Compaction,
                           AgentContent };
-        Kind                       kind;
+        Kind                       kind{};
         std::string                text;       // message text / tool-call title / session event text / permission description
         std::string                status;     // tool-call or plan status, best-effort, may be empty
         std::vector<std::string>   planSteps;  // Kind::Plan only

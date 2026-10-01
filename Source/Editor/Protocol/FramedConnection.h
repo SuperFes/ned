@@ -80,7 +80,7 @@ template <typename TransportT>
 class FramedConnection {
   public:
     struct Options {
-        LogCategory logCategory;
+        LogCategory logCategory{};
         // "server"/"adapter"/"agent" -- formatted into "<noun> exited (EOF)"
         // for the disconnect reason string.
         std::string_view entityNoun;

@@ -263,7 +263,7 @@ class BrokerRouter {
 
   private:
     struct PendingRequest {
-        ConnectionId connection;
+        ConnectionId connection{};
         Json         originalId;
     };
 
