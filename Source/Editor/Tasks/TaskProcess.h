@@ -31,6 +31,7 @@
 #include <thread>
 #include <vector>
 
+#include "Editor/Lifetime.h"
 #include "Editor/Process/ChildProcess.h"
 #include "UI/EventLoop.h"
 
@@ -78,6 +79,8 @@ class TaskProcess {
   private:
     void StartReadLoop();
 
+    // Drops output and exit already posted when this process is destroyed.
+    editor::LifetimeGuard lifetime_;
     std::jthread          readThread_; // declared before child_ -- see header comment
     process::ChildProcess child_;
 

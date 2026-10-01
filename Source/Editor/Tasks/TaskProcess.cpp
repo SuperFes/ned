@@ -16,7 +16,7 @@ void TaskProcess::StartReadLoop() {
     // run) -- see TaskProcess.h's header comment for why readThread_ has to
     // start out empty (default-constructed) rather than being given real
     // work directly in the initializer list.
-    readThread_ = std::jthread([this](std::stop_token) {
+    readThread_ = std::jthread([this, alive = lifetime_.Token()](std::stop_token) {
         while (true) {
             std::string chunk;
             try {
@@ -35,10 +35,10 @@ void TaskProcess::StartReadLoop() {
             if (chunk.empty()) {
                 break; // EOF -- the process exited (or this TaskProcess is being destroyed)
             }
-            eventLoop_.Post([this, chunk = std::move(chunk)]() mutable { DispatchOutput(chunk); });
+            eventLoop_.Post(alive.Bind([this, chunk = std::move(chunk)] { DispatchOutput(chunk); }));
         }
         const std::optional<int> exitCode = child_.WaitForExit();
-        eventLoop_.Post([this, exitCode] { DispatchExit(exitCode); });
+        eventLoop_.Post(alive.Bind([this, exitCode] { DispatchExit(exitCode); }));
     });
 }
 

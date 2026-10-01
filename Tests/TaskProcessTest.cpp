@@ -1,8 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <signal.h>
@@ -94,4 +96,22 @@ TEST_CASE("Constructing a TaskProcess for a nonexistent executable throws", "[Ta
 
     REQUIRE_THROWS_AS(
         TaskProcess({"ned-definitely-not-a-real-binary-xyz"}, eventLoop, [](std::string_view) {}, [](std::optional<int>) {}), std::runtime_error);
+}
+
+// A process can be destroyed with its output and exit still queued on the
+// loop; neither may run against it afterwards.
+TEST_CASE("A TaskProcess destroyed with its output still queued delivers nothing", "[Tasks][Lifetime]") {
+    ned::ui::EventLoop eventLoop;
+    int                outputs = 0;
+    int                exits   = 0;
+
+    std::optional<TaskProcess> process(
+        std::in_place, std::vector<std::string>{"echo", "queued"}, eventLoop, [&outputs](std::string_view) { ++outputs; },
+        [&exits](std::optional<int>) { ++exits; });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200)); // output and exit both posted
+    process.reset();
+    (void)eventLoop.DrainPosted_();
+
+    CHECK(outputs == 0);
+    CHECK(exits == 0);
 }
