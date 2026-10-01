@@ -2444,12 +2444,12 @@ void Manager::RefreshServerResults(const std::string& connectionKey, RefreshKind
             // uncovered. previousSemanticTokens_ is deliberately kept: the
             // server recomputed against its own resultId, which is exactly
             // what the next full/delta request should still delta from.
-            ++semanticTokensRequestCounter_[bufferPtr];
+            semanticTokensRequestCounter_[bufferPtr] = ++nextRequestToken_;
             semanticTokensCoverage_.erase(bufferPtr);
             semanticTokensRequestedGeneration_.erase(bufferPtr);
             break;
         case RefreshKind::CodeLens:
-            ++codeLensRequestCounter_[bufferPtr];
+            codeLensRequestCounter_[bufferPtr] = ++nextRequestToken_;
             codeLensRequestedGeneration_.erase(bufferPtr);
             break;
         case RefreshKind::InlayHints:
@@ -2459,7 +2459,7 @@ void Manager::RefreshServerResults(const std::string& connectionKey, RefreshKind
             // whole path exists for), and that leaves the viewport marked
             // covered -- so dropping the armed triple alone would re-ask
             // nothing.
-            ++inlayHintsRequestCounter_[bufferPtr];
+            inlayHintsRequestCounter_[bufferPtr] = ++nextRequestToken_;
             inlayHintCoverage_.erase(bufferPtr);
             break;
         case RefreshKind::Diagnostics:
@@ -2531,7 +2531,7 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
         const std::size_t requestEnd   = request->second;
 
         coverage.inFlight                     = std::pair{requestStart, requestEnd};
-        const std::size_t requestId           = ++semanticTokensRequestCounter_[&buffer];
+        const std::size_t requestId = semanticTokensRequestCounter_[&buffer] = ++nextRequestToken_;
         const std::size_t requestedGeneration = buffer.ContentGeneration();
         // The document the server will answer about, kept so its positions
         // convert against the right text however long the round trip takes.
@@ -2597,7 +2597,7 @@ void Manager::RequestSemanticTokens(text::Buffer& buffer, std::size_t viewportSt
         return; // already requested for this exact content -- a cursor-blink/scroll-only repaint, not a real change
     }
     semanticTokensRequestedGeneration_[&buffer] = buffer.ContentGeneration();
-    const std::size_t requestId                 = ++semanticTokensRequestCounter_[&buffer];
+    const std::size_t requestId = semanticTokensRequestCounter_[&buffer] = ++nextRequestToken_;
     const std::size_t requestedGeneration       = buffer.ContentGeneration();
     // See the range branch above: the document the server answers about.
     std::shared_ptr<const text::ITextStorage> requestedContent = buffer.Content().Clone();
@@ -2764,7 +2764,7 @@ void Manager::RequestInlayHints(text::Buffer& buffer, std::size_t viewportStartB
     }
 
     coverage.inFlight           = std::pair{requestStart, requestEnd};
-    const std::size_t requestId = ++inlayHintsRequestCounter_[&buffer];
+    const std::size_t requestId = inlayHintsRequestCounter_[&buffer] = ++nextRequestToken_;
 
     const text::ITextStorage& content       = buffer.Content();
     const Position            start         = BytePositionToLsp(content, requestStart);
@@ -3104,7 +3104,7 @@ void Manager::RequestCodeLenses(text::Buffer& buffer, std::size_t viewportStartB
     }
 
     codeLensRequestedGeneration_[&buffer] = buffer.ContentGeneration();
-    const std::size_t requestId           = ++codeLensRequestCounter_[&buffer];
+    const std::size_t requestId = codeLensRequestCounter_[&buffer] = ++nextRequestToken_;
 
     text::Buffer* const bufferPtr     = &buffer;
     const std::string   connectionKey = state->connectionKey; // per-connection latch, see RequestSemanticTokens
@@ -3166,7 +3166,7 @@ void Manager::RequestCodeLenses(text::Buffer& buffer, std::size_t viewportStartB
             });
             codeLensSpans_[bufferPtr]           = std::move(resolved);
             codeLensSpansGeneration_[bufferPtr] = bufferPtr->ContentGeneration();
-            ++codeLensRevision_[bufferPtr];
+            codeLensRevision_[bufferPtr]        = ++nextRequestToken_;
 
             // The viewport was recorded in the requested document's own
             // coordinates, the same ones the lenses just arrived in -- both
@@ -3295,7 +3295,7 @@ void Manager::RequestDocumentColors(text::Buffer& buffer, const std::string& ser
     }
 
     documentColorRequestedGeneration_[&buffer] = buffer.ContentGeneration();
-    const std::size_t requestId                = ++documentColorRequestCounter_[&buffer];
+    const std::size_t requestId = documentColorRequestCounter_[&buffer] = ++nextRequestToken_;
 
     text::Buffer* const                       bufferPtr           = &buffer;
     const std::string                         connectionKey       = state->connectionKey;
@@ -3489,7 +3489,7 @@ void Manager::RequestCodeActionHints(text::Buffer& buffer, std::size_t viewportS
     }
 
     coverage.inFlight           = std::pair{requestStart, requestEnd};
-    const std::size_t requestId = ++codeActionHintRequestCounter_[&buffer];
+    const std::size_t requestId = codeActionHintRequestCounter_[&buffer] = ++nextRequestToken_;
 
     const Position      start         = BytePositionToLsp(content, requestStart);
     const Position      end           = BytePositionToLsp(content, requestEnd);

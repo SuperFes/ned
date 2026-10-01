@@ -4153,6 +4153,41 @@ TEST_CASE("RequestSemanticTokens sends a plain full request when a legend is set
     REQUIRE(spans[1].syntaxClass == SyntaxClass::Variable);
 }
 
+// A reply can outlive its buffer, and the next buffer allocated at the same
+// address starts its own requests over; the old reply must not pass as one
+// of the new buffer's.
+TEST_CASE("A semantic tokens reply for a closed buffer is not applied to the next buffer at its address", "[Lsp]") {
+    BufferList                  bufferList;
+    ned::ui::EventLoop          eventLoop;
+    Manager                     manager(bufferList, eventLoop);
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-lsp-manager-reused-address-test.txt";
+
+    Client*    client = nullptr;
+    FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);
+    manager.SetSemanticTokensLegendForTesting("test-lang", SemanticTokensLegend{.tokenTypes = {"keyword"}, .tokenModifiers = {}});
+
+    std::optional<Buffer> slot;
+    slot.emplace("closed");
+    slot->SetPath(path);
+    slot->InsertAtPoint("int x = 1;");
+    manager.SyncBuffer(*slot, "test-lang");
+    (void)ReadRawFrame(server.serverStdinRead); // didOpen
+    manager.RequestSemanticTokens(*slot, 0, slot->Size(), "test-lang");
+    const std::string stale = ReadRawFrame(server.serverStdinRead);
+    manager.NotifyBufferClosed(*slot);
+
+    slot.emplace("opened");
+    slot->SetPath(path);
+    slot->InsertAtPoint("int x = 1;");
+    manager.SyncBuffer(*slot, "test-lang");
+    manager.RequestSemanticTokens(*slot, 0, slot->Size(), "test-lang");
+
+    client->DispatchFrame(Json{{"jsonrpc", "2.0"}, {"id", RequestIdFromFrame(stale)}, {"result", {{"data", Json::array({0, 0, 3, 0, 0})}}}}.dump());
+
+    CHECK(manager.SemanticTokensGeneration(*slot) == 0);
+    CHECK(manager.SemanticTokenSpans(*slot).empty());
+}
+
 TEST_CASE("RequestSemanticTokens sends nothing when the server never advertised a legend", "[Lsp]") {
     BufferList                  bufferList;
     ned::ui::EventLoop          eventLoop;

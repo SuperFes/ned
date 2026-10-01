@@ -2367,6 +2367,11 @@ class Manager {
     // dedup a whole-document request); range mode has its own
     // requestedRange_ triple just below.
     text::PerBufferMap<std::size_t>                                semanticTokensRequestedGeneration_;
+    // Every *RequestCounter_ and codeLensRevision_ takes its values from
+    // nextRequestToken_, never from its own entry: a reply can outlive its
+    // buffer, and per-buffer numbering would let it match the first request
+    // of the next buffer allocated at the same address.
+    std::size_t                                                    nextRequestToken_ = 0;
     text::PerBufferMap<std::size_t>                                semanticTokensRequestCounter_;
     mutable text::PerBufferMap<std::vector<editor::HighlightSpan>> semanticTokenSpans_;
     // The content generation semanticTokenSpans_ above is resolved against --
