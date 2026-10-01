@@ -2178,7 +2178,14 @@ void WindowManager::PurgeFinishedHugeFileLoaders() {
     std::erase_if(hugeFileLoaders_, [](const std::unique_ptr<HugeFileLoader>& loader) { return loader->Done(); });
 }
 
+WindowManager::~WindowManager() {
+    if (asyncSaveDispatcherInstalled_) {
+        editor::SetAsyncSaveDispatcher(nullptr);
+    }
+}
+
 void WindowManager::EnableAsyncFileSaving(EventLoop& eventLoop) {
+    asyncSaveDispatcherInstalled_ = true;
     editor::SetAsyncSaveDispatcher([this, &eventLoop](editor::AsyncSaveRequest request) -> bool {
         PurgeFinishedAsyncSavers();
         asyncFileSavers_.push_back(std::make_unique<AsyncFileSaver>(

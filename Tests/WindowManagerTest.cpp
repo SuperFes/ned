@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "Editor/BufferSave.h"
 #include "Editor/Commands.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/MinimapSettings.h"
@@ -1107,4 +1108,35 @@ TEST_CASE("Cancelling a call hierarchy whose pane was closed hides it without re
     manager.HierarchyCancel();
 
     REQUIRE_FALSE(models.back().has_value());
+}
+
+// The save dispatcher is process-wide; the manager that installed it takes
+// it down with it, or a later large save is handed to a freed manager.
+TEST_CASE("A destroyed WindowManager leaves no async save dispatcher behind", "[WindowManager]") {
+    struct Restore {
+        std::uintmax_t threshold = ned::text::AsyncLoadThreshold();
+        ~Restore() {
+            ned::editor::SetAsyncSaveDispatcher(nullptr);
+            ned::text::SetAsyncLoadThreshold(threshold);
+        }
+    } restore;
+    ned::text::SetAsyncLoadThreshold(8);
+
+    Fixture            fixture;
+    ned::ui::EventLoop eventLoop;
+    {
+        ned::ui::WindowManager manager = fixture.Manager();
+        manager.EnableAsyncFileSaving(eventLoop);
+    }
+
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / ("ned_wm_dispatcher_" + std::to_string(::getpid()) + ".txt");
+    std::ofstream(path).close();
+    ned::text::Buffer buffer = ned::text::Buffer::FromFile(path);
+    buffer.InsertAt(0, "content large enough to dispatch\n");
+    ned::editor::WriteBufferToDisk(buffer, ned::editor::SaveDispatch::Automatic);
+
+    CHECK_FALSE(buffer.IsSaving());
+    CHECK_FALSE(buffer.Modified());
+    std::filesystem::remove(path);
 }

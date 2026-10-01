@@ -249,6 +249,10 @@ class WindowManager {
                   const editor::Keymap& globalKeymap, editor::Mode initialMode, std::string& statusMessage,
                   const Theme& theme);
 
+    // Takes down the process-wide save dispatcher EnableAsyncFileSaving
+    // installed, which reaches into this manager.
+    ~WindowManager();
+
     WindowManager(const WindowManager&)            = delete;
     WindowManager& operator=(const WindowManager&) = delete;
 
@@ -1141,6 +1145,7 @@ class WindowManager {
     std::vector<std::unique_ptr<HugeFileLoader>> hugeFileLoaders_;
     // See EnableAsyncFileSaving's own comment above.
     std::vector<std::unique_ptr<AsyncFileSaver>> asyncFileSavers_;
+    bool                                         asyncSaveDispatcherInstalled_ = false;
 
     // See StartFileWatcher's own comment above. Shares autoSaveThread_'s
     // accepted latent shutdown ordering: main.cpp declares eventLoop after
