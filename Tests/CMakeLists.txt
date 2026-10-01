@@ -527,3 +527,7 @@ if (Python3_Interpreter_FOUND)
 else()
     message(STATUS "No Python3 interpreter: skipping the grammar tables manifest test")
 endif()
+
+add_test(NAME "The data tree prune removes what the source no longer has"
+        COMMAND ${CMAKE_COMMAND} "-DSCRIPT=${CMAKE_SOURCE_DIR}/CMake/PruneDataTree.cmake"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/PruneDataTreeTest" -P "${CMAKE_CURRENT_SOURCE_DIR}/PruneDataTreeTest.cmake")
