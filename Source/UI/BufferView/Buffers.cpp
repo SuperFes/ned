@@ -457,7 +457,7 @@ void BufferView::OpenLinkAtPoint() {
 
     lspManager_->RequestDocumentLinks(
         buffer,
-        [this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::Manager::ResolvedDocumentLink> links) {
+        lifetime_.Bind([this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::Manager::ResolvedDocumentLink> links) {
             if (documentLinkRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
@@ -480,7 +480,7 @@ void BufferView::OpenLinkAtPoint() {
             // second round trip before it can be followed.
             lspManager_->ResolveDocumentLink(
                 activeBuffer_.Get(), *covering,
-                [this, bufferPtr, point, generation](std::optional<editor::lsp::Manager::ResolvedDocumentLink> resolved) {
+                lifetime_.Bind([this, bufferPtr, point, generation](std::optional<editor::lsp::Manager::ResolvedDocumentLink> resolved) {
                     if (documentLinkRequest_.IsStale(generation)) {
                         return;
                     }
@@ -492,9 +492,9 @@ void BufferView::OpenLinkAtPoint() {
                         return;
                     }
                     OpenResolvedDocumentLink(*resolved);
-                },
+                }),
                 serverKey);
-        },
+        }),
         serverKey);
 }
 

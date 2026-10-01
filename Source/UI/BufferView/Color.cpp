@@ -119,7 +119,7 @@ void BufferView::RequestColorAtPoint() {
         open({});
         return;
     }
-    lspManager_->RequestColorPresentations(buffer, found->color, found->begin, found->end, open,
+    lspManager_->RequestColorPresentations(buffer, found->color, found->begin, found->end, lifetime_.Bind(open),
                                            editor::LanguageKeyForMode(mode_));
 }
 

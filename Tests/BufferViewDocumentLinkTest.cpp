@@ -399,3 +399,37 @@ TEST_CASE("open-link-at-point ignores a documentLink response that arrived after
 
     std::filesystem::remove_all(includeDir);
 }
+
+TEST_CASE("open-link-at-point drops a documentLink response that arrives after the view is gone",
+          "[BufferView][DocumentLink][Lifetime]") {
+    LspFixture    lsp("ned_bufferview_document_link_closed_test.c", "#include \"dl-closed.h\"\nint main() {}\n");
+    FakeLspServer server = FakeLspServer::Create(lsp.manager, "c", lsp.eventLoop, lsp.client);
+
+    const std::filesystem::path includeDir = std::filesystem::temp_directory_path() / "ned-document-link-closed-include";
+    std::filesystem::create_directories(includeDir);
+    const std::filesystem::path target = includeDir / "dl-closed.h";
+    WriteFile(target, "#pragma once\n");
+
+    FrameReader               frames{server.serverStdinRead};
+    Fixture&                  f = lsp.fixture;
+    std::optional<BufferView> view;
+    view.emplace(f.activeBuffer, f.killRing, f.registers, f.promptHistory, f.bufferList, f.dispatcher, f.statusMessage, f.mode,
+                 f.theme);
+    lsp.Ready(*view, frames);
+    lsp.SourceBuffer().SetPoint(12);
+    InvokeOpenLinkAtPoint(*view);
+
+    const Json request = frames.WithMethod("textDocument/documentLink");
+    view.reset(); // the window closed while the server was still thinking
+
+    const Json response = {
+        {"jsonrpc", "2.0"},
+        {"id", request["id"]},
+        {"result", Json::array({{{"range", RangeJson(0, 9, 22)}, {"target", "file://" + target.string()}}})},
+    };
+    lsp.client->DispatchFrame(response.dump());
+
+    REQUIRE(*lsp.fixture.activeBuffer.Get().Path() == lsp.sourcePath);
+
+    std::filesystem::remove_all(includeDir);
+}

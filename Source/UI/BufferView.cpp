@@ -44,10 +44,6 @@ BufferView::BufferView(ActiveBuffer& activeBuffer, text::KillRing& killRing, edi
     modeSyncBuffer_ = &activeBuffer_.Get();
 }
 
-BufferView::~BufferView() {
-    *searchEverywhereAlive_ = false;
-}
-
 // The scroll position lives in Viewport now; these stay on BufferView because
 // an externally-owned ScrollBar/Minimap is wired to them by the pane that owns
 // both, and has no business reaching past the widget for it.
@@ -1359,7 +1355,7 @@ void BufferView::RequestQuickFixAtPoint() {
     statusMessage_ = "Requesting quick fix...";
     lspManager_->RequestCodeActions(
         buffer, rangeStart, rangeEnd,
-        [this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::CodeAction> actions) {
+        lifetime_.Bind([this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::CodeAction> actions) {
             if (codeActionRequest_.IsStale(generation)) {
                 return; // superseded by a newer request
             }
@@ -1407,7 +1403,7 @@ void BufferView::RequestQuickFixAtPoint() {
             codeActionSelection_ = 0;
             inputMode_           = InputMode::LspCodeActionSelect;
             RefreshCodeActionSelectStatus();
-        },
+        }),
         serverKey);
 }
 
@@ -1775,17 +1771,17 @@ void BufferView::StageOrUnstageFileAtPoint(bool stage) {
         return;
     }
 
-    auto onSuccess = [this, stage, target = *target] {
+    auto onSuccess = lifetime_.Bind([this, stage, target = *target] {
         statusMessage_ = (stage ? "Staged " : "Unstaged ") + target.filename().string();
         RefreshVcsStatusBuffer();
         // Staging moves a file's changes into the index, which the bundled
         // git plugin's worktree-vs-index diff then stops reporting --
         // refresh so the gutter agrees (and the reverse for unstaging).
         RequestDiffForCurrentBuffer();
-    };
-    auto onError = [this, stage](std::string error) {
+    });
+    auto onError   = lifetime_.Bind([this, stage](std::string error) {
         statusMessage_ = std::string("vcs ") + (stage ? "stage" : "unstage") + ": " + error;
-    };
+    });
     if (stage) {
         vcsRunner_->RequestStage(*target, std::move(onSuccess), std::move(onError));
     }

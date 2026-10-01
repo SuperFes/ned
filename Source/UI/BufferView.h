@@ -52,6 +52,7 @@
 #include "Editor/ImportFixup.h"
 #include "Editor/IncrementalSearch.h"
 #include "Editor/InlineDebugValues.h"
+#include "Editor/Lifetime.h"
 #include "Editor/Link.h"
 #include "Editor/LinkedEditingSession.h"
 #include "Editor/LocalScopes.h"
@@ -149,12 +150,6 @@ class BufferView : public Widget {
     BufferView(const BufferView&)            = delete;
     BufferView& operator=(const BufferView&) = delete;
 
-    // search-everywhere-symbols-and-text follow-up: the one thing this
-    // needs beyond the implicit destructor -- flips searchEverywhereAlive_
-    // so a still-running detached background text-search thread's
-    // Post-marshaled callback (which cannot know otherwise) knows not to
-    // touch a destroyed *this.
-    ~BufferView();
 
     // jump-back-stack follow-up: public so a test can assert the eviction
     // cap without reaching into jumpBackStack_ itself -- same "expose a
@@ -5442,14 +5437,6 @@ class BufferView : public Widget {
     bufferview::RequestSlot  searchEverywhereWorkspaceSymbolRequest_;
     DeadlineTimer            searchEverywhereTextSearchTimer_;
     bufferview::RequestSlot  searchEverywhereTextSearchRequest_;
-    // Copied into the detached background text-search thread and checked
-    // before that thread's Post-marshaled callback touches `this` -- the
-    // one new safety primitive this phase needs, since (unlike every other
-    // async source in this codebase) that thread's own work
-    // (Editor::SearchDirectory) has no stop-token to honor and will run to
-    // completion regardless of whether this BufferView still exists by
-    // then. See ~BufferView().
-    std::shared_ptr<std::atomic<bool>> searchEverywhereAlive_ = std::make_shared<std::atomic<bool>>(true);
 
     bufferview::EditorContext context_;
 
@@ -5470,6 +5457,11 @@ class BufferView : public Widget {
     using TestGutterEntry                     = bufferview::GutterModel::TestGutterEntry;
     using InlineDiagnostic                    = bufferview::GutterModel::InlineDiagnostic;
     static constexpr int kMaxFoldDepthColumns = bufferview::GutterModel::kMaxFoldDepthColumns;
+
+    // Every callback handed to a manager, runner or another thread is bound
+    // through this, so a reply landing after the view closed is dropped. Last,
+    // so it dies before any member a late callback could reach.
+    editor::LifetimeGuard lifetime_;
 };
 
 // context_ holds references to BufferView's own members, so moving one would

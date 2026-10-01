@@ -1352,7 +1352,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             }
             const std::size_t line = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1;
             statusMessage_         = "Jumping to line...";
-            dapManager_->JumpToLine(*buffer.Path(), line, [this](bool, std::string message) { statusMessage_ = std::move(message); });
+            dapManager_->JumpToLine(*buffer.Path(), line, lifetime_.Bind([this](bool, std::string message) { statusMessage_ = std::move(message); }));
             return;
         }
         case editor::InteractiveRequest::DapToggleHexFormat:
@@ -3061,9 +3061,9 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             // above: EndInteractiveSession() below runs immediately,
             // the result lands in statusMessage_ from the callback.
             statusMessage_ = "Evaluating...";
-            dapManager_->Evaluate(input, [this, input](bool success, std::string text) {
+            dapManager_->Evaluate(input, lifetime_.Bind([this, input](bool success, std::string text) {
                 statusMessage_ = success ? (input + " = " + text) : ("Evaluate failed: " + text);
-            });
+            }));
         }
     }
     else if (inputMode_ == InputMode::DapBreakpointCondition || inputMode_ == InputMode::DapBreakpointLogMessage ||
@@ -3130,7 +3130,7 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             statusMessage_                = "Setting " + name + "...";
             dapManager_->SetVariable(
                 ownerRef, name, input,
-                [this, bufferPtr, line, lineText, name](editor::dap::Manager::SetVariableResult result) {
+                lifetime_.Bind([this, bufferPtr, line, lineText, name](editor::dap::Manager::SetVariableResult result) {
                     if (bufferPtr != &activeBuffer_.Get()) {
                         return; // switched away while the request was in flight
                     }
@@ -3176,7 +3176,7 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
                     target.InsertAt(targetLineStart, replacement);
                     target.SetReadOnly(wasReadOnly);
                     statusMessage_.clear();
-                });
+                }));
         }
         pendingDapSetVariable_.reset();
     }
@@ -3202,7 +3202,7 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             statusMessage_                    = "Fetching memory...";
             dapManager_->RequestMemory(
                 memoryReference, 0, count,
-                [this, memoryReference, asImage](bool success, editor::dap::Manager::MemoryBlock block) {
+                lifetime_.Bind([this, memoryReference, asImage](bool success, editor::dap::Manager::MemoryBlock block) {
                     if (!success) {
                         statusMessage_ = "Read memory failed (adapter may not support readMemory).";
                         return;
@@ -3213,7 +3213,7 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
                     else {
                         BuildMemoryBuffer(memoryReference, block);
                     }
-                });
+                }));
         }
         pendingDapMemoryReference_.reset();
         pendingDapMemoryAsImage_ = false;
@@ -3260,12 +3260,12 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             // than a confusing stale-content overwrite.
             vcsRunner_->RequestBranchCreate(
                 input,
-                [this, input] {
+                lifetime_.Bind([this, input] {
                     statusMessage_ = "Created and switched to " + input + " (modified buffers not reloaded)";
                     RefreshVcsStatusBuffer();
                     RequestDiffForCurrentBuffer();
-                },
-                [this](std::string error) { statusMessage_ = "vcs branch: " + error; });
+                }),
+                lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs branch: " + error; }));
         }
     }
     else if (inputMode_ == InputMode::GotoLine) {
@@ -4574,7 +4574,7 @@ void BufferView::CommitSearchEverywhereCandidate(const editor::SearchEverywhereC
                 text::Buffer* const                    bufferPtr    = &buffer;
                 lspManager_->ResolveWorkspaceSymbol(
                     buffer, searchEverywhereUnresolvedSymbols_[*candidate.remoteSymbolResolveToken],
-                    [this, bufferPtr, fallback](std::optional<editor::lsp::Manager::SymbolResult> resolved) {
+                    lifetime_.Bind([this, bufferPtr, fallback](std::optional<editor::lsp::Manager::SymbolResult> resolved) {
                         if (bufferPtr != &activeBuffer_.Get()) {
                             return; // buffer switched while the resolve was in flight
                         }
@@ -4585,7 +4585,7 @@ void BufferView::CommitSearchEverywhereCandidate(const editor::SearchEverywhereC
                             JumpToDefinition(editor::lsp::Manager::ResolvedLocation{
                                 .path = fallback.path, .position = {.line = fallback.line, .character = fallback.character}});
                         }
-                    });
+                    }));
             }
             else if (candidate.remoteLocation) {
                 JumpToDefinition(editor::lsp::Manager::ResolvedLocation{
@@ -4610,12 +4610,12 @@ void BufferView::CommitSearchEverywhereCandidate(const editor::SearchEverywhereC
             const std::string   command   = candidate.label;
             statusMessage_                = "Running " + command + "...";
             lspManager_->ExecuteCommand(*bufferPtr, candidate.target, command, editor::lsp::Json::array(),
-                                        [this, bufferPtr, command](bool ok) {
+                                        lifetime_.Bind([this, bufferPtr, command](bool ok) {
                                             if (bufferPtr != &activeBuffer_.Get()) {
                                                 return; // active buffer changed since the request was sent
                                             }
                                             statusMessage_ = ok ? command + " done." : command + " failed.";
-                                        });
+                                        }));
             return;
         }
         case editor::SearchEverywhereKind::Theme:
@@ -4806,7 +4806,7 @@ void BufferView::RequestSearchEverywhereWorkspaceSymbols() {
 
     lspManager_->RequestWorkspaceSymbols(
         buffer, query,
-        [this, bufferPtr, token, serverKey](std::vector<editor::lsp::Manager::SymbolResult> symbols) {
+        lifetime_.Bind([this, bufferPtr, token, serverKey](std::vector<editor::lsp::Manager::SymbolResult> symbols) {
             if (searchEverywhereWorkspaceSymbolRequest_.IsStale(token)) {
                 return; // superseded by a newer request
             }
@@ -4838,7 +4838,7 @@ void BufferView::RequestSearchEverywhereWorkspaceSymbols() {
                      .remoteSymbolResolveToken = resolveToken});
             }
             RefreshSearchEverywhereStatus();
-        },
+        }),
         serverKey);
 }
 
@@ -4866,10 +4866,10 @@ void BufferView::RequestSearchEverywhereTextSearch() {
     // this quotes every metacharacter in the typed query first.
     const std::string pattern = RE2::QuoteMeta(prompt_->Text());
     EventLoop*        loop    = eventLoop_;
-    // Copied, not captured by reference: this outlives the arming call, and
-    // needs its own stable lifetime independent of *this.
-    std::shared_ptr<std::atomic<bool>> alive = searchEverywhereAlive_;
-    BufferView*                        self  = this;
+    // Taken here on the main thread; the search thread must not touch *this
+    // to get one.
+    const editor::LifetimeToken alive = lifetime_.Token();
+    BufferView*                 self  = this;
 
     // Deliberately detached, not joined anywhere: Editor::SearchDirectory
     // has no stop-token to honor, so nothing would be gained by keeping a
@@ -4891,12 +4891,9 @@ void BufferView::RequestSearchEverywhereTextSearch() {
         if (matches.size() > kMaxSearchEverywhereTextMatches) {
             matches.resize(kMaxSearchEverywhereTextMatches);
         }
-        loop->Post([self, alive, token, matches = std::move(matches)] {
-            if (!*alive) {
-                return; // *self was destroyed while this search was running
-            }
+        loop->Post(alive.Bind([self, token, matches = std::move(matches)] {
             self->ApplySearchEverywhereTextMatches(token, matches);
-        });
+        }));
     }).detach();
 }
 
@@ -5507,14 +5504,14 @@ void BufferView::OfferWorklog(const editor::tracker::IssueClock& clock) {
                           statusMessage_ = "Logging " + duration + " to " + clock.key + "...";
                           trackerRunner_->PostWorklog(
                               connection, clock.key, clock.worklog,
-                              [this, clock, connection, duration] {
+                              lifetime_.Bind([this, clock, connection, duration] {
                                   statusMessage_ = "Logged " + duration + " to " + clock.key + ".";
                                   RefreshIssueBuffer(connection, clock.key);
                                   if (onIssueChanged_) {
                                       onIssueChanged_(clock.key);
                                   }
-                              },
-                              [this](std::string error) { statusMessage_ = std::move(error); }); },
+                              }),
+                              lifetime_.Bind([this](std::string error) { statusMessage_ = std::move(error); })); },
                       /*keepOrder=*/true);
 }
 
@@ -5531,10 +5528,10 @@ void BufferView::PickIssueChoice(bool transition, const std::string& key) {
     }
     statusMessage_ = (transition ? "Fetching the statuses " : "Fetching who ") + key + (transition ? " can move to..." : " can be assigned to...");
 
-    auto pick = [this, key, connection = *connection, transition](std::vector<editor::tracker::Choice> choices) {
+    auto pick    = lifetime_.Bind([this, key, connection = *connection, transition](std::vector<editor::tracker::Choice> choices) {
         BeginIssueChoicePrompt(transition, key, connection, std::move(choices));
-    };
-    auto onError = [this](std::string error) { statusMessage_ = std::move(error); };
+    });
+    auto onError = lifetime_.Bind([this](std::string error) { statusMessage_ = std::move(error); });
     if (transition) {
         trackerRunner_->RequestTransitions(*connection, key, pick, onError);
     }
@@ -5566,14 +5563,14 @@ void BufferView::BeginIssueChoicePrompt(bool transition, const std::string& key,
             const std::string              done   = transition          ? key + " → " + choice.name + "."
                                                     : choice.id.empty() ? key + " unassigned."
                                                                         : key + " assigned to " + choice.name + ".";
-            auto                           onDone = [this, key, connection, done] {
+            auto                           onDone  = lifetime_.Bind([this, key, connection, done] {
                 statusMessage_ = done;
                 RefreshIssueBuffer(connection, key);
                 if (onIssueChanged_) {
                     onIssueChanged_(key);
                 }
-            };
-            auto onError   = [this](std::string error) { statusMessage_ = std::move(error); };
+            });
+            auto                           onError = lifetime_.Bind([this](std::string error) { statusMessage_ = std::move(error); });
             statusMessage_ = (transition ? "Moving " : "Assigning ") + key + "...";
             if (transition) {
                 trackerRunner_->Transition(connection, key, choice, onDone, onError);
@@ -5619,7 +5616,7 @@ void BufferView::FinishTrackerComment(bool post) {
     statusMessage_ = "Posting the comment on " + target->key + "...";
     trackerRunner_->PostComment(
         target->connection, target->key, text,
-        [this, target = *target, instance = buffer.InstanceId()] {
+        lifetime_.Bind([this, target = *target, instance = buffer.InstanceId()] {
             text::Buffer* posted = bufferList_.Find(editor::tracker::CommentBufferName(target.key));
             if (posted != nullptr && posted->InstanceId() == instance) {
                 editor::tracker::DetachComment(*posted);
@@ -5630,8 +5627,8 @@ void BufferView::FinishTrackerComment(bool post) {
             if (onIssueChanged_) {
                 onIssueChanged_(target.key);
             }
-        },
-        [this](std::string error) { statusMessage_ = std::move(error); });
+        }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = std::move(error); }));
 }
 
 void BufferView::RefreshIssueBuffer(const std::string& connectionName, const std::string& key) {
@@ -5642,8 +5639,8 @@ void BufferView::RefreshIssueBuffer(const std::string& connectionName, const std
     const auto                                found = std::ranges::find(known, key, &editor::tracker::Issue::key);
     trackerRunner_->RequestIssueOn(
         connectionName, found != known.end() ? *found : editor::tracker::Issue{.key = key},
-        [this](const editor::tracker::IssueDetail& detail) { (void)editor::tracker::ShowIssue(bufferList_, detail); },
-        [this](std::string error) { statusMessage_ = std::move(error); });
+        lifetime_.Bind([this](const editor::tracker::IssueDetail& detail) { (void)editor::tracker::ShowIssue(bufferList_, detail); }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = std::move(error); }));
 }
 
 bool BufferView::HandleIssueQuickKey(const editor::KeyChord& chord) {

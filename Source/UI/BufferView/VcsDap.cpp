@@ -66,14 +66,14 @@ void BufferView::RequestBlameForCurrentBuffer() {
     text::Buffer* buffer = &activeBuffer_.Get();
     vcsRunner_->RequestBlame(
         *buffer,
-        [this, buffer](std::vector<editor::vcs::BlameLine> lines) {
+        lifetime_.Bind([this, buffer](std::vector<editor::vcs::BlameLine> lines) {
             if (&activeBuffer_.Get() != buffer) {
                 return; // active buffer changed while the request was in flight -- discard, it's stale
             }
             DispatchBlameForTesting(std::move(lines)); // reused here too -- see its own doc comment
             statusMessage_ = "blame loaded";
-        },
-        [this](std::string error) { statusMessage_ = "vcs blame: " + error; });
+        }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs blame: " + error; }));
 }
 
 void BufferView::ShowBlameDetailAtPoint() {
@@ -184,12 +184,12 @@ void BufferView::RequestDiffForCurrentBuffer() {
     text::Buffer* buffer = &activeBuffer_.Get();
     vcsRunner_->RequestDiff(
         *buffer,
-        [this, buffer](std::vector<editor::vcs::DiffHunk> hunks) {
+        lifetime_.Bind([this, buffer](std::vector<editor::vcs::DiffHunk> hunks) {
             if (&activeBuffer_.Get() != buffer) {
                 return; // active buffer changed while the request was in flight -- discard, it's stale
             }
             DispatchDiffForTesting(std::move(hunks)); // reused here too -- see its own doc comment
-        },
+        }),
         [](const std::string&) {}); // silent -- see this method's own header comment
 
     RequestConflictVerdictForCurrentBuffer();
@@ -267,7 +267,7 @@ void BufferView::RequestConflictVerdictForCurrentBuffer() {
     const std::filesystem::path wanted = NormalizedForCompare(*buffer->Path());
 
     vcsRunner_->RequestStatus(
-        [this, buffer, root, wanted](std::vector<editor::vcs::StatusEntry> entries) {
+        lifetime_.Bind([this, buffer, root, wanted](std::vector<editor::vcs::StatusEntry> entries) {
             if (&activeBuffer_.Get() != buffer) {
                 return; // active buffer changed while the request was in flight -- stale
             }
@@ -283,7 +283,7 @@ void BufferView::RequestConflictVerdictForCurrentBuffer() {
             // (documentation, a test fixture) is exactly that case.
             ApplyConflictVerdict(buffer, unmerged ? bufferview::GutterModel::VcsConflictVerdict::Conflicted
                                                    : bufferview::GutterModel::VcsConflictVerdict::Clean);
-        },
+        }),
         [](const std::string&) {}); // silent, previous verdict stands -- see this method's own declaration
 }
 
@@ -308,7 +308,7 @@ void BufferView::RequestVcsBlameBuffer() {
     const std::filesystem::path path = *buffer->Path();
     vcsRunner_->RequestBlame(
         *buffer,
-        [this, buffer, path](std::vector<editor::vcs::BlameLine> lines) {
+        lifetime_.Bind([this, buffer, path](std::vector<editor::vcs::BlameLine> lines) {
             if (&activeBuffer_.Get() == buffer) {
                 // Populates the gutter for the still-active source buffer
                 // before BuildVcsBlameBuffer switches activeBuffer_ away
@@ -316,8 +316,8 @@ void BufferView::RequestVcsBlameBuffer() {
                 DispatchBlameForTesting(lines);
             }
             BuildVcsBlameBuffer(path, lines);
-        },
-        [this](std::string error) { statusMessage_ = "vcs blame: " + error; });
+        }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs blame: " + error; }));
 }
 
 void BufferView::RequestVcsLogBuffer() {
@@ -332,8 +332,8 @@ void BufferView::RequestVcsLogBuffer() {
     }
     const std::filesystem::path path = *buffer.Path();
     vcsRunner_->RequestLog(
-        buffer, [this, path](std::vector<editor::vcs::LogEntry> entries) { BuildVcsLogBuffer(path, entries); },
-        [this](std::string error) { statusMessage_ = "vcs log: " + error; });
+        buffer, lifetime_.Bind([this, path](std::vector<editor::vcs::LogEntry> entries) { BuildVcsLogBuffer(path, entries); }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs log: " + error; }));
 }
 
 void BufferView::BuildVcsBlameBuffer(const std::filesystem::path& path, const std::vector<editor::vcs::BlameLine>& lines) {
@@ -420,8 +420,8 @@ void BufferView::RequestVcsFullDiffBuffer() {
     }
     const std::filesystem::path root = editor::ProjectRoot();
     vcsRunner_->RequestFullDiff(
-        [this, root](std::string rawDiff) { BuildDiffHunksMultibuffer(rawDiff, root, "*vcs diff*", "Working tree clean."); },
-        [this](std::string error) { statusMessage_ = "vcs full diff: " + error; });
+        lifetime_.Bind([this, root](std::string rawDiff) { BuildDiffHunksMultibuffer(rawDiff, root, "*vcs diff*", "Working tree clean."); }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs full diff: " + error; }));
 }
 
 void BufferView::RequestVcsCommitDiffBuffer(const std::string& commitHash) {
@@ -432,11 +432,11 @@ void BufferView::RequestVcsCommitDiffBuffer(const std::string& commitHash) {
     const std::filesystem::path root = editor::ProjectRoot();
     vcsRunner_->RequestCommitDiff(
         commitHash,
-        [this, root, commitHash](std::string rawDiff) {
+        lifetime_.Bind([this, root, commitHash](std::string rawDiff) {
             BuildDiffHunksMultibuffer(rawDiff, root, "*vcs commit " + commitHash + "*",
                                       "Commit " + commitHash + " touched no files.");
-        },
-        [this](std::string error) { statusMessage_ = "vcs commit diff: " + error; });
+        }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs commit diff: " + error; }));
 }
 
 void BufferView::RequestVcsStatusBuffer() {
@@ -445,8 +445,8 @@ void BufferView::RequestVcsStatusBuffer() {
         return;
     }
     vcsRunner_->RequestStatus(
-        [this](std::vector<editor::vcs::StatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/true); },
-        [this](std::string error) { statusMessage_ = "vcs status: " + error; });
+        lifetime_.Bind([this](std::vector<editor::vcs::StatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/true); }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs status: " + error; }));
 }
 
 void BufferView::BuildVcsStatusBuffer(const std::vector<editor::vcs::StatusEntry>& entries, bool announce) {
@@ -473,7 +473,7 @@ void BufferView::RefreshVcsStatusBuffer() {
         return;
     }
     vcsRunner_->RequestStatus(
-        [this](std::vector<editor::vcs::StatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/false); });
+        lifetime_.Bind([this](std::vector<editor::vcs::StatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/false); }));
 }
 
 namespace {
@@ -527,7 +527,7 @@ void BufferView::BeginVcsCommitMessage(VcsCommitMode mode) {
         if (editor::tracker::Connections().empty()) {
             return;
         }
-        vcsRunner_->RefreshCurrentBranch([this, path] {
+        vcsRunner_->RefreshCurrentBranch(lifetime_.Bind([this, path] {
             text::Buffer* buffer = bufferList_.FindByPath(path);
             if (buffer == nullptr || buffer->Text() != pendingCommitSeed_ + std::string(editor::vcs::kVcsCommitMessageTemplate)) {
                 return;
@@ -539,7 +539,7 @@ void BufferView::BeginVcsCommitMessage(VcsCommitMode mode) {
             buffer->DeleteRange(0, buffer->Content().ByteLength());
             pendingCommitSeed_ = seed;
             SeedCommitBuffer(*buffer, pendingCommitSeed_);
-        });
+        }));
         return;
     }
     // Amend/Reword: seed with the previous commit's own message first
@@ -549,7 +549,7 @@ void BufferView::BeginVcsCommitMessage(VcsCommitMode mode) {
     const bool reword = (mode == VcsCommitMode::Reword);
     statusMessage_    = "Fetching previous commit message...";
     vcsRunner_->RequestPreviousCommitMessage(
-        [this, path, mode, reword](std::string message) {
+        lifetime_.Bind([this, path, mode, reword](std::string message) {
             while (!message.empty() && (message.back() == '\n' || message.back() == '\r')) {
                 message.pop_back();
             }
@@ -562,10 +562,10 @@ void BufferView::BeginVcsCommitMessage(VcsCommitMode mode) {
             pendingCommitMode_ = mode;
             activeBuffer_.Set(commitBuffer);
             statusMessage_ = reword ? "Rewording the previous commit." : "Amending the previous commit.";
-        },
-        [this, reword](std::string error) {
+        }),
+        lifetime_.Bind([this, reword](std::string error) {
             statusMessage_ = (reword ? "vcs commit reword: " : "vcs commit amend: ") + error;
-        });
+        }));
 }
 
 void BufferView::FinishVcsCommitMessage() {
@@ -590,14 +590,14 @@ void BufferView::FinishVcsCommitMessage() {
         statusMessage_ = mode == VcsCommitMode::Amend    ? "Amending..."
                           : mode == VcsCommitMode::Reword ? "Rewording..."
                                                            : "Committing...";
-        auto onSuccess = [this](std::string summary) {
+        auto onSuccess = lifetime_.Bind([this](std::string summary) {
             statusMessage_ = summary.empty() ? "Committed." : summary;
             RefreshVcsStatusBuffer();
             // The comparison point (HEAD for git) just moved, so the
             // current buffer's markers are stale now.
             RequestDiffForCurrentBuffer();
-        };
-        auto onError = [this](std::string error) { statusMessage_ = "vcs commit: " + error; };
+        });
+        auto onError   = lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs commit: " + error; });
         switch (mode) {
             case VcsCommitMode::Commit:
                 vcsRunner_->RequestCommit(message, onSuccess, onError);
@@ -626,15 +626,15 @@ void BufferView::ExtendCommit() {
     }
     statusMessage_ = "Extending...";
     vcsRunner_->RequestExtendCommit(
-        [this](std::string summary) {
+        lifetime_.Bind([this](std::string summary) {
             statusMessage_ = summary.empty() ? "Committed." : summary;
             RefreshVcsStatusBuffer();
             // The comparison point (HEAD for git) just moved, so the
             // current buffer's markers are stale now -- same reasoning
             // FinishVcsCommitMessage's own onSuccess has.
             RequestDiffForCurrentBuffer();
-        },
-        [this](std::string error) { statusMessage_ = "vcs extend commit: " + error; });
+        }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs extend commit: " + error; }));
 }
 
 void BufferView::RunVcsSequenceStep(VcsSequenceStep step) {
@@ -646,7 +646,7 @@ void BufferView::RunVcsSequenceStep(VcsSequenceStep step) {
     // repository may have moved on (a terminal `git rebase --continue`)
     // since this editor last looked.
     vcsRunner_->RequestSequenceState(
-        [this, step](const editor::vcs::SequenceState& state) {
+        lifetime_.Bind([this, step](const editor::vcs::SequenceState& state) {
             if (state.kind.empty()) {
                 statusMessage_ = "No rebase, merge or cherry-pick in progress.";
                 return;
@@ -656,13 +656,13 @@ void BufferView::RunVcsSequenceStep(VcsSequenceStep step) {
                 return;
             }
             RunVcsSequenceStep(step, state.kind);
-        },
-        [this](std::string error) { statusMessage_ = error; });
+        }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = error; }));
 }
 
 void BufferView::ContinueVcsSequence() {
     vcsRunner_->RequestStatus(
-        [this](const std::vector<editor::vcs::StatusEntry>& entries) {
+        lifetime_.Bind([this](const std::vector<editor::vcs::StatusEntry>& entries) {
             const std::filesystem::path          root  = editor::ProjectRoot();
             const editor::vcs::SequenceFileProbe probe = {
                 .hasUnsavedBuffer =
@@ -681,16 +681,16 @@ void BufferView::ContinueVcsSequence() {
             // Re-probed rather than threaded through: the status round trip
             // is the only thing between the two and it can't change the kind.
             vcsRunner_->RequestSequenceState(
-                [this, toStage = std::move(plan.toStage)](const editor::vcs::SequenceState& state) mutable {
+                lifetime_.Bind([this, toStage = std::move(plan.toStage)](const editor::vcs::SequenceState& state) mutable {
                     if (state.kind.empty()) {
                         statusMessage_ = "No rebase, merge or cherry-pick in progress.";
                         return;
                     }
                     StageThenContinueVcsSequence(std::move(toStage), state.kind);
-                },
-                [this](std::string error) { statusMessage_ = error; });
-        },
-        [this](std::string error) { statusMessage_ = error; });
+                }),
+                lifetime_.Bind([this](std::string error) { statusMessage_ = error; }));
+        }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = error; }));
 }
 
 void BufferView::StageThenContinueVcsSequence(std::vector<std::filesystem::path> paths, std::string kind) {
@@ -703,20 +703,20 @@ void BufferView::StageThenContinueVcsSequence(std::vector<std::filesystem::path>
     paths.pop_back();
     vcsRunner_->RequestStage(
         next,
-        [this, paths = std::move(paths), kind = std::move(kind)]() mutable {
+        lifetime_.Bind([this, paths = std::move(paths), kind = std::move(kind)]() mutable {
             StageThenContinueVcsSequence(std::move(paths), std::move(kind));
-        },
-        [this](std::string error) { statusMessage_ = error; });
+        }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = error; }));
 }
 
 void BufferView::RunVcsSequenceStep(VcsSequenceStep step, const std::string& kind) {
     const char* verb = step == VcsSequenceStep::Continue ? "Continuing" : step == VcsSequenceStep::Skip ? "Skipping"
                                                                                                         : "Aborting";
     statusMessage_   = std::string(verb) + " " + kind + "...";
-    auto onSuccess   = [this, step] {
+    auto onSuccess   = lifetime_.Bind([this, step] {
         ReportVcsSequenceOutcome(step == VcsSequenceStep::Abort ? "Aborted." : "");
-    };
-    auto onError = [this](std::string error) { ReportVcsSequenceOutcome(std::move(error)); };
+    });
+    auto onError     = lifetime_.Bind([this](std::string error) { ReportVcsSequenceOutcome(std::move(error)); });
     switch (step) {
         case VcsSequenceStep::Continue:
             vcsRunner_->RequestSequenceContinue(kind, onSuccess, onError);
@@ -736,15 +736,15 @@ void BufferView::ReportVcsSequenceOutcome(std::string outcome) {
     // Stopping again on the next conflicting commit exits non-zero, so the
     // re-probe is what says whether the sequence finished or is waiting.
     vcsRunner_->RequestSequenceState(
-        [this, outcome](const editor::vcs::SequenceState& state) {
+        lifetime_.Bind([this, outcome](const editor::vcs::SequenceState& state) {
             if (state.kind.empty()) {
                 statusMessage_ = outcome.empty() ? "Done." : outcome;
                 return;
             }
             statusMessage_ = editor::vcs::SequenceLabel(state) + " -- " +
                              (outcome.empty() ? "resolve, then C-c x c to continue" : outcome);
-        },
-        [this, outcome](std::string) { statusMessage_ = outcome.empty() ? "Done." : outcome; });
+        }),
+        lifetime_.Bind([this, outcome](std::string) { statusMessage_ = outcome.empty() ? "Done." : outcome; }));
 }
 
 void BufferView::RunVcsSequenceStepForTesting(VcsSequenceStep step) {
@@ -802,14 +802,14 @@ void BufferView::StageOrUnstageHunkAtPoint(bool stage) {
     const std::size_t targetLine = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1; // 1-indexed, diff's own convention
     vcsRunner_->RequestHunkApply(
         buffer, targetLine, stage,
-        [this, stage] {
+        lifetime_.Bind([this, stage] {
             statusMessage_ = stage ? "Hunk staged." : "Hunk unstaged.";
             RefreshVcsStatusBuffer();
             RequestDiffForCurrentBuffer();
-        },
-        [this, stage](std::string error) {
+        }),
+        lifetime_.Bind([this, stage](std::string error) {
             statusMessage_ = std::string("vcs ") + (stage ? "stage" : "unstage") + " hunk: " + error;
-        });
+        }));
 }
 
 void BufferView::RevertHunkAtPoint() {
@@ -833,7 +833,7 @@ void BufferView::RevertHunkAtPoint() {
     const std::size_t targetLine = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1; // 1-indexed, diff's own convention
     vcsRunner_->RequestHunkRevert(
         buffer, targetLine,
-        [this] {
+        lifetime_.Bind([this] {
             statusMessage_ = "Hunk reverted.";
             // AutoRevert/FileWatch picks up the now-changed-on-disk file on
             // its own next sweep (this buffer is guaranteed unmodified, the
@@ -843,10 +843,10 @@ void BufferView::RevertHunkAtPoint() {
             // below to see accurate state shortly after.
             RefreshVcsStatusBuffer();
             RequestDiffForCurrentBuffer();
-        },
-        [this](std::string error) {
+        }),
+        lifetime_.Bind([this](std::string error) {
             statusMessage_ = "vcs revert hunk: " + error;
-        });
+        }));
 }
 
 void BufferView::RevertHunkAtPointForTesting() {
@@ -891,8 +891,8 @@ void BufferView::RequestVcsBranchesBuffer() {
         return;
     }
     vcsRunner_->RequestBranchList(
-        [this](std::vector<editor::vcs::BranchEntry> entries) { BuildVcsBranchesBuffer(entries); },
-        [this](std::string error) { statusMessage_ = "vcs branches: " + error; });
+        lifetime_.Bind([this](std::vector<editor::vcs::BranchEntry> entries) { BuildVcsBranchesBuffer(entries); }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs branches: " + error; }));
 }
 
 void BufferView::BuildVcsBranchesBuffer(const std::vector<editor::vcs::BranchEntry>& entries) {
@@ -917,7 +917,7 @@ void BufferView::BeginVcsSwitchBranchPrompt() {
     }
     statusMessage_ = "Fetching branches...";
     vcsRunner_->RequestBranchList(
-        [this](std::vector<editor::vcs::BranchEntry> entries) {
+        lifetime_.Bind([this](std::vector<editor::vcs::BranchEntry> entries) {
             if (inputMode_ != InputMode::Normal) {
                 // Another prompt began while the fetch was in flight --
                 // don't hijack it (same in-progress guard RequestCloseBuffer
@@ -935,8 +935,8 @@ void BufferView::BeginVcsSwitchBranchPrompt() {
             prompt_.emplace("Switch to branch: ");
             vcsBranchList_.SelectTop();
             RefreshVcsSwitchBranchStatus();
-        },
-        [this](std::string error) { statusMessage_ = "vcs branch: " + error; });
+        }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs branch: " + error; }));
 }
 
 // VCS side panel follow-up: pulled out of the VcsCreateBranch switch case
@@ -954,7 +954,7 @@ void BufferView::BeginVcsCreateBranchPrompt() {
 }
 
 void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>)> onComplete) {
-    dapManager_->RequestStackTrace([this, onComplete = std::move(onComplete)](std::vector<editor::dap::Manager::StackFrame> frames) {
+    dapManager_->RequestStackTrace(lifetime_.Bind([this, onComplete = std::move(onComplete)](std::vector<editor::dap::Manager::StackFrame> frames) {
         if (frames.empty()) {
             onComplete({});
             return;
@@ -998,7 +998,7 @@ void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>
                 lines->push_back(row + "  [data:" + std::to_string(d) + "]");
             }
         }
-        dapManager_->RequestScopes(frames[0].id, [this, lines, onComplete](std::vector<editor::dap::Manager::Scope> scopes) {
+        dapManager_->RequestScopes(frames[0].id, lifetime_.Bind([this, lines, onComplete](std::vector<editor::dap::Manager::Scope> scopes) {
             const std::vector<std::string>& watches = dapManager_->Watches();
             if (scopes.empty() && watches.empty()) {
                 onComplete(*lines);
@@ -1020,7 +1020,7 @@ void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>
                 for (std::size_t w = 0; w < watches.size(); ++w) {
                     dapManager_->Evaluate(
                         watches[w],
-                        [this, lines, remaining, chunks, onComplete, w, expression = watches[w]](bool success, std::string text) {
+                        lifetime_.Bind([this, lines, remaining, chunks, onComplete, w, expression = watches[w]](bool success, std::string text) {
                             (*chunks)[0][1 + w] = "  " + expression + " = " + (success ? text : ("<" + text + ">")) + "  [watch:" +
                                                   std::to_string(w) + "]";
                             if (--*remaining == 0) {
@@ -1029,7 +1029,7 @@ void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>
                                 }
                                 onComplete(*lines);
                             }
-                        },
+                        }),
                         "watch");
                 }
             }
@@ -1038,8 +1038,8 @@ void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>
             for (std::size_t s = 0; s < scopes.size(); ++s) {
                 dapManager_->RequestVariables(
                     scopes[s].variablesReference,
-                    [this, lines, remaining, chunks, onComplete, s, scopeVariablesReference = scopes[s].variablesReference,
-                     scopeName = scopes[s].name](std::vector<editor::dap::Manager::Variable> variables) {
+                    lifetime_.Bind([this, lines, remaining, chunks, onComplete, s, scopeVariablesReference = scopes[s].variablesReference,
+                                    scopeName = scopes[s].name](std::vector<editor::dap::Manager::Variable> variables) {
                         std::vector<std::string>& chunk = (*chunks)[1 + s];
                         chunk.push_back("");
                         chunk.push_back("== " + scopeName + " ==");
@@ -1052,10 +1052,10 @@ void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>
                             }
                             onComplete(*lines);
                         }
-                    });
+                    }));
             }
-        });
-    });
+        }));
+    }));
 }
 
 void BufferView::ShowDebugInfo() {
@@ -1122,7 +1122,7 @@ void BufferView::ExpandVariableAtPoint() {
     statusMessage_                = "Expanding...";
     dapManager_->RequestVariables(
         reference,
-        [this, bufferPtr, line, lineText, markerPos, indent, reference](std::vector<editor::dap::Manager::Variable> variables) {
+        lifetime_.Bind([this, bufferPtr, line, lineText, markerPos, indent, reference](std::vector<editor::dap::Manager::Variable> variables) {
             if (bufferPtr != &activeBuffer_.Get()) {
                 return; // switched away while the request was in flight
             }
@@ -1172,7 +1172,7 @@ void BufferView::ExpandVariableAtPoint() {
             target.InsertAt(targetLineStart, replacement);
             target.SetReadOnly(wasReadOnly);
             statusMessage_.clear();
-        });
+        }));
 }
 
 // Debugging wishlist follow-up (pointer/linked-list graph view). See
@@ -1245,7 +1245,7 @@ void BufferView::ExpandPointerGraphNode(std::size_t index) {
     const std::size_t generation         = pointerGraphRequest_.Begin();
     dapManager_->RequestVariables(
         variablesReference,
-        [this, index, generation](std::vector<editor::dap::Manager::Variable> variables) {
+        lifetime_.Bind([this, index, generation](std::vector<editor::dap::Manager::Variable> variables) {
             if (!pointerGraphSession_ || pointerGraphRequest_.IsStale(generation)) {
                 return; // superseded by a newer request, or the session ended -- ExpandHierarchyNode's own guard
             }
@@ -1277,7 +1277,7 @@ void BufferView::ExpandPointerGraphNode(std::size_t index) {
             }
             session.tree.Expand(index, std::move(children));
             PushPointerGraphModel();
-        });
+        }));
 }
 
 void BufferView::PushPointerGraphModel() {
@@ -1421,7 +1421,7 @@ void BufferView::ShowDisassemblyAtPoint() {
     }
 
     statusMessage_ = "Fetching instructions...";
-    dapManager_->RequestStackTrace([this, requestedFrameId](std::vector<editor::dap::Manager::StackFrame> frames) {
+    dapManager_->RequestStackTrace(lifetime_.Bind([this, requestedFrameId](std::vector<editor::dap::Manager::StackFrame> frames) {
         if (frames.empty()) {
             statusMessage_ = "No stack to disassemble (is the session stopped?).";
             return;
@@ -1444,14 +1444,14 @@ void BufferView::ShowDisassemblyAtPoint() {
         // "one shot, re-invoke to refresh" model; no incremental paging.
         dapManager_->RequestDisassembly(
             pcAddress, -32, 64,
-            [this, pcAddress](std::vector<editor::dap::Manager::DisassembledInstruction> instructions) {
+            lifetime_.Bind([this, pcAddress](std::vector<editor::dap::Manager::DisassembledInstruction> instructions) {
                 if (instructions.empty()) {
                     statusMessage_ = "No instructions returned (adapter may not support disassembly).";
                     return;
                 }
                 BuildDisassemblyBuffer(instructions, pcAddress);
-            });
-    });
+            }));
+    }));
 }
 
 void BufferView::BuildDisassemblyBuffer(const std::vector<editor::dap::Manager::DisassembledInstruction>& instructions,
@@ -1616,7 +1616,7 @@ void BufferView::ToggleHexFormatAtPoint() {
     statusMessage_ = "Formatting...";
     dapManager_->RequestVariables(
         ownerRef,
-        [this, bufferPtr, spliceIfUnchanged, name, ownerRef, indent, wantHex](std::vector<editor::dap::Manager::Variable> variables) {
+        lifetime_.Bind([this, bufferPtr, spliceIfUnchanged, name, ownerRef, indent, wantHex](std::vector<editor::dap::Manager::Variable> variables) {
             if (bufferPtr != &activeBuffer_.Get()) {
                 return; // switched away while the request was in flight
             }
@@ -1627,7 +1627,7 @@ void BufferView::ToggleHexFormatAtPoint() {
                 return;
             }
             spliceIfUnchanged(FormatDebugVariableLine(*it, indent, ownerRef, wantHex));
-        },
+        }),
         wantHex);
 }
 
@@ -1706,7 +1706,7 @@ void BufferView::ToggleWatchGraphAtPoint() {
     statusMessage_ = "Graphing...";
     dapManager_->EvaluateWithReference(
         expression,
-        [this, bufferPtr, spliceIfUnchanged, lineText](editor::dap::Manager::EvaluateResult result) {
+        lifetime_.Bind([this, bufferPtr, spliceIfUnchanged, lineText](editor::dap::Manager::EvaluateResult result) {
             if (bufferPtr != &activeBuffer_.Get()) {
                 return; // switched away while the request was in flight
             }
@@ -1716,7 +1716,7 @@ void BufferView::ToggleWatchGraphAtPoint() {
             }
             dapManager_->RequestVariables(
                 result.variablesReference,
-                [this, spliceIfUnchanged, lineText](std::vector<editor::dap::Manager::Variable> variables) {
+                lifetime_.Bind([this, spliceIfUnchanged, lineText](std::vector<editor::dap::Manager::Variable> variables) {
                     if (variables.empty()) {
                         statusMessage_ = "No elements to graph.";
                         return;
@@ -1732,8 +1732,8 @@ void BufferView::ToggleWatchGraphAtPoint() {
                         values.push_back(parsed);
                     }
                     spliceIfUnchanged(lineText + "  " + editor::BuildBlockSparkline(values) + "  [graph]");
-                });
-        },
+                }));
+        }),
         "watch");
 }
 
@@ -1777,7 +1777,7 @@ void BufferView::LineInspectAtPoint() {
     for (std::size_t i = 0; i < candidates.size(); ++i) {
         const auto [start, end]      = candidates[i];
         const std::string expression = std::string(content.Substring(start, end - start));
-        dapManager_->Evaluate(expression, [this, bufferPtr, texts, remaining, i, expression, capped](bool success, std::string text) {
+        dapManager_->Evaluate(expression, lifetime_.Bind([this, bufferPtr, texts, remaining, i, expression, capped](bool success, std::string text) {
             (*texts)[i] = expression + " = " + (success ? text : ("<" + text + ">"));
             if (--*remaining != 0) {
                 return;
@@ -1796,7 +1796,7 @@ void BufferView::LineInspectAtPoint() {
                 message += "  (showing first " + std::to_string(editor::kMaxLineInspectExpressions) + ")";
             }
             statusMessage_ = std::move(message);
-        });
+        }));
     }
 }
 
@@ -1908,7 +1908,7 @@ void BufferView::BeginDapThreadSelect() {
         return;
     }
     statusMessage_ = "Fetching threads...";
-    dapManager_->RequestThreads([this](std::vector<editor::dap::Manager::Thread> threads) {
+    dapManager_->RequestThreads(lifetime_.Bind([this](std::vector<editor::dap::Manager::Thread> threads) {
         if (threads.empty()) {
             statusMessage_ = "No threads reported (or the session already resumed).";
             return;
@@ -1917,7 +1917,7 @@ void BufferView::BeginDapThreadSelect() {
         dapThreadSelection_ = 0;
         inputMode_          = InputMode::DapThreadSelect;
         RefreshDapThreadSelectStatus();
-    });
+    }));
 }
 
 void BufferView::RefreshDapThreadSelectStatus() {
@@ -1943,9 +1943,9 @@ void BufferView::HandleDapThreadSelectKey(const editor::KeyChord& chord) {
                                    if (dapManager_ == nullptr) {
                                        return;
                                    }
-                                   dapManager_->SelectThread(thread.id, [this, name = thread.name](bool success) {
+                                   dapManager_->SelectThread(thread.id, lifetime_.Bind([this, name = thread.name](bool success) {
                                        statusMessage_ = success ? ("Selected thread: " + name) : "Failed to select thread.";
-                                   });
+                                   }));
                                }},
                           chord);
 }
@@ -1960,7 +1960,7 @@ void BufferView::StepIntoWithTargets() {
         statusMessage_ = dapManager_->StepInto();
         return;
     }
-    dapManager_->RequestStepInTargets(*frameId, [this](std::vector<editor::dap::Manager::StepInTarget> targets) {
+    dapManager_->RequestStepInTargets(*frameId, lifetime_.Bind([this](std::vector<editor::dap::Manager::StepInTarget> targets) {
         // Zero targets means "this adapter has no opinion" as often as it
         // means "nothing to step into", and one target is not a choice --
         // both step the way F11 always did.
@@ -1975,7 +1975,7 @@ void BufferView::StepIntoWithTargets() {
         dapStepInTargetSelection_ = 0;
         inputMode_                = InputMode::DapStepInTargetSelect;
         RefreshDapStepInTargetStatus();
-    });
+    }));
 }
 
 void BufferView::RefreshDapStepInTargetStatus() {
@@ -2122,7 +2122,7 @@ void BufferView::ToggleDataBreakpointAtPoint() {
     // the stopped frame for it rather than declining.
     statusMessage_ = "Asking the adapter about " + parsed->name + "...";
     dapManager_->RequestDataBreakpointInfo(
-        parsed->ownerRef, parsed->name, [this, name = parsed->name](editor::dap::Manager::DataBreakpointInfo info) {
+        parsed->ownerRef, parsed->name, lifetime_.Bind([this, name = parsed->name](editor::dap::Manager::DataBreakpointInfo info) {
             if (!info.canBreak) {
                 statusMessage_ = "Cannot watch " + name + ": " + info.description;
                 return;
@@ -2156,7 +2156,7 @@ void BufferView::ToggleDataBreakpointAtPoint() {
                     : static_cast<std::size_t>(std::distance(info.accessTypes.begin(), write));
             inputMode_ = InputMode::DapDataBreakpointAccess;
             RefreshDapDataBreakpointAccessStatus();
-        });
+        }));
 }
 
 void BufferView::RefreshDapDataBreakpointAccessStatus() {
@@ -2221,12 +2221,12 @@ bufferview::FuzzyPrompt BufferView::VcsSwitchBranchPrompt() {
                 statusMessage_ = "Switching to " + selected + "...";
                 vcsRunner_->RequestBranchSwitch(
                     selected,
-                    [this, selected] {
+                    lifetime_.Bind([this, selected] {
                         statusMessage_ = "Switched to " + selected + " (modified buffers not reloaded)";
                         RefreshVcsStatusBuffer();
                         RequestDiffForCurrentBuffer();
-                    },
-                    [this](std::string error) { statusMessage_ = "vcs branch: " + error; }); }};
+                    }),
+                    lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs branch: " + error; })); }};
 }
 
 void BufferView::RefreshVcsSwitchBranchStatus() {

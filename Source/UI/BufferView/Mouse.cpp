@@ -177,7 +177,7 @@ void BufferView::RequestContextMenuCodeActions(std::size_t point) {
 
     lspManager_->RequestCodeActions(
         buffer, rangeStart, rangeEnd,
-        [this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::CodeAction> actions) {
+        lifetime_.Bind([this, bufferPtr, point, generation, serverKey](std::vector<editor::lsp::CodeAction> actions) {
             if (contextMenuCodeActionRequest_.IsStale(generation)) {
                 return; // superseded by a newer right-click
             }
@@ -205,7 +205,7 @@ void BufferView::RequestContextMenuCodeActions(std::size_t point) {
                                        std::make_move_iterator(fixRows.end()));
             contextMenuSelection_ = 0; // land on the first (highest-priority) live fix
             RefreshContextMenuStatus();
-        },
+        }),
         serverKey);
 }
 

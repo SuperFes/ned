@@ -21,6 +21,7 @@
 #include <thread>
 #include <vector>
 
+#include "Editor/Lifetime.h"
 #include "UI/Widget.h"
 
 struct notcurses; // <notcurses/notcurses.h>
@@ -348,7 +349,9 @@ class DeadlineTimer {
 
     void Arm(EventLoop& loop, std::chrono::milliseconds delay, std::function<void()> onFire) {
         Cancel();
-        thread_ = std::jthread([&loop, delay, onFire = std::move(onFire)](const std::stop_token& stopToken) {
+        // The stop token only covers the wait: a fire already posted to the
+        // loop is dropped through the guard instead.
+        thread_ = std::jthread([&loop, delay, onFire = armed_.Bind(std::move(onFire))](const std::stop_token& stopToken) {
             std::mutex                   mutex;
             std::unique_lock<std::mutex> lock(mutex);
             std::condition_variable_any  cv;
@@ -364,13 +367,15 @@ class DeadlineTimer {
     }
 
     void Cancel() {
+        armed_.Revoke();
         if (thread_.joinable()) {
             thread_.request_stop();
         }
     }
 
   private:
-    std::jthread thread_;
+    editor::LifetimeGuard armed_;
+    std::jthread          thread_;
 };
 
 } // namespace ned::ui
