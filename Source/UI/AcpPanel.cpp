@@ -1056,6 +1056,10 @@ void AcpPanel::EndFrame() {
     images_.EndFrame();
 }
 
+void AcpPanel::ReleasePixelPlanes() {
+    images_.ReleaseAll();
+}
+
 bool AcpPanel::EntryExpanded(std::size_t index) const {
     if (!acpManager_ || index >= acpManager_->Transcript().size()) {
         return false;

@@ -115,6 +115,8 @@ class AcpPanel : public Widget {
     void SetOcclusionTest(std::function<bool(Box)> covered);
     // Once a frame after painting: takes down bitmaps not drawn this frame.
     void EndFrame();
+    // Takes down every bitmap, before Notcurses stops and frees them.
+    void ReleasePixelPlanes();
 
     // Runs an agent's login command in a terminal: `argv` with `env` set,
     // under `label`; `done` is told whether it exited 0.

@@ -3598,12 +3598,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         return std::nullopt;
     };
 
-    // suspend-frame follow-up: same ReleaseMinimapPixelPlanes() call the
-    // final post-Run teardown below already relies on, just fired mid-
-    // session instead of at exit -- see EventLoopCallbacks::onSuspend's own
-    // doc comment for why this specific call is required before
-    // notcurses_stop(), not merely tidy.
-    callbacks.onSuspend = [&] { windowManager->ReleaseMinimapPixelPlanes(); };
+    // Stopping Notcurses on suspend frees every plane, so each widget holding
+    // one lets go of it first -- see EventLoopCallbacks::onSuspend.
+    callbacks.onSuspend = [&] {
+        windowManager->ReleaseMinimapPixelPlanes();
+        acpPanel.ReleasePixelPlanes();
+    };
 
     eventLoop.Run(callbacks);
 

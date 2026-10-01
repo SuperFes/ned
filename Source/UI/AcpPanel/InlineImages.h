@@ -59,6 +59,9 @@ class InlineImages {
     // after painting, so one whose rows scrolled away, whose panel closed
     // or that something now covers doesn't stay on the terminal.
     void EndFrame();
+    // Removes every bitmap. Notcurses frees all planes when it stops (a
+    // suspend), so this must run first.
+    void ReleaseAll();
 
   private:
     struct Plane {

@@ -30,9 +30,14 @@ namespace {
 } // namespace
 
 InlineImages::~InlineImages() {
+    ReleaseAll();
+}
+
+void InlineImages::ReleaseAll() {
     for (auto& [id, plane] : planes_) {
         ReleasePlane(plane);
     }
+    planes_.clear();
 }
 
 void InlineImages::SetEventLoop(EventLoop* eventLoop) {
