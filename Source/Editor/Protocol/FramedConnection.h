@@ -4,7 +4,7 @@
 // blocking-read loop marshaling frames onto the main thread via
 // ned::ui::EventLoop::Post, a second jthread draining the server/agent/
 // adapter's stderr, a third jthread draining an async write queue, a
-// shared_ptr<bool> alive_ use-after-free guard, and a teardown order that,
+// use-after-free guard, and a teardown order that,
 // gotten wrong, hangs rather than failing to compile -- this class exists so
 // that order lives in exactly one place, ~FramedConnection, instead of being
 // re-derived per protocol.
@@ -42,12 +42,11 @@
 // Threading/lifetime contract is unchanged from what Lsp::Client/Dap::Client/
 // Acp::Client each documented individually: every public method here, and
 // the onFrame_/onDisconnected_ callbacks, only ever run on the main thread.
-// alive_ is flipped false as the first statement of ~FramedConnection() and
-// captured by value (a second owning reference) in every Post lambda below;
-// a lambda that finds it false no-ops without touching `this` or any member
-// at all, which is what makes it safe regardless of how a background
-// thread's already-posted callback races this object's destruction (see
-// lsp-use-after-free follow-up, the bug this pattern was built to fix).
+// lifetime_ is revoked as the first statement of ~FramedConnection(), and
+// every Post lambda below is bound through a token taken from it; a lambda
+// drained after that no-ops without touching `this` or any member, however a
+// background thread's already-posted callback races this object's
+// destruction.
 //
 
 #ifndef NED_EDITOR_PROTOCOL_FRAMEDCONNECTION_H
@@ -66,6 +65,7 @@
 #include <vector>
 
 #include "Editor/DiagnosticsLog.h"
+#include "Editor/Lifetime.h"
 #include "UI/EventLoop.h"
 
 namespace ned::editor::protocol {
@@ -103,13 +103,12 @@ class FramedConnection {
         StartWriteLoop();
     }
 
-    // lsp-use-after-free follow-up: alive_ must be cleared first -- see this
-    // file's own header comment. Then the writer, so a graceful-shutdown
+    // lifetime_ must be revoked first -- see this file's own header comment. Then the writer, so a graceful-shutdown
     // drain still has a live transport; then the hang-up that wakes both
     // readers; transport_ itself is destroyed only once no thread uses it.
     // Assigning an empty jthread requests a stop and joins.
     ~FramedConnection() {
-        *alive_ = false;
+        lifetime_.Revoke();
         writeThread_ = std::jthread();
         transport_.Close();
         readThread_   = std::jthread();
@@ -170,41 +169,35 @@ class FramedConnection {
         // genuinely consulted rather than ignored, so a read thread the
         // scheduler has not yet run by the time its owner is destroyed exits
         // here instead of entering a read at all.
-        readThread_ = std::jthread([this](const std::stop_token& stopToken) {
+        readThread_ = std::jthread([this, alive = lifetime_.Token()](const std::stop_token& stopToken) {
             while (!stopToken.stop_requested()) {
                 std::optional<std::string> frame;
                 try {
                     frame = transport_.ReadFrame(); // blocks
                 }
                 catch (const std::exception& e) {
-                    eventLoop_.Post([this, alive = alive_, reason = std::string(e.what())] {
-                        if (!*alive) {
-                            return; // this FramedConnection is gone
-                        }
+                    eventLoop_.Post(alive.Bind([this, reason = std::string(e.what())] {
                         LogMessage(options_.logCategory, LogSeverity::Warning, reason);
                         if (onDisconnected_) {
                             onDisconnected_(reason);
                         }
-                    });
+                    }));
                     return;
                 }
                 if (!frame) {
                     // EOF -- the process exited (or this object is being
                     // destroyed: the destructor's transport_.Close() is
                     // what makes the blocking ReadFrame() call above
-                    // finally return). alive_ is what makes that
+                    // finally return). The lifetime token is what makes that
                     // safe, not an assumption about when this callback runs
                     // relative to destruction.
-                    eventLoop_.Post([this, alive = alive_] {
-                        if (!*alive) {
-                            return;
-                        }
+                    eventLoop_.Post(alive.Bind([this] {
                         const std::string reason = std::string(options_.entityNoun) + " exited (EOF)";
                         LogMessage(options_.logCategory, LogSeverity::Warning, reason);
                         if (onDisconnected_) {
                             onDisconnected_(reason);
                         }
-                    });
+                    }));
                     return;
                 }
                 if (frame->empty()) {
@@ -219,14 +212,11 @@ class FramedConnection {
                 // iteration a repaint, so a frame arriving here and updating
                 // real state is shown without needing an explicit "force a
                 // frame" call.
-                eventLoop_.Post([this, alive = alive_, frameText = std::move(*frame)]() mutable {
-                    if (!*alive) {
-                        return;
-                    }
+                eventLoop_.Post(alive.Bind([this, frameText = std::move(*frame)]() mutable {
                     if (onFrame_) {
                         onFrame_(std::move(frameText));
                     }
-                });
+                }));
             }
         });
     }
@@ -306,8 +296,8 @@ class FramedConnection {
 
     Options options_;
 
-    // lsp-use-after-free follow-up: see this file's own header comment.
-    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
+    // See this file's own header comment.
+    LifetimeGuard lifetime_;
 
     // The threads are stopped and joined in ~FramedConnection's body, before
     // any member is destroyed.

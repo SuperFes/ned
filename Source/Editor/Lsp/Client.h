@@ -12,10 +12,10 @@
 // reasoning, including why a use-after-free hazard fixed there (lsp-use-
 // after-free follow-up, corrected 2026-08-26 -- a real, ASan-confirmed
 // heap-use-after-free on Manager's mid-session respawn path) needs no
-// separate guard here: connection_'s own alive_ is checked before its
-// onFrame_/onDisconnected_ callbacks are ever invoked, and since connection_
-// is a member of this Client (constructed and destroyed alongside it), a
-// callback that finds it false can only run after this Client itself has
+// separate guard here: connection_'s own lifetime token is checked before
+// its onFrame_/onDisconnected_ callbacks are ever invoked, and since
+// connection_ is a member of this Client (constructed and destroyed alongside
+// it), a callback that finds it revoked can only run after this Client has
 // already finished being destroyed -- by which point it never touches this
 // Client's `this` at all, having already returned.
 //
