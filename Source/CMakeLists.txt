@@ -292,7 +292,7 @@ add_library(ned_lib STATIC
         Editor/Tracker/Runner.cpp
         Editor/Process/ChildProcess.cpp
         Editor/Process/StreamedChild.cpp
-        Editor/Acp/Transport.cpp
+        Editor/Protocol/LineTransport.cpp
         Editor/Acp/Client.cpp
         Editor/Acp/Config.cpp
         Editor/Acp/PanelConfig.cpp

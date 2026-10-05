@@ -7,7 +7,7 @@
 // nothing to multiplex across processes here. Deliberately a self-contained
 // duplicate of BrokerSocketPath.h's directory-resolution logic rather than a
 // cross-namespace reuse of it -- this codebase's established precedent for a
-// small per-subsystem primitive (see Lsp/Transport.h vs. Acp/Transport.h,
+// small per-subsystem primitive (see Lsp/Transport.h vs. Protocol/LineTransport.h,
 // independently duplicated rather than shared despite similar shape).
 //
 

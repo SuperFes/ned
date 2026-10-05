@@ -8,7 +8,7 @@ namespace ned::editor::acp {
 
 namespace {
 
-    protocol::FramedConnection<Transport>::Options MakeConnectionOptions() {
+    protocol::FramedConnection<protocol::LineTransport>::Options MakeConnectionOptions() {
         // acp-stderr-severity follow-up: Info, not Warning -- a real agent's
         // stderr is routinely just informational chatter (a startup banner, a
         // "session started" line), not necessarily a warning. Unlike Lsp
@@ -34,7 +34,7 @@ Client::Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop) : c
     });
 }
 
-Client::Client(Transport transport, ned::ui::EventLoop& eventLoop) : connection_(std::move(transport), eventLoop, MakeConnectionOptions()) {
+Client::Client(protocol::LineTransport transport, ned::ui::EventLoop& eventLoop) : connection_(std::move(transport), eventLoop, MakeConnectionOptions()) {
     connection_.SetOnFrame([this](std::string frame) { DispatchFrame(frame); });
     connection_.SetOnDisconnected([this](std::string reason) {
         if (onDisconnected_) {

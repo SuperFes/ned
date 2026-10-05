@@ -1,4 +1,4 @@
-#include "Transport.h"
+#include "LineTransport.h"
 
 #include <cerrno>
 #include <chrono>
@@ -7,7 +7,7 @@
 
 #include <unistd.h>
 
-namespace ned::editor::acp {
+namespace ned::editor::protocol {
 
 namespace {
 
@@ -20,7 +20,7 @@ namespace {
     // a new line was read (a clean "the agent exited" signal); throws on a
     // genuine read error. EOF *mid*-line (some bytes read, then EOF with no
     // terminating '\n') is treated as a malformed final message, not a clean
-    // disconnect -- matches Transport::ReadFrame's own "EOF mid-body" case.
+    // disconnect -- matches LineTransport::ReadFrame's own "EOF mid-body" case.
     // The first byte of a message waits unbounded (idle between messages is
     // normal); every byte after that is bounded by stallTimeout -- once a
     // message has started arriving, further silence is anomalous. Always
@@ -42,7 +42,7 @@ namespace {
                     // not the mid-message stall the bounded wait reports.
                     return false;
                 }
-                throw std::runtime_error("ned: ACP transport stalled mid-message");
+                throw std::runtime_error("ned: line transport stalled mid-message");
             }
             first                = false;
             char          ch     = 0;
@@ -56,10 +56,10 @@ namespace {
                 if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
                     continue;
                 }
-                throw std::runtime_error(std::string("ned: ACP transport read failed: ") + std::strerror(errno));
+                throw std::runtime_error(std::string("ned: line transport read failed: ") + std::strerror(errno));
             }
             if (result == 0) {
-                return !line.empty() ? throw std::runtime_error("ned: ACP transport EOF mid-message") : false;
+                return !line.empty() ? throw std::runtime_error("ned: line transport EOF mid-message") : false;
             }
             if (ch == '\n') {
                 if (!line.empty() && line.back() == '\r') {
@@ -80,19 +80,19 @@ namespace {
 
 } // namespace
 
-Transport::Transport(const std::vector<std::string>& argv, bool captureStderr) : child_(argv, captureStderr ? process::StderrMode::Capture : process::StderrMode::Discard),
+LineTransport::LineTransport(const std::vector<std::string>& argv, bool captureStderr) : child_(argv, captureStderr ? process::StderrMode::Capture : process::StderrMode::Discard),
                                                                                  processLabel_(argv.empty() ? std::string() : BaseName(argv[0])) {
 }
 
-Transport::Transport(int readFd, int writeFd, pid_t pid) : child_(readFd, writeFd, pid) {
+LineTransport::LineTransport(int readFd, int writeFd, pid_t pid) : child_(readFd, writeFd, pid) {
 }
 
-void Transport::WriteFrame(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout) const {
+void LineTransport::WriteFrame(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout) const {
     child_.WriteAll(jsonPayload, stallTimeout);
     child_.WriteAll("\n", stallTimeout);
 }
 
-std::optional<std::string> Transport::ReadFrame(std::chrono::milliseconds stallTimeout) const {
+std::optional<std::string> LineTransport::ReadFrame(std::chrono::milliseconds stallTimeout) const {
     std::string line;
     if (!ReadLine(child_, line, stallTimeout)) {
         return std::nullopt;
@@ -100,24 +100,24 @@ std::optional<std::string> Transport::ReadFrame(std::chrono::milliseconds stallT
     return line;
 }
 
-void Transport::Close() noexcept {
+void LineTransport::Close() noexcept {
     child_.CloseConnection();
 }
 
-pid_t Transport::Pid() const noexcept {
+pid_t LineTransport::Pid() const noexcept {
     return child_.Pid();
 }
 
-int Transport::StderrFd() const noexcept {
+int LineTransport::StderrFd() const noexcept {
     return child_.StderrFd();
 }
 
-std::string Transport::ReadStderr() const {
+std::string LineTransport::ReadStderr() const {
     return child_.ReadSomeStderr();
 }
 
-const std::string& Transport::ProcessLabel() const noexcept {
+const std::string& LineTransport::ProcessLabel() const noexcept {
     return processLabel_;
 }
 
-} // namespace ned::editor::acp
+} // namespace ned::editor::protocol

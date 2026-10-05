@@ -1,12 +1,9 @@
 //
-// ACP client, slice 1. ACP's own message framing -- newline-delimited JSON,
-// one message per line, no "Content-Length" header block at all (unlike
-// Lsp/Transport.h/Dap's shared framing) -- layered directly on
-// Process/ChildProcess.h's raw spawn/pipe mechanics, exactly the reuse that
-// file's own header comment anticipated when it split ChildProcess out from
-// the original LSP-only Transport. This is its own class rather than a reuse
-// of Lsp::Transport because the framing genuinely differs, not because ACP
-// needs different process/pipe handling.
+// Newline-delimited JSON framing -- one message per line, no Content-Length
+// header block (unlike Lsp/Transport.h, shared by LSP and DAP) -- layered on
+// Process/ChildProcess.h, over either a spawned child's pipes or an
+// already-connected fd pair. ACP agents and the MCP bridge's relay both
+// speak it.
 //
 // A JSON-RPC payload produced by nlohmann::json::dump() never contains a
 // literal, unescaped newline byte (one embedded in a string is always
@@ -14,8 +11,8 @@
 // exactly one line, safe to frame this way.
 //
 
-#ifndef NED_EDITOR_ACP_TRANSPORT_H
-#define NED_EDITOR_ACP_TRANSPORT_H
+#ifndef NED_EDITOR_PROTOCOL_LINETRANSPORT_H
+#define NED_EDITOR_PROTOCOL_LINETRANSPORT_H
 
 #include <chrono>
 #include <optional>
@@ -28,7 +25,7 @@
 #include "Editor/Process/ChildProcess.h"
 #include "Editor/ProcessTimeouts.h"
 
-namespace ned::editor::acp {
+namespace ned::editor::protocol {
 
 // subprocess-hang-protection follow-up -- see Lsp/Transport.h's identical
 // stall-timeout reasoning; ACP's messages are single lines, not multi-line
@@ -40,7 +37,7 @@ namespace ned::editor::acp {
 // the same pair LSP's Transport uses) instead of this file's old
 // kMessageStallTimeout compile-time constant.
 
-class Transport {
+class LineTransport {
   public:
     // argv[0] is resolved against $PATH (or treated as a literal path if it
     // contains a '/', matching execvp's own convention) before spawning.
@@ -51,7 +48,7 @@ class Transport {
     // lsp-stderr-capture follow-up (extended to ACP): captureStderr mirrors
     // Lsp/Transport.h's identical parameter exactly -- defaults to false so
     // nothing changes for a caller that doesn't ask.
-    explicit Transport(const std::vector<std::string>& argv, bool captureStderr = false);
+    explicit LineTransport(const std::vector<std::string>& argv, bool captureStderr = false);
 
     // Wraps already-open, already-connected file descriptors directly,
     // taking ownership of both -- for a caller that manages the underlying
@@ -59,14 +56,14 @@ class Transport {
     // subprocess involved). pid, if given, is reaped/killed by the
     // destructor the same way the process-spawning constructor's child is;
     // -1 (the default) means "no process to manage."
-    Transport(int readFd, int writeFd, pid_t pid = -1);
+    LineTransport(int readFd, int writeFd, pid_t pid = -1);
 
-    ~Transport() = default; // ChildProcess's own destructor does the real work
+    ~LineTransport() = default; // ChildProcess's own destructor does the real work
 
-    Transport(Transport&&)                 = default;
-    Transport& operator=(Transport&&)      = default;
-    Transport(const Transport&)            = delete;
-    Transport& operator=(const Transport&) = delete;
+    LineTransport(LineTransport&&)                 = default;
+    LineTransport& operator=(LineTransport&&)      = default;
+    LineTransport(const LineTransport&)            = delete;
+    LineTransport& operator=(const LineTransport&) = delete;
 
     // Writes one message (jsonPayload + "\n") to the child's stdin. Throws
     // std::runtime_error on a write failure (e.g. the child already exited
@@ -116,6 +113,6 @@ class Transport {
     std::string           processLabel_;
 };
 
-} // namespace ned::editor::acp
+} // namespace ned::editor::protocol
 
-#endif // NED_EDITOR_ACP_TRANSPORT_H
+#endif // NED_EDITOR_PROTOCOL_LINETRANSPORT_H

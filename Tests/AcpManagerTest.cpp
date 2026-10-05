@@ -14,7 +14,7 @@
 #include "Editor/Acp/Config.h"
 #include "Editor/Acp/Manager.h"
 #include "Editor/Acp/TerminalText.h"
-#include "Editor/Acp/Transport.h"
+#include "Editor/Protocol/LineTransport.h"
 #include "Editor/Acp/TurnFiles.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/Lsp/Manager.h"
@@ -31,7 +31,7 @@
 using ned::editor::acp::Client;
 using ned::editor::acp::Manager;
 using ned::editor::acp::Json;
-using ned::editor::acp::Transport;
+using Transport = ned::editor::protocol::LineTransport;
 
 namespace {
 

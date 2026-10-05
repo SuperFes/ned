@@ -331,7 +331,7 @@ add_executable(ned_tests
             BoundedReadTest.cpp
             TestWatchdog.cpp
             TestWatchdogTest.cpp
-            AcpTransportTest.cpp
+            LineTransportTest.cpp
             AcpClientTest.cpp
             AcpConfigTest.cpp
             AcpManagerTest.cpp
@@ -359,7 +359,6 @@ add_executable(ned_tests
             LspBrokerTest.cpp
             LspBrokerConnectTest.cpp
             LspBrokerDaemonTest.cpp
-            McpTransportTest.cpp
             McpToolRegistryTest.cpp
             McpBridgeServerTest.cpp
             DapConfigTest.cpp

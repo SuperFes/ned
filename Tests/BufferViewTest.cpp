@@ -20,7 +20,7 @@
 #include "Editor/Acp/Client.h"
 #include "Editor/Acp/Config.h"
 #include "Editor/Acp/Manager.h"
-#include "Editor/Acp/Transport.h"
+#include "Editor/Protocol/LineTransport.h"
 #include "Editor/Backup.h"
 #include "Editor/BindingsReport.h"
 #include "Editor/Clipboard.h"
@@ -814,7 +814,7 @@ struct FakeAcpAgent {
         REQUIRE(::pipe(clientWritesHere) == 0);
         REQUIRE(::pipe(clientReadsHere) == 0);
         auto client = std::make_unique<ned::editor::acp::Client>(
-            ned::editor::acp::Transport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
+            ned::editor::protocol::LineTransport(clientReadsHere[0], clientWritesHere[1]), eventLoop);
         outClient = &manager.SetClientForTesting(std::move(client));
         return FakeAcpAgent(clientWritesHere[0], clientReadsHere[1]);
     }

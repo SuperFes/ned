@@ -11,12 +11,12 @@
 
 #include "BoundedRead.h"
 #include "Editor/Acp/Client.h"
-#include "Editor/Acp/Transport.h"
+#include "Editor/Protocol/LineTransport.h"
 #include "UI/EventLoop.h"
 
 using ned::editor::acp::Client;
 using ned::editor::acp::Json;
-using ned::editor::acp::Transport;
+using Transport = ned::editor::protocol::LineTransport;
 
 namespace {
 

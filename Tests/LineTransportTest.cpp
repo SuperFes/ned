@@ -7,9 +7,9 @@
 #include <unistd.h>
 
 #include "BoundedRead.h"
-#include "Editor/Acp/Transport.h"
+#include "Editor/Protocol/LineTransport.h"
 
-using ned::editor::acp::Transport;
+using ned::editor::protocol::LineTransport;
 
 namespace {
 
@@ -18,8 +18,8 @@ namespace {
 // versa. No subprocess involved at all, exercising the framing logic in
 // isolation. Mirrors Tests/LspTransportTest.cpp's own TransportPair exactly.
 struct TransportPair {
-    Transport a; // writes to b, reads from b
-    Transport b; // writes to a, reads from a
+    LineTransport a; // writes to b, reads from b
+    LineTransport b; // writes to a, reads from a
 
     static TransportPair Create() {
         int toB[2];
@@ -27,13 +27,13 @@ struct TransportPair {
         REQUIRE(::pipe(toB) == 0);
         REQUIRE(::pipe(toA) == 0);
         // a: reads toA[0], writes toB[1]. b: reads toB[0], writes toA[1].
-        return TransportPair{Transport(toA[0], toB[1]), Transport(toB[0], toA[1])};
+        return TransportPair{LineTransport(toA[0], toB[1]), LineTransport(toB[0], toA[1])};
     }
 };
 
 } // namespace
 
-TEST_CASE("Transport round-trips a simple message through a real pipe pair", "[Acp]") {
+TEST_CASE("LineTransport round-trips a simple message through a real pipe pair", "[Protocol]") {
     TransportPair pair = TransportPair::Create();
 
     pair.a.WriteFrame(R"({"jsonrpc":"2.0","id":1,"method":"initialize"})");
@@ -43,7 +43,7 @@ TEST_CASE("Transport round-trips a simple message through a real pipe pair", "[A
     REQUIRE(*received == R"({"jsonrpc":"2.0","id":1,"method":"initialize"})");
 }
 
-TEST_CASE("Transport round-trips a message body containing an escaped newline", "[Acp]") {
+TEST_CASE("LineTransport round-trips a message body containing an escaped newline", "[Protocol]") {
     TransportPair pair = TransportPair::Create();
 
     // A literal '\n' inside a JSON string is always escaped as the two
@@ -59,7 +59,7 @@ TEST_CASE("Transport round-trips a message body containing an escaped newline", 
     REQUIRE(*received == payload);
 }
 
-TEST_CASE("Transport reads multiple messages sent back to back", "[Acp]") {
+TEST_CASE("LineTransport reads multiple messages sent back to back", "[Protocol]") {
     TransportPair pair = TransportPair::Create();
 
     pair.a.WriteFrame("first");
@@ -72,12 +72,12 @@ TEST_CASE("Transport reads multiple messages sent back to back", "[Acp]") {
     REQUIRE(second == "second");
 }
 
-TEST_CASE("Transport::ReadFrame returns nullopt on a clean EOF between messages", "[Acp]") {
+TEST_CASE("LineTransport::ReadFrame returns nullopt on a clean EOF between messages", "[Protocol]") {
     int toB[2];
     REQUIRE(::pipe(toB) == 0);
-    Transport reader(toB[0], -1);
+    LineTransport reader(toB[0], -1);
     {
-        Transport writer(-1, toB[1]);
+        LineTransport writer(-1, toB[1]);
         writer.WriteFrame("only message");
         REQUIRE(reader.ReadFrame() == "only message");
         // writer goes out of scope here -- its destructor closes the write
@@ -87,12 +87,12 @@ TEST_CASE("Transport::ReadFrame returns nullopt on a clean EOF between messages"
     REQUIRE_FALSE(reader.ReadFrame().has_value());
 }
 
-TEST_CASE("Transport::ReadFrame throws on EOF mid-message", "[Acp]") {
+TEST_CASE("LineTransport::ReadFrame throws on EOF mid-message", "[Protocol]") {
     int toB[2];
     REQUIRE(::pipe(toB) == 0);
-    Transport reader(toB[0], -1);
+    LineTransport reader(toB[0], -1);
     {
-        Transport writer(-1, toB[1]);
+        LineTransport writer(-1, toB[1]);
         // Write bytes with no trailing newline, then let writer go out of
         // scope -- its destructor closes the write end, so EOF arrives
         // after some bytes were already read for this line, which
@@ -110,7 +110,7 @@ TEST_CASE("Transport::ReadFrame throws on EOF mid-message", "[Acp]") {
     REQUIRE_THROWS_AS(reader.ReadFrame(), std::runtime_error);
 }
 
-TEST_CASE("Transport::ReadFrame does not stall on ordinary idle silence between messages", "[Acp]") {
+TEST_CASE("LineTransport::ReadFrame does not stall on ordinary idle silence between messages", "[Protocol]") {
     // subprocess-hang-protection follow-up: a very short stallTimeout must
     // never fire while genuinely waiting for a fresh message's first byte.
     TransportPair pair = TransportPair::Create();
@@ -121,12 +121,12 @@ TEST_CASE("Transport::ReadFrame does not stall on ordinary idle silence between 
     REQUIRE(received == "hello");
 }
 
-TEST_CASE("Transport::ReadFrame throws when a message stalls mid-line", "[Acp]") {
+TEST_CASE("LineTransport::ReadFrame throws when a message stalls mid-line", "[Protocol]") {
     // subprocess-hang-protection follow-up.
     int toB[2];
     REQUIRE(::pipe(toB) == 0);
-    Transport reader(toB[0], -1);
-    Transport writer(-1, toB[1]); // kept alive -- no EOF, just silence after the partial write
+    LineTransport reader(toB[0], -1);
+    LineTransport writer(-1, toB[1]); // kept alive -- no EOF, just silence after the partial write
 
     const std::string partial = "{\"incomplete";
     std::size_t       written = 0;
@@ -139,19 +139,19 @@ TEST_CASE("Transport::ReadFrame throws when a message stalls mid-line", "[Acp]")
     REQUIRE_THROWS_AS(reader.ReadFrame(std::chrono::milliseconds(50)), std::runtime_error);
 }
 
-TEST_CASE("Transport constructor throws for an executable that can't be found on $PATH", "[Acp]") {
-    REQUIRE_THROWS_AS(Transport({"ned-definitely-not-a-real-binary-xyz"}), std::runtime_error);
+TEST_CASE("LineTransport constructor throws for an executable that can't be found on $PATH", "[Protocol]") {
+    REQUIRE_THROWS_AS(LineTransport({"ned-definitely-not-a-real-binary-xyz"}), std::runtime_error);
 }
 
-TEST_CASE("Transport constructor throws for an empty argv", "[Acp]") {
-    REQUIRE_THROWS_AS(Transport(std::vector<std::string>{}), std::runtime_error);
+TEST_CASE("LineTransport constructor throws for an empty argv", "[Protocol]") {
+    REQUIRE_THROWS_AS(LineTransport(std::vector<std::string>{}), std::runtime_error);
 }
 
-TEST_CASE("Transport spawns a real process and exchanges data with it over pipes", "[Acp]") {
+TEST_CASE("LineTransport spawns a real process and exchanges data with it over pipes", "[Protocol]") {
     // Same /bin/cat-through-stdbuf stand-in Tests/LspTransportTest.cpp uses,
     // for the same reason: cat's stdout is fully buffered against a pipe, so
     // stdbuf -o0 is what makes it flush a small payload back promptly.
-    Transport transport({"stdbuf", "-o0", "/bin/cat"});
+    LineTransport transport({"stdbuf", "-o0", "/bin/cat"});
 
     transport.WriteFrame("hello from a test");
     const auto echoed = transport.ReadFrame();
@@ -160,15 +160,15 @@ TEST_CASE("Transport spawns a real process and exchanges data with it over pipes
     REQUIRE(*echoed == "hello from a test");
 }
 
-TEST_CASE("Transport::StderrFd/ProcessLabel are unset unless constructed with captureStderr=true", "[Acp]") {
-    Transport transport({"sh", "-c", "exit 0"});
+TEST_CASE("LineTransport::StderrFd/ProcessLabel are unset unless constructed with captureStderr=true", "[Protocol]") {
+    LineTransport transport({"sh", "-c", "exit 0"});
     REQUIRE(transport.StderrFd() == -1);
     REQUIRE(transport.ProcessLabel() == "sh");
 }
 
 // lsp-stderr-capture follow-up (extended to ACP).
-TEST_CASE("Transport captures stderr on its own pipe, separate from stdout, when captureStderr=true", "[Acp]") {
-    Transport transport({"sh", "-c", "printf 'err line 1\\nerr line 2\\n' >&2"}, /*captureStderr=*/true);
+TEST_CASE("LineTransport captures stderr on its own pipe, separate from stdout, when captureStderr=true", "[Protocol]") {
+    LineTransport transport({"sh", "-c", "printf 'err line 1\\nerr line 2\\n' >&2"}, /*captureStderr=*/true);
     REQUIRE(transport.StderrFd() >= 0);
     REQUIRE(transport.ProcessLabel() == "sh");
 

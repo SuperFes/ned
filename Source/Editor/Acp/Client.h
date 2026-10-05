@@ -1,6 +1,6 @@
 //
 // ACP client, slice 1. One JSON-RPC 2.0 connection to one running ACP agent
-// process (see Transport.h for the raw process/newline-framing layer this
+// process (see Protocol/LineTransport.h for the raw process/newline-framing layer this
 // sits on top of).
 //
 // one-connection-class follow-up: the threading/lifetime machinery this
@@ -51,7 +51,7 @@
 #include "Editor/Protocol/FramedConnection.h"
 #include "UI/EventLoop.h"
 
-#include "Transport.h"
+#include "Editor/Protocol/LineTransport.h"
 
 namespace ned::editor::acp {
 
@@ -75,9 +75,9 @@ class Client {
     // Client (see FramedConnection.h's own lifetime contract).
     Client(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop);
 
-    // Takes ownership of an already-open Transport directly -- for tests
+    // Takes ownership of an already-open LineTransport directly -- for tests
     // driving a raw pipe pair with no real subprocess involved.
-    Client(Transport transport, ned::ui::EventLoop& eventLoop);
+    Client(protocol::LineTransport transport, ned::ui::EventLoop& eventLoop);
 
     ~Client() = default; // connection_'s own destructor does the real teardown work — see FramedConnection.h
 
@@ -153,7 +153,7 @@ class Client {
     void PrepareForGracefulShutdown();
 
   private:
-    protocol::FramedConnection<Transport> connection_;
+    protocol::FramedConnection<protocol::LineTransport> connection_;
 
     struct PendingRequest {
         ResponseCallback                      callback;

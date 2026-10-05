@@ -24,7 +24,7 @@
 #include "Editor/Acp/Config.h"
 #include "Editor/Acp/Manager.h"
 #include "Editor/Acp/PanelConfig.h"
-#include "Editor/Acp/Transport.h"
+#include "Editor/Protocol/LineTransport.h"
 #include "Editor/Lsp/Client.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Lsp/ServerConfig.h"
@@ -40,7 +40,7 @@
 namespace {
 
 using ned::editor::acp::Json;
-using ned::editor::acp::Transport;
+using Transport = ned::editor::protocol::LineTransport;
 using ned::editor::lsp::kProseLanguageKey;
 using ned::ui::AcpPanel;
 using ned::ui::Box;
