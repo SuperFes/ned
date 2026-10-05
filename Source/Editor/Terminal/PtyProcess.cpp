@@ -104,76 +104,30 @@ namespace {
 
 PtyProcess::PtyProcess(std::vector<std::string> argv, int rows, int cols, ned::ui::EventLoop& eventLoop,
                        std::function<void(std::string_view)> onOutput, std::function<void(std::optional<int>)> onExit,
-                       const std::vector<std::pair<std::string, std::string>>& env) : child_(SpawnPty(std::move(argv), rows, cols, env)), eventLoop_(eventLoop), onOutput_(std::move(onOutput)), onExit_(std::move(onExit)) {
-    StartReadLoop();
-}
-
-PtyProcess::~PtyProcess() {
-    // Runs before the member destructors that do the real teardown -- see
-    // the header comment for why queued Posts must be defused first.
-    *alive_ = false;
-    child_.CloseConnection();
-    if (readThread_.joinable()) {
-        readThread_.join();
-    }
-}
-
-void PtyProcess::StartReadLoop() {
-    // Mirrors TaskProcess::StartReadLoop -- see that function's comment for
-    // why the thread starts in the constructor body. Every posted lambda
-    // carries the alive_ flag -- see ~PtyProcess.
-    readThread_ = std::jthread([this](std::stop_token) {
-        while (true) {
-            std::string chunk;
-            try {
-                chunk = child_.ReadSome(); // a pty's EIO at the shell's exit reads as EOF
-            }
-            catch (const std::exception&) {
-                break;
-            }
-            if (chunk.empty()) {
-                break; // EOF, or this PtyProcess is being destroyed
-            }
-            eventLoop_.Post([this, alive = alive_, chunk = std::move(chunk)] {
-                if (*alive) {
-                    DispatchOutput(chunk);
-                }
-            });
-        }
-        const std::optional<int> exitCode = child_.WaitForExit();
-        eventLoop_.Post([this, alive = alive_, exitCode] {
-            if (*alive) {
-                DispatchExit(exitCode);
-            }
-        });
-    });
+                       const std::vector<std::pair<std::string, std::string>>& env) : stream_(SpawnPty(std::move(argv), rows, cols, env), eventLoop, std::move(onOutput), std::move(onExit)) {
 }
 
 void PtyProcess::Write(std::string_view data, std::chrono::milliseconds timeout) const {
-    child_.WriteAll(data, timeout);
+    stream_.Child().WriteAll(data, timeout);
 }
 
 void PtyProcess::Resize(int rows, int cols) const noexcept {
     winsize windowSize{};
     windowSize.ws_row = static_cast<unsigned short>(std::max(1, rows));
     windowSize.ws_col = static_cast<unsigned short>(std::max(1, cols));
-    ::ioctl(child_.WriteFd(), TIOCSWINSZ, &windowSize);
+    ::ioctl(stream_.Child().WriteFd(), TIOCSWINSZ, &windowSize);
 }
 
 void PtyProcess::DispatchOutput(std::string_view chunk) {
-    if (onOutput_) {
-        onOutput_(chunk);
-    }
+    stream_.DispatchOutput(chunk);
 }
 
 void PtyProcess::DispatchExit(std::optional<int> exitCode) {
-    if (onExit_) {
-        onExit_(exitCode);
-    }
+    stream_.DispatchExit(exitCode);
 }
 
 int PtyProcess::MasterFdForTesting() const noexcept {
-    return child_.WriteFd();
+    return stream_.Child().WriteFd();
 }
 
 } // namespace ned::editor::terminal

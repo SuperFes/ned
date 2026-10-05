@@ -379,6 +379,7 @@ add_executable(ned_tests
             TrackerGithubPluginTest.cpp
             TrackerJiraPluginTest.cpp
             ChildProcessTest.cpp
+            StreamedChildTest.cpp
             TaskConfigTest.cpp
             TaskProcessTest.cpp
             TaskRunnerTest.cpp

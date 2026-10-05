@@ -1,11 +1,9 @@
 //
 // Terminal-panel follow-up. Owns one shell subprocess running on a real pty
 // (forkpty) and streams the master side's raw output to a caller-supplied
-// callback -- deliberately a near-copy of Tasks/TaskProcess (read that file's
-// and Lsp/Client.h's header comments for the full threading/lifetime
-// reasoning; none of it is repeated here because almost none of it differs),
-// the same "mirror exactly, differ only where it must" convention
-// Dap/Client.h already established. The differences that must exist:
+// callback. The read loop, its main-thread marshaling and the teardown order
+// live in Process/StreamedChild.h, shared with Tasks/TaskProcess. What
+// differs here:
 //
 // - Spawn is forkpty + execve, not ChildProcess's posix_spawn + pipes: a
 //   terminal application needs a controlling tty and session leadership,
@@ -17,9 +15,6 @@
 // - Resize (TIOCSWINSZ on the master) exists at all -- the kernel delivers
 //   the foreground process group its SIGWINCH from that ioctl.
 //
-// Teardown matches TaskProcess: the destructor hangs up child_ and joins the
-// read loop before child_ is destroyed.
-//
 
 #ifndef NED_EDITOR_TERMINAL_PTYPROCESS_H
 #define NED_EDITOR_TERMINAL_PTYPROCESS_H
@@ -28,11 +23,11 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <utility>
 #include <vector>
 
 #include "Editor/Process/ChildProcess.h"
+#include "Editor/Process/StreamedChild.h"
 #include "Editor/ProcessTimeouts.h"
 #include "UI/EventLoop.h"
 
@@ -51,23 +46,8 @@ class PtyProcess {
                std::function<void(std::string_view chunk)> onOutput, std::function<void(std::optional<int> exitCode)> onExit,
                const std::vector<std::pair<std::string, std::string>>& env = {});
 
-    // Marks alive_ false before member destruction does the real teardown
-    // work (see header comment) -- unlike TaskProcess/Client, a
-    // PtyProcess is genuinely destroyed *mid-run* (TerminalPanel's [×]
-    // close button, respawn after exit), so read-loop callbacks already
-    // sitting in the EventLoop's queue would otherwise be drained against a
-    // freed object later. Every posted lambda holds the shared flag and
-    // checks it at drain time; flag writes and drains both happen on the
-    // main thread, so no further synchronization is needed. A real,
-    // user-reported intermittent shutdown hang traced to exactly this
-    // use-after-free, not defensive plumbing.
-    ~PtyProcess();
-
     PtyProcess(const PtyProcess&)            = delete;
     PtyProcess& operator=(const PtyProcess&) = delete;
-    // Not movable: the background thread's lambda captures `this` directly.
-    PtyProcess(PtyProcess&&)            = delete;
-    PtyProcess& operator=(PtyProcess&&) = delete;
 
     // Sends bytes to the shell (the master side's write half). Main thread
     // only, like every other public method here. Throws std::runtime_error
@@ -92,17 +72,7 @@ class PtyProcess {
     [[nodiscard]] int MasterFdForTesting() const noexcept;
 
   private:
-    void StartReadLoop();
-
-    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true); // see ~PtyProcess
-
-    std::jthread          readThread_;
-    process::ChildProcess child_;
-
-    ned::ui::EventLoop& eventLoop_;
-
-    std::function<void(std::string_view chunk)>      onOutput_;
-    std::function<void(std::optional<int> exitCode)> onExit_;
+    process::StreamedChild stream_;
 };
 
 } // namespace ned::editor::terminal

@@ -5,15 +5,8 @@
 // this sits on top of, and Lsp/Client.h for the framed sibling this
 // deliberately mirrors the shape of).
 //
-// Threading/lifetime notes are identical to Client's own -- read that
-// file's header comment for the full reasoning; the short version:
-// - A background std::jthread runs a blocking read loop (ChildProcess::
-//   ReadSome), marshaling each chunk onto the main thread via
-//   ned::ui::EventLoop::Post. Every public method here only ever runs on
-//   the main thread.
-// - The destructor hangs up child_, which wakes the read loop, and joins
-//   it before child_ itself is destroyed -- see ChildProcess's threading
-//   note. A stop_token alone cannot interrupt a blocking read().
+// The read loop, its main-thread marshaling and the teardown order live in
+// Process/StreamedChild.h; this adds only the spawn and Cancel().
 //
 
 #ifndef NED_EDITOR_TASKS_TASKPROCESS_H
@@ -23,11 +16,10 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <vector>
 
-#include "Editor/Lifetime.h"
 #include "Editor/Process/ChildProcess.h"
+#include "Editor/Process/StreamedChild.h"
 #include "UI/EventLoop.h"
 
 namespace ned::editor::tasks {
@@ -46,13 +38,8 @@ class TaskProcess {
                 std::function<void(std::optional<int> exitCode)> onExit,
                 process::StderrMode                              stderrMode = process::StderrMode::MergeWithStdout);
 
-    ~TaskProcess();
-
     TaskProcess(const TaskProcess&)            = delete;
     TaskProcess& operator=(const TaskProcess&) = delete;
-    // Not movable: the background thread's lambda captures `this` directly.
-    TaskProcess(TaskProcess&&)            = delete;
-    TaskProcess& operator=(TaskProcess&&) = delete;
 
     // User-triggered cancellation (cancel-task) -- SIGKILLs the child. The
     // background read loop's own ReadSome() then observes EOF as usual and
@@ -72,17 +59,7 @@ class TaskProcess {
     void DispatchExit(std::optional<int> exitCode);
 
   private:
-    void StartReadLoop();
-
-    // Drops output and exit already posted when this process is destroyed.
-    editor::LifetimeGuard lifetime_;
-    std::jthread          readThread_;
-    process::ChildProcess child_;
-
-    ned::ui::EventLoop& eventLoop_;
-
-    std::function<void(std::string_view chunk)>      onOutput_;
-    std::function<void(std::optional<int> exitCode)> onExit_;
+    process::StreamedChild stream_;
 };
 
 } // namespace ned::editor::tasks
