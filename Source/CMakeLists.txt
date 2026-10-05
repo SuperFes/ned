@@ -321,7 +321,6 @@ add_library(ned_lib STATIC
         Editor/Lsp/BrokerDaemon.cpp
         Editor/Lsp/BrokerConnect.cpp
         Editor/Mcp/SocketPath.cpp
-        Editor/Mcp/Transport.cpp
         Editor/Mcp/ToolRegistry.cpp
         Editor/Mcp/BridgeServer.cpp
         Editor/Mcp/BridgeSetting.cpp

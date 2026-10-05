@@ -82,6 +82,8 @@ class FramedConnection {
         // just informational startup chatter, so Acp passes Info here;
         // Lsp/Dap keep the original Warning default.
         LogSeverity stderrSeverity = LogSeverity::Warning;
+        // Lowered where the peer going away is routine rather than a fault.
+        LogSeverity disconnectSeverity = LogSeverity::Warning;
     };
 
     // Spawns argv as a new subprocess. eventLoop must outlive this object,
@@ -177,7 +179,7 @@ class FramedConnection {
                 }
                 catch (const std::exception& e) {
                     eventLoop_.Post(alive.Bind([this, reason = std::string(e.what())] {
-                        LogMessage(options_.logCategory, LogSeverity::Warning, reason);
+                        LogMessage(options_.logCategory, options_.disconnectSeverity, reason);
                         if (onDisconnected_) {
                             onDisconnected_(reason);
                         }
@@ -193,7 +195,7 @@ class FramedConnection {
                     // relative to destruction.
                     eventLoop_.Post(alive.Bind([this] {
                         const std::string reason = std::string(options_.entityNoun) + " exited (EOF)";
-                        LogMessage(options_.logCategory, LogSeverity::Warning, reason);
+                        LogMessage(options_.logCategory, options_.disconnectSeverity, reason);
                         if (onDisconnected_) {
                             onDisconnected_(reason);
                         }

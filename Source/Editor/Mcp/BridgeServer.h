@@ -2,45 +2,39 @@
 // ACP MCP tool-server bridge, slice 1. Owns the live `ned` process's own
 // listening Unix domain socket (SocketPath.h) and speaks just enough of
 // the real MCP protocol (initialize / notifications/initialized / tools/list
-// / tools/call, newline-delimited JSON-RPC via Transport) to serve one
-// connected client at a time -- the `ned --mcp-stdio-relay` subprocess the
+// / tools/call, newline-delimited JSON-RPC) to serve the relays that connect
+// to it -- the `ned --mcp-stdio-relay` subprocess the
 // ACP agent spawns as its configured stdio MCP server (see main.cpp and
 // Manager::StartSession's mcpServers payload). Real tool dispatch is
 // delegated entirely to one injected ToolRegistry; this class is pure
 // protocol/transport plumbing.
 //
-// Threading shape mirrors every other background-I/O class in this codebase
-// (Client/Client/Client's own read loops): a background jthread
-// does blocking accept()/ReadMessage() calls only, marshaling each complete
-// line onto the main thread via EventLoop::Post before touching any real
-// state -- ToolRegistry::CallTool, and therefore every Manager/Runner/
-// TestRunner call it makes, always runs on the main thread. A tool's
-// eventual response write (SendResult/SendError) also happens on the main
-// thread, synchronously via Transport::WriteMessage -- MCP tool results
-// here are small single-line JSON blobs, so this deliberately skips the
-// async-write-queue treatment Client needed for large payloads (that was
-// a fix for a *measured* freeze on big workspace-wide operations, not a
-// speculative one; revisit only if the same is ever measured here).
-//
-// Only one connection is served at a time (Manager itself is a single
-// session, so at most one relay is ever expected live) -- the accept loop
-// simply waits for the next connection once the current one disconnects.
+// A background jthread only accept()s, handing each connected socket to the
+// main thread, where it becomes one FramedConnection: that class's reader
+// and async writer threads, and its teardown order, are what serve the
+// relay. ToolRegistry::CallTool, and therefore every Manager/Runner/
+// TestRunner call it makes, always runs on the main thread. Each live relay
+// gets its own connection, so a second relay is served alongside the first
+// rather than queued behind it.
 //
 
 #ifndef NED_EDITOR_MCP_BRIDGESERVER_H
 #define NED_EDITOR_MCP_BRIDGESERVER_H
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <mutex>
 #include <stop_token>
+#include <string>
 #include <thread>
+#include <unordered_map>
 
 #include <nlohmann/json.hpp>
 
+#include "Editor/Lifetime.h"
+#include "Editor/Protocol/FramedConnection.h"
+#include "Editor/Protocol/LineTransport.h"
 #include "UI/EventLoop.h"
-
-#include "Transport.h"
 
 namespace ned::editor::mcp {
 
@@ -54,8 +48,8 @@ class BridgeServer {
     // requirement every sibling manager in this codebase documents.
     BridgeServer(ToolRegistry& registry, ned::ui::EventLoop& eventLoop);
 
-    // Hangs up the listening socket and any live connection, joins the
-    // background accept/read loop, then closes the socket.
+    // Hangs up the listening socket, joins the accept loop, then closes the
+    // socket and every live connection.
     ~BridgeServer();
 
     BridgeServer(const BridgeServer&)            = delete;
@@ -70,30 +64,31 @@ class BridgeServer {
     [[nodiscard]] const std::filesystem::path& SocketPath() const noexcept;
 
   private:
-    void AcceptLoop(std::stop_token stopToken);
-    // Runs on the background thread for one accepted connection until
-    // ReadMessage() returns std::nullopt (EOF/disconnect) or throws (a
-    // genuine transport error, logged and treated the same as a disconnect).
-    void ServeConnection(const std::shared_ptr<Transport>& transport, std::stop_token stopToken);
+    using Connection   = protocol::FramedConnection<protocol::LineTransport>;
+    using ConnectionId = std::uint64_t;
 
-    // Posted onto the main thread per complete line. Parses the JSON-RPC
-    // frame and dispatches by method.
-    void HandleFrame(const std::shared_ptr<Transport>& transport, const std::string& line);
+    void AcceptLoop(const std::stop_token& stopToken, const LifetimeToken& alive);
+    void Adopt(protocol::LineTransport transport);
 
-    void SendResult(const std::weak_ptr<Transport>& transport, const Json& id, const Json& result);
-    void SendError(const std::weak_ptr<Transport>& transport, const Json& id, int code, const std::string& message);
+    // Parses one JSON-RPC frame from connection id and dispatches by method.
+    void HandleFrame(ConnectionId id, const std::string& line);
+
+    void SendResult(ConnectionId id, const Json& requestId, const Json& result);
+    void SendError(ConnectionId id, const Json& requestId, int code, const std::string& message);
+    // Dropped when the connection has gone, or for a notification (no id).
+    void Send(ConnectionId id, const Json& requestId, Json response);
 
     ToolRegistry&         registry_;
     ned::ui::EventLoop&   eventLoop_;
     std::filesystem::path socketPath_;
     int                   listenFd_ = -1;
-    std::shared_ptr<bool> alive_    = std::make_shared<bool>(true);
 
-    // The connection the background thread is serving, for the destructor
-    // to hang up.
-    std::mutex                 connectionMutex_;
-    std::shared_ptr<Transport> currentConnection_;
-    std::jthread               acceptThread_;
+    // Main-thread only.
+    std::unordered_map<ConnectionId, std::unique_ptr<Connection>> connections_;
+    ConnectionId                                                  nextConnectionId_ = 1;
+
+    LifetimeGuard lifetime_;
+    std::jthread  acceptThread_;
 };
 
 } // namespace ned::editor::mcp

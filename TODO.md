@@ -36,16 +36,6 @@ about features. Declaring it makes breaking any of them a major-version event. C
 - [ ] **Right-docked `AcpPanel` has no reserved resize border**, unlike
       `ProjectSidebar`'s divider column.
 
-## Refactoring
-
-- [ ] **Consolidate the background-loop + `EventLoop::Post` pattern.**
-      `Mcp/BridgeServer` is a full copy of `FramedConnection`'s machinery (jthread read
-      loop, `shared_ptr<bool> alive_`, destruction-order comment). `Terminal/PtyProcess`,
-      `Tasks/TaskProcess`, `FileWatch` and `ModePrewarm` carry thinner versions.
-      `FramedConnection` can't be reused as-is, because it owns one spawned transport by
-      value and the bridge accepts N sockets. Extract the per-connection half into
-      something the bridge can hold per accepted connection.
-
 ## Janet Widget Surface
 
 The tracker panels, buffer list and DAP thread panel now share `UI/TableView.h`. That

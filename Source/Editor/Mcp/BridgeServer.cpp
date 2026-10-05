@@ -2,7 +2,6 @@
 
 #include <cerrno>
 #include <cstring>
-#include <optional>
 #include <stdexcept>
 #include <system_error>
 
@@ -16,32 +15,27 @@
 namespace ned::editor::mcp {
 
 namespace {
-    constexpr int kListenBacklog = 1; // only one relay is ever expected to connect at a time -- see this file's own header comment
+    constexpr int kListenBacklog = 4; // accept() never waits on a served relay, so this only holds relays connecting at the same instant
 } // namespace
 
 BridgeServer::BridgeServer(ToolRegistry& registry, ned::ui::EventLoop& eventLoop) : registry_(registry), eventLoop_(eventLoop) {
 }
 
 BridgeServer::~BridgeServer() {
-    *alive_ = false;
-    // Wake the accept/read loop without freeing any descriptor it may still
-    // be using, join it, and only then close. The stop is requested first:
-    // a connection accepted after the hang-up below sees it and goes away.
+    lifetime_.Revoke();
+    // Wake accept() without freeing the descriptor it is blocked on, join,
+    // and only then close. The stop is requested first: a connection
+    // accepted after the hang-up below sees it and goes away.
     acceptThread_.request_stop();
     if (listenFd_ >= 0) {
         ::shutdown(listenFd_, SHUT_RDWR);
-    }
-    {
-        const std::lock_guard<std::mutex> lock(connectionMutex_);
-        if (currentConnection_) {
-            currentConnection_->Close();
-        }
     }
     acceptThread_ = std::jthread();
     if (listenFd_ >= 0) {
         ::close(listenFd_);
         listenFd_ = -1;
     }
+    connections_.clear();
     std::error_code ec;
     if (!socketPath_.empty()) {
         std::filesystem::remove(socketPath_, ec); // best-effort; a stale socket file left behind is harmless (Start() rebinds over it next time)
@@ -84,7 +78,7 @@ void BridgeServer::Start() {
     }
 
     listenFd_     = fd;
-    acceptThread_ = std::jthread([this](std::stop_token stopToken) { AcceptLoop(stopToken); });
+    acceptThread_ = std::jthread([this, alive = lifetime_.Token()](const std::stop_token& stopToken) { AcceptLoop(stopToken, alive); });
 }
 
 bool BridgeServer::IsListening() const noexcept {
@@ -95,7 +89,7 @@ const std::filesystem::path& BridgeServer::SocketPath() const noexcept {
     return socketPath_;
 }
 
-void BridgeServer::AcceptLoop(std::stop_token stopToken) {
+void BridgeServer::AcceptLoop(const std::stop_token& stopToken, const LifetimeToken& alive) {
     while (!stopToken.stop_requested()) {
         const int connFd = ::accept(listenFd_, nullptr, nullptr);
         if (connFd < 0) {
@@ -103,6 +97,10 @@ void BridgeServer::AcceptLoop(std::stop_token stopToken) {
                 continue;
             }
             return; // listenFd_ was shut down (destructor tearing down) or a genuine fatal error either way -- exit the loop
+        }
+        if (stopToken.stop_requested()) {
+            ::close(connFd);
+            return;
         }
         // A single accept()ed socket fd is used as both ends -- mirroring
         // `ned --lsp-broker-stop`'s own dup()-based one-shot socket write in
@@ -114,53 +112,33 @@ void BridgeServer::AcceptLoop(std::stop_token stopToken) {
             ::close(connFd);
             continue;
         }
-        std::shared_ptr<Transport> transport;
+        std::shared_ptr<protocol::LineTransport> transport;
         try {
-            transport = std::make_shared<Transport>(connFd, dupFd, -1);
+            transport = std::make_shared<protocol::LineTransport>(connFd, dupFd, -1);
         }
         catch (const std::exception&) {
-            continue; // Transport released both fds
+            continue; // LineTransport released both fds
         }
-        {
-            const std::lock_guard<std::mutex> lock(connectionMutex_);
-            if (stopToken.stop_requested()) {
-                return;
-            }
-            currentConnection_ = transport;
-        }
-        ServeConnection(transport, stopToken);
-        const std::lock_guard<std::mutex> lock(connectionMutex_);
-        currentConnection_.reset();
+        // Shared, so a post dropped by teardown still closes the socket.
+        eventLoop_.Post(alive.Bind([this, transport] { Adopt(std::move(*transport)); }));
     }
 }
 
-void BridgeServer::ServeConnection(const std::shared_ptr<Transport>& transport, std::stop_token stopToken) {
-    while (!stopToken.stop_requested()) {
-        std::optional<std::string> line;
-        try {
-            line = transport->ReadMessage();
-        }
-        catch (const std::exception&) {
-            return; // a stalled/malformed peer -- same as a clean disconnect from this loop's point of view
-        }
-        if (!line) {
-            return; // EOF: the relay subprocess exited (agent tore down its MCP server, or the ACP session ended)
-        }
-        if (line->empty()) {
-            continue; // a blank line -- tolerate the same way Acp::Transport's own ReadMessage documents
-        }
-        std::shared_ptr<bool> aliveCopy = alive_;
-        std::string           frameLine = *line;
-        eventLoop_.Post([this, transport, frameLine, aliveCopy] {
-            if (!*aliveCopy) {
-                return;
-            }
-            HandleFrame(transport, frameLine);
-        });
-    }
+void BridgeServer::Adopt(protocol::LineTransport transport) {
+    const ConnectionId id         = nextConnectionId_++;
+    auto               connection = std::make_unique<Connection>(
+        std::move(transport), eventLoop_,
+        Connection::Options{.logCategory = LogCategory::Acp, .entityNoun = "MCP relay", .disconnectSeverity = LogSeverity::Info});
+    connection->SetOnFrame([this, id](const std::string& frame) { HandleFrame(id, frame); });
+    connection->SetOnDisconnected([this, id](const std::string&) {
+        // Deferred: erasing here would destroy the connection from inside
+        // its own callback.
+        eventLoop_.Post(lifetime_.Bind([this, id] { connections_.erase(id); }));
+    });
+    connections_.emplace(id, std::move(connection));
 }
 
-void BridgeServer::HandleFrame(const std::shared_ptr<Transport>& transport, const std::string& line) {
+void BridgeServer::HandleFrame(ConnectionId connectionId, const std::string& line) {
     Json frame;
     try {
         frame = Json::parse(line);
@@ -176,7 +154,7 @@ void BridgeServer::HandleFrame(const std::shared_ptr<Transport>& transport, cons
     if (method == "initialize") {
         const Json&       params          = frame.value("params", Json::object());
         const std::string protocolVersion = params.value("protocolVersion", std::string("2025-06-18"));
-        SendResult(transport, id,
+        SendResult(connectionId, id,
                    Json{
                        {"protocolVersion", protocolVersion},
                        {"capabilities", {{"tools", Json::object()}}},
@@ -192,7 +170,7 @@ void BridgeServer::HandleFrame(const std::shared_ptr<Transport>& transport, cons
         for (const ToolDescriptor& tool : registry_.ListTools()) {
             tools.push_back(Json{{"name", tool.name}, {"description", tool.description}, {"inputSchema", tool.inputSchema}});
         }
-        SendResult(transport, id, Json{{"tools", tools}});
+        SendResult(connectionId, id, Json{{"tools", tools}});
         return;
     }
     if (method == "tools/call") {
@@ -200,47 +178,33 @@ void BridgeServer::HandleFrame(const std::shared_ptr<Transport>& transport, cons
         const std::string name   = params.value("name", std::string());
         const Json        args   = params.value("arguments", Json::object());
         if (!registry_.HasTool(name)) {
-            SendError(transport, id, -32601, "Unknown tool: " + name);
+            SendError(connectionId, id, -32601, "Unknown tool: " + name);
             return;
         }
-        std::weak_ptr<Transport> weakTransport = transport;
-        std::shared_ptr<bool>    aliveCopy     = alive_;
-        registry_.CallTool(name, args, [this, weakTransport, id, aliveCopy](Json toolResult) {
-            if (!*aliveCopy) {
-                return;
-            }
-            SendResult(weakTransport, id, toolResult);
-        });
+        registry_.CallTool(name, args, lifetime_.Bind([this, connectionId, id](const Json& toolResult) { SendResult(connectionId, id, toolResult); }));
         return;
     }
     if (hasId) {
-        SendError(transport, id, -32601, "Method not found: " + method);
+        SendError(connectionId, id, -32601, "Method not found: " + method);
     }
 }
 
-void BridgeServer::SendResult(const std::weak_ptr<Transport>& transport, const Json& id, const Json& result) {
-    const std::shared_ptr<Transport> locked = transport.lock();
-    if (!locked || id.is_null()) {
-        return; // connection dropped, or this was a notification (no id to answer)
-    }
-    try {
-        locked->WriteMessage(Json{{"jsonrpc", "2.0"}, {"id", id}, {"result", result}}.dump());
-    }
-    catch (const std::exception&) {
-        // the relay disconnected between the request and this response -- nothing more to do
-    }
+void BridgeServer::SendResult(ConnectionId id, const Json& requestId, const Json& result) {
+    Send(id, requestId, Json{{"result", result}});
 }
 
-void BridgeServer::SendError(const std::weak_ptr<Transport>& transport, const Json& id, int code, const std::string& message) {
-    const std::shared_ptr<Transport> locked = transport.lock();
-    if (!locked || id.is_null()) {
+void BridgeServer::SendError(ConnectionId id, const Json& requestId, int code, const std::string& message) {
+    Send(id, requestId, Json{{"error", {{"code", code}, {"message", message}}}});
+}
+
+void BridgeServer::Send(ConnectionId id, const Json& requestId, Json response) {
+    const auto connection = connections_.find(id);
+    if (connection == connections_.end() || requestId.is_null()) {
         return;
     }
-    try {
-        locked->WriteMessage(Json{{"jsonrpc", "2.0"}, {"id", id}, {"error", {{"code", code}, {"message", message}}}}.dump());
-    }
-    catch (const std::exception&) {
-    }
+    response["jsonrpc"] = "2.0";
+    response["id"]      = requestId;
+    connection->second->SendFrame(response.dump());
 }
 
 } // namespace ned::editor::mcp
