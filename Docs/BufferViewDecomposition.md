@@ -402,7 +402,7 @@ into `Editor/Project/`.
 
 **The collision question resolved itself.** The concern that dropping prefixes would
 give six directories a `Config.h` and three a `Manager.h` turned out to be moot:
-`Lsp/Transport.h` and `Acp/Transport.h` already shared a basename before any of this, so
+`Lsp/Transport.h` and ACP's own `Transport.h` already shared a basename before any of this, so
 it was the accepted status quo. Includes are always fully qualified by directory. Two
 tests that imported both `lsp::Manager` and `dap::Manager` (or `acp::`) with
 using-declarations now qualify at the point of use, which reads better there anyway.
