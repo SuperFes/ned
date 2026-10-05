@@ -7,6 +7,7 @@
 
 #include "Editor/Org.h"
 #include "Editor/Tracker/Clocking.h"
+#include "EnvOverride.h"
 #include "Text/Buffer.h"
 
 namespace org     = ned::editor::org;
@@ -83,6 +84,20 @@ TEST_CASE("RunningIssueClock turns a running clock on an issue into a worklog", 
     plain.SetPoint(0);
     REQUIRE(org::ClockInAtPoint(plain, start).status == org::ClockInStatus::Ok);
     CHECK_FALSE(tracker::RunningIssueClock(plain.Text(), start + std::chrono::minutes(5)));
+}
+
+TEST_CASE("A worklog starts at the real instant the clock was taken, whatever the time zone", "[TrackerClocking]") {
+    const ned::tests::ScopedTimeZone pacific("PST8PDT,M3.2.0,M11.1.0");
+    ned::text::Buffer                buffer("issues.org");
+    tracker::EnsureIssueHeading(buffer, {.key = "DEV-1"}, "work");
+    const auto start = LocalTime(2026, 9, 29, 22, 5); // the next day in UTC
+    buffer.SetPoint(0);
+    REQUIRE(org::ClockInAtPoint(buffer, start).status == org::ClockInStatus::Ok);
+
+    const auto clock = tracker::RunningIssueClock(buffer.Text(), start + std::chrono::minutes(30));
+    REQUIRE(clock);
+    CHECK(clock->worklog.started == std::chrono::system_clock::to_time_t(start));
+    CHECK(clock->worklog.seconds == 30 * 60);
 }
 
 TEST_CASE("ClockDuration writes H:MM", "[TrackerClocking]") {

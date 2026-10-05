@@ -149,10 +149,6 @@ daemon/attach mode.
 
 Real, reproduced, non-urgent. Fix opportunistically; delete when fixed.
 
-- **Org clock and agenda timestamps are UTC.** `TimestampFromTimePoint` and "today"
-  (`Org.cpp`, `Project/Agenda.cpp`, the deadline prompt) floor `system_clock` to days.
-  Real Org writes local time. A fix must move all of them together, and it shifts
-  existing files' clock lines by the UTC offset.
 - **F# grammar**: application and infix share `prec-left 16`, so `1 + f a` parses as
   `(1 + f) a`. Also, `let f x y = ()` without a trailing newline doesn't parse as a
   function.

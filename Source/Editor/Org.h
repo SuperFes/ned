@@ -546,6 +546,10 @@ struct Planning {
 // SetProperty already state.
 void SetPlanning(text::Buffer& buffer, const Headline& headline, const Planning& planning);
 
+// The local calendar date at now -- real Org's "today" is the user's wall
+// clock, never UTC.
+[[nodiscard]] std::chrono::year_month_day LocalToday(std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
+
 // A separate, distinct parser from ParseTimestamp -- ParseTimestamp reads
 // real Org's own canonical bracket syntax; this reads what a user actually
 // types into the org-schedule/org-deadline prompt: "today", "tomorrow",
@@ -728,17 +732,16 @@ struct RunningClock {
 [[nodiscard]] std::optional<RunningClock> CurrentlyRunningClock(std::string_view                bufferText,
                                                                 const std::vector<std::string>& todoKeywords = TodoKeywords());
 
-// now - start, the same minute-resolution sys_days+hours+minutes
-// arithmetic ClockOut's own end-of-clock duration uses -- the live
-// "elapsed so far" for a still-running RunningClock::start, recomputed
-// fresh on every call rather than ticked/cached anywhere (a UI caller
-// re-reads this once per repaint, the same direct now()-read ModeLine's
-// own spinner frame already is).
-// The instant a CLOCK: timestamp names, read the way ClockInAtPoint/
-// ClockOut write one from a system_clock time point -- so a clock's start
-// round-trips to the time it was taken.
+// The instant a CLOCK: timestamp names, read in local time the way
+// ClockInAtPoint/ClockOut write one -- so a clock's start round-trips to
+// the time it was taken.
 [[nodiscard]] std::chrono::system_clock::time_point ClockTimePoint(const OrgTimestamp& timestamp);
 
+// now - start, the same arithmetic ClockOut's own end-of-clock duration
+// uses -- the live "elapsed so far" for a still-running
+// RunningClock::start, recomputed fresh on every call rather than
+// ticked/cached anywhere (a UI caller re-reads this once per repaint, the
+// same direct now()-read ModeLine's own spinner frame already is).
 [[nodiscard]] std::chrono::minutes ElapsedMinutes(const OrgTimestamp&                   start,
                                                   std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
 

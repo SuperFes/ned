@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <ctime>
 #include <iomanip>
 #include <mutex>
 #include <regex>
@@ -560,8 +561,7 @@ bool CycleTodoKeywordAtPoint(text::Buffer& buffer, const std::vector<std::string
             const bool scheduledRepeats = planning->scheduled && planning->scheduled->repeaterKind != OrgTimestamp::RepeaterKind::None;
             const bool deadlineRepeats  = planning->deadline && planning->deadline->repeaterKind != OrgTimestamp::RepeaterKind::None;
             if (scheduledRepeats || deadlineRepeats) {
-                const auto today =
-                    std::chrono::year_month_day{std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now())};
+                const auto today    = LocalToday();
                 Planning advanced = *planning;
                 if (scheduledRepeats)
                     advanced.scheduled = AdvanceTimestamp(*advanced.scheduled, today);
@@ -1395,32 +1395,39 @@ namespace {
         return bodyStart;
     }
 
-    // now, as an inactive OrgTimestamp with minute-granularity time-of-day
-    // -- real Org's own CLOCK: entries are always "[...]", never "<...>".
-    // Same std::chrono::floor<days>(system_clock::now()) idiom
-    // CycleTodoKeywordAtPoint's own recurrence hook already uses for
-    // "today," extended with the time-of-day remainder.
+    // now in local time, as an inactive OrgTimestamp with minute-granularity
+    // time-of-day -- real Org's own CLOCK: entries are always "[...]", never
+    // "<...>", and always the user's wall clock.
     OrgTimestamp TimestampFromTimePoint(std::chrono::system_clock::time_point now) {
         using namespace std::chrono;
-        const auto days      = floor<std::chrono::days>(now);
-        const auto timeOfDay = duration_cast<minutes>(now - days);
+        const std::time_t seconds = system_clock::to_time_t(now);
+        std::tm           local{};
+        localtime_r(&seconds, &local);
 
         OrgTimestamp timestamp;
-        timestamp.date   = year_month_day{days};
-        timestamp.hour   = static_cast<int>(timeOfDay.count() / 60);
-        timestamp.minute = static_cast<int>(timeOfDay.count() % 60);
+        timestamp.date   = year{local.tm_year + 1900} / month{static_cast<unsigned>(local.tm_mon + 1)} / day{static_cast<unsigned>(local.tm_mday)};
+        timestamp.hour   = local.tm_hour;
+        timestamp.minute = local.tm_min;
         timestamp.active = false;
         return timestamp;
     }
 
-    // end - start, both converted to a single minute-resolution time point
-    // first -- mixed sys_days/hours/minutes arithmetic, the same duration-
-    // promotion idiom AddInterval already relies on above.
+    // The inverse of TimestampFromTimePoint. tm_isdst = -1 lets mktime pick
+    // the offset in force on that date, so an hour a DST change skips or
+    // repeats is counted as it really passed.
+    std::chrono::system_clock::time_point TimePointFromTimestamp(const OrgTimestamp& timestamp) {
+        std::tm local{};
+        local.tm_year  = static_cast<int>(timestamp.date.year()) - 1900;
+        local.tm_mon   = static_cast<int>(static_cast<unsigned>(timestamp.date.month())) - 1;
+        local.tm_mday  = static_cast<int>(static_cast<unsigned>(timestamp.date.day()));
+        local.tm_hour  = timestamp.hour.value_or(0);
+        local.tm_min   = timestamp.minute.value_or(0);
+        local.tm_isdst = -1;
+        return std::chrono::system_clock::from_time_t(std::mktime(&local));
+    }
+
     std::chrono::minutes ClockDuration(const OrgTimestamp& start, const OrgTimestamp& end) {
-        using namespace std::chrono;
-        const auto startPoint = sys_days{start.date} + hours{start.hour.value_or(0)} + minutes{start.minute.value_or(0)};
-        const auto endPoint   = sys_days{end.date} + hours{end.hour.value_or(0)} + minutes{end.minute.value_or(0)};
-        return duration_cast<minutes>(endPoint - startPoint);
+        return std::chrono::duration_cast<std::chrono::minutes>(TimePointFromTimestamp(end) - TimePointFromTimestamp(start));
     }
 
     // "  CLOCK: [start]" or "  CLOCK: [start]--[end] =>  H:MM" -- the
@@ -1595,6 +1602,10 @@ void SetPlanning(text::Buffer& buffer, const Headline& headline, const Planning&
     else {
         buffer.InsertAt(headline.lineEndByte, "\n" + newLine + "\n");
     }
+}
+
+std::chrono::year_month_day LocalToday(std::chrono::system_clock::time_point now) {
+    return TimestampFromTimePoint(now).date;
 }
 
 std::optional<OrgTimestamp> ParseTimestampInput(std::string_view input, std::chrono::year_month_day today) {
@@ -1942,8 +1953,7 @@ std::optional<RunningClock> CurrentlyRunningClock(std::string_view bufferText, c
 }
 
 std::chrono::system_clock::time_point ClockTimePoint(const OrgTimestamp& timestamp) {
-    using namespace std::chrono;
-    return sys_days{timestamp.date} + hours{timestamp.hour.value_or(0)} + minutes{timestamp.minute.value_or(0)};
+    return TimePointFromTimestamp(timestamp);
 }
 
 std::chrono::minutes ElapsedMinutes(const OrgTimestamp& start, std::chrono::system_clock::time_point now) {

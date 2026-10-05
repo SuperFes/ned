@@ -2970,9 +2970,7 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
                 statusMessage_.clear();
             }
             else {
-                const auto today = std::chrono::year_month_day{
-                    std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now())};
-                if (const auto parsed = editor::org::ParseTimestampInput(input, today)) {
+                if (const auto parsed = editor::org::ParseTimestampInput(input, editor::org::LocalToday())) {
                     (isDeadline ? planning.deadline : planning.scheduled) = parsed;
                     editor::org::SetPlanning(activeBuffer_.Get(), *headline, planning);
                     statusMessage_.clear();

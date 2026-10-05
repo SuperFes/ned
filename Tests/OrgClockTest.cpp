@@ -4,6 +4,7 @@
 #include <string>
 
 #include "Editor/Org.h"
+#include "EnvOverride.h"
 #include "Text/Buffer.h"
 #include "Text/Rope.h"
 
@@ -15,6 +16,7 @@ using ned::editor::org::ClockOut;
 using ned::editor::org::ClockOutStatus;
 using ned::editor::org::CurrentlyRunningClock;
 using ned::editor::org::ElapsedMinutes;
+using ned::editor::org::LocalToday;
 using ned::editor::org::ParseLogbookDrawer;
 using ned::editor::org::ParseOutline;
 using ned::editor::org::TotalClockedMinutes;
@@ -25,12 +27,21 @@ using ned::text::Rope;
 namespace {
 
 // A fixed point in time so tests don't depend on when they happen to
-// run -- 2026-08-24 09:15 UTC.
+// run -- 2026-08-24 09:15 UTC, which is local time under
+// Tests/TimeZoneTestGuard.cpp.
 std::chrono::system_clock::time_point TestNow(int hour, int minute) {
     using namespace std::chrono;
     const auto date = sys_days{year{2026} / August / day{24}};
     return date + hours{hour} + minutes{minute};
 }
+
+std::chrono::system_clock::time_point Utc(std::chrono::year_month_day date, int hour, int minute) {
+    using namespace std::chrono;
+    return sys_days{date} + hours{hour} + minutes{minute};
+}
+
+// US Pacific as a POSIX rule, so the tests don't depend on installed tzdata.
+constexpr const char* kPacific = "PST8PDT,M3.2.0,M11.1.0";
 
 } // namespace
 
@@ -222,4 +233,44 @@ TEST_CASE("ClockInAtPoint puts the LOGBOOK after a property drawer that ends the
     const auto running = CurrentlyRunningClock("* Task\n:PROPERTIES:\n:ISSUE: DEV-1\n:END:\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 09:15]\n:END:\n");
     REQUIRE(running);
     CHECK(ned::editor::org::ClockTimePoint(running->start) == TestNow(9, 15));
+}
+
+TEST_CASE("Clock lines are written in local time and read back to the same instant", "[Org][Clock]") {
+    const ned::tests::ScopedTimeZone pacific(kPacific);
+    using namespace std::chrono;
+    const auto start = Utc(year{2026} / August / day{25}, 1, 0); // 18:00 PDT the day before
+
+    Buffer buffer("test", Rope("* Task\n"));
+    buffer.SetPoint(2);
+    REQUIRE(ClockInAtPoint(buffer, start).status == ClockInStatus::Ok);
+    CHECK(buffer.Text() == "* Task\n:LOGBOOK:\nCLOCK: [2026-08-24 Mon 18:00]\n:END:\n");
+
+    const auto running = CurrentlyRunningClock(buffer.Text());
+    REQUIRE(running);
+    CHECK(ned::editor::org::ClockTimePoint(running->start) == start);
+    CHECK(ElapsedMinutes(running->start, start + minutes{90}).count() == 90);
+}
+
+TEST_CASE("A clock across the end of daylight saving counts the hour that repeats", "[Org][Clock]") {
+    const ned::tests::ScopedTimeZone pacific(kPacific);
+    using namespace std::chrono;
+    const auto start = Utc(year{2026} / November / day{1}, 7, 30);  // 00:30 PDT
+    const auto end   = Utc(year{2026} / November / day{1}, 11, 30); // 03:30 PST
+
+    Buffer buffer("test", Rope("* Task\n"));
+    buffer.SetPoint(2);
+    REQUIRE(ClockInAtPoint(buffer, start).status == ClockInStatus::Ok);
+    REQUIRE(ClockOut(buffer, end) == ClockOutStatus::Ok);
+    CHECK(buffer.Text() == "* Task\n:LOGBOOK:\nCLOCK: [2026-11-01 Sun 00:30]--[2026-11-01 Sun 03:30] =>  4:00\n:END:\n");
+}
+
+TEST_CASE("LocalToday turns over at local midnight, not UTC midnight", "[Org][Clock]") {
+    using namespace std::chrono;
+    const auto beforeMidnight = Utc(year{2026} / August / day{25}, 6, 59); // 23:59 PDT
+    const auto afterMidnight  = Utc(year{2026} / August / day{25}, 7, 0);  // 00:00 PDT
+
+    CHECK(LocalToday(beforeMidnight) == year{2026} / August / day{25});
+    const ned::tests::ScopedTimeZone pacific(kPacific);
+    CHECK(LocalToday(beforeMidnight) == year{2026} / August / day{24});
+    CHECK(LocalToday(afterMidnight) == year{2026} / August / day{25});
 }

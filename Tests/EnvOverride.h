@@ -12,6 +12,7 @@
 #define NED_TESTS_ENVOVERRIDE_H
 
 #include <cstdlib>
+#include <ctime>
 #include <optional>
 #include <string>
 
@@ -47,6 +48,26 @@ class ScopedEnvOverride {
   private:
     std::string                name_;
     std::optional<std::string> previous_;
+};
+
+// TZ for the scope, applied with tzset so localtime_r/mktime see it.
+class ScopedTimeZone {
+  public:
+    explicit ScopedTimeZone(const char* zone) {
+        override_.emplace("TZ", zone);
+        ::tzset();
+    }
+
+    ~ScopedTimeZone() {
+        override_.reset();
+        ::tzset();
+    }
+
+    ScopedTimeZone(const ScopedTimeZone&)            = delete;
+    ScopedTimeZone& operator=(const ScopedTimeZone&) = delete;
+
+  private:
+    std::optional<ScopedEnvOverride> override_;
 };
 
 } // namespace ned::tests

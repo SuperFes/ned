@@ -53,7 +53,7 @@ std::vector<AgendaItem> CollectAgendaItems(const std::filesystem::path& root, co
     }
     const std::string&                doneKeyword = todoKeywords.back();
     const std::chrono::year_month_day today =
-        referenceDate.value_or(std::chrono::year_month_day{std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now())});
+        referenceDate.value_or(org::LocalToday());
 
     for (const ProjectTreeEntry& entry : BuildProjectTree(root)) {
         if (entry.isDirectory || entry.path.extension() != ".org") {

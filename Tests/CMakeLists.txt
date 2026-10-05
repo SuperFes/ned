@@ -246,6 +246,7 @@ add_executable(ned_tests
             ClipboardTest.cpp
             ClipboardTestGuard.cpp
             LocaleTestGuard.cpp
+            TimeZoneTestGuard.cpp
             SigpipeTestGuard.cpp
             TerminalOutputTestGuard.cpp
             TabWidthTest.cpp

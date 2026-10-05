@@ -79,8 +79,8 @@ struct AgendaItem {
 // respectively), preserving each file's own walk/document order as the
 // tiebreak otherwise (a stable sort).
 //
-// referenceDate defaults to nullopt, meaning "today" read fresh from
-// std::chrono::system_clock -- the same optional-override-for-testing
+// referenceDate defaults to nullopt, meaning the local "today"
+// (org::LocalToday) read fresh from the wall clock -- the same optional-override-for-testing
 // shape Editor/Backup.h's PruneBackups(nowSeconds) already establishes, so
 // tests can pin a fixed date without this function ever reading the wall
 // clock itself when one is given. Returns an empty list rather than
