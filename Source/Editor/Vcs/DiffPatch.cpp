@@ -1,5 +1,7 @@
 #include "DiffPatch.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <string_view>
 
 namespace ned::editor::vcs {
@@ -205,6 +207,68 @@ std::vector<DiffHunkText> ParseDiffHunks(const std::string& diffOutput) {
     }
 
     return hunks;
+}
+
+std::size_t MapNewLineToOldLine(const std::string& diffOutput, std::size_t newLine) {
+    std::ptrdiff_t delta = 0; // old minus new, accumulated over the hunks wholly above newLine
+    for (const DiffHunkText& hunk : ParseDiffHunks(diffOutput)) {
+        // A pure deletion sits in the gap after newStart, so newStart itself is still above it.
+        const bool above = hunk.newCount == 0 ? newLine <= hunk.newStart : newLine < hunk.newStart;
+        if (above) {
+            break;
+        }
+        if (newLine >= hunk.newStart + hunk.newCount) {
+            delta += static_cast<std::ptrdiff_t>(hunk.oldCount) - static_cast<std::ptrdiff_t>(hunk.newCount);
+            continue;
+        }
+
+        // An empty old side means "inserted after oldStart".
+        std::size_t oldLine      = hunk.oldCount == 0 ? hunk.oldStart + 1 : hunk.oldStart;
+        std::size_t newCursor    = hunk.newStart;
+        std::size_t removedStart = 0;
+        std::size_t removedCount = 0;
+        std::size_t addedCount   = 0;
+        std::size_t pos          = 0;
+        while (pos < hunk.bodyText.size()) {
+            const auto line = LineAt(hunk.bodyText, pos);
+            pos             = line.nextPos;
+            if (line.text.empty() || line.text.front() == '\\') {
+                continue;
+            }
+            switch (line.text.front()) {
+                case '-':
+                    if (addedCount > 0) {
+                        removedCount = 0;
+                        addedCount   = 0;
+                    }
+                    if (removedCount == 0) {
+                        removedStart = oldLine;
+                    }
+                    ++removedCount;
+                    ++oldLine;
+                    break;
+                case '+':
+                    if (newCursor == newLine) {
+                        return removedCount > 0 ? removedStart + std::min(addedCount, removedCount - 1) : oldLine;
+                    }
+                    ++addedCount;
+                    ++newCursor;
+                    break;
+                default:
+                    if (newCursor == newLine) {
+                        return oldLine;
+                    }
+                    ++oldLine;
+                    ++newCursor;
+                    removedCount = 0;
+                    addedCount   = 0;
+                    break;
+            }
+        }
+        break; // a body shorter than its header claims: fall back to the shift so far
+    }
+    const std::ptrdiff_t mapped = static_cast<std::ptrdiff_t>(newLine) + delta;
+    return mapped < 1 ? 1 : static_cast<std::size_t>(mapped);
 }
 
 std::size_t CountBinaryFileDiffs(const std::string& diffOutput) {

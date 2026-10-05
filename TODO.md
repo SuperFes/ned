@@ -155,8 +155,6 @@ Real, reproduced, non-urgent. Fix opportunistically; delete when fixed.
 - **`search-everywhere debounces a background text search…` flakes under `ctest -j8`**.
   It's a timing margin under contention; pin the debounce to a fake clock if it
   resurfaces.
-- **Hunk unstage matches point against the cached staged diff**, which drifts when
-  unstaged edits exist earlier in the file. It's exact in the stage-then-undo flow.
 
 ## Notes for Whoever Builds Next
 

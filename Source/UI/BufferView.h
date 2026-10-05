@@ -3301,11 +3301,7 @@ class BufferView : public Widget {
     // while point counts buffer lines, so staging from mismatched numbers
     // would silently pick the wrong hunk; "save first" is the honest
     // answer, not a limitation to paper over. Success refreshes the status
-    // buffer + diff gutter, same as the whole-file pair above. (An unstage
-    // additionally assumes index and worktree line numbers agree for the
-    // hunk's region -- true in the common stage-then-oops flow; drift from
-    // *earlier* unstaged edits in the same file is a recorded caveat, see
-    // ROADMAP.md.)
+    // buffer + diff gutter, same as the whole-file pair above.
     void StageOrUnstageHunkAtPoint(bool stage);
     // mouse-ergonomics follow-up (vcs-revert-hunk): StageOrUnstageHunkAtPoint's
     // destructive sibling -- discards the hunk covering point from the

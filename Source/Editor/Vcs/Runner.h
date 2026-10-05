@@ -174,13 +174,18 @@ class Runner {
     // failure, including "no unstaged/staged change at this line" when no
     // hunk covers targetLine. Both provider callbacks still only ever run
     // on the main thread, same as everywhere else here.
+    // This overload takes targetLine as a buffer (worktree) line in both
+    // directions: an unstage first maps it to its index line through the
+    // unstaged diff (MapNewLineToOldLine), so unstaged edits earlier in the
+    // file don't shift it onto the wrong staged hunk.
     void RequestHunkApply(const text::Buffer& buffer, std::size_t targetLine, bool stage, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     // VCS side panel follow-up: RequestHunkApply's own path-based sibling,
     // for a caller with no live Buffer& (VcsPanel's diff preview) -- shares
     // the same private core as the Buffer-taking overload above (which only
     // ever used buffer.Path(), nothing content-dependent; the "buffer not
     // modified" guard that gates the point-driven caller lives in
-    // BufferView::StageOrUnstageHunkAtPoint, not here).
+    // BufferView::StageOrUnstageHunkAtPoint, not here). Unlike the Buffer&
+    // overload, targetLine is already on the chosen diff's own new side.
     void RequestHunkApply(const std::filesystem::path& path, std::size_t targetLine, bool stage, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     // mouse-ergonomics follow-up: discards one hunk's change from the
     // working tree -- RequestHunkApply's own diff-then-patch chain, reading

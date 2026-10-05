@@ -37,6 +37,14 @@ namespace ned::editor::vcs {
 // DispatchDiffForTesting), so "point on the marked line" works.
 std::optional<std::string> ExtractHunkPatch(const std::string& diffOutput, std::size_t targetLine);
 
+// Translates a 1-indexed new-side line of diffOutput to the old-side line it
+// corresponds to -- e.g. a worktree line to its index line through the
+// unstaged diff, so it can be looked up in the staged one. Lines outside every
+// hunk shift by the preceding hunks' line-count deltas. An added line inside a
+// replacement pairs with the k-th removed line (clamped to the last); a purely
+// inserted line maps to the old line that follows the insertion.
+std::size_t MapNewLineToOldLine(const std::string& diffOutput, std::size_t newLine);
+
 // Multibuffers follow-up: unlike ExtractHunkPatch (one hunk, verbatim,
 // re-sliced from a file header it re-finds each call), this walks the whole
 // of diffOutput once and returns every hunk across every file, each paired

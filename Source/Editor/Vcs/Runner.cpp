@@ -399,7 +399,25 @@ void Runner::RequestHunkApply(const text::Buffer& buffer, std::size_t targetLine
         onError("no file associated with this buffer");
         return;
     }
-    RequestHunkApplyForPath(*buffer.Path(), targetLine, stage, std::move(onSuccess), std::move(onError));
+    if (stage) {
+        RequestHunkApplyForPath(*buffer.Path(), targetLine, stage, std::move(onSuccess), std::move(onError));
+        return;
+    }
+    // Point counts worktree lines but the staged diff counts index lines;
+    // unstaged edits above the hunk shift one against the other, so translate
+    // through the unstaged diff first.
+    const std::filesystem::path path = std::filesystem::weakly_canonical(*buffer.Path());
+    RunProviderOperation(
+        "unstage hunk", "unstage-hunk-map:" + path.string(),
+        [&path](Provider& provider) {
+            (void)provider.StagedDiffArgv(path); // fail before spawning anything if the chain can't finish
+            return provider.DiffArgv(path);
+        },
+        [this, path, targetLine, onSuccess = std::move(onSuccess), onError](Provider&, std::string diffOutput) {
+            RequestHunkApplyForPath(path, MapNewLineToOldLine(diffOutput, targetLine), /*stage=*/false, onSuccess,
+                                    onError);
+        },
+        onError);
 }
 
 void Runner::RequestHunkApply(const std::filesystem::path& path, std::size_t targetLine, bool stage,

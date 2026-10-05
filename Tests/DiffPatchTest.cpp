@@ -6,6 +6,7 @@
 
 using ned::editor::vcs::DiffHunkText;
 using ned::editor::vcs::ExtractHunkPatch;
+using ned::editor::vcs::MapNewLineToOldLine;
 using ned::editor::vcs::ParseDiffHunks;
 
 namespace {
@@ -221,4 +222,75 @@ TEST_CASE("CountBinaryFileDiffs counts binary-file summary lines across a mixed 
                               "index 3333333..4444444 100644\n"
                               "Binary files a/data.bin and b/data.bin differ\n";
     REQUIRE(CountBinaryFileDiffs(mixed) == 2);
+}
+
+TEST_CASE("MapNewLineToOldLine is the identity with no diff", "[DiffPatch]") {
+    REQUIRE(MapNewLineToOldLine("", 1) == 1);
+    REQUIRE(MapNewLineToOldLine("", 42) == 42);
+}
+
+TEST_CASE("MapNewLineToOldLine shifts lines below a hunk by its line-count delta", "[DiffPatch]") {
+    // kTwoHunkDiff: a 1:1 replacement at line 2, then two lines inserted after old line 5.
+    REQUIRE(MapNewLineToOldLine(kTwoHunkDiff, 1) == 1);
+    REQUIRE(MapNewLineToOldLine(kTwoHunkDiff, 3) == 3);
+    REQUIRE(MapNewLineToOldLine(kTwoHunkDiff, 5) == 5);
+    REQUIRE(MapNewLineToOldLine(kTwoHunkDiff, 8) == 6);
+    REQUIRE(MapNewLineToOldLine(kTwoHunkDiff, 20) == 18);
+
+    // kDeletionDiff: old lines 4-5 removed after new line 3.
+    REQUIRE(MapNewLineToOldLine(kDeletionDiff, 3) == 3);
+    REQUIRE(MapNewLineToOldLine(kDeletionDiff, 4) == 6);
+}
+
+TEST_CASE("MapNewLineToOldLine pairs replaced lines and sends insertions to the following old line", "[DiffPatch]") {
+    REQUIRE(MapNewLineToOldLine(kTwoHunkDiff, 2) == 2);
+    REQUIRE(MapNewLineToOldLine(kTwoHunkDiff, 6) == 6);
+    REQUIRE(MapNewLineToOldLine(kTwoHunkDiff, 7) == 6);
+
+    // Two old lines replaced by three new ones: the third clamps to the last removed line.
+    const std::string growing = "diff --git a/f b/f\n"
+                                "--- a/f\n"
+                                "+++ b/f\n"
+                                "@@ -4,2 +4,3 @@\n"
+                                "-a\n"
+                                "-b\n"
+                                "+A\n"
+                                "+B\n"
+                                "+C\n";
+    REQUIRE(MapNewLineToOldLine(growing, 4) == 4);
+    REQUIRE(MapNewLineToOldLine(growing, 5) == 5);
+    REQUIRE(MapNewLineToOldLine(growing, 6) == 5);
+    REQUIRE(MapNewLineToOldLine(growing, 7) == 6);
+
+    // Insertion at the very top of the file.
+    const std::string topInsert = "diff --git a/f b/f\n"
+                                  "--- a/f\n"
+                                  "+++ b/f\n"
+                                  "@@ -0,0 +1,3 @@\n"
+                                  "+x\n"
+                                  "+y\n"
+                                  "+z\n";
+    REQUIRE(MapNewLineToOldLine(topInsert, 2) == 1);
+    REQUIRE(MapNewLineToOldLine(topInsert, 4) == 1);
+    REQUIRE(MapNewLineToOldLine(topInsert, 10) == 7);
+}
+
+TEST_CASE("MapNewLineToOldLine walks context lines exactly", "[DiffPatch]") {
+    const std::string withContext = "diff --git a/f b/f\n"
+                                    "--- a/f\n"
+                                    "+++ b/f\n"
+                                    "@@ -1,4 +1,5 @@\n"
+                                    " one\n"
+                                    "+inserted\n"
+                                    " two\n"
+                                    "-three\n"
+                                    "+THREE\n"
+                                    " four\n"
+                                    "\\ No newline at end of file\n";
+    REQUIRE(MapNewLineToOldLine(withContext, 1) == 1);
+    REQUIRE(MapNewLineToOldLine(withContext, 2) == 2);
+    REQUIRE(MapNewLineToOldLine(withContext, 3) == 2);
+    REQUIRE(MapNewLineToOldLine(withContext, 4) == 3);
+    REQUIRE(MapNewLineToOldLine(withContext, 5) == 4);
+    REQUIRE(MapNewLineToOldLine(withContext, 6) == 5);
 }
