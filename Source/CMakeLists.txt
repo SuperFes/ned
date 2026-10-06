@@ -307,6 +307,7 @@ add_library(ned_lib STATIC
         Editor/Lsp/BackgroundSync.cpp
         Editor/Lsp/Broker.cpp
         Editor/Lsp/BrokerSocketPath.cpp
+        Editor/RuntimeDir.cpp
         Editor/Lsp/BrokerMain.cpp
         Editor/Lsp/BrokerDaemon.cpp
         Editor/Lsp/BrokerConnect.cpp

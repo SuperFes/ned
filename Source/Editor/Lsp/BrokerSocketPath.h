@@ -16,25 +16,13 @@
 
 namespace ned::editor::lsp {
 
-// $XDG_RUNTIME_DIR/ned, falling back to $XDG_STATE_HOME/ned/run, falling
-// back to $HOME/.local/state/ned/run if neither is set. Throws
-// std::runtime_error if none is usable. XDG_RUNTIME_DIR is the spec's own
-// answer for exactly this kind of ephemeral, per-user, tmpfs-backed
-// runtime file (sockets, lock files) -- the first use of that variable
-// anywhere in this codebase, everything else so far being disposable
-// *state* (Session.h/Backup.h/ProjectSession.h/...) rather than a live
-// runtime handle. A pure path calculation -- does not create the
-// directory; see EnsureBrokerRuntimeDirectory below for that.
+// Editor/RuntimeDir.h's RuntimeDirectory(): the broker's files sit at its
+// top level. A pure path calculation.
 [[nodiscard]] std::filesystem::path BrokerRuntimeDirectory();
 
-// Creates BrokerRuntimeDirectory() (and any missing parents) if it doesn't
-// already exist, with permissions restricted to the owner (0700) --
-// deliberately stricter than every other XDG directory helper in this
-// codebase (none of which pass an explicit mode to create_directories at
-// all), since a world-readable directory would let another local user on
-// a shared machine discover and connect to the broker's socket. Safe to
-// call repeatedly; a no-op if the directory already exists with the
-// right permissions. Throws std::runtime_error on failure.
+// EnsureRuntimeDirectory(): creates BrokerRuntimeDirectory() owner-only
+// (0700), so another local user can't find and connect to the broker's
+// socket. Throws std::runtime_error on failure.
 void EnsureBrokerRuntimeDirectory();
 
 // BrokerRuntimeDirectory() / "broker.sock" -- the daemon's single Unix
