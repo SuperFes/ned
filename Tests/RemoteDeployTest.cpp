@@ -57,6 +57,7 @@ TEST_CASE("The probe's answer is read past anything a login script printed", "[R
     REQUIRE(probed.installed == std::vector<std::string>{"ab12-x86_64", "cd34-x86_64"});
 
     REQUIRE(ParseProbe("ned-agent-probe-1\naarch64\n/data/ned/agent\n").installed.empty());
+    REQUIRE(ParseProbe("Last login: today\nno newlinened-agent-probe-1\naarch64\n/data/ned/agent\n").arch == "aarch64");
     REQUIRE_THROWS_AS(ParseProbe("bash: sh: command not found\n"), DeployError);
     REQUIRE_THROWS_AS(ParseProbe("ned-agent-probe-1\nx86_64\nrelative/agent\n"), DeployError);
     REQUIRE_THROWS_AS(ParseProbe("ned-agent-probe-1\n"), DeployError);
