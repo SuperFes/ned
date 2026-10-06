@@ -152,6 +152,10 @@ bool FrameTransport::WaitReadable(std::chrono::milliseconds timeout) const {
     return child_.WaitReadable(timeout);
 }
 
+std::string FrameTransport::ReadUnframed() const {
+    return child_.ReadSome();
+}
+
 void FrameTransport::Close() noexcept {
     child_.CloseConnection();
 }

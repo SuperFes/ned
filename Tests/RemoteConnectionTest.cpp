@@ -154,6 +154,34 @@ TEST_CASE("A hello from another build reinstalls once, and a second mismatch fai
     REQUIRE_THROWS_WITH(ned::editor::remote::Connect(fake.Options()), StartsWith("the agent on host still reports build " + host::FileBuildId(AgentBinary())));
 }
 
+TEST_CASE("Whatever a login script prints ahead of the agent is skipped", "[Remote][Connection][HostAgent]") {
+    FakeHost        fake;
+    const Handshake handshake = ned::editor::remote::Connect(fake.Options("chatty"));
+    REQUIRE(handshake.hello.build == handshake.agent.build);
+}
+
+TEST_CASE("Waiting for the agent to start gives up on a flood, an exit, a timeout and a cancel", "[Remote][Connection]") {
+    using ned::editor::remote::AwaitAgentStart;
+    using ned::editor::remote::kAgentStartMarker;
+
+    FrameTransport started({"/bin/sh", "-c", "printf 'motd'; echo " + std::string(kAgentStartMarker) + "; sleep 10"}, true);
+    AwaitAgentStart(started, std::chrono::seconds(10));
+
+    FrameTransport flood({"/bin/sh", "-c", "yes 'You have new mail.'"}, true);
+    REQUIRE_THROWS_WITH(AwaitAgentStart(flood, std::chrono::seconds(10)), ContainsSubstring("does a login script write to stdout? It began: You have new mail."));
+
+    FrameTransport exited({"/bin/sh", "-c", "echo 'sh: exec: ned-agent: not found' >&2; exit 127"}, true);
+    REQUIRE_THROWS_WITH(AwaitAgentStart(exited, std::chrono::seconds(10)), "sh: exec: ned-agent: not found");
+
+    FrameTransport silent({"sleep", "10"}, true);
+    REQUIRE_THROWS_WITH(AwaitAgentStart(silent, std::chrono::milliseconds(100)), "the agent didn't start within 100 ms");
+
+    FrameTransport   another({"sleep", "10"}, true);
+    std::stop_source stop;
+    stop.request_stop();
+    REQUIRE_THROWS_WITH(AwaitAgentStart(another, std::chrono::seconds(30), stop.get_token()), "cancelled waiting for the agent to start");
+}
+
 TEST_CASE("An agent that dies before hello says why", "[Remote][Connection]") {
     FakeHost fake;
     WriteScript(fake.local, "echo 'agent exploded' >&2; exit 3");

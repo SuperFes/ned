@@ -14,12 +14,15 @@
 
 #include <chrono>
 #include <expected>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <vector>
 
 #include "Editor/Host/Hello.h"
 #include "Editor/Lifetime.h"
@@ -51,6 +54,19 @@ struct Handshake {
     host::HelloResponse        hello;
     DeployedAgent              agent;
 };
+
+// The agent session's command: a POSIX sh prints kAgentStartMarker on its
+// own line, then becomes the agent. Anything a login script printed comes
+// before the marker, never among the frames.
+inline constexpr std::string_view      kAgentStartMarker = "ned-agent-stdio-1";
+[[nodiscard]] std::vector<std::string> AgentSessionCommand(const std::filesystem::path& agent);
+
+// Reads the agent session's stdout up to and including kAgentStartMarker's
+// line. The agent says nothing before hello, so nothing past it is lost.
+// Throws ConnectError when the session exits first, prints more than a
+// login script plausibly would, or stays silent past timeout, and once
+// stop is requested.
+void AwaitAgentStart(protocol::FrameTransport& transport, std::chrono::milliseconds timeout, const std::stop_token& stop = {});
 
 // Says hello over a transport no Endpoint drives yet, and applies the codec
 // it settles. Throws ConnectError when the agent errs, exits, or doesn't
