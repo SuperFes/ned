@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-251 bindings.
+252 bindings.
 
 ## `ned/add-tracker-panel`
 
@@ -794,6 +794,10 @@ Set which 0-indexed buffer column the ruler marks (default 80). Has no effect wh
 ## `ned/set-ruler-enabled`
 
 Enable/disable the print-margin/fill-column ruler: a single-column background wash spanning every visible row, marking ned/set-ruler-column's own column. Default true. Themed via the "buffer.ruler" surface (ned/theme-surface).
+
+## `ned/set-save-fsync`
+
+Whether a save flushes the file to disk before renaming it into place, and the rename after (default true), so a crash or power loss can't leave the file empty or half-written. Off saves faster on a slow disk, trusting the system to write it back later.
 
 ## `ned/set-save-place`
 

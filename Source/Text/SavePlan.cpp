@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <mutex>
 #include <ostream>
 #include <sstream>
 #include <span>
@@ -9,11 +10,35 @@
 #include <string>
 #include <system_error>
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include "WhitespaceHygiene.h"
 
 namespace ned::text {
 
 namespace {
+    std::mutex& SaveFsyncMutex() {
+        static std::mutex mutex;
+        return mutex;
+    }
+
+    bool& SaveFsyncStorage() {
+        static bool enabled = true;
+        return enabled;
+    }
+
+    // Flushes what was written to path through to the disk.
+    bool SyncPath(const std::filesystem::path& path, int flags) {
+        const int fd = ::open(path.c_str(), flags | O_CLOEXEC);
+        if (fd < 0) {
+            return false;
+        }
+        const bool synced = ::fsync(fd) == 0;
+        ::close(fd);
+        return synced;
+    }
+
     // Where every byte of a save goes: straight to the file for the UTF-8
     // family, through the charset's encoder for anything else. A character
     // the encoder refuses fails the stream, which each write mode already
@@ -282,8 +307,8 @@ namespace {
         }
 
         write(file);
-        const bool writeFailed = !file;
         file.close();
+        const bool writeFailed = !file || (SaveFsync() && !SyncPath(target, O_RDONLY));
 
         if (writeFailed) {
             // Deliberately not removed or restored: unlike the temp-file
@@ -297,6 +322,16 @@ namespace {
     }
 
 } // namespace
+
+void SetSaveFsync(bool enabled) {
+    const std::lock_guard<std::mutex> lock(SaveFsyncMutex());
+    SaveFsyncStorage() = enabled;
+}
+
+bool SaveFsync() {
+    const std::lock_guard<std::mutex> lock(SaveFsyncMutex());
+    return SaveFsyncStorage();
+}
 
 void ValidateSavePlanCharset(const SavePlan& plan) {
     if (IsUtf8Family(plan.charset)) {
@@ -360,8 +395,10 @@ void ReplaceFileContent(const std::filesystem::path& target, const PreservedFile
     }
 
     write(file);
-    const bool writeFailed = !file;
     file.close();
+    // Flushed before the rename, or a crash could leave the new name on
+    // content that never reached the disk.
+    const bool writeFailed = !file || (SaveFsync() && !SyncPath(tempPath, O_RDONLY));
 
     if (writeFailed) {
         std::filesystem::remove(tempPath);
@@ -378,6 +415,11 @@ void ReplaceFileContent(const std::filesystem::path& target, const PreservedFile
     if (ec) {
         std::filesystem::remove(tempPath);
         throw std::runtime_error("ned: cannot save file: " + target.string() + " (" + ec.message() + ")");
+    }
+    // The rename itself. Some filesystems can't sync a directory; the save
+    // has happened either way.
+    if (SaveFsync()) {
+        (void)SyncPath(target.has_parent_path() ? target.parent_path() : std::filesystem::path("."), O_RDONLY | O_DIRECTORY);
     }
 }
 

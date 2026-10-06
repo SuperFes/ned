@@ -109,6 +109,7 @@
 #include "Json.h"
 #include "Text/BufferList.h"
 #include "Text/FilePreservation.h"
+#include "Text/SavePlan.h"
 #include "Value.h"
 
 namespace ned::janet {
@@ -550,6 +551,10 @@ namespace {
 
     void NedSetHugeFileDiskSpaceCheckEnabled(bool enabled) {
         text::SetHugeFileDiskSpaceCheckEnabled(enabled);
+    }
+
+    void NedSetSaveFsync(bool enabled) {
+        text::SetSaveFsync(enabled);
     }
 
     // file-attribute-preservation follow-up (Text/FilePreservation.h).
@@ -2270,6 +2275,11 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-huge-file-disk-space-check-enabled",
         "Enable/disable the free-disk-space safety check for huge (piece-table-backed) buffers entirely (default "
         "true). Off skips both the open-time read-only downgrade and the save-time refusal.");
+    env.Register<&NedSetSaveFsync>(
+        "ned", "set-save-fsync",
+        "Whether a save flushes the file to disk before renaming it into place, and the rename after (default "
+        "true), so a crash or power loss can't leave the file empty or half-written. Off saves faster on a slow "
+        "disk, trusting the system to write it back later.");
     env.Register<&NedSetFollowSymlinksOnSave>(
         "ned", "set-follow-symlinks-on-save",
         "Whether saving a file reached through a symlink writes the file the link points at (default true) or "
