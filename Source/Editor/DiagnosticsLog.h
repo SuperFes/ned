@@ -30,8 +30,6 @@
 #include <string_view>
 #include <vector>
 
-#include "Text/BufferList.h"
-
 namespace ned::editor {
 
 // One entry per LogMessage call. Every subsystem gets its own category so
@@ -120,19 +118,14 @@ void                      SetLogMaxEntries(std::size_t maxEntries);
 // avoid rebuilding the "*Messages*" buffer on every Paint() tick.
 [[nodiscard]] std::size_t LogGeneration();
 
-// Finds-or-creates "*Messages*" and replaces its content wholesale with one
-// line per entry whose category is currently visible (oldest first),
-// formatted "HH:MM:SS [SEVERITY] [category] message (path:line)". Attaches
-// one synthetic Buffer::Diagnostic per line (ranged over that line's own
-// bytes, severity mapped from LogSeverity) so the existing diagnostics
-// gutter glyph/color pipeline renders severity for free -- see
-// BufferView.cpp's DiagnosticGlyphFor. Ordinary DeleteRange/InsertAtPoint
-// wrapped in one BeginUndoGroup/EndUndoGroup step, not
-// Buffer::ReplaceContentForLoad (that API is tied to the async-file-loader's
-// IsLoading() state machine specifically).
-void RebuildMessagesBuffer(text::BufferList& bufferList);
+// One rendered line, e.g. "09:15:03 [ERROR] [lsp] message text (x47) (init.janet:12:)".
+// The colon-terminated "path:line:" suffix is what lets the *Messages*
+// buffer's result-visiting regex jump to it. Shared by the on-disk log and
+// the *Messages* buffer.
+[[nodiscard]] std::string FormatLogLine(const LogEntry& entry);
 
-[[nodiscard]] std::string_view MessagesBufferName(); // "*Messages*"
+// " (xN)" for a coalesced entry, empty for count 1.
+[[nodiscard]] std::string LogCountSuffix(std::uint32_t count);
 
 // Retention: deletes whole daily log files under $XDG_STATE_HOME/ned/logs/
 // older than LogMaxAgeDays() (default 14, <= 0 disables). nowSeconds is

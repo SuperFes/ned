@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <deque>
+#include <filesystem>
 #include <fstream>
 #include <mutex>
 #include <stdexcept>
@@ -142,39 +143,6 @@ namespace {
         return "INFO"; // unreachable -- silences a "not all enumerators handled" warning on some compilers
     }
 
-    text::Buffer::Diagnostic::Severity DiagnosticSeverityFor(LogSeverity severity) {
-        switch (severity) {
-            case LogSeverity::Info:
-                return text::Buffer::Diagnostic::Severity::Information;
-            case LogSeverity::Warning:
-                return text::Buffer::Diagnostic::Severity::Warning;
-            case LogSeverity::Error:
-                return text::Buffer::Diagnostic::Severity::Error;
-        }
-        return text::Buffer::Diagnostic::Severity::Information; // unreachable
-    }
-
-    // diagnostics-log-rollup follow-up: the "(xN)" suffix rendered for a
-    // coalesced entry -- shared between FormatLine and RebuildMessagesBuffer's
-    // synthetic Diagnostic message so both agree on the same rendering.
-    std::string CountSuffix(std::uint32_t count) {
-        return count > 1 ? " (x" + std::to_string(count) + ")" : std::string();
-    }
-
-    // One formatted line for a single entry, e.g.
-    // "09:15:03 [ERROR] [lsp] message text (x47) (init.janet:12)" -- the
-    // "path:line:" suffix (colon-terminated) is what lets
-    // BufferView::VisitResultUnderPoint's existing "^(.*):(\\d+):" regex
-    // fallback click/Enter-visit it, with no new command needed.
-    std::string FormatLine(const LogEntry& entry) {
-        std::string line = LocalTimeLabel(entry.timestamp) + " [" + SeverityLabel(entry.severity) + "] [" +
-                           std::string(LogCategoryToString(entry.category)) + "] " + entry.message + CountSuffix(entry.count);
-        if (entry.path && entry.line) {
-            line += " (" + *entry.path + ":" + std::to_string(*entry.line) + ":)";
-        }
-        return line;
-    }
-
     // $XDG_STATE_HOME/ned/logs, falling back to $HOME/.local/state/ned/logs
     // -- the same inlined resolution Backup.cpp/Session.cpp/ProjectTrust.cpp
     // each already duplicate (no shared helper exists in this codebase to
@@ -199,7 +167,7 @@ namespace {
             std::filesystem::create_directories(directory);
             const std::filesystem::path file = directory / ("ned-" + UtcDateLabel(entry.timestamp) + ".log");
             std::ofstream               out(file, std::ios::app);
-            out << FormatLine(entry) << '\n';
+            out << FormatLogLine(entry) << '\n';
         }
         catch (const std::exception&) {
             // Swallowed -- see this function's own doc comment.
@@ -354,53 +322,17 @@ std::size_t LogGeneration() {
     return GenerationStorage();
 }
 
-std::string_view MessagesBufferName() {
-    return "*Messages*";
+std::string LogCountSuffix(std::uint32_t count) {
+    return count > 1 ? " (x" + std::to_string(count) + ")" : std::string();
 }
 
-void RebuildMessagesBuffer(text::BufferList& bufferList) {
-    const std::string bufferName(MessagesBufferName());
-    text::Buffer*     buffer = bufferList.Find(bufferName);
-    if (!buffer) {
-        buffer = &bufferList.CreateBuffer(bufferName);
-        buffer->SetReadOnly(true); // must be set before the first append -- AppendWhileReadOnly's own precondition
+std::string FormatLogLine(const LogEntry& entry) {
+    std::string line = LocalTimeLabel(entry.timestamp) + " [" + SeverityLabel(entry.severity) + "] [" +
+                       std::string(LogCategoryToString(entry.category)) + "] " + entry.message + LogCountSuffix(entry.count);
+    if (entry.path && entry.line) {
+        line += " (" + *entry.path + ":" + std::to_string(*entry.line) + ":)";
     }
-
-    std::vector<LogEntry> visible;
-    for (LogEntry& entry : LogEntries()) {
-        if (LogCategoryVisible(entry.category)) {
-            visible.push_back(std::move(entry));
-        }
-    }
-
-    buffer->SetReadOnly(false);
-    buffer->BeginUndoGroup();
-    if (buffer->Size() > 0) {
-        buffer->DeleteRange(0, buffer->Size());
-    }
-
-    std::vector<text::Buffer::Diagnostic> diagnostics;
-    diagnostics.reserve(visible.size());
-    std::size_t offset = 0;
-    for (const LogEntry& entry : visible) {
-        const std::string line      = FormatLine(entry) + "\n";
-        const std::size_t startByte = offset;
-        buffer->InsertAtPoint(line);
-        offset += line.size();
-        // -1 excludes the trailing newline from the diagnostic's own range,
-        // matching every other line-ranged Diagnostic in this codebase.
-        diagnostics.push_back(text::Buffer::Diagnostic{
-            .startByte = startByte,
-            .endByte   = offset > 0 ? offset - 1 : offset,
-            .severity  = DiagnosticSeverityFor(entry.severity),
-            .origin    = text::Buffer::Diagnostic::Origin::Code,
-            .message   = entry.message + CountSuffix(entry.count),
-        });
-    }
-    buffer->SetPoint(buffer->Size());
-    buffer->EndUndoGroup();
-    buffer->SetReadOnly(true);
-    buffer->SetDiagnostics(std::move(diagnostics));
+    return line;
 }
 
 void SetLogMaxAgeDays(int days) {

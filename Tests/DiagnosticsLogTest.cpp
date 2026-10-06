@@ -7,6 +7,7 @@
 #include <string>
 
 #include "Editor/DiagnosticsLog.h"
+#include "Editor/MessagesBuffer.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 

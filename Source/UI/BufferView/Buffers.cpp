@@ -20,7 +20,7 @@ namespace {
     // Matches every flat "path:line:" results-buffer format written here --
     // project-search/project-replace/agenda's HandlePromptKey/BuildResultsBuffer
     // path and BuildVcsBlameBuffer's own format both write this shape, plus
-    // DiagnosticsLog::RebuildMessagesBuffer/TestResultsBuffer's own
+    // MessagesBuffer.h's RebuildMessagesBuffer/TestResultsBuffer's own
     // "path:line: message" lines. Greedy .* correctly handles the rare case
     // of a ':' inside the path itself, by backing off to find the *last*
     // plausible ":<digits>:" split.

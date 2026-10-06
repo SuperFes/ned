@@ -74,6 +74,7 @@
 #include "Editor/MacroRegistry.h"
 #include "Editor/MassifOutputParser.h"
 #include "Editor/MassifReportBuffer.h"
+#include "Editor/MessagesBuffer.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
 #include "Editor/MultibufferLimits.h"
