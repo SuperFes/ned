@@ -29,6 +29,9 @@ namespace ned::text {
 // .editorconfig states without a BOM isn't mistaken for binary.
 [[nodiscard]] bool LooksBinaryToLoad(const std::filesystem::path& path, std::optional<Charset> chosen = std::nullopt);
 
+// LooksBinaryToLoad's judgement of bytes already read from path.
+[[nodiscard]] bool BytesLookBinaryToLoad(const std::filesystem::path& path, std::string_view bytes, std::optional<Charset> chosen = std::nullopt);
+
 // The judgement itself, over a file's first bytes.
 [[nodiscard]] bool HeadLooksBinary(std::string_view head, Charset charset);
 

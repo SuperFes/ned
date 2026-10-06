@@ -15,6 +15,7 @@
 #include "BufferList.h"
 #include "DiskSpace.h"
 #include "DisplayWidth.h"
+#include "FileContents.h"
 #include "FilePreservation.h"
 #include "Grapheme.h"
 #include "LineEnding.h"
@@ -142,51 +143,24 @@ Buffer::Buffer(std::string name, Rope initialContent) : Name_(std::move(name)),
 }
 
 Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary, std::optional<Charset> charsetChoice) {
-    // large-file-async-load follow-up: checked before any sizing/reading --
-    // decoding arbitrary binary content as UTF-8 text is meaningless, and
-    // this is meant to be cheap-fail-fast rather than paying for a
-    // potentially huge read first. Every existing caller of
-    // BufferList::OpenFile/OpenOrCreateFile already wraps the call in a
-    // try/catch for exactly this kind of failure, so this needed no call
-    // site changes. open-binary-anyway follow-up: allowBinary is the
-    // explicit, caller-opted-in escape hatch -- see BinaryFileError's own
-    // doc comment.
-    const bool likelyBinary = LooksBinaryToLoad(path, charsetChoice);
+    // The head alone settles most binary files, before paying for a read of
+    // the whole thing.
+    if (!allowBinary && LooksBinaryToLoad(path, charsetChoice)) {
+        throw BinaryFileError("ned: refusing to open binary file as text: " + path.string());
+    }
+    return FromContents(path, ReadFileContents(path), allowBinary, charsetChoice);
+}
+
+Buffer Buffer::FromContents(const std::filesystem::path& path, FileContents contents, bool allowBinary, std::optional<Charset> charsetChoice) {
+    const bool likelyBinary = BytesLookBinaryToLoad(path, contents.bytes, charsetChoice);
     if (!allowBinary && likelyBinary) {
         throw BinaryFileError("ned: refusing to open binary file as text: " + path.string());
     }
 
-    // external-modification-safety follow-up: stat the timestamp *before*
-    // reading -- if the file changes between this stat and the read below,
-    // a later ExternallyModified() check sees a differing timestamp and
-    // flags it, whereas stat-after-read would silently absorb that write.
-    std::error_code                       timestampError;
-    const std::filesystem::file_time_type diskTime = std::filesystem::last_write_time(path, timestampError);
-
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        throw std::runtime_error("ned: cannot open file for reading: " + path.string());
-    }
-
-    std::uintmax_t size;
-    try {
-        size = std::filesystem::file_size(path);
-    }
-    catch (const std::filesystem::filesystem_error&) {
-        throw std::runtime_error("ned: cannot determine size of file: " + path.string());
-    }
-
-    // Bulk read rather than istreambuf_iterator's byte-at-a-time extraction.
-    std::string content(static_cast<std::size_t>(size), '\0');
-    file.read(content.data(), static_cast<std::streamsize>(size));
-    if (file.bad()) {
-        throw std::runtime_error("ned: error reading file: " + path.string());
-    }
-    content.resize(static_cast<std::size_t>(file.gcount())); // handles a short read (e.g. file shrank concurrently)
-
     // A file that doesn't decode in its charset is binary as far as a load
     // is concerned; opened anyway, its bytes are kept exactly as read.
-    Charset charset = ResolveLoadCharset(path, content, charsetChoice);
+    std::string& content = contents.bytes;
+    Charset      charset = ResolveLoadCharset(path, content, charsetChoice);
     if (IsUtf8Family(charset)) {
         content.erase(0, PreambleLength(content, charset));
     }
@@ -202,24 +176,20 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary, std
         charset = Charset::Utf8;
     }
 
-    // crlf-handling follow-up: detect before normalizing -- the detected
-    // ending is exactly what SaveToFile later re-expands LF back into, so
-    // opening and immediately saving a CRLF file round-trips byte-for-byte
-    // rather than silently converting it to LF. Storage_ itself only ever
-    // holds the normalized, LF-only form (see Text/LineEnding.h).
+    // Detected before normalizing: it's what a save expands LF back into, so
+    // opening and saving a CRLF file round-trips byte-for-byte. Storage_
+    // only ever holds the LF-only form (Text/LineEnding.h).
     const LineEnding detectedEnding = DetectLineEnding(content);
     if (HasCarriageReturn(content)) {
         content = NormalizeToLf(content);
     }
 
     Buffer buffer(path.filename().string(), Rope(content));
-    buffer.Path_         = path;
-    buffer.LineEnding_   = detectedEnding;
-    buffer.Charset_      = charset;
-    buffer.LikelyBinary_ = likelyBinary; // only ever true here if allowBinary let a real binary-detected open through
-    if (!timestampError) {
-        buffer.DiskTimestamp_ = diskTime;
-    }
+    buffer.Path_          = path;
+    buffer.LineEnding_    = detectedEnding;
+    buffer.Charset_       = charset;
+    buffer.LikelyBinary_  = likelyBinary; // only ever true here if allowBinary let a real binary-detected open through
+    buffer.DiskTimestamp_ = contents.timestamp;
     return buffer;
 }
 

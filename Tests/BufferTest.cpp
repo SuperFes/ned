@@ -1,14 +1,17 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
 #include "Text/BinaryDetect.h"
 #include "Text/Buffer.h"
 #include "Text/Charset.h"
+#include "Text/FileContents.h"
 
 using ned::text::Buffer;
 
@@ -286,6 +289,58 @@ TEST_CASE("A UTF-16 file that doesn't decode is binary, and opened anyway keeps 
     CHECK(ReadFileBytes(path) == bytes);
 
     std::filesystem::remove(path);
+}
+
+TEST_CASE("Contents read apart from the buffer decode exactly as FromFile reads them", "[Buffer][Charset]") {
+    using ned::text::BinaryFileError;
+    using ned::text::FileContents;
+    using ned::text::ReadFileContents;
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_buffer_test_contents.txt";
+    const std::string           samples[] = {
+        "plain\n",
+        "\xEF\xBB\xBF"
+        "bom\n",
+        "crlf\r\nline\r\n",
+        "cr\rline\r",
+        std::string("\xFF\xFE\xE9\x00\r\x00\n\x00", 8),
+        std::string("\xFF\xFEx\x00\x00\xDC", 6),
+        std::string("elf\0\x01\x02", 6),
+        "",
+    };
+    for (const std::string& bytes : samples) {
+        WriteFileBytes(path, bytes);
+        for (const bool allowBinary : {false, true}) {
+            CAPTURE(bytes, allowBinary);
+            std::optional<Buffer> read;
+            try {
+                read.emplace(Buffer::FromFile(path, allowBinary));
+            }
+            catch (const BinaryFileError&) {
+                CHECK_THROWS_AS(Buffer::FromContents(path, ReadFileContents(path), allowBinary), BinaryFileError);
+                continue;
+            }
+            const Buffer decoded = Buffer::FromContents(path, ReadFileContents(path), allowBinary);
+            CHECK(decoded.Text() == read->Text());
+            CHECK(decoded.FileCharset() == read->FileCharset());
+            CHECK(decoded.LineEndingKind() == read->LineEndingKind());
+            CHECK(decoded.LikelyBinary() == read->LikelyBinary());
+            CHECK(decoded.Path() == read->Path());
+            CHECK_FALSE(decoded.ExternallyModified());
+        }
+    }
+
+    // The timestamp is the reader's, not a fresh stat.
+    const FileContents contents = ReadFileContents(path);
+    REQUIRE(contents.timestamp.has_value());
+    CHECK(Buffer::FromContents(path, FileContents{.bytes = contents.bytes, .timestamp = *contents.timestamp - std::chrono::seconds(1)}).ExternallyModified());
+
+    // Nothing needs to be at path: the bytes may come from another host.
+    std::filesystem::remove(path);
+    const Buffer elsewhere = Buffer::FromContents(path, FileContents{.bytes = "a\r\nb\r\n", .timestamp = std::nullopt});
+    CHECK(elsewhere.Text() == "a\nb\n");
+    CHECK(elsewhere.LineEndingKind() == ned::text::LineEnding::CRLF);
+    CHECK(elsewhere.Name() == path.filename().string());
+    CHECK_THROWS_AS(ReadFileContents(path), std::runtime_error);
 }
 
 TEST_CASE("A chosen charset is what the next save writes and what later reverts decode", "[Buffer][Charset]") {

@@ -30,6 +30,7 @@
 #include "BufferEntryOwners.h"
 #include "Charset.h"
 #include "EditJournal.h"
+#include "FileContents.h"
 #include "FileConventions.h"
 #include "ITextStorage.h"
 #include "IndentStyle.h"
@@ -77,6 +78,12 @@ class Buffer {
     // file that doesn't decode is treated as binary.
     [[nodiscard]] static Buffer FromFile(const std::filesystem::path& path, bool allowBinary = false,
                                          std::optional<Charset> charset = std::nullopt);
+
+    // FromFile's decoding of contents already read from path, by this
+    // process or a remote host. path still names the buffer and settles a
+    // charset the content doesn't state (ResolveLoadCharset).
+    [[nodiscard]] static Buffer FromContents(const std::filesystem::path& path, FileContents contents, bool allowBinary = false,
+                                             std::optional<Charset> charset = std::nullopt);
 
     // huge-file-editing follow-up: opens path via a PieceTableStorage
     // (Text/PieceTable.h) instead of reading the whole file into memory --

@@ -47,15 +47,17 @@ bool LooksBinary(const std::filesystem::path& path) {
 
 bool LooksBinaryToLoad(const std::filesystem::path& path, std::optional<Charset> chosen) {
     const std::optional<std::string> head = ReadHead(path);
-    if (!head) {
-        return true;
-    }
+    return !head || BytesLookBinaryToLoad(path, *head, chosen);
+}
+
+bool BytesLookBinaryToLoad(const std::filesystem::path& path, std::string_view bytes, std::optional<Charset> chosen) {
+    const std::string_view head = bytes.substr(0, kHeadBytes);
     // Resolving can read .editorconfig files, so only a head that could be
     // binary pays for it.
-    if (head->find('\0') == std::string::npos) {
+    if (head.find('\0') == std::string_view::npos) {
         return false;
     }
-    return HeadLooksBinary(*head, ResolveLoadCharset(path, *head, chosen));
+    return HeadLooksBinary(head, ResolveLoadCharset(path, head, chosen));
 }
 
 } // namespace ned::text
