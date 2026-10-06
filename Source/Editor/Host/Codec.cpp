@@ -1,5 +1,6 @@
 #include "Codec.h"
 
+#include <cstdint>
 #include <vector>
 
 namespace ned::editor::host {
@@ -56,6 +57,17 @@ std::uint64_t RequireUnsigned(const Json& json, const char* field) {
         return static_cast<std::uint64_t>(value.get<std::int64_t>());
     }
     WrongType(field, "an unsigned integer");
+}
+
+std::int64_t RequireInteger(const Json& json, const char* field) {
+    const Json& value = Field(json, field);
+    if (value.is_number_unsigned() && value.get<std::uint64_t>() <= static_cast<std::uint64_t>(INT64_MAX)) {
+        return static_cast<std::int64_t>(value.get<std::uint64_t>());
+    }
+    if (value.is_number_integer() && !value.is_number_unsigned()) {
+        return value.get<std::int64_t>();
+    }
+    WrongType(field, "an integer");
 }
 
 bool RequireBool(const Json& json, const char* field) {

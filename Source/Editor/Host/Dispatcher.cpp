@@ -1,12 +1,16 @@
 #include "Dispatcher.h"
 
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stop_token>
 #include <thread>
 #include <utility>
 
+#include "Editor/Host/Codec.h"
+#include "Editor/Host/Fs.h"
+#include "Editor/Host/FsCodec.h"
 #include "Editor/Host/SearchCodec.h"
 
 namespace ned::editor::host {
@@ -39,6 +43,14 @@ struct Dispatcher::SearchJob {
     std::optional<std::stop_callback<StopWorker>> forwardStop;
 };
 
+struct Dispatcher::WorkerJob {
+    explicit WorkerJob(Responder responderIn) : responder(std::move(responderIn)) {
+    }
+
+    Responder    responder;
+    std::jthread worker;
+};
+
 Dispatcher::Dispatcher(protocol::Endpoint& endpoint, PostQueue& postQueue, Identity identity,
                        std::function<void(std::string_view codec)> onCodec) : endpoint_(endpoint), postQueue_(postQueue), identity_(std::move(identity)), onCodec_(std::move(onCodec)) {
     // Bound, so a request arriving after this object is gone is answered
@@ -49,11 +61,15 @@ Dispatcher::Dispatcher(protocol::Endpoint& endpoint, PostQueue& postQueue, Ident
     endpoint_.Handle(std::string(kSearchProject), lifetime_.Bind([this](Json params, Responder responder) {
         SearchProject(params, std::move(responder));
     }));
+    endpoint_.Handle(std::string(kFsStat), lifetime_.Bind([this](Json params, Responder responder) { FsStat(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kFsRead), lifetime_.Bind([this](Json params, Responder responder) { FsRead(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kFsWrite), lifetime_.Bind([this](Json params, Responder responder) { FsWrite(params, std::move(responder)); }));
 }
 
 Dispatcher::~Dispatcher() {
     lifetime_.Revoke();
     searches_.clear();
+    workerJobs_.clear();
 }
 
 void Dispatcher::Hello(const Json& params, Responder responder) {
@@ -73,7 +89,7 @@ void Dispatcher::Hello(const Json& params, Responder responder) {
     response.arch         = identity_.arch;
     response.codec        = ChooseCodec(request.codecs);
     response.window       = protocol::kDefaultWindow;
-    response.capabilities = Capabilities{.search = 1};
+    response.capabilities = Capabilities{.fs = 1, .search = 1};
     responder.Result(ToJson(response));
     if (onCodec_) {
         onCodec_(response.codec);
@@ -162,6 +178,82 @@ void Dispatcher::FinishSearch(std::uint64_t job, const std::string& error) {
         responder.Chunk(MatchesToJson(chunk));
     }
     responder.Result(Json::object());
+}
+
+void Dispatcher::RunOnWorker(Responder responder, std::function<WorkerAnswer()> work) {
+    const std::uint64_t id  = nextJob_++;
+    auto                job = std::make_unique<WorkerJob>(std::move(responder));
+    job->worker             = std::jthread([this, id, alive = lifetime_.Token(), work = std::move(work)] {
+        WorkerAnswer answer = work();
+        postQueue_.Post(alive.Bind([this, id, answer = std::move(answer)] {
+            if (const auto it = workerJobs_.find(id); it != workerJobs_.end()) {
+                answer(it->second->responder);
+                workerJobs_.erase(it);
+            }
+        }));
+    });
+    workerJobs_.emplace(id, std::move(job));
+}
+
+void Dispatcher::FsStat(const Json& params, Responder responder) {
+    std::filesystem::path path;
+    try {
+        path = PathParamsFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    responder.Result(ToJson(StatPath(path)));
+}
+
+void Dispatcher::FsRead(const Json& params, Responder responder) {
+    std::filesystem::path path;
+    try {
+        path = PathParamsFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    RunOnWorker(std::move(responder), [path = std::move(path)]() -> WorkerAnswer {
+        try {
+            auto     contents = std::make_shared<const text::FileContents>(ReadPath(path));
+            FileStat stat     = StatPath(path);
+            stat.size         = contents->bytes.size();
+            stat.timestamp    = contents->timestamp;
+            return [contents, stat](Responder& answer) {
+                // Queued past the peer's credit, so the window paces them.
+                const std::string_view bytes = contents->bytes;
+                for (std::size_t at = 0; at < bytes.size(); at += kFsChunkBytes) {
+                    answer.Chunk(Bytes(bytes.substr(at, kFsChunkBytes)));
+                }
+                answer.Result(ToJson(stat));
+            };
+        }
+        catch (const FsError& e) {
+            return [code = e.Code(), message = std::string(e.what())](Responder& answer) { answer.Error(code, message); };
+        }
+    });
+}
+
+void Dispatcher::FsWrite(const Json& params, Responder responder) {
+    std::shared_ptr<const FsWriteRequest> request;
+    try {
+        request = std::make_shared<const FsWriteRequest>(FsWriteRequestFromJson(params));
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    RunOnWorker(std::move(responder), [request]() -> WorkerAnswer {
+        try {
+            return [stat = WritePath(*request)](Responder& answer) { answer.Result(ToJson(stat)); };
+        }
+        catch (const FsError& e) {
+            return [code = e.Code(), message = std::string(e.what())](Responder& answer) { answer.Error(code, message); };
+        }
+    });
 }
 
 } // namespace ned::editor::host

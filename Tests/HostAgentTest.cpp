@@ -13,6 +13,8 @@
 #include <unistd.h>
 
 #include "Editor/Host/Agent.h"
+#include "Editor/Host/Codec.h"
+#include "Editor/Host/FsCodec.h"
 #include "Editor/Host/Hello.h"
 #include "Editor/Host/SearchCodec.h"
 #include "Editor/PostQueue.h"
@@ -135,7 +137,7 @@ TEST_CASE("ned-agent answers hello with its own build and settles the codec", "[
     REQUIRE(hello.arch == host::BuildArch());
     REQUIRE(hello.codec == "zstd");
     REQUIRE(hello.capabilities.search == 1);
-    REQUIRE(hello.capabilities.fs == 0);
+    REQUIRE(hello.capabilities.fs == 1);
 }
 
 TEST_CASE("ned-agent's project search matches a local search exactly", "[Host][HostAgent]") {
@@ -267,8 +269,50 @@ TEST_CASE("ned-agent rejects bad search params and unknown methods", "[Host][Hos
     const auto badParams = client.Call(std::string(host::kSearchProject), Json{{"root", "/not/bytes"}});
     REQUIRE(badParams.error->code == error_code::kInvalidParams);
 
-    const auto unknown = client.Call("fs/read", Json::object());
+    const auto unknown = client.Call("proc/spawn", Json::object());
     REQUIRE(unknown.error->code == error_code::kMethodNotFound);
+}
+
+TEST_CASE("ned-agent reads and writes files, streaming a read under credit", "[Host][HostAgent]") {
+    const std::filesystem::path dir = FreshDir("ned_host_agent_fs");
+    const std::filesystem::path file = dir / "data.bin";
+    AgentClient                 client(FrameTransport({AgentBinary(), "--stdio"}, true));
+
+    // More chunks than one credit window holds.
+    std::string bytes(6 * 1024 * 1024 + 7, '\0');
+    for (std::size_t i = 0; i < bytes.size(); ++i) {
+        bytes[i] = static_cast<char>((i * 2654435761U) >> 13);
+    }
+    const auto written = client.Call(std::string(host::kFsWrite),
+                                     host::ToJson(host::FsWriteRequest{.path = file, .data = bytes, .expect = std::optional<std::filesystem::file_time_type>()}));
+    REQUIRE(written.result.has_value());
+    const host::FileStat stat = host::FileStatFromJson(*written.result);
+    CHECK(stat.size == bytes.size());
+    CHECK(stat.timestamp == std::filesystem::last_write_time(file));
+    CHECK(host::FileStatFromJson(*client.Call(std::string(host::kFsStat), host::PathParams(file)).result) == stat);
+
+    const auto read = client.Call(std::string(host::kFsRead), host::PathParams(file));
+    REQUIRE(read.result.has_value());
+    CHECK(read.chunks.size() == (bytes.size() + host::kFsChunkBytes - 1) / host::kFsChunkBytes);
+    std::string received;
+    for (const Json& chunk : read.chunks) {
+        REQUIRE(chunk.is_binary());
+        received.append(chunk.get_binary().begin(), chunk.get_binary().end());
+    }
+    CHECK(received == bytes);
+    CHECK(host::FileStatFromJson(*read.result).timestamp == stat.timestamp);
+
+    // Changed under the editor: refused, and the file kept.
+    std::filesystem::last_write_time(file, *stat.timestamp + std::chrono::seconds(3));
+    const auto stale = client.Call(std::string(host::kFsWrite), host::ToJson(host::FsWriteRequest{.path = file, .data = "mine", .expect = stat.timestamp}));
+    REQUIRE(stale.error.has_value());
+    CHECK(stale.error->code == host::fs_error::kFileChanged);
+    CHECK(std::filesystem::file_size(file) == bytes.size());
+
+    CHECK(client.Call(std::string(host::kFsRead), host::PathParams(dir / "missing")).error->code == host::fs_error::kNotFound);
+    CHECK(client.Call(std::string(host::kFsRead), Json{{"path", "/not/bytes"}}).error->code == error_code::kInvalidParams);
+    CHECK(client.Call(std::string(host::kFsWrite), Json{{"path", host::Bytes("/x")}}).error->code == error_code::kInvalidParams);
+    std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("RunAgent ends quietly when the editor hangs up and with a reason on a protocol error", "[Host][HostAgent]") {

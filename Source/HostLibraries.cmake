@@ -58,6 +58,8 @@ add_library(ned_host STATIC
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Host/Agent.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Host/Codec.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Host/Dispatcher.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/Editor/Host/Fs.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/Editor/Host/FsCodec.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Host/Hello.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Host/SearchCodec.cpp)
 
