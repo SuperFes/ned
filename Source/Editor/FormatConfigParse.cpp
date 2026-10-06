@@ -7,7 +7,7 @@
 #include <sstream>
 #include <system_error>
 
-#include "EditorConfig.h"
+#include "EditorConfigFormatRules.h"
 #include "FinalNewline.h"
 #include "FormatRules.h"
 #include "IndentStyle.h"

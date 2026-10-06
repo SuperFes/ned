@@ -47,6 +47,7 @@
 #include "Editor/Commands.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/EditorConfig.h"
+#include "Editor/EditorConfigFormatRules.h"
 #include "Editor/FileSettings.h"
 #include "Editor/Format.h"
 #include "Editor/FormatBlankLines.h"

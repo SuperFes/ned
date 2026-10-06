@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include "Editor/EditorConfig.h"
+#include "Editor/EditorConfigFormatRules.h"
 #include "Editor/Format.h"
 #include "Editor/FormatBuiltinStyle.h"
 #include "Editor/FormatRules.h"
