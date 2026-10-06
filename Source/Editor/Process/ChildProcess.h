@@ -188,6 +188,12 @@ class ChildProcess {
     // comment. Idempotent.
     void CloseConnection() noexcept;
 
+    // Ends the child's stdin, as at EOF, while its output stays readable.
+    // The descriptor number stays reserved until the destructor, now open
+    // on /dev/null, so it can't be reused under a concurrent WriteAll, and
+    // a later WriteAll throws. A pty has no EOF to send this way.
+    void CloseInput() noexcept;
+
   private:
     // The wake eventfd and, given a pid, its pidfd; on failure releases
     // everything this object holds, kills the child, and throws.

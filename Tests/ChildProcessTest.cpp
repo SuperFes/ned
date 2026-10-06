@@ -69,6 +69,22 @@ TEST_CASE("ChildProcess spawns a real process and exchanges data with it over pi
     REQUIRE(child.ReadSome() == "hello from a test");
 }
 
+TEST_CASE("ChildProcess::CloseInput gives the child EOF while its output stays readable", "[Process]") {
+    // wc only answers once its input ends.
+    ChildProcess child({"wc", "-c"});
+    child.WriteAll("12345", std::chrono::milliseconds(1000));
+    child.CloseInput();
+
+    std::string output;
+    for (std::string chunk = child.ReadSome(); !chunk.empty(); chunk = child.ReadSome()) {
+        output += chunk;
+    }
+    REQUIRE(output == "5\n");
+    REQUIRE(child.WaitForExit() == 0);
+    // Writing after it fails rather than reaching the child.
+    REQUIRE_THROWS_AS(child.WriteAll("more", std::chrono::milliseconds(100)), std::runtime_error);
+}
+
 TEST_CASE("ChildProcess::Kill terminates a real running process promptly", "[Process]") {
     ChildProcess child({"sleep", "100"});
     const pid_t  pid = child.Pid();

@@ -272,6 +272,21 @@ void ChildProcess::CloseConnection() noexcept {
     }
 }
 
+void ChildProcess::CloseInput() noexcept {
+    if (writeFd_ < 0) {
+        return;
+    }
+    // A socket's peer reads the descriptor this one was dup'd from too, so
+    // only a shutdown reaches it; for a pipe this is a harmless ENOTSOCK.
+    ::shutdown(writeFd_, SHUT_WR);
+    // Read-only, so a later write fails instead of vanishing.
+    const int devNull = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+    if (devNull >= 0) {
+        (void)::dup3(devNull, writeFd_, O_CLOEXEC);
+        ::close(devNull);
+    }
+}
+
 void ChildProcess::Release() noexcept {
     CloseConnection();
     // EOF on the child's stdin is a well-behaved child's cue to exit; a
