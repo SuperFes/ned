@@ -247,6 +247,7 @@ add_library(ned_lib STATIC
         Editor/PersistentUndo.cpp
         Editor/Project/Undo.cpp
         Editor/DiagnosticsLog.cpp
+        Editor/PostQueue.cpp
         Editor/Timestamp.cpp
         Editor/SanitizerOutputParser.cpp
         Editor/ValgrindOutputParser.cpp

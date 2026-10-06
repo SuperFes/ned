@@ -2,7 +2,7 @@
 // A spawned child whose raw output is streamed to the main thread.
 //
 // A background jthread blocks in ChildProcess::ReadSome and posts each chunk
-// onto the EventLoop, then reaps the child and posts its exit code. Both
+// onto a PostQueue, then reaps the child and posts its exit code. Both
 // callbacks run on the main thread, and every public method is main-thread
 // only. How the child was spawned (pipes, a pty) is the caller's business:
 // it hands over an already-running ChildProcess.
@@ -22,11 +22,8 @@
 #include <thread>
 
 #include "Editor/Lifetime.h"
+#include "Editor/PostQueue.h"
 #include "Editor/Process/ChildProcess.h"
-
-namespace ned::ui {
-class EventLoop;
-} // namespace ned::ui
 
 namespace ned::editor::process {
 
@@ -36,8 +33,8 @@ class StreamedChild {
     // exitCode is std::nullopt when the child was terminated by a signal.
     using ExitHandler = std::function<void(std::optional<int> exitCode)>;
 
-    // eventLoop must outlive this object.
-    StreamedChild(ChildProcess child, ui::EventLoop& eventLoop, OutputHandler onOutput, ExitHandler onExit);
+    // postQueue must outlive this object.
+    StreamedChild(ChildProcess child, PostQueue& postQueue, OutputHandler onOutput, ExitHandler onExit);
     ~StreamedChild();
 
     StreamedChild(const StreamedChild&)            = delete;
@@ -50,12 +47,12 @@ class StreamedChild {
     [[nodiscard]] const ChildProcess& Child() const noexcept;
 
     // What the reader's posted callbacks call. Public so tests can drive the
-    // dispatch without running an EventLoop.
+    // dispatch without draining a PostQueue.
     void DispatchOutput(std::string_view chunk);
     void DispatchExit(std::optional<int> exitCode);
 
   private:
-    void StartReadLoop(ui::EventLoop& eventLoop);
+    void StartReadLoop(PostQueue& postQueue);
 
     LifetimeGuard lifetime_;
     std::jthread  readThread_;

@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "Editor/Lifetime.h"
+#include "Editor/PostQueue.h"
 #include "UI/Widget.h"
 
 struct notcurses; // <notcurses/notcurses.h>
@@ -113,7 +114,9 @@ struct EventLoopCallbacks {
 void               SetHeadlessOutputForTesting(bool headless);
 [[nodiscard]] bool HeadlessOutputForTesting();
 
-class EventLoop {
+// Post()/DrainPosted_() come from PostQueue; Run() polls its wake fd
+// alongside terminal input.
+class EventLoop : public editor::PostQueue {
   public:
     EventLoop();
     ~EventLoop();
@@ -177,26 +180,7 @@ class EventLoop {
     // silently stop delivering input).
     void Suspend();
 
-    // Thread-safe: queues fn to run on the loop's own thread at the next
-    // opportunity, then wakes the loop if it's currently blocked waiting
-    // for input (BufferView's scratch-auto-save background thread,
-    // Manager's background read-loop threads both need to marshal work
-    // back onto the thread that owns every Widget's state, never touching
-    // it directly from a second thread).
-    void Post(std::function<void()> fn);
-
-    // Runs every currently-queued Post()ed callback and returns whether any
-    // ran at all (the caller's cue that a repaint is worth doing). Public
-    // primarily for tests (terminal-panel follow-up, the TaskProcess::
-    // DispatchOutput precedent): a fixture with no Run() loop alive can
-    // still pump a background producer's Post-marshaled callbacks through
-    // by hand (PtyProcessTest's real-shell round trip); Run() itself is the
-    // only production caller, hence the internal-seam trailing underscore.
-    bool DrainPosted_();
-
   private:
-    void Wake_();
-
     // suspend-frame follow-up: the notcurses_core_init/linesigs_disable/
     // IXON-IXOFF-clearing sequence, shared between the constructor and
     // Run()'s post-resume reinitialization -- notcurses_stop() invalidates
@@ -232,12 +216,6 @@ class EventLoop {
     ncplane*   backingPlane_     = nullptr;
     bool       running_          = false;
     bool       suspendRequested_ = false; // suspend-frame follow-up: consumed by Run()'s own loop, see Suspend()'s doc comment
-
-    int wakeReadFd_  = -1;
-    int wakeWriteFd_ = -1;
-
-    std::mutex                         postedMutex_;
-    std::vector<std::function<void()>> posted_;
 };
 
 // A one-shot "call this once, after this much wall-clock time, on the loop

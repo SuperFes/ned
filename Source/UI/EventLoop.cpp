@@ -72,7 +72,7 @@ namespace {
     // so these are raw bytes written directly to the terminal, the same
     // "reach past Notcurses' own API" precedent InitializeNotcurses_'s own
     // IXON/IXOFF termios tweak already establishes. Best-effort, matching
-    // Wake_'s own write() handling -- a write failure here just means the
+    // PostQueue::Wake's write() handling -- a write failure here just means the
     // terminal won't send bracketed-paste markers, degrading back to
     // today's per-character paste behavior, not a reason to crash.
     void EnableBracketedPaste() {
@@ -178,28 +178,9 @@ void EventLoop::InitializeNotcurses_() {
 
 EventLoop::EventLoop() {
     InitializeNotcurses_();
-
-    // A pipe purely for Post() to wake a blocked poll() from another thread
-    // -- notcurses_inputready_fd (below, in Run) gives us a real pollable
-    // fd for terminal input, but there's no equivalent "wake me up, a
-    // background thread posted work" fd Notcurses itself provides, so this
-    // is the standard self-pipe trick to build one.
-    int fds[2];
-    if (pipe(fds) != 0) {
-        notcurses_stop(nc_);
-        throw std::runtime_error("EventLoop: pipe() failed");
-    }
-    wakeReadFd_  = fds[0];
-    wakeWriteFd_ = fds[1];
-    fcntl(wakeReadFd_, F_SETFL, fcntl(wakeReadFd_, F_GETFL) | O_NONBLOCK);
-    fcntl(wakeWriteFd_, F_SETFL, fcntl(wakeWriteFd_, F_GETFL) | O_NONBLOCK);
 }
 
 EventLoop::~EventLoop() {
-    if (wakeReadFd_ >= 0)
-        close(wakeReadFd_);
-    if (wakeWriteFd_ >= 0)
-        close(wakeWriteFd_);
     if (nc_ != nullptr) {
         DisableBracketedPaste();
         notcurses_stop(nc_);
@@ -269,42 +250,13 @@ notcurses* EventLoop::NotcursesContext() const {
     return nc_;
 }
 
-void EventLoop::Wake_() {
-    const char byte = 0;
-    // Best-effort: if the pipe is momentarily full the reader will still
-    // wake for the bytes already queued, and Post()'s own posted_ vector
-    // (not the pipe) is what actually carries the work -- the pipe is only
-    // ever a wakeup signal, never the payload.
-    [[maybe_unused]] const ssize_t written = write(wakeWriteFd_, &byte, 1);
-}
-
-void EventLoop::Post(std::function<void()> fn) {
-    {
-        const std::lock_guard<std::mutex> lock(postedMutex_);
-        posted_.push_back(std::move(fn));
-    }
-    Wake_();
-}
-
-bool EventLoop::DrainPosted_() {
-    std::vector<std::function<void()>> work;
-    {
-        const std::lock_guard<std::mutex> lock(postedMutex_);
-        work.swap(posted_);
-    }
-    for (auto& fn : work) {
-        SafeInvoke("posted background work", fn);
-    }
-    return !work.empty();
-}
-
 void EventLoop::Suspend() {
     suspendRequested_ = true;
 }
 
 void EventLoop::Exit() {
     running_ = false;
-    Wake_();
+    Wake();
 }
 
 void EventLoop::Run(const EventLoopCallbacks& callbacks) {
@@ -344,7 +296,7 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
         struct pollfd fds[2];
         fds[0].fd     = inputFd;
         fds[0].events = POLLIN;
-        fds[1].fd     = wakeReadFd_;
+        fds[1].fd     = WakeFd();
         fds[1].events = POLLIN;
 
         const int pollResult = poll(fds, 2, -1);
@@ -355,9 +307,7 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
         // Drain the wake pipe unconditionally (cheap, and avoids a
         // build-up of unread bytes across many Post() calls between wakes)
         // before running whatever was actually posted.
-        char discard[64];
-        while (read(wakeReadFd_, discard, sizeof(discard)) > 0) {
-        }
+        DiscardWakeups();
         // Posted work (scratch auto-save, LSP background-thread results,
         // ...) may itself have mutated state a repaint should reflect --
         // e.g. new diagnostics arriving -- so running any of it at all

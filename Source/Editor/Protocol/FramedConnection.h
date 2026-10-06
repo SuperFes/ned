@@ -2,7 +2,7 @@
 // one-connection-class follow-up. Lsp::Client, Dap::Client and Acp::Client
 // each hand-rolled an identical connection machine: a background jthread
 // blocking-read loop marshaling frames onto the main thread via
-// ned::ui::EventLoop::Post, a second jthread draining the server/agent/
+// PostQueue::Post, a second jthread draining the server/agent/
 // adapter's stderr, a third jthread draining an async write queue, a
 // use-after-free guard, and a teardown order that,
 // gotten wrong, hangs rather than failing to compile -- this class exists so
@@ -66,7 +66,7 @@
 
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Lifetime.h"
-#include "UI/EventLoop.h"
+#include "Editor/PostQueue.h"
 
 namespace ned::editor::protocol {
 
@@ -86,10 +86,9 @@ class FramedConnection {
         LogSeverity disconnectSeverity = LogSeverity::Warning;
     };
 
-    // Spawns argv as a new subprocess. eventLoop must outlive this object,
+    // Spawns argv as a new subprocess. postQueue must outlive this object,
     // matching every Client this replaces.
-    FramedConnection(std::vector<std::string> argv, bool captureStderr, ned::ui::EventLoop& eventLoop, Options options)
-        : options_(std::move(options)), transport_(std::move(argv), captureStderr), eventLoop_(eventLoop) {
+    FramedConnection(std::vector<std::string> argv, bool captureStderr, PostQueue& postQueue, Options options) : options_(std::move(options)), transport_(std::move(argv), captureStderr), postQueue_(postQueue) {
         StartReadLoop();
         StartStderrReadLoop();
         StartWriteLoop();
@@ -98,8 +97,7 @@ class FramedConnection {
     // Takes ownership of an already-open TransportT directly -- for tests
     // driving a raw pipe pair with no real subprocess involved, mirroring
     // every Client's own test constructor.
-    FramedConnection(TransportT transport, ned::ui::EventLoop& eventLoop, Options options)
-        : options_(std::move(options)), transport_(std::move(transport)), eventLoop_(eventLoop) {
+    FramedConnection(TransportT transport, PostQueue& postQueue, Options options) : options_(std::move(options)), transport_(std::move(transport)), postQueue_(postQueue) {
         StartReadLoop();
         StartStderrReadLoop(); // no-op unless transport_ was itself constructed with captureStderr
         StartWriteLoop();
@@ -178,7 +176,7 @@ class FramedConnection {
                     frame = transport_.ReadFrame(); // blocks
                 }
                 catch (const std::exception& e) {
-                    eventLoop_.Post(alive.Bind([this, reason = std::string(e.what())] {
+                    postQueue_.Post(alive.Bind([this, reason = std::string(e.what())] {
                         LogMessage(options_.logCategory, options_.disconnectSeverity, reason);
                         if (onDisconnected_) {
                             onDisconnected_(reason);
@@ -193,7 +191,7 @@ class FramedConnection {
                     // finally return). The lifetime token is what makes that
                     // safe, not an assumption about when this callback runs
                     // relative to destruction.
-                    eventLoop_.Post(alive.Bind([this] {
+                    postQueue_.Post(alive.Bind([this] {
                         const std::string reason = std::string(options_.entityNoun) + " exited (EOF)";
                         LogMessage(options_.logCategory, options_.disconnectSeverity, reason);
                         if (onDisconnected_) {
@@ -209,12 +207,12 @@ class FramedConnection {
                     // Never produced by LSP/DAP's Content-Length framing.
                     continue;
                 }
-                // ned::ui::EventLoop::Run's own loop drains any Post()ed
-                // work unconditionally and that alone earns the next
+                // ui::EventLoop::Run drains any Post()ed work
+                // unconditionally and that alone earns the next
                 // iteration a repaint, so a frame arriving here and updating
                 // real state is shown without needing an explicit "force a
                 // frame" call.
-                eventLoop_.Post(alive.Bind([this, frameText = std::move(*frame)]() mutable {
+                postQueue_.Post(alive.Bind([this, frameText = std::move(*frame)]() mutable {
                     if (onFrame_) {
                         onFrame_(std::move(frameText));
                     }
@@ -258,7 +256,7 @@ class FramedConnection {
                     }
                     // By value, not through this: the line can still be
                     // queued after the connection is destroyed.
-                    eventLoop_.Post([category = options_.logCategory, severity = options_.stderrSeverity, label,
+                    postQueue_.Post([category = options_.logCategory, severity = options_.stderrSeverity, label,
                                      line = std::move(line)] {
                         // diagnostics-log-rollup follow-up: LogMessage
                         // itself coalesces this against the immediately
@@ -307,7 +305,7 @@ class FramedConnection {
     std::jthread stderrThread_;
     TransportT   transport_;
 
-    ned::ui::EventLoop& eventLoop_;
+    PostQueue& postQueue_;
 
     std::mutex writeMutex_;
     // condition_variable_any, not condition_variable: plain

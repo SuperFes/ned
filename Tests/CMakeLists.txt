@@ -235,6 +235,7 @@ add_executable(ned_tests
             CandidateListTest.cpp
             RequestSlotTest.cpp
             LifetimeTest.cpp
+            PostQueueTest.cpp
             MinibufferPromptTest.cpp
             PromptHistoryTest.cpp
             TabBarTest.cpp

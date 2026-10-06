@@ -4,14 +4,13 @@
 #include <string>
 #include <utility>
 
-#include "UI/EventLoop.h"
 
 namespace ned::editor::process {
 
-StreamedChild::StreamedChild(ChildProcess child, ui::EventLoop& eventLoop, OutputHandler onOutput, ExitHandler onExit) : child_(std::move(child)), onOutput_(std::move(onOutput)), onExit_(std::move(onExit)) {
+StreamedChild::StreamedChild(ChildProcess child, PostQueue& postQueue, OutputHandler onOutput, ExitHandler onExit) : child_(std::move(child)), onOutput_(std::move(onOutput)), onExit_(std::move(onExit)) {
     // Started in the body, once child_ exists, which is why readThread_ is
     // declared ahead of it empty.
-    StartReadLoop(eventLoop);
+    StartReadLoop(postQueue);
 }
 
 StreamedChild::~StreamedChild() {
@@ -41,8 +40,8 @@ void StreamedChild::DispatchExit(std::optional<int> exitCode) {
     }
 }
 
-void StreamedChild::StartReadLoop(ui::EventLoop& eventLoop) {
-    readThread_ = std::jthread([this, &eventLoop, alive = lifetime_.Token()](std::stop_token) {
+void StreamedChild::StartReadLoop(PostQueue& postQueue) {
+    readThread_ = std::jthread([this, &postQueue, alive = lifetime_.Token()](std::stop_token) {
         while (true) {
             std::string chunk;
             try {
@@ -57,10 +56,10 @@ void StreamedChild::StartReadLoop(ui::EventLoop& eventLoop) {
             if (chunk.empty()) {
                 break; // EOF: the child exited, or this object is being destroyed
             }
-            eventLoop.Post(alive.Bind([this, chunk = std::move(chunk)] { DispatchOutput(chunk); }));
+            postQueue.Post(alive.Bind([this, chunk = std::move(chunk)] { DispatchOutput(chunk); }));
         }
         const std::optional<int> exitCode = child_.WaitForExit();
-        eventLoop.Post(alive.Bind([this, exitCode] { DispatchExit(exitCode); }));
+        postQueue.Post(alive.Bind([this, exitCode] { DispatchExit(exitCode); }));
     });
 }
 
