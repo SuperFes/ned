@@ -54,6 +54,10 @@ enum class Charset : std::uint8_t { Utf8,
 [[nodiscard]] Charset ResolveLoadCharset(const std::filesystem::path& path, std::string_view head,
                                          std::optional<Charset> chosen);
 
+// ResolveLoadCharset for a file whose surroundings this process can't see,
+// such as one read on a remote host: nothing is stated.
+[[nodiscard]] Charset ResolveUnstatedCharset(std::string_view head, std::optional<Charset> chosen);
+
 // How many of `head`'s bytes are `charset`'s preamble: all of it when the
 // file starts with it, else none (a UTF-16 file stated without a BOM).
 [[nodiscard]] std::size_t PreambleLength(std::string_view head, Charset charset);

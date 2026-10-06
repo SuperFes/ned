@@ -1,12 +1,12 @@
-#include "Location.h"
+#include "RemoteFile.h"
 
-namespace ned::editor::remote {
+namespace ned::text {
 
-std::string Location::ToString() const {
+std::string RemoteFile::ToString() const {
     return destination + ":" + path.string();
 }
 
-std::optional<Location> ParseLocation(std::string_view text) {
+std::optional<RemoteFile> ParseRemoteFile(std::string_view text) {
     const std::size_t split = text.find(":/");
     if (split == std::string_view::npos || split == 0) {
         return std::nullopt;
@@ -15,7 +15,7 @@ std::optional<Location> ParseLocation(std::string_view text) {
     if (!path.has_filename() && path != path.root_path()) {
         path = path.parent_path();
     }
-    return Location{.destination = std::string(text.substr(0, split)), .path = std::move(path)};
+    return RemoteFile{.destination = std::string(text.substr(0, split)), .path = std::move(path)};
 }
 
-} // namespace ned::editor::remote
+} // namespace ned::text

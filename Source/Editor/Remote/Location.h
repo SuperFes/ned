@@ -1,28 +1,23 @@
 //
-// A place on a remote host, written destination:/absolute/path the way scp
-// and the mode line spell it.
+// A place on a remote host: Text/RemoteFile.h's, under the name the remote
+// commands use for it.
 //
 
 #ifndef NED_EDITOR_REMOTE_LOCATION_H
 #define NED_EDITOR_REMOTE_LOCATION_H
 
-#include <filesystem>
 #include <optional>
-#include <string>
 #include <string_view>
+
+#include "Text/RemoteFile.h"
 
 namespace ned::editor::remote {
 
-struct Location {
-    std::string           destination;
-    std::filesystem::path path; // absolute, lexically normal, no trailing separator
+using Location = text::RemoteFile;
 
-    [[nodiscard]] std::string ToString() const;
-};
-
-// nullopt unless text is a destination, ':', then an absolute path. The
-// first ":/" splits them, so a bracketed IPv6 destination parses too.
-[[nodiscard]] std::optional<Location> ParseLocation(std::string_view text);
+[[nodiscard]] inline std::optional<Location> ParseLocation(std::string_view text) {
+    return text::ParseRemoteFile(text);
+}
 
 } // namespace ned::editor::remote
 

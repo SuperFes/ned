@@ -60,4 +60,9 @@ bool BytesLookBinaryToLoad(const std::filesystem::path& path, std::string_view b
     return HeadLooksBinary(head, ResolveLoadCharset(path, head, chosen));
 }
 
+bool BytesLookBinaryToLoad(std::string_view bytes, std::optional<Charset> chosen) {
+    const std::string_view head = bytes.substr(0, kHeadBytes);
+    return head.find('\0') != std::string_view::npos && HeadLooksBinary(head, ResolveUnstatedCharset(head, chosen));
+}
+
 } // namespace ned::text

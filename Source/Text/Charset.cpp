@@ -166,8 +166,7 @@ std::string_view CharsetPreamble(Charset charset) {
 }
 
 Charset ResolveLoadCharset(const std::filesystem::path& path, std::string_view head, std::optional<Charset> chosen) {
-    const Charset sniffed = SniffCharset(head);
-    if (!chosen && sniffed == Charset::Utf8) {
+    if (!chosen && SniffCharset(head) == Charset::Utf8) {
         std::function<std::optional<Charset>(const std::filesystem::path&)> resolver;
         {
             std::scoped_lock lock(StatedResolver().mutex);
@@ -177,6 +176,11 @@ Charset ResolveLoadCharset(const std::filesystem::path& path, std::string_view h
             chosen = resolver(path);
         }
     }
+    return ResolveUnstatedCharset(head, chosen);
+}
+
+Charset ResolveUnstatedCharset(std::string_view head, std::optional<Charset> chosen) {
+    const Charset sniffed = SniffCharset(head);
     if (!chosen || IsUtf8Family(*chosen)) {
         return (chosen && sniffed != Charset::Utf8Bom) ? Charset::Utf8 : sniffed;
     }

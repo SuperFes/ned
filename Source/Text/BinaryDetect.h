@@ -31,6 +31,9 @@ namespace ned::text {
 
 // LooksBinaryToLoad's judgement of bytes already read from path.
 [[nodiscard]] bool BytesLookBinaryToLoad(const std::filesystem::path& path, std::string_view bytes, std::optional<Charset> chosen = std::nullopt);
+// The same for bytes read where this process can't see what surrounds the
+// file (ResolveUnstatedCharset).
+[[nodiscard]] bool BytesLookBinaryToLoad(std::string_view bytes, std::optional<Charset> chosen = std::nullopt);
 
 // The judgement itself, over a file's first bytes.
 [[nodiscard]] bool HeadLooksBinary(std::string_view head, Charset charset);
