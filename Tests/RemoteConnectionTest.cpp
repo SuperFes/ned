@@ -21,6 +21,7 @@
 #include "Editor/Remote/Hosts.h"
 #include "Editor/Remote/Location.h"
 #include "Editor/Remote/Search.h"
+#include "EnvOverride.h"
 #include "FakeRemoteHost.h"
 
 using Catch::Matchers::ContainsSubstring;
@@ -154,18 +155,52 @@ TEST_CASE("A hello from another build reinstalls once, and a second mismatch fai
     REQUIRE_THROWS_WITH(ned::editor::remote::Connect(fake.Options()), StartsWith("the agent on host still reports build " + host::FileBuildId(AgentBinary())));
 }
 
+TEST_CASE("A host that already has the agent starts it in one session", "[Remote][Connection][HostAgent]") {
+    FakeHost fake;
+    // Offered too, but never this host's architecture.
+    const fs::path foreign = fake.dir / "agents" / "sparc64" / "ned-agent";
+    fs::create_directories(foreign.parent_path());
+    fs::copy_file(fake.local, foreign);
+    const fs::path                      log = fake.dir / "sessions";
+    const ned::tests::ScopedEnvOverride logged("NED_FAKE_SSH_LOG", log.c_str());
+    const auto                          sessions = [&log] {
+        std::ifstream in(log);
+        std::size_t   count = 0;
+        for (std::string line; std::getline(in, line);) {
+            ++count;
+        }
+        return count;
+    };
+
+    // Missing, so a probe and an upload come between two starts.
+    REQUIRE(ned::editor::remote::Connect(fake.Options()).agent.uploaded);
+    REQUIRE(sessions() == 4);
+
+    const Handshake again = ned::editor::remote::Connect(fake.Options());
+    REQUIRE(sessions() == 5);
+    REQUIRE_FALSE(again.agent.uploaded);
+    REQUIRE(again.agent.arch == host::BuildArch());
+    REQUIRE(again.agent.build == host::FileBuildId(fake.local));
+    REQUIRE(again.agent.remotePath == fake.dir / "data" / "ned" / "agent" / (again.agent.build + "-" + again.agent.arch) / "ned-agent");
+    REQUIRE(again.hello.build == again.agent.build);
+}
+
 TEST_CASE("Whatever a login script prints ahead of the agent is skipped", "[Remote][Connection][HostAgent]") {
     FakeHost        fake;
     const Handshake handshake = ned::editor::remote::Connect(fake.Options("chatty"));
     REQUIRE(handshake.hello.build == handshake.agent.build);
 }
 
-TEST_CASE("Waiting for the agent to start gives up on a flood, an exit, a timeout and a cancel", "[Remote][Connection]") {
+TEST_CASE("Waiting for the agent to start reads where it is, and gives up on a flood, an exit, a timeout and a cancel", "[Remote][Connection]") {
     using ned::editor::remote::AwaitAgentStart;
     using ned::editor::remote::kAgentStartMarker;
 
-    FrameTransport started({"/bin/sh", "-c", "printf 'motd'; echo " + std::string(kAgentStartMarker) + "; sleep 10"}, true);
-    AwaitAgentStart(started, std::chrono::seconds(10));
+    using ned::editor::remote::kAgentMissingMarker;
+    FrameTransport started({"/bin/sh", "-c", "printf 'motd'; printf '" + std::string(kAgentStartMarker) + " /data/ab-x86_64/ned-agent'; echo; sleep 10"}, true);
+    REQUIRE(AwaitAgentStart(started, std::chrono::seconds(10)) == fs::path("/data/ab-x86_64/ned-agent"));
+
+    FrameTransport missing({"/bin/sh", "-c", "echo motd; echo " + std::string(kAgentMissingMarker)}, true);
+    REQUIRE(AwaitAgentStart(missing, std::chrono::seconds(10)) == std::nullopt);
 
     FrameTransport flood({"/bin/sh", "-c", "yes 'You have new mail.'"}, true);
     REQUIRE_THROWS_WITH(AwaitAgentStart(flood, std::chrono::seconds(10)), ContainsSubstring("does a login script write to stdout? It began: You have new mail."));

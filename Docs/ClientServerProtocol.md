@@ -102,7 +102,8 @@ hello  -> {protocol: {major, minor}, codecs: [str], window: uint}
   remote may have no toolchain. Copying uses the same `ssh`/`sftp` transport
   (ControlMaster), so a deploy has no other dependencies.
 
-  `Remote/Deploy.h` does it in at most two sessions. A probe, fed to `sh -s` so a non-POSIX
+  `Remote/Deploy.h` does it only when the agent session (section 5) finds none of the
+  editor's builds installed, in two more sessions. A probe, fed to `sh -s` so a non-POSIX
   login shell never parses it, prints the architecture, the agent root and the installed
   `<build>-<arch>` directories after a marker line that skips anything a login script
   printed. When the local agent's build isn't among them, it goes up on the stdin of one
@@ -110,11 +111,10 @@ hello  -> {protocol: {major, minor}, codecs: [str], window: uint}
   leaves a partial agent. Local agents come from `libexec/ned/agent/<arch>/`
   (`$NED_AGENT_DIR` overrides): `cmake --install build-agent-<arch> --component agent
   --prefix <prefix>` puts a static build there, the editor's build tree included.
-- `Remote/Connection.h` puts it together: master, deploy, an agent session, then `hello`
-  sent as request id 1 before an `Endpoint` takes over the connection (and numbers past
-  it). `Connect` blocks, so a
-  `Connector` runs it on a worker that a stop cancels at any step, and hands a
-  `Connection` to the main thread.
+- `Remote/Connection.h` puts it together: master, an agent session (deploying when it finds
+  none), then `hello` sent as request id 1 before an `Endpoint` takes over the connection
+  (and numbers past it). `Connect` blocks, so a `Connector` runs it on a worker that a stop
+  cancels at any step, and hands a `Connection` to the main thread.
 - `Remote/Hosts.h` keeps one `Connection` per destination for the editor, sharing an
   attempt between callers. `remote-connect`, `remote-disconnect` and
   `remote-project-search` (`host:/path`, results streamed into `*search results*`) run
@@ -151,10 +151,13 @@ connection rather than behind a virtual interface:
   `ClearAllForwardings=yes` and keepalives, and `ControlPersist=no` keeps a user's
   persisting config from backgrounding the master out of the editor's ownership.
 
-  A login script can print ahead of any command (bash reads `~/.bashrc` for one run over
-  ssh), so the agent session is `sh -c 'echo ned-agent-stdio-1; exec "$0" --stdio'
-  <agent>`, and the editor skips stdout through the marker before `hello`. The agent says
-  nothing until `hello`, so its frames start clean.
+  The agent session is one `sh -c` script given every local `<build>-<arch>`. It picks the
+  one matching `uname -m` that is installed, prints `ned-agent-stdio-1 <path>` and `exec`s
+  it, so a host that already has the agent costs one session; otherwise it prints
+  `ned-agent-missing-1`, and the editor deploys and runs the script again. A login script
+  can print ahead of any command (bash reads `~/.bashrc` for one run over ssh), so the
+  editor skips stdout through the marker before `hello`. The agent says nothing until
+  `hello`, so its frames start clean.
 
 No TCP and no listening socket on either side.
 

@@ -12,8 +12,11 @@
 // to "silent" never finishes logging in; a session on "chatty" prints to
 // stdout ahead of its command, as a login script can.
 //
+// With $NED_FAKE_SSH_LOG set, each session appends its command line there.
+//
 
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 
@@ -147,6 +150,12 @@ int main(int argc, char** argv) {
     }
     if (command.empty()) {
         return Fail("fake ssh: a session needs a command");
+    }
+    if (const char* log = std::getenv("NED_FAKE_SSH_LOG"); log != nullptr && *log != '\0') {
+        if (std::FILE* file = std::fopen(log, "a")) {
+            std::fprintf(file, "%s\n", command.c_str());
+            std::fclose(file);
+        }
     }
     if (destination == "chatty") {
         std::fputs("Welcome to chatty\nno newline here", stdout);
