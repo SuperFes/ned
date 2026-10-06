@@ -13,6 +13,7 @@ using ned::editor::SearchFiles;
 using ned::editor::SearchMatch;
 using ned::editor::SearchPattern;
 using ned::editor::SearchPatternError;
+using ned::editor::SearchRoot;
 
 namespace {
 
@@ -108,6 +109,42 @@ TEST_CASE("SearchDirectory matches live content opened through a symlinked direc
     REQUIRE(matches.size() == 1);
     REQUIRE(matches[0].file == dir / "real" / "a.txt");
     REQUIRE(matches[0].lineText == "fresh needle");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("SearchRoot places a path under either the root's spelling or its canonical form", "[SearchEngine]") {
+    const std::filesystem::path dir = FreshDir("ned_search_engine_root");
+    std::filesystem::create_directory(dir / "real");
+    std::filesystem::create_directory_symlink(dir / "real", dir / "link");
+
+    const SearchRoot root(dir / "link");
+    REQUIRE(root.Valid());
+    REQUIRE(root.Relative(dir / "link" / "a.txt", dir / "real" / "a.txt") == std::filesystem::path("a.txt"));
+    REQUIRE(root.Relative(dir / "real" / "b" / "c.txt", dir / "real" / "b" / "c.txt") == std::filesystem::path("b/c.txt"));
+    REQUIRE_FALSE(root.Relative(dir / "other.txt", dir / "other.txt").has_value());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("SearchDirectory under a symlinked root uses live content opened through the real path",
+          "[SearchEngine]") {
+    const std::filesystem::path dir = FreshDir("ned_search_engine_symlinked_root");
+    std::filesystem::create_directory(dir / "real");
+    {
+        std::ofstream(dir / "real" / "a.txt") << "stale needle\n";
+    }
+    std::filesystem::create_directory_symlink(dir / "real", dir / "link");
+    const std::vector<LiveContent> live{Live(dir / "real" / "a.txt", "fresh needle\n"),
+                                        Live(dir / "real" / "new.txt", "unsaved needle\n")};
+
+    const std::vector<SearchMatch> matches = SearchDirectory(dir / "link", SearchPattern("needle"), live);
+
+    REQUIRE(matches.size() == 2);
+    REQUIRE(matches[0].file == dir / "link" / "a.txt");
+    REQUIRE(matches[0].lineText == "fresh needle");
+    REQUIRE(matches[1].file == dir / "link" / "new.txt");
+    REQUIRE(matches[1].lineText == "unsaved needle");
 
     std::filesystem::remove_all(dir);
 }

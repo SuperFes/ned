@@ -263,6 +263,34 @@ std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, cons
     return SearchDirectory(root, SearchPattern(pattern), {}, stop);
 }
 
+SearchRoot::SearchRoot(const std::filesystem::path& root) {
+    std::error_code             ec;
+    const std::filesystem::path absolute = std::filesystem::absolute(root, ec);
+    if (ec) {
+        return;
+    }
+    normalized_ = absolute.lexically_normal();
+    std::error_code canonicalEc;
+    canonical_ = std::filesystem::weakly_canonical(normalized_, canonicalEc);
+    if (canonicalEc) {
+        canonical_ = normalized_;
+    }
+}
+
+std::optional<std::filesystem::path> SearchRoot::Relative(const std::filesystem::path& path,
+                                                          const std::filesystem::path& canonicalPath) const {
+    if (!Valid()) {
+        return std::nullopt;
+    }
+    if (IsUnderRoot(path, normalized_)) {
+        return path.lexically_relative(normalized_);
+    }
+    if (!canonicalPath.empty() && IsUnderRoot(canonicalPath, canonical_)) {
+        return canonicalPath.lexically_relative(canonical_);
+    }
+    return std::nullopt;
+}
+
 std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, const SearchPattern& pattern,
                                          std::span<const LiveContent> live, const std::stop_token& stop) {
     std::error_code             ec;
@@ -270,29 +298,58 @@ std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, cons
     if (ec) {
         return {};
     }
-    const std::filesystem::path normalizedRoot = absoluteRoot.lexically_normal();
+    const SearchRoot searchRoot(absoluteRoot);
 
-    std::vector<const LiveContent*> inRoot;
+    // Each entry under root, with the path it's reported as: root's own
+    // spelling, whichever of the entry's spellings put it there.
+    struct InRoot {
+        const LiveContent*    entry;
+        std::filesystem::path relative;
+        std::filesystem::path reported;
+    };
+    std::vector<InRoot> inRoot;
     for (const LiveContent& entry : live) {
-        if (IsUnderRoot(entry.path, normalizedRoot)) {
-            inRoot.push_back(&entry);
+        if (std::optional<std::filesystem::path> relative = searchRoot.Relative(entry.path, entry.canonicalPath)) {
+            std::filesystem::path reported = (searchRoot.Normalized() / *relative).lexically_normal();
+            inRoot.push_back(InRoot{&entry, std::move(*relative), std::move(reported)});
         }
     }
     // Deterministic order for whatever ends up appended after the walk.
-    std::sort(inRoot.begin(), inRoot.end(), [](const LiveContent* a, const LiveContent* b) { return a->path < b->path; });
+    std::sort(inRoot.begin(), inRoot.end(), [](const InRoot& a, const InRoot& b) { return a.reported < b.reported; });
 
     std::vector<std::filesystem::path> files = CollectSearchableFiles(absoluteRoot, stop);
     std::vector<const LiveContent*>    sources(files.size(), nullptr);
 
     if (!inRoot.empty()) {
-        const std::unordered_map<std::string, const LiveContent*> byKey = LiveByKey(inRoot);
+        std::vector<const LiveContent*> entries;
+        entries.reserve(inRoot.size());
+        for (const InRoot& item : inRoot) {
+            entries.push_back(item.entry);
+        }
+        const std::unordered_map<std::string, const LiveContent*> byKey = LiveByKey(entries);
+
+        // A walked file's canonical spelling is derived lexically from the
+        // root's, not by a syscall per file.
+        const bool rootAliased = searchRoot.Canonical() != searchRoot.Normalized();
+        const auto findLive    = [&](const std::filesystem::path& walked) -> const LiveContent* {
+            const std::filesystem::path normal = walked.lexically_normal();
+            if (const auto it = byKey.find(normal.string()); it != byKey.end()) {
+                return it->second;
+            }
+            if (!rootAliased) {
+                return nullptr;
+            }
+            const std::filesystem::path alias =
+                (searchRoot.Canonical() / normal.lexically_relative(searchRoot.Normalized())).lexically_normal();
+            const auto it = byKey.find(alias.string());
+            return it != byKey.end() ? it->second : nullptr;
+        };
 
         std::vector<const LiveContent*> matchedByWalk;
         for (std::size_t i = 0; i < files.size(); ++i) {
-            const auto it = byKey.find(files[i].lexically_normal().string());
-            if (it != byKey.end()) {
-                sources[i] = it->second;
-                matchedByWalk.push_back(it->second);
+            if (const LiveContent* entry = findLive(files[i])) {
+                sources[i] = entry;
+                matchedByWalk.push_back(entry);
             }
         }
 
@@ -300,15 +357,15 @@ std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, cons
         // so an unsaved file under build/ doesn't show up where its saved
         // twin wouldn't.
         const GitIgnoreMatcher& gitIgnore = CachedGitIgnoreMatcher(absoluteRoot);
-        for (const LiveContent* entry : inRoot) {
-            if (std::find(matchedByWalk.begin(), matchedByWalk.end(), entry) != matchedByWalk.end()) {
+        for (const InRoot& item : inRoot) {
+            if (std::find(matchedByWalk.begin(), matchedByWalk.end(), item.entry) != matchedByWalk.end()) {
                 continue;
             }
-            if (IsHiddenOrIgnored(entry->path.lexically_relative(normalizedRoot), gitIgnore)) {
+            if (IsHiddenOrIgnored(item.relative, gitIgnore)) {
                 continue;
             }
-            files.push_back(entry->path);
-            sources.push_back(entry);
+            files.push_back(item.reported);
+            sources.push_back(item.entry);
         }
     }
 

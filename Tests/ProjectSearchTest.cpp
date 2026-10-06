@@ -369,6 +369,27 @@ TEST_CASE("SearchDirectory searches an open modified buffer's content instead of
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("SearchDirectory through a symlinked root sees a buffer opened by its real path", "[ProjectSearch]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_live_symlinked_root";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "real");
+    {
+        std::ofstream(dir / "real" / "a.txt") << "on disk only\n";
+    }
+    std::filesystem::create_directory_symlink(dir / "real", dir / "link");
+
+    ned::text::BufferList bufferList;
+    ned::text::Buffer&    buffer = bufferList.OpenOrCreateFile(dir / "real" / "a.txt");
+    buffer.SetPoint(buffer.Content().ByteLength());
+    buffer.InsertAtPoint("typed but unsaved\n");
+
+    const std::vector<SearchMatch> matches = SearchDirectory(dir / "link", "disk|unsaved", bufferList);
+    REQUIRE(matches.size() == 2);
+    REQUIRE(matches[1].lineText == "typed but unsaved");
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("SearchDirectory sees a modified buffer that has no file on disk yet", "[ProjectSearch]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_live_newfile";
     std::filesystem::remove_all(dir);

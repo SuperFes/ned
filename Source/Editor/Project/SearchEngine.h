@@ -64,12 +64,41 @@ class SearchPattern {
 // Content searched in place of a file on disk -- an open buffer's unsaved
 // edits. It may stand for a file that doesn't exist yet.
 struct LiveContent {
-    std::filesystem::path path;          // absolute and lexically normal; reported as SearchMatch::file
+    std::filesystem::path path;          // absolute and lexically normal
     std::filesystem::path canonicalPath; // weakly canonical, so a symlinked spelling still matches
     std::string           text;          // searched unless preScanned is set
     // Matches the caller already found, for content too large to hand over
     // as one string.
     std::optional<std::vector<SearchMatch>> preScanned;
+};
+
+// A search root in each spelling live content can be compared against: a
+// buffer opened through the real path still belongs to a root reached
+// through a symlink.
+class SearchRoot {
+  public:
+    explicit SearchRoot(const std::filesystem::path& root);
+
+    // False if root can't be made absolute; nothing is under it then.
+    [[nodiscard]] bool Valid() const noexcept {
+        return !normalized_.empty();
+    }
+
+    // `path` relative to the root, through whichever spelling it's under, or
+    // nullopt if it's under neither.
+    [[nodiscard]] std::optional<std::filesystem::path> Relative(const std::filesystem::path& path,
+                                                                const std::filesystem::path& canonicalPath) const;
+
+    [[nodiscard]] const std::filesystem::path& Normalized() const noexcept {
+        return normalized_;
+    }
+    [[nodiscard]] const std::filesystem::path& Canonical() const noexcept {
+        return canonical_;
+    }
+
+  private:
+    std::filesystem::path normalized_;
+    std::filesystem::path canonical_;
 };
 
 // Recursively searches every regular text file under root, returning one
@@ -81,8 +110,9 @@ struct LiveContent {
 
 // As above, with each `live` entry searched in place of its file. Entries the
 // walk never visits (a file not yet on disk) are appended in path order,
-// subject to the same dot-directory and .gitignore rules; entries outside
-// root are ignored.
+// subject to the same dot-directory and .gitignore rules. An entry counts as
+// under root by SearchRoot's rule and is reported under root's spelling;
+// entries outside it are ignored.
 [[nodiscard]] std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, const SearchPattern& pattern,
                                                        std::span<const LiveContent> live,
                                                        const std::stop_token&       stop = {});

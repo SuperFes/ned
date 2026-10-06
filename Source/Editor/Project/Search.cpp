@@ -84,19 +84,16 @@ std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, cons
                                          text::BufferList& liveBuffers) {
     const SearchPattern compiled(pattern);
 
-    std::error_code             ec;
-    const std::filesystem::path absoluteRoot = std::filesystem::absolute(root, ec);
-    if (ec) {
+    const SearchRoot searchRoot(root);
+    if (!searchRoot.Valid()) {
         return {};
     }
-    const std::filesystem::path normalizedRoot = absoluteRoot.lexically_normal();
 
     const std::vector<LiveContent> live = SnapshotModifiedBuffers(
-        liveBuffers, compiled, [&normalizedRoot](const std::filesystem::path& absolutePath, const std::filesystem::path&) {
-            const std::filesystem::path relative = absolutePath.lexically_relative(normalizedRoot);
-            return !relative.empty() && *relative.begin() != "..";
+        liveBuffers, compiled, [&searchRoot](const std::filesystem::path& absolutePath, const std::filesystem::path& canonical) {
+            return searchRoot.Relative(absolutePath, canonical).has_value();
         });
-    return SearchDirectory(absoluteRoot, compiled, live);
+    return SearchDirectory(root, compiled, live);
 }
 
 std::vector<SearchMatch> SearchFiles(const std::vector<std::filesystem::path>& files, const std::string& pattern,
