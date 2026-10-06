@@ -130,6 +130,9 @@ class Endpoint {
 
     // How many chunks the peer accepts ahead per stream.
     void SetPeerWindow(std::size_t window);
+    // Numbers later requests past id, which something else already sent on
+    // this connection: a handshake made before this endpoint took over.
+    void ReserveRequestIds(std::uint64_t id);
 
     // Throws ProtocolError for a message that breaks the protocol: wrong
     // shape, an unknown response id, or a chunk out of sequence. Credit is

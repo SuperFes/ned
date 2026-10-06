@@ -59,10 +59,10 @@ namespace detail {
     };
 
     struct Incoming {
-        std::stop_source    stop;
-        std::size_t         credit{};
-        std::uint64_t       nextSeq = 0;
-        std::deque<Json>    queued;
+        std::stop_source      stop;
+        std::size_t           credit{};
+        std::uint64_t         nextSeq = 0;
+        std::deque<Json>      queued;
         std::optional<Json>   response; // held until queued finishes draining
         std::function<void()> onDrained;
     };
@@ -405,6 +405,10 @@ Endpoint::~Endpoint() {
 
 void Endpoint::SetPeerWindow(std::size_t window) {
     core_->peerWindow = std::max<std::size_t>(window, 1);
+}
+
+void Endpoint::ReserveRequestIds(std::uint64_t id) {
+    core_->nextId = std::max(core_->nextId, id + 1);
 }
 
 void Endpoint::Receive(Json message) {

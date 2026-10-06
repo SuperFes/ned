@@ -68,6 +68,10 @@ class FrameTransport {
     // oversized length, or a payload zstd rejects.
     [[nodiscard]] std::optional<std::string> ReadFrame(std::chrono::milliseconds stallTimeout = ProtocolReadStallTimeoutMs()) const;
 
+    // True once a frame (or EOF) is ready within timeout, for a reader that
+    // can't wait unbounded for one to start.
+    [[nodiscard]] bool WaitReadable(std::chrono::milliseconds timeout) const;
+
     void Close() noexcept;
 
     [[nodiscard]] pid_t              Pid() const noexcept;

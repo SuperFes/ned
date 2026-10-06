@@ -112,6 +112,25 @@ TEST_CASE("Endpoint correlates responses answered out of order", "[Protocol][End
     REQUIRE(peers.editor.PendingRequests() == 0);
 }
 
+TEST_CASE("Endpoint numbers requests past ids a handshake already used", "[Protocol][Endpoint]") {
+    Peers peers;
+    peers.host.Handle("echo", [](Json params, Responder responder) { responder.Result(std::move(params)); });
+
+    // The handshake's request, sent outside the editor's endpoint.
+    peers.host.Receive(Json{{"id", 1}, {"method", "echo"}, {"params", "hello"}});
+    peers.editor.ReserveRequestIds(1);
+    peers.toEditor.clear();
+
+    Outcome outcome;
+    REQUIRE(peers.editor.Request("echo", "after", outcome.Handlers()) == 2);
+    peers.Pump();
+    REQUIRE(outcome.result == Json("after"));
+
+    // Never backwards.
+    peers.editor.ReserveRequestIds(0);
+    REQUIRE(peers.editor.Request("echo", "next", outcome.Handlers()) == 3);
+}
+
 TEST_CASE("Endpoint answers an unknown method and dispatches notifications", "[Protocol][Endpoint]") {
     Peers             peers;
     std::vector<Json> seen;

@@ -148,6 +148,10 @@ std::optional<std::string> FrameTransport::ReadFrame(std::chrono::milliseconds s
     return (flags & kFrameFlagZstd) != 0 ? Decompress(payload) : payload;
 }
 
+bool FrameTransport::WaitReadable(std::chrono::milliseconds timeout) const {
+    return child_.WaitReadable(timeout);
+}
+
 void FrameTransport::Close() noexcept {
     child_.CloseConnection();
 }
