@@ -93,6 +93,9 @@ class Responder {
 
     // Chunks waiting on credit, for a producer that wants to slow down.
     [[nodiscard]] std::size_t Backlog() const;
+    // Runs each time the peer's credit clears a backlog, for a producer that
+    // holds work back while Backlog() is nonzero.
+    void OnDrained(std::function<void()> callback);
     // Set when the request is cancelled or the connection closes.
     [[nodiscard]] std::stop_token StopToken() const;
     [[nodiscard]] bool            Finished() const;

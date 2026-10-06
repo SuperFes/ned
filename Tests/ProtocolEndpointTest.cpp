@@ -184,6 +184,34 @@ TEST_CASE("Endpoint streams a flood without exceeding the receiver's window", "[
     }
 }
 
+TEST_CASE("Endpoint tells a producer when credit clears its backlog", "[Protocol][Endpoint]") {
+    Peers                    peers;
+    std::optional<Responder> held;
+    int                      drained = 0;
+    peers.host.Handle("stream", [&](Json, Responder responder) {
+        for (std::size_t i = 0; i < kDefaultWindow + 2; ++i) {
+            responder.Chunk(i);
+        }
+        REQUIRE(responder.Backlog() == 2);
+        responder.OnDrained([&] {
+            ++drained;
+            REQUIRE(held->Backlog() == 0);
+            held->Chunk("late");
+            held->Result("done");
+        });
+        held.emplace(std::move(responder));
+    });
+
+    Outcome outcome;
+    peers.editor.Request("stream", nullptr, outcome.Handlers());
+    peers.Pump();
+
+    REQUIRE(drained == 1);
+    REQUIRE(outcome.result == Json("done"));
+    REQUIRE(outcome.chunks.size() == kDefaultWindow + 3);
+    REQUIRE(outcome.chunks.back() == Json("late"));
+}
+
 TEST_CASE("Endpoint cancels mid-stream with one response and no later chunks", "[Protocol][Endpoint]") {
     Peers                    peers;
     std::optional<Responder> held;

@@ -63,7 +63,8 @@ namespace detail {
         std::size_t         credit{};
         std::uint64_t       nextSeq = 0;
         std::deque<Json>    queued;
-        std::optional<Json> response; // held until queued finishes draining
+        std::optional<Json>   response; // held until queued finishes draining
+        std::function<void()> onDrained;
     };
 
     struct EndpointCore : std::enable_shared_from_this<EndpointCore> {
@@ -121,22 +122,31 @@ namespace detail {
         }
 
         // Sends what credit allows, then the held response once nothing is
-        // left ahead of it.
+        // left ahead of it, or else tells the producer its backlog cleared.
         void Flush(std::uint64_t id) {
             const auto it = incoming.find(id);
             if (it == incoming.end()) {
                 return;
             }
-            Incoming& entry = it->second;
+            Incoming&  entry      = it->second;
+            const bool hadBacklog = !entry.queued.empty();
             while (entry.credit > 0 && !entry.queued.empty()) {
                 Json data = std::move(entry.queued.front());
                 entry.queued.pop_front();
                 SendChunk(id, entry, std::move(data));
             }
-            if (entry.queued.empty() && entry.response) {
+            if (!entry.queued.empty()) {
+                return;
+            }
+            if (entry.response) {
                 Json response = std::move(*entry.response);
                 incoming.erase(it);
                 Send(std::move(response));
+            }
+            else if (hadBacklog && entry.onDrained) {
+                // A copy: the callback may answer, erasing the entry.
+                const std::function<void()> onDrained = entry.onDrained;
+                onDrained();
             }
         }
 
@@ -360,6 +370,16 @@ std::size_t Responder::Backlog() const {
     }
     const auto it = core->incoming.find(id_);
     return it == core->incoming.end() ? 0 : it->second.queued.size();
+}
+
+void Responder::OnDrained(std::function<void()> callback) {
+    const auto core = core_.lock();
+    if (!core || answered_) {
+        return;
+    }
+    if (const auto it = core->incoming.find(id_); it != core->incoming.end()) {
+        it->second.onDrained = std::move(callback);
+    }
 }
 
 std::stop_token Responder::StopToken() const {
