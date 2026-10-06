@@ -284,8 +284,8 @@ TEST_CASE("Hosts report attempts that fail or are cancelled, and connections tha
     std::optional<std::expected<Connection*, std::string>> silent;
     hosts.Connect("silent", [&](std::expected<Connection*, std::string> connection) { silent = connection; });
     REQUIRE(hosts.Disconnect("silent"));
-    REQUIRE(PumpUntil(queue, [&] { return silent.has_value(); }));
-    REQUIRE(silent->error() == "ssh to silent cancelled");
+    REQUIRE(silent.has_value());
+    REQUIRE(silent->error() == "cancelled");
     REQUIRE_FALSE(hosts.Connecting("silent"));
 
     std::optional<std::pair<std::string, std::string>> dropped;
@@ -297,6 +297,29 @@ TEST_CASE("Hosts report attempts that fail or are cancelled, and connections tha
     REQUIRE(dropped == std::pair<std::string, std::string>{"host", "the link went away"});
     REQUIRE(hosts.Find("host") == nullptr);
     REQUIRE(PumpUntil(queue, [&] { return hosts.Destinations().empty(); }));
+}
+
+TEST_CASE("A cancelled attempt never yields its connection, and the next one starts afresh", "[Remote][Connection][HostAgent]") {
+    FakeHost  fake;
+    PostQueue queue;
+    Hosts     hosts(queue, [&](const std::string& destination) { return fake.Options(destination); });
+
+    std::vector<std::expected<Connection*, std::string>> answers;
+    const auto                                           collect = [&](std::expected<Connection*, std::string> connection) { answers.push_back(std::move(connection)); };
+    hosts.Connect("host", collect);
+    // Logged in and posted, but not yet handed over.
+    pollfd posted{.fd = queue.WakeFd(), .events = POLLIN, .revents = 0};
+    REQUIRE(::poll(&posted, 1, 30000) == 1);
+    REQUIRE(hosts.Disconnect("host"));
+    REQUIRE(answers.size() == 1);
+    REQUIRE(answers[0].error() == "cancelled");
+
+    hosts.Connect("host", collect);
+    REQUIRE(hosts.Connecting("host"));
+    REQUIRE(PumpUntil(queue, [&] { return answers.size() == 2; }));
+    REQUIRE(answers[1].has_value());
+    REQUIRE(hosts.Find("host") == *answers[1]);
+    REQUIRE(hosts.Destinations() == std::vector<std::string>{"host"});
 }
 
 TEST_CASE("A remote project search streams the host's matches", "[Remote][Connection][HostAgent]") {
