@@ -17,7 +17,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <iosfwd>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "Charset.h"
@@ -65,11 +67,23 @@ struct SavePlan {
 // take a half-written file back. ExecuteSavePlan checks it too.
 void ValidateSavePlanCharset(const SavePlan& plan);
 
-// Writes plan.target: atomically via a sibling temp file and a rename
-// where that is available, in place where a hard-linked file or an
-// uncreatable sibling forces it. Throws std::runtime_error on failure,
-// matching Buffer::Save's own contract -- callers catch and report.
+// Writes plan.target through ReplaceFileContent. Throws
+// std::runtime_error on failure, matching Buffer::Save's own contract --
+// callers catch and report.
 void ExecuteSavePlan(const SavePlan& plan);
+
+// The bytes ExecuteSavePlan would write, for a target written elsewhere: a
+// remote host's file.
+[[nodiscard]] std::string EncodeSavePlan(const SavePlan& plan);
+
+// Replaces target's content with what write puts on the stream: atomically
+// via a sibling temp file and a rename where that is available, in place
+// where a hard-linked file or an uncreatable sibling forces it, with
+// attributes (CaptureFileAttributes) carried across. A stream left failed
+// fails the save; the original survives unless it was written in place.
+// Throws std::runtime_error.
+void ReplaceFileContent(const std::filesystem::path& target, const PreservedFileAttributes& attributes,
+                        const std::function<void(std::ostream&)>& write);
 
 } // namespace ned::text
 

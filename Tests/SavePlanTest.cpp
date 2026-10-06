@@ -135,3 +135,46 @@ TEST_CASE("ExecuteSavePlan throws when the target directory does not exist", "[S
     const std::filesystem::path target = TempPath("missing_dir") / "nested" / "file.txt";
     REQUIRE_THROWS_AS(ExecuteSavePlan(PlanFor(target, "content")), std::runtime_error);
 }
+
+TEST_CASE("EncodeSavePlan gives exactly the bytes ExecuteSavePlan writes", "[SavePlan]") {
+    const std::filesystem::path target = TempPath("encoded.txt");
+    std::filesystem::remove(target);
+
+    for (const auto charset : {ned::text::Charset::Utf8, ned::text::Charset::Utf8Bom, ned::text::Charset::Utf16Le, ned::text::Charset::Latin1}) {
+        for (const auto ending : {LineEnding::LF, LineEnding::CRLF}) {
+            SavePlan plan               = PlanFor(target, "caf\xC3\xA9   \n\nlast  \n\n");
+            plan.charset                = charset;
+            plan.lineEnding             = ending;
+            plan.trimTrailingWhitespace = true;
+            plan.ensureFinalNewline     = true;
+            ExecuteSavePlan(plan);
+            CHECK(ned::text::EncodeSavePlan(plan) == ReadFile(target));
+        }
+    }
+
+    // What the charset can't hold fails before any byte is produced.
+    SavePlan emoji = PlanFor(target, "\xF0\x9F\x98\x80");
+    emoji.charset  = ned::text::Charset::Latin1;
+    CHECK_THROWS_AS(ned::text::EncodeSavePlan(emoji), std::runtime_error);
+    std::filesystem::remove(target);
+}
+
+TEST_CASE("ReplaceFileContent keeps the original when the write fails", "[SavePlan]") {
+    const std::filesystem::path target = TempPath("replace.sh");
+    WriteFile(target, "original\n");
+    std::filesystem::permissions(target, std::filesystem::perms::owner_all);
+
+    REQUIRE_THROWS_AS(ned::text::ReplaceFileContent(target, CaptureFileAttributes(target),
+                                                    [](std::ostream& out) {
+                                                        out << "half";
+                                                        out.setstate(std::ios::failbit);
+                                                    }),
+                      std::runtime_error);
+    CHECK(ReadFile(target) == "original\n");
+    CHECK_FALSE(std::filesystem::exists(target.string() + ".ned-tmp"));
+
+    ned::text::ReplaceFileContent(target, CaptureFileAttributes(target), [](std::ostream& out) { out << "replaced\n"; });
+    CHECK(ReadFile(target) == "replaced\n");
+    CHECK(std::filesystem::status(target).permissions() == std::filesystem::perms::owner_all);
+    std::filesystem::remove(target);
+}
