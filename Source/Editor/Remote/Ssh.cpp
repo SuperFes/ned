@@ -3,10 +3,13 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cerrno>
+#include <charconv>
 #include <string_view>
 #include <system_error>
 
 #include <poll.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include "Editor/RuntimeDir.h"
@@ -60,6 +63,23 @@ namespace {
                 "ServerAliveInterval=" + std::to_string(options.aliveInterval.count()),
                 "-o",
                 "ServerAliveCountMax=" + std::to_string(options.aliveCountMax)};
+    }
+
+    // The pid in a NewControlPath name, "<pid>-<n>".
+    std::optional<pid_t> ControlPathOwner(std::string_view name) {
+        const auto dash = name.find('-');
+        if (dash == 0 || dash == std::string_view::npos || dash + 1 == name.size()) {
+            return std::nullopt;
+        }
+        const auto digits = [](std::string_view part) { return std::ranges::all_of(part, [](char c) { return c >= '0' && c <= '9'; }); };
+        if (!digits(name.substr(0, dash)) || !digits(name.substr(dash + 1))) {
+            return std::nullopt;
+        }
+        pid_t pid = 0;
+        if (std::from_chars(name.data(), name.data() + dash, pid).ec != std::errc() || pid <= 0) {
+            return std::nullopt;
+        }
+        return pid;
     }
 
     std::string Trimmed(std::string_view text) {
@@ -137,6 +157,36 @@ std::vector<std::string> SshExitArgv(const std::string& destination, const std::
 std::filesystem::path NewControlPath() {
     static std::atomic<unsigned> next{0};
     return EnsureRuntimeDirectory("ssh") / (std::to_string(::getpid()) + "-" + std::to_string(next++));
+}
+
+std::size_t SweepOrphanedMasters(const SshOptions& options) {
+    std::filesystem::path dir;
+    try {
+        dir = RuntimeDirectory() / "ssh";
+    }
+    catch (const std::runtime_error&) {
+        return 0;
+    }
+    std::error_code                    ec;
+    std::vector<std::filesystem::path> orphaned;
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        const std::optional<pid_t> owner = ControlPathOwner(entry.path().filename().string());
+        if (owner && entry.is_socket(ec) && ::kill(*owner, 0) != 0 && errno == ESRCH) {
+            orphaned.push_back(entry.path());
+        }
+    }
+    for (const std::filesystem::path& controlPath : orphaned) {
+        try {
+            // -O never logs in, so any destination does.
+            process::ChildProcess request(SshExitArgv("orphaned-master", controlPath, options));
+            (void)request.WaitReadable(kExitRequestWait);
+        }
+        catch (const std::runtime_error&) {
+            // The socket goes regardless; a master still behind it ends with its link.
+        }
+        std::filesystem::remove(controlPath, ec);
+    }
+    return orphaned.size();
 }
 
 SshMaster::SshMaster(std::string destination, SshOptions options, std::filesystem::path controlPath) : destination_(std::move(destination)), options_(std::move(options)), controlPath_(controlPath.empty() ? NewControlPath() : std::move(controlPath)) {
