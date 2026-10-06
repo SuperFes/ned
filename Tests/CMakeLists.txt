@@ -334,6 +334,7 @@ add_executable(ned_tests
             TestWatchdog.cpp
             TestWatchdogTest.cpp
             LineTransportTest.cpp
+            FrameTransportTest.cpp
             AcpClientTest.cpp
             AcpConfigTest.cpp
             AcpManagerTest.cpp

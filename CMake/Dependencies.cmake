@@ -2,7 +2,7 @@
 # FetchContent -- see git log for the migration off it). Included from the
 # root CMakeLists.txt before any target that links against these; every
 # target/variable this file produces (notcurses-core, utf8proc, CLI11::CLI11,
-# nlohmann_json::nlohmann_json, re2::re2, pcre2-8-static, vterm, the Janet_*
+# nlohmann_json::nlohmann_json, re2::re2, pcre2-8-static, vterm, PkgConfig::ZSTD, the Janet_*
 # pkg-config variables, Catch2::Catch2WithMain) is consumed from Source/ and
 # Tests/ subdirectories added afterward.
 
@@ -100,6 +100,11 @@ add_library(vterm ALIAS PkgConfig::VTERM)
 # file(1)'s content sniffing (Gentoo's sys-apps/file), consulted only for an
 # extension two languages share (`.h`: C, C++, Objective-C). Editor/FileMagic.h.
 pkg_check_modules(LIBMAGIC REQUIRED IMPORTED_TARGET libmagic)
+#------------------------------------------------------------------------------
+
+#--- System zstd ------------------------------------------------------------------
+# Per-frame compression on the host protocol's wire. Editor/Protocol/FrameTransport.h.
+pkg_check_modules(ZSTD REQUIRED IMPORTED_TARGET libzstd)
 #------------------------------------------------------------------------------
 
 #--- System image decoders -------------------------------------------------------

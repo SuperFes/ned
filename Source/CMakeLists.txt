@@ -57,6 +57,8 @@ add_library(ned_core STATIC
         Editor/Process/StreamedChild.cpp
         Editor/ProcessTimeouts.cpp
         Editor/Project/SearchEngine.cpp
+        Editor/Protocol/Cbor.cpp
+        Editor/Protocol/FrameTransport.cpp
         Editor/Protocol/LineTransport.cpp
         Editor/SearchSettings.cpp
         Text/BinaryDetect.cpp
@@ -68,8 +70,12 @@ add_library(ned_core STATIC
 
 target_include_directories(ned_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Only SearchEngine.cpp includes RE2; its header forward-declares it.
-target_link_libraries(ned_core PRIVATE re2::re2)
+# Only SearchEngine.cpp includes RE2; its header forward-declares it. Cbor.h
+# hands out nlohmann::json, so that one is public.
+target_link_libraries(ned_core
+        PUBLIC nlohmann_json::nlohmann_json
+        PRIVATE re2::re2
+        PRIVATE PkgConfig::ZSTD)
 
 if (NED_ENABLE_SANITIZERS)
     target_compile_options(ned_core PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
