@@ -1,9 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <filesystem>
+#include <optional>
 #include <string>
 
+#include "Editor/BufferSave.h"
 #include "Editor/Host/FsCodec.h"
+#include "Editor/Protocol/Endpoint.h"
 #include "Editor/Remote/RemoteBuffer.h"
 #include "Text/BufferList.h"
 
@@ -40,4 +44,100 @@ TEST_CASE("A remote read that fails leaves its placeholder loading, unless the f
     CHECK_FALSE(missing.IsLoading());
     CHECK(missing.Text().empty());
     CHECK_FALSE(missing.RemoteTimestamp().has_value());
+}
+
+TEST_CASE("A remote save keeps edits made while it was in flight, and a host's refusal asks next time", "[Remote][RemoteBuffer]") {
+    ned::text::Buffer buffer = ned::text::Buffer::FromRemoteContents({.destination = "host", .path = "/srv/a.txt"},
+                                                                     FileContents{.bytes = "one\n", .timestamp = std::nullopt});
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint("two\n");
+
+    ned::text::SavePlan plan = buffer.BeginRemoteSave(false, false);
+    CHECK(buffer.IsSaving());
+    CHECK(plan.target == "host:/srv/a.txt");
+    CHECK(ned::text::EncodeSavePlan(plan) == "one\ntwo\n");
+    buffer.InsertAtPoint("three\n"); // while the write is out
+    const auto when = std::filesystem::file_time_type::clock::now();
+    REQUIRE_FALSE(remote::FinishRemoteSave(buffer, std::move(plan), host::FileStat{.kind = host::FileKind::File, .size = 8, .mode = 0644, .timestamp = when}));
+    CHECK_FALSE(buffer.IsSaving());
+    CHECK(buffer.RemoteTimestamp() == when);
+    CHECK(buffer.Modified()); // "three" was never written
+    CHECK_FALSE(buffer.Path().has_value());
+
+    ned::text::SavePlan              second = buffer.BeginRemoteSave(false, false);
+    const std::optional<std::string> refused =
+        remote::FinishRemoteSave(buffer, std::move(second), std::unexpected(remote::FsFailure{.code = host::fs_error::kFileChanged, .message = "/srv/a.txt changed since it was read"}));
+    CHECK(refused == "/srv/a.txt changed since it was read; saving again asks to overwrite it");
+    CHECK(buffer.ExternallyModified());
+    CHECK(buffer.Modified());
+    CHECK_FALSE(buffer.IsSaving());
+
+    ned::text::SavePlan third = buffer.BeginRemoteSave(false, false);
+    CHECK(remote::FinishRemoteSave(buffer, std::move(third), std::unexpected(remote::FsFailure{.code = ned::editor::protocol::error_code::kTimedOut, .message = "no answer within 30000 ms"})) ==
+          "no answer within 30000 ms");
+    CHECK(buffer.ExternallyModified());
+
+    ned::text::SavePlan fourth = buffer.BeginRemoteSave(false, false);
+    REQUIRE_FALSE(remote::FinishRemoteSave(buffer, std::move(fourth), host::FileStat{.kind = host::FileKind::File, .size = 14, .mode = 0644, .timestamp = when}));
+    CHECK_FALSE(buffer.ExternallyModified());
+    CHECK_FALSE(buffer.Modified());
+
+    CHECK_THROWS(ned::text::Buffer("plain").BeginRemoteSave());
+}
+
+TEST_CASE("WriteBufferToDisk hands a remote buffer to the remote-save dispatcher, encoded as a local save would be", "[Remote][RemoteBuffer]") {
+    using ned::editor::RemoteSaveRequest;
+    using ned::editor::SaveDispatch;
+    struct DispatcherGuard {
+        ~DispatcherGuard() {
+            ned::editor::SetRemoteSaveDispatcher(nullptr);
+        }
+    } guard;
+
+    const auto        when   = std::filesystem::file_time_type::clock::now();
+    ned::text::Buffer buffer = ned::text::Buffer::FromRemoteContents({.destination = "host", .path = "/srv/a.txt"},
+                                                                     FileContents{.bytes     = "\xEF\xBB\xBF"
+                                                                                               "a\r\n",
+                                                                                  .timestamp = when});
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint("b");
+
+    // Nothing to carry it.
+    CHECK_THROWS_WITH(ned::editor::WriteBufferToDisk(buffer, SaveDispatch::Automatic), "ned: no remote hosts to save host:/srv/a.txt through");
+    CHECK_FALSE(buffer.IsSaving());
+
+    std::optional<RemoteSaveRequest> taken;
+    ned::editor::SetRemoteSaveDispatcher([&](RemoteSaveRequest request) {
+        taken.emplace(std::move(request));
+        return true;
+    });
+    // A synchronous caller couldn't report the outcome.
+    CHECK_THROWS_WITH(ned::editor::WriteBufferToDisk(buffer), "ned: host:/srv/a.txt is on a remote host; save-buffer saves it");
+    CHECK_FALSE(taken.has_value());
+    CHECK_FALSE(buffer.IsSaving());
+
+    ned::editor::WriteBufferToDisk(buffer, SaveDispatch::Automatic);
+    REQUIRE(taken.has_value());
+    CHECK(buffer.IsSaving());
+    CHECK(taken->buffer.Is(buffer));
+    CHECK(taken->file.ToString() == "host:/srv/a.txt");
+    CHECK(taken->bytes == "\xEF\xBB\xBF"
+                          "a\r\nb\r\n");
+    CHECK(taken->expect == std::optional<std::optional<std::filesystem::file_time_type>>(when));
+    REQUIRE_FALSE(remote::FinishRemoteSave(buffer, std::move(taken->plan), host::FileStat{.kind = host::FileKind::File, .size = 8, .mode = 0644, .timestamp = when}));
+
+    // Overwriting sends no expectation.
+    buffer.InsertAtPoint("c");
+    taken.reset();
+    ned::editor::WriteBufferToDisk(buffer, SaveDispatch::Automatic, true);
+    REQUIRE(taken.has_value());
+    CHECK_FALSE(taken->expect.has_value());
+    buffer.AbandonSave();
+
+    // Too large for one request: refused before it leaves.
+    buffer.InsertAtPoint(std::string(remote::kMaxWriteBytes, 'x'));
+    taken.reset();
+    CHECK_THROWS_WITH(ned::editor::WriteBufferToDisk(buffer, SaveDispatch::Automatic), Catch::Matchers::ContainsSubstring("too large to save to its host"));
+    CHECK_FALSE(taken.has_value());
+    CHECK_FALSE(buffer.IsSaving());
 }

@@ -9,6 +9,7 @@
 #include "LineEndingPolicy.h"
 #include "Mode.h"
 #include "ModeOverrides.h"
+#include "Remote/Fs.h"
 #include "Text/BufferList.h"
 #include "TrimOnSave.h"
 
@@ -31,11 +32,61 @@ namespace {
         return DispatcherStorage();
     }
 
+    std::function<bool(RemoteSaveRequest)>& RemoteDispatcherStorage() {
+        static std::function<bool(RemoteSaveRequest)> dispatcher;
+        return dispatcher;
+    }
+
+    std::function<bool(RemoteSaveRequest)> CurrentRemoteDispatcher() {
+        const std::scoped_lock lock(DispatcherMutex());
+        return RemoteDispatcherStorage();
+    }
+
+    void WriteRemoteBuffer(text::Buffer& buffer, SaveDispatch dispatch, bool overwriteChanged, text::SavePlan plan) {
+        const text::RemoteFile& file = *buffer.Remote();
+        const auto              fail = [&buffer](const std::string& message) {
+            buffer.AbandonSave();
+            throw std::runtime_error(message);
+        };
+        // Its outcome can only arrive later, which no synchronous caller
+        // could report.
+        if (dispatch == SaveDispatch::ForceSynchronous) {
+            fail("ned: " + file.ToString() + " is on a remote host; save-buffer saves it");
+        }
+        const std::function<bool(RemoteSaveRequest)> dispatcher = CurrentRemoteDispatcher();
+        if (!dispatcher) {
+            fail("ned: no remote hosts to save " + file.ToString() + " through");
+        }
+        RemoteSaveRequest request{.buffer = text::BufferIdentity(buffer), .file = file, .bytes = {}, .expect = std::nullopt, .plan = {}};
+        try {
+            request.bytes = text::EncodeSavePlan(plan);
+        }
+        catch (const std::exception& e) {
+            fail(e.what());
+        }
+        if (request.bytes.size() > remote::kMaxWriteBytes) {
+            fail("ned: " + file.ToString() + " is too large to save to its host (" + std::to_string(request.bytes.size() >> 20) + " MiB, at most " +
+                 std::to_string(remote::kMaxWriteBytes >> 20) + ")");
+        }
+        if (!overwriteChanged) {
+            request.expect = buffer.RemoteTimestamp();
+        }
+        request.plan = std::move(plan);
+        if (!dispatcher(std::move(request))) {
+            fail("ned: couldn't start saving " + file.ToString());
+        }
+    }
+
 } // namespace
 
 void SetAsyncSaveDispatcher(std::function<bool(AsyncSaveRequest)> dispatcher) {
     const std::scoped_lock lock(DispatcherMutex());
     DispatcherStorage() = std::move(dispatcher);
+}
+
+void SetRemoteSaveDispatcher(std::function<bool(RemoteSaveRequest)> dispatcher) {
+    const std::scoped_lock lock(DispatcherMutex());
+    RemoteDispatcherStorage() = std::move(dispatcher);
 }
 
 bool ShouldSaveAsynchronously(const text::Buffer& buffer) {
@@ -65,11 +116,10 @@ text::Charset CharsetForSave(const text::Buffer& buffer) {
     return *stated;
 }
 
-void WriteBufferToDisk(text::Buffer& buffer, SaveDispatch dispatch) {
-    if (!buffer.Path()) {
+void WriteBufferToDisk(text::Buffer& buffer, SaveDispatch dispatch, bool overwriteChanged) {
+    if (!buffer.Path() && !buffer.Remote()) {
         throw std::runtime_error("ned: buffer \"" + buffer.Name() + "\" has no associated file path");
     }
-    const std::filesystem::path bufferPath = *buffer.Path();
 
     // binary-safety-guardrails follow-up: a buffer opened via a confirmed
     // "open anyway?" binary override gets none of the byte-level,
@@ -96,8 +146,17 @@ void WriteBufferToDisk(text::Buffer& buffer, SaveDispatch dispatch) {
     const std::optional<text::LineEnding> ending =
         binarySafeguards ? std::optional<text::LineEnding>{} : std::optional<text::LineEnding>(ResolveLineEndingForSave(buffer));
 
-    const text::Charset charset   = CharsetForSave(buffer);
-    const auto          beginPlan = [&] {
+    const text::Charset charset = CharsetForSave(buffer);
+    if (buffer.Remote()) {
+        text::SavePlan plan         = buffer.BeginRemoteSave(finalNewline, trim, ending);
+        plan.charset                = charset;
+        plan.keepTrailingWhitespace = keepTrailingWhitespace;
+        WriteRemoteBuffer(buffer, dispatch, overwriteChanged, std::move(plan));
+        return;
+    }
+
+    const std::filesystem::path bufferPath = *buffer.Path();
+    const auto                  beginPlan  = [&] {
         text::SavePlan plan         = buffer.BeginSave(bufferPath, finalNewline, trim, ending);
         plan.charset                = charset;
         plan.keepTrailingWhitespace = keepTrailingWhitespace;

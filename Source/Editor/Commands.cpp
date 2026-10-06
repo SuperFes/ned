@@ -2160,7 +2160,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     // save-buffer-force (what BufferView's overwrite confirmation invokes
     // on y -- also M-x-reachable as the deliberate "I know, write it
     // anyway" escape hatch).
-    const auto saveBufferBody = [](CommandContext& context) {
+    const auto saveBufferBody = [](CommandContext& context, bool force) {
         try {
             // binary-safety-guardrails follow-up: BinarySafeguardsActive()
             // also gates the format-on-save step immediately below (auto-
@@ -2200,7 +2200,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                 ApplyScopedFormatOnSave(context.buffer, *context.mode);
             }
 
-            WriteBufferToDisk(context.buffer, SaveDispatch::Automatic);
+            WriteBufferToDisk(context.buffer, SaveDispatch::Automatic, force);
             if (context.message) {
                 // A large save is still running when this returns, so it
                 // must not claim the file is written -- the mode line
@@ -2233,7 +2233,8 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
         // binary-safety-guardrails follow-up: an LSP formatter is exactly
         // as capable of corrupting binary content as the external
         // FormatCommand() this same early-out already skips for.
-        if (FormatCommand() || context.buffer.BinarySafeguardsActive() || !editor::lsp::FormatOnSaveEnabled() ||
+        // A remote buffer has no language server of its own to ask.
+        if (FormatCommand() || context.buffer.BinarySafeguardsActive() || context.buffer.Remote() || !editor::lsp::FormatOnSaveEnabled() ||
             !context.lspManager || !context.mode) {
             return false;
         }
@@ -2275,7 +2276,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               context.deferSaveForLspFormat = false; // force=false: the guards above already ran
                               return;
                           }
-                          saveBufferBody(context);
+                          saveBufferBody(context, false);
                       });
 
     registry.Register("save-buffer-force", "Save the current buffer even if its file changed on disk.",
@@ -2291,7 +2292,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               context.deferSaveForLspFormat = true; // force=true: mirrors this command's own "skip the guards" meaning
                               return;
                           }
-                          saveBufferBody(context);
+                          saveBufferBody(context, true);
                       });
 
     // format-buffer follow-up: save-buffer's own formatting step, exposed

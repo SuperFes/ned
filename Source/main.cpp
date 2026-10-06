@@ -1508,6 +1508,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     (void)ned::editor::remote::SweepOrphanedMasters();
     ned::editor::remote::Hosts remoteHosts(eventLoop);
     windowManager->SetRemoteHosts(&remoteHosts);
+    windowManager->EnableRemoteSaving(eventLoop);
 
     // session-persistence slice 2: the restored session's breakpoints,
     // applied as soon as the store they live in exists -- long before any

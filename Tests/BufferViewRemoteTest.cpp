@@ -11,6 +11,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 
 #include "Editor/Commands.h"
@@ -21,7 +22,9 @@
 #include "Editor/PostQueue.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
+#include "Editor/BufferSave.h"
 #include "Editor/Remote/Hosts.h"
+#include "Editor/Remote/RemoteBuffer.h"
 #include "FakeRemoteHost.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
@@ -336,4 +339,57 @@ TEST_CASE("Closing a remote buffer while it loads drops the host's answer", "[Bu
     REQUIRE(PumpUntil(fixture.queue, [&] { return fixture.hosts.Find("host") != nullptr; }));
     REQUIRE_FALSE(PumpUntil(fixture.queue, [&] { return fixture.bufferList.FindByRemote({.destination = "host", .path = file}) != nullptr; },
                             std::chrono::milliseconds(500)));
+}
+
+TEST_CASE("save-buffer writes a remote buffer to its host, and asks before overwriting a change there", "[BufferView][Remote][HostAgent]") {
+    Fixture                          fixture;
+    ned::editor::remote::RemoteSaver saver(fixture.hosts, fixture.bufferList, fixture.queue, [&](std::string message) { fixture.statusMessage = std::move(message); });
+    ned::editor::SetRemoteSaveDispatcher([&saver](ned::editor::RemoteSaveRequest request) { return saver.Dispatch(std::move(request)); });
+    struct DispatcherGuard {
+        ~DispatcherGuard() {
+            ned::editor::SetRemoteSaveDispatcher(nullptr);
+        }
+    } guard;
+
+    const std::filesystem::path file = fixture.fake.dir / "notes.txt";
+    std::ofstream(file, std::ios::binary) << "one\r\n";
+    std::filesystem::permissions(file, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write | std::filesystem::perms::group_read);
+    const std::string where = "host:" + file.string();
+    const auto        read  = [&file] {
+        std::ifstream in(file, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+
+    fixture.Command("find-file");
+    fixture.Enter(where);
+    REQUIRE(fixture.StatusStartsWith("Opened " + where));
+    ned::text::Buffer& buffer = fixture.activeBuffer.Get();
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint("two\n");
+
+    fixture.Command("save-buffer");
+    CHECK(fixture.statusMessage == "Saving notes.txt...");
+    REQUIRE(fixture.StatusStartsWith("Wrote " + where));
+    CHECK(read() == "one\r\ntwo\r\n");
+    CHECK_FALSE(buffer.Modified());
+    CHECK(buffer.RemoteTimestamp() == std::filesystem::last_write_time(file));
+    CHECK((std::filesystem::status(file).permissions() & std::filesystem::perms::group_read) != std::filesystem::perms::none);
+
+    // Someone else writes it on the host.
+    std::ofstream(file, std::ios::binary) << "theirs\n";
+    std::filesystem::last_write_time(file, *buffer.RemoteTimestamp() + std::chrono::seconds(5));
+    buffer.InsertAtPoint("three\n");
+    fixture.Command("save-buffer");
+    REQUIRE(fixture.StatusStartsWith("Couldn't save " + where + ": "));
+    CHECK_THAT(fixture.statusMessage, ContainsSubstring("saving again asks to overwrite it"));
+    CHECK(read() == "theirs\n");
+    CHECK(buffer.Modified());
+
+    fixture.Command("save-buffer");
+    CHECK(fixture.statusMessage == "notes.txt changed on host since it was read; save anyway? (y/n)");
+    fixture.view.OnEvent(test::Character('y'));
+    REQUIRE(fixture.StatusStartsWith("Wrote " + where));
+    CHECK(read() == "one\r\ntwo\r\nthree\r\n");
+    CHECK_FALSE(buffer.ExternallyModified());
+    CHECK_FALSE(buffer.Modified());
 }

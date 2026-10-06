@@ -49,6 +49,7 @@
 #include "Editor/Project/Session.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
+#include "Editor/Remote/RemoteBuffer.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/Tracker/IssueAction.h"
@@ -883,6 +884,11 @@ class WindowManager {
     // not-called-from-the-constructor reasoning as the two above.
     void EnableAsyncFileSaving(EventLoop& eventLoop);
 
+    // Wires editor::SetRemoteSaveDispatcher to a RemoteSaver over the hosts
+    // SetRemoteHosts gave, so save-buffer writes a remote buffer to its
+    // host. Call after SetRemoteHosts.
+    void EnableRemoteSaving(EventLoop& eventLoop);
+
     // True while any save is still writing. The quit path polls this so
     // shutdown waits for a write rather than killing it partway through,
     // and AsyncSaveStatus() is what it tells the user it is waiting on.
@@ -1150,6 +1156,7 @@ class WindowManager {
     // See EnableAsyncFileSaving's own comment above.
     std::vector<std::unique_ptr<AsyncFileSaver>> asyncFileSavers_;
     bool                                         asyncSaveDispatcherInstalled_ = false;
+    std::unique_ptr<editor::remote::RemoteSaver> remoteSaver_;
 
     // See StartFileWatcher's own comment above. Shares autoSaveThread_'s
     // accepted latent shutdown ordering: main.cpp declares eventLoop after

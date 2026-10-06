@@ -1054,7 +1054,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::ConfirmOverwriteSave:
             inputMode_     = InputMode::ConfirmOverwriteSave;
-            statusMessage_ = activeBuffer_.Get().Name() + " changed on disk since it was read; save anyway? (y/n)";
+            statusMessage_ = activeBuffer_.Get().Name() +
+                             (activeBuffer_.Get().Remote() ? " changed on " + activeBuffer_.Get().Remote()->destination : std::string(" changed on disk")) +
+                             " since it was read; save anyway? (y/n)";
             return;
         case editor::InteractiveRequest::MultibufferApply:
             StartMultibufferApply(/*fileOnly=*/false);

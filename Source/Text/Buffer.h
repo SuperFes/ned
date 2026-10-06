@@ -209,9 +209,13 @@ class Buffer {
     // Where a remote buffer's file lives; nullopt for every other buffer.
     [[nodiscard]] const std::optional<RemoteFile>& Remote() const;
     // The host's timestamp from the last read or write, for a write to
-    // check the file is still as it was then.
+    // check the file is still as it was then; nullopt when the host had no
+    // such file. Setting it clears NoteRemoteChanged.
     [[nodiscard]] const std::optional<std::filesystem::file_time_type>& RemoteTimestamp() const;
     void SetRemoteTimestamp(std::optional<std::filesystem::file_time_type> timestamp);
+    // The host refused a write because its file changed since it was read:
+    // ExternallyModified() holds from here, so the next save asks first.
+    void NoteRemoteChanged();
 
     // Rebinds this buffer to a different on-disk path without touching its
     // content (project-file-ops follow-up: rename-file updates the open
@@ -606,6 +610,13 @@ class Buffer {
     // is the path the buffer should report afterwards (the one passed to
     // BeginSave, not the resolved write target).
     void FinishSave(const std::filesystem::path& path, SavePlan plan);
+
+    // BeginSave and FinishSave for a remote buffer: the plan has no local
+    // target or attributes (the host settles those), and the host's
+    // timestamp of what it wrote replaces a local stat.
+    [[nodiscard]] SavePlan BeginRemoteSave(bool ensureFinalNewline = true, bool trimTrailingWhitespace = true,
+                                           std::optional<LineEnding> lineEndingOverride = std::nullopt);
+    void FinishRemoteSave(SavePlan plan, std::optional<std::filesystem::file_time_type> timestamp);
 
     // Gives up on an in-flight save (the write threw). Disarms edit
     // tracking and changes nothing about what the buffer considers saved,
@@ -1265,6 +1276,13 @@ class Buffer {
   private:
     // Decodes a file's bytes in charset into a nameless, pathless buffer;
     // described names the file in errors.
+    // BeginSave's refusals: still loading, or already saving.
+    void RequireSavable() const;
+    // Captures the plan's content and arms edit tracking against it.
+    [[nodiscard]] SavePlan StartSavePlan(LineEnding ending, bool trimTrailingWhitespace, bool ensureFinalNewline);
+    // What any completed write implies, wherever it went.
+    void CommitSave(SavePlan plan);
+
     [[nodiscard]] static Buffer Decode(const std::string& described, std::string content, bool allowBinary, bool likelyBinary, Charset charset);
 
     void ClampCursorsToContent();
@@ -1518,6 +1536,7 @@ class Buffer {
     std::optional<std::filesystem::path> Path_;
     std::optional<RemoteFile>                      Remote_;
     std::optional<std::filesystem::file_time_type> RemoteTimestamp_;
+    bool                                           RemoteChanged_ = false;
     // The file's last_write_time as of the last load/save/revert -- what
     // ExternallyModified() compares against. nullopt for a pathless or
     // NewFile() buffer (no on-disk content has ever been seen).

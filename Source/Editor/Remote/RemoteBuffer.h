@@ -1,17 +1,25 @@
 //
-// Buffers holding a remote host's file (Text/RemoteFile.h): what a load
-// does with the host's answer, apart from the connection that carried it.
+// Buffers holding a remote host's file (Text/RemoteFile.h): what a load or
+// a save does with the host's answer, and the saver that carries a save to
+// its host.
 //
 
 #ifndef NED_EDITOR_REMOTE_REMOTEBUFFER_H
 #define NED_EDITOR_REMOTE_REMOTEBUFFER_H
 
 #include <cstddef>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 
+#include "Editor/BufferSave.h"
+#include "Editor/Lifetime.h"
+#include "Editor/PostQueue.h"
 #include "Editor/Remote/Fs.h"
+#include "Editor/Remote/Hosts.h"
 #include "Text/Buffer.h"
+#include "Text/BufferList.h"
 
 namespace ned::editor::remote {
 
@@ -26,6 +34,35 @@ namespace ned::editor::remote {
 // Returns why not otherwise -- a failed read, or content that looks
 // binary -- leaving the placeholder as it was.
 [[nodiscard]] std::optional<std::string> FinishRemoteLoad(text::Buffer& placeholder, const FsResult<text::FileContents>& read);
+
+// Settles a remote save (Buffer::BeginRemoteSave) with the host's answer:
+// saved, at the host's new timestamp, or abandoned with why. A file that
+// changed on the host since the buffer last saw it marks the buffer
+// externally modified, so the next save asks before overwriting it.
+[[nodiscard]] std::optional<std::string> FinishRemoteSave(text::Buffer& buffer, text::SavePlan plan, const FsResult<host::FileStat>& written);
+
+// Carries remote saves (SetRemoteSaveDispatcher) to their hosts, connecting
+// when needed, and settles each buffer once its host answers. report gets
+// the outcome for the mode line. Main thread only.
+class RemoteSaver {
+  public:
+    RemoteSaver(Hosts& hosts, text::BufferList& buffers, PostQueue& postQueue, std::function<void(std::string message)> report);
+
+    RemoteSaver(const RemoteSaver&)            = delete;
+    RemoteSaver& operator=(const RemoteSaver&) = delete;
+
+    // Always takes the save, and never settles it before returning.
+    bool Dispatch(RemoteSaveRequest request);
+
+  private:
+    void Finish(const std::shared_ptr<RemoteSaveRequest>& request, const FsResult<host::FileStat>& written);
+
+    Hosts&                                   hosts_;
+    text::BufferList&                        buffers_;
+    PostQueue&                               postQueue_;
+    std::function<void(std::string message)> report_;
+    LifetimeGuard                            lifetime_;
+};
 
 } // namespace ned::editor::remote
 

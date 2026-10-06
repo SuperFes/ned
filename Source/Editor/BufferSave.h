@@ -19,9 +19,11 @@
 
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <string>
 
 #include "Text/Buffer.h"
+#include "Text/BufferIdentity.h"
 #include "Text/SavePlan.h"
 
 namespace ned::editor {
@@ -39,13 +41,19 @@ enum class SaveDispatch {
     Automatic,        // may complete later, reporting through the mode line
 };
 
-// Requires buffer.Path() -- throws std::runtime_error otherwise, same as
-// Buffer::Save's own contract. Callers are expected to catch and report,
-// matching every existing save-buffer call site. With SaveDispatch::
-// Automatic a large buffer may instead return before the file is written,
-// having thrown nothing: the write is then in flight (buffer.IsSaving()),
-// and its outcome arrives later.
-void WriteBufferToDisk(text::Buffer& buffer, SaveDispatch dispatch = SaveDispatch::ForceSynchronous);
+// Requires buffer.Path() or buffer.Remote() -- throws std::runtime_error
+// otherwise, same as Buffer::Save's own contract. Callers are expected to
+// catch and report, matching every existing save-buffer call site. With
+// SaveDispatch::Automatic a large buffer may instead return before the file
+// is written, having thrown nothing: the write is then in flight
+// (buffer.IsSaving()), and its outcome arrives later.
+//
+// A remote buffer always saves that way, through the remote-save
+// dispatcher, and only under SaveDispatch::Automatic. Its host refuses the
+// write when the file changed since the buffer last saw it, unless
+// overwriteChanged; a local file's check is the caller's, beforehand
+// (ExternallyModified).
+void WriteBufferToDisk(text::Buffer& buffer, SaveDispatch dispatch = SaveDispatch::ForceSynchronous, bool overwriteChanged = false);
 
 // The charset the next save writes: the buffer's own, unless .editorconfig
 // states another and set-buffer-charset hasn't chosen one. A binary buffer
@@ -81,6 +89,24 @@ struct AsyncSaveRequest {
 // back to the synchronous path. Process-wide and mutex-guarded, the same
 // shape the other process-wide settings here use.
 void SetAsyncSaveDispatcher(std::function<bool(AsyncSaveRequest)> dispatcher);
+
+// A remote buffer's save, encoded and ready for its host. Like
+// AsyncSaveRequest, nothing here refers to the buffer but its identity.
+struct RemoteSaveRequest {
+    text::BufferIdentity buffer;
+    text::RemoteFile     file;
+    std::string          bytes;
+    // What the host's file must still be (Buffer::RemoteTimestamp; nullopt:
+    // absent) for the write to go ahead. Unset writes regardless.
+    std::optional<std::optional<std::filesystem::file_time_type>> expect;
+    text::SavePlan                                                 plan;
+};
+
+// Installed by whatever holds the editor's remote hosts. Returns true if it
+// took the save, in which case it settles the buffer (Buffer::
+// FinishRemoteSave or AbandonSave) once the host answers -- never before
+// returning. Unset, a remote save fails at once.
+void SetRemoteSaveDispatcher(std::function<bool(RemoteSaveRequest)> dispatcher);
 
 // The size at or above which SaveDispatch::Automatic hands a save to that
 // dispatcher. Deliberately not its own setting: this reuses

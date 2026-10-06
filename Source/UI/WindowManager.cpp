@@ -2199,6 +2199,18 @@ WindowManager::~WindowManager() {
     if (asyncSaveDispatcherInstalled_) {
         editor::SetAsyncSaveDispatcher(nullptr);
     }
+    if (remoteSaver_) {
+        editor::SetRemoteSaveDispatcher(nullptr);
+    }
+}
+
+void WindowManager::EnableRemoteSaving(EventLoop& eventLoop) {
+    if (remoteHosts_ == nullptr) {
+        return;
+    }
+    remoteSaver_ = std::make_unique<editor::remote::RemoteSaver>(*remoteHosts_, bufferList_, eventLoop,
+                                                                 [this](std::string message) { statusMessage_ = std::move(message); });
+    editor::SetRemoteSaveDispatcher([saver = remoteSaver_.get()](editor::RemoteSaveRequest request) { return saver->Dispatch(std::move(request)); });
 }
 
 void WindowManager::EnableAsyncFileSaving(EventLoop& eventLoop) {
