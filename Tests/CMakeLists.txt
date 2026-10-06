@@ -336,6 +336,8 @@ add_executable(ned_tests
             LineTransportTest.cpp
             FrameTransportTest.cpp
             ProtocolEndpointTest.cpp
+            HostCodecTest.cpp
+            HostAgentTest.cpp
             AcpClientTest.cpp
             AcpConfigTest.cpp
             AcpManagerTest.cpp
@@ -478,6 +480,9 @@ target_compile_definitions(ned_tests PRIVATE NED_RUNAWAY_SCANNER_LIBRARY="$<TARG
 # that runs out of the build tree. Tests-only, deliberately: nothing in
 # ned_lib or the ned binary may depend on where the source happens to be.
 target_compile_definitions(ned_tests PRIVATE NED_REPO_ROOT="${CMAKE_SOURCE_DIR}")
+# HostAgentTest drives the real executable over its stdio.
+target_compile_definitions(ned_tests PRIVATE NED_AGENT_BINARY="$<TARGET_FILE:ned-agent>")
+add_dependencies(ned_tests ned-agent)
 
 # SKIP_REGULAR_EXPRESSION: Catch2's SKIP() (e.g. ModeOverridesTest.cpp's
 # real-system-queries tests, which SKIP rather than fail when a machine has

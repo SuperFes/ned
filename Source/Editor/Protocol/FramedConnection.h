@@ -163,6 +163,12 @@ class FramedConnection {
         drainQueueOnStop_ = true;
     }
 
+    // For a transport setting that's safe to change while the threads run,
+    // such as FrameTransport's compression.
+    [[nodiscard]] TransportT& Transport() noexcept {
+        return transport_;
+    }
+
   private:
     void StartReadLoop() {
         // closed-connection-never-parks follow-up: the stop token is

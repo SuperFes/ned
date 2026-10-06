@@ -89,6 +89,21 @@ endif()
 add_executable(ned_core_link_check Editor/CoreLinkCheck.cpp)
 target_link_libraries(ned_core_link_check PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,ned_core>")
 
+# The host side of Docs/ClientServerProtocol.md: the dispatcher and its
+# method handlers over ned_core, with no terminal, Janet or grammar either.
+# ned-agent is this and a main(); linking it is ned_host's own link check.
+add_library(ned_host STATIC
+        Editor/Host/Agent.cpp
+        Editor/Host/Codec.cpp
+        Editor/Host/Dispatcher.cpp
+        Editor/Host/Hello.cpp
+        Editor/Host/SearchCodec.cpp)
+
+target_link_libraries(ned_host PUBLIC ned_core)
+
+add_executable(ned-agent Agent/main.cpp)
+target_link_libraries(ned-agent PRIVATE ned_host)
+
 add_library(ned_lib STATIC
         Application.cpp
         Text/Base64.cpp
@@ -596,6 +611,7 @@ target_link_libraries(ned_lib
         # `ned --compile-language` runs the same generator ned-langc does.
         PUBLIC ned_grammar_compile
         PUBLIC ned_core
+        PUBLIC ned_host
         PUBLIC ${Janet_LIBRARIES}
         # Every widget (Widget/KeyTranslation/Theme/EventLoop/Layout and every
         # concrete widget through main.cpp's own composition root) is built on
