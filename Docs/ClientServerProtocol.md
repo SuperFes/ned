@@ -108,6 +108,11 @@ hello  -> {protocol: {major, minor}, build: str, codecs: [str], window: uint}
   leaves a partial agent. Local agents come from `libexec/ned/agent/<arch>/`
   (`$NED_AGENT_DIR` overrides): `cmake --install build-agent-<arch> --component agent
   --prefix <prefix>` puts a static build there, the editor's build tree included.
+- `Remote/Connection.h` puts it together: master, deploy, an agent session, then `hello`
+  sent as request id 1 before an `Endpoint` takes over the connection (and numbers past
+  it). The editor's `build` is the agent build it expects. `Connect` blocks, so a
+  `Connector` runs it on a worker that a stop cancels at any step, and hands a
+  `Connection` to the main thread.
 - The in-process transport skips `hello`. Both ends are the same build.
 
 ## 5. Transports

@@ -338,6 +338,7 @@ add_executable(ned_tests
             ProtocolEndpointTest.cpp
             HostCodecTest.cpp
             HostAgentTest.cpp
+            RemoteConnectionTest.cpp
             RemoteDeployTest.cpp
             RemoteSshTest.cpp
             AcpClientTest.cpp
