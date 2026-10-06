@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <fstream>
+#include <ostream>
+#include <sstream>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -19,7 +21,7 @@ namespace {
     // that from being reached.
     class EncodingSink {
       public:
-        EncodingSink(std::ofstream& file, Charset charset) : file_(file), encoder_(charset), passThrough_(IsUtf8Family(charset)) {
+        EncodingSink(std::ostream& file, Charset charset) : file_(file), encoder_(charset), passThrough_(IsUtf8Family(charset)) {
         }
 
         void Write(const char* data, std::size_t size) {
@@ -41,7 +43,7 @@ namespace {
         }
 
       private:
-        std::ofstream& file_;
+        std::ostream&  file_;
         CharsetEncoder encoder_;
         bool           passThrough_;
         std::string    encoded_;
@@ -259,11 +261,8 @@ namespace {
         }
     }
 
-    // Truncate-and-write the target's own inode, preserving everything
-    // hanging off it (mode, owner, xattrs/ACLs, and every hard link) at the
-    // cost of the sibling-temp-then-rename path's crash atomicity. See
-    // ExecuteSavePlan below for the two situations that select this.
-    void WritePlanContent(std::ofstream& file, const SavePlan& plan) {
+    // The preamble, then the encoded and transformed content.
+    void WritePlanContent(std::ostream& file, const SavePlan& plan) {
         const std::string_view preamble = CharsetPreamble(plan.charset);
         file.write(preamble.data(), static_cast<std::streamsize>(preamble.size()));
         EncodingSink sink(file, plan.charset);
@@ -272,13 +271,17 @@ namespace {
         sink.Finish();
     }
 
-    void WriteInPlace(const SavePlan& plan) {
-        std::ofstream file(plan.target, std::ios::binary | std::ios::trunc);
+    // Truncate-and-write the target's own inode, preserving everything
+    // hanging off it (mode, owner, xattrs/ACLs, and every hard link) at the
+    // cost of the sibling-temp-then-rename path's crash atomicity. See
+    // ReplaceFileContent below for the two situations that select this.
+    void WriteInPlace(const std::filesystem::path& target, const std::function<void(std::ostream&)>& write) {
+        std::ofstream file(target, std::ios::binary | std::ios::trunc);
         if (!file) {
-            throw std::runtime_error("ned: cannot open file for writing: " + plan.target.string());
+            throw std::runtime_error("ned: cannot open file for writing: " + target.string());
         }
 
-        WritePlanContent(file, plan);
+        write(file);
         const bool writeFailed = !file;
         file.close();
 
@@ -288,7 +291,7 @@ namespace {
             // fall back to here -- Editor/Backup.h's pre-save version is the
             // recovery route, so the message has to say so rather than imply
             // the file is still intact.
-            throw std::runtime_error("ned: error writing file: " + plan.target.string() +
+            throw std::runtime_error("ned: error writing file: " + target.string() +
                                      " -- it may now be truncated; recover from a backup version if needed");
         }
     }
@@ -321,15 +324,14 @@ void ValidateSavePlanCharset(const SavePlan& plan) {
                              " has a character it can't hold -- set-buffer-charset picks another");
 }
 
-void ExecuteSavePlan(const SavePlan& plan) {
-    ValidateSavePlanCharset(plan);
+void ReplaceFileContent(const std::filesystem::path& target, const PreservedFileAttributes& attributes, const std::function<void(std::ostream&)>& write) {
     // A multiply-linked file can only stay linked if its own inode is
     // written; a rename would give every other link the stale content. That
     // costs this path's crash atomicity, which is acceptable precisely
     // because save-buffer has already written an Editor/Backup.h version by
     // the time it gets here.
-    if (ShouldWriteInPlace(plan.attributes)) {
-        WriteInPlace(plan);
+    if (ShouldWriteInPlace(attributes)) {
+        WriteInPlace(target, write);
         return;
     }
 
@@ -337,7 +339,7 @@ void ExecuteSavePlan(const SavePlan& plan) {
     // partway through (e.g. disk full) can't leave the original truncated or
     // corrupted -- std::filesystem::rename is atomic on POSIX when both
     // paths are on the same filesystem, which a sibling file guarantees.
-    const std::filesystem::path tempPath = plan.target.string() + ".ned-tmp";
+    const std::filesystem::path tempPath = target.string() + ".ned-tmp";
 
     std::ofstream file(tempPath, std::ios::binary | std::ios::trunc);
     if (!file) {
@@ -350,14 +352,14 @@ void ExecuteSavePlan(const SavePlan& plan) {
         // something already occupies its path, and truncating the real file
         // in place for *those* would destroy exactly what this path exists
         // to protect.
-        if (plan.attributes.existed && !CanCreateSiblingFile(plan.target)) {
-            WriteInPlace(plan);
+        if (attributes.existed && !CanCreateSiblingFile(target)) {
+            WriteInPlace(target, write);
             return;
         }
         throw std::runtime_error("ned: cannot open file for writing: " + tempPath.string());
     }
 
-    WritePlanContent(file, plan);
+    write(file);
     const bool writeFailed = !file;
     file.close();
 
@@ -369,14 +371,29 @@ void ExecuteSavePlan(const SavePlan& plan) {
     // Strictly between the write and the rename: the temp file is fully
     // written but not yet visible under the target's name, so nothing ever
     // observes it with the wrong mode.
-    ApplyFileAttributes(tempPath, plan.attributes);
+    ApplyFileAttributes(tempPath, attributes);
 
     std::error_code ec;
-    std::filesystem::rename(tempPath, plan.target, ec);
+    std::filesystem::rename(tempPath, target, ec);
     if (ec) {
         std::filesystem::remove(tempPath);
-        throw std::runtime_error("ned: cannot save file: " + plan.target.string() + " (" + ec.message() + ")");
+        throw std::runtime_error("ned: cannot save file: " + target.string() + " (" + ec.message() + ")");
     }
+}
+
+void ExecuteSavePlan(const SavePlan& plan) {
+    ValidateSavePlanCharset(plan);
+    ReplaceFileContent(plan.target, plan.attributes, [&plan](std::ostream& file) { WritePlanContent(file, plan); });
+}
+
+std::string EncodeSavePlan(const SavePlan& plan) {
+    ValidateSavePlanCharset(plan);
+    std::ostringstream out(std::ios::binary);
+    WritePlanContent(out, plan);
+    if (!out) {
+        throw std::runtime_error("ned: cannot encode " + plan.target.string() + " as " + std::string(CharsetName(plan.charset)));
+    }
+    return std::move(out).str();
 }
 
 } // namespace ned::text
