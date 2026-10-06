@@ -197,6 +197,8 @@ granularity. Each is justified when one turns up in real use.
 
 ## Won't Do (at Least Not Soon)
 
+- **Daemon/attach mode** (`emacsclient`-style) — the LSP broker already keeps servers
+  warm and sessions restore buffers. See `Docs/ClientServerProtocol.md`.
 - **Org Babel** — arbitrary code execution from opening a text file. If it is ever
   revisited, reuse the Jupyter rich-output renderer.
 - **Org table formula engine** and **Org export/publishing** — each is tool-sized.

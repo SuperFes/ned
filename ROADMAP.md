@@ -194,8 +194,8 @@ against.
 
 - 🔜 **Remote development over SSH**: edit files on a remote host locally, with an
   optional thin agent for search and toolchain-native language servers.
-- 🔜 **A client/server protocol** for the remote agent and an `emacsclient`-style
-  attach mode.
+- 🔜 **A client/server protocol** for the remote agent, with local execution as its
+  in-process case.
 - 🔜 **Remote debugging**, e.g. attaching to live PHP.
 - 🔜 **Documentation**: Doxygen developer docs, a `ned-setup` first-run generator, and
   debugger cookbook entries.

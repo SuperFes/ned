@@ -18,6 +18,7 @@
 # Design Records
 
 - [Formatting Rules](FormattingRules.md)
+- [Client/Server Protocol](ClientServerProtocol.md)
 
 # Investigations
 

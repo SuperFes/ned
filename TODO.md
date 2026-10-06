@@ -60,8 +60,8 @@ the remote toolchain. Edit locally and sync on save; don't build a remote-author
 buffer.
 
 **File I/O and editing**
-- [ ] A remote file I/O seam behind `Buffer::FromFile` and the save path. Rope, undo and
-      multi-cursor stay unchanged.
+- [ ] A host file I/O seam behind `Buffer::FromFile` and the save path, through the
+      in-process transport first. Rope, undo and multi-cursor stay unchanged.
 - [ ] Remote semantics for `ExternallyModified`/`AutoRevert`/`AutoMerge`/`FileWatch`:
       a `stat` round trip on the poll tick, with a longer interval over a slow link.
 - [ ] `user@host:/path` display everywhere (tab bar, mode line, sidebar, buffer names).
@@ -90,28 +90,21 @@ buffer.
 **Agent (phase b)**
 - [ ] A headless `add_executable` over `ned_lib`. Measured 2026-09-08: it links without
       `-ljanet` and runs real `ProjectSearch` at 8.7 MB, so no library split is needed.
-- [ ] A seam to spawn LSP/DAP/task/VCS subprocesses remotely instead of through
-      `ChildProcess`, and relay remote inotify. This is the biggest lift in the section.
+- [ ] The `proc` seam: LSP/DAP/task/VCS subprocesses spawn through the host, local ones
+      included, and remote inotify relays through `watch`. This is the biggest lift in
+      the section.
 - [ ] Auto-deploy with a version handshake. Build per architecture, either
       cross-compiled or prebuilt, because the remote host may have no toolchain.
 
-**Client/server protocol** — its first consumer is the agent, and the second is a
-daemon/attach mode.
-- [ ] Design the protocol. Local execution is the degenerate case: in-process is one
-      transport behind the protocol, not a bypass around it. Send operations, not
-      buffers. Compress per frame, and negotiate the codec at the handshake with
-      "none" as a first-class option; nothing compression-related is linked today.
-      Build on `FramedConnection`: timeouts on every blocking call, a non-blocking
-      connect, an async write queue, and no lock held across a join. Decide the trust
-      model together with the framing, since this is a remote code execution surface.
-      Still open: the framing, JSON vs. something denser, streaming and cancellation
-      (`$/progress`/`$/cancelRequest` are prior art), versioning, and
-      `AF_UNIX`/stdio-over-ssh/TCP.
-- [ ] **Daemon/attach mode** (`emacsclient`-equivalent): keep a warm process (buffers,
-      LSP connections, undo) and attach a new terminal to it.
-- [ ] **Remote debug sessions**, e.g. attaching to live PHP in production.
-- [ ] Decide on port forwarding: only the agent's own socket, or also forwarding a
-      user's dev-server port back to the local machine.
+**Client/server protocol** — designed in `Docs/ClientServerProtocol.md`, whose staging
+section orders the work. The seam items above (file I/O, remote spawn) are its stages 3
+and 4.
+- [ ] Wire and codec: length-prefixed frames with a 64 MiB cap, CBOR, per-frame zstd
+      negotiated with `none` as an option.
+- [ ] Messages: request/response correlation, streams with credit-based flow control,
+      `$/cancel`.
+- [ ] Verify a remote debug session end to end (PHP/Xdebug, with the adapter running on
+      the host through `proc`).
 
 ## Documentation & Companion Tooling
 
