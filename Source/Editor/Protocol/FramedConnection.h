@@ -54,6 +54,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstddef>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -70,6 +71,12 @@
 
 namespace ned::editor::protocol {
 
+// How far the read loop runs ahead of the main thread, in frame bytes.
+// Past it, the read loop stops reading until the main thread catches up,
+// so a peer that ignores flow control fills its own pipe rather than
+// editor memory. A pause, never a disconnect.
+inline constexpr std::size_t kDefaultMaxQueuedBytes = std::size_t{64} << 20;
+
 template <typename TransportT>
 class FramedConnection {
   public:
@@ -84,6 +91,9 @@ class FramedConnection {
         LogSeverity stderrSeverity = LogSeverity::Warning;
         // Lowered where the peer going away is routine rather than a fault.
         LogSeverity disconnectSeverity = LogSeverity::Warning;
+        // The frame in hand is always delivered, so a single frame larger
+        // than this still gets through.
+        std::size_t maxQueuedBytes = kDefaultMaxQueuedBytes;
     };
 
     // Spawns argv as a new subprocess. postQueue must outlive this object,
@@ -177,6 +187,12 @@ class FramedConnection {
         // here instead of entering a read at all.
         readThread_ = std::jthread([this, alive = lifetime_.Token()](const std::stop_token& stopToken) {
             while (!stopToken.stop_requested()) {
+                {
+                    std::unique_lock<std::mutex> lock(queuedMutex_);
+                    if (!queuedCv_.wait(lock, stopToken, [this] { return queuedBytes_ < options_.maxQueuedBytes; })) {
+                        return;
+                    }
+                }
                 std::optional<std::string> frame;
                 try {
                     frame = transport_.ReadFrame(); // blocks
@@ -218,7 +234,17 @@ class FramedConnection {
                 // iteration a repaint, so a frame arriving here and updating
                 // real state is shown without needing an explicit "force a
                 // frame" call.
-                postQueue_.Post(alive.Bind([this, frameText = std::move(*frame)]() mutable {
+                const std::size_t charge = frame->size() + kQueuedFrameOverhead;
+                {
+                    std::lock_guard<std::mutex> lock(queuedMutex_);
+                    queuedBytes_ += charge;
+                }
+                postQueue_.Post(alive.Bind([this, charge, frameText = std::move(*frame)]() mutable {
+                    {
+                        std::lock_guard<std::mutex> lock(queuedMutex_);
+                        queuedBytes_ -= charge;
+                    }
+                    queuedCv_.notify_one();
                     if (onFrame_) {
                         onFrame_(std::move(frameText));
                     }
@@ -300,6 +326,10 @@ class FramedConnection {
         });
     }
 
+    // What a queued frame costs beyond its bytes, so a flood of empty
+    // frames still counts.
+    static constexpr std::size_t kQueuedFrameOverhead = 256;
+
     Options options_;
 
     // See this file's own header comment.
@@ -310,6 +340,11 @@ class FramedConnection {
     std::jthread readThread_;
     std::jthread stderrThread_;
     TransportT   transport_;
+
+    // Frames posted and not yet taken by the main thread, charged as above.
+    std::mutex                  queuedMutex_;
+    std::condition_variable_any queuedCv_;
+    std::size_t                 queuedBytes_ = 0;
 
     PostQueue& postQueue_;
 

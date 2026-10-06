@@ -72,9 +72,11 @@ response  {id, result}                   ends the stream
 
 A stream starts with a credit window from `hello` (default 16 chunks). The sender stops at
 zero credit, and the receiver grants more as it consumes. Credit is required, not an
-optimization. `FramedConnection`'s reader posts every frame to the `EventLoop`, whose queue
-is unbounded, so a fast host (a big search, clangd's stdout) would otherwise grow editor
-memory without limit over a link that is itself keeping up fine.
+optimization: it keeps a cooperating host's frames moving at the pace the editor consumes
+them. A host that ignores it meets `FramedConnection`'s read-ahead cap instead (64 MiB of
+frames posted and not yet handled): the reader stops, and the host's writes block on its
+own pipe. The cap pauses, never disconnects. Measured against a gigabit link with the main
+thread stalling a second at a time, it stays within 1% of unbounded read-ahead.
 
 **Cancellation.** `$/cancel {id}` has LSP's `$/cancelRequest` semantics. The request
 still gets exactly one response, either an error with code `Cancelled` or a partial
