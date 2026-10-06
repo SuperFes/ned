@@ -1,6 +1,8 @@
 #include "RemoteBuffer.h"
 
+#include "Editor/FileSettings.h"
 #include "Editor/ModeOverrides.h"
+#include "Editor/PersistentUndo.h"
 #include "Text/BinaryDetect.h"
 #include "Text/BufferList.h"
 
@@ -31,6 +33,8 @@ std::optional<std::string> FinishRemoteLoad(text::Buffer& placeholder, const FsR
     }
     // The placeholder's mode was settled from its path alone.
     ClearModeCacheFor(placeholder);
+    ApplyFileSettings(placeholder);
+    TryRestoreUndoHistory(placeholder);
     return std::nullopt;
 }
 

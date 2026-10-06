@@ -31,7 +31,9 @@ namespace ned::editor {
 // Sets buffer's LocalIndent and Conventions from its file on disk -- read
 // directly rather than from the buffer, so an async-loading placeholder and
 // a huge file get the same answer. A path that doesn't exist yet still gets
-// its .editorconfig.
+// its .editorconfig. A remote buffer's indentation comes from its own
+// content and modeline: its host's .editorconfig and formatter configs
+// aren't read.
 void ApplyFileSettings(text::Buffer& buffer);
 
 // ApplyFileSettings again for every buffer whose file changed under it since
