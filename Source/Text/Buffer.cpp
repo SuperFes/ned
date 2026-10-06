@@ -152,15 +152,38 @@ Buffer Buffer::FromFile(const std::filesystem::path& path, bool allowBinary, std
 }
 
 Buffer Buffer::FromContents(const std::filesystem::path& path, FileContents contents, bool allowBinary, std::optional<Charset> charsetChoice) {
-    const bool likelyBinary = BytesLookBinaryToLoad(path, contents.bytes, charsetChoice);
+    const bool    likelyBinary = BytesLookBinaryToLoad(path, contents.bytes, charsetChoice);
+    const Charset charset      = ResolveLoadCharset(path, contents.bytes, charsetChoice);
+    Buffer        buffer       = Decode(path.string(), std::move(contents.bytes), allowBinary, likelyBinary, charset);
+    buffer.Rename(path.filename().string());
+    buffer.Path_          = path;
+    buffer.DiskTimestamp_ = contents.timestamp;
+    return buffer;
+}
+
+Buffer Buffer::FromRemoteContents(RemoteFile file, FileContents contents, bool allowBinary, std::optional<Charset> charsetChoice) {
+    const bool    likelyBinary = BytesLookBinaryToLoad(contents.bytes, charsetChoice);
+    const Charset charset      = ResolveUnstatedCharset(contents.bytes, charsetChoice);
+    Buffer        buffer       = Decode(file.ToString(), std::move(contents.bytes), allowBinary, likelyBinary, charset);
+    buffer.Rename(file.path.filename().string());
+    buffer.Remote_          = std::move(file);
+    buffer.RemoteTimestamp_ = contents.timestamp;
+    return buffer;
+}
+
+Buffer Buffer::NewRemoteFile(RemoteFile file) {
+    Buffer buffer(file.path.filename().string());
+    buffer.Remote_ = std::move(file);
+    return buffer;
+}
+
+Buffer Buffer::Decode(const std::string& described, std::string content, bool allowBinary, bool likelyBinary, Charset charset) {
     if (!allowBinary && likelyBinary) {
-        throw BinaryFileError("ned: refusing to open binary file as text: " + path.string());
+        throw BinaryFileError("ned: refusing to open binary file as text: " + described);
     }
 
     // A file that doesn't decode in its charset is binary as far as a load
     // is concerned; opened anyway, its bytes are kept exactly as read.
-    std::string& content = contents.bytes;
-    Charset      charset = ResolveLoadCharset(path, content, charsetChoice);
     if (IsUtf8Family(charset)) {
         content.erase(0, PreambleLength(content, charset));
     }
@@ -169,8 +192,7 @@ Buffer Buffer::FromContents(const std::filesystem::path& path, FileContents cont
         content = std::move(*decoded);
     }
     else if (!allowBinary) {
-        throw BinaryFileError("ned: refusing to open " + path.string() + " as text: it doesn't decode as " +
-                              std::string(CharsetName(charset)));
+        throw BinaryFileError("ned: refusing to open " + described + " as text: it doesn't decode as " + std::string(CharsetName(charset)));
     }
     else {
         charset = Charset::Utf8;
@@ -184,12 +206,10 @@ Buffer Buffer::FromContents(const std::filesystem::path& path, FileContents cont
         content = NormalizeToLf(content);
     }
 
-    Buffer buffer(path.filename().string(), Rope(content));
-    buffer.Path_          = path;
-    buffer.LineEnding_    = detectedEnding;
-    buffer.Charset_       = charset;
-    buffer.LikelyBinary_  = likelyBinary; // only ever true here if allowBinary let a real binary-detected open through
-    buffer.DiskTimestamp_ = contents.timestamp;
+    Buffer buffer{std::string(), Rope(content)};
+    buffer.LineEnding_   = detectedEnding;
+    buffer.Charset_      = charset;
+    buffer.LikelyBinary_ = likelyBinary; // only ever true here if allowBinary let a real binary-detected open through
     return buffer;
 }
 
@@ -488,6 +508,18 @@ void Buffer::Rename(std::string name) {
 
 const std::optional<std::filesystem::path>& Buffer::Path() const {
     return Path_;
+}
+
+const std::optional<RemoteFile>& Buffer::Remote() const {
+    return Remote_;
+}
+
+const std::optional<std::filesystem::file_time_type>& Buffer::RemoteTimestamp() const {
+    return RemoteTimestamp_;
+}
+
+void Buffer::SetRemoteTimestamp(std::optional<std::filesystem::file_time_type> timestamp) {
+    RemoteTimestamp_ = timestamp;
 }
 
 void Buffer::SetPath(std::filesystem::path path) {

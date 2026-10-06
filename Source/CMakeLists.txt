@@ -66,6 +66,7 @@ add_library(ned_lib STATIC
         Text/Buffer.cpp
         Text/BufferIdentity.cpp
         Text/BufferList.cpp
+        Text/RemoteFile.cpp
         Text/LineDiff.cpp
         Text/ThreeWayMerge.cpp
         Text/ConflictHunk.cpp
@@ -324,7 +325,6 @@ add_library(ned_lib STATIC
         Editor/Remote/HostLookup.cpp
         Editor/Remote/Hosts.cpp
         Editor/Remote/KnownHosts.cpp
-        Editor/Remote/Location.cpp
         Editor/Remote/Search.cpp
         Editor/Remote/Ssh.cpp
         Editor/Repl/Config.cpp

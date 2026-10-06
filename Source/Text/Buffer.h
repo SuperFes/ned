@@ -36,6 +36,7 @@
 #include "IndentStyle.h"
 #include "LineEnding.h"
 #include "PieceTable.h"
+#include "RemoteFile.h"
 #include "Rope.h"
 #include "SavePlan.h"
 #include "UndoTree.h"
@@ -84,6 +85,14 @@ class Buffer {
     // charset the content doesn't state (ResolveLoadCharset).
     [[nodiscard]] static Buffer FromContents(const std::filesystem::path& path, FileContents contents, bool allowBinary = false,
                                              std::optional<Charset> charset = std::nullopt);
+
+    // A remote host's file, read there. It has no Path(): nothing that
+    // reads or writes a buffer's local file touches it. Nothing around the
+    // file states its charset, since this process can't see there.
+    [[nodiscard]] static Buffer FromRemoteContents(RemoteFile file, FileContents contents, bool allowBinary = false,
+                                                   std::optional<Charset> charset = std::nullopt);
+    // A remote file that doesn't exist yet.
+    [[nodiscard]] static Buffer NewRemoteFile(RemoteFile file);
 
     // huge-file-editing follow-up: opens path via a PieceTableStorage
     // (Text/PieceTable.h) instead of reading the whole file into memory --
@@ -196,6 +205,13 @@ class Buffer {
     [[nodiscard]] const std::string&                          Name() const;
     void                                                      Rename(std::string name);
     [[nodiscard]] const std::optional<std::filesystem::path>& Path() const;
+
+    // Where a remote buffer's file lives; nullopt for every other buffer.
+    [[nodiscard]] const std::optional<RemoteFile>& Remote() const;
+    // The host's timestamp from the last read or write, for a write to
+    // check the file is still as it was then.
+    [[nodiscard]] const std::optional<std::filesystem::file_time_type>& RemoteTimestamp() const;
+    void SetRemoteTimestamp(std::optional<std::filesystem::file_time_type> timestamp);
 
     // Rebinds this buffer to a different on-disk path without touching its
     // content (project-file-ops follow-up: rename-file updates the open
@@ -1247,6 +1263,10 @@ class Buffer {
     [[nodiscard]] std::size_t DiagnosticsGeneration() const;
 
   private:
+    // Decodes a file's bytes in charset into a nameless, pathless buffer;
+    // described names the file in errors.
+    [[nodiscard]] static Buffer Decode(const std::string& described, std::string content, bool allowBinary, bool likelyBinary, Charset charset);
+
     void ClampCursorsToContent();
     void RevertDecoding(std::optional<Charset> charset);
     void MoveToLine(std::size_t targetLine, std::size_t tabWidth);
@@ -1496,6 +1516,8 @@ class Buffer {
 
     std::string                          Name_;
     std::optional<std::filesystem::path> Path_;
+    std::optional<RemoteFile>                      Remote_;
+    std::optional<std::filesystem::file_time_type> RemoteTimestamp_;
     // The file's last_write_time as of the last load/save/revert -- what
     // ExternallyModified() compares against. nullopt for a pathless or
     // NewFile() buffer (no on-disk content has ever been seen).

@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
 #include <filesystem>
@@ -341,6 +342,44 @@ TEST_CASE("Contents read apart from the buffer decode exactly as FromFile reads 
     CHECK(elsewhere.LineEndingKind() == ned::text::LineEnding::CRLF);
     CHECK(elsewhere.Name() == path.filename().string());
     CHECK_THROWS_AS(ReadFileContents(path), std::runtime_error);
+}
+
+TEST_CASE("A remote file's contents decode with no local path and nothing local stating their charset", "[Buffer][Charset]") {
+    using ned::text::FileContents;
+    using ned::text::RemoteFile;
+    const RemoteFile file{.destination = "host", .path = "/srv/notes.txt"};
+    const auto       when = std::filesystem::file_time_type::clock::now();
+
+    Buffer remote = Buffer::FromRemoteContents(file, FileContents{.bytes = "\xEF\xBB\xBF"
+                                                                           "a\r\nb\r\n",
+                                                                  .timestamp = when});
+    CHECK(remote.Text() == "a\nb\n");
+    CHECK(remote.FileCharset() == ned::text::Charset::Utf8Bom);
+    CHECK(remote.LineEndingKind() == ned::text::LineEnding::CRLF);
+    CHECK(remote.Name() == "notes.txt");
+    CHECK_FALSE(remote.Path().has_value());
+    CHECK(remote.Remote() == file);
+    CHECK(remote.RemoteTimestamp() == when);
+    CHECK_FALSE(remote.Modified());
+    CHECK_FALSE(remote.ExternallyModified());
+
+    // A local .editorconfig says latin1 for every path; the host's file
+    // isn't under it.
+    ned::text::SetStatedCharsetResolver([](const std::filesystem::path&) { return std::optional(ned::text::Charset::Latin1); });
+    CHECK(Buffer::FromContents("/srv/notes.txt", FileContents{.bytes = "\xE9", .timestamp = std::nullopt}).Text() == "\xC3\xA9");
+    CHECK(Buffer::FromRemoteContents(file, FileContents{.bytes = "\xE9", .timestamp = std::nullopt}).Text() == "\xE9");
+    ned::text::SetStatedCharsetResolver({});
+
+    CHECK_THROWS_AS(Buffer::FromRemoteContents(file, FileContents{.bytes = std::string("a\0b", 3), .timestamp = std::nullopt}), ned::text::BinaryFileError);
+    CHECK_THROWS_WITH(Buffer::FromRemoteContents(file, FileContents{.bytes = std::string("a\0b", 3), .timestamp = std::nullopt}),
+                      "ned: refusing to open binary file as text: host:/srv/notes.txt");
+    CHECK(Buffer::FromRemoteContents(file, FileContents{.bytes = std::string("a\0b", 3), .timestamp = std::nullopt}, true).LikelyBinary());
+
+    const Buffer fresh = Buffer::NewRemoteFile(file);
+    CHECK(fresh.Text().empty());
+    CHECK(fresh.Remote() == file);
+    CHECK_FALSE(fresh.Path().has_value());
+    CHECK_FALSE(fresh.RemoteTimestamp().has_value());
 }
 
 TEST_CASE("A chosen charset is what the next save writes and what later reverts decode", "[Buffer][Charset]") {
