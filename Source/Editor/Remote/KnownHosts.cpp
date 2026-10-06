@@ -1,0 +1,315 @@
+#include "KnownHosts.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdlib>
+#include <fstream>
+#include <iterator>
+#include <optional>
+#include <set>
+
+#include <arpa/inet.h>
+#include <glob.h>
+
+namespace ned::editor::remote {
+
+namespace {
+
+    // ssh gives up past this depth too.
+    constexpr int kMaxIncludeDepth = 16;
+
+    std::string_view Trim(std::string_view text) {
+        const std::size_t first = text.find_first_not_of(" \t\r");
+        if (first == std::string_view::npos) {
+            return {};
+        }
+        return text.substr(first, text.find_last_not_of(" \t\r") - first + 1);
+    }
+
+    std::vector<std::string_view> Lines(std::string_view text) {
+        std::vector<std::string_view> lines;
+        while (!text.empty()) {
+            const std::size_t end = text.find('\n');
+            lines.push_back(text.substr(0, end));
+            text = end == std::string_view::npos ? std::string_view() : text.substr(end + 1);
+        }
+        return lines;
+    }
+
+    std::vector<std::string> Words(std::string_view text) {
+        std::vector<std::string> words;
+        std::size_t              i = 0;
+        while (i < text.size()) {
+            if (std::isspace(static_cast<unsigned char>(text[i])) != 0) {
+                ++i;
+                continue;
+            }
+            if (text[i] == '#') {
+                break;
+            }
+            std::string word;
+            if (text[i] == '"') {
+                const std::size_t close = text.find('"', i + 1);
+                word                    = std::string(text.substr(i + 1, close == std::string_view::npos ? std::string_view::npos : close - i - 1));
+                i                       = close == std::string_view::npos ? text.size() : close + 1;
+            }
+            else {
+                while (i < text.size() && std::isspace(static_cast<unsigned char>(text[i])) == 0) {
+                    word += text[i++];
+                }
+            }
+            words.push_back(std::move(word));
+        }
+        return words;
+    }
+
+    std::string Lower(std::string_view text) {
+        std::string lower(text);
+        std::ranges::transform(lower, lower.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return lower;
+    }
+
+    bool IsPattern(std::string_view name) {
+        return name.find_first_of("*?!") != std::string_view::npos;
+    }
+
+    bool IsAddress(const std::string& name) {
+        unsigned char buffer[16];
+        return ::inet_pton(AF_INET, name.c_str(), buffer) == 1 || ::inet_pton(AF_INET6, name.c_str(), buffer) == 1;
+    }
+
+    // ~ and the %d/%% tokens; nullopt for a path that needs any other token.
+    std::optional<std::filesystem::path> ExpandPath(std::string_view word, const std::filesystem::path& home) {
+        std::string expanded;
+        if (word == "~" || word.starts_with("~/")) {
+            expanded = home.string();
+            word.remove_prefix(1);
+        }
+        for (std::size_t i = 0; i < word.size(); ++i) {
+            if (word[i] != '%') {
+                expanded += word[i];
+                continue;
+            }
+            if (i + 1 == word.size()) {
+                return std::nullopt;
+            }
+            switch (word[++i]) {
+                case '%':
+                    expanded += '%';
+                    break;
+                case 'd':
+                    expanded += home.string();
+                    break;
+                default:
+                    return std::nullopt;
+            }
+        }
+        return std::filesystem::path(expanded);
+    }
+
+    std::optional<std::string> ReadFile(const std::filesystem::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        if (!in) {
+            return std::nullopt;
+        }
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+
+    std::vector<std::filesystem::path> Glob(const std::string& pattern) {
+        std::vector<std::filesystem::path> paths;
+        glob_t                             matches{};
+        if (::glob(pattern.c_str(), 0, nullptr, &matches) == 0) {
+            for (std::size_t i = 0; i < matches.gl_pathc; ++i) {
+                paths.emplace_back(matches.gl_pathv[i]);
+            }
+        }
+        ::globfree(&matches);
+        return paths;
+    }
+
+    struct Collected {
+        std::vector<std::string>           hosts;
+        std::vector<std::filesystem::path> knownHostsFiles;
+    };
+
+    void ReadConfig(const std::filesystem::path& file, const std::filesystem::path& includeBase, const std::filesystem::path& home, int depth,
+                    Collected& collected) {
+        if (depth > kMaxIncludeDepth) {
+            return;
+        }
+        const std::optional<std::string> text = ReadFile(file);
+        if (!text) {
+            return;
+        }
+        SshConfigNames names = ParseSshConfig(*text, home);
+        collected.hosts.insert(collected.hosts.end(), names.hosts.begin(), names.hosts.end());
+        collected.knownHostsFiles.insert(collected.knownHostsFiles.end(), names.knownHostsFiles.begin(), names.knownHostsFiles.end());
+        for (const std::string& include : names.includes) {
+            const std::filesystem::path pattern = std::filesystem::path(include).is_absolute() ? std::filesystem::path(include) : includeBase / include;
+            for (const std::filesystem::path& included : Glob(pattern.string())) {
+                ReadConfig(included, includeBase, home, depth + 1, collected);
+            }
+        }
+    }
+
+} // namespace
+
+SshConfigNames ParseSshConfig(std::string_view text, const std::filesystem::path& home) {
+    SshConfigNames names;
+    for (std::string_view line : Lines(text)) {
+        line = Trim(line);
+        if (line.empty() || line.front() == '#') {
+            continue;
+        }
+        const std::size_t keywordEnd = line.find_first_of(" \t=");
+        const std::string keyword    = Lower(line.substr(0, keywordEnd));
+        std::string_view  rest       = keywordEnd == std::string_view::npos ? std::string_view() : Trim(line.substr(keywordEnd));
+        if (rest.starts_with('=')) {
+            rest = Trim(rest.substr(1));
+        }
+        const std::vector<std::string> arguments = Words(rest);
+        if (keyword == "host") {
+            for (const std::string& name : arguments) {
+                if (!IsPattern(name)) {
+                    names.hosts.push_back(name);
+                }
+            }
+        }
+        else if (keyword == "userknownhostsfile" || keyword == "globalknownhostsfile") {
+            for (const std::string& path : arguments) {
+                if (Lower(path) == "none") {
+                    continue;
+                }
+                if (std::optional<std::filesystem::path> expanded = ExpandPath(path, home)) {
+                    names.knownHostsFiles.push_back(std::move(*expanded));
+                }
+            }
+        }
+        else if (keyword == "include") {
+            for (const std::string& path : arguments) {
+                if (std::optional<std::filesystem::path> expanded = ExpandPath(path, home)) {
+                    names.includes.push_back(expanded->string());
+                }
+            }
+        }
+    }
+    return names;
+}
+
+std::vector<std::string> ParseKnownHosts(std::string_view text) {
+    std::vector<std::string> hosts;
+    for (std::string_view line : Lines(text)) {
+        std::vector<std::string> fields = Words(Trim(line));
+        if (!fields.empty() && fields.front().starts_with('@')) {
+            if (fields.front() == "@revoked") {
+                continue;
+            }
+            fields.erase(fields.begin());
+        }
+        if (fields.empty()) {
+            continue;
+        }
+        std::vector<std::string> names;
+        std::vector<std::string> addresses;
+        std::string_view         list = fields.front();
+        while (!list.empty()) {
+            const std::size_t comma = list.find(',');
+            std::string_view  entry = list.substr(0, comma);
+            list                    = comma == std::string_view::npos ? std::string_view() : list.substr(comma + 1);
+            if (entry.empty() || entry.starts_with('|') || IsPattern(entry)) {
+                continue;
+            }
+            if (entry.starts_with('[')) {
+                const std::size_t close = entry.find("]:");
+                if (close == std::string_view::npos || entry.substr(close + 2) != "22") {
+                    continue;
+                }
+                entry = entry.substr(1, close - 1);
+            }
+            std::string name(entry);
+            (IsAddress(name) ? addresses : names).push_back(std::move(name));
+        }
+        const std::vector<std::string>& chosen = names.empty() ? addresses : names;
+        hosts.insert(hosts.end(), chosen.begin(), chosen.end());
+    }
+    return hosts;
+}
+
+std::vector<std::string> ParseSearchDomains(std::string_view text) {
+    std::vector<std::string> domains;
+    for (std::string_view line : Lines(text)) {
+        line = Trim(line);
+        if (line.empty() || line.front() == '#' || line.front() == ';') {
+            continue;
+        }
+        std::vector<std::string> words = Words(line.substr(0, line.find(';')));
+        if (words.empty() || (words.front() != "search" && words.front() != "domain")) {
+            continue;
+        }
+        if (words.front() == "domain") {
+            words.resize(std::min<std::size_t>(words.size(), 2));
+        }
+        domains.clear();
+        for (auto word = words.begin() + 1; word != words.end(); ++word) {
+            while (word->ends_with('.')) {
+                word->pop_back();
+            }
+            if (!word->empty()) {
+                domains.push_back(std::move(*word));
+            }
+        }
+    }
+    return domains;
+}
+
+HostSources DefaultHostSources() {
+    const char*                 home = std::getenv("HOME");
+    const std::filesystem::path homeDir(home != nullptr ? home : "");
+    HostSources                 sources{.home = homeDir, .userConfig = {}, .systemConfig = "/etc/ssh/ssh_config", .knownHosts = {}};
+    if (!homeDir.empty()) {
+        sources.userConfig = homeDir / ".ssh" / "config";
+        sources.knownHosts = {homeDir / ".ssh" / "known_hosts", homeDir / ".ssh" / "known_hosts2"};
+    }
+    sources.knownHosts.emplace_back("/etc/ssh/ssh_known_hosts");
+    sources.knownHosts.emplace_back("/etc/ssh/ssh_known_hosts2");
+    return sources;
+}
+
+std::vector<std::string> KnownHosts(const HostSources& sources) {
+    Collected collected;
+    if (!sources.userConfig.empty()) {
+        ReadConfig(sources.userConfig, sources.home / ".ssh", sources.home, 0, collected);
+    }
+    Collected system;
+    if (!sources.systemConfig.empty()) {
+        ReadConfig(sources.systemConfig, sources.systemConfig.parent_path(), sources.home, 0, system);
+    }
+
+    std::vector<std::filesystem::path> files = sources.knownHosts;
+    std::vector<std::filesystem::path> named = collected.knownHostsFiles;
+    named.insert(named.end(), system.knownHostsFiles.begin(), system.knownHostsFiles.end());
+    for (const std::filesystem::path& file : named) {
+        if (std::ranges::find(files, file) == files.end()) {
+            files.push_back(file);
+        }
+    }
+    for (const std::filesystem::path& file : files) {
+        if (const std::optional<std::string> text = ReadFile(file)) {
+            const std::vector<std::string> hosts = ParseKnownHosts(*text);
+            collected.hosts.insert(collected.hosts.end(), hosts.begin(), hosts.end());
+        }
+    }
+    // Last: a system config's hosts are mostly the distribution's own.
+    collected.hosts.insert(collected.hosts.end(), system.hosts.begin(), system.hosts.end());
+
+    std::vector<std::string> unique;
+    std::set<std::string>    seen;
+    for (std::string& host : collected.hosts) {
+        if (seen.insert(Lower(host)).second) {
+            unique.push_back(std::move(host));
+        }
+    }
+    return unique;
+}
+
+} // namespace ned::editor::remote

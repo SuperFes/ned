@@ -340,6 +340,7 @@ add_executable(ned_tests
             HostAgentTest.cpp
             RemoteConnectionTest.cpp
             RemoteDeployTest.cpp
+            RemoteKnownHostsTest.cpp
             RemoteSshTest.cpp
             AcpClientTest.cpp
             AcpConfigTest.cpp

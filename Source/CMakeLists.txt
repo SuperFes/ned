@@ -321,6 +321,7 @@ add_library(ned_lib STATIC
         Editor/Remote/Connection.cpp
         Editor/Remote/Deploy.cpp
         Editor/Remote/Hosts.cpp
+        Editor/Remote/KnownHosts.cpp
         Editor/Remote/Location.cpp
         Editor/Remote/Search.cpp
         Editor/Remote/Ssh.cpp
