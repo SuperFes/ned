@@ -35,6 +35,10 @@ reason, so it stays a conscious call.
       an explicit command over ACP. The new work is multi-line inline rendering, and
       `Text/LineDiff.h` plus `UndoTree` already supply the prompt input.
 
+- [ ] **Client-only remote mode** (no agent; per-operation `ssh`/`sftp`). A second
+      backend behind the same host API, with search falling back to a remote `rg` or
+      `grep -r`. Justified by a host where deploying the agent isn't allowed.
+
 ### Performance
 
 - [ ] **Incremental fold/locals/indent passes.** Queries are incremental (`changed-ranges`),

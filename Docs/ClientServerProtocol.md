@@ -168,14 +168,17 @@ real call sites, not here.
 - **Huge files** (`Buffer::FromHugeFile`, mmap) stay local-only. A remote file over
   `HugeFileThreshold()` opens through the ordinary streamed path, or is refused with a
   message if it's too large to hold.
-- **Client-only mode** (no agent: per-operation `ssh`/`sftp`) is a different backend
-  behind the same host API. Its search falls back to a remote `rg`, whose semantics
-  differ.
+- **Client-only mode** (no agent: per-operation `ssh`/`sftp`) would be a different
+  backend behind the same host API. It's deferred: a toolchain-free host may not have
+  `rg` either, leaving `grep -r` as the only search.
 
 ## 8. Staging
 
 Each step is unit-tested on its own and lands working.
 
+0. **Library split.** `ned_core` and `ned_host` carved out of `ned_lib` so the agent
+   links no Notcurses, Janet or grammar engine. The agent must be a static (musl)
+   executable: a remote with an older glibc can't run a locally built dynamic binary.
 1. **Wire + codec.** Frame reader/writer, length cap, reserved-flag rejection, CBOR
    round-trip of binary payloads, zstd negotiation. Tested over a pipe pair.
 2. **Messages.** Correlation, streams, credit, cancellation, under a fake peer: a flood

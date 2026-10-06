@@ -49,21 +49,57 @@ table is the evidence this stage was waiting for.
 
 ## Remote Development
 
-Goal: edit files on a remote host over SSH without ned running remotely, comfortably
-enough that it doesn't feel like a degraded mode.
+Goal: edit files on a remote host over SSH without the editor running remotely,
+comfortably enough that it doesn't feel like a degraded mode.
 
-**Approach.** Build **(a) client-only** first: shell out to `ssh`/`sftp` per operation,
-with no footprint on the remote host. Add **(b) a thin remote agent** only once search
-latency, or LSP running against the wrong toolchain, proves it necessary. The agent
-would do fast search, change notification, and host LSP/DAP/task/VCS processes against
-the remote toolchain. Edit locally and sync on save; don't build a remote-authoritative
-buffer.
+**Approach.** A thin, self-contained agent first, speaking `Docs/ClientServerProtocol.md`
+over `ssh host ned-agent --stdio`. It does search, file I/O, change notification, and
+hosts LSP/DAP/task/VCS processes against the remote toolchain. Locally, the same
+dispatcher runs in-process. A real target host (Rocky 9, glibc 2.34, no compiler, no `rg`)
+rules out both a dynamically linked agent and a client-only `rg` fallback. Edit locally
+and sync on save; don't build a remote-authoritative buffer.
+
+**Library split** — the agent links only what it needs. Measured by include closure,
+2026-10-05.
+- [ ] `ned_core` with no Notcurses/Janet dependency: Lifetime, DiagnosticsLog, Process,
+      Protocol, GitIgnore, BinaryDetect, Charset, SavePlan, FileWatch, and a posting
+      queue that `ui::EventLoop` contains. `FramedConnection` uses only `Post()`, but
+      today reaches Notcurses through `EventLoop` → `Widget` (66 files).
+- [ ] Split `Project/Search.cpp` into a disk core and a live-buffer overlay. The overlay
+      is what pulls in `Buffer`/`BufferList` and the grammar engine (215 files), and it
+      belongs on the editor side anyway.
+- [ ] Separate the per-file charset lookup from `EditorConfig`, which reaches the
+      language machinery through `FormatRules` (209 files). Search needs only the
+      charset.
+- [ ] `Text/DisplayWidth.cpp` includes Notcurses, which blocks a clean text library. It
+      doesn't block the agent.
+
+**Agent**
+- [ ] `ned_host` (dispatcher plus `fs`/`proc`/`search`/`watch` handlers) and a
+      `ned-agent` executable over it, initially answering only `hello` and `search`.
+- [ ] Static musl builds for x86_64 and aarch64 (clang `--target` + musl sysroot +
+      static libc++, or `zig c++`). Verify with `file`/`ldd` and a run in a bare
+      container. RE2/abseil under musl is the likeliest failure.
+- [ ] Size the search pool from the host's core count, not the local default.
+- [ ] Deploy to the remote `$XDG_DATA_HOME/ned/agent/<build>-<arch>/` (0700) over the
+      same ssh connection, with a redeploy on a `hello` build-hash mismatch.
+- [ ] The `proc` seam: LSP/DAP/task/VCS subprocesses spawn through the host, local ones
+      included, and remote inotify relays through `watch`. This is the biggest lift in
+      the section.
+
+**Client/server protocol**, ordered by the design doc's staging section.
+- [ ] Wire and codec: length-prefixed frames with a 64 MiB cap, CBOR, per-frame zstd
+      negotiated with `none` as an option.
+- [ ] Messages: request/response correlation, streams with credit-based flow control,
+      `$/cancel`.
+- [ ] Verify a remote debug session end to end (PHP/Xdebug, with the adapter running on
+      the host through `proc`).
 
 **File I/O and editing**
 - [ ] A host file I/O seam behind `Buffer::FromFile` and the save path, through the
       in-process transport first. Rope, undo and multi-cursor stay unchanged.
-- [ ] Remote semantics for `ExternallyModified`/`AutoRevert`/`AutoMerge`/`FileWatch`:
-      a `stat` round trip on the poll tick, with a longer interval over a slow link.
+- [ ] Remote semantics for `ExternallyModified`/`AutoRevert`/`AutoMerge`/`FileWatch`,
+      driven by `watch` events rather than polling.
 - [ ] `user@host:/path` display everywhere (tab bar, mode line, sidebar, buffer names).
       Project-registry roots accept the same syntax.
 - [ ] Failure handling for a connection that drops mid-save/revert/search. Use
@@ -72,8 +108,10 @@ buffer.
 - [ ] Confirm local and remote buffers mix in one window layout.
 
 **Connect**
-- [ ] SSH transport: shell out to real `ssh`/`sftp`, reusing the user's config, agent and
+- [ ] SSH transport: shell out to real `ssh`, reusing the user's config, agent and
       `known_hosts`. Try `ControlMaster` multiplexing before reaching for libssh.
+      Override `RemoteCommand`/`RequestTTY` (`-o RemoteCommand=none -o RequestTTY=no`):
+      a user's config that launches an interactive shell otherwise refuses a command.
 - [ ] Parse `~/.ssh/config` directly (`Host`/`HostName`/`User`/`Port`/`IdentityFile`/
       `ProxyJump`, wildcards) to fill in defaults.
 - [ ] A connect prompt that completes the project name first, then the host, then the
@@ -83,28 +121,9 @@ buffer.
 **Project tree and search**
 - [ ] A lazy, async remote directory listing for the sidebar (`AsyncFileLoader`
       precedent).
-- [ ] Remote project search. Start with a remote `rg`, whose semantics differ from ned's
-      gitignore/binary rules. The agent is the fix for exact parity. Decide how
-      project-replace, find-references and the agenda scan degrade in client-only mode.
-
-**Agent (phase b)**
-- [ ] A headless `add_executable` over `ned_lib`. Measured 2026-09-08: it links without
-      `-ljanet` and runs real `ProjectSearch` at 8.7 MB, so no library split is needed.
-- [ ] The `proc` seam: LSP/DAP/task/VCS subprocesses spawn through the host, local ones
-      included, and remote inotify relays through `watch`. This is the biggest lift in
-      the section.
-- [ ] Auto-deploy with a version handshake. Build per architecture, either
-      cross-compiled or prebuilt, because the remote host may have no toolchain.
-
-**Client/server protocol** — designed in `Docs/ClientServerProtocol.md`, whose staging
-section orders the work. The seam items above (file I/O, remote spawn) are its stages 3
-and 4.
-- [ ] Wire and codec: length-prefixed frames with a 64 MiB cap, CBOR, per-frame zstd
-      negotiated with `none` as an option.
-- [ ] Messages: request/response correlation, streams with credit-based flow control,
-      `$/cancel`.
-- [ ] Verify a remote debug session end to end (PHP/Xdebug, with the adapter running on
-      the host through `proc`).
+- [ ] Remote project search through the agent's `search`, with the editor's live-buffer
+      overlay applied to the results. Decide how project-replace, find-references and
+      the agenda scan run against a remote root.
 
 ## Documentation & Companion Tooling
 
