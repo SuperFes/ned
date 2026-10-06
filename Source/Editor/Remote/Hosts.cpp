@@ -10,6 +10,7 @@ Hosts::Hosts(PostQueue& postQueue, OptionsFactory options, HostLookupOptions loo
 Hosts::~Hosts() {
     lifetime_.Revoke();
     attempts_.clear();
+    cancelled_.clear();
     connections_.clear();
 }
 
@@ -27,15 +28,24 @@ void Hosts::Connect(const std::string& destination, Connected done) {
         return;
     }
     Attempt& attempt = attempts_[destination];
+    attempt.id       = ++nextAttemptId_;
     attempt.waiters.push_back(std::move(done));
-    attempt.connector = std::make_unique<Connector>(options_(destination), postQueue_,
-                                                    [this, destination](Connector::Result result) { Finish(destination, std::move(result)); });
+    attempt.connector = std::make_unique<Connector>(options_(destination), postQueue_, [this, destination, id = attempt.id](Connector::Result result) {
+        Finish(destination, id, std::move(result));
+    });
 }
 
-void Hosts::Finish(const std::string& destination, Connector::Result result) {
-    auto attempt = attempts_.extract(destination);
+void Hosts::Finish(const std::string& destination, std::uint64_t id, Connector::Result result) {
     // This runs inside the Connector's own callback, so it goes afterwards.
-    postQueue_.Post([connector = std::shared_ptr<Connector>(std::move(attempt.mapped().connector))] {});
+    const auto retire = [this](std::unique_ptr<Connector> connector) { postQueue_.Post([connector = std::shared_ptr<Connector>(std::move(connector))] {}); };
+    if (auto cancelled = cancelled_.extract(id); !cancelled.empty()) {
+        // Its callers already have the cancellation; a connection that got
+        // this far closes along with result.
+        retire(std::move(cancelled.mapped()));
+        return;
+    }
+    auto attempt = attempts_.extract(destination);
+    retire(std::move(attempt.mapped().connector));
 
     if (!result) {
         for (Connected& waiter : attempt.mapped().waiters) {
@@ -61,8 +71,12 @@ void Hosts::Finish(const std::string& destination, Connector::Result result) {
 }
 
 bool Hosts::Disconnect(const std::string& destination) {
-    if (const auto attempt = attempts_.find(destination); attempt != attempts_.end()) {
-        attempt->second.connector->Cancel();
+    if (auto attempt = attempts_.extract(destination); !attempt.empty()) {
+        attempt.mapped().connector->Cancel();
+        cancelled_.emplace(attempt.mapped().id, std::move(attempt.mapped().connector));
+        for (Connected& waiter : attempt.mapped().waiters) {
+            waiter(std::unexpected(std::string("cancelled")));
+        }
         return true;
     }
     auto live = connections_.extract(destination);

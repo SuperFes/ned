@@ -6,6 +6,7 @@
 #ifndef NED_EDITOR_REMOTE_HOSTS_H
 #define NED_EDITOR_REMOTE_HOSTS_H
 
+#include <cstdint>
 #include <expected>
 #include <functional>
 #include <map>
@@ -39,9 +40,11 @@ class Hosts {
     // otherwise once an attempt ends. Callers asking while an attempt is
     // in flight share it.
     void Connect(const std::string& destination, Connected done);
-    // Cancels an attempt, whose callers then get the cancellation, or
+    // Cancels an attempt, whose callers get the cancellation at once, or
     // closes a connection, failing its pending requests. Not from inside
     // that connection's own handlers. False if there was nothing to end.
+    // A cancelled attempt never yields a connection, even one that had
+    // already logged in, and the next Connect starts afresh.
     bool Disconnect(const std::string& destination);
 
     [[nodiscard]] Connection* Find(const std::string& destination) const;
@@ -58,19 +61,23 @@ class Hosts {
 
   private:
     struct Attempt {
+        std::uint64_t              id = 0;
         std::unique_ptr<Connector> connector;
         std::vector<Connected>     waiters;
     };
 
-    void Finish(const std::string& destination, Connector::Result result);
+    void Finish(const std::string& destination, std::uint64_t id, Connector::Result result);
 
     PostQueue&                                         postQueue_;
     OptionsFactory                                     options_;
     Dropped                                            onDropped_;
     std::map<std::string, std::unique_ptr<Connection>> connections_;
     std::map<std::string, Attempt>                     attempts_;
-    HostLookup                                         lookup_;
-    LifetimeGuard                                      lifetime_;
+    // Cancelled attempts whose workers haven't answered yet, by id.
+    std::map<std::uint64_t, std::unique_ptr<Connector>> cancelled_;
+    std::uint64_t                                       nextAttemptId_ = 0;
+    HostLookup                                          lookup_;
+    LifetimeGuard                                       lifetime_;
 };
 
 } // namespace ned::editor::remote
