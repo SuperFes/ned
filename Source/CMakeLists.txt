@@ -43,13 +43,46 @@ endif()
 add_executable(ned-langc Editor/Grammar/Compile/LangcMain.cpp)
 target_link_libraries(ned-langc PRIVATE ned_grammar_compile)
 
+# Process, protocol, logging and file plumbing with no terminal, Janet or
+# grammar dependency -- what a headless host process links. Nothing here may
+# reach UI/ or Text/'s buffer layer; ned_core_link_check enforces that at
+# link time.
+add_library(ned_core STATIC
+        Editor/DiagnosticsLog.cpp
+        Editor/FileWatch.cpp
+        Editor/GitIgnore.cpp
+        Editor/PostQueue.cpp
+        Editor/Process/ChildProcess.cpp
+        Editor/Process/StreamedChild.cpp
+        Editor/ProcessTimeouts.cpp
+        Editor/Protocol/LineTransport.cpp
+        Editor/SearchSettings.cpp
+        Text/BinaryDetect.cpp
+        Text/Charset.cpp
+        Text/FilePreservation.cpp
+        Text/LineEnding.cpp
+        Text/SavePlan.cpp
+        Text/WhitespaceHygiene.cpp)
+
+target_include_directories(ned_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+if (NED_ENABLE_SANITIZERS)
+    target_compile_options(ned_core PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(ned_core PUBLIC -fsanitize=address,undefined)
+endif()
+
+# Links every ned_core object and nothing else, so a dependency that leaks in
+# fails the build as an undefined symbol rather than going unnoticed inside
+# ned_lib's link.
+add_executable(ned_core_link_check Editor/CoreLinkCheck.cpp)
+target_link_libraries(ned_core_link_check PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,ned_core>")
+
 add_library(ned_lib STATIC
         Application.cpp
         Text/Base64.cpp
         Text/FileUri.cpp
         Text/Rope.cpp
         Text/RopeStorage.cpp
-        Text/SavePlan.cpp
         Text/MappedFile.cpp
         Text/OffsetRemap.cpp
         Text/AnchorSet.cpp
@@ -57,7 +90,6 @@ add_library(ned_lib STATIC
         Text/PieceTable.cpp
         Text/PieceTableStorage.cpp
         Text/DiskSpace.cpp
-        Text/FilePreservation.cpp
         Text/Grapheme.cpp
         Text/DisplayWidth.cpp
         Text/UndoTree.cpp
@@ -65,15 +97,11 @@ add_library(ned_lib STATIC
         Text/Buffer.cpp
         Text/BufferIdentity.cpp
         Text/BufferList.cpp
-        Text/BinaryDetect.cpp
         Text/LineDiff.cpp
         Text/ThreeWayMerge.cpp
         Text/ConflictHunk.cpp
         Text/MergeAlignment.cpp
         Text/Utf8.cpp
-        Text/LineEnding.cpp
-        Text/Charset.cpp
-        Text/WhitespaceHygiene.cpp
         Editor/Key.cpp
         Editor/Command.cpp
         Editor/FuzzyMatch.cpp
@@ -203,7 +231,6 @@ add_library(ned_lib STATIC
         Editor/Fill.cpp
         Editor/PageScroll.cpp
         Editor/DiffRefreshSettings.cpp
-        Editor/ProcessTimeouts.cpp
         Editor/ThemeSetting.cpp
         Editor/Variables.cpp
         Editor/HighlightSettings.cpp
@@ -211,8 +238,6 @@ add_library(ned_lib STATIC
         Editor/MinimapSettings.cpp
         Editor/RulerSettings.cpp
         Editor/WhitespaceSettings.cpp
-        Editor/GitIgnore.cpp
-        Editor/SearchSettings.cpp
         Editor/Project/Search.cpp
         Editor/Project/Agenda.cpp
         Editor/Project/CaseCheck.cpp
@@ -233,7 +258,6 @@ add_library(ned_lib STATIC
         Editor/Project/FileOps.cpp
         Editor/AutoRevert.cpp
         Editor/AutoMerge.cpp
-        Editor/FileWatch.cpp
         Editor/BackgroundActivity.cpp
         Editor/HighlightCache.cpp
         Editor/ChunkedHighlight.cpp
@@ -246,8 +270,6 @@ add_library(ned_lib STATIC
         Editor/BufferSave.cpp
         Editor/PersistentUndo.cpp
         Editor/Project/Undo.cpp
-        Editor/DiagnosticsLog.cpp
-        Editor/PostQueue.cpp
         Editor/MessagesBuffer.cpp
         Editor/Timestamp.cpp
         Editor/SanitizerOutputParser.cpp
@@ -292,9 +314,6 @@ add_library(ned_lib STATIC
         Editor/Tracker/KeyCompletion.cpp
         Editor/Tracker/Registry.cpp
         Editor/Tracker/Runner.cpp
-        Editor/Process/ChildProcess.cpp
-        Editor/Process/StreamedChild.cpp
-        Editor/Protocol/LineTransport.cpp
         Editor/Acp/Client.cpp
         Editor/Acp/Config.cpp
         Editor/Acp/PanelConfig.cpp
@@ -564,6 +583,7 @@ target_link_libraries(ned_lib
         # The editor compiles out-of-tree language packages in process, and
         # `ned --compile-language` runs the same generator ned-langc does.
         PUBLIC ned_grammar_compile
+        PUBLIC ned_core
         PUBLIC ${Janet_LIBRARIES}
         # Every widget (Widget/KeyTranslation/Theme/EventLoop/Layout and every
         # concrete widget through main.cpp's own composition root) is built on
