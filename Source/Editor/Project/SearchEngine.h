@@ -4,10 +4,11 @@
 // LiveContent.
 //
 // Matching runs on RE2 (linear time, no backtracking blowup) across a small
-// worker pool (SearchSettings.h's ProjectSearchThreads). The directory walk
-// -- dot-directories, GitIgnore.h's matcher, Text/BinaryDetect.h's sniff --
-// stays on the calling thread; only the per-file line scan is parallel, and
-// results come back in walk order regardless of which worker scanned a file.
+// worker pool (SearchOptions::threads). The directory walk -- dot-directories,
+// GitIgnore.h's matcher, Text/BinaryDetect.h's sniff -- runs on the calling
+// thread, feeding the pool as it finds files, then joins the scan once it's
+// done. Results come back in walk order regardless of which worker scanned a
+// file.
 //
 
 #ifndef NED_EDITOR_PROJECT_SEARCHENGINE_H
@@ -15,6 +16,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -101,6 +103,21 @@ class SearchRoot {
     std::filesystem::path canonical_;
 };
 
+// The settings a search runs under, explicit so a host can run the
+// editor's rather than its own.
+struct SearchOptions {
+    unsigned int threads      = 4;    // scan workers, capped by the machine's cores
+    bool         editorConfig = true; // decode a file in the charset .editorconfig states
+};
+
+// The process-wide settings: ProjectSearchThreads, EditorConfigEnabled.
+[[nodiscard]] SearchOptions CurrentSearchOptions();
+
+// Receives a streamed search's matches as runs of finished files, in the
+// order SearchDirectory would return them. Called on a search thread, never
+// concurrently and never with an empty run. Must not throw.
+using SearchSink = std::function<void(std::vector<SearchMatch> matches)>;
+
 // Recursively searches every regular text file under root, returning one
 // SearchMatch per matching line, in walk order then top to bottom. Throws
 // SearchPatternError on invalid syntax. Returns an empty list if root can't
@@ -116,6 +133,13 @@ class SearchRoot {
 [[nodiscard]] std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, const SearchPattern& pattern,
                                                        std::span<const LiveContent> live,
                                                        const std::stop_token&       stop = {});
+
+// SearchDirectory, streamed: matches reach onMatches as files finish
+// rather than after the whole walk. Nothing more is sent once stop is
+// requested.
+void StreamSearchDirectory(const std::filesystem::path& root, const SearchPattern& pattern,
+                           std::span<const LiveContent> live, const SearchOptions& options,
+                           const SearchSink& onMatches, const std::stop_token& stop = {});
 
 // The same per-file scan over an explicit file list instead of a walk. No
 // .gitignore, dot-directory or binary filtering: the caller already chose

@@ -378,14 +378,15 @@ std::map<std::string, std::string> EditorConfigPropertiesFor(const std::filesyst
     });
 }
 
-std::vector<std::optional<text::Charset>> EditorConfigCharsets(std::span<const std::filesystem::path> files) {
-    std::vector<std::optional<text::Charset>> charsets(files.size());
-    if (!EditorConfigEnabled()) {
-        return charsets;
+EditorConfigCharsetCache::EditorConfigCharsetCache(bool enabled) : enabled_(enabled) {
+}
+
+std::optional<text::Charset> EditorConfigCharsetCache::operator()(const std::filesystem::path& file) {
+    if (!enabled_) {
+        return std::nullopt;
     }
-    std::unordered_map<std::string, std::optional<EditorConfigFile>> byDirectory;
-    const auto fileIn = [&byDirectory](const std::filesystem::path& directory) -> const EditorConfigFile* {
-        auto [it, inserted] = byDirectory.try_emplace(directory.string());
+    const auto fileIn = [this](const std::filesystem::path& directory) -> const EditorConfigFile* {
+        auto [it, inserted] = byDirectory_.try_emplace(directory.string());
         if (inserted) {
             if (const std::optional<std::string> text = ReadFile(directory / ".editorconfig")) {
                 it->second = ParseEditorConfig(*text);
@@ -393,8 +394,15 @@ std::vector<std::optional<text::Charset>> EditorConfigCharsets(std::span<const s
         }
         return it->second ? &*it->second : nullptr;
     };
-    for (std::size_t i = 0; i < files.size(); ++i) {
-        charsets[i] = EditorConfigConventions(PropertiesFor(files[i], fileIn)).charset;
+    return EditorConfigConventions(PropertiesFor(file, fileIn)).charset;
+}
+
+std::vector<std::optional<text::Charset>> EditorConfigCharsets(std::span<const std::filesystem::path> files) {
+    EditorConfigCharsetCache                  cache(EditorConfigEnabled());
+    std::vector<std::optional<text::Charset>> charsets;
+    charsets.reserve(files.size());
+    for (const std::filesystem::path& file : files) {
+        charsets.push_back(cache(file));
     }
     return charsets;
 }

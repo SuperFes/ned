@@ -2,11 +2,15 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <fstream>
 #include <iterator>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
 
 #include <re2/re2.h>
 
@@ -26,17 +30,15 @@ namespace {
     }
 
     // Single-threaded: a recursive_directory_iterator can't be shared across
-    // threads, and the walk was never the slow part.
-    std::vector<std::filesystem::path> CollectSearchableFiles(const std::filesystem::path& absoluteRoot,
-                                                              const std::stop_token&       stop) {
-        std::vector<std::filesystem::path> files;
-
+    // threads. Calls onFile with each searchable file, in walk order.
+    template <typename OnFile>
+    void WalkSearchableFiles(const std::filesystem::path& absoluteRoot, const std::stop_token& stop, OnFile onFile) {
         std::error_code ec;
         auto            it = std::filesystem::recursive_directory_iterator(
             absoluteRoot, std::filesystem::directory_options::skip_permission_denied, ec);
         const auto end = std::filesystem::recursive_directory_iterator();
         if (ec) {
-            return files;
+            return;
         }
 
         const GitIgnoreMatcher& gitIgnore = CachedGitIgnoreMatcher(absoluteRoot);
@@ -60,10 +62,8 @@ namespace {
                 continue;
             }
 
-            files.push_back(entry.path());
+            onFile(entry.path());
         }
-
-        return files;
     }
 
     // Whether p is at or under root, decided lexically (no syscalls, and no
@@ -158,70 +158,134 @@ namespace {
         return matches;
     }
 
-    // Fans the per-file scan out across a small worker pool, an atomic
-    // counter handing each thread its next file (file sizes vary too much for
-    // a static split). perFile[i] is written by exactly one thread, then
-    // flattened in file order once every worker has joined, so the result
-    // doesn't depend on scheduling. `live` is parallel to `files`: a non-null
-    // entry is searched in place of reading that file.
-    std::vector<SearchMatch> SearchFilesParallel(const std::vector<std::filesystem::path>& files,
-                                                 const std::vector<const LiveContent*>&    live,
-                                                 const SearchPattern& pattern, const std::stop_token& stop) {
-        if (files.empty()) {
-            return {};
+    // The per-file scan across a small worker pool, fed while the walk is
+    // still finding files. Workers take files in push order; a file's
+    // matches go to the sink once it and every file before it are done, so
+    // the result doesn't depend on scheduling.
+    class ScanPipeline {
+      public:
+        ScanPipeline(const SearchPattern& pattern, unsigned int threads, const SearchSink& onMatches,
+                     const std::stop_token& stop) : pattern_(pattern), onMatches_(onMatches), stop_(stop) {
+            const unsigned int hardware = std::thread::hardware_concurrency();
+            const unsigned int count    = std::max(1u, std::min(threads, hardware == 0 ? 4u : hardware));
+            // The calling thread scans too once it's done pushing, but at
+            // least one worker runs beside it so results flow during the walk.
+            const unsigned int workers = std::max(1u, count - 1);
+            workers_.reserve(workers);
+            for (unsigned int t = 0; t < workers; ++t) {
+                workers_.emplace_back([this] { Work(); });
+            }
         }
 
-        const unsigned int hardwareThreads = std::thread::hardware_concurrency();
-        const unsigned int threadCount     = std::max(
-            1u, std::min({static_cast<unsigned int>(ProjectSearchThreads()), hardwareThreads == 0 ? 4u : hardwareThreads,
-                          static_cast<unsigned int>(files.size())}));
+        ~ScanPipeline() {
+            Finish();
+        }
 
-        // Resolved before any worker exists: it reads .editorconfig files.
-        const std::vector<std::optional<text::Charset>> stated = EditorConfigCharsets(files);
+        ScanPipeline(const ScanPipeline&)            = delete;
+        ScanPipeline& operator=(const ScanPipeline&) = delete;
 
-        std::vector<std::vector<SearchMatch>> perFile(files.size());
-        std::atomic<std::size_t>              nextIndex{0};
+        // A non-null `live` is searched in place of reading the file.
+        void Push(std::filesystem::path path, std::optional<text::Charset> stated, const LiveContent* live) {
+            {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                items_.push_back(Item{.path = std::move(path), .stated = stated, .live = live});
+            }
+            ready_.notify_one();
+        }
 
-        auto worker = [&]() {
-            for (;;) {
-                const std::size_t i = nextIndex.fetch_add(1, std::memory_order_relaxed);
-                if (i >= files.size() || stop.stop_requested()) {
+        // Ends the input, scans beside the workers until nothing is left,
+        // and waits for them.
+        void Finish() {
+            {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                if (closed_) {
                     return;
                 }
-                if (live[i] == nullptr) {
-                    perFile[i] = SearchOneFile(files[i], stated[i], pattern);
-                }
-                else if (live[i]->preScanned) {
-                    perFile[i] = *live[i]->preScanned;
-                }
-                else {
-                    perFile[i] = SearchOneText(files[i], live[i]->text, pattern);
-                }
+                closed_ = true;
             }
+            ready_.notify_all();
+            Work();
+            workers_.clear();
+        }
+
+      private:
+        struct Item {
+            std::filesystem::path        path;
+            std::optional<text::Charset> stated;
+            const LiveContent*           live = nullptr;
+            std::vector<SearchMatch>     matches;
+            bool                         done = false;
         };
 
-        {
-            // The calling thread runs the same loop rather than idling.
-            std::vector<std::jthread> workers;
-            workers.reserve(threadCount - 1);
-            for (unsigned int t = 1; t < threadCount; ++t) {
-                workers.emplace_back(worker);
+        void Work() {
+            for (;;) {
+                Item* item = nullptr;
+                {
+                    std::unique_lock<std::mutex> lock(mutex_);
+                    ready_.wait(lock, stop_, [this] { return next_ < items_.size() || closed_; });
+                    if (stop_.stop_requested() || next_ == items_.size()) {
+                        return;
+                    }
+                    // A deque's push_back leaves references to its elements valid.
+                    item = &items_[next_++];
+                }
+                Complete(*item, Scan(*item));
             }
-            worker();
         }
+
+        [[nodiscard]] std::vector<SearchMatch> Scan(const Item& item) const {
+            if (item.live == nullptr) {
+                return SearchOneFile(item.path, item.stated, pattern_);
+            }
+            if (item.live->preScanned) {
+                return *item.live->preScanned;
+            }
+            return SearchOneText(item.path, item.live->text, pattern_);
+        }
+
+        void Complete(Item& item, std::vector<SearchMatch> matches) {
+            {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                item.matches = std::move(matches);
+                item.done    = true;
+            }
+            // Collecting and sending under one lock keeps runs in order.
+            const std::lock_guard<std::mutex> emitLock(emitMutex_);
+            std::vector<SearchMatch>          run;
+            {
+                const std::lock_guard<std::mutex> lock(mutex_);
+                for (; emitted_ < items_.size() && items_[emitted_].done; ++emitted_) {
+                    std::vector<SearchMatch> done = std::exchange(items_[emitted_].matches, {});
+                    run.insert(run.end(), std::make_move_iterator(done.begin()), std::make_move_iterator(done.end()));
+                }
+            }
+            if (!run.empty() && !stop_.stop_requested()) {
+                onMatches_(std::move(run));
+            }
+        }
+
+        const SearchPattern&   pattern_;
+        const SearchSink&      onMatches_;
+        std::stop_token        stop_;
+
+        std::mutex                  mutex_;
+        std::condition_variable_any ready_;
+        std::deque<Item>            items_;
+        std::size_t                 next_    = 0;
+        std::size_t                 emitted_ = 0;
+        bool                        closed_  = false;
+
+        std::mutex                emitMutex_;
+        std::vector<std::jthread> workers_; // declared last, so joined before the state they use goes
+    };
+
+    std::vector<SearchMatch> Collect(const std::function<void(const SearchSink&)>& search, const std::stop_token& stop) {
+        std::vector<SearchMatch> matches;
+        search([&matches](std::vector<SearchMatch> run) {
+            matches.insert(matches.end(), std::make_move_iterator(run.begin()), std::make_move_iterator(run.end()));
+        });
         if (stop.stop_requested()) {
             return {};
-        }
-
-        std::size_t total = 0;
-        for (const std::vector<SearchMatch>& m : perFile) {
-            total += m.size();
-        }
-
-        std::vector<SearchMatch> matches;
-        matches.reserve(total);
-        for (std::vector<SearchMatch>& m : perFile) {
-            matches.insert(matches.end(), std::make_move_iterator(m.begin()), std::make_move_iterator(m.end()));
         }
         return matches;
     }
@@ -256,6 +320,11 @@ SearchPattern& SearchPattern::operator=(SearchPattern&&) noexcept = default;
 
 bool SearchPattern::Matches(std::string_view line) const {
     return re2::RE2::PartialMatch(line, *regex_);
+}
+
+SearchOptions CurrentSearchOptions() {
+    return SearchOptions{.threads      = static_cast<unsigned int>(std::max(1, ProjectSearchThreads())),
+                         .editorConfig = EditorConfigEnabled()};
 }
 
 std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, const std::string& pattern,
@@ -293,10 +362,17 @@ std::optional<std::filesystem::path> SearchRoot::Relative(const std::filesystem:
 
 std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, const SearchPattern& pattern,
                                          std::span<const LiveContent> live, const std::stop_token& stop) {
+    return Collect([&](const SearchSink& sink) { StreamSearchDirectory(root, pattern, live, CurrentSearchOptions(), sink, stop); },
+                   stop);
+}
+
+void StreamSearchDirectory(const std::filesystem::path& root, const SearchPattern& pattern,
+                           std::span<const LiveContent> live, const SearchOptions& options, const SearchSink& onMatches,
+                           const std::stop_token& stop) {
     std::error_code             ec;
     const std::filesystem::path absoluteRoot = std::filesystem::absolute(root, ec);
     if (ec) {
-        return {};
+        return;
     }
     const SearchRoot searchRoot(absoluteRoot);
 
@@ -317,59 +393,55 @@ std::vector<SearchMatch> SearchDirectory(const std::filesystem::path& root, cons
     // Deterministic order for whatever ends up appended after the walk.
     std::sort(inRoot.begin(), inRoot.end(), [](const InRoot& a, const InRoot& b) { return a.reported < b.reported; });
 
-    std::vector<std::filesystem::path> files = CollectSearchableFiles(absoluteRoot, stop);
-    std::vector<const LiveContent*>    sources(files.size(), nullptr);
+    std::vector<const LiveContent*> entries;
+    entries.reserve(inRoot.size());
+    for (const InRoot& item : inRoot) {
+        entries.push_back(item.entry);
+    }
+    const std::unordered_map<std::string, const LiveContent*> byKey = LiveByKey(entries);
 
+    // A walked file's canonical spelling is derived lexically from the
+    // root's, not by a syscall per file.
+    const bool rootAliased = searchRoot.Canonical() != searchRoot.Normalized();
+    const auto findLive    = [&](const std::filesystem::path& walked) -> const LiveContent* {
+        if (byKey.empty()) {
+            return nullptr;
+        }
+        const std::filesystem::path normal = walked.lexically_normal();
+        if (const auto it = byKey.find(normal.string()); it != byKey.end()) {
+            return it->second;
+        }
+        if (!rootAliased) {
+            return nullptr;
+        }
+        const std::filesystem::path alias =
+            (searchRoot.Canonical() / normal.lexically_relative(searchRoot.Normalized())).lexically_normal();
+        const auto it = byKey.find(alias.string());
+        return it != byKey.end() ? it->second : nullptr;
+    };
+
+    EditorConfigCharsetCache               charsets(options.editorConfig);
+    std::unordered_set<const LiveContent*> matchedByWalk;
+    ScanPipeline                           pipeline(pattern, options.threads, onMatches, stop);
+    WalkSearchableFiles(absoluteRoot, stop, [&](const std::filesystem::path& file) {
+        const LiveContent* entry = findLive(file);
+        if (entry != nullptr) {
+            matchedByWalk.insert(entry);
+        }
+        pipeline.Push(file, entry != nullptr ? std::nullopt : charsets(file), entry);
+    });
+
+    // Live content the walk never saw, filtered by the walk's own rules so an
+    // unsaved file under build/ doesn't show up where its saved twin wouldn't.
     if (!inRoot.empty()) {
-        std::vector<const LiveContent*> entries;
-        entries.reserve(inRoot.size());
-        for (const InRoot& item : inRoot) {
-            entries.push_back(item.entry);
-        }
-        const std::unordered_map<std::string, const LiveContent*> byKey = LiveByKey(entries);
-
-        // A walked file's canonical spelling is derived lexically from the
-        // root's, not by a syscall per file.
-        const bool rootAliased = searchRoot.Canonical() != searchRoot.Normalized();
-        const auto findLive    = [&](const std::filesystem::path& walked) -> const LiveContent* {
-            const std::filesystem::path normal = walked.lexically_normal();
-            if (const auto it = byKey.find(normal.string()); it != byKey.end()) {
-                return it->second;
-            }
-            if (!rootAliased) {
-                return nullptr;
-            }
-            const std::filesystem::path alias =
-                (searchRoot.Canonical() / normal.lexically_relative(searchRoot.Normalized())).lexically_normal();
-            const auto it = byKey.find(alias.string());
-            return it != byKey.end() ? it->second : nullptr;
-        };
-
-        std::vector<const LiveContent*> matchedByWalk;
-        for (std::size_t i = 0; i < files.size(); ++i) {
-            if (const LiveContent* entry = findLive(files[i])) {
-                sources[i] = entry;
-                matchedByWalk.push_back(entry);
-            }
-        }
-
-        // Live content the walk never saw, filtered by the walk's own rules
-        // so an unsaved file under build/ doesn't show up where its saved
-        // twin wouldn't.
         const GitIgnoreMatcher& gitIgnore = CachedGitIgnoreMatcher(absoluteRoot);
         for (const InRoot& item : inRoot) {
-            if (std::find(matchedByWalk.begin(), matchedByWalk.end(), item.entry) != matchedByWalk.end()) {
-                continue;
+            if (!matchedByWalk.contains(item.entry) && !IsHiddenOrIgnored(item.relative, gitIgnore)) {
+                pipeline.Push(item.reported, std::nullopt, item.entry);
             }
-            if (IsHiddenOrIgnored(item.relative, gitIgnore)) {
-                continue;
-            }
-            files.push_back(item.reported);
-            sources.push_back(item.entry);
         }
     }
-
-    return SearchFilesParallel(files, sources, pattern, stop);
+    pipeline.Finish();
 }
 
 std::vector<SearchMatch> SearchFiles(const std::vector<std::filesystem::path>& files, const SearchPattern& pattern,
@@ -418,7 +490,20 @@ std::vector<SearchMatch> SearchFiles(const std::vector<std::filesystem::path>& f
         sources.push_back(source);
     }
 
-    return SearchFilesParallel(resolved, sources, pattern, {});
+    if (resolved.empty()) {
+        return {};
+    }
+    const SearchOptions options = CurrentSearchOptions();
+    return Collect(
+        [&](const SearchSink& sink) {
+            EditorConfigCharsetCache charsets(options.editorConfig);
+            ScanPipeline             pipeline(pattern, static_cast<unsigned int>(std::min<std::size_t>(options.threads, resolved.size())), sink, {});
+            for (std::size_t i = 0; i < resolved.size(); ++i) {
+                pipeline.Push(resolved[i], sources[i] != nullptr ? std::nullopt : charsets(resolved[i]), sources[i]);
+            }
+            pipeline.Finish();
+        },
+        {});
 }
 
 } // namespace ned::editor

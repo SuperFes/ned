@@ -18,6 +18,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -55,9 +56,22 @@ struct EditorConfigFile {
 // max_line_length ("off" is no limit).
 [[nodiscard]] text::FileConventions EditorConfigConventions(const std::map<std::string, std::string>& properties);
 
-// The charset .editorconfig states for each of `files`, reading each
-// directory's .editorconfig once -- for scans over many files. All nullopt
-// while .editorconfig is disabled.
+// The charset .editorconfig states for one file at a time, reading each
+// directory's .editorconfig once -- for scans over many files. Always
+// nullopt when constructed disabled. Not thread-safe.
+class EditorConfigCharsetCache {
+  public:
+    explicit EditorConfigCharsetCache(bool enabled);
+
+    [[nodiscard]] std::optional<text::Charset> operator()(const std::filesystem::path& file);
+
+  private:
+    bool                                                             enabled_;
+    std::unordered_map<std::string, std::optional<EditorConfigFile>> byDirectory_;
+};
+
+// EditorConfigCharsetCache over a whole list, enabled as the process-wide
+// toggle says.
 [[nodiscard]] std::vector<std::optional<text::Charset>> EditorConfigCharsets(std::span<const std::filesystem::path> files);
 
 // Makes every load decode a file in the charset .editorconfig states for it

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <stop_token>
 #include <fstream>
 #include <string>
 #include <vector>
@@ -11,9 +12,11 @@ using ned::editor::LiveContent;
 using ned::editor::SearchDirectory;
 using ned::editor::SearchFiles;
 using ned::editor::SearchMatch;
+using ned::editor::SearchOptions;
 using ned::editor::SearchPattern;
 using ned::editor::SearchPatternError;
 using ned::editor::SearchRoot;
+using ned::editor::StreamSearchDirectory;
 
 namespace {
 
@@ -162,6 +165,82 @@ TEST_CASE("SearchFiles uses live content, drops duplicates and sourceless paths,
     REQUIRE(matches.size() == 2);
     REQUIRE(matches[0].file == dir / "unsaved.txt");
     REQUIRE(matches[1].file == dir / "b.txt");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("StreamSearchDirectory sends non-empty runs that add up to SearchDirectory's result", "[SearchEngine]") {
+    const std::filesystem::path dir = FreshDir("ned_search_engine_stream");
+    for (int d = 0; d < 8; ++d) {
+        const std::filesystem::path sub = dir / ("d" + std::to_string(d));
+        std::filesystem::create_directories(sub);
+        for (int f = 0; f < 40; ++f) {
+            std::ofstream out(sub / ("f" + std::to_string(f) + ".txt"));
+            out << "none\n";
+            if (f % 3 == 0) {
+                out << "needle " << d << ' ' << f << "\nneedle again\n";
+            }
+        }
+    }
+    const std::vector<LiveContent> live{Live(dir / "d1" / "f1.txt", "live needle\n"), Live(dir / "unsaved.txt", "needle\n")};
+    const SearchPattern            pattern("needle");
+    const std::vector<SearchMatch> expected = SearchDirectory(dir, pattern, live);
+    REQUIRE(expected.size() == 8 * 14 * 2 + 2);
+
+    for (const unsigned int threads : {1u, 8u}) {
+        std::vector<SearchMatch> streamed;
+        std::size_t              runs = 0;
+        StreamSearchDirectory(dir, pattern, live, SearchOptions{.threads = threads},
+                              [&](std::vector<SearchMatch> run) {
+                                  REQUIRE_FALSE(run.empty());
+                                  ++runs;
+                                  streamed.insert(streamed.end(), run.begin(), run.end());
+                              });
+        REQUIRE(runs >= 1);
+        REQUIRE(streamed.size() == expected.size());
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            REQUIRE(streamed[i].file == expected[i].file);
+            REQUIRE(streamed[i].lineNumber == expected[i].lineNumber);
+            REQUIRE(streamed[i].lineText == expected[i].lineText);
+        }
+    }
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("StreamSearchDirectory sends nothing more once stopped", "[SearchEngine]") {
+    const std::filesystem::path dir = FreshDir("ned_search_engine_stream_stop");
+    for (int f = 0; f < 200; ++f) {
+        std::ofstream(dir / ("f" + std::to_string(f) + ".txt")) << "needle\n";
+    }
+
+    std::stop_source stop;
+    std::size_t      runs = 0;
+    StreamSearchDirectory(
+        dir, SearchPattern("needle"), {}, SearchOptions{.threads = 4},
+        [&](std::vector<SearchMatch>) {
+            ++runs;
+            stop.request_stop();
+        },
+        stop.get_token());
+    REQUIRE(runs == 1);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("StreamSearchDirectory reads .editorconfig charsets only when its options say to", "[SearchEngine]") {
+    const std::filesystem::path dir = FreshDir("ned_search_engine_stream_editorconfig");
+    std::ofstream(dir / ".editorconfig", std::ios::binary) << "root = true\n[*.txt]\ncharset = latin1\n";
+    std::ofstream(dir / "old.txt", std::ios::binary) << "caf\xE9 needle\n";
+
+    const auto count = [&](bool editorConfig) {
+        std::size_t matches = 0;
+        StreamSearchDirectory(dir, SearchPattern("caf\xC3\xA9 needle"), {}, SearchOptions{.threads = 1, .editorConfig = editorConfig},
+                              [&](std::vector<SearchMatch> run) { matches += run.size(); });
+        return matches;
+    };
+    REQUIRE(count(true) == 1);
+    REQUIRE(count(false) == 0);
 
     std::filesystem::remove_all(dir);
 }
