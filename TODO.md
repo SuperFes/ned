@@ -61,10 +61,6 @@ and sync on save; don't build a remote-authoritative buffer.
 
 **Library split** — the agent links only what it needs. Measured by include closure,
 2026-10-05.
-- [ ] `ned_core` with no Notcurses/Janet dependency: Lifetime, DiagnosticsLog, Process,
-      Protocol, GitIgnore, BinaryDetect, Charset, SavePlan, FileWatch, and a posting
-      queue that `ui::EventLoop` contains. `FramedConnection` uses only `Post()`, but
-      today reaches Notcurses through `EventLoop` → `Widget` (66 files).
 - [ ] Split `Project/Search.cpp` into a disk core and a live-buffer overlay. The overlay
       is what pulls in `Buffer`/`BufferList` and the grammar engine (215 files), and it
       belongs on the editor side anyway.
