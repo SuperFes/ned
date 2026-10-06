@@ -56,6 +56,7 @@ add_library(ned_core STATIC
         Editor/Process/ChildProcess.cpp
         Editor/Process/StreamedChild.cpp
         Editor/ProcessTimeouts.cpp
+        Editor/Project/SearchEngine.cpp
         Editor/Protocol/LineTransport.cpp
         Editor/SearchSettings.cpp
         Text/BinaryDetect.cpp
@@ -66,6 +67,9 @@ add_library(ned_core STATIC
         Text/WhitespaceHygiene.cpp)
 
 target_include_directories(ned_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Only SearchEngine.cpp includes RE2; its header forward-declares it.
+target_link_libraries(ned_core PRIVATE re2::re2)
 
 if (NED_ENABLE_SANITIZERS)
     target_compile_options(ned_core PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)

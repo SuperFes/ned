@@ -274,6 +274,7 @@ add_executable(ned_tests
             GitIgnoreTest.cpp
             SearchSettingsTest.cpp
             ProjectSearchTest.cpp
+            SearchEngineTest.cpp
             ProjectAgendaTest.cpp
             CaseCheckTest.cpp
             ColorLiteralTest.cpp
