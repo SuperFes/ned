@@ -25,6 +25,7 @@ add_library(ned_core STATIC
         ${CMAKE_CURRENT_LIST_DIR}/Editor/SearchSettings.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Text/BinaryDetect.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Text/Charset.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/Text/FileContents.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Text/FilePreservation.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Text/LineEnding.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Text/SavePlan.cpp

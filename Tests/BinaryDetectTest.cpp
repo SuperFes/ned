@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <string>
 
 #include "Text/BinaryDetect.h"
 
@@ -31,4 +32,15 @@ TEST_CASE("LooksBinary is true for content containing a NUL byte", "[BinaryDetec
 
 TEST_CASE("LooksBinary is true for a nonexistent/unreadable path", "[BinaryDetect]") {
     REQUIRE(LooksBinary(std::filesystem::temp_directory_path() / "ned_binary_detect_does_not_exist.bin"));
+}
+
+TEST_CASE("Bytes already read are judged as LooksBinaryToLoad judges the file", "[BinaryDetect]") {
+    using ned::text::BytesLookBinaryToLoad;
+    const std::filesystem::path path = "/nonexistent/ned_bytes.txt";
+    CHECK_FALSE(BytesLookBinaryToLoad(path, "text\n"));
+    CHECK_FALSE(BytesLookBinaryToLoad(path, ""));
+    CHECK(BytesLookBinaryToLoad(path, std::string("a\0b", 3)));
+    CHECK_FALSE(BytesLookBinaryToLoad(path, std::string("\xFF\xFEx\x00", 4)));
+    // Only the head counts, as with a file.
+    CHECK_FALSE(BytesLookBinaryToLoad(path, std::string(8192, 'x') + std::string(1, '\0')));
 }
