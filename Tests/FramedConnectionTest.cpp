@@ -10,10 +10,12 @@
 #include <thread>
 #include <vector>
 
+#include <fcntl.h>
 #include <unistd.h>
 
 #include "BoundedRead.h"
 #include "Editor/Lsp/Transport.h"
+#include "Editor/Protocol/FrameTransport.h"
 #include "Editor/Protocol/FramedConnection.h"
 #include "UI/EventLoop.h"
 
@@ -252,4 +254,112 @@ TEST_CASE("FramedConnection is destroyed promptly while its peer keeps the pipes
     ::close(oursWritesHere[0]);
 
     REQUIRE(prompt);
+}
+
+namespace {
+
+using FrameConnection = FramedConnection<ned::editor::protocol::FrameTransport>;
+
+// A peer that ignores flow control, writing frames as fast as the pipe takes
+// them, against a connection whose read-ahead is capped at maxQueuedBytes.
+struct Flood {
+    ned::ui::EventLoop             eventLoop;
+    int                            toEditor[2]{-1, -1};
+    int                            fromEditor[2]{-1, -1};
+    std::optional<FrameConnection> connection;
+    std::vector<std::string>       received;
+    std::string                    stream; // every frame the peer means to send
+    std::size_t                    sent = 0;
+
+    Flood(std::size_t maxQueuedBytes, std::size_t frames, std::size_t payloadBytes) {
+        REQUIRE(::pipe(toEditor) == 0);
+        REQUIRE(::pipe(fromEditor) == 0);
+        REQUIRE(::fcntl(toEditor[1], F_SETFL, O_NONBLOCK) == 0);
+        connection.emplace(ned::editor::protocol::FrameTransport(toEditor[0], fromEditor[1]), eventLoop,
+                           FrameConnection::Options{.logCategory = LogCategory::General, .entityNoun = "agent", .maxQueuedBytes = maxQueuedBytes});
+        connection->SetOnFrame([this](std::string frame) { received.push_back(std::move(frame)); });
+        for (std::size_t i = 0; i < frames; ++i) {
+            std::string payload = std::to_string(i) + ":";
+            payload.resize(payloadBytes, 'x');
+            stream += ned::editor::protocol::EncodeFrame(payload, false);
+        }
+    }
+    ~Flood() {
+        connection.reset();
+        ::close(toEditor[1]);
+        ::close(fromEditor[0]);
+    }
+    Flood(const Flood&)            = delete;
+    Flood& operator=(const Flood&) = delete;
+
+    // Writes until the pipe has refused more for quiet, without draining.
+    void FillUntilRefused(std::chrono::milliseconds quiet = std::chrono::milliseconds(300)) {
+        auto lastProgress = std::chrono::steady_clock::now();
+        while (sent < stream.size() && std::chrono::steady_clock::now() - lastProgress < quiet) {
+            if (WriteSome()) {
+                lastProgress = std::chrono::steady_clock::now();
+            }
+            else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+    }
+    bool WriteSome() {
+        const ssize_t n = ::write(toEditor[1], stream.data() + sent, stream.size() - sent);
+        if (n <= 0) {
+            return false;
+        }
+        sent += static_cast<std::size_t>(n);
+        return true;
+    }
+};
+
+} // namespace
+
+TEST_CASE("A peer ignoring flow control fills its own pipe, not the editor's queue", "[Protocol][FramedConnection]") {
+    constexpr std::size_t kCap     = 64 * 1024;
+    constexpr std::size_t kPayload = 4096;
+    constexpr std::size_t kFrames  = 1024;
+    Flood                 flood(kCap, kFrames, kPayload);
+
+    flood.FillUntilRefused();
+    // The reader stops past the cap: what got in is the cap, the frame in
+    // hand, and what the pipe itself holds.
+    const auto pipeBytes = static_cast<std::size_t>(::fcntl(flood.toEditor[1], F_GETPIPE_SZ));
+    REQUIRE(flood.sent <= kCap + 2 * (kPayload + 512) + pipeBytes);
+    REQUIRE(flood.sent < flood.stream.size());
+
+    // Draining lets the rest through, in order.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (flood.received.size() < kFrames && std::chrono::steady_clock::now() < deadline) {
+        flood.WriteSome();
+        flood.eventLoop.DrainPosted_();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(flood.received.size() == kFrames);
+    for (std::size_t i = 0; i < kFrames; ++i) {
+        REQUIRE(flood.received[i].starts_with(std::to_string(i) + ":"));
+    }
+}
+
+TEST_CASE("A frame larger than the read-ahead cap still arrives", "[Protocol][FramedConnection]") {
+    Flood      flood(1024, 2, 256 * 1024);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (flood.received.size() < 2 && std::chrono::steady_clock::now() < deadline) {
+        flood.WriteSome();
+        flood.eventLoop.DrainPosted_();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    REQUIRE(flood.received.size() == 2);
+    REQUIRE(flood.received[1].size() == 256 * 1024);
+}
+
+TEST_CASE("A connection whose reader is held back by the cap is destroyed promptly", "[Protocol][FramedConnection][Lifetime]") {
+    Flood flood(16 * 1024, 1024, 4096);
+    flood.FillUntilRefused();
+    REQUIRE(flood.sent < flood.stream.size());
+
+    const auto started = std::chrono::steady_clock::now();
+    flood.connection.reset();
+    REQUIRE(std::chrono::steady_clock::now() - started < std::chrono::seconds(2));
 }

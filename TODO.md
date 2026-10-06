@@ -74,9 +74,6 @@ and sync on save; don't build a remote-authoritative buffer.
       the section.
 
 **Client/server protocol**, ordered by the design doc's staging section.
-- [ ] Credit bounds a cooperating host only. `FramedConnection`'s reader posts every
-      frame, so a host that ignores credit still grows editor memory. Stop reading past
-      a cap of unprocessed frames, so the pipe itself pushes back.
 - [ ] `ned --protocol-dump`: decode a captured byte stream to readable JSON.
 - [ ] Verify a remote debug session end to end (PHP/Xdebug, with the adapter running on
       the host through `proc`).
