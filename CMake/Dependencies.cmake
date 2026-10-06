@@ -2,7 +2,7 @@
 # FetchContent -- see git log for the migration off it). Included from the
 # root CMakeLists.txt before any target that links against these; every
 # target/variable this file produces (notcurses-core, utf8proc, CLI11::CLI11,
-# nlohmann_json::nlohmann_json, re2::re2, pcre2-8-static, vterm, PkgConfig::ZSTD, the Janet_*
+# nlohmann_json::nlohmann_json, re2::re2, pcre2-8-static, vterm, zstd::libzstd, the Janet_*
 # pkg-config variables, Catch2::Catch2WithMain) is consumed from Source/ and
 # Tests/ subdirectories added afterward.
 
@@ -105,6 +105,8 @@ pkg_check_modules(LIBMAGIC REQUIRED IMPORTED_TARGET libmagic)
 #--- System zstd ------------------------------------------------------------------
 # Per-frame compression on the host protocol's wire. Editor/Protocol/FrameTransport.h.
 pkg_check_modules(ZSTD REQUIRED IMPORTED_TARGET libzstd)
+# zstd's own CMake package spells it this way; so does the static agent build.
+add_library(zstd::libzstd ALIAS PkgConfig::ZSTD)
 #------------------------------------------------------------------------------
 
 #--- System image decoders -------------------------------------------------------

@@ -43,66 +43,8 @@ endif()
 add_executable(ned-langc Editor/Grammar/Compile/LangcMain.cpp)
 target_link_libraries(ned-langc PRIVATE ned_grammar_compile)
 
-# Process, protocol, logging and file plumbing with no terminal, Janet or
-# grammar dependency -- what a headless host process links. Nothing here may
-# reach UI/ or Text/'s buffer layer; ned_core_link_check enforces that at
-# link time.
-add_library(ned_core STATIC
-        Editor/DiagnosticsLog.cpp
-        Editor/EditorConfig.cpp
-        Editor/FileWatch.cpp
-        Editor/GitIgnore.cpp
-        Editor/PostQueue.cpp
-        Editor/Process/ChildProcess.cpp
-        Editor/Process/StreamedChild.cpp
-        Editor/ProcessTimeouts.cpp
-        Editor/Project/SearchEngine.cpp
-        Editor/Protocol/Cbor.cpp
-        Editor/Protocol/Endpoint.cpp
-        Editor/Protocol/FrameTransport.cpp
-        Editor/Protocol/LineTransport.cpp
-        Editor/SearchSettings.cpp
-        Text/BinaryDetect.cpp
-        Text/Charset.cpp
-        Text/FilePreservation.cpp
-        Text/LineEnding.cpp
-        Text/SavePlan.cpp
-        Text/WhitespaceHygiene.cpp)
-
-target_include_directories(ned_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-
-# Only SearchEngine.cpp includes RE2; its header forward-declares it. Cbor.h
-# hands out nlohmann::json, so that one is public.
-target_link_libraries(ned_core
-        PUBLIC nlohmann_json::nlohmann_json
-        PRIVATE re2::re2
-        PRIVATE PkgConfig::ZSTD)
-
-if (NED_ENABLE_SANITIZERS)
-    target_compile_options(ned_core PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
-    target_link_options(ned_core PUBLIC -fsanitize=address,undefined)
-endif()
-
-# Links every ned_core object and nothing else, so a dependency that leaks in
-# fails the build as an undefined symbol rather than going unnoticed inside
-# ned_lib's link.
-add_executable(ned_core_link_check Editor/CoreLinkCheck.cpp)
-target_link_libraries(ned_core_link_check PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,ned_core>")
-
-# The host side of Docs/ClientServerProtocol.md: the dispatcher and its
-# method handlers over ned_core, with no terminal, Janet or grammar either.
-# ned-agent is this and a main(); linking it is ned_host's own link check.
-add_library(ned_host STATIC
-        Editor/Host/Agent.cpp
-        Editor/Host/Codec.cpp
-        Editor/Host/Dispatcher.cpp
-        Editor/Host/Hello.cpp
-        Editor/Host/SearchCodec.cpp)
-
-target_link_libraries(ned_host PUBLIC ned_core)
-
-add_executable(ned-agent Agent/main.cpp)
-target_link_libraries(ned-agent PRIVATE ned_host)
+# ned_core, ned_host and ned-agent; shared with the static agent build.
+include(HostLibraries.cmake)
 
 add_library(ned_lib STATIC
         Application.cpp
