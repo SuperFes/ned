@@ -49,6 +49,7 @@ target_link_libraries(ned-langc PRIVATE ned_grammar_compile)
 # link time.
 add_library(ned_core STATIC
         Editor/DiagnosticsLog.cpp
+        Editor/EditorConfig.cpp
         Editor/FileWatch.cpp
         Editor/GitIgnore.cpp
         Editor/PostQueue.cpp
@@ -149,7 +150,6 @@ add_library(ned_lib STATIC
         Editor/ModeOverrides.cpp
         Editor/FileMagic.cpp
         Editor/Modeline.cpp
-        Editor/EditorConfig.cpp
         Editor/EditorConfigFormatRules.cpp
         Editor/FileSettings.cpp
         Editor/ModePrewarm.cpp
