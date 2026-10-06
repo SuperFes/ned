@@ -2,7 +2,7 @@
 
 The wire protocol between the editor and a **host**: the machine whose files, processes
 and toolchain a project lives on. Its consumer is the remote agent (`ned-agent`), a
-headless build over `ned_lib` started with `ssh host ned-agent --stdio`. Local execution
+headless build over `ned_host` started with `ssh host ned-agent --stdio`. Local execution
 is the degenerate case. The local host is the same server-side dispatcher reached through
 an in-process transport, not a separate code path around it.
 

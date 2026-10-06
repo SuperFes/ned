@@ -65,8 +65,6 @@ and sync on save; don't build a remote-authoritative buffer.
       doesn't block the agent.
 
 **Agent**
-- [ ] `ned_host` (dispatcher plus `fs`/`proc`/`search`/`watch` handlers) and a
-      `ned-agent` executable over it, initially answering only `hello` and `search`.
 - [ ] Static musl builds for x86_64 and aarch64 (clang `--target` + musl sysroot +
       static libc++, or `zig c++`). Verify with `file`/`ldd` and a run in a bare
       container. RE2/abseil under musl is the likeliest failure.
@@ -78,10 +76,10 @@ and sync on save; don't build a remote-authoritative buffer.
       the section.
 
 **Client/server protocol**, ordered by the design doc's staging section.
-- [ ] Wire and codec: length-prefixed frames with a 64 MiB cap, CBOR, per-frame zstd
-      negotiated with `none` as an option.
-- [ ] Messages: request/response correlation, streams with credit-based flow control,
-      `$/cancel`.
+- [ ] Credit bounds a cooperating host only. `FramedConnection`'s reader posts every
+      frame, so a host that ignores credit still grows editor memory. Stop reading past
+      a cap of unprocessed frames, so the pipe itself pushes back.
+- [ ] `ned --protocol-dump`: decode a captured byte stream to readable JSON.
 - [ ] Verify a remote debug session end to end (PHP/Xdebug, with the adapter running on
       the host through `proc`).
 
@@ -111,8 +109,9 @@ and sync on save; don't build a remote-authoritative buffer.
 **Project tree and search**
 - [ ] A lazy, async remote directory listing for the sidebar (`AsyncFileLoader`
       precedent).
-- [ ] Remote project search through the agent's `search`, with the editor's live-buffer
-      overlay applied to the results. Decide how project-replace, find-references and
+- [ ] Remote project search through the agent's `search/project`, with unsaved edits
+      sent as `LiveContent`. Unsaved text can exceed the 64 MiB frame cap in total, so
+      it needs to go up as a stream rather than inside the request. Decide how project-replace, find-references and
       the agenda scan run against a remote root.
 
 ## Documentation & Companion Tooling
