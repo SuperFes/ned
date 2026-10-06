@@ -99,6 +99,15 @@ hello  -> {protocol: {major, minor}, build: str, codecs: [str], window: uint}
   mode 0700. They are built per architecture, cross-compiled or prebuilt, because the
   remote may have no toolchain. Copying uses the same `ssh`/`sftp` transport
   (ControlMaster), so a deploy has no other dependencies.
+
+  `Remote/Deploy.h` does it in at most two sessions. A probe, fed to `sh -s` so a non-POSIX
+  login shell never parses it, prints the architecture, the agent root and the installed
+  `<build>-<arch>` directories after a marker line that skips anything a login script
+  printed. When the local agent's build isn't among them, it goes up on the stdin of one
+  `sh -c` session, under a temporary name moved into place, so an interrupted upload never
+  leaves a partial agent. Local agents come from `libexec/ned/agent/<arch>/`
+  (`$NED_AGENT_DIR` overrides): `cmake --install build-agent-<arch> --component agent
+  --prefix <prefix>` puts a static build there, the editor's build tree included.
 - The in-process transport skips `hello`. Both ends are the same build.
 
 ## 5. Transports

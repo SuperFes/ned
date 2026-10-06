@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -17,6 +18,8 @@ using ned::editor::process::ChildProcess;
 using ned::editor::remote::NewControlPath;
 using ned::editor::remote::QuoteRemoteWord;
 using ned::editor::remote::RemoteCommandLine;
+using ned::editor::remote::RunSession;
+using ned::editor::remote::SessionResult;
 using ned::editor::remote::SshError;
 using ned::editor::remote::SshMaster;
 using ned::editor::remote::SshOptions;
@@ -181,5 +184,43 @@ TEST_CASE("Control paths are unique and sit in an owner-only runtime directory",
     REQUIRE(second.parent_path() == first.parent_path());
     REQUIRE(std::filesystem::status(dir / "ned" / "ssh").permissions() == std::filesystem::perms::owner_all);
     REQUIRE(std::filesystem::status(dir / "ned").permissions() == std::filesystem::perms::owner_all);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A one-shot session takes input and reports output, errors and exit code", "[Remote][Ssh]") {
+    const std::filesystem::path dir = FreshDir();
+    SshMaster                   master("host", FakeSsh(), dir / "m");
+    master.Start();
+
+    const std::string   big(3 * 1024 * 1024 + 7, 'x');
+    const SessionResult echoed = RunSession(master, std::vector<std::string>{"wc", "-c"}, big);
+    REQUIRE(echoed.exitCode == 0);
+    REQUIRE(echoed.output == std::to_string(big.size()) + "\n");
+
+    const SessionResult failed = RunSession(master, std::vector<std::string>{"sh", "-c", "echo oops >&2; exit 3"});
+    REQUIRE(failed.exitCode == 3);
+    REQUIRE(failed.output.empty());
+    REQUIRE(failed.errors == "oops\n");
+
+    // A command that quits without reading its input still says how it ended.
+    REQUIRE(RunSession(master, std::vector<std::string>{"sh", "-c", "exit 7"}, big).exitCode == 7);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A one-shot session that stalls or is cancelled is killed", "[Remote][Ssh]") {
+    const std::filesystem::path dir = FreshDir();
+    SshMaster                   master("host", FakeSsh(), dir / "m");
+    master.Start();
+
+    const auto started = std::chrono::steady_clock::now();
+    REQUIRE_THROWS_WITH(RunSession(master, std::vector<std::string>{"sleep", "30"}, {}, std::chrono::milliseconds(200)), "no answer on host within 200 ms");
+
+    std::stop_source stop;
+    std::jthread     canceller([&stop] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        stop.request_stop();
+    });
+    REQUIRE_THROWS_WITH(RunSession(master, std::vector<std::string>{"sleep", "30"}, {}, std::chrono::seconds(30), stop.get_token()), "cancelled on host");
+    REQUIRE(std::chrono::steady_clock::now() - started < std::chrono::seconds(10));
     std::filesystem::remove_all(dir);
 }

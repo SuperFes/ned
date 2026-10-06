@@ -318,6 +318,7 @@ add_library(ned_lib STATIC
         Editor/Tasks/TaskConfig.cpp
         Editor/Tasks/TaskProcess.cpp
         Editor/Tasks/TaskRunner.cpp
+        Editor/Remote/Deploy.cpp
         Editor/Remote/Ssh.cpp
         Editor/Repl/Config.cpp
         Editor/TestRun/TestOutputParser.cpp
@@ -602,6 +603,9 @@ target_link_libraries(ned PRIVATE ned_lib)
 # executable-relative share/ned); the build tree's own copy is assembled by
 # ned_data (CMake/DataTree.cmake).
 target_compile_definitions(ned_lib PRIVATE NED_INSTALL_DATADIR="${CMAKE_INSTALL_FULL_DATADIR}/ned")
+# Remote/Deploy.cpp's equivalent for the static agents under agent/<arch>/,
+# which the agent-* builds install (CMake/StaticAgent.cmake).
+target_compile_definitions(ned_lib PRIVATE NED_INSTALL_LIBEXECDIR="${CMAKE_INSTALL_FULL_LIBEXECDIR}/ned")
 add_dependencies(ned ned_data)
 
 # Packaging follow-up: no install() rule existed at all before this -- fine

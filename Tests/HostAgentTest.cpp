@@ -20,7 +20,9 @@
 #include "Editor/Protocol/Endpoint.h"
 #include "Editor/Protocol/FrameTransport.h"
 #include "Editor/Protocol/FramedConnection.h"
+#include "Editor/Remote/Deploy.h"
 #include "Editor/Remote/Ssh.h"
+#include "EnvOverride.h"
 
 using ned::editor::LiveContent;
 using ned::editor::PostQueue;
@@ -221,6 +223,36 @@ TEST_CASE("ned-agent runs through an ssh master's session", "[Host][HostAgent]")
     REQUIRE(search.result == Json::object());
     REQUIRE(search.chunks.size() == 1);
     REQUIRE(host::MatchesFromHost(search.chunks.front(), dir).size() == 1);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A deployed agent says hello with the build it was deployed as", "[Host][HostAgent]") {
+    namespace remote                        = ned::editor::remote;
+    const std::filesystem::path         dir = FreshDir("ned_host_agent_deploy");
+    const ned::tests::ScopedEnvOverride data("XDG_DATA_HOME", (dir / "data").c_str());
+    const std::filesystem::path         local = dir / "agents" / host::BuildArch() / "ned-agent";
+    std::filesystem::create_directories(local.parent_path());
+    std::filesystem::copy_file(AgentBinary(), local);
+    const remote::AgentDirCandidates candidates{.environment = dir / "agents", .executableRelative = std::nullopt, .installed = "/nonexistent"};
+
+    remote::SshMaster master("host", {.program = NED_FAKE_SSH}, dir / "m");
+    master.Start();
+    const auto helloBuild = [&](const std::filesystem::path& agent) {
+        AgentClient client(FrameTransport(master.SessionArgv(std::vector<std::string>{agent.string(), "--stdio"}), true));
+        const auto  answer = client.Call(std::string(host::kHello), host::ToJson(host::HelloRequest{.build = "editor", .codecs = {"none"}, .window = 16}));
+        return host::HelloResponseFromJson(*answer.result).build;
+    };
+
+    const remote::DeployedAgent deployed = remote::EnsureAgent(master, candidates);
+    REQUIRE(deployed.uploaded);
+    REQUIRE(helloBuild(deployed.remotePath) == deployed.build);
+
+    // A damaged install answers with another build, and a reinstall fixes it.
+    std::ofstream(deployed.remotePath, std::ios::binary | std::ios::app) << "damage";
+    REQUIRE(helloBuild(deployed.remotePath) != deployed.build);
+    REQUIRE(remote::EnsureAgent(master, candidates, true).uploaded);
+    REQUIRE(helloBuild(deployed.remotePath) == deployed.build);
 
     std::filesystem::remove_all(dir);
 }

@@ -338,6 +338,7 @@ add_executable(ned_tests
             ProtocolEndpointTest.cpp
             HostCodecTest.cpp
             HostAgentTest.cpp
+            RemoteDeployTest.cpp
             RemoteSshTest.cpp
             AcpClientTest.cpp
             AcpConfigTest.cpp
@@ -485,7 +486,7 @@ target_compile_definitions(ned_tests PRIVATE NED_REPO_ROOT="${CMAKE_SOURCE_DIR}"
 target_compile_definitions(ned_tests PRIVATE NED_AGENT_BINARY="$<TARGET_FILE:ned-agent>")
 add_dependencies(ned_tests ned-agent)
 
-# Stands in for ssh in RemoteSshTest and HostAgentTest's ssh run.
+# Stands in for ssh in the Remote tests and HostAgentTest's ssh runs.
 add_executable(ned_fake_ssh Remote/FakeSsh.cpp)
 set_target_properties(ned_fake_ssh PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 add_dependencies(ned_tests ned_fake_ssh)

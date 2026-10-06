@@ -98,6 +98,21 @@ class SshMaster {
     std::optional<process::ChildProcess> master_;
 };
 
+// How a one-shot session ended and what it printed.
+struct SessionResult {
+    std::optional<int> exitCode; // nullopt when killed by a signal
+    std::string        output;
+    std::string        errors;
+};
+
+// Runs remoteArgv through master with input on its stdin, then collects
+// its output, so it suits commands that print little. A command that exits
+// before reading all its input still reports how it ended. Throws SshError
+// when nothing moves for stallTimeout or once stop is requested, killing
+// the session either way.
+SessionResult RunSession(const SshMaster& master, std::span<const std::string> remoteArgv, std::string_view input = {},
+                         std::chrono::milliseconds stallTimeout = std::chrono::seconds(30), const std::stop_token& stop = {});
+
 } // namespace ned::editor::remote
 
 #endif

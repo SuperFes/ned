@@ -1,6 +1,7 @@
 #include "Ssh.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <string_view>
 #include <system_error>
@@ -18,6 +19,10 @@ namespace {
     constexpr std::size_t kMaxStderrBytes{16 * 1024};
     // How long a stop waits for `ssh -O exit` before the master is killed.
     constexpr std::chrono::milliseconds kExitRequestWait{2000};
+    // RunSession writes in chunks so a stop is noticed mid-upload.
+    constexpr std::size_t kInputChunkBytes{256 * 1024};
+    constexpr std::size_t kMaxSessionOutputBytes{1024 * 1024};
+    constexpr int         kSessionPollMs = 50;
 
     bool IsShellSafe(char c) {
         return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || std::string_view("_@%+=:,./-").find(c) != std::string_view::npos;
@@ -63,6 +68,12 @@ namespace {
             return {};
         }
         return std::string(text.substr(first, text.find_last_not_of(" \t\r\n") - first + 1));
+    }
+
+    void AppendCapped(std::string& to, std::string_view chunk, std::size_t cap) {
+        if (to.size() < cap) {
+            to += chunk.substr(0, cap - to.size());
+        }
     }
 
     std::string LoginFailure(const std::string& destination, std::string_view stderrText, std::optional<int> exitCode) {
@@ -179,9 +190,7 @@ void SshMaster::Start(const std::stop_token& stop) {
             std::filesystem::remove(controlPath_, ec);
             throw SshError(LoginFailure(destination_, stderrText, exitCode));
         }
-        if (stderrText.size() < kMaxStderrBytes) {
-            stderrText += chunk.substr(0, kMaxStderrBytes - stderrText.size());
-        }
+        AppendCapped(stderrText, chunk, kMaxStderrBytes);
     }
 }
 
@@ -214,6 +223,72 @@ const std::string& SshMaster::Destination() const noexcept {
 
 const std::filesystem::path& SshMaster::ControlPath() const noexcept {
     return controlPath_;
+}
+
+SessionResult RunSession(const SshMaster& master, std::span<const std::string> remoteArgv, std::string_view input, std::chrono::milliseconds stallTimeout,
+                         const std::stop_token& stop) {
+    const std::string                    where = " on " + master.Destination();
+    std::optional<process::ChildProcess> child;
+    try {
+        child.emplace(master.SessionArgv(remoteArgv), process::StderrMode::Capture);
+    }
+    catch (const std::runtime_error& error) {
+        throw SshError("cannot run ssh" + where + ": " + error.what());
+    }
+    const auto fail = [&child](std::string message) {
+        child->Kill();
+        return SshError(std::move(message));
+    };
+
+    std::optional<std::string> writeFailure;
+    for (std::size_t at = 0; at < input.size(); at += kInputChunkBytes) {
+        if (stop.stop_requested()) {
+            throw fail("cancelled" + where);
+        }
+        try {
+            child->WriteAll(input.substr(at, kInputChunkBytes), stallTimeout);
+        }
+        catch (const std::runtime_error& error) {
+            // Usually the command exited early; how it ended says why.
+            writeFailure = error.what();
+            break;
+        }
+    }
+    child->CloseInput();
+
+    SessionResult         result;
+    std::array<pollfd, 2> fds{pollfd{.fd = child->ReadFd(), .events = POLLIN, .revents = 0},
+                              pollfd{.fd = child->StderrFd(), .events = POLLIN, .revents = 0}};
+    auto                  lastProgress = std::chrono::steady_clock::now();
+    while (fds[0].fd >= 0 || fds[1].fd >= 0) {
+        if (stop.stop_requested()) {
+            throw fail("cancelled" + where);
+        }
+        if (std::chrono::steady_clock::now() - lastProgress > stallTimeout) {
+            throw fail("no answer" + where + " within " + std::to_string(stallTimeout.count()) + " ms");
+        }
+        if (::poll(fds.data(), fds.size(), kSessionPollMs) <= 0) {
+            continue;
+        }
+        lastProgress = std::chrono::steady_clock::now();
+        for (std::size_t i = 0; i < fds.size(); ++i) {
+            if (fds[i].fd < 0 || fds[i].revents == 0) {
+                continue;
+            }
+            const std::string chunk = i == 0 ? child->ReadSome() : child->ReadSomeStderr();
+            if (chunk.empty()) {
+                fds[i].fd = -1;
+            }
+            else {
+                AppendCapped(i == 0 ? result.output : result.errors, chunk, kMaxSessionOutputBytes);
+            }
+        }
+    }
+    result.exitCode = child->WaitForExit();
+    if (writeFailure && result.exitCode == 0) {
+        throw SshError("writing to ssh" + where + ": " + *writeFailure);
+    }
+    return result;
 }
 
 } // namespace ned::editor::remote

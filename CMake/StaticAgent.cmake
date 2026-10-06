@@ -58,3 +58,10 @@ add_library(zstd::libzstd ALIAS libzstd_static)
 include(${CMAKE_CURRENT_LIST_DIR}/../Source/HostLibraries.cmake)
 
 target_link_options(ned-agent PRIVATE -static $<$<CONFIG:Release,MinSizeRel>:-s>)
+
+# Where the editor looks for agents to deploy: libexec/ned/agent/<arch>/,
+# named as `uname -m` names the architecture. `cmake --install <dir>
+# --component agent --prefix <editor prefix>` puts it there, including the
+# editor's own build tree.
+include(GNUInstallDirs)
+install(TARGETS ned-agent RUNTIME DESTINATION "${CMAKE_INSTALL_LIBEXECDIR}/ned/agent/${CMAKE_SYSTEM_PROCESSOR}" COMPONENT agent)
