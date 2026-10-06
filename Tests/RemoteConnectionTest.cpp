@@ -55,6 +55,7 @@ void WriteScript(const fs::path& path, const std::string& body) {
 
 using FakeHost = ned::tests::FakeRemoteHost;
 using ned::tests::AgentBinary;
+using ned::tests::PipePeer;
 using ned::tests::PumpUntil;
 
 fs::path FreshDir() {
@@ -65,46 +66,6 @@ host::HelloRequest Request() {
     return host::HelloRequest{.codecs = {"zstd", "none"}, .window = 16};
 }
 
-// A Connection over pipes, with the test playing the agent.
-struct PipePeer {
-    int                         fromEditor = -1;
-    int                         toEditor   = -1;
-    std::unique_ptr<Connection> connection;
-
-    PipePeer(PostQueue& queue, const fs::path& dir) {
-        int editorIn[2];
-        int editorOut[2];
-        REQUIRE(::pipe(editorIn) == 0);
-        REQUIRE(::pipe(editorOut) == 0);
-        fromEditor = editorOut[0];
-        toEditor   = editorIn[1];
-        connection = std::make_unique<Connection>(Handshake{.master    = std::make_unique<SshMaster>("host", SshOptions{.program = NED_FAKE_SSH}, dir / "m"),
-                                                            .transport = FrameTransport(editorIn[0], editorOut[1]),
-                                                            .hello     = {},
-                                                            .agent     = {}},
-                                                  queue);
-    }
-    ~PipePeer() {
-        connection.reset();
-        HangUp();
-        ::close(fromEditor);
-    }
-    PipePeer(const PipePeer&)            = delete;
-    PipePeer& operator=(const PipePeer&) = delete;
-
-    void SendRaw(const std::string& frame) const {
-        REQUIRE(::write(toEditor, frame.data(), frame.size()) == static_cast<ssize_t>(frame.size()));
-    }
-    void Send(const Json& message) const {
-        SendRaw(ned::editor::protocol::EncodeFrame(ned::editor::protocol::EncodeCbor(message), false));
-    }
-    void HangUp() {
-        if (toEditor >= 0) {
-            ::close(toEditor);
-            toEditor = -1;
-        }
-    }
-};
 
 } // namespace
 

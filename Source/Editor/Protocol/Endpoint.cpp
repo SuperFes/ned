@@ -6,6 +6,7 @@
 #include <optional>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace ned::editor::protocol {
 
@@ -52,10 +53,12 @@ namespace {
 namespace detail {
 
     struct Outgoing {
-        ResponseHandlers handlers;
-        bool             cancelled = false;
-        std::uint64_t    nextSeq   = 0;
-        std::size_t      consumed  = 0; // chunks received since the last grant
+        ResponseHandlers                          handlers;
+        bool                                      cancelled = false;
+        std::uint64_t                             nextSeq   = 0;
+        std::size_t                               consumed  = 0; // chunks received since the last grant
+        std::optional<std::chrono::milliseconds>  idleLimit;
+        std::chrono::steady_clock::time_point     lastHeard;
     };
 
     struct Incoming {
@@ -251,6 +254,7 @@ namespace detail {
             }
             ++entry.nextSeq;
             ++entry.consumed;
+            entry.lastHeard = std::chrono::steady_clock::now();
             if (!entry.cancelled && entry.handlers.onChunk) {
                 const auto onChunk = entry.handlers.onChunk;
                 onChunk(params.contains("data") ? std::move(params["data"]) : Json());
@@ -420,7 +424,7 @@ void Endpoint::Receive(Json message) {
     }
 }
 
-std::uint64_t Endpoint::Request(std::string method, Json params, ResponseHandlers handlers) {
+std::uint64_t Endpoint::Request(std::string method, Json params, ResponseHandlers handlers, std::optional<std::chrono::milliseconds> idleLimit) {
     const std::uint64_t id = core_->nextId++;
     if (core_->closed) {
         if (handlers.onError) {
@@ -428,7 +432,7 @@ std::uint64_t Endpoint::Request(std::string method, Json params, ResponseHandler
         }
         return id;
     }
-    core_->outgoing.emplace(id, detail::Outgoing{std::move(handlers), false, 0, 0});
+    core_->outgoing.emplace(id, detail::Outgoing{std::move(handlers), false, 0, 0, idleLimit, std::chrono::steady_clock::now()});
     core_->Send(Json{{"id", id}, {"method", std::move(method)}, {"params", std::move(params)}});
     return id;
 }
@@ -444,6 +448,32 @@ void Endpoint::Cancel(std::uint64_t id) {
     }
     it->second.cancelled = true;
     core_->Send(Json{{"method", kCancel}, {"params", {{"id", id}}}});
+}
+
+void Endpoint::ExpireIdle(std::chrono::steady_clock::time_point now) {
+    struct Expired {
+        std::uint64_t             id;
+        std::chrono::milliseconds limit;
+        ResponseHandlers          handlers;
+    };
+    const std::shared_ptr<detail::EndpointCore> core = core_;
+    std::vector<Expired>                        expired;
+    for (auto& [id, entry] : core->outgoing) {
+        if (entry.idleLimit && !entry.cancelled && now - entry.lastHeard >= *entry.idleLimit) {
+            entry.cancelled = true;
+            expired.push_back(Expired{id, *entry.idleLimit, std::exchange(entry.handlers, {})});
+        }
+    }
+    // Every cancel goes out before any handler runs, since one may close
+    // the endpoint; the handlers run regardless, as nothing else will.
+    for (const Expired& request : expired) {
+        core->Send(Json{{"method", kCancel}, {"params", {{"id", request.id}}}});
+    }
+    for (Expired& request : expired) {
+        if (request.handlers.onError) {
+            request.handlers.onError(RemoteError{error_code::kTimedOut, "no answer within " + std::to_string(request.limit.count()) + " ms", nullptr});
+        }
+    }
 }
 
 void Endpoint::Handle(std::string method, RequestHandler handler) {

@@ -52,6 +52,10 @@ class Hosts {
     // Live connections, sorted.
     [[nodiscard]] std::vector<std::string> Destinations() const;
 
+    // Fails every connection's requests that have heard nothing past their
+    // idle limit (Endpoint::ExpireIdle). The owner calls this periodically.
+    void ExpireIdleRequests();
+
     // Runs when a live connection ends without Disconnect: the agent
     // exited, the link dropped, or the agent broke the protocol.
     void SetOnDropped(Dropped handler);

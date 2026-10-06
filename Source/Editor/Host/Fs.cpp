@@ -43,8 +43,9 @@ text::FileContents ReadPath(const std::filesystem::path& path) {
     if (stat.kind == FileKind::Missing) {
         throw FsError(fs_error::kNotFound, "no such file: " + path.string());
     }
-    if (stat.kind == FileKind::Directory) {
-        throw FsError(fs_error::kFailed, path.string() + " is a directory");
+    // A FIFO or a device could block the read, or never end it.
+    if (stat.kind != FileKind::File) {
+        throw FsError(fs_error::kFailed, path.string() + (stat.kind == FileKind::Directory ? " is a directory" : " is not a regular file"));
     }
     try {
         return text::ReadFileContents(path);

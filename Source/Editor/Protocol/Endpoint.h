@@ -27,8 +27,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
@@ -45,6 +47,9 @@ namespace error_code {
     inline constexpr int kCancelled      = -32800;
     // Reported locally when the connection ends first; never on the wire.
     inline constexpr int kConnectionClosed = -32099;
+    // Reported locally when a request outlives its idle limit; never on the
+    // wire.
+    inline constexpr int kTimedOut = -32098;
 } // namespace error_code
 
 // Chunks a receiver lets a stream send ahead before granting more.
@@ -140,8 +145,11 @@ class Endpoint {
     // sender; it can't detect one that ignores it.
     void Receive(nlohmann::json message);
 
-    // Returns the request's id, for Cancel.
-    std::uint64_t Request(std::string method, nlohmann::json params, ResponseHandlers handlers);
+    // Returns the request's id, for Cancel. With idleLimit, the request
+    // expires once that long passes with nothing heard for it (see
+    // ExpireIdle).
+    std::uint64_t Request(std::string method, nlohmann::json params, ResponseHandlers handlers,
+                          std::optional<std::chrono::milliseconds> idleLimit = std::nullopt);
     void          Notify(std::string method, nlohmann::json params);
     // Asks the peer to stop. Chunks after this are dropped; the one
     // response still arrives, as Cancelled or a partial result.
@@ -149,6 +157,11 @@ class Endpoint {
 
     void Handle(std::string method, RequestHandler handler);
     void HandleNotification(std::string method, NotificationHandler handler);
+
+    // Fails each request whose idle limit has passed since it was sent or
+    // its last chunk arrived, with kTimedOut, and cancels it on the peer;
+    // its late answer is dropped. The owner calls this periodically.
+    void ExpireIdle(std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
 
     // The connection is gone: every pending request fails with
     // kConnectionClosed, every incoming one is stopped, and nothing more is

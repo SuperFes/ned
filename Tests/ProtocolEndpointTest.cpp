@@ -1,9 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -329,4 +331,67 @@ TEST_CASE("Endpoint rejects messages that break the protocol", "[Protocol][Endpo
     host.Receive(Json{{"id", 5}, {"method", "x"}});
     REQUIRE_THROWS_AS(host.Receive(Json{{"id", 5}, {"method", "x"}}), ProtocolError); // reused
     REQUIRE_THROWS_AS(host.Receive(Json{{"id", 4}, {"method", "x"}}), ProtocolError); // went backwards
+}
+
+TEST_CASE("Endpoint expires a request that hears nothing within its idle limit", "[Protocol][Endpoint]") {
+    using std::chrono::milliseconds;
+    using std::chrono::steady_clock;
+    std::vector<Responder>   stalled;
+    std::optional<Responder> streaming;
+    Peers                    peers;
+    peers.host.Handle("stall", [&](const Json&, Responder responder) { stalled.push_back(std::move(responder)); });
+    peers.host.Handle("stream", [&](const Json&, Responder responder) { streaming.emplace(std::move(responder)); });
+
+    Outcome   limited;
+    Outcome   unlimited;
+    Outcome   chatty;
+    const std::uint64_t id = peers.editor.Request("stall", nullptr, limited.Handlers(), milliseconds(1000));
+    peers.editor.Request("stall", nullptr, unlimited.Handlers());
+    peers.editor.Request("stream", nullptr, chatty.Handlers(), milliseconds(1000));
+    peers.Pump();
+    const auto sent = steady_clock::now();
+
+    peers.editor.ExpireIdle(sent + milliseconds(500));
+    CHECK(limited.responses == 0);
+
+    // A chunk counts as hearing from the request.
+    std::this_thread::sleep_for(milliseconds(2));
+    streaming->Chunk("progress");
+    peers.Pump();
+    peers.editor.ExpireIdle(sent + milliseconds(1001));
+    CHECK(chatty.responses == 0);
+    CHECK(limited.responses == 1);
+    CHECK(limited.error->code == error_code::kTimedOut);
+    CHECK(limited.error->message == "no answer within 1000 ms");
+
+    // The host is told to stop, and its late answer goes nowhere.
+    REQUIRE(peers.toHost.size() == 1);
+    CHECK(peers.toHost.front()["method"] == "$/cancel");
+    CHECK(peers.toHost.front()["params"]["id"] == id);
+    peers.Pump();
+    stalled.front().Result("late");
+    peers.Pump();
+    CHECK(limited.responses == 1);
+    CHECK_FALSE(limited.result.has_value());
+
+    peers.editor.ExpireIdle(steady_clock::now() + std::chrono::hours(24));
+    CHECK(unlimited.responses == 0);
+    CHECK(chatty.responses == 1);
+    CHECK(chatty.error->code == error_code::kTimedOut);
+    // Expiring again does nothing more.
+    peers.editor.ExpireIdle(steady_clock::now() + std::chrono::hours(48));
+    CHECK(chatty.responses == 1);
+}
+
+TEST_CASE("A request expiring closes the endpoint without losing the others' answers", "[Protocol][Endpoint]") {
+    std::vector<Responder> kept;
+    Peers                  peers;
+    peers.host.Handle("stall", [&](const Json&, Responder responder) { kept.push_back(std::move(responder)); });
+    Outcome second;
+    peers.editor.Request("stall", nullptr, ResponseHandlers{{}, [&](RemoteError) { peers.editor.Close("gave up"); }, {}}, std::chrono::milliseconds(1));
+    peers.editor.Request("stall", nullptr, second.Handlers(), std::chrono::milliseconds(1));
+    peers.Pump();
+    peers.editor.ExpireIdle(std::chrono::steady_clock::now() + std::chrono::seconds(1));
+    CHECK(second.responses == 1);
+    CHECK(second.error->code == error_code::kTimedOut);
 }

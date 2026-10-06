@@ -7,6 +7,7 @@
 #include <string>
 
 #include <stdlib.h>
+#include <sys/stat.h>
 
 #include "Editor/Host/Fs.h"
 
@@ -81,6 +82,9 @@ TEST_CASE("A host read returns the bytes and the timestamp before them", "[Host]
     CHECK(contents.timestamp == fs::last_write_time(dir.path / "f"));
     CHECK(CodeOf([&] { (void)host::ReadPath(dir.path / "missing"); }) == fs_error::kNotFound);
     CHECK(CodeOf([&] { (void)host::ReadPath(dir.path); }) == fs_error::kFailed);
+    // A FIFO with no writer would block the read forever.
+    REQUIRE(::mkfifo((dir.path / "fifo").c_str(), 0600) == 0);
+    CHECK_THROWS_WITH(host::ReadPath(dir.path / "fifo"), ContainsSubstring("is not a regular file"));
 }
 
 TEST_CASE("A host write replaces the file as a local save does", "[Host][HostFs]") {

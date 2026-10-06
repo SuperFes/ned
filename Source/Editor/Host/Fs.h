@@ -33,7 +33,8 @@ class FsError : public std::runtime_error {
 // Follows symlinks; a path that doesn't resolve is Missing.
 [[nodiscard]] FileStat StatPath(const std::filesystem::path& path);
 
-// Throws FsError: kNotFound, or kFailed for a directory or a failed read.
+// Throws FsError: kNotFound, or kFailed for anything but a regular file
+// and for a failed read.
 [[nodiscard]] text::FileContents ReadPath(const std::filesystem::path& path);
 
 // Replaces the file (through a symlink, its target) as a local save does,
