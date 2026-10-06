@@ -128,6 +128,14 @@ hello  -> {protocol: {major, minor}, codecs: [str], window: uint}
   through it. Their host prompts offer `Remote/KnownHosts.h`'s names (ssh_config and
   known_hosts), plus what the typed name resolves to under resolv.conf's search domains
   (`Remote/HostLookup.h`, through a killable `getent ahosts`).
+- A remote buffer (`Text/RemoteFile.h`) holds a host's file and has no local path, so
+  nothing that reads or writes a buffer's local file (the watcher, LSP, VCS, backups,
+  autosave, revert) touches a same-named file here. `find-file host:/path` opens one
+  through `fs/read` (`Remote/RemoteBuffer.h`); its mode, indentation and persisted undo
+  history come from the host path and its content, never a local `.editorconfig`.
+  `save-buffer` encodes it with the local save policy and writes it through `fs/write`
+  (`RemoteSaver`), expecting the mtime it last saw; a file changed on the host is
+  refused, and the next save asks before overwriting it.
 - The in-process transport skips `hello`. Both ends are the same build.
 
 ## 5. Transports

@@ -309,24 +309,7 @@ Buffer Buffer::NewFile(std::filesystem::path path) {
 
 SavePlan Buffer::BeginSave(const std::filesystem::path& path, bool ensureFinalNewline, bool trimTrailingWhitespace,
                            std::optional<LineEnding> lineEndingOverride) {
-    // progressive-huge-file-load follow-up: a still-loading huge buffer is
-    // now genuinely editable (ReadOnly() no longer implies "can't save" the
-    // way it used to via Loading_) -- without this guard, nothing else
-    // would stop a mid-load save from silently writing a truncated,
-    // not-yet-fully-read version of the file over the real one. Checked
-    // first, before the disk-space check below, since it's a cheap,
-    // unconditional refusal rather than a size-dependent one.
-    if (Loading_) {
-        throw std::runtime_error("ned: cannot save \"" + Name_ + "\" -- still loading in the background");
-    }
-
-    // Two concurrent writes to one file would race each other to the
-    // rename regardless of which finished first, and the second one's
-    // FinishSave would claim a saved state the first had already moved
-    // past. The inverse of the loading refusal above.
-    if (Saving_) {
-        throw std::runtime_error("ned: cannot save \"" + Name_ + "\" -- a save is already in progress");
-    }
+    RequireSavable();
 
     // file-attribute-preservation follow-up: everything below writes to the
     // *resolved* target, not to `path` itself -- saving through a symlink
@@ -356,11 +339,47 @@ SavePlan Buffer::BeginSave(const std::filesystem::path& path, bool ensureFinalNe
     // Attributes are captured before the file is replaced -- see
     // Text/FilePreservation.h for what a rename silently discards and why
     // each piece has to be put back by hand.
+    SavePlan plan   = StartSavePlan(effectiveEnding, trimTrailingWhitespace, ensureFinalNewline);
+    plan.target     = target;
+    plan.attributes = CaptureFileAttributes(target);
+    return plan;
+}
+
+SavePlan Buffer::BeginRemoteSave(bool ensureFinalNewline, bool trimTrailingWhitespace, std::optional<LineEnding> lineEndingOverride) {
+    if (!Remote_) {
+        throw std::runtime_error("ned: buffer \"" + Name_ + "\" holds no remote file");
+    }
+    RequireSavable();
+    SavePlan plan = StartSavePlan(lineEndingOverride.value_or(LineEnding_), trimTrailingWhitespace, ensureFinalNewline);
+    plan.target   = Remote_->ToString();
+    return plan;
+}
+
+void Buffer::RequireSavable() const {
+    // progressive-huge-file-load follow-up: a still-loading huge buffer is
+    // now genuinely editable (ReadOnly() no longer implies "can't save" the
+    // way it used to via Loading_) -- without this guard, nothing else
+    // would stop a mid-load save from silently writing a truncated,
+    // not-yet-fully-read version of the file over the real one. Checked
+    // ahead of BeginSave's disk-space check, since it's a cheap,
+    // unconditional refusal rather than a size-dependent one.
+    if (Loading_) {
+        throw std::runtime_error("ned: cannot save \"" + Name_ + "\" -- still loading in the background");
+    }
+
+    // Two concurrent writes to one file would race each other to the
+    // rename regardless of which finished first, and the second one's
+    // FinishSave would claim a saved state the first had already moved
+    // past. The inverse of the loading refusal above.
+    if (Saving_) {
+        throw std::runtime_error("ned: cannot save \"" + Name_ + "\" -- a save is already in progress");
+    }
+}
+
+SavePlan Buffer::StartSavePlan(LineEnding ending, bool trimTrailingWhitespace, bool ensureFinalNewline) {
     SavePlan plan;
-    plan.target                 = target;
     plan.snapshot               = Storage_->SnapshotForBackgroundRead();
-    plan.attributes             = CaptureFileAttributes(target);
-    plan.lineEnding             = effectiveEnding;
+    plan.lineEnding             = ending;
     plan.trimTrailingWhitespace = trimTrailingWhitespace;
     plan.ensureFinalNewline     = ensureFinalNewline;
     plan.charset                = Charset_;
@@ -372,7 +391,17 @@ SavePlan Buffer::BeginSave(const std::filesystem::path& path, bool ensureFinalNe
 }
 
 void Buffer::FinishSave(const std::filesystem::path& path, SavePlan plan) {
-    Path_       = path;
+    Path_ = path;
+    CommitSave(std::move(plan));
+    CaptureDiskTimestamp();
+}
+
+void Buffer::FinishRemoteSave(SavePlan plan, std::optional<std::filesystem::file_time_type> timestamp) {
+    CommitSave(std::move(plan));
+    SetRemoteTimestamp(timestamp);
+}
+
+void Buffer::CommitSave(SavePlan plan) {
     LineEnding_ = plan.lineEnding;
     Charset_    = plan.charset;
     if (CharsetChosen_) {
@@ -389,7 +418,6 @@ void Buffer::FinishSave(const std::filesystem::path& path, SavePlan plan) {
     SaveProgress_ = nullptr;
     ++UnsavedChangeGeneration_;
     ++SaveGeneration_;
-    CaptureDiskTimestamp();
 }
 
 void Buffer::AbandonSave() {
@@ -520,6 +548,11 @@ const std::optional<std::filesystem::file_time_type>& Buffer::RemoteTimestamp() 
 
 void Buffer::SetRemoteTimestamp(std::optional<std::filesystem::file_time_type> timestamp) {
     RemoteTimestamp_ = timestamp;
+    RemoteChanged_   = false;
+}
+
+void Buffer::NoteRemoteChanged() {
+    RemoteChanged_ = true;
 }
 
 void Buffer::SetPath(std::filesystem::path path) {
@@ -691,6 +724,9 @@ void Buffer::CaptureDiskTimestamp() {
 }
 
 bool Buffer::ExternallyModified() const {
+    if (Remote_) {
+        return RemoteChanged_;
+    }
     if (!Path_) {
         return false;
     }
