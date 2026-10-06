@@ -6,6 +6,7 @@
 // diagnostics, messages) and link resolution/activation.
 //
 
+#include "Editor/Remote/Location.h"
 #include "UI/BufferView/Internal.h"
 
 namespace ned::ui {
@@ -85,6 +86,11 @@ void BufferView::JumpToPathLine(const std::filesystem::path& path, std::size_t l
     // empty.
     const std::optional<std::filesystem::path> resolved = ResolveResultPath(path);
     if (!resolved) {
+        // A remote search's results name host:/path.
+        if (const auto remote = editor::remote::ParseLocation(path.string())) {
+            VisitRemoteFile(*remote, line, false);
+            return;
+        }
         statusMessage_ = "No such file: " + path.string();
         return;
     }
