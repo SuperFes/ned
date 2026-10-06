@@ -20,6 +20,7 @@
 #include "Editor/Protocol/Endpoint.h"
 #include "Editor/Protocol/FrameTransport.h"
 #include "Editor/Protocol/FramedConnection.h"
+#include "Editor/Remote/Ssh.h"
 
 using ned::editor::LiveContent;
 using ned::editor::PostQueue;
@@ -201,6 +202,25 @@ TEST_CASE("ned-agent searches under the request's settings rather than its own",
     };
     REQUIRE(count(true) == 1);
     REQUIRE(count(false) == 0);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("ned-agent runs through an ssh master's session", "[Host][HostAgent]") {
+    const std::filesystem::path dir = FreshDir("ned_host_agent_ssh");
+    std::ofstream(dir / "a.txt") << "needle\n";
+
+    ned::editor::remote::SshMaster master("host", {.program = NED_FAKE_SSH}, dir / "m");
+    master.Start();
+    AgentClient client(FrameTransport(master.SessionArgv(std::vector<std::string>{AgentBinary(), "--stdio"}), true));
+
+    const auto hello = client.Call(std::string(host::kHello), host::ToJson(host::HelloRequest{.build = "editor", .codecs = {"none"}, .window = 16}));
+    REQUIRE(host::HelloResponseFromJson(*hello.result).build == host::FileBuildId(AgentBinary()));
+
+    const auto search = client.Call(std::string(host::kSearchProject), host::ToJson(host::SearchRequest{.root = dir, .pattern = "needle", .live = {}}));
+    REQUIRE(search.result == Json::object());
+    REQUIRE(search.chunks.size() == 1);
+    REQUIRE(host::MatchesFromHost(search.chunks.front(), dir).size() == 1);
 
     std::filesystem::remove_all(dir);
 }

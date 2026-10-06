@@ -338,6 +338,7 @@ add_executable(ned_tests
             ProtocolEndpointTest.cpp
             HostCodecTest.cpp
             HostAgentTest.cpp
+            RemoteSshTest.cpp
             AcpClientTest.cpp
             AcpConfigTest.cpp
             AcpManagerTest.cpp
@@ -483,6 +484,12 @@ target_compile_definitions(ned_tests PRIVATE NED_REPO_ROOT="${CMAKE_SOURCE_DIR}"
 # HostAgentTest drives the real executable over its stdio.
 target_compile_definitions(ned_tests PRIVATE NED_AGENT_BINARY="$<TARGET_FILE:ned-agent>")
 add_dependencies(ned_tests ned-agent)
+
+# Stands in for ssh in RemoteSshTest and HostAgentTest's ssh run.
+add_executable(ned_fake_ssh Remote/FakeSsh.cpp)
+set_target_properties(ned_fake_ssh PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+add_dependencies(ned_tests ned_fake_ssh)
+target_compile_definitions(ned_tests PRIVATE NED_FAKE_SSH="$<TARGET_FILE:ned_fake_ssh>")
 
 # SKIP_REGULAR_EXPRESSION: Catch2's SKIP() (e.g. ModeOverridesTest.cpp's
 # real-system-queries tests, which SKIP rather than fail when a machine has

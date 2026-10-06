@@ -118,6 +118,16 @@ connection rather than behind a virtual interface:
   built on `FramedConnection` with a length-prefixed transport type beside
   `LineTransport`.
 
+  `Remote/Ssh.h` owns one foreground `ssh -M -N` master per host, with its control socket
+  at `$XDG_RUNTIME_DIR/ned/ssh/<pid>-<n>`. The socket appears only once login succeeds,
+  which is how readiness is detected; a master that exits first reports ssh's own stderr.
+  The agent and deploy commands run as sessions through it, so only the first connection
+  pays for login (about 1 s to the test host, against ~0.4 s, or five round trips, per
+  later session). Stopping the master with `-O exit` ends every session on it. Every
+  invocation passes `BatchMode=yes`, `RemoteCommand=none`, `RequestTTY=no`,
+  `ClearAllForwardings=yes` and keepalives, and `ControlPersist=no` keeps a user's
+  persisting config from backgrounding the master out of the editor's ownership.
+
 No TCP and no listening socket on either side.
 
 ## 6. Trust

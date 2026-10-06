@@ -98,10 +98,9 @@ and sync on save; don't build a remote-authoritative buffer.
 - [ ] Confirm local and remote buffers mix in one window layout.
 
 **Connect**
-- [ ] SSH transport: shell out to real `ssh`, reusing the user's config, agent and
-      `known_hosts`. Try `ControlMaster` multiplexing before reaching for libssh.
-      Override `RemoteCommand`/`RequestTTY` (`-o RemoteCommand=none -o RequestTTY=no`):
-      a user's config that launches an interactive shell otherwise refuses a command.
+- [ ] Password and keyboard-interactive logins. `Remote/Ssh.h` runs with
+      `BatchMode=yes`, so only key and agent auth work; an `SSH_ASKPASS` helper that
+      answers through a ned prompt would lift that.
 - [ ] Parse `~/.ssh/config` directly (`Host`/`HostName`/`User`/`Port`/`IdentityFile`/
       `ProxyJump`, wildcards) to fill in defaults.
 - [ ] A connect prompt that completes the project name first, then the host, then the
