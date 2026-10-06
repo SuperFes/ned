@@ -9,7 +9,8 @@
 //    remote quoting is parsed by a real shell.
 //
 // Destination "denied" fails login the way a refused key does; a master
-// to "silent" never finishes logging in.
+// to "silent" never finishes logging in; a session on "chatty" prints to
+// stdout ahead of its command, as a login script can.
 //
 
 #include <cstdio>
@@ -146,6 +147,10 @@ int main(int argc, char** argv) {
     }
     if (command.empty()) {
         return Fail("fake ssh: a session needs a command");
+    }
+    if (destination == "chatty") {
+        std::fputs("Welcome to chatty\nno newline here", stdout);
+        std::fflush(stdout);
     }
     ::execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
     return Fail("fake ssh: cannot exec /bin/sh");

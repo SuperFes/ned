@@ -68,9 +68,6 @@ and sync on save; don't build a remote-authoritative buffer.
 - [ ] A CI job that builds both static agents (`agent-*` presets) and runs `[HostAgent]`
       against them through `NED_TEST_AGENT`: x86_64 natively, aarch64 under
       `qemu-aarch64`.
-- [ ] A login script that prints to stdout corrupts the agent's frame stream, where the
-      deploy probe already skips such output. Have the agent lead with a sync marker the
-      editor scans for, or at least name the cause in the decode error.
 - [ ] Prune `<build>-<arch>` agent directories no editor has used in a while.
 - [ ] The `proc` seam: LSP/DAP/task/VCS subprocesses spawn through the host, local ones
       included, and remote inotify relays through `watch`. This is the biggest lift in

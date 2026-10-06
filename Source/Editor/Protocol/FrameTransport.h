@@ -72,6 +72,10 @@ class FrameTransport {
     // can't wait unbounded for one to start.
     [[nodiscard]] bool WaitReadable(std::chrono::milliseconds timeout) const;
 
+    // Whatever bytes are ready, outside the framing: for skipping what a
+    // session prints before its peer starts speaking. Empty on EOF.
+    [[nodiscard]] std::string ReadUnframed() const;
+
     void Close() noexcept;
 
     [[nodiscard]] pid_t              Pid() const noexcept;

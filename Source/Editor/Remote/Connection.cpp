@@ -16,6 +16,8 @@ namespace {
     constexpr std::uint64_t kHelloId     = 1;
     constexpr int           kHelloPollMs = 50;
     constexpr std::size_t   kMaxStderrBytes{16 * 1024};
+    // More than a login banner, less than a runaway script.
+    constexpr std::size_t kMaxPreambleBytes{64 * 1024};
 
     // What an agent that exited said on its way out.
     std::string ExitReason(const protocol::FrameTransport& transport) {
@@ -35,6 +37,46 @@ namespace {
     }
 
 } // namespace
+
+std::vector<std::string> AgentSessionCommand(const std::filesystem::path& agent) {
+    // An argument to `sh -c`, so it stays free of backslashes for a non-POSIX
+    // login shell's quoting to pass through untouched.
+    return {"sh", "-c", "echo " + std::string(kAgentStartMarker) + "; exec \"$0\" --stdio", agent.string()};
+}
+
+void AwaitAgentStart(protocol::FrameTransport& transport, std::chrono::milliseconds timeout, const std::stop_token& stop) {
+    const std::string marker   = std::string(kAgentStartMarker) + "\n";
+    const auto        deadline = std::chrono::steady_clock::now() + timeout;
+    std::string       preamble;
+    while (true) {
+        while (!transport.WaitReadable(std::chrono::milliseconds(kHelloPollMs))) {
+            if (stop.stop_requested()) {
+                throw ConnectError("cancelled waiting for the agent to start");
+            }
+            if (std::chrono::steady_clock::now() >= deadline) {
+                throw ConnectError("the agent didn't start within " + std::to_string(timeout.count()) + " ms");
+            }
+        }
+        std::string chunk;
+        try {
+            chunk = transport.ReadUnframed();
+        }
+        catch (const std::runtime_error&) {
+            // Ends the session as EOF would.
+        }
+        if (chunk.empty()) {
+            throw ConnectError(ExitReason(transport));
+        }
+        preamble += chunk;
+        if (preamble.find(marker) != std::string::npos) {
+            return;
+        }
+        if (preamble.size() > kMaxPreambleBytes) {
+            throw ConnectError("the host printed more than " + std::to_string(kMaxPreambleBytes / 1024) +
+                               " KiB before the agent started; does a login script write to stdout? It began: " + preamble.substr(0, preamble.find('\n')).substr(0, 80));
+        }
+    }
+}
 
 host::HelloResponse SayHello(protocol::FrameTransport& transport, const host::HelloRequest& request, std::chrono::milliseconds timeout,
                              const std::stop_token& stop) {
@@ -94,9 +136,10 @@ Handshake Connect(const ConnectOptions& options, const std::stop_token& stop) {
     for (const bool reinstall : {false, true}) {
         DeployedAgent            agent = EnsureAgent(*master, options.agents, reinstall, stop);
         const host::HelloRequest request{.codecs = {std::string(host::kCodecZstd), std::string(host::kCodecNone)}, .window = protocol::kDefaultWindow};
-        protocol::FrameTransport transport(master->SessionArgv(std::vector<std::string>{agent.remotePath.string(), "--stdio"}), true);
+        protocol::FrameTransport transport(master->SessionArgv(AgentSessionCommand(agent.remotePath)), true);
         host::HelloResponse      hello;
         try {
+            AwaitAgentStart(transport, ProtocolRequestTimeoutMs(), stop);
             hello = SayHello(transport, request, ProtocolRequestTimeoutMs(), stop);
         }
         catch (const ConnectError& e) {

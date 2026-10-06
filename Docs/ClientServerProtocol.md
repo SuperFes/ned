@@ -143,10 +143,16 @@ connection rather than behind a virtual interface:
   which is how readiness is detected; a master that exits first reports ssh's own stderr.
   The agent and deploy commands run as sessions through it, so only the first connection
   pays for login (about 1 s to the test host, against ~0.4 s, or five round trips, per
-  later session). Stopping the master with `-O exit` ends every session on it. Every
+  later session). Stopping the master with `-O exit` ends every session on it, and an
+  editor starting up sends that to masters whose `<pid>` is gone. Every
   invocation passes `BatchMode=yes`, `RemoteCommand=none`, `RequestTTY=no`,
   `ClearAllForwardings=yes` and keepalives, and `ControlPersist=no` keeps a user's
   persisting config from backgrounding the master out of the editor's ownership.
+
+  A login script can print ahead of any command (bash reads `~/.bashrc` for one run over
+  ssh), so the agent session is `sh -c 'echo ned-agent-stdio-1; exec "$0" --stdio'
+  <agent>`, and the editor skips stdout through the marker before `hello`. The agent says
+  nothing until `hello`, so its frames start clean.
 
 No TCP and no listening socket on either side.
 
