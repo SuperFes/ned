@@ -21,6 +21,7 @@
 #include "Editor/HeaderSource.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/Remote/Hosts.h"
+#include "Editor/Remote/Location.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tracker/Clocking.h"
 #include "Editor/Tracker/CommentBuffer.h"
@@ -2857,6 +2858,11 @@ std::optional<bufferview::TextEntryPrompt> BufferView::TextEntryPromptFor(InputM
 bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& input) {
     if (inputMode_ == InputMode::FindFile) {
         const bool isNewFile = !std::filesystem::exists(input);
+        // host:/path, unless a local file has that name.
+        if (const auto remote = isNewFile ? editor::remote::ParseLocation(input) : std::nullopt) {
+            VisitRemoteFile(*remote);
+            return bufferview::PromptCommit::Finished;
+        }
         try {
             text::Buffer& opened = bufferList_.OpenOrCreateFile(input);
             activeBuffer_.Set(opened);

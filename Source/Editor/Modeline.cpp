@@ -252,4 +252,16 @@ std::string ReadFileEnds(const std::filesystem::path& path, std::size_t headByte
     return ends;
 }
 
+std::string TextEnds(const text::ITextStorage& text, std::size_t headBytes, std::size_t tailBytes) {
+    const std::size_t size     = text.ByteLength();
+    const std::size_t headSize = std::min(size, headBytes);
+    std::string       ends     = text.Substring(0, headSize);
+    if (size > headSize) {
+        const std::size_t tailSize = std::min(size - headSize, tailBytes);
+        ends += std::string(kModelineLines * 2 + 1, '\n');
+        ends += text.Substring(size - tailSize, tailSize);
+    }
+    return ends;
+}
+
 } // namespace ned::editor

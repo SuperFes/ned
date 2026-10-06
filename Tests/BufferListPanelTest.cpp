@@ -317,3 +317,20 @@ TEST_CASE("BufferListPanel confirming a kill skips a marked buffer that closed e
     REQUIRE(fixture.bufferList.Find("two") == nullptr);
     REQUIRE(fixture.bufferList.Find("three") == &three);
 }
+
+TEST_CASE("BufferListPanel shows a remote buffer's host and path as its file", "[BufferListPanel]") {
+    Fixture fixture;
+    fixture.bufferList.AddRemotePlaceholder({.destination = "dev", .path = "/srv/a.c"});
+
+    ned::ui::BufferListPanel panel(fixture.theme, fixture.bufferList);
+    panel.Show();
+    panel.Popup().TakeFocus();
+    panel.Popup().SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 4});
+    ned::ui::Screen screen(60, 5);
+    panel.Popup().Paint(ned::ui::Canvas(screen, panel.Popup().Box_()));
+    std::string text;
+    for (int x = 1; x < 59; ++x) {
+        text += screen.PixelAt(x, 2).character;
+    }
+    CHECK(text.find("dev:/srv/a.c") != std::string::npos);
+}

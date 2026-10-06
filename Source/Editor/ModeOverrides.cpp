@@ -283,7 +283,13 @@ Mode ModeForPath(const std::filesystem::path& path) {
     if (auto overrideMode = ModeForFileOverride(path); overrideMode) {
         return std::move(*overrideMode);
     }
-    const std::string ends = ReadFileEnds(path);
+    return ModeForPathAndEnds(path, ReadFileEnds(path));
+}
+
+Mode ModeForPathAndEnds(const std::filesystem::path& path, std::string_view ends) {
+    if (auto overrideMode = ModeForFileOverride(path); overrideMode) {
+        return std::move(*overrideMode);
+    }
     // A modeline in the file outranks everything but the user's own override.
     if (const std::optional<std::string> language = ParseModeline(ends).language) {
         if (auto mode = ModeByName(*language + "-mode"); mode) {
@@ -325,6 +331,9 @@ Mode ModeForPath(const std::filesystem::path& path) {
 Mode ModeForBuffer(const text::Buffer& buffer) {
     if (buffer.Path()) {
         return ModeForPath(*buffer.Path());
+    }
+    if (buffer.Remote()) {
+        return ModeForPathAndEnds(buffer.Remote()->path, TextEnds(buffer.Content()));
     }
     return FundamentalMode();
 }

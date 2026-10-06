@@ -93,9 +93,13 @@ void SetModeForFilename(const std::string& filename, const std::string& modeName
 // SetOnActiveBufferChanged) call the exact same table, rather than two
 // copies that could drift.
 [[nodiscard]] Mode ModeForPath(const std::filesystem::path& path);
+// ModeForPath with the file's ends (ReadFileEnds) already in hand, for a
+// file that isn't on this machine's disk.
+[[nodiscard]] Mode ModeForPathAndEnds(const std::filesystem::path& path, std::string_view ends);
 
 // FundamentalMode() for a buffer with no associated path (e.g. a scratch
-// buffer), otherwise ModeForPath(*buffer.Path()).
+// buffer), otherwise ModeForPath(*buffer.Path()); a remote buffer's mode
+// comes from its host path and its own content.
 [[nodiscard]] Mode ModeForBuffer(const text::Buffer& buffer);
 
 // per-buffer-mode-cache follow-up: memoized ModeForBuffer, keyed by buffer
