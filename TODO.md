@@ -109,10 +109,12 @@ and sync on save; don't build a remote-authoritative buffer.
 **Project tree and search**
 - [ ] A lazy, async remote directory listing for the sidebar (`AsyncFileLoader`
       precedent).
-- [ ] Remote project search through the agent's `search/project`, with unsaved edits
-      sent as `LiveContent`. Unsaved text can exceed the 64 MiB frame cap in total, so
-      it needs to go up as a stream rather than inside the request. Decide how project-replace, find-references and
-      the agenda scan run against a remote root.
+- [ ] Remote project search (`remote-project-search`) runs, but its results can't be
+      visited until the file I/O seam opens remote files. Once remote buffers exist,
+      send their unsaved edits as `LiveContent`. Unsaved text can exceed the 64 MiB
+      frame cap in total, so it needs to go up as a stream rather than inside the
+      request. Decide how project-replace, find-references and the agenda scan run
+      against a remote root.
 
 ## Documentation & Companion Tooling
 

@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-369 commands.
+372 commands.
 
 ## `acp-close-session`
 
@@ -1339,6 +1339,18 @@ Clear the cached compiler-derived default include paths, so the next lookup re-p
 ## `reload-format-config`
 
 Re-read format.janet (personal, then project) without restarting ned.
+
+## `remote-connect`
+
+Connect to a host over ssh, installing ned's agent there if it isn't already.
+
+## `remote-disconnect`
+
+Close the connection to a host.
+
+## `remote-project-search`
+
+Search all files under host:/path for a regex pattern on that host, in a new results buffer.
 
 ## `remove-last-cursor`
 

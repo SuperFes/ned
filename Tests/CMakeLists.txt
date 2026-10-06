@@ -418,6 +418,7 @@ add_executable(ned_tests
             BufferViewNextErrorTest.cpp
             BufferViewDiagnosticsBufferTest.cpp
             BufferViewProjectReplaceTest.cpp
+            BufferViewRemoteTest.cpp
             BufferViewResultJumpTest.cpp
             BufferViewEmbeddedLspTest.cpp
             BufferViewCodeLensRowTest.cpp

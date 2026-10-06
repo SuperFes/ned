@@ -321,6 +321,7 @@ add_library(ned_lib STATIC
         Editor/Remote/Connection.cpp
         Editor/Remote/Deploy.cpp
         Editor/Remote/Hosts.cpp
+        Editor/Remote/Location.cpp
         Editor/Remote/Search.cpp
         Editor/Remote/Ssh.cpp
         Editor/Repl/Config.cpp
@@ -504,6 +505,7 @@ add_library(ned_lib STATIC
         UI/BufferView/Paint.cpp
         UI/BufferView/Gutter.cpp
         UI/BufferView/Prompts.cpp
+        UI/BufferView/Remote.cpp
         UI/BufferView/Lsp.cpp
         UI/BufferView/Rename.cpp
         UI/BufferView/ChangeSignature.cpp

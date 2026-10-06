@@ -24,6 +24,7 @@
 #include "Editor/Project/Session.h"
 #include "Editor/Project/Tree.h"
 #include "Editor/RecentFiles.h"
+#include "Editor/Remote/Hosts.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
 #include "Editor/TabWidth.h"
@@ -564,6 +565,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     // Set*-hook forward below.
     pane->Buffer().SetLeftDock(leftDock_);
     pane->Buffer().SetVcsPanel(vcsPanel_);
+    pane->Buffer().SetRemoteHosts(remoteHosts_);
     pane->Buffer().SetDebugPanel(debugPanel_);
     pane->Buffer().SetThemeApplier(themeApplier_);
     pane->Buffer().SetThemeDetector(themeDetector_);
@@ -1035,6 +1037,18 @@ void WindowManager::SetDapManager(editor::dap::Manager* dapManager) {
         }
     });
     dapManager->SetOnSessionEnded([this](std::string reason) { statusMessage_ = std::move(reason); });
+}
+
+void WindowManager::SetRemoteHosts(editor::remote::Hosts* remoteHosts) {
+    remoteHosts_ = remoteHosts;
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetRemoteHosts(remoteHosts);
+    }
+    if (remoteHosts != nullptr) {
+        remoteHosts->SetOnDropped([this](const std::string& destination, const std::string& reason) {
+            statusMessage_ = "Lost the connection to " + destination + ": " + reason;
+        });
+    }
 }
 
 void WindowManager::SetAcpManager(editor::acp::Manager* acpManager) {

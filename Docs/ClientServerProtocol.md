@@ -113,6 +113,10 @@ hello  -> {protocol: {major, minor}, codecs: [str], window: uint}
   it). `Connect` blocks, so a
   `Connector` runs it on a worker that a stop cancels at any step, and hands a
   `Connection` to the main thread.
+- `Remote/Hosts.h` keeps one `Connection` per destination for the editor, sharing an
+  attempt between callers. `remote-connect`, `remote-disconnect` and
+  `remote-project-search` (`host:/path`, results streamed into `*search results*`) run
+  through it.
 - The in-process transport skips `hello`. Both ends are the same build.
 
 ## 5. Transports

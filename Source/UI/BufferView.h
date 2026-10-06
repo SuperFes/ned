@@ -70,6 +70,7 @@
 #include "Editor/PromptHistory.h"
 #include "Editor/QueryReplace.h"
 #include "Editor/Register.h"
+#include "Editor/Remote/Location.h"
 #include "Editor/RenameReview.h"
 #include "Editor/SearchEverywhere.h"
 #include "Editor/SearchEverywherePreview.h"
@@ -127,6 +128,11 @@ class PaneAlignment;
 namespace ned::editor {
 class MergeViewSession;
 } // namespace ned::editor
+
+namespace ned::editor::remote {
+class Connection;
+class Hosts;
+} // namespace ned::editor::remote
 
 namespace ned::ui {
 
@@ -438,6 +444,10 @@ class BufferView : public Widget {
     // (the dap-* commands report "No debugger available." via
     // statusMessage_ if this was never called).
     void SetDapManager(editor::dap::Manager* dapManager);
+
+    // The editor's remote hosts, for remote-connect/-disconnect and
+    // remote-project-search, which report "No remote hosts." while unset.
+    void SetRemoteHosts(editor::remote::Hosts* remoteHosts);
 
     // ACP client slice 2: registers the shared Manager -- same "unset is
     // a safe no-op" convention as SetDapManager (the acp-* commands report
@@ -1270,6 +1280,12 @@ class BufferView : public Widget {
                            // registers pendingOpenProjectRoot_ under the typed name and
                            // activates it.
                            OpenProjectName,
+                           RemoteConnect,
+                           RemoteDisconnect,
+                           // destination:/root, then the pattern, the open-project
+                           // prompts' two-step shape.
+                           RemoteSearchRoot,
+                           RemoteSearchPattern,
                            PointToRegister,
                            JumpToRegister,
                            CopyToRegister,
@@ -4286,6 +4302,32 @@ class BufferView : public Widget {
     // pendingPropertyName_'s own "state carried between two prompts in the
     // same session" shape above.
     std::filesystem::path pendingOpenProjectRoot_;
+
+    // A remote search in flight. Its callbacks carry the generation, so a
+    // newer search or a closed results buffer turns the old one's late
+    // chunks into no-ops.
+    struct RemoteSearchRun {
+        std::uint64_t                         generation = 0;
+        editor::remote::Location              root;
+        std::string                           pattern;
+        std::optional<std::uint64_t>          requestId;
+        text::BufferIdentity                  results;
+        std::size_t                           matches = 0;
+        std::chrono::steady_clock::time_point started;
+    };
+    void ConnectToHost(const std::string& destination);
+    void DisconnectFromHost(const std::string& destination);
+    void StartRemoteSearch(const editor::remote::Location& root, const std::string& pattern);
+    void SendRemoteSearch(std::uint64_t generation, editor::remote::Connection& connection);
+    void AppendRemoteMatches(std::uint64_t generation, const std::vector<editor::SearchMatch>& matches);
+    void FinishRemoteSearch(std::uint64_t generation, const std::optional<std::string>& failure);
+    void CancelRemoteSearch();
+
+    editor::remote::Hosts*         remoteHosts_ = nullptr; // see SetRemoteHosts
+    std::optional<RemoteSearchRun> remoteSearch_;
+    std::uint64_t                  remoteSearchGeneration_ = 0;
+    editor::remote::Location       pendingRemoteSearchRoot_;
+    std::string                    lastRemoteSearchRoot_;
 
     BookmarkPromptAction bookmarkPromptAction_ = BookmarkPromptAction::Jump;
     bool                 charsetPromptReverts_ = false;

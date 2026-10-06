@@ -90,6 +90,7 @@
 #include "Editor/RecencyGlow.h"
 #include "Editor/RecentFiles.h"
 #include "Editor/Register.h"
+#include "Editor/Remote/Hosts.h"
 #include "Editor/Repl/Config.h"
 #include "Editor/RustfmtConfig.h"
 #include "Editor/ScriptingSession.h"
@@ -1503,6 +1504,9 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // own doc comment in WindowManager.h.
     ned::editor::dap::Manager dapManager(eventLoop);
     windowManager->SetDapManager(&dapManager);
+
+    ned::editor::remote::Hosts remoteHosts(eventLoop);
+    windowManager->SetRemoteHosts(&remoteHosts);
 
     // session-persistence slice 2: the restored session's breakpoints,
     // applied as soon as the store they live in exists -- long before any

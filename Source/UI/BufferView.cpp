@@ -491,6 +491,10 @@ bool BufferView::HandleChord(const editor::KeyChord& chord) {
         case InputMode::OrgDeadline:
         case InputMode::OrgSchedule:
         case InputMode::ProjectSearch:
+        case InputMode::RemoteConnect:
+        case InputMode::RemoteDisconnect:
+        case InputMode::RemoteSearchRoot:
+        case InputMode::RemoteSearchPattern:
         case InputMode::ReplName:
         case InputMode::SearchInResults:
         case InputMode::SetHeadlineTags:

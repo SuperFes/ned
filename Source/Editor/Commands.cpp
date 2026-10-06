@@ -2596,6 +2596,16 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           context.interactiveRequest = InteractiveRequest::VisitSearchResult;
                       });
 
+    registry.Register("remote-connect", "Connect to a host over ssh, installing ned's agent there if it isn't already.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::RemoteConnect; });
+
+    registry.Register("remote-disconnect", "Close the connection to a host.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::RemoteDisconnect; });
+
+    registry.Register("remote-project-search",
+                      "Search all files under host:/path for a regex pattern on that host, in a new results buffer.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::RemoteProjectSearch; });
+
     registry.Register(
         "project-replace",
         "Search-and-replace a regex pattern across all files under the current directory, with one "

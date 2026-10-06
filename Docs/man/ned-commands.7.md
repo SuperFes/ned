@@ -1050,6 +1050,18 @@ for the live keymap stack.
 
 :   Re-read format.janet (personal, then project) without restarting ned.
 
+`remote-connect`
+
+:   Connect to a host over ssh, installing ned's agent there if it isn't already.
+
+`remote-disconnect`
+
+:   Close the connection to a host.
+
+`remote-project-search`
+
+:   Search all files under host:/path for a regex pattern on that host, in a new results buffer.
+
 `remove-last-cursor` (`C-S-DOWN`)
 
 :   Remove the most recently added secondary cursor.

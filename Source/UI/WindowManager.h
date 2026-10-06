@@ -542,6 +542,9 @@ class WindowManager {
     // capturing some pane that may have been closed by then (identical
     // reasoning to SetDapManager's own SetOnStopped wiring).
     void SetAcpManager(editor::acp::Manager* acpManager);
+    // Every pane's remote commands go through remoteHosts; a connection
+    // that drops says so in the status line.
+    void SetRemoteHosts(editor::remote::Hosts* remoteHosts);
 
     // ACP auto-reconnect follow-up: seeds SaveProjectSessionNow's own
     // lastAcpAgent field for a run where Manager::AgentName() never gets
@@ -1030,6 +1033,7 @@ class WindowManager {
     editor::tracker::Runner*                           trackerRunner_  = nullptr;
     editor::dap::Manager*                           dapManager_     = nullptr;  // see SetDapManager
     editor::acp::Manager*                           acpManager_     = nullptr;  // see SetAcpManager
+    editor::remote::Hosts*                             remoteHosts_    = nullptr;  // see SetRemoteHosts
     std::optional<std::string>                         lastAcpAgentSeed_;          // see SetLastKnownAcpAgent
     editor::ProjectUndoManager*                        projectUndo_ = nullptr;     // see SetProjectUndo
     const janet::Environment*                          janetEnv_    = nullptr;     // see SetJanetEnvironment

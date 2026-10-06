@@ -19,8 +19,9 @@
 #include "Editor/Protocol/FrameTransport.h"
 #include "Editor/Remote/Connection.h"
 #include "Editor/Remote/Hosts.h"
+#include "Editor/Remote/Location.h"
 #include "Editor/Remote/Search.h"
-#include "EnvOverride.h"
+#include "FakeRemoteHost.h"
 
 using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::StartsWith;
@@ -44,32 +45,6 @@ using Json           = nlohmann::json;
 
 namespace {
 
-std::string AgentBinary() {
-    const char* override = std::getenv("NED_TEST_AGENT");
-    return override != nullptr && *override != '\0' ? override : NED_AGENT_BINARY;
-}
-
-fs::path FreshDir() {
-    std::string pattern = (fs::temp_directory_path() / "ned-connect-XXXXXX").string();
-    REQUIRE(::mkdtemp(pattern.data()) != nullptr);
-    return pattern;
-}
-
-template <typename Done>
-bool PumpUntil(PostQueue& queue, Done done, std::chrono::milliseconds limit = std::chrono::seconds(30)) {
-    const auto deadline = std::chrono::steady_clock::now() + limit;
-    while (!done()) {
-        if (std::chrono::steady_clock::now() > deadline) {
-            return false;
-        }
-        pollfd wake{.fd = queue.WakeFd(), .events = POLLIN, .revents = 0};
-        ::poll(&wake, 1, 50);
-        queue.DiscardWakeups();
-        queue.DrainPosted_();
-    }
-    return true;
-}
-
 void WriteScript(const fs::path& path, const std::string& body) {
     fs::create_directories(path.parent_path());
     std::ofstream(path) << "#!/bin/sh\n"
@@ -77,29 +52,13 @@ void WriteScript(const fs::path& path, const std::string& body) {
     fs::permissions(path, fs::perms::owner_all);
 }
 
-// A host reached through the fake ssh, with its own data and runtime
-// directories and the local agents under agents/.
-struct FakeHost {
-    fs::path                      dir = FreshDir();
-    ned::tests::ScopedEnvOverride data{"XDG_DATA_HOME", (dir / "data").c_str()};
-    ned::tests::ScopedEnvOverride runtime{"XDG_RUNTIME_DIR", (dir / "run").c_str()};
-    fs::path                      local = dir / "agents" / host::BuildArch() / "ned-agent";
+using FakeHost = ned::tests::FakeRemoteHost;
+using ned::tests::AgentBinary;
+using ned::tests::PumpUntil;
 
-    FakeHost() {
-        fs::create_directories(dir / "run");
-        fs::create_directories(local.parent_path());
-        fs::copy_file(AgentBinary(), local);
-    }
-    ~FakeHost() {
-        fs::remove_all(dir);
-    }
-
-    [[nodiscard]] ConnectOptions Options(std::string destination = "host") const {
-        return ConnectOptions{.destination = std::move(destination),
-                              .ssh         = SshOptions{.program = NED_FAKE_SSH},
-                              .agents      = {.environment = dir / "agents", .executableRelative = std::nullopt, .installed = "/nonexistent"}};
-    }
-};
+fs::path FreshDir() {
+    return ned::tests::FreshRemoteDir();
+}
 
 host::HelloRequest Request() {
     return host::HelloRequest{.codecs = {"zstd", "none"}, .window = 16};
@@ -387,4 +346,19 @@ TEST_CASE("A remote project search refuses matches outside its root", "[Remote][
     REQUIRE(done->has_value());
     REQUIRE_THAT(**done, StartsWith("the host's search results are malformed: "));
     fs::remove_all(dir);
+}
+
+TEST_CASE("A remote location is a destination, a colon, then an absolute path", "[Remote]") {
+    using ned::editor::remote::ParseLocation;
+    const auto located = ParseLocation("me@box:/srv/app/../www/");
+    REQUIRE(located.has_value());
+    REQUIRE(located->destination == "me@box");
+    REQUIRE(located->path == "/srv/www");
+    REQUIRE(located->ToString() == "me@box:/srv/www");
+    REQUIRE(ParseLocation("box:/")->path == "/");
+    REQUIRE(ParseLocation("[::1]:/tmp")->destination == "[::1]");
+
+    REQUIRE_FALSE(ParseLocation("box"));
+    REQUIRE_FALSE(ParseLocation("box:relative"));
+    REQUIRE_FALSE(ParseLocation(":/tmp"));
 }

@@ -1064,7 +1064,13 @@ enum class InteractiveRequest { None,
                                 // already uses, writing to a sibling temp file and atomically
                                 // renaming over the original. Same shape as ConfirmOverwriteSave,
                                 // "y" runs BufferView's own RunHugeFormat.
-                                ConfirmHugeFormat };
+                                ConfirmHugeFormat,
+                                // Prompt for an ssh destination (Editor/Remote/Hosts.h).
+                                RemoteConnect,
+                                RemoteDisconnect,
+                                // Prompt for destination:/root, then a pattern, and stream the
+                                // host's matches into a results buffer.
+                                RemoteProjectSearch };
 
 // Everything a command implementation might need. Built fresh per invocation
 // from live references -- never stored, so there's no lifetime concern beyond

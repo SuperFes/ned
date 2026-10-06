@@ -20,6 +20,7 @@
 #include "Editor/FormatRules.h"
 #include "Editor/HeaderSource.h"
 #include "Editor/ModeOverrides.h"
+#include "Editor/Remote/Hosts.h"
 #include "Editor/TabWidth.h"
 #include "Editor/Tracker/Clocking.h"
 #include "Editor/Tracker/CommentBuffer.h"
@@ -647,6 +648,31 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::ProjectSearch:
             inputMode_ = InputMode::ProjectSearch;
             prompt_.emplace("Project search: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        case editor::InteractiveRequest::RemoteConnect:
+            inputMode_ = InputMode::RemoteConnect;
+            prompt_.emplace("Connect to host: ");
+            statusMessage_ = prompt_->StatusText();
+            return;
+        case editor::InteractiveRequest::RemoteDisconnect: {
+            const std::vector<std::string> connected = remoteHosts_ != nullptr ? remoteHosts_->Destinations() : std::vector<std::string>{};
+            if (connected.empty()) {
+                statusMessage_ = "Not connected to any host.";
+                return;
+            }
+            inputMode_ = InputMode::RemoteDisconnect;
+            prompt_.emplace("Disconnect from host: ");
+            if (connected.size() == 1) {
+                prompt_->SetText(connected.front());
+            }
+            statusMessage_ = prompt_->StatusText();
+            return;
+        }
+        case editor::InteractiveRequest::RemoteProjectSearch:
+            inputMode_ = InputMode::RemoteSearchRoot;
+            prompt_.emplace("Remote search in (host:/path): ");
+            prompt_->SetText(lastRemoteSearchRoot_);
             statusMessage_ = prompt_->StatusText();
             return;
         case editor::InteractiveRequest::SearchInResults: {
@@ -2650,6 +2676,14 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "open-project-path";
         case InputMode::OpenProjectName:
             return "open-project-name";
+        case InputMode::RemoteConnect:
+            return "remote-connect";
+        case InputMode::RemoteDisconnect:
+            return "remote-disconnect";
+        case InputMode::RemoteSearchRoot:
+            return "remote-search-root";
+        case InputMode::RemoteSearchPattern:
+            return "project-search";
         default:
             return "prompt"; // unreachable from HandlePromptKey's own dispatch guard; a safe shared fallback regardless
     }
@@ -2784,6 +2818,13 @@ std::optional<bufferview::TextEntryPrompt> BufferView::TextEntryPromptFor(InputM
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Schedule"};
         case InputMode::ProjectSearch:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Project search"};
+        case InputMode::RemoteConnect:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Connect"};
+        case InputMode::RemoteDisconnect:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Disconnect"};
+        case InputMode::RemoteSearchRoot:
+        case InputMode::RemoteSearchPattern:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Remote search"};
         case InputMode::SearchInResults:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Search in results"};
         case InputMode::ReplName:
@@ -2876,6 +2917,33 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
                 statusMessage_ = std::to_string(matches.size()) + " match" + (matches.size() == 1 ? "" : "es") +
                                  " for \"" + input + "\" -- C-c C-v to visit";
             }
+        }
+        catch (const editor::SearchPatternError& e) {
+            ReportError(std::string("Invalid regex: ") + e.what());
+        }
+    }
+    else if (inputMode_ == InputMode::RemoteConnect) {
+        if (!input.empty()) {
+            ConnectToHost(input);
+        }
+    }
+    else if (inputMode_ == InputMode::RemoteDisconnect) {
+        DisconnectFromHost(input);
+    }
+    else if (inputMode_ == InputMode::RemoteSearchRoot) {
+        if (const std::optional<editor::remote::Location> root = editor::remote::ParseLocation(input)) {
+            pendingRemoteSearchRoot_ = *root;
+            inputMode_               = InputMode::RemoteSearchPattern;
+            prompt_.emplace("Remote search " + root->ToString() + " for: ");
+            statusMessage_ = prompt_->StatusText();
+            return bufferview::PromptCommit::Transitioned;
+        }
+        statusMessage_ = "Expected host:/path, not \"" + input + "\"";
+    }
+    else if (inputMode_ == InputMode::RemoteSearchPattern) {
+        try {
+            const editor::SearchPattern checked(input);
+            StartRemoteSearch(pendingRemoteSearchRoot_, input);
         }
         catch (const editor::SearchPatternError& e) {
             ReportError(std::string("Invalid regex: ") + e.what());
