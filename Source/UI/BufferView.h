@@ -4323,8 +4323,10 @@ class BufferView : public Widget {
     void FinishRemoteSearch(std::uint64_t generation, const std::optional<std::string>& failure);
     void CancelRemoteSearch();
     // Opens a host's file: the buffer already holding it, or a loading one
-    // filled once the host answers, connecting first when needed.
-    void VisitRemoteFile(const editor::remote::Location& file);
+    // filled once the host answers, connecting first when needed; at line
+    // (1-indexed) when given. A file the host doesn't have opens as a new
+    // one only with createMissing; otherwise it's reported missing.
+    void VisitRemoteFile(const editor::remote::Location& file, std::optional<std::size_t> line = std::nullopt, bool createMissing = true);
     // Hosts already in use or used before, then the ones ssh knows.
     [[nodiscard]] std::vector<std::string> RemoteHostCandidates() const;
     // The host dropdown's candidates for what the prompt holds now.

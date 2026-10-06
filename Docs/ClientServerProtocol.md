@@ -135,7 +135,8 @@ hello  -> {protocol: {major, minor}, codecs: [str], window: uint}
   history come from the host path and its content, never a local `.editorconfig`.
   `save-buffer` encodes it with the local save policy and writes it through `fs/write`
   (`RemoteSaver`), expecting the mtime it last saw; a file changed on the host is
-  refused, and the next save asks before overwriting it.
+  refused, and the next save asks before overwriting it. `next-error` and RET on a remote
+  search's `host:/path:line:` results open the host's file at that line.
 - The in-process transport skips `hello`. Both ends are the same build.
 
 ## 5. Transports
@@ -239,8 +240,13 @@ Each step is unit-tested on its own and lands working.
    round-trip of binary payloads, zstd negotiation. Tested over a pipe pair.
 2. **Messages.** Correlation, streams, credit, cancellation, under a fake peer: a flood
    that never exceeds the window, cancel mid-stream, exactly one response per request.
-3. **In-process transport + `fs`.** `Buffer::FromFile` and the save path go through the
-   local host. No user-visible change, and the existing load/save tests pass unchanged.
+3. **`fs`.** A load splits into reading (`Text/FileContents.h`) and decoding
+   (`Buffer::FromContents`), a save into encoding and replacing the file
+   (`Text/SavePlan.h`), and the agent's `fs` handlers run the same functions a local load
+   and save do. Local files call them directly rather than through an in-process host:
+   load and revert are synchronous in many places, which an inline in-process answer
+   would keep only by blocking the dispatcher. The in-process transport comes with
+   `proc`, which needs it.
 4. **`proc`.** Settle the process-seam shape from section 7, then move the framing layers
    onto it, one consumer family at a time (LSP, DAP, ACP, tasks, VCS, terminal).
 5. **ssh transport + `hello` + deploy.** `ned-agent` executable, version handshake,

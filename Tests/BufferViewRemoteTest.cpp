@@ -393,3 +393,38 @@ TEST_CASE("save-buffer writes a remote buffer to its host, and asks before overw
     CHECK_FALSE(buffer.ExternallyModified());
     CHECK_FALSE(buffer.Modified());
 }
+
+TEST_CASE("next-error walks a remote search's results into the host's files", "[BufferView][Remote][HostAgent]") {
+    Fixture                     fixture;
+    const std::filesystem::path tree = fixture.fake.dir / "walk";
+    std::filesystem::create_directories(tree / "sub");
+    std::ofstream(tree / "a.txt") << "needle one\nhay\nneedle two\n";
+    std::ofstream(tree / "sub" / "b.txt") << "a needle\n";
+
+    fixture.Command("remote-project-search");
+    fixture.Enter("host:" + tree.string() + "/");
+    fixture.Enter("needle");
+    REQUIRE(fixture.StatusStartsWith("3 matches for \"needle\""));
+
+    const auto lineOfPoint = [&fixture] {
+        const ned::text::Buffer& buffer = fixture.activeBuffer.Get();
+        return std::ranges::count(buffer.Text().substr(0, buffer.Point()), '\n') + 1;
+    };
+    const ned::text::RemoteFile a{.destination = "host", .path = tree / "a.txt"};
+
+    fixture.Command("next-error");
+    REQUIRE(fixture.StatusStartsWith("Opened host:" + a.path.string()));
+    CHECK(fixture.activeBuffer.Get().Remote() == a);
+    CHECK(lineOfPoint() == 1);
+
+    // Already open: straight to the line.
+    fixture.Command("next-error");
+    CHECK(fixture.activeBuffer.Get().Remote() == a);
+    CHECK(lineOfPoint() == 3);
+
+    // Gone from the host since the search: reported, not created.
+    std::filesystem::remove(tree / "sub" / "b.txt");
+    fixture.Command("next-error");
+    REQUIRE(fixture.StatusStartsWith("Couldn't open host:" + (tree / "sub" / "b.txt").string() + ": no such file"));
+    CHECK(fixture.bufferList.FindByRemote({.destination = "host", .path = tree / "sub" / "b.txt"}) == nullptr);
+}

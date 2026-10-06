@@ -79,15 +79,18 @@ and sync on save; don't build a remote-authoritative buffer.
       the host through `proc`).
 
 **File I/O and editing**
-- [ ] A host file I/O seam behind `Buffer::FromFile` and the save path, through the
-      in-process transport first. Rope, undo and multi-cursor stay unchanged.
 - [ ] Remote semantics for `ExternallyModified`/`AutoRevert`/`AutoMerge`/`FileWatch`,
-      driven by `watch` events rather than polling.
-- [ ] `user@host:/path` display everywhere (tab bar, mode line, sidebar, buffer names).
-      Project-registry roots accept the same syntax.
-- [ ] Failure handling for a connection that drops mid-save/revert/search. Use
-      configurable timeouts in the `Editor/ProcessTimeouts.h` shape and show a visible
-      failure, never a silent hang.
+      driven by `watch` events rather than polling. Today a remote buffer only learns its
+      file changed when the host refuses a write.
+- [ ] `revert-buffer` (and its charset variants) for a remote buffer, re-reading through
+      `fs/read`; it throws today, as for any buffer without a path.
+- [ ] Remote saves over 48 MiB: `fs/write` carries the content in one request, so a
+      bigger file needs a streamed upload. Decoding a read and encoding a save run on the
+      main thread, which only matters at that size too.
+- [ ] Remote buffers in sessions and window layouts. A pane showing a buffer without a
+      path drops the whole layout from the saved session today.
+- [ ] `user@host:/path` display everywhere (tab bar, mode line, sidebar, buffer names);
+      the buffer list shows it already. Project-registry roots accept the same syntax.
 - [ ] Confirm local and remote buffers mix in one window layout.
 
 **Connect**
@@ -106,12 +109,10 @@ and sync on save; don't build a remote-authoritative buffer.
 **Project tree and search**
 - [ ] A lazy, async remote directory listing for the sidebar (`AsyncFileLoader`
       precedent).
-- [ ] Remote project search (`remote-project-search`) runs, but its results can't be
-      visited until the file I/O seam opens remote files. Once remote buffers exist,
-      send their unsaved edits as `LiveContent`. Unsaved text can exceed the 64 MiB
-      frame cap in total, so it needs to go up as a stream rather than inside the
-      request. Decide how project-replace, find-references and the agenda scan run
-      against a remote root.
+- [ ] Send remote buffers' unsaved edits with a remote project search, as `LiveContent`.
+      Unsaved text can exceed the 64 MiB frame cap in total, so it needs to go up as a
+      stream rather than inside the request. Decide how project-replace, find-references
+      and the agenda scan run against a remote root.
 
 ## Documentation & Companion Tooling
 

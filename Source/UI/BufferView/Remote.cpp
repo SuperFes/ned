@@ -66,9 +66,18 @@ void BufferView::DisconnectFromHost(const std::string& destination) {
     statusMessage_ = remoteHosts_->Disconnect(destination) ? "Disconnected from " + destination : "Not connected to " + destination;
 }
 
-void BufferView::VisitRemoteFile(const editor::remote::Location& file) {
+void BufferView::VisitRemoteFile(const editor::remote::Location& file, std::optional<std::size_t> line, bool createMissing) {
+    const auto goToLine = [this, line](text::Buffer& buffer) {
+        if (line) {
+            buffer.SetPoint(buffer.ByteOffsetForLineAndColumn(*line - 1, 0));
+            if (&activeBuffer_.Get() == &buffer) {
+                viewport_.ScrollToShowPoint();
+            }
+        }
+    };
     if (text::Buffer* open = bufferList_.FindByRemote(file)) {
         activeBuffer_.Set(*open);
+        goToLine(*open);
         return;
     }
     if (remoteHosts_ == nullptr) {
@@ -86,7 +95,8 @@ void BufferView::VisitRemoteFile(const editor::remote::Location& file) {
         CloseBufferNow(buffer);
         ReportError("Couldn't open " + file.ToString() + ": " + why);
     };
-    remoteHosts_->Connect(file.destination, lifetime_.Bind([this, file, identity, fail](const std::expected<editor::remote::Connection*, std::string>& connection) {
+    remoteHosts_->Connect(file.destination, lifetime_.Bind([this, file, identity, fail, goToLine, createMissing](
+                                                               const std::expected<editor::remote::Connection*, std::string>& connection) {
         text::Buffer* buffer = bufferList_.Find(identity);
         if (buffer == nullptr) {
             return;
@@ -95,18 +105,24 @@ void BufferView::VisitRemoteFile(const editor::remote::Location& file) {
             fail(*buffer, connection.error());
             return;
         }
-        editor::remote::ReadFile(**connection, file.path, editor::remote::MaxRemoteFileBytes(),
-                                 lifetime_.Bind([this, file, identity, fail](const editor::remote::FsResult<text::FileContents>& read) {
-                                     text::Buffer* loading = bufferList_.Find(identity);
-                                     if (loading == nullptr) {
-                                         return;
-                                     }
-                                     if (const std::optional<std::string> failure = editor::remote::FinishRemoteLoad(*loading, read)) {
-                                         fail(*loading, *failure);
-                                         return;
-                                     }
-                                     statusMessage_ = (read ? "Opened " : "(New file) ") + file.ToString();
-                                 }));
+        editor::remote::ReadFile(
+            **connection, file.path, editor::remote::MaxRemoteFileBytes(),
+            lifetime_.Bind([this, file, identity, fail, goToLine, createMissing](const editor::remote::FsResult<text::FileContents>& read) {
+                text::Buffer* loading = bufferList_.Find(identity);
+                if (loading == nullptr) {
+                    return;
+                }
+                if (!read && read.error().code == editor::host::fs_error::kNotFound && !createMissing) {
+                    fail(*loading, "no such file");
+                    return;
+                }
+                if (const std::optional<std::string> failure = editor::remote::FinishRemoteLoad(*loading, read)) {
+                    fail(*loading, *failure);
+                    return;
+                }
+                goToLine(*loading);
+                statusMessage_ = (read ? "Opened " : "(New file) ") + file.ToString();
+            }));
     }));
 }
 
