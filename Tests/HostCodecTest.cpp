@@ -27,10 +27,9 @@ Json OverTheWire(const Json& json) {
 } // namespace
 
 TEST_CASE("Hello messages round-trip and pick zstd only when offered", "[Host][HostCodec]") {
-    const host::HelloRequest request{.build = "abc", .codecs = {"none", "zstd"}, .window = 8};
+    const host::HelloRequest request{.codecs = {"none", "zstd"}, .window = 8};
     const host::HelloRequest decoded = host::HelloRequestFromJson(OverTheWire(host::ToJson(request)));
     REQUIRE(decoded.major == host::kProtocolMajor);
-    REQUIRE(decoded.build == "abc");
     REQUIRE(decoded.codecs == request.codecs);
     REQUIRE(decoded.window == 8);
 
@@ -81,7 +80,7 @@ TEST_CASE("Search requests carry the editor's search settings", "[Host][HostCode
     REQUIRE(decoded.options.threads == 3);
     REQUIRE_FALSE(decoded.options.editorConfig);
 
-    Json noThreads = host::ToJson(request);
+    Json noThreads       = host::ToJson(request);
     noThreads["threads"] = 0;
     REQUIRE_THROWS_AS(host::SearchRequestFromJson(noThreads), ProtocolError);
     Json missing = host::ToJson(request);

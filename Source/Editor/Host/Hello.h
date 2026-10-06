@@ -37,7 +37,6 @@ struct Capabilities {
 struct HelloRequest {
     std::uint64_t            major = kProtocolMajor;
     std::uint64_t            minor = kProtocolMinor;
-    std::string              build;
     std::vector<std::string> codecs;
     std::size_t              window{};
 };

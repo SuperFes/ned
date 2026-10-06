@@ -126,7 +126,7 @@ TEST_CASE("ned-agent answers hello with its own build and settles the codec", "[
     AgentClient client(FrameTransport({AgentBinary(), "--stdio"}, true));
 
     const auto answer = client.Call(std::string(host::kHello),
-                                    host::ToJson(host::HelloRequest{.build = "editor", .codecs = {"zstd", "none"}, .window = 16}));
+                                    host::ToJson(host::HelloRequest{.codecs = {"zstd", "none"}, .window = 16}));
 
     REQUIRE(answer.result.has_value());
     const host::HelloResponse hello = host::HelloResponseFromJson(*answer.result);
@@ -163,7 +163,7 @@ TEST_CASE("ned-agent's project search matches a local search exactly", "[Host][H
     const std::vector<SearchMatch> local = ned::editor::SearchDirectory(dir, SearchPattern("needle"), live);
 
     AgentClient client(FrameTransport({AgentBinary(), "--stdio"}, true));
-    client.Call(std::string(host::kHello), host::ToJson(host::HelloRequest{.build = "editor", .codecs = {"zstd"}, .window = 16}));
+    client.Call(std::string(host::kHello), host::ToJson(host::HelloRequest{.codecs = {"zstd"}, .window = 16}));
     client.connection.Transport().SetCompression(true);
 
     const auto answer = client.Call(std::string(host::kSearchProject),
@@ -216,7 +216,7 @@ TEST_CASE("ned-agent runs through an ssh master's session", "[Host][HostAgent]")
     master.Start();
     AgentClient client(FrameTransport(master.SessionArgv(std::vector<std::string>{AgentBinary(), "--stdio"}), true));
 
-    const auto hello = client.Call(std::string(host::kHello), host::ToJson(host::HelloRequest{.build = "editor", .codecs = {"none"}, .window = 16}));
+    const auto hello = client.Call(std::string(host::kHello), host::ToJson(host::HelloRequest{.codecs = {"none"}, .window = 16}));
     REQUIRE(host::HelloResponseFromJson(*hello.result).build == host::FileBuildId(AgentBinary()));
 
     const auto search = client.Call(std::string(host::kSearchProject), host::ToJson(host::SearchRequest{.root = dir, .pattern = "needle", .live = {}}));
@@ -240,7 +240,7 @@ TEST_CASE("A deployed agent says hello with the build it was deployed as", "[Hos
     master.Start();
     const auto helloBuild = [&](const std::filesystem::path& agent) {
         AgentClient client(FrameTransport(master.SessionArgv(std::vector<std::string>{agent.string(), "--stdio"}), true));
-        const auto  answer = client.Call(std::string(host::kHello), host::ToJson(host::HelloRequest{.build = "editor", .codecs = {"none"}, .window = 16}));
+        const auto  answer = client.Call(std::string(host::kHello), host::ToJson(host::HelloRequest{.codecs = {"none"}, .window = 16}));
         return host::HelloResponseFromJson(*answer.result).build;
     };
 

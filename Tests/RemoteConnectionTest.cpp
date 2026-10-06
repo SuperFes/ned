@@ -98,7 +98,7 @@ struct FakeHost {
 };
 
 host::HelloRequest Request() {
-    return host::HelloRequest{.build = "editor", .codecs = {"zstd", "none"}, .window = 16};
+    return host::HelloRequest{.codecs = {"zstd", "none"}, .window = 16};
 }
 
 } // namespace

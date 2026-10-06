@@ -92,9 +92,8 @@ Handshake Connect(const ConnectOptions& options, const std::stop_token& stop) {
 
     std::string reported;
     for (const bool reinstall : {false, true}) {
-        DeployedAgent agent = EnsureAgent(*master, options.agents, reinstall, stop);
-        // The editor's build is the agent build it expects.
-        const host::HelloRequest request{.build = agent.build, .codecs = {std::string(host::kCodecZstd), std::string(host::kCodecNone)}, .window = protocol::kDefaultWindow};
+        DeployedAgent            agent = EnsureAgent(*master, options.agents, reinstall, stop);
+        const host::HelloRequest request{.codecs = {std::string(host::kCodecZstd), std::string(host::kCodecNone)}, .window = protocol::kDefaultWindow};
         protocol::FrameTransport transport(master->SessionArgv(std::vector<std::string>{agent.remotePath.string(), "--stdio"}), true);
         host::HelloResponse      hello;
         try {

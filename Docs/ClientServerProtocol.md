@@ -85,7 +85,7 @@ result. A stream stops sending chunks once it sees the cancel.
 The first exchange on every connection, initiated by the editor:
 
 ```
-hello  -> {protocol: {major, minor}, build: str, codecs: [str], window: uint}
+hello  -> {protocol: {major, minor}, codecs: [str], window: uint}
        <- {protocol: {major, minor}, build: str, arch: str, codec: str,
            window: uint, capabilities: {fs: uint, proc: uint, search: uint, watch: uint}}
 ```
@@ -110,7 +110,7 @@ hello  -> {protocol: {major, minor}, build: str, codecs: [str], window: uint}
   --prefix <prefix>` puts a static build there, the editor's build tree included.
 - `Remote/Connection.h` puts it together: master, deploy, an agent session, then `hello`
   sent as request id 1 before an `Endpoint` takes over the connection (and numbers past
-  it). The editor's `build` is the agent build it expects. `Connect` blocks, so a
+  it). `Connect` blocks, so a
   `Connector` runs it on a worker that a stop cancels at any step, and hands a
   `Connection` to the main thread.
 - The in-process transport skips `hello`. Both ends are the same build.

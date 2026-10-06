@@ -14,7 +14,6 @@ using Json = nlohmann::json;
 
 Json ToJson(const HelloRequest& request) {
     return Json{{"protocol", {{"major", request.major}, {"minor", request.minor}}},
-                {"build", request.build},
                 {"codecs", request.codecs},
                 {"window", request.window}};
 }
@@ -24,7 +23,6 @@ HelloRequest HelloRequestFromJson(const Json& json) {
     HelloRequest request;
     request.major  = RequireUnsigned(protocol, "major");
     request.minor  = RequireUnsigned(protocol, "minor");
-    request.build  = RequireString(json, "build");
     request.window = RequireUnsigned(json, "window");
     for (const Json& codec : RequireArray(json, "codecs")) {
         if (!codec.is_string()) {
