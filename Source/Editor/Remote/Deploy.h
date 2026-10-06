@@ -1,9 +1,9 @@
 //
 // Getting the right ned-agent onto a remote host (Docs/ClientServerProtocol.md,
-// section 4). One probe session reads the host's architecture and the agents
-// already installed under $XDG_DATA_HOME/ned/agent/<build>-<arch>/; an agent
-// whose build isn't there goes up in one more session through the same
-// master. The local agents are static builds kept per architecture under
+// section 4). Agents live under $XDG_DATA_HOME/ned/agent/<build>-<arch>/ on
+// the host. When the agent session finds none of the editor's builds there,
+// a probe session reads the host's architecture and what is installed, and
+// the agent goes up in one more session through the same master. The local agents are static builds kept per architecture under
 // libexec/ned/agent/<arch>/, so the remote needs no toolchain, and a missing
 // one is a visible error rather than anything the editor build requires.
 //
@@ -40,6 +40,10 @@ struct AgentDirCandidates {
 [[nodiscard]] AgentDirCandidates DefaultAgentDirCandidates();
 
 [[nodiscard]] std::optional<std::filesystem::path> FindLocalAgent(const AgentDirCandidates& candidates, std::string_view arch);
+
+// The <build>-<arch> directory each local agent would be installed in, one
+// per architecture, as FindLocalAgent picks them.
+[[nodiscard]] std::vector<std::string> LocalAgentDirectories(const AgentDirCandidates& candidates);
 
 // What the probe learned about a host.
 struct RemoteHost {

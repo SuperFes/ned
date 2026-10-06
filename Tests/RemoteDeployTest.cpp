@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <vector>
 
 #include "Editor/Host/Hello.h"
 #include "Editor/Remote/Deploy.h"
@@ -17,6 +18,7 @@ using ned::editor::remote::DeployedAgent;
 using ned::editor::remote::DeployError;
 using ned::editor::remote::EnsureAgent;
 using ned::editor::remote::FindLocalAgent;
+using ned::editor::remote::LocalAgentDirectories;
 using ned::editor::remote::ParseProbe;
 using ned::editor::remote::RemoteHost;
 using ned::editor::remote::SshMaster;
@@ -81,6 +83,11 @@ TEST_CASE("Local agents are found per architecture, $NED_AGENT_DIR alone when se
     environment.environment        = dir / "env";
     REQUIRE(FindLocalAgent(environment, "aarch64") == dir / "env" / "aarch64" / "ned-agent");
     REQUIRE(FindLocalAgent(environment, "x86_64") == std::nullopt);
+
+    namespace host = ned::editor::host;
+    REQUIRE(LocalAgentDirectories(fallback) == std::vector<std::string>{host::FileBuildId(dir / "exe" / "x86_64" / "ned-agent") + "-x86_64"});
+    REQUIRE(LocalAgentDirectories(environment) == std::vector<std::string>{host::FileBuildId(dir / "env" / "aarch64" / "ned-agent") + "-aarch64"});
+    REQUIRE(LocalAgentDirectories({.environment = dir / "none", .executableRelative = std::nullopt, .installed = dir / "none"}).empty());
     fs::remove_all(dir);
 
     // build/Tests/ned_tests looks in build/libexec/ned/agent, where the

@@ -47,6 +47,18 @@ exit 0
         return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
     }
 
+    std::vector<std::filesystem::path> SearchedDirs(const AgentDirCandidates& candidates) {
+        if (candidates.environment) {
+            return {*candidates.environment};
+        }
+        std::vector<std::filesystem::path> dirs;
+        if (candidates.executableRelative) {
+            dirs.push_back(*candidates.executableRelative);
+        }
+        dirs.push_back(candidates.installed);
+        return dirs;
+    }
+
     std::string FirstLine(std::string_view text) {
         const auto end = text.find('\n');
         return std::string(text.substr(0, end));
@@ -67,23 +79,39 @@ AgentDirCandidates DefaultAgentDirCandidates() {
 }
 
 std::optional<std::filesystem::path> FindLocalAgent(const AgentDirCandidates& candidates, std::string_view arch) {
-    std::vector<std::filesystem::path> dirs;
-    if (candidates.environment) {
-        dirs.push_back(*candidates.environment);
-    }
-    else {
-        if (candidates.executableRelative) {
-            dirs.push_back(*candidates.executableRelative);
-        }
-        dirs.push_back(candidates.installed);
-    }
-    for (const std::filesystem::path& dir : dirs) {
+    for (const std::filesystem::path& dir : SearchedDirs(candidates)) {
         const std::filesystem::path agent = dir / arch / "ned-agent";
         if (::access(agent.c_str(), X_OK) == 0 && std::filesystem::is_regular_file(agent)) {
             return agent;
         }
     }
     return std::nullopt;
+}
+
+std::vector<std::string> LocalAgentDirectories(const AgentDirCandidates& candidates) {
+    std::vector<std::string> arches;
+    for (const std::filesystem::path& dir : SearchedDirs(candidates)) {
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+            arches.push_back(entry.path().filename().string());
+        }
+    }
+    std::ranges::sort(arches);
+    const auto [first, last] = std::ranges::unique(arches);
+    arches.erase(first, last);
+
+    std::vector<std::string> directories;
+    for (const std::string& arch : arches) {
+        if (const std::optional<std::filesystem::path> agent = FindLocalAgent(candidates, arch)) {
+            try {
+                directories.push_back(host::FileBuildId(*agent) + "-" + arch);
+            }
+            catch (const std::runtime_error&) {
+                // Unreadable, so it can't be deployed either.
+            }
+        }
+    }
+    return directories;
 }
 
 RemoteHost ParseProbe(std::string_view output) {

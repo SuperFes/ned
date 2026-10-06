@@ -1,5 +1,6 @@
 #include "Connection.h"
 
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -18,6 +19,14 @@ namespace {
     constexpr std::size_t   kMaxStderrBytes{16 * 1024};
     // More than a login banner, less than a runaway script.
     constexpr std::size_t kMaxPreambleBytes{64 * 1024};
+
+    // Runs the first of its arguments, <build>-<arch>, that matches this host
+    // and is installed. An argument to `sh -c`, so it stays on one line and
+    // free of backslashes for a non-POSIX login shell's quoting to pass
+    // through untouched; hence printf, then echo for the newline.
+    constexpr std::string_view kStartScript =
+        R"(r="${XDG_DATA_HOME:-$HOME/.local/share}/ned/agent"; a=$(uname -m); for d in "$@"; do if [ "$d" = "${d%-*}-$a" ] && [ -x "$r/$d/ned-agent" ]; then )"
+        R"(printf 'ned-agent-stdio-1 %s' "$r/$d/ned-agent"; echo; exec "$r/$d/ned-agent" --stdio; fi; done; echo ned-agent-missing-1)";
 
     // What an agent that exited said on its way out.
     std::string ExitReason(const protocol::FrameTransport& transport) {
@@ -38,14 +47,15 @@ namespace {
 
 } // namespace
 
-std::vector<std::string> AgentSessionCommand(const std::filesystem::path& agent) {
-    // An argument to `sh -c`, so it stays free of backslashes for a non-POSIX
-    // login shell's quoting to pass through untouched.
-    return {"sh", "-c", "echo " + std::string(kAgentStartMarker) + "; exec \"$0\" --stdio", agent.string()};
+std::vector<std::string> AgentSessionCommand(std::span<const std::string> directories) {
+    std::vector<std::string> argv{"sh", "-c", std::string(kStartScript), "sh"};
+    argv.insert(argv.end(), directories.begin(), directories.end());
+    return argv;
 }
 
-void AwaitAgentStart(protocol::FrameTransport& transport, std::chrono::milliseconds timeout, const std::stop_token& stop) {
-    const std::string marker   = std::string(kAgentStartMarker) + "\n";
+std::optional<std::filesystem::path> AwaitAgentStart(protocol::FrameTransport& transport, std::chrono::milliseconds timeout, const std::stop_token& stop) {
+    const std::string started  = std::string(kAgentStartMarker) + " ";
+    const std::string missing  = std::string(kAgentMissingMarker) + "\n";
     const auto        deadline = std::chrono::steady_clock::now() + timeout;
     std::string       preamble;
     while (true) {
@@ -68,8 +78,14 @@ void AwaitAgentStart(protocol::FrameTransport& transport, std::chrono::milliseco
             throw ConnectError(ExitReason(transport));
         }
         preamble += chunk;
-        if (preamble.find(marker) != std::string::npos) {
-            return;
+        if (const auto at = preamble.find(started); at != std::string::npos) {
+            const auto path = at + started.size();
+            if (const auto end = preamble.find('\n', path); end != std::string::npos) {
+                return preamble.substr(path, end - path);
+            }
+        }
+        else if (preamble.find(missing) != std::string::npos) {
+            return std::nullopt;
         }
         if (preamble.size() > kMaxPreambleBytes) {
             throw ConnectError("the host printed more than " + std::to_string(kMaxPreambleBytes / 1024) +
@@ -132,19 +148,38 @@ Handshake Connect(const ConnectOptions& options, const std::stop_token& stop) {
     auto master = std::make_unique<SshMaster>(options.destination, options.ssh);
     master->Start(stop);
 
-    std::string reported;
-    for (const bool reinstall : {false, true}) {
-        DeployedAgent            agent = EnsureAgent(*master, options.agents, reinstall, stop);
-        const host::HelloRequest request{.codecs = {std::string(host::kCodecZstd), std::string(host::kCodecNone)}, .window = protocol::kDefaultWindow};
-        protocol::FrameTransport transport(master->SessionArgv(AgentSessionCommand(agent.remotePath)), true);
-        host::HelloResponse      hello;
+    const std::vector<std::string> directories = LocalAgentDirectories(options.agents);
+    const host::HelloRequest       request{.codecs = {std::string(host::kCodecZstd), std::string(host::kCodecNone)}, .window = protocol::kDefaultWindow};
+    std::optional<DeployedAgent>   installed;
+    bool                           reinstalled = false;
+    while (true) {
+        protocol::FrameTransport             transport(master->SessionArgv(AgentSessionCommand(directories)), true);
+        std::optional<std::filesystem::path> started;
+        host::HelloResponse                  hello;
         try {
-            AwaitAgentStart(transport, ProtocolRequestTimeoutMs(), stop);
-            hello = SayHello(transport, request, ProtocolRequestTimeoutMs(), stop);
+            started = AwaitAgentStart(transport, ProtocolRequestTimeoutMs(), stop);
+            if (started) {
+                hello = SayHello(transport, request, ProtocolRequestTimeoutMs(), stop);
+            }
         }
         catch (const ConnectError& e) {
             throw ConnectError(options.destination + ": " + e.what());
         }
+        if (!started) {
+            if (installed) {
+                throw ConnectError("the agent installed on " + options.destination + " at " + installed->remotePath.string() + " isn't found to start");
+            }
+            installed = EnsureAgent(*master, options.agents, false, stop);
+            continue;
+        }
+
+        // <build>-<arch>
+        const std::string directory = started->parent_path().filename().string();
+        const auto        dash      = directory.rfind('-');
+        DeployedAgent     agent{.remotePath = *started,
+                                .build      = directory.substr(0, dash),
+                                .arch       = dash == std::string::npos ? std::string() : directory.substr(dash + 1),
+                                .uploaded   = installed && installed->uploaded};
         if (hello.build == agent.build) {
             if (hello.major != request.major) {
                 throw ConnectError("the agent on " + options.destination + " speaks protocol " + std::to_string(hello.major) + ", the editor " +
@@ -152,9 +187,13 @@ Handshake Connect(const ConnectOptions& options, const std::stop_token& stop) {
             }
             return Handshake{.master = std::move(master), .transport = std::move(transport), .hello = std::move(hello), .agent = std::move(agent)};
         }
-        reported = hello.build;
+        if (reinstalled) {
+            throw ConnectError("the agent on " + options.destination + " still reports build " + hello.build + " after reinstalling");
+        }
+        transport.Close();
+        installed   = EnsureAgent(*master, options.agents, true, stop);
+        reinstalled = true;
     }
-    throw ConnectError("the agent on " + options.destination + " still reports build " + reported + " after reinstalling");
 }
 
 Connection::Connection(Handshake handshake, PostQueue& postQueue) : master_(std::move(handshake.master)), hello_(std::move(handshake.hello)), agent_(std::move(handshake.agent)),

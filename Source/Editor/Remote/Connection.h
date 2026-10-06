@@ -1,9 +1,10 @@
 //
 // The editor's connection to a remote host's agent (Docs/ClientServerProtocol.md,
-// sections 4 and 5): an ssh master, the agent EnsureAgent installed, a
-// session running it, and hello. An agent whose hello reports another build
-// than the one deployed is reinstalled once; a second mismatch is an error,
-// never something to work around.
+// sections 4 and 5): an ssh master, a session running the agent, and hello.
+// The session starts an agent the host already has in one round trip; only
+// when it has none does EnsureAgent probe and install one. An agent whose
+// hello reports another build than its directory's is reinstalled once; a
+// second mismatch is an error, never something to work around.
 //
 // Connect blocks, so Connector runs it on a worker and hands the result to
 // the main thread, where a Connection drives the protocol.
@@ -17,6 +18,8 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <span>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
@@ -55,18 +58,24 @@ struct Handshake {
     DeployedAgent              agent;
 };
 
-// The agent session's command: a POSIX sh prints kAgentStartMarker on its
-// own line, then becomes the agent. Anything a login script printed comes
+// The agent session's command. A POSIX sh looks for the first of the
+// <build>-<arch> directories (LocalAgentDirectories) that matches the host's
+// architecture and is installed, prints "kAgentStartMarker <path>" on its
+// own line, then becomes that agent; with none, it prints
+// kAgentMissingMarker and exits. Anything a login script printed comes
 // before the marker, never among the frames.
-inline constexpr std::string_view      kAgentStartMarker = "ned-agent-stdio-1";
-[[nodiscard]] std::vector<std::string> AgentSessionCommand(const std::filesystem::path& agent);
+inline constexpr std::string_view      kAgentStartMarker   = "ned-agent-stdio-1";
+inline constexpr std::string_view      kAgentMissingMarker = "ned-agent-missing-1";
+[[nodiscard]] std::vector<std::string> AgentSessionCommand(std::span<const std::string> directories);
 
-// Reads the agent session's stdout up to and including kAgentStartMarker's
-// line. The agent says nothing before hello, so nothing past it is lost.
-// Throws ConnectError when the session exits first, prints more than a
-// login script plausibly would, or stays silent past timeout, and once
-// stop is requested.
-void AwaitAgentStart(protocol::FrameTransport& transport, std::chrono::milliseconds timeout, const std::stop_token& stop = {});
+// Reads the agent session's stdout up to and including its marker's line,
+// returning the started agent's path, or nullopt when the host has none of
+// the offered directories. The agent says nothing before hello, so nothing
+// past the marker is lost. Throws ConnectError when the session exits
+// first, prints more than a login script plausibly would, or stays silent
+// past timeout, and once stop is requested.
+[[nodiscard]] std::optional<std::filesystem::path> AwaitAgentStart(protocol::FrameTransport& transport, std::chrono::milliseconds timeout,
+                                                                   const std::stop_token& stop = {});
 
 // Says hello over a transport no Endpoint drives yet, and applies the codec
 // it settles. Throws ConnectError when the agent errs, exits, or doesn't
