@@ -58,6 +58,7 @@ add_library(ned_core STATIC
         Editor/ProcessTimeouts.cpp
         Editor/Project/SearchEngine.cpp
         Editor/Protocol/Cbor.cpp
+        Editor/Protocol/Endpoint.cpp
         Editor/Protocol/FrameTransport.cpp
         Editor/Protocol/LineTransport.cpp
         Editor/SearchSettings.cpp
