@@ -88,6 +88,16 @@ bool Hosts::Disconnect(const std::string& destination) {
     return true;
 }
 
+void Hosts::ExpireIdleRequests() {
+    // Looked up afresh each time, as a failed request's handler may end a
+    // connection.
+    for (const std::string& destination : Destinations()) {
+        if (Connection* connection = Find(destination)) {
+            connection->Endpoint().ExpireIdle();
+        }
+    }
+}
+
 Connection* Hosts::Find(const std::string& destination) const {
     const auto live = connections_.find(destination);
     return live != connections_.end() && live->second->Connected() ? live->second.get() : nullptr;

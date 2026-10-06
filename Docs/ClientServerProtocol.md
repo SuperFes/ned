@@ -78,6 +78,13 @@ frames posted and not yet handled): the reader stops, and the host's writes bloc
 own pipe. The cap pauses, never disconnects. Measured against a gigabit link with the main
 thread stalling a second at a time, it stays within 1% of unbounded read-ahead.
 
+**Idle limits.** A request may carry an idle limit: once that long passes with nothing heard
+for it (its sending, or its last chunk), the editor fails it locally with `TimedOut` and
+cancels it on the host, dropping the late answer. `fs` requests use the request timeout
+(`ProcessTimeouts.h`), a write plus the time its content takes up a 256 KiB/s link, and a
+5 s editor tick expires them. A search carries none, since a large tree can be quiet for
+long, and the user can cancel it.
+
 **Cancellation.** `$/cancel {id}` has LSP's `$/cancelRequest` semantics. The request
 still gets exactly one response, either an error with code `Cancelled` or a partial
 result. A stream stops sending chunks once it sees the cancel.

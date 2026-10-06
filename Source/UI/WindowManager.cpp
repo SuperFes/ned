@@ -1457,6 +1457,9 @@ void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
                 if (acpManager_) {
                     acpManager_->ExpireStaleRequests();
                 }
+                if (remoteHosts_ != nullptr) {
+                    remoteHosts_->ExpireIdleRequests();
+                }
             });
 
             // After the Post so a long walk never delays the tick's own work;

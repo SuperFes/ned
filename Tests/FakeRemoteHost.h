@@ -12,14 +12,19 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
+
+#include <nlohmann/json.hpp>
 
 #include <poll.h>
 #include <unistd.h>
 
 #include "Editor/Host/Hello.h"
 #include "Editor/PostQueue.h"
+#include "Editor/Protocol/Cbor.h"
+#include "Editor/Protocol/FrameTransport.h"
 #include "Editor/Remote/Connection.h"
 #include "Editor/Remote/HostLookup.h"
 #include "EnvOverride.h"
@@ -85,6 +90,71 @@ struct FakeRemoteHost {
             .destination = std::move(destination),
             .ssh         = editor::remote::SshOptions{.program = NED_FAKE_SSH},
             .agents      = {.environment = dir / "agents", .executableRelative = std::nullopt, .installed = "/nonexistent"}};
+    }
+};
+
+// A Connection over pipes, with the test playing the agent.
+struct PipePeer {
+    int                                     fromEditor = -1;
+    int                                     toEditor   = -1;
+    std::unique_ptr<editor::remote::Connection> connection;
+
+    PipePeer(editor::PostQueue& queue, const std::filesystem::path& dir) {
+        int editorIn[2];
+        int editorOut[2];
+        REQUIRE(::pipe(editorIn) == 0);
+        REQUIRE(::pipe(editorOut) == 0);
+        fromEditor = editorOut[0];
+        toEditor   = editorIn[1];
+        connection = std::make_unique<editor::remote::Connection>(
+            editor::remote::Handshake{.master    = std::make_unique<editor::remote::SshMaster>("host", editor::remote::SshOptions{.program = NED_FAKE_SSH}, dir / "m"),
+                                      .transport = editor::protocol::FrameTransport(editorIn[0], editorOut[1]),
+                                      .hello     = {},
+                                      .agent     = {}},
+            queue);
+    }
+    ~PipePeer() {
+        connection.reset();
+        HangUp();
+        ::close(fromEditor);
+    }
+    PipePeer(const PipePeer&)            = delete;
+    PipePeer& operator=(const PipePeer&) = delete;
+
+    void SendRaw(const std::string& frame) const {
+        REQUIRE(::write(toEditor, frame.data(), frame.size()) == static_cast<ssize_t>(frame.size()));
+    }
+    void Send(const nlohmann::json& message) const {
+        SendRaw(editor::protocol::EncodeFrame(editor::protocol::EncodeCbor(message), false));
+    }
+    [[nodiscard]] bool HasMessage() const {
+        pollfd readable{.fd = fromEditor, .events = POLLIN, .revents = 0};
+        return ::poll(&readable, 1, 0) == 1;
+    }
+    // The editor's next message; uncompressed, since no hello settled a codec.
+    [[nodiscard]] nlohmann::json Receive() const {
+        const auto readExactly = [this](std::size_t count) {
+            std::string bytes(count, '\0');
+            for (std::size_t got = 0; got < count;) {
+                pollfd readable{.fd = fromEditor, .events = POLLIN, .revents = 0};
+                REQUIRE(::poll(&readable, 1, 10000) == 1);
+                const ssize_t n = ::read(fromEditor, bytes.data() + got, count - got);
+                REQUIRE(n > 0);
+                got += static_cast<std::size_t>(n);
+            }
+            return bytes;
+        };
+        const std::string header = readExactly(5);
+        const std::size_t length = (std::size_t{static_cast<unsigned char>(header[0])} << 24) | (std::size_t{static_cast<unsigned char>(header[1])} << 16) |
+                                   (std::size_t{static_cast<unsigned char>(header[2])} << 8) | std::size_t{static_cast<unsigned char>(header[3])};
+        REQUIRE(header[4] == 0);
+        return editor::protocol::DecodeCbor(readExactly(length));
+    }
+    void HangUp() {
+        if (toEditor >= 0) {
+            ::close(toEditor);
+            toEditor = -1;
+        }
     }
 };
 
