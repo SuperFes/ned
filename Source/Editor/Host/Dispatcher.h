@@ -47,12 +47,20 @@ class Dispatcher {
 
   private:
     struct SearchJob;
+    struct WorkerJob;
+
+    // work runs on a worker; the answer it returns runs back on this thread.
+    using WorkerAnswer = std::function<void(protocol::Responder& responder)>;
+    void RunOnWorker(protocol::Responder responder, std::function<WorkerAnswer()> work);
 
     void Hello(const nlohmann::json& params, protocol::Responder responder);
     void SearchProject(const nlohmann::json& params, protocol::Responder responder);
     void SearchMatches(std::uint64_t job, std::vector<SearchMatch> matches);
     void SendPending(SearchJob& job);
     void FinishSearch(std::uint64_t job, const std::string& error);
+    void FsStat(const nlohmann::json& params, protocol::Responder responder);
+    void FsRead(const nlohmann::json& params, protocol::Responder responder);
+    void FsWrite(const nlohmann::json& params, protocol::Responder responder);
 
     protocol::Endpoint&                         endpoint_;
     PostQueue&                                  postQueue_;
@@ -61,6 +69,7 @@ class Dispatcher {
 
     std::uint64_t                                                 nextJob_ = 0;
     std::unordered_map<std::uint64_t, std::unique_ptr<SearchJob>> searches_;
+    std::unordered_map<std::uint64_t, std::unique_ptr<WorkerJob>> workerJobs_;
 
     LifetimeGuard lifetime_;
 };

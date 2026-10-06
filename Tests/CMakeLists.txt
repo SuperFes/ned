@@ -337,6 +337,7 @@ add_executable(ned_tests
             FrameTransportTest.cpp
             ProtocolEndpointTest.cpp
             HostCodecTest.cpp
+            HostFsTest.cpp
             HostAgentTest.cpp
             RemoteConnectionTest.cpp
             RemoteDeployTest.cpp

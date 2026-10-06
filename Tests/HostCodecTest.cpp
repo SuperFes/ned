@@ -1,11 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Editor/Host/Codec.h"
+#include "Editor/Host/FsCodec.h"
 #include "Editor/Host/Hello.h"
 #include "Editor/Host/SearchCodec.h"
 #include "Editor/Protocol/Cbor.h"
@@ -86,6 +90,51 @@ TEST_CASE("Search requests carry the editor's search settings", "[Host][HostCode
     Json missing = host::ToJson(request);
     missing.erase("editorconfig");
     REQUIRE_THROWS_AS(host::SearchRequestFromJson(missing), ProtocolError);
+}
+
+TEST_CASE("fs stats and writes round-trip, timestamps to the nanosecond", "[Host][HostCodec]") {
+    using std::chrono::file_clock;
+    const auto now = file_clock::now();
+    for (const host::FileStat& stat : {host::FileStat{.kind = host::FileKind::File, .size = 12, .mode = 0755, .timestamp = now},
+                                       host::FileStat{.kind = host::FileKind::Directory, .size = 0, .mode = 0700, .timestamp = std::nullopt},
+                                       host::FileStat{},
+                                       host::FileStat{.kind = host::FileKind::Other, .size = 0, .mode = 0, .timestamp = file_clock::time_point{}}}) {
+        CHECK(host::FileStatFromJson(OverTheWire(host::ToJson(stat))) == stat);
+    }
+
+    // Before 1970 still counts.
+    const auto old = std::chrono::clock_cast<file_clock>(std::chrono::sys_days{std::chrono::year{1969} / 7 / 20});
+    CHECK(host::FileStatFromJson(OverTheWire(host::ToJson(host::FileStat{.kind = host::FileKind::File, .size = 1, .mode = 0644, .timestamp = old}))).timestamp == old);
+
+    using Expect = std::optional<std::optional<std::filesystem::file_time_type>>;
+    for (const Expect& expect : {Expect(), Expect(std::optional<std::filesystem::file_time_type>()), Expect(now)}) {
+        const host::FsWriteRequest request{.path = "/srv/caf\xC3\xA9.txt", .data = std::string("a\0b", 3), .expect = expect};
+        const host::FsWriteRequest decoded = host::FsWriteRequestFromJson(OverTheWire(host::ToJson(request)));
+        CHECK(decoded.path == request.path);
+        CHECK(decoded.data == request.data);
+        CHECK(decoded.expect == expect);
+    }
+    CHECK(host::PathParamsFromJson(OverTheWire(host::PathParams("/a/b"))) == "/a/b");
+}
+
+TEST_CASE("Malformed fs messages are protocol errors", "[Host][HostCodec]") {
+    const Json stat = host::ToJson(host::FileStat{.kind = host::FileKind::File, .size = 1, .mode = 0644, .timestamp = std::nullopt});
+    for (const auto& [field, value] : {std::pair<const char*, Json>{"kind", "socket"}, {"kind", 3}, {"size", -1}, {"mode", 010000}, {"mtime", "yesterday"}}) {
+        Json bad   = stat;
+        bad[field] = value;
+        CAPTURE(field);
+        CHECK_THROWS_AS(host::FileStatFromJson(bad), ProtocolError);
+    }
+    for (const char* field : {"kind", "size", "mode", "mtime"}) {
+        Json missing = stat;
+        missing.erase(field);
+        CAPTURE(field);
+        CHECK_THROWS_AS(host::FileStatFromJson(missing), ProtocolError);
+    }
+    CHECK_THROWS_AS(host::FileStatFromJson(Json::array()), ProtocolError);
+    CHECK_THROWS_AS(host::FsWriteRequestFromJson(Json{{"path", host::Bytes("/a")}, {"data", "text, not bytes"}}), ProtocolError);
+    CHECK_THROWS_AS(host::FsWriteRequestFromJson(Json{{"path", host::Bytes("/a")}, {"data", host::Bytes("x")}, {"expect", 1.5}}), ProtocolError);
+    CHECK_THROWS_AS(host::PathParamsFromJson(Json{{"path", host::Bytes("relative")}}), ProtocolError);
 }
 
 TEST_CASE("Path decoding rejects relative paths, NULs and non-bytes", "[Host][HostCodec]") {
