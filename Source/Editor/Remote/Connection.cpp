@@ -158,6 +158,11 @@ void Connection::SetOnDisconnected(std::function<void(const std::string& reason)
     onDisconnected_ = std::move(handler);
 }
 
+void Connection::Close(const std::string& reason) {
+    framed_.Transport().Close();
+    Disconnect(reason);
+}
+
 void Connection::Disconnect(const std::string& reason) {
     if (!connected_) {
         return;

@@ -82,6 +82,8 @@ class Connection {
     // pending request has already failed with kConnectionClosed. The
     // handler mustn't destroy the Connection; post that instead.
     void SetOnDisconnected(std::function<void(const std::string& reason)> handler);
+    // Ends the session as a hang-up would, with reason as the cause.
+    void Close(const std::string& reason);
 
   private:
     using Framed = protocol::FramedConnection<protocol::FrameTransport>;

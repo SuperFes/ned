@@ -320,6 +320,8 @@ add_library(ned_lib STATIC
         Editor/Tasks/TaskRunner.cpp
         Editor/Remote/Connection.cpp
         Editor/Remote/Deploy.cpp
+        Editor/Remote/Hosts.cpp
+        Editor/Remote/Search.cpp
         Editor/Remote/Ssh.cpp
         Editor/Repl/Config.cpp
         Editor/TestRun/TestOutputParser.cpp

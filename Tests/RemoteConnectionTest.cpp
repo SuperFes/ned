@@ -15,8 +15,11 @@
 #include "Editor/Host/Hello.h"
 #include "Editor/Host/SearchCodec.h"
 #include "Editor/PostQueue.h"
+#include "Editor/Protocol/Cbor.h"
 #include "Editor/Protocol/FrameTransport.h"
 #include "Editor/Remote/Connection.h"
+#include "Editor/Remote/Hosts.h"
+#include "Editor/Remote/Search.h"
 #include "EnvOverride.h"
 
 using Catch::Matchers::ContainsSubstring;
@@ -30,6 +33,7 @@ using ned::editor::remote::Connection;
 using ned::editor::remote::ConnectOptions;
 using ned::editor::remote::Connector;
 using ned::editor::remote::Handshake;
+using ned::editor::remote::Hosts;
 using ned::editor::remote::SayHello;
 using ned::editor::remote::SshMaster;
 using ned::editor::remote::SshOptions;
@@ -100,6 +104,47 @@ struct FakeHost {
 host::HelloRequest Request() {
     return host::HelloRequest{.codecs = {"zstd", "none"}, .window = 16};
 }
+
+// A Connection over pipes, with the test playing the agent.
+struct PipePeer {
+    int                         fromEditor = -1;
+    int                         toEditor   = -1;
+    std::unique_ptr<Connection> connection;
+
+    PipePeer(PostQueue& queue, const fs::path& dir) {
+        int editorIn[2];
+        int editorOut[2];
+        REQUIRE(::pipe(editorIn) == 0);
+        REQUIRE(::pipe(editorOut) == 0);
+        fromEditor = editorOut[0];
+        toEditor   = editorIn[1];
+        connection = std::make_unique<Connection>(Handshake{.master    = std::make_unique<SshMaster>("host", SshOptions{.program = NED_FAKE_SSH}, dir / "m"),
+                                                            .transport = FrameTransport(editorIn[0], editorOut[1]),
+                                                            .hello     = {},
+                                                            .agent     = {}},
+                                                  queue);
+    }
+    ~PipePeer() {
+        connection.reset();
+        HangUp();
+        ::close(fromEditor);
+    }
+    PipePeer(const PipePeer&)            = delete;
+    PipePeer& operator=(const PipePeer&) = delete;
+
+    void SendRaw(const std::string& frame) const {
+        REQUIRE(::write(toEditor, frame.data(), frame.size()) == static_cast<ssize_t>(frame.size()));
+    }
+    void Send(const Json& message) const {
+        SendRaw(ned::editor::protocol::EncodeFrame(ned::editor::protocol::EncodeCbor(message), false));
+    }
+    void HangUp() {
+        if (toEditor >= 0) {
+            ::close(toEditor);
+            toEditor = -1;
+        }
+    }
+};
 
 } // namespace
 
@@ -200,51 +245,146 @@ TEST_CASE("A connection that breaks fails its requests and reports why", "[Remot
     const fs::path dir = FreshDir();
     PostQueue      queue;
 
-    const auto connect = [&](int& peerRead, int& peerWrite) {
-        int toEditor[2];
-        int toPeer[2];
-        REQUIRE(::pipe(toEditor) == 0);
-        REQUIRE(::pipe(toPeer) == 0);
-        peerRead  = toPeer[0];
-        peerWrite = toEditor[1];
-        return std::make_unique<Connection>(Handshake{.master    = std::make_unique<SshMaster>("host", SshOptions{.program = NED_FAKE_SSH}, dir / "m"),
-                                                      .transport = FrameTransport(toEditor[0], toPeer[1]),
-                                                      .hello     = {},
-                                                      .agent     = {}},
-                                            queue);
-    };
-
     SECTION("the agent hangs up") {
-        int        peerRead   = -1;
-        int        peerWrite  = -1;
-        const auto connection = connect(peerRead, peerWrite);
+        PipePeer peer(queue, dir);
 
         std::optional<std::string> reason;
         std::optional<RemoteError> failed;
-        connection->SetOnDisconnected([&](const std::string& why) { reason = why; });
-        connection->Endpoint().Request("search/project", Json::object(),
-                                       ResponseHandlers{[](const Json&) {}, [&](RemoteError error) { failed = std::move(error); }, {}});
-        ::close(peerWrite);
+        peer.connection->SetOnDisconnected([&](const std::string& why) { reason = why; });
+        peer.connection->Endpoint().Request("search/project", Json::object(),
+                                            ResponseHandlers{[](const Json&) {}, [&](RemoteError error) { failed = std::move(error); }, {}});
+        peer.HangUp();
         REQUIRE(PumpUntil(queue, [&] { return reason.has_value(); }));
-        REQUIRE_FALSE(connection->Connected());
+        REQUIRE_FALSE(peer.connection->Connected());
         REQUIRE(failed.has_value());
         REQUIRE(failed->code == error_code::kConnectionClosed);
-        ::close(peerRead);
     }
 
     SECTION("the agent breaks the protocol") {
-        int        peerRead   = -1;
-        int        peerWrite  = -1;
-        const auto connection = connect(peerRead, peerWrite);
+        PipePeer peer(queue, dir);
 
         std::optional<std::string> reason;
-        connection->SetOnDisconnected([&](const std::string& why) { reason = why; });
-        const std::string garbage = ned::editor::protocol::EncodeFrame("not cbor", false);
-        REQUIRE(::write(peerWrite, garbage.data(), garbage.size()) == static_cast<ssize_t>(garbage.size()));
+        peer.connection->SetOnDisconnected([&](const std::string& why) { reason = why; });
+        peer.SendRaw(ned::editor::protocol::EncodeFrame("not cbor", false));
         REQUIRE(PumpUntil(queue, [&] { return reason.has_value(); }));
-        REQUIRE_FALSE(connection->Connected());
-        ::close(peerWrite);
-        ::close(peerRead);
+        REQUIRE_FALSE(peer.connection->Connected());
     }
+    fs::remove_all(dir);
+}
+
+TEST_CASE("Hosts share an attempt per destination and keep its connection", "[Remote][Connection][HostAgent]") {
+    FakeHost  fake;
+    PostQueue queue;
+    Hosts     hosts(queue, [&](const std::string& destination) { return fake.Options(destination); });
+
+    std::vector<Connection*> answers;
+    const auto               collect = [&](std::expected<Connection*, std::string> connection) {
+        REQUIRE(connection.has_value());
+        answers.push_back(*connection);
+    };
+    hosts.Connect("host", collect);
+    hosts.Connect("host", collect);
+    REQUIRE(hosts.Connecting("host"));
+    REQUIRE(PumpUntil(queue, [&] { return answers.size() == 2; }));
+    REQUIRE(answers[0] == answers[1]);
+    REQUIRE(hosts.Find("host") == answers[0]);
+    REQUIRE(hosts.Destinations() == std::vector<std::string>{"host"});
+    REQUIRE_FALSE(hosts.Connecting("host"));
+
+    // Already connected: answered at once.
+    hosts.Connect("host", collect);
+    REQUIRE(answers.size() == 3);
+    REQUIRE(answers[2] == answers[0]);
+
+    std::optional<RemoteError> failed;
+    hosts.Find("host")->Endpoint().Request("search/project", host::ToJson(host::SearchRequest{.root = "/nonexistent", .pattern = "x", .live = {}}),
+                                           ResponseHandlers{[](const Json&) {}, [&](RemoteError error) { failed = std::move(error); }, {}});
+    bool dropped = false;
+    hosts.SetOnDropped([&](const std::string&, const std::string&) { dropped = true; });
+    REQUIRE(hosts.Disconnect("host"));
+    REQUIRE(failed.has_value());
+    REQUIRE(failed->code == error_code::kConnectionClosed);
+    REQUIRE(failed->message == "disconnected from host");
+    REQUIRE(hosts.Find("host") == nullptr);
+    REQUIRE(hosts.Destinations().empty());
+    REQUIRE_FALSE(hosts.Disconnect("host"));
+    REQUIRE_FALSE(dropped);
+}
+
+TEST_CASE("Hosts report attempts that fail or are cancelled, and connections that drop", "[Remote][Connection][HostAgent]") {
+    FakeHost  fake;
+    PostQueue queue;
+    Hosts     hosts(queue, [&](const std::string& destination) { return fake.Options(destination); });
+
+    std::optional<std::expected<Connection*, std::string>> denied;
+    hosts.Connect("denied", [&](std::expected<Connection*, std::string> connection) { denied = connection; });
+    REQUIRE(PumpUntil(queue, [&] { return denied.has_value(); }));
+    REQUIRE_FALSE(denied->has_value());
+    REQUIRE(hosts.Destinations().empty());
+
+    std::optional<std::expected<Connection*, std::string>> silent;
+    hosts.Connect("silent", [&](std::expected<Connection*, std::string> connection) { silent = connection; });
+    REQUIRE(hosts.Disconnect("silent"));
+    REQUIRE(PumpUntil(queue, [&] { return silent.has_value(); }));
+    REQUIRE(silent->error() == "ssh to silent cancelled");
+    REQUIRE_FALSE(hosts.Connecting("silent"));
+
+    std::optional<std::pair<std::string, std::string>> dropped;
+    hosts.SetOnDropped([&](const std::string& destination, const std::string& reason) { dropped.emplace(destination, reason); });
+    Connection* live = nullptr;
+    hosts.Connect("host", [&](std::expected<Connection*, std::string> connection) { live = connection.value(); });
+    REQUIRE(PumpUntil(queue, [&] { return live != nullptr; }));
+    live->Close("the link went away");
+    REQUIRE(dropped == std::pair<std::string, std::string>{"host", "the link went away"});
+    REQUIRE(hosts.Find("host") == nullptr);
+    REQUIRE(PumpUntil(queue, [&] { return hosts.Destinations().empty(); }));
+}
+
+TEST_CASE("A remote project search streams the host's matches", "[Remote][Connection][HostAgent]") {
+    FakeHost fake;
+    fs::create_directories(fake.dir / "tree" / "sub");
+    std::ofstream(fake.dir / "tree" / "a.txt") << "needle one\nhay\nneedle two\n";
+    std::ofstream(fake.dir / "tree" / "sub" / "b.txt") << "a needle\n";
+
+    PostQueue  queue;
+    Connection connection(ned::editor::remote::Connect(fake.Options()), queue);
+
+    std::vector<ned::editor::SearchMatch>     matches;
+    std::optional<std::optional<std::string>> done;
+    ned::editor::remote::SearchProject(
+        connection, host::SearchRequest{.root = fake.dir / "tree", .pattern = "needle", .live = {}},
+        [&](std::vector<ned::editor::SearchMatch> chunk) { matches.insert(matches.end(), chunk.begin(), chunk.end()); },
+        [&](std::optional<std::string> failure) { done = std::move(failure); });
+    REQUIRE(PumpUntil(queue, [&] { return done.has_value(); }));
+    REQUIRE(*done == std::nullopt);
+    REQUIRE(matches.size() == 3);
+
+    done.reset();
+    ned::editor::remote::SearchProject(
+        connection, host::SearchRequest{.root = fake.dir / "tree", .pattern = "(", .live = {}}, [](std::vector<ned::editor::SearchMatch>) {},
+        [&](std::optional<std::string> failure) { done = std::move(failure); });
+    REQUIRE(PumpUntil(queue, [&] { return done.has_value(); }));
+    REQUIRE(done->has_value());
+    REQUIRE_THAT(**done, ContainsSubstring("missing )"));
+}
+
+TEST_CASE("A remote project search refuses matches outside its root", "[Remote][Connection]") {
+    const fs::path dir = FreshDir();
+    PostQueue      queue;
+    PipePeer       peer(queue, dir);
+
+    std::size_t                               delivered = 0;
+    std::optional<std::optional<std::string>> done;
+    const std::uint64_t                       id = ned::editor::remote::SearchProject(
+        *peer.connection, host::SearchRequest{.root = "/project", .pattern = "x", .live = {}},
+        [&](std::vector<ned::editor::SearchMatch>) { ++delivered; }, [&](std::optional<std::string> failure) { done = std::move(failure); });
+
+    const std::vector<ned::editor::SearchMatch> outside{{.file = "/etc/passwd", .lineNumber = 1, .lineText = "root"}};
+    peer.Send(Json{{"method", "$/chunk"}, {"params", {{"id", id}, {"seq", 0}, {"data", host::MatchesToJson(outside)}}}});
+    peer.Send(Json{{"id", id}, {"error", {{"code", ned::editor::protocol::error_code::kCancelled}, {"message", "cancelled"}}}});
+    REQUIRE(PumpUntil(queue, [&] { return done.has_value(); }));
+    REQUIRE(delivered == 0);
+    REQUIRE(done->has_value());
+    REQUIRE_THAT(**done, StartsWith("the host's search results are malformed: "));
     fs::remove_all(dir);
 }
