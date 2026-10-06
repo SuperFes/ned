@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <expected>
@@ -187,21 +188,60 @@ std::vector<std::string> BufferView::RemoteHostCandidates() const {
     return unique;
 }
 
-std::vector<std::string> BufferView::RemoteHostCompletions() const {
-    const std::string& typed = prompt_->Text();
-    if (inputMode_ != InputMode::RemoteSearchRoot) {
-        return editor::remote::MatchHosts(remoteHostCandidates_, typed);
+std::optional<std::string> BufferView::TypedRemoteHost() const {
+    if (inputMode_ == InputMode::RemoteConnect) {
+        return prompt_->Text();
     }
     // Past the host there's nothing to offer until the agent can list a
     // directory.
-    if (typed.find(":/") != std::string::npos) {
+    if (inputMode_ == InputMode::RemoteSearchRoot && prompt_->Text().find(":/") == std::string::npos) {
+        return prompt_->Text().substr(0, prompt_->Text().find(':'));
+    }
+    return std::nullopt;
+}
+
+std::vector<std::string> BufferView::RemoteHostCompletions() const {
+    if (inputMode_ == InputMode::RemoteDisconnect) {
+        return editor::remote::MatchHosts(remoteHostCandidates_, prompt_->Text());
+    }
+    const std::optional<std::string> typed = TypedRemoteHost();
+    if (!typed) {
         return {};
     }
-    std::vector<std::string> roots = editor::remote::MatchHosts(remoteHostCandidates_, typed.substr(0, typed.find(':')));
-    for (std::string& root : roots) {
-        root += ":/";
+    std::vector<std::string> hosts = editor::remote::MatchHosts(remoteHostCandidates_, *typed);
+    if (remoteLookupTyped_ == typed) {
+        for (const std::string& resolved : remoteResolvedHosts_) {
+            if (std::ranges::find(hosts, resolved) == hosts.end()) {
+                hosts.push_back(resolved);
+            }
+        }
     }
-    return roots;
+    if (inputMode_ == InputMode::RemoteSearchRoot) {
+        for (std::string& host : hosts) {
+            host += ":/";
+        }
+    }
+    return hosts;
+}
+
+void BufferView::RequestRemoteHostLookup() {
+    const std::optional<std::string> typed = TypedRemoteHost();
+    if (remoteHosts_ == nullptr || !typed || typed == remoteLookupTyped_) {
+        return;
+    }
+    remoteLookupTyped_ = typed;
+    remoteResolvedHosts_.clear();
+    if (typed->empty()) {
+        remoteHosts_->Lookup().Cancel();
+        return;
+    }
+    remoteHosts_->Lookup().Qualify(*typed, lifetime_.Bind([this, typed = *typed](std::vector<std::string> resolved) {
+        if (TypedRemoteHost() != typed) {
+            return;
+        }
+        remoteResolvedHosts_ = std::move(resolved);
+        RefreshPathCompletionPopup();
+    }));
 }
 
 void BufferView::CancelRemoteSearch() {

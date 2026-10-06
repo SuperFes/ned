@@ -654,6 +654,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             inputMode_ = InputMode::RemoteConnect;
             prompt_.emplace("Connect to host: ");
             remoteHostCandidates_    = RemoteHostCandidates();
+            remoteLookupTyped_.reset();
             pathCompletionSelection_ = 0;
             RefreshPathCompletionPopup();
             return;
@@ -680,6 +681,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 prompt_->SetText(roots.front());
             }
             remoteHostCandidates_    = RemoteHostCandidates();
+            remoteLookupTyped_.reset();
             pathCompletionSelection_ = 0;
             RefreshPathCompletionPopup();
             return;

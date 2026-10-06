@@ -21,6 +21,7 @@
 #include "Editor/Host/Hello.h"
 #include "Editor/PostQueue.h"
 #include "Editor/Remote/Connection.h"
+#include "Editor/Remote/HostLookup.h"
 #include "EnvOverride.h"
 
 namespace ned::tests {
@@ -50,6 +51,16 @@ bool PumpUntil(editor::PostQueue& queue, Done done, std::chrono::milliseconds li
         queue.DrainPosted_();
     }
     return true;
+}
+
+// A resolver that knows names starting with "good." and never answers for
+// ones starting with "slow.", searching domains under dir/resolv.conf.
+inline editor::remote::HostLookupOptions FakeResolver(const std::filesystem::path& dir) {
+    return editor::remote::HostLookupOptions{
+        .resolvConf = dir / "resolv.conf",
+        .command    = {"/bin/sh", "-c", "case \"$1\" in good.*) echo \"192.0.2.1 STREAM $1\" ;; slow.*) exec sleep 30 ;; *) exit 2 ;; esac", "sh"},
+        .delay      = std::chrono::milliseconds(20),
+        .limit      = std::chrono::seconds(3)};
 }
 
 struct FakeRemoteHost {

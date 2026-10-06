@@ -116,7 +116,9 @@ hello  -> {protocol: {major, minor}, codecs: [str], window: uint}
 - `Remote/Hosts.h` keeps one `Connection` per destination for the editor, sharing an
   attempt between callers. `remote-connect`, `remote-disconnect` and
   `remote-project-search` (`host:/path`, results streamed into `*search results*`) run
-  through it.
+  through it. Their host prompts offer `Remote/KnownHosts.h`'s names (ssh_config and
+  known_hosts), plus what the typed name resolves to under resolv.conf's search domains
+  (`Remote/HostLookup.h`, through a killable `getent ahosts`).
 - The in-process transport skips `hello`. Both ends are the same build.
 
 ## 5. Transports

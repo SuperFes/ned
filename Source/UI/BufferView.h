@@ -4326,12 +4326,20 @@ class BufferView : public Widget {
     [[nodiscard]] std::vector<std::string> RemoteHostCandidates() const;
     // The host dropdown's candidates for what the prompt holds now.
     [[nodiscard]] std::vector<std::string> RemoteHostCompletions() const;
+    // The host part of a host prompt, or nullopt once nothing would
+    // complete it (remote-disconnect, or a root prompt past its host).
+    [[nodiscard]] std::optional<std::string> TypedRemoteHost() const;
+    // Asks the resolver about the typed host under each search domain,
+    // once per change of it.
+    void RequestRemoteHostLookup();
 
     editor::remote::Hosts*         remoteHosts_ = nullptr; // see SetRemoteHosts
     std::optional<RemoteSearchRun> remoteSearch_;
     std::uint64_t                  remoteSearchGeneration_ = 0;
     editor::remote::Location       pendingRemoteSearchRoot_;
     std::vector<std::string>       remoteHostCandidates_; // read when a host prompt opens
+    std::optional<std::string>     remoteLookupTyped_;    // the host text last looked up
+    std::vector<std::string>       remoteResolvedHosts_;  // what resolved for it
 
     BookmarkPromptAction bookmarkPromptAction_ = BookmarkPromptAction::Jump;
     bool                 charsetPromptReverts_ = false;

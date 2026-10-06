@@ -16,6 +16,7 @@
 #include "Editor/Lifetime.h"
 #include "Editor/PostQueue.h"
 #include "Editor/Remote/Connection.h"
+#include "Editor/Remote/HostLookup.h"
 
 namespace ned::editor::remote {
 
@@ -25,7 +26,7 @@ class Hosts {
     using Dropped        = std::function<void(const std::string& destination, const std::string& reason)>;
     using OptionsFactory = std::function<ConnectOptions(const std::string& destination)>;
 
-    explicit Hosts(PostQueue& postQueue, OptionsFactory options = DefaultOptions);
+    explicit Hosts(PostQueue& postQueue, OptionsFactory options = DefaultOptions, HostLookupOptions lookup = {});
     // Cancels every attempt and closes every connection.
     ~Hosts();
 
@@ -52,6 +53,9 @@ class Hosts {
     // exited, the link dropped, or the agent broke the protocol.
     void SetOnDropped(Dropped handler);
 
+    // Resolver lookups for a connect prompt's host names.
+    [[nodiscard]] HostLookup& Lookup() noexcept;
+
   private:
     struct Attempt {
         std::unique_ptr<Connector> connector;
@@ -65,6 +69,7 @@ class Hosts {
     Dropped                                            onDropped_;
     std::map<std::string, std::unique_ptr<Connection>> connections_;
     std::map<std::string, Attempt>                     attempts_;
+    HostLookup                                         lookup_;
     LifetimeGuard                                      lifetime_;
 };
 

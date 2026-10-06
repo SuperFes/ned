@@ -1,10 +1,14 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
+#include "Editor/PostQueue.h"
+#include "Editor/Remote/HostLookup.h"
 #include "Editor/Remote/KnownHosts.h"
 #include "FakeRemoteHost.h"
 
@@ -89,4 +93,61 @@ TEST_CASE("Hosts match fuzzily, keeping the given order between equals", "[Remot
     REQUIRE(MatchHosts(hosts, "members") == Names{"members-dev.iad.example.com", "members.example.com"});
     REQUIRE(MatchHosts(hosts, "mdev").front() == "members-dev.iad.example.com");
     REQUIRE(MatchHosts(hosts, "nowhere").empty());
+}
+
+TEST_CASE("A host lookup reports the names that resolve, in order", "[Remote][KnownHosts]") {
+    const fs::path                  dir = ned::tests::FreshRemoteDir();
+    ned::editor::PostQueue          queue;
+    ned::editor::remote::HostLookup lookup(queue, ned::tests::FakeResolver(dir));
+    std::optional<Names>            found;
+    const auto                      collect = [&](Names names) { found = std::move(names); };
+
+    lookup.Lookup({"good.a", "bad.a", "good.b"}, collect);
+    REQUIRE(ned::tests::PumpUntil(queue, [&] { return found.has_value(); }));
+    REQUIRE(*found == Names{"good.a", "good.b"});
+
+    // Each search domain, except one the name already ends in.
+    std::ofstream(dir / "resolv.conf") << "search a.test b.test\n";
+    found.reset();
+    lookup.Qualify("good", collect);
+    REQUIRE(ned::tests::PumpUntil(queue, [&] { return found.has_value(); }));
+    REQUIRE(*found == Names{"good.a.test", "good.b.test"});
+    found.reset();
+    lookup.Qualify("good.a.test", collect);
+    REQUIRE(ned::tests::PumpUntil(queue, [&] { return found.has_value(); }));
+    REQUIRE(*found == Names{"good.a.test.b.test"});
+
+    // A replaced lookup never answers.
+    bool replaced = false;
+    lookup.Lookup({"good.first"}, [&](Names) { replaced = true; });
+    found.reset();
+    lookup.Lookup({"good.second"}, collect);
+    REQUIRE(ned::tests::PumpUntil(queue, [&] { return found.has_value(); }));
+    REQUIRE(*found == Names{"good.second"});
+    REQUIRE_FALSE(replaced);
+    fs::remove_all(dir);
+}
+
+TEST_CASE("A host lookup that hangs is cut off, and cancelling kills it", "[Remote][KnownHosts]") {
+    const fs::path                         dir = ned::tests::FreshRemoteDir();
+    ned::editor::PostQueue                 queue;
+    ned::editor::remote::HostLookupOptions options = ned::tests::FakeResolver(dir);
+    options.limit                                  = std::chrono::milliseconds(200);
+    ned::editor::remote::HostLookup lookup(queue, options);
+
+    std::optional<Names> found;
+    lookup.Lookup({"slow.a", "good.a"}, [&](Names names) { found = std::move(names); });
+    REQUIRE(ned::tests::PumpUntil(queue, [&] { return found.has_value(); }, std::chrono::seconds(2)));
+    REQUIRE(*found == Names{"good.a"});
+
+    options.limit = std::chrono::seconds(30);
+    ned::editor::remote::HostLookup patient(queue, options);
+    bool                            answered = false;
+    patient.Lookup({"slow.b"}, [&](Names) { answered = true; });
+    REQUIRE_FALSE(ned::tests::PumpUntil(queue, [&] { return answered; }, std::chrono::milliseconds(200)));
+    const auto started = std::chrono::steady_clock::now();
+    patient.Cancel();
+    REQUIRE(std::chrono::steady_clock::now() - started < std::chrono::seconds(1));
+    REQUIRE_FALSE(ned::tests::PumpUntil(queue, [&] { return answered; }, std::chrono::milliseconds(100)));
+    fs::remove_all(dir);
 }

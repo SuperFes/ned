@@ -7,6 +7,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -38,9 +40,11 @@ namespace test = ned::ui::test;
 namespace {
 
 struct Fixture {
-    ned::tests::FakeRemoteHost fake;
-    ned::editor::PostQueue     queue;
-    ned::editor::remote::Hosts hosts{queue, [this](const std::string& destination) { return fake.Options(destination); }};
+    ned::tests::FakeRemoteHost    fake;
+    ned::tests::ScopedEnvOverride home{"HOME", (fake.dir / "home").c_str()};
+    ned::editor::PostQueue        queue;
+    ned::editor::remote::Hosts    hosts{queue, [this](const std::string& destination) { return fake.Options(destination); },
+                                        ned::tests::FakeResolver(fake.dir)};
 
     ned::text::Buffer            buffer{"scratch"};
     ned::text::KillRing          killRing;
@@ -203,4 +207,45 @@ TEST_CASE("The host prompts offer the hosts ssh knows, and Tab takes one", "[Buf
     fixture.view.OnEvent(test::Ctrl('g'));
     fixture.Command("remote-connect");
     REQUIRE(popup->rows.at(0).main == "zqalias");
+}
+
+TEST_CASE("The host prompts add names the resolver knows under the search domains", "[BufferView][Remote]") {
+    Fixture fixture;
+    std::ofstream(fixture.fake.dir / "resolv.conf") << "search example.test other.test\n";
+
+    std::optional<ned::ui::ListPopupModel> popup;
+    fixture.view.SetOnCandidatesChanged([&](std::optional<ned::ui::ListPopupModel> model) { popup = std::move(model); });
+    const auto rows = [&] {
+        std::vector<std::string> labels;
+        for (const ned::ui::ListPopupRow& row : popup ? popup->rows : std::vector<ned::ui::ListPopupRow>{}) {
+            labels.push_back(row.main);
+        }
+        return labels;
+    };
+
+    // After whatever the system's own ssh files offer.
+    const auto endsWith = [&](const std::vector<std::string>& tail) {
+        const std::vector<std::string> shown = rows();
+        return shown.size() >= tail.size() && std::equal(tail.begin(), tail.end(), shown.end() - static_cast<std::ptrdiff_t>(tail.size()));
+    };
+
+    fixture.Command("remote-connect");
+    fixture.Type("good");
+    REQUIRE(PumpUntil(fixture.queue, [&] { return endsWith({"good.example.test", "good.other.test"}); }));
+
+    // Only the latest text's answer counts.
+    fixture.Type("x");
+    REQUIRE_FALSE(PumpUntil(fixture.queue, [&] { return std::ranges::contains(rows(), "goodx.example.test"); }, std::chrono::milliseconds(300)));
+    REQUIRE_FALSE(std::ranges::contains(rows(), "good.example.test"));
+    fixture.view.OnEvent(test::Ctrl('g'));
+
+    fixture.Command("remote-project-search");
+    fixture.Type("good.example");
+    REQUIRE(PumpUntil(fixture.queue, [&] { return endsWith({"good.example.example.test:/", "good.example.other.test:/"}); }));
+    // Up from the top wraps to the last row.
+    fixture.view.OnEvent(test::ArrowUp());
+    fixture.view.OnEvent(test::ArrowUp());
+    fixture.view.OnEvent(test::Tab());
+    REQUIRE(fixture.statusMessage == "Remote search in (host:/path): good.example.example.test:/");
+    fixture.view.OnEvent(test::Ctrl('g'));
 }

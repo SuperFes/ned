@@ -2535,6 +2535,7 @@ std::vector<std::string> BufferView::GatherPathCompletionCandidates() const {
 // keystroke/Up/Down (see HandlePromptKey's own call sites).
 
 void BufferView::RefreshPathCompletionPopup() {
+    RequestRemoteHostLookup();
     const std::vector<std::string> candidates = GatherPathCompletionCandidates();
     pathCompletionSelection_                  = candidates.empty() ? 0 : std::min(pathCompletionSelection_, candidates.size() - 1);
 

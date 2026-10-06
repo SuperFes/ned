@@ -4,7 +4,7 @@
 
 namespace ned::editor::remote {
 
-Hosts::Hosts(PostQueue& postQueue, OptionsFactory options) : postQueue_(postQueue), options_(std::move(options)) {
+Hosts::Hosts(PostQueue& postQueue, OptionsFactory options, HostLookupOptions lookup) : postQueue_(postQueue), options_(std::move(options)), lookup_(postQueue, std::move(lookup)) {
 }
 
 Hosts::~Hosts() {
@@ -95,6 +95,10 @@ std::vector<std::string> Hosts::Destinations() const {
 
 void Hosts::SetOnDropped(Dropped handler) {
     onDropped_ = std::move(handler);
+}
+
+HostLookup& Hosts::Lookup() noexcept {
+    return lookup_;
 }
 
 } // namespace ned::editor::remote
