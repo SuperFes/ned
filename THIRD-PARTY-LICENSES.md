@@ -29,8 +29,26 @@ determination ever depends on it.
 | [libvterm](https://github.com/neovim/libvterm) | MIT | Paul "LeoNerd" Evans |
 | [RE2](https://github.com/google/re2) | BSD-3-Clause | © 2009 The RE2 Authors (Google Inc. and contributors); `util/utf.h`, `util/rune.cc` © 2002 Lucent Technologies under Lucent's permissive notice |
 | [PCRE2](https://github.com/PCRE2Project/pcre2) (8-bit library) | BSD-3-Clause WITH PCRE2-exception; JIT compiler BSD-2-Clause | © 1997-2007 University of Cambridge; © 2007-2024 Philip Hazel; JIT © 2009-2024 Zoltan Herczeg |
+| [zstd](https://github.com/facebook/zstd) | BSD-3-Clause (dual-licensed with GPL-2.0-only; used under BSD) | © Meta Platforms, Inc. and affiliates |
 | [libmagic](https://www.darwinsys.com/file/) (from `file`) | BSD-2-Clause-style (`file`'s own `COPYING`) | © 1985-1995 Ian F. Darwin; © 1994- Christos Zoulas |
 | [Catch2](https://github.com/catchorg/Catch2) (test-only, never shipped) | Boost Software License 1.0 | Catch2 Authors |
+
+## Statically linked into `ned-agent`
+
+The remote agent (`CMake/StaticAgent.cmake`) embeds everything it uses. Its
+dependencies are built from the pinned sources listed there; the C and C++
+runtimes are whatever the musl toolchain provides, shown here for the zig
+presets.
+
+| Project | License | Copyright |
+|---|---|---|
+| [RE2](https://github.com/google/re2) | BSD-3-Clause | © 2009 The RE2 Authors (Google Inc. and contributors); `util/utf.h`, `util/rune.cc` © 2002 Lucent Technologies under Lucent's permissive notice |
+| [Abseil](https://github.com/abseil/abseil-cpp) (RE2's dependency) | Apache License 2.0 | © The Abseil Authors |
+| [zstd](https://github.com/facebook/zstd) | BSD-3-Clause (dual-licensed with GPL-2.0-only; used under BSD) | © Meta Platforms, Inc. and affiliates |
+| [nlohmann/json](https://github.com/nlohmann/json) | MIT | © 2013-2025 Niels Lohmann |
+| [musl](https://musl.libc.org/) | MIT | © 2005-2020 Rich Felker, et al. |
+| [LLVM libc++, libc++abi, libunwind](https://llvm.org/) | Apache License 2.0 WITH LLVM-exception | © LLVM Project contributors |
+| [Zig](https://ziglang.org/) `compiler_rt` | MIT | © Zig contributors |
 
 ## Language packages
 

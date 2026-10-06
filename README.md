@@ -61,7 +61,7 @@ See [`ROADMAP.md`](ROADMAP.md) for shipped and planned features.
 - [Notcurses](https://github.com/dankamongmen/notcurses) v3.0.17 exactly, with three
   small input-handling patches ned carries (`Patches/notcurses/`)
 - System packages for `libutf8proc`, CLI11, `nlohmann/json`, RE2, PCRE2, `libvterm`,
-  and Catch2 (tests)
+  zstd, and Catch2 (tests)
 
 Every bundled language is a package under `Source/Languages/<name>/` (its grammar as
 `grammar.janet`, compiled by ned itself at build time), so an ordinary build touches no
@@ -78,6 +78,19 @@ cmake --build build
 ```
 
 Run the test suite with `ctest --test-dir build`.
+
+### Remote agent (optional)
+
+Remote editing runs `ned-agent`, a fully static binary, on the remote host. Building it
+needs a musl toolchain; the presets use [zig](https://ziglang.org/), which is only needed
+for this:
+
+```sh
+cmake --preset agent-x86_64 && cmake --build --preset agent-x86_64    # or agent-aarch64
+```
+
+Its dependencies are fetched at the versions the editor links. Any other musl-targeting
+toolchain works with `-DNED_AGENT_ONLY=ON` in place of the zig toolchain file.
 
 ## Status
 

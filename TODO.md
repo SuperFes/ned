@@ -65,12 +65,15 @@ and sync on save; don't build a remote-authoritative buffer.
       doesn't block the agent.
 
 **Agent**
-- [ ] Static musl builds for x86_64 and aarch64 (clang `--target` + musl sysroot +
-      static libc++, or `zig c++`). Verify with `file`/`ldd` and a run in a bare
-      container. RE2/abseil under musl is the likeliest failure.
+- [ ] A CI job that builds both static agents (`agent-*` presets) and runs `[HostAgent]`
+      against them through `NED_TEST_AGENT`: x86_64 natively, aarch64 under
+      `qemu-aarch64`.
 - [ ] Size the search pool from the host's core count, not the local default.
 - [ ] Deploy to the remote `$XDG_DATA_HOME/ned/agent/<build>-<arch>/` (0700) over the
-      same ssh connection, with a redeploy on a `hello` build-hash mismatch.
+      same ssh connection, with a redeploy on a `hello` build-hash mismatch. Agents come
+      from `libexec/ned/agent/<arch>/`, built by the `agent-*` presets or shipped
+      prebuilt. Neither may make zig a requirement of the editor build, so a missing
+      agent is a visible "no agent for <arch>" error, not a build failure.
 - [ ] The `proc` seam: LSP/DAP/task/VCS subprocesses spawn through the host, local ones
       included, and remote inotify relays through `watch`. This is the biggest lift in
       the section.

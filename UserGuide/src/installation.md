@@ -19,6 +19,7 @@ dependencies:
 | `libvterm` | The embedded terminal panel's VT100/xterm emulation |
 | RE2 | Project-wide search |
 | PCRE2 | In-file regex replace (`query-replace-regexp`, project replace) |
+| zstd | Compression on the remote-host protocol |
 | Catch2 (v3) | Tests only |
 
 Everything **except** Janet and Notcurses is a normal system package on most
@@ -33,7 +34,7 @@ v3.0.17 with three small input-handling patches ned carries — see
 ```sh
 sudo apt-get install clang lld pkg-config libunistring-dev libdeflate-dev \
     libncurses-dev libcli11-dev libre2-dev libpcre2-dev libvterm-dev \
-    libutf8proc-dev nlohmann-json3-dev catch2 libstdc++-14-dev cmake
+    libutf8proc-dev nlohmann-json3-dev libzstd-dev catch2 libstdc++-14-dev cmake
 ```
 
 `libstdc++-14-dev` matters even when building with Clang: ned uses C++23 `<chrono>`
