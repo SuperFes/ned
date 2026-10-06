@@ -106,11 +106,26 @@ namespace {
         }
     }
 
-    bool Eligible(const text::Buffer& buffer) {
-        if (!buffer.Path() || buffer.IsLoading() || buffer.ReadOnly()) {
-            return false;
+    // Where a buffer's history is kept: the key it's stored under, and its
+    // undo file. A remote buffer's key is its host:/path, which no local
+    // path key can equal, since those start at the root.
+    struct UndoTarget {
+        std::string           key;
+        std::filesystem::path file;
+    };
+
+    std::optional<UndoTarget> TargetFor(const text::Buffer& buffer) {
+        if (buffer.IsLoading() || buffer.ReadOnly()) {
+            return std::nullopt;
         }
-        return !IsScratchFile(*buffer.Path());
+        if (buffer.Remote()) {
+            const std::string key = buffer.Remote()->ToString();
+            return UndoTarget{.key = key, .file = UndoDirectory() / (Fnv1a64Hex(key) + ".json")};
+        }
+        if (!buffer.Path() || IsScratchFile(*buffer.Path())) {
+            return std::nullopt;
+        }
+        return UndoTarget{.key = FilePlaceStore::NormalizePathKey(*buffer.Path()), .file = UndoFileForPath(*buffer.Path())};
     }
 
     void AtomicWrite(const std::filesystem::path& path, std::string_view content) {
@@ -131,7 +146,7 @@ namespace {
     }
 
     std::string SerializeToJson(const std::vector<text::UndoTree::SerializedNode>& nodes, std::size_t currentId,
-                                const std::filesystem::path& path) {
+                                const std::string& key) {
         Json jsonNodes = Json::array();
         for (const auto& node : nodes) {
             Json entry = {
@@ -144,7 +159,7 @@ namespace {
         }
         return Json{
             {"version", 1},
-            {"path", path.string()},
+            {"path", key},
             {"currentId", currentId},
             {"nodes", std::move(jsonNodes)},
         }
@@ -193,7 +208,8 @@ std::filesystem::path UndoFileForPath(const std::filesystem::path& file) {
 }
 
 void SaveUndoHistory(const text::Buffer& buffer) {
-    if (!PersistentUndoEnabled() || !Eligible(buffer)) {
+    const std::optional<UndoTarget> target = TargetFor(buffer);
+    if (!PersistentUndoEnabled() || !target) {
         return;
     }
     if (buffer.Content().ByteLength() > MaxUndoBytes()) {
@@ -205,14 +221,14 @@ void SaveUndoHistory(const text::Buffer& buffer) {
         return; // nothing beyond a fresh load already gives
     }
 
-    DebugLog("SaveUndoHistory: begin path=" + buffer.Path()->string() +
+    DebugLog("SaveUndoHistory: begin path=" + target->key +
              " bufferBytes=" + std::to_string(buffer.Content().ByteLength()) + " nodeCount=" + std::to_string(nodes.size()) +
              " currentId=" + std::to_string(buffer.CurrentUndoNodeId()));
     try {
-        const std::string json = SerializeToJson(nodes, buffer.CurrentUndoNodeId(), *buffer.Path());
+        const std::string json = SerializeToJson(nodes, buffer.CurrentUndoNodeId(), target->key);
         DebugLog("SaveUndoHistory: serialized jsonBytes=" + std::to_string(json.size()));
-        AtomicWrite(UndoFileForPath(*buffer.Path()), json);
-        DebugLog("SaveUndoHistory: wrote OK path=" + buffer.Path()->string());
+        AtomicWrite(target->file, json);
+        DebugLog("SaveUndoHistory: wrote OK path=" + target->key);
     }
     catch (const std::exception& e) {
         DebugLog(std::string("SaveUndoHistory: EXCEPTION (swallowed) ") + e.what());
@@ -221,17 +237,18 @@ void SaveUndoHistory(const text::Buffer& buffer) {
 }
 
 void TryRestoreUndoHistory(text::Buffer& buffer) {
-    if (!PersistentUndoEnabled() || !Eligible(buffer)) {
+    const std::optional<UndoTarget> target = TargetFor(buffer);
+    if (!PersistentUndoEnabled() || !target) {
         return;
     }
 
     try {
-        std::ifstream file(UndoFileForPath(*buffer.Path()), std::ios::binary);
+        std::ifstream file(target->file, std::ios::binary);
         if (!file) {
             return; // nothing persisted for this path
         }
         const std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-        DebugLog("TryRestoreUndoHistory: path=" + buffer.Path()->string() + " fileBytes=" + std::to_string(content.size()));
+        DebugLog("TryRestoreUndoHistory: path=" + target->key + " fileBytes=" + std::to_string(content.size()));
 
         const auto parsed = ParseNodes(content);
         if (!parsed || parsed->empty()) {
@@ -267,11 +284,12 @@ void SaveUndoHistoryForOpenBuffers(text::BufferList& bufferList) {
 
     DebugLog("SaveUndoHistoryForOpenBuffers: sweep start, bufferCount=" + std::to_string(bufferList.Buffers().size()));
     for (const auto& buffer : bufferList.Buffers()) {
-        if (!Eligible(*buffer)) {
+        const std::optional<UndoTarget> target = TargetFor(*buffer);
+        if (!target) {
             continue;
         }
 
-        const std::string key        = FilePlaceStore::NormalizePathKey(*buffer->Path());
+        const std::string& key       = target->key;
         const std::size_t generation = buffer->ContentGeneration();
         {
             const std::lock_guard<std::mutex> lock(UndoMutex());

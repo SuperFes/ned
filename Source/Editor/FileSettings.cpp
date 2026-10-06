@@ -80,6 +80,10 @@ IndentOverride FileIndentOverride(const std::filesystem::path& path, std::string
 }
 
 void ApplyFileSettings(text::Buffer& buffer) {
+    if (buffer.Remote()) {
+        buffer.SetLocalIndent(IndentFrom(TextEnds(buffer.Content(), kDetectionHeadBytes), Properties(), std::nullopt));
+        return;
+    }
     if (!buffer.Path()) {
         return;
     }

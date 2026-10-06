@@ -283,3 +283,52 @@ TEST_CASE("Persistent-undo settings default and round-trip", "[PersistentUndo]")
     SetPersistentUndoMaxSizeMb(0); // clamped to 1, TabWidth::SetTabWidth's own convention
     REQUIRE(PersistentUndoMaxSizeMb() == 1);
 }
+
+TEST_CASE("A remote buffer's history is kept under its host:/path, apart from a local file's", "[PersistentUndo][Remote]") {
+    const UndoSandbox           sandbox("ned_undo_test_remote");
+    const std::filesystem::path local = sandbox.WriteWorkFile("same.txt", "a");
+    const ned::text::RemoteFile file{.destination = "host", .path = local};
+    const auto                  edit = [](ned::text::Buffer& buffer) {
+        buffer.SetPoint(buffer.Size());
+        buffer.InsertAtPoint("b");
+        buffer.MoveBackward();
+        buffer.MoveForward();
+        buffer.InsertAtPoint("c");
+    };
+
+    {
+        ned::text::Buffer remote = ned::text::Buffer::FromRemoteContents(file, ned::text::FileContents{.bytes = "a", .timestamp = std::nullopt});
+        edit(remote); // "abc"
+        SaveUndoHistory(remote);
+    }
+
+    // The local file of the same path has no history of its own.
+    ned::text::BufferList bufferList;
+    ned::text::Buffer&    localBuffer = bufferList.OpenOrCreateFile(sandbox.WriteWorkFile("same.txt", "abc"));
+    TryRestoreUndoHistory(localBuffer);
+    CHECK_FALSE(localBuffer.CanUndo());
+
+    // Reopened from the host, it picks up where it was.
+    ned::text::Buffer reopened = ned::text::Buffer::FromRemoteContents(file, ned::text::FileContents{.bytes = "abc", .timestamp = std::nullopt});
+    TryRestoreUndoHistory(reopened);
+    REQUIRE(reopened.CanUndo());
+    reopened.Undo();
+    CHECK(reopened.Text() == "ab");
+
+    // Another host's file of the same path doesn't.
+    ned::text::Buffer elsewhere = ned::text::Buffer::FromRemoteContents({.destination = "other", .path = local},
+                                                                       ned::text::FileContents{.bytes = "abc", .timestamp = std::nullopt});
+    TryRestoreUndoHistory(elsewhere);
+    CHECK_FALSE(elsewhere.CanUndo());
+
+    // The periodic sweep covers remote buffers too.
+    ned::text::BufferList remotes;
+    ned::text::Buffer&    loading = remotes.AddRemotePlaceholder({.destination = "third", .path = "/srv/x"});
+    loading.FinishLoad(ned::text::Rope("x"));
+    edit(loading);
+    SaveUndoHistoryForOpenBuffers(remotes);
+    ned::text::Buffer third = ned::text::Buffer::FromRemoteContents({.destination = "third", .path = "/srv/x"},
+                                                                   ned::text::FileContents{.bytes = "xbc", .timestamp = std::nullopt});
+    TryRestoreUndoHistory(third);
+    CHECK(third.CanUndo());
+}

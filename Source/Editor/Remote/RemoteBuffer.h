@@ -20,7 +20,9 @@ namespace ned::editor::remote {
 [[nodiscard]] std::size_t MaxRemoteFileBytes();
 
 // Fills a loading placeholder (BufferList::AddRemotePlaceholder) with a
-// read's outcome: the file, or an empty new file when the host has none.
+// read's outcome: the file, or an empty new file when the host has none,
+// then settles what an open settles from content alone: its mode,
+// indentation and persisted undo history.
 // Returns why not otherwise -- a failed read, or content that looks
 // binary -- leaving the placeholder as it was.
 [[nodiscard]] std::optional<std::string> FinishRemoteLoad(text::Buffer& placeholder, const FsResult<text::FileContents>& read);

@@ -58,7 +58,8 @@ namespace ned::editor {
 // root (nothing to restore beyond a fresh load already gives). Writes via
 // the usual sibling-.ned-tmp-then-rename atomic write. Swallows every
 // failure -- an unattended periodic save with nothing to report to, same
-// posture as AutoSaveFileBuffers.
+// posture as AutoSaveFileBuffers. A remote buffer (Text/RemoteFile.h) is
+// eligible too, its history keyed by its host:/path rather than a path.
 void SaveUndoHistory(const text::Buffer& buffer);
 
 // The load-time counterpart: reads buffer's persisted undo file, if any,
