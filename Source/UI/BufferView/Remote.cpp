@@ -220,7 +220,7 @@ void BufferView::FinishRemoteSearch(std::uint64_t generation, const std::optiona
         statusMessage_ = "No matches for " + what + " (" + elapsed + ")";
     }
     else {
-        statusMessage_ = CountMatches(run.matches) + " for " + what + " in " + elapsed + " -- remote files can't be opened yet";
+        statusMessage_ = CountMatches(run.matches) + " for " + what + " in " + elapsed;
     }
 }
 
