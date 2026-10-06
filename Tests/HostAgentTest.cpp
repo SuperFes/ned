@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -37,6 +38,13 @@ using Json           = nlohmann::json;
 using Connection     = ned::editor::protocol::FramedConnection<FrameTransport>;
 
 namespace {
+
+// NED_TEST_AGENT points these tests at another agent build, such as a
+// static cross build.
+std::string AgentBinary() {
+    const char* override = std::getenv("NED_TEST_AGENT");
+    return override != nullptr && *override != '\0' ? override : NED_AGENT_BINARY;
+}
 
 // The editor's end of a connection to an agent.
 struct AgentClient {
@@ -112,7 +120,7 @@ void RequireSameMatches(const std::vector<SearchMatch>& actual, const std::vecto
 } // namespace
 
 TEST_CASE("ned-agent answers hello with its own build and settles the codec", "[Host][HostAgent]") {
-    AgentClient client(FrameTransport({NED_AGENT_BINARY, "--stdio"}, true));
+    AgentClient client(FrameTransport({AgentBinary(), "--stdio"}, true));
 
     const auto answer = client.Call(std::string(host::kHello),
                                     host::ToJson(host::HelloRequest{.build = "editor", .codecs = {"zstd", "none"}, .window = 16}));
@@ -120,7 +128,7 @@ TEST_CASE("ned-agent answers hello with its own build and settles the codec", "[
     REQUIRE(answer.result.has_value());
     const host::HelloResponse hello = host::HelloResponseFromJson(*answer.result);
     REQUIRE(hello.major == host::kProtocolMajor);
-    REQUIRE(hello.build == host::FileBuildId(NED_AGENT_BINARY));
+    REQUIRE(hello.build == host::FileBuildId(AgentBinary()));
     REQUIRE(hello.arch == host::BuildArch());
     REQUIRE(hello.codec == "zstd");
     REQUIRE(hello.capabilities.search == 1);
@@ -143,7 +151,7 @@ TEST_CASE("ned-agent's project search matches a local search exactly", "[Host][H
         LiveContent{dir / "unsaved.txt", std::filesystem::weakly_canonical(dir / "unsaved.txt"), "unsaved needle\n", std::nullopt}};
     const std::vector<SearchMatch> local = ned::editor::SearchDirectory(dir, SearchPattern("needle"), live);
 
-    AgentClient client(FrameTransport({NED_AGENT_BINARY, "--stdio"}, true));
+    AgentClient client(FrameTransport({AgentBinary(), "--stdio"}, true));
     client.Call(std::string(host::kHello), host::ToJson(host::HelloRequest{.build = "editor", .codecs = {"zstd"}, .window = 16}));
     client.connection.Transport().SetCompression(true);
 
@@ -165,7 +173,7 @@ TEST_CASE("ned-agent's project search matches a local search exactly", "[Host][H
 }
 
 TEST_CASE("ned-agent rejects bad search params and unknown methods", "[Host][HostAgent]") {
-    AgentClient client(FrameTransport({NED_AGENT_BINARY, "--stdio"}, true));
+    AgentClient client(FrameTransport({AgentBinary(), "--stdio"}, true));
 
     const auto badPattern = client.Call(std::string(host::kSearchProject),
                                         host::ToJson(host::SearchRequest{.root = "/tmp", .pattern = "(unclosed", .live = {}}));

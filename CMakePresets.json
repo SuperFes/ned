@@ -21,6 +21,30 @@
                 "CMAKE_BUILD_TYPE": "Debug",
                 "NED_ENABLE_SANITIZERS": "ON"
             }
+        },
+        {
+            "name": "agent-x86_64",
+            "displayName": "Static ned-agent, x86_64 musl (zig)",
+            "binaryDir": "${sourceDir}/build-agent-x86_64",
+            "toolchainFile": "${sourceDir}/CMake/Toolchains/ZigMusl.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "NED_AGENT_ONLY": "ON",
+                "NED_AGENT_ARCH": "x86_64",
+                "NED_BUILD_TESTS": "OFF"
+            }
+        },
+        {
+            "name": "agent-aarch64",
+            "displayName": "Static ned-agent, aarch64 musl (zig)",
+            "binaryDir": "${sourceDir}/build-agent-aarch64",
+            "toolchainFile": "${sourceDir}/CMake/Toolchains/ZigMusl.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "NED_AGENT_ONLY": "ON",
+                "NED_AGENT_ARCH": "aarch64",
+                "NED_BUILD_TESTS": "OFF"
+            }
         }
     ],
     "buildPresets": [
@@ -31,6 +55,20 @@
         {
             "name": "sanitize",
             "configurePreset": "sanitize"
+        },
+        {
+            "name": "agent-x86_64",
+            "configurePreset": "agent-x86_64",
+            "targets": [
+                "ned-agent"
+            ]
+        },
+        {
+            "name": "agent-aarch64",
+            "configurePreset": "agent-aarch64",
+            "targets": [
+                "ned-agent"
+            ]
         }
     ]
 }

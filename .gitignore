@@ -4,6 +4,7 @@ cmake-build-*/
 .claude/
 build-asan/
 build-sanitize/
+build-agent-*/
 cmake-build-asan/
 cmake-build-debug/
 .harper-dictionary.txt
