@@ -79,11 +79,17 @@ void ExecuteSavePlan(const SavePlan& plan);
 // Replaces target's content with what write puts on the stream: atomically
 // via a sibling temp file and a rename where that is available, in place
 // where a hard-linked file or an uncreatable sibling forces it, with
-// attributes (CaptureFileAttributes) carried across. A stream left failed
-// fails the save; the original survives unless it was written in place.
+// attributes (CaptureFileAttributes) carried across and the result synced
+// (SetSaveFsync). A stream left failed fails the save; the original survives unless it was written in place.
 // Throws std::runtime_error.
 void ReplaceFileContent(const std::filesystem::path& target, const PreservedFileAttributes& attributes,
                         const std::function<void(std::ostream&)>& write);
+
+// Whether ReplaceFileContent flushes the new content to disk before the
+// rename, and the rename after it, so a crash can't leave an empty or torn
+// file under the target's name. Default true.
+void               SetSaveFsync(bool enabled);
+[[nodiscard]] bool SaveFsync();
 
 } // namespace ned::text
 

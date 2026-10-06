@@ -178,3 +178,33 @@ TEST_CASE("ReplaceFileContent keeps the original when the write fails", "[SavePl
     CHECK(std::filesystem::status(target).permissions() == std::filesystem::perms::owner_all);
     std::filesystem::remove(target);
 }
+
+TEST_CASE("Saves land with fsync on and off", "[SavePlan]") {
+    REQUIRE(ned::text::SaveFsync());
+    const std::filesystem::path target = TempPath("fsync.txt");
+    const std::filesystem::path linked = TempPath("fsync_link.txt");
+    std::filesystem::remove(target);
+    std::filesystem::remove(linked);
+
+    for (const bool fsync : {true, false}) {
+        ned::text::SetSaveFsync(fsync);
+        CHECK(ned::text::SaveFsync() == fsync);
+        ExecuteSavePlan(PlanFor(target, fsync ? "synced\n" : "unsynced\n"));
+        CHECK(ReadFile(target) == (fsync ? "synced\n" : "unsynced\n"));
+        CHECK_FALSE(std::filesystem::exists(target.string() + ".ned-tmp"));
+    }
+    ned::text::SetSaveFsync(true);
+
+    // In place, too.
+    std::filesystem::create_hard_link(target, linked);
+    ExecuteSavePlan(PlanFor(target, "in place\n"));
+    CHECK(ReadFile(linked) == "in place\n");
+    // A target with no directory part syncs the current one.
+    const std::filesystem::path cwd = std::filesystem::current_path();
+    std::filesystem::current_path(target.parent_path());
+    ExecuteSavePlan(PlanFor(target.filename(), "relative\n"));
+    std::filesystem::current_path(cwd);
+    CHECK(ReadFile(target) == "relative\n");
+    std::filesystem::remove(target);
+    std::filesystem::remove(linked);
+}

@@ -802,6 +802,10 @@ The popup is never one source: a language server's items, snippet triggers for t
 
 :   Enable/disable the print-margin/fill-column ruler: a single-column background wash spanning every visible row, marking ned/set-ruler-column's own column. Default true. Themed via the "buffer.ruler" surface (ned/theme-surface).
 
+`ned/set-save-fsync`
+
+:   Whether a save flushes the file to disk before renaming it into place, and the rename after (default true), so a crash or power loss can't leave the file empty or half-written. Off saves faster on a slow disk, trusting the system to write it back later.
+
 `ned/set-save-place`
 
 :   Enable/disable remembering each file's last point and scroll position across editor runs (default true). Off disables both restoring and recording.
