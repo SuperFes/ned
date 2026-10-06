@@ -653,7 +653,9 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::RemoteConnect:
             inputMode_ = InputMode::RemoteConnect;
             prompt_.emplace("Connect to host: ");
-            statusMessage_ = prompt_->StatusText();
+            remoteHostCandidates_    = RemoteHostCandidates();
+            pathCompletionSelection_ = 0;
+            RefreshPathCompletionPopup();
             return;
         case editor::InteractiveRequest::RemoteDisconnect: {
             const std::vector<std::string> connected = remoteHosts_ != nullptr ? remoteHosts_->Destinations() : std::vector<std::string>{};
@@ -666,14 +668,20 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             if (connected.size() == 1) {
                 prompt_->SetText(connected.front());
             }
-            statusMessage_ = prompt_->StatusText();
+            remoteHostCandidates_    = connected;
+            pathCompletionSelection_ = 0;
+            RefreshPathCompletionPopup();
             return;
         }
         case editor::InteractiveRequest::RemoteProjectSearch:
             inputMode_ = InputMode::RemoteSearchRoot;
             prompt_.emplace("Remote search in (host:/path): ");
-            prompt_->SetText(lastRemoteSearchRoot_);
-            statusMessage_ = prompt_->StatusText();
+            if (const auto& roots = promptHistory_.Entries(HistoryKeyForInputMode(InputMode::RemoteSearchRoot)); !roots.empty()) {
+                prompt_->SetText(roots.front());
+            }
+            remoteHostCandidates_    = RemoteHostCandidates();
+            pathCompletionSelection_ = 0;
+            RefreshPathCompletionPopup();
             return;
         case editor::InteractiveRequest::SearchInResults: {
             // Resolved up front rather than at confirm time: the prompt says
@@ -2819,10 +2827,11 @@ std::optional<bufferview::TextEntryPrompt> BufferView::TextEntryPromptFor(InputM
         case InputMode::ProjectSearch:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Project search"};
         case InputMode::RemoteConnect:
-            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Connect"};
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::PathDropdown, "Connect"};
         case InputMode::RemoteDisconnect:
-            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Disconnect"};
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::PathDropdown, "Disconnect"};
         case InputMode::RemoteSearchRoot:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::PathDropdown, "Remote search"};
         case InputMode::RemoteSearchPattern:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Remote search"};
         case InputMode::SearchInResults:
@@ -2932,10 +2941,11 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
     }
     else if (inputMode_ == InputMode::RemoteSearchRoot) {
         if (const std::optional<editor::remote::Location> root = editor::remote::ParseLocation(input)) {
+            promptHistory_.Record(HistoryKeyForInputMode(InputMode::RemoteSearchRoot), root->ToString());
             pendingRemoteSearchRoot_ = *root;
             inputMode_               = InputMode::RemoteSearchPattern;
             prompt_.emplace("Remote search " + root->ToString() + " for: ");
-            statusMessage_ = prompt_->StatusText();
+            RefreshPathCompletionPopup(); // closes the host dropdown
             return bufferview::PromptCommit::Transitioned;
         }
         statusMessage_ = "Expected host:/path, not \"" + input + "\"";

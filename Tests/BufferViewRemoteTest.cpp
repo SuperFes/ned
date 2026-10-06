@@ -26,6 +26,7 @@
 #include "Text/KillRing.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferView.h"
+#include "UI/ListPopup.h"
 #include "UI/Theme.h"
 
 using Catch::Matchers::ContainsSubstring;
@@ -157,4 +158,49 @@ TEST_CASE("remote-connect and remote-disconnect report each outcome", "[BufferVi
     fixture.view.OnEvent(test::Return());
     REQUIRE(fixture.statusMessage == "Disconnected from host");
     REQUIRE(fixture.hosts.Destinations().empty());
+}
+
+TEST_CASE("The host prompts offer the hosts ssh knows, and Tab takes one", "[BufferView][Remote]") {
+    Fixture                     fixture;
+    const std::filesystem::path home = fixture.fake.dir / "home";
+    std::filesystem::create_directories(home / ".ssh");
+    std::ofstream(home / ".ssh" / "config") << "Host zqalias\n";
+    std::ofstream(home / ".ssh" / "known_hosts") << "zqknown.example ssh-ed25519 AAAA\n";
+    const ned::tests::ScopedEnvOverride homeOverride("HOME", home.c_str());
+
+    std::optional<ned::ui::ListPopupModel> popup;
+    fixture.view.SetOnCandidatesChanged([&](std::optional<ned::ui::ListPopupModel> model) { popup = std::move(model); });
+
+    fixture.Command("remote-connect");
+    REQUIRE(popup.has_value());
+    // The user's config comes first; the system's own files may add more.
+    REQUIRE(popup->rows.at(0).main == "zqalias");
+    REQUIRE(popup->rows.at(1).main == "zqknown.example");
+    fixture.Type("zqk");
+    REQUIRE(popup->rows.size() == 1);
+    fixture.view.OnEvent(test::Tab());
+    REQUIRE(fixture.statusMessage == "Connect to host: zqknown.example");
+    fixture.view.OnEvent(test::Ctrl('g'));
+    REQUIRE_FALSE(popup.has_value());
+
+    // The root prompt offers host:/ until the path starts.
+    fixture.Command("remote-project-search");
+    REQUIRE(popup->rows.at(0).main == "zqalias:/");
+    fixture.Type("alias");
+    fixture.view.OnEvent(test::Tab());
+    REQUIRE(fixture.statusMessage == "Remote search in (host:/path): zqalias:/");
+    REQUIRE_FALSE(popup.has_value());
+    fixture.Enter("srv");
+    REQUIRE(fixture.statusMessage == "Remote search zqalias:/srv for: ");
+    REQUIRE_FALSE(popup.has_value());
+    fixture.view.OnEvent(test::Ctrl('g'));
+
+    // Roots searched before rank their hosts first, and the prompt starts
+    // from the last one.
+    fixture.Command("remote-project-search");
+    REQUIRE(fixture.statusMessage == "Remote search in (host:/path): zqalias:/srv");
+    REQUIRE_FALSE(popup.has_value());
+    fixture.view.OnEvent(test::Ctrl('g'));
+    fixture.Command("remote-connect");
+    REQUIRE(popup->rows.at(0).main == "zqalias");
 }

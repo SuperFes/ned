@@ -32,7 +32,8 @@ enum class PromptCompletion {
     // Buffer and file names, offered as a common prefix plus a list in the echo
     // area.
     Names,
-    // Filesystem paths, offered as an anchored dropdown that Tab accepts from.
+    // Filesystem paths, or names a prompt picks much like one (scratch pads,
+    // ssh hosts), offered as an anchored dropdown that Tab accepts from.
     PathDropdown,
 };
 

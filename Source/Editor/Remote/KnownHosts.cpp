@@ -11,6 +11,8 @@
 #include <arpa/inet.h>
 #include <glob.h>
 
+#include "Editor/FuzzyMatch.h"
+
 namespace ned::editor::remote {
 
 namespace {
@@ -310,6 +312,22 @@ std::vector<std::string> KnownHosts(const HostSources& sources) {
         }
     }
     return unique;
+}
+
+std::vector<std::string> MatchHosts(const std::vector<std::string>& hosts, std::string_view typed) {
+    std::vector<std::pair<int, const std::string*>> scored;
+    for (const std::string& host : hosts) {
+        if (const std::optional<int> score = FuzzyScore(host, typed)) {
+            scored.emplace_back(*score, &host);
+        }
+    }
+    std::ranges::stable_sort(scored, std::ranges::greater(), &std::pair<int, const std::string*>::first);
+    std::vector<std::string> matched;
+    matched.reserve(scored.size());
+    for (const auto& [score, host] : scored) {
+        matched.push_back(*host);
+    }
+    return matched;
 }
 
 } // namespace ned::editor::remote

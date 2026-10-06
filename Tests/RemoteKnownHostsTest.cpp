@@ -10,6 +10,7 @@
 
 using ned::editor::remote::HostSources;
 using ned::editor::remote::KnownHosts;
+using ned::editor::remote::MatchHosts;
 using ned::editor::remote::ParseKnownHosts;
 using ned::editor::remote::ParseSearchDomains;
 using ned::editor::remote::ParseSshConfig;
@@ -80,4 +81,12 @@ TEST_CASE("Known hosts rank the user config, then known_hosts, then the system c
     std::ofstream(home / ".ssh" / "conf.d" / "b.conf") << "Host nested\nInclude conf.d/b.conf\n";
     REQUIRE(KnownHosts(sources).size() == 6);
     fs::remove_all(dir);
+}
+
+TEST_CASE("Hosts match fuzzily, keeping the given order between equals", "[Remote][KnownHosts]") {
+    const Names hosts{"zeta.example.com", "members-dev.iad.example.com", "alpha.example.com", "members.example.com"};
+    REQUIRE(MatchHosts(hosts, "") == hosts);
+    REQUIRE(MatchHosts(hosts, "members") == Names{"members-dev.iad.example.com", "members.example.com"});
+    REQUIRE(MatchHosts(hosts, "mdev").front() == "members-dev.iad.example.com");
+    REQUIRE(MatchHosts(hosts, "nowhere").empty());
 }

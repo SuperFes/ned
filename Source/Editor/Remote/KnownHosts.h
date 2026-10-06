@@ -50,6 +50,10 @@ struct HostSources {
 // config's, each once. Missing or unreadable files contribute nothing.
 [[nodiscard]] std::vector<std::string> KnownHosts(const HostSources& sources);
 
+// The hosts typed fuzzily matches, best first. Equal matches keep the order
+// given, so the caller's ranking of sources survives an empty query.
+[[nodiscard]] std::vector<std::string> MatchHosts(const std::vector<std::string>& hosts, std::string_view typed);
+
 } // namespace ned::editor::remote
 
 #endif // NED_EDITOR_REMOTE_KNOWNHOSTS_H

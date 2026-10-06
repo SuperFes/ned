@@ -1,12 +1,14 @@
 #include <chrono>
 #include <cstdio>
 #include <expected>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "Editor/Host/SearchCodec.h"
 #include "Editor/NextError.h"
 #include "Editor/Remote/Hosts.h"
+#include "Editor/Remote/KnownHosts.h"
 #include "Editor/Remote/Search.h"
 #include "UI/BufferView.h"
 
@@ -68,7 +70,6 @@ void BufferView::StartRemoteSearch(const editor::remote::Location& root, const s
         return;
     }
     CancelRemoteSearch();
-    lastRemoteSearchRoot_          = root.ToString();
     const std::uint64_t generation = ++remoteSearchGeneration_;
     remoteSearch_.emplace(RemoteSearchRun{.generation = generation,
                                           .root       = root,
@@ -159,6 +160,48 @@ void BufferView::FinishRemoteSearch(std::uint64_t generation, const std::optiona
     else {
         statusMessage_ = CountMatches(run.matches) + " for " + what + " in " + elapsed + " -- remote files can't be opened yet";
     }
+}
+
+std::vector<std::string> BufferView::RemoteHostCandidates() const {
+    std::vector<std::string> hosts;
+    if (remoteHosts_ != nullptr) {
+        hosts = remoteHosts_->Destinations();
+    }
+    for (const std::string& root : promptHistory_.Entries(HistoryKeyForInputMode(InputMode::RemoteSearchRoot))) {
+        if (const std::optional<editor::remote::Location> location = editor::remote::ParseLocation(root)) {
+            hosts.push_back(location->destination);
+        }
+    }
+    const std::vector<std::string>& connected = promptHistory_.Entries(HistoryKeyForInputMode(InputMode::RemoteConnect));
+    hosts.insert(hosts.end(), connected.begin(), connected.end());
+    const std::vector<std::string> known = editor::remote::KnownHosts(editor::remote::DefaultHostSources());
+    hosts.insert(hosts.end(), known.begin(), known.end());
+
+    std::vector<std::string> unique;
+    std::set<std::string>    seen;
+    for (std::string& host : hosts) {
+        if (seen.insert(host).second) {
+            unique.push_back(std::move(host));
+        }
+    }
+    return unique;
+}
+
+std::vector<std::string> BufferView::RemoteHostCompletions() const {
+    const std::string& typed = prompt_->Text();
+    if (inputMode_ != InputMode::RemoteSearchRoot) {
+        return editor::remote::MatchHosts(remoteHostCandidates_, typed);
+    }
+    // Past the host there's nothing to offer until the agent can list a
+    // directory.
+    if (typed.find(":/") != std::string::npos) {
+        return {};
+    }
+    std::vector<std::string> roots = editor::remote::MatchHosts(remoteHostCandidates_, typed.substr(0, typed.find(':')));
+    for (std::string& root : roots) {
+        root += ":/";
+    }
+    return roots;
 }
 
 void BufferView::CancelRemoteSearch() {

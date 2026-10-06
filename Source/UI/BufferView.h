@@ -4322,12 +4322,16 @@ class BufferView : public Widget {
     void AppendRemoteMatches(std::uint64_t generation, const std::vector<editor::SearchMatch>& matches);
     void FinishRemoteSearch(std::uint64_t generation, const std::optional<std::string>& failure);
     void CancelRemoteSearch();
+    // Hosts already in use or used before, then the ones ssh knows.
+    [[nodiscard]] std::vector<std::string> RemoteHostCandidates() const;
+    // The host dropdown's candidates for what the prompt holds now.
+    [[nodiscard]] std::vector<std::string> RemoteHostCompletions() const;
 
     editor::remote::Hosts*         remoteHosts_ = nullptr; // see SetRemoteHosts
     std::optional<RemoteSearchRun> remoteSearch_;
     std::uint64_t                  remoteSearchGeneration_ = 0;
     editor::remote::Location       pendingRemoteSearchRoot_;
-    std::string                    lastRemoteSearchRoot_;
+    std::vector<std::string>       remoteHostCandidates_; // read when a host prompt opens
 
     BookmarkPromptAction bookmarkPromptAction_ = BookmarkPromptAction::Jump;
     bool                 charsetPromptReverts_ = false;
