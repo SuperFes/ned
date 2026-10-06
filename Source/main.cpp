@@ -1505,6 +1505,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     ned::editor::dap::Manager dapManager(eventLoop);
     windowManager->SetDapManager(&dapManager);
 
+    (void)ned::editor::remote::SweepOrphanedMasters();
     ned::editor::remote::Hosts remoteHosts(eventLoop);
     windowManager->SetRemoteHosts(&remoteHosts);
 

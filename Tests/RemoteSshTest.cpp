@@ -10,8 +10,11 @@
 #include <thread>
 #include <vector>
 
+#include <unistd.h>
+
 #include "Editor/Process/ChildProcess.h"
 #include "Editor/Remote/Ssh.h"
+#include "Editor/RuntimeDir.h"
 #include "EnvOverride.h"
 
 using ned::editor::process::ChildProcess;
@@ -184,6 +187,38 @@ TEST_CASE("Control paths are unique and sit in an owner-only runtime directory",
     REQUIRE(second.parent_path() == first.parent_path());
     REQUIRE(std::filesystem::status(dir / "ned" / "ssh").permissions() == std::filesystem::perms::owner_all);
     REQUIRE(std::filesystem::status(dir / "ned").permissions() == std::filesystem::perms::owner_all);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Masters whose editor is gone are asked to exit, live editors' are kept", "[Remote][Ssh]") {
+    const std::filesystem::path         dir = FreshDir();
+    const ned::tests::ScopedEnvOverride runtime("XDG_RUNTIME_DIR", dir.c_str());
+    REQUIRE(remote::SweepOrphanedMasters(FakeSsh()) == 0);
+
+    pid_t deadPid = 0;
+    {
+        ChildProcess gone(std::vector<std::string>{"true"});
+        deadPid = gone.Pid();
+        (void)gone.WaitForExit();
+    }
+    const std::filesystem::path sockets  = ned::editor::EnsureRuntimeDirectory("ssh");
+    const std::filesystem::path orphaned = sockets / (std::to_string(deadPid) + "-0");
+    const std::filesystem::path live     = sockets / (std::to_string(::getpid()) + "-99");
+    ChildProcess                orphan(remote::SshMasterArgv("host", orphaned, FakeSsh()));
+    SshMaster                   owned("host", FakeSsh(), live);
+    owned.Start();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!std::filesystem::is_socket(orphaned) && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    REQUIRE(std::filesystem::is_socket(orphaned));
+
+    REQUIRE(remote::SweepOrphanedMasters(FakeSsh()) == 1);
+    REQUIRE(orphan.WaitForExit() == 0);
+    REQUIRE_FALSE(std::filesystem::exists(orphaned));
+    REQUIRE(std::filesystem::is_socket(live));
+    REQUIRE(Run(owned.SessionArgv(std::vector<std::string>{"true"})).exitCode == 0);
+    owned.Stop();
     std::filesystem::remove_all(dir);
 }
 

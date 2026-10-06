@@ -62,6 +62,13 @@ class SshError : public std::runtime_error {
 // connections in one editor -- never share a master.
 [[nodiscard]] std::filesystem::path NewControlPath();
 
+// Asks every master whose editor is gone to exit, and removes its control
+// socket. A master runs with -n under ControlPersist=no, so nothing ends it
+// when an editor dies without stopping it; its login stays up until the
+// link drops. Sockets of live editors are left alone. Returns how many
+// were swept.
+std::size_t SweepOrphanedMasters(const SshOptions& options = {});
+
 // Owns one ssh master and its control socket. Start, Stop and destruction
 // belong to one owner thread; SessionArgv is const and may be called from
 // any thread once Start has returned.
