@@ -106,6 +106,7 @@ TEST_CASE("remote-project-search connects, then streams matches into a results b
     fixture.Enter("needle");
     REQUIRE(fixture.statusMessage == "Connecting to host...");
     REQUIRE(fixture.StatusStartsWith("3 matches for \"needle\" on host:" + tree.string() + " in "));
+    CHECK(fixture.statusMessage.ends_with(" s"));
 
     const ned::text::Buffer& results = fixture.activeBuffer.Get();
     REQUIRE(results.Name().starts_with("*search results*"));
