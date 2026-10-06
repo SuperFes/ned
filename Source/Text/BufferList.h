@@ -82,6 +82,14 @@ class BufferList {
     [[nodiscard]] Buffer*       FindByPath(const std::filesystem::path& path);
     [[nodiscard]] const Buffer* FindByPath(const std::filesystem::path& path) const;
 
+    // The open buffer holding a remote file; host paths are compared as
+    // given, never resolved against this machine's disk.
+    [[nodiscard]] Buffer* FindByRemote(const RemoteFile& file);
+    // An empty, loading buffer for a remote file, to be filled by
+    // Buffer::FinishLoad once the host's bytes arrive. Nothing here touches
+    // the local disk, and no open hook runs: those read a local path.
+    Buffer& AddRemotePlaceholder(const RemoteFile& file);
+
     // Returns true if a buffer with that name was found and closed. Clears
     // PreviewBuffer() first if it happens to be the buffer being closed, so
     // that pointer never dangles.

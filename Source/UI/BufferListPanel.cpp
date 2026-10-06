@@ -153,7 +153,9 @@ void BufferListPanel::RefreshDisplay() {
                       table::Cell{.text = buffer.Name()},
                       table::Cell{.text       = FormatBufferSize(buffer.Size()),
                                   .sortNumber = static_cast<std::int64_t>(buffer.Size())},
-                      table::Cell{.text       = buffer.Path() ? DisplayPath(*buffer.Path()) : std::string(),
+                      table::Cell{.text       = buffer.Path()     ? DisplayPath(*buffer.Path())
+                                                : buffer.Remote() ? buffer.Remote()->ToString()
+                                                                  : std::string(),
                                   .foreground = theme_.indentGuideForeground}}});
     }
     table_.SetModel(std::move(model));

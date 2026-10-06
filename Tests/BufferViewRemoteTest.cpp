@@ -17,6 +17,7 @@
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
 #include "Editor/Mode.h"
+#include "Editor/ModeOverrides.h"
 #include "Editor/PostQueue.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
@@ -248,4 +249,91 @@ TEST_CASE("The host prompts add names the resolver knows under the search domain
     fixture.view.OnEvent(test::Tab());
     REQUIRE(fixture.statusMessage == "Remote search in (host:/path): good.example.example.test:/");
     fixture.view.OnEvent(test::Ctrl('g'));
+}
+
+TEST_CASE("find-file opens a host:/path through the host, once, and a missing one as a new remote file", "[BufferView][Remote][HostAgent]") {
+    Fixture                     fixture;
+    const std::filesystem::path file = fixture.fake.dir / "code.py";
+    std::ofstream(file, std::ios::binary) << "x = 1\r\ny = 2\r\n";
+    const std::string where = "host:" + file.string();
+
+    fixture.Command("find-file");
+    fixture.Enter(where);
+    REQUIRE(fixture.statusMessage == "Reading " + where + "...");
+    REQUIRE(fixture.activeBuffer.Get().IsLoading());
+    REQUIRE(fixture.StatusStartsWith("Opened " + where));
+
+    const ned::text::Buffer& opened = fixture.activeBuffer.Get();
+    CHECK(opened.Text() == "x = 1\ny = 2\n");
+    CHECK(opened.Name() == "code.py");
+    CHECK_FALSE(opened.Path().has_value());
+    REQUIRE(opened.Remote().has_value());
+    CHECK(opened.Remote()->ToString() == where);
+    CHECK(opened.LineEndingKind() == ned::text::LineEnding::CRLF);
+    CHECK(opened.RemoteTimestamp() == std::filesystem::last_write_time(file));
+    CHECK_FALSE(opened.IsLoading());
+    CHECK_FALSE(opened.ReadOnly());
+    CHECK_FALSE(opened.Modified());
+    // Its mode comes from the host path and its content, as a local file's would.
+    CHECK(ned::editor::CachedModeForBuffer(opened).name == ned::editor::ModeForPath(file).name);
+    CHECK(ned::editor::CachedModeForBuffer(opened).name != ned::editor::FundamentalMode().name);
+
+    // Already open: the same buffer, no second read.
+    const std::size_t buffers = fixture.bufferList.Buffers().size();
+    fixture.activeBuffer.Set(fixture.buffer);
+    fixture.Command("find-file");
+    fixture.Enter(where);
+    CHECK(&fixture.activeBuffer.Get() == &opened);
+    CHECK(fixture.bufferList.Buffers().size() == buffers);
+
+    const std::string fresh = "host:" + (fixture.fake.dir / "new.txt").string();
+    fixture.Command("find-file");
+    fixture.Enter(fresh);
+    REQUIRE(fixture.StatusStartsWith("(New file) " + fresh));
+    CHECK(fixture.activeBuffer.Get().Text().empty());
+    CHECK_FALSE(fixture.activeBuffer.Get().RemoteTimestamp().has_value());
+    CHECK_FALSE(std::filesystem::exists(fixture.fake.dir / "new.txt"));
+}
+
+TEST_CASE("find-file on a host:/path that can't be read closes its buffer and says why", "[BufferView][Remote][HostAgent]") {
+    Fixture fixture;
+    const auto remoteBuffers = [&fixture] {
+        return std::ranges::count_if(fixture.bufferList.Buffers(), [](const auto& buffer) { return buffer->Remote().has_value(); });
+    };
+
+    fixture.Command("find-file");
+    fixture.Enter("host:" + fixture.fake.dir.string());
+    REQUIRE(fixture.StatusStartsWith("Couldn't open host:" + fixture.fake.dir.string() + ": " + fixture.fake.dir.string() + " is a directory"));
+    CHECK(remoteBuffers() == 0);
+
+    fixture.Command("find-file");
+    fixture.Enter("denied:/etc/hosts");
+    REQUIRE(fixture.StatusStartsWith("Couldn't open denied:/etc/hosts: "));
+    CHECK_THAT(fixture.statusMessage, ContainsSubstring("Permission denied"));
+    CHECK(remoteBuffers() == 0);
+
+    std::ofstream(fixture.fake.dir / "blob", std::ios::binary) << std::string("\x7f" "ELF\0\0", 6);
+    fixture.Command("find-file");
+    fixture.Enter("host:" + (fixture.fake.dir / "blob").string());
+    REQUIRE(fixture.StatusStartsWith("Couldn't open host:"));
+    CHECK_THAT(fixture.statusMessage, ContainsSubstring("refusing to open binary file as text"));
+    CHECK(remoteBuffers() == 0);
+}
+
+TEST_CASE("Closing a remote buffer while it loads drops the host's answer", "[BufferView][Remote][HostAgent]") {
+    Fixture                     fixture;
+    const std::filesystem::path file = fixture.fake.dir / "a.txt";
+    std::ofstream(file) << "text\n";
+
+    fixture.Command("find-file");
+    fixture.Enter("host:" + file.string());
+    REQUIRE(fixture.activeBuffer.Get().IsLoading());
+    fixture.Command("kill-buffer");
+    // The kill-buffer prompt names the active buffer by default.
+    fixture.view.OnEvent(test::Return());
+    REQUIRE(fixture.bufferList.FindByRemote({.destination = "host", .path = file}) == nullptr);
+    // The connection and read still finish; nothing reappears.
+    REQUIRE(PumpUntil(fixture.queue, [&] { return fixture.hosts.Find("host") != nullptr; }));
+    REQUIRE_FALSE(PumpUntil(fixture.queue, [&] { return fixture.bufferList.FindByRemote({.destination = "host", .path = file}) != nullptr; },
+                            std::chrono::milliseconds(500)));
 }

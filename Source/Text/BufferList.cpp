@@ -322,6 +322,23 @@ const Buffer* BufferList::FindByPath(const std::filesystem::path& path) const {
     return const_cast<BufferList*>(this)->FindByPath(path);
 }
 
+Buffer* BufferList::FindByRemote(const RemoteFile& file) {
+    for (auto& buffer : buffers_) {
+        if (buffer->Remote() == file) {
+            return buffer.get();
+        }
+    }
+    return nullptr;
+}
+
+Buffer& BufferList::AddRemotePlaceholder(const RemoteFile& file) {
+    Buffer placeholder = Buffer::NewRemoteFile(file);
+    placeholder.Rename(UniqueName(placeholder.Name()));
+    placeholder.MarkLoading();
+    buffers_.push_back(std::make_unique<Buffer>(std::move(placeholder)));
+    return *buffers_.back();
+}
+
 bool BufferList::Close(const std::string& name) {
     const auto it = std::find_if(buffers_.begin(), buffers_.end(), [&name](const std::unique_ptr<Buffer>& buffer) {
         return buffer->Name() == name;

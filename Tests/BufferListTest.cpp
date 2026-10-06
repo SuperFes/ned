@@ -745,3 +745,28 @@ TEST_CASE("Find by identity names an open buffer and nothing once it is closed",
     REQUIRE(list.Find(identity) == nullptr);
     REQUIRE(list.Find(ned::text::BufferIdentity()) == nullptr);
 }
+
+TEST_CASE("A remote file's buffer is found by host and path, never as a local file", "[BufferList]") {
+    ned::text::BufferList          list;
+    const std::filesystem::path    local = std::filesystem::temp_directory_path() / "ned_bufferlist_remote.txt";
+    const ned::text::RemoteFile    file{.destination = "host", .path = local};
+    { std::ofstream(local) << "local\n"; }
+
+    ned::text::Buffer& placeholder = list.AddRemotePlaceholder(file);
+    CHECK(placeholder.IsLoading());
+    CHECK(placeholder.ReadOnly());
+    CHECK_FALSE(placeholder.Path().has_value());
+    CHECK(list.FindByRemote(file) == &placeholder);
+    CHECK(list.FindByRemote({.destination = "other", .path = local}) == nullptr);
+    CHECK(list.FindByPath(local) == nullptr);
+
+    // The local file of the same name opens as its own buffer.
+    ned::text::Buffer& opened = list.OpenFile(local);
+    CHECK(&opened != &placeholder);
+    CHECK(opened.Text() == "local\n");
+    CHECK(list.FindByRemote(file) == &placeholder);
+    CHECK(list.FindByPath(local) == &opened);
+
+    CHECK(list.AddRemotePlaceholder({.destination = "other", .path = local}).Name() != placeholder.Name());
+    std::filesystem::remove(local);
+}

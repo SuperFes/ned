@@ -10,6 +10,7 @@
 #include "Editor/NextError.h"
 #include "Editor/Remote/Hosts.h"
 #include "Editor/Remote/KnownHosts.h"
+#include "Editor/Remote/RemoteBuffer.h"
 #include "Editor/Remote/Search.h"
 #include "UI/BufferView.h"
 
@@ -63,6 +64,50 @@ void BufferView::DisconnectFromHost(const std::string& destination) {
         CancelRemoteSearch();
     }
     statusMessage_ = remoteHosts_->Disconnect(destination) ? "Disconnected from " + destination : "Not connected to " + destination;
+}
+
+void BufferView::VisitRemoteFile(const editor::remote::Location& file) {
+    if (text::Buffer* open = bufferList_.FindByRemote(file)) {
+        activeBuffer_.Set(*open);
+        return;
+    }
+    if (remoteHosts_ == nullptr) {
+        statusMessage_ = "No remote hosts.";
+        return;
+    }
+    text::Buffer& placeholder = bufferList_.AddRemotePlaceholder(file);
+    activeBuffer_.Set(placeholder);
+    statusMessage_ = "Reading " + file.ToString() + "...";
+
+    // The buffer may be closed before the host answers; then the answer
+    // goes nowhere.
+    const text::BufferIdentity identity(placeholder);
+    const auto                 fail = [this, file](text::Buffer& buffer, const std::string& why) {
+        CloseBufferNow(buffer);
+        ReportError("Couldn't open " + file.ToString() + ": " + why);
+    };
+    remoteHosts_->Connect(file.destination, lifetime_.Bind([this, file, identity, fail](const std::expected<editor::remote::Connection*, std::string>& connection) {
+        text::Buffer* buffer = bufferList_.Find(identity);
+        if (buffer == nullptr) {
+            return;
+        }
+        if (!connection) {
+            fail(*buffer, connection.error());
+            return;
+        }
+        editor::remote::ReadFile(**connection, file.path, editor::remote::MaxRemoteFileBytes(),
+                                 lifetime_.Bind([this, file, identity, fail](const editor::remote::FsResult<text::FileContents>& read) {
+                                     text::Buffer* loading = bufferList_.Find(identity);
+                                     if (loading == nullptr) {
+                                         return;
+                                     }
+                                     if (const std::optional<std::string> failure = editor::remote::FinishRemoteLoad(*loading, read)) {
+                                         fail(*loading, *failure);
+                                         return;
+                                     }
+                                     statusMessage_ = (read ? "Opened " : "(New file) ") + file.ToString();
+                                 }));
+    }));
 }
 
 void BufferView::StartRemoteSearch(const editor::remote::Location& root, const std::string& pattern) {

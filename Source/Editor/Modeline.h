@@ -18,6 +18,8 @@
 #include <string>
 #include <string_view>
 
+#include "Text/ITextStorage.h"
+
 namespace ned::editor {
 
 inline constexpr std::size_t kModelineLines = 5;
@@ -37,6 +39,9 @@ struct Modeline {
 // overlap. Empty for a missing or unreadable file.
 [[nodiscard]] std::string ReadFileEnds(const std::filesystem::path& path, std::size_t headBytes = 8192,
                                        std::size_t tailBytes = 4096);
+
+// ReadFileEnds of text already in hand, such as a remote buffer's.
+[[nodiscard]] std::string TextEnds(const text::ITextStorage& text, std::size_t headBytes = 8192, std::size_t tailBytes = 4096);
 
 } // namespace ned::editor
 
