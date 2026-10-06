@@ -145,6 +145,14 @@ TEST_CASE("ned-agent's project search matches a local search exactly", "[Host][H
         std::ofstream(dir / "stale.txt") << "stale needle\n";
         std::ofstream(dir / ".gitignore") << "ignored.txt\n";
         std::ofstream(dir / "ignored.txt") << "needle ignored\n";
+        // Enough files for the scan to finish them out of order.
+        for (int d = 0; d < 6; ++d) {
+            const std::filesystem::path sub = dir / ("d" + std::to_string(d));
+            std::filesystem::create_directories(sub);
+            for (int f = 0; f < 60; ++f) {
+                std::ofstream(sub / ("f" + std::to_string(f) + ".txt")) << "padding\nneedle " << d << ' ' << f << '\n';
+            }
+        }
     }
     const std::vector<LiveContent> live{
         LiveContent{dir / "stale.txt", std::filesystem::weakly_canonical(dir / "stale.txt"), "fresh needle\n", std::nullopt},
@@ -156,7 +164,7 @@ TEST_CASE("ned-agent's project search matches a local search exactly", "[Host][H
     client.connection.Transport().SetCompression(true);
 
     const auto answer = client.Call(std::string(host::kSearchProject),
-                                    host::ToJson(host::SearchRequest{.root = dir, .pattern = "needle", .live = live}));
+                                    host::ToJson(host::SearchRequest{.root = dir, .pattern = "needle", .live = live, .options = {.threads = 8}}));
 
     REQUIRE(answer.result == Json::object());
     REQUIRE(answer.chunks.size() > 1);
@@ -166,8 +174,33 @@ TEST_CASE("ned-agent's project search matches a local search exactly", "[Host][H
             remote.push_back(std::move(match));
         }
     }
-    REQUIRE(local.size() == 3002);
+    REQUIRE(local.size() == 3002 + 6 * 60);
     RequireSameMatches(remote, local);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("ned-agent searches under the request's settings rather than its own", "[Host][HostAgent]") {
+    const std::filesystem::path dir = FreshDir("ned_host_agent_search_settings");
+    std::ofstream(dir / ".editorconfig", std::ios::binary) << "root = true\n[*.txt]\ncharset = latin1\n";
+    std::ofstream(dir / "old.txt", std::ios::binary) << "caf\xE9 needle\n";
+
+    AgentClient client(FrameTransport({AgentBinary(), "--stdio"}, true));
+    const auto  count = [&](bool editorConfig) {
+        const auto answer = client.Call(std::string(host::kSearchProject),
+                                         host::ToJson(host::SearchRequest{.root    = dir,
+                                                                          .pattern = "caf\xC3\xA9 needle",
+                                                                          .live    = {},
+                                                                          .options = {.threads = 1, .editorConfig = editorConfig}}));
+        REQUIRE(answer.result == Json::object());
+        std::size_t matches = 0;
+        for (const Json& chunk : answer.chunks) {
+            matches += host::MatchesFromHost(chunk, dir).size();
+        }
+        return matches;
+    };
+    REQUIRE(count(true) == 1);
+    REQUIRE(count(false) == 0);
 
     std::filesystem::remove_all(dir);
 }

@@ -22,6 +22,7 @@ namespace ned::editor::host {
 [[nodiscard]] const nlohmann::json& RequireArray(const nlohmann::json& json, const char* field);
 [[nodiscard]] std::string           RequireString(const nlohmann::json& json, const char* field);
 [[nodiscard]] std::uint64_t         RequireUnsigned(const nlohmann::json& json, const char* field);
+[[nodiscard]] bool                  RequireBool(const nlohmann::json& json, const char* field);
 // A CBOR byte string, as the bytes it holds.
 [[nodiscard]] std::string RequireBytes(const nlohmann::json& json, const char* field);
 

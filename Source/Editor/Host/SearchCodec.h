@@ -2,9 +2,14 @@
 // Wire forms for search/project (Docs/ClientServerProtocol.md, section 7).
 //
 //   params  {root: path, pattern: str, live: [{path, canonical, text: bytes}
-//                                             | {path, canonical, matches}]}
+//                                             | {path, canonical, matches}],
+//            threads: uint, editorconfig: bool}
 //   chunk   [{file: path, line: uint, text: bytes}, ...]
 //   result  {}
+//
+// Chunks arrive as files finish, in the order a local SearchDirectory
+// returns them. threads and editorconfig are the editor's own settings
+// (SearchOptions), so a remote search behaves as a local one would.
 //
 
 #ifndef NED_EDITOR_HOST_SEARCHCODEC_H
@@ -27,6 +32,7 @@ struct SearchRequest {
     std::filesystem::path    root;
     std::string              pattern;
     std::vector<LiveContent> live;
+    SearchOptions            options = CurrentSearchOptions();
 };
 
 // The decoders throw protocol::ProtocolError on a malformed field.

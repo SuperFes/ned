@@ -1,6 +1,7 @@
 #include "SearchCodec.h"
 
 #include <algorithm>
+#include <limits>
 
 #include "Editor/Host/Codec.h"
 #include "Editor/Protocol/FrameTransport.h"
@@ -30,7 +31,11 @@ Json ToJson(const SearchRequest& request) {
         }
         live.push_back(std::move(item));
     }
-    return Json{{"root", PathToJson(request.root)}, {"pattern", request.pattern}, {"live", std::move(live)}};
+    return Json{{"root", PathToJson(request.root)},
+                {"pattern", request.pattern},
+                {"live", std::move(live)},
+                {"threads", request.options.threads},
+                {"editorconfig", request.options.editorConfig}};
 }
 
 SearchRequest SearchRequestFromJson(const Json& json) {
@@ -47,6 +52,12 @@ SearchRequest SearchRequestFromJson(const Json& json) {
         }
         request.live.push_back(std::move(entry));
     }
+    const std::uint64_t threads = RequireUnsigned(json, "threads");
+    if (threads == 0) {
+        throw protocol::ProtocolError("ned: search threads must be at least 1");
+    }
+    request.options.threads      = static_cast<unsigned int>(std::min<std::uint64_t>(threads, std::numeric_limits<unsigned int>::max()));
+    request.options.editorConfig = RequireBool(json, "editorconfig");
     return request;
 }
 

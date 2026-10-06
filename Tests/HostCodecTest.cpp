@@ -74,6 +74,21 @@ TEST_CASE("Search requests carry paths as raw bytes", "[Host][HostCodec]") {
     REQUIRE((*decoded.live[1].preScanned)[0].lineNumber == 9);
 }
 
+TEST_CASE("Search requests carry the editor's search settings", "[Host][HostCodec]") {
+    host::SearchRequest request{.root = "/root", .pattern = "needle", .live = {}, .options = {.threads = 3, .editorConfig = false}};
+
+    const host::SearchRequest decoded = host::SearchRequestFromJson(OverTheWire(host::ToJson(request)));
+    REQUIRE(decoded.options.threads == 3);
+    REQUIRE_FALSE(decoded.options.editorConfig);
+
+    Json noThreads = host::ToJson(request);
+    noThreads["threads"] = 0;
+    REQUIRE_THROWS_AS(host::SearchRequestFromJson(noThreads), ProtocolError);
+    Json missing = host::ToJson(request);
+    missing.erase("editorconfig");
+    REQUIRE_THROWS_AS(host::SearchRequestFromJson(missing), ProtocolError);
+}
+
 TEST_CASE("Path decoding rejects relative paths, NULs and non-bytes", "[Host][HostCodec]") {
     REQUIRE(host::RequirePath(Json{{"p", host::Bytes("/a/./b/../c")}}, "p") == "/a/c");
     REQUIRE_THROWS_AS(host::RequirePath(Json{{"p", host::Bytes("a/b")}}, "p"), ProtocolError);

@@ -1,6 +1,8 @@
 #include "Dispatcher.h"
 
+#include <iterator>
 #include <optional>
+#include <span>
 #include <stop_token>
 #include <thread>
 #include <utility>
@@ -29,7 +31,10 @@ struct Dispatcher::SearchJob {
     explicit SearchJob(Responder responderIn) : responder(std::move(responderIn)) {
     }
 
-    Responder                                     responder;
+    Responder responder;
+    // Matches held while the peer's credit is spent, so a slow link gets
+    // fuller chunks rather than a queue of small ones.
+    std::vector<SearchMatch>                      pending;
     std::jthread                                  worker;
     std::optional<std::stop_callback<StopWorker>> forwardStop;
 };
@@ -93,25 +98,53 @@ void Dispatcher::SearchProject(const Json& params, Responder responder) {
 
     const std::uint64_t id  = nextJob_++;
     auto                job = std::make_unique<SearchJob>(std::move(responder));
-    job->worker             = std::jthread([this, id, alive = lifetime_.Token(), root = std::move(request->root), pattern = std::move(*pattern),
-                                            live = std::move(request->live)](const std::stop_token& stop) {
-        std::vector<SearchMatch> matches;
-        std::string              error;
+    job->responder.OnDrained(lifetime_.Bind([this, id] {
+        if (const auto it = searches_.find(id); it != searches_.end()) {
+            SendPending(*it->second);
+        }
+    }));
+    job->worker = std::jthread([this, id, alive = lifetime_.Token(), root = std::move(request->root), pattern = std::move(*pattern),
+                                live = std::move(request->live), options = request->options](const std::stop_token& stop) {
+        std::string error;
         try {
-            matches = SearchDirectory(root, pattern, live, stop);
+            StreamSearchDirectory(
+                root, pattern, live, options,
+                [&](std::vector<SearchMatch> run) {
+                    postQueue_.Post(alive.Bind([this, id, run = std::move(run)]() mutable { SearchMatches(id, std::move(run)); }));
+                },
+                stop);
         }
         catch (const std::exception& e) {
             error = e.what();
         }
-        postQueue_.Post(alive.Bind([this, id, matches = std::move(matches), error = std::move(error)]() mutable {
-            FinishSearch(id, std::move(matches), error);
-        }));
+        // Posted after every run, so it arrives after them.
+        postQueue_.Post(alive.Bind([this, id, error = std::move(error)] { FinishSearch(id, error); }));
     });
     job->forwardStop.emplace(job->responder.StopToken(), StopWorker{job->worker.get_stop_source()});
     searches_.emplace(id, std::move(job));
 }
 
-void Dispatcher::FinishSearch(std::uint64_t job, std::vector<SearchMatch> matches, const std::string& error) {
+void Dispatcher::SearchMatches(std::uint64_t job, std::vector<SearchMatch> matches) {
+    const auto it = searches_.find(job);
+    if (it == searches_.end()) {
+        return;
+    }
+    std::vector<SearchMatch>& pending = it->second->pending;
+    pending.insert(pending.end(), std::make_move_iterator(matches.begin()), std::make_move_iterator(matches.end()));
+    SendPending(*it->second);
+}
+
+void Dispatcher::SendPending(SearchJob& job) {
+    if (job.pending.empty() || job.responder.Backlog() > 0) {
+        return;
+    }
+    for (const std::span<const SearchMatch> chunk : ChunkMatches(job.pending)) {
+        job.responder.Chunk(MatchesToJson(chunk));
+    }
+    job.pending.clear();
+}
+
+void Dispatcher::FinishSearch(std::uint64_t job, const std::string& error) {
     const auto it = searches_.find(job);
     if (it == searches_.end()) {
         return;
@@ -125,7 +158,7 @@ void Dispatcher::FinishSearch(std::uint64_t job, std::vector<SearchMatch> matche
         responder.Error(error_code::kInternalError, error);
         return;
     }
-    for (const std::span<const SearchMatch> chunk : ChunkMatches(matches)) {
+    for (const std::span<const SearchMatch> chunk : ChunkMatches(finished->pending)) {
         responder.Chunk(MatchesToJson(chunk));
     }
     responder.Result(Json::object());

@@ -58,6 +58,14 @@ std::uint64_t RequireUnsigned(const Json& json, const char* field) {
     WrongType(field, "an unsigned integer");
 }
 
+bool RequireBool(const Json& json, const char* field) {
+    const Json& value = Field(json, field);
+    if (!value.is_boolean()) {
+        WrongType(field, "a boolean");
+    }
+    return value.get<bool>();
+}
+
 std::string RequireBytes(const Json& json, const char* field) {
     const Json& value = Field(json, field);
     if (!value.is_binary()) {

@@ -50,7 +50,9 @@ class Dispatcher {
 
     void Hello(const nlohmann::json& params, protocol::Responder responder);
     void SearchProject(const nlohmann::json& params, protocol::Responder responder);
-    void FinishSearch(std::uint64_t job, std::vector<SearchMatch> matches, const std::string& error);
+    void SearchMatches(std::uint64_t job, std::vector<SearchMatch> matches);
+    void SendPending(SearchJob& job);
+    void FinishSearch(std::uint64_t job, const std::string& error);
 
     protocol::Endpoint&                         endpoint_;
     PostQueue&                                  postQueue_;
