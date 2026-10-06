@@ -91,7 +91,9 @@ RemoteHost ParseProbe(std::string_view output) {
     for (const auto line : std::views::split(output, '\n')) {
         lines.emplace_back(line.begin(), line.end());
     }
-    const auto marker = std::ranges::find(std::views::reverse(lines), kProbeMarker);
+    // A login script's last line may lack its newline, leaving the marker
+    // at the end of it.
+    const auto marker = std::ranges::find_if(std::views::reverse(lines), [](std::string_view line) { return line.ends_with(kProbeMarker); });
     if (marker == std::views::reverse(lines).end()) {
         throw DeployError("the host's probe printed no marker: " + FirstLine(output));
     }
