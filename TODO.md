@@ -61,12 +61,6 @@ and sync on save; don't build a remote-authoritative buffer.
 
 **Library split** — the agent links only what it needs. Measured by include closure,
 2026-10-05.
-- [ ] Split `Project/Search.cpp` into a disk core and a live-buffer overlay. The overlay
-      is what pulls in `Buffer`/`BufferList` and the grammar engine (215 files), and it
-      belongs on the editor side anyway.
-- [ ] Separate the per-file charset lookup from `EditorConfig`, which reaches the
-      language machinery through `FormatRules` (209 files). Search needs only the
-      charset.
 - [ ] `Text/DisplayWidth.cpp` includes Notcurses, which blocks a clean text library. It
       doesn't block the agent.
 
