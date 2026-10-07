@@ -12,6 +12,7 @@
 #include "Editor/Host/FsCodec.h"
 #include "Editor/Host/Hello.h"
 #include "Editor/Host/SearchCodec.h"
+#include "Editor/Host/WatchCodec.h"
 #include "Editor/Protocol/Cbor.h"
 
 using ned::editor::LiveContent;
@@ -160,6 +161,25 @@ TEST_CASE("Rename requests round-trip and need both absolute paths", "[Host][Hos
     CHECK(host::FsRenameRequestFromJson(OverTheWire(host::ToJson(request))) == request);
     CHECK_THROWS_AS(host::FsRenameRequestFromJson(Json{{"from", host::Bytes("/a")}}), ProtocolError);
     CHECK_THROWS_AS(host::FsRenameRequestFromJson(Json{{"from", host::Bytes("/a")}, {"to", host::Bytes("b")}}), ProtocolError);
+}
+
+TEST_CASE("Watch requests and events round-trip and refuse what they can't name", "[Host][HostCodec]") {
+    using Kind = ned::editor::FileEvent::Kind;
+    const host::WatchSetRequest request{.files = {"/a/caf\xC3\xA9", "/b"}, .directories = {"/c/d"}};
+    CHECK(host::WatchSetRequestFromJson(OverTheWire(host::ToJson(request))) == request);
+    CHECK(host::WatchSetRequestFromJson(OverTheWire(host::ToJson(host::WatchSetRequest{}))) == host::WatchSetRequest{});
+    CHECK_THROWS_AS(host::WatchSetRequestFromJson(Json{{"files", Json::array()}}), ProtocolError);
+    CHECK_THROWS_AS(host::WatchSetRequestFromJson(Json{{"files", Json::array({host::Bytes("rel")})}, {"directories", Json::array()}}),
+                    ProtocolError);
+
+    const host::WatchEvents events{.events   = {{.path = "/a", .kind = Kind::Created}, {.path = "/b", .kind = Kind::Changed}, {.path = "/c", .kind = Kind::Deleted}},
+                                   .overflow = true};
+    CHECK(host::WatchEventsFromJson(OverTheWire(host::ToJson(events))) == events);
+    CHECK_THROWS_AS(host::WatchEventsFromJson(Json{{"events", Json::array({Json{{"path", host::Bytes("/a")}, {"kind", "moved"}}})}, {"overflow", false}}),
+                    ProtocolError);
+    CHECK_THROWS_AS(host::WatchEventsFromJson(Json{{"events", Json::array({Json{{"path", host::Bytes("a")}, {"kind", "created"}}})}, {"overflow", false}}),
+                    ProtocolError);
+    CHECK_THROWS_AS(host::WatchEventsFromJson(Json{{"events", Json::array()}}), ProtocolError);
 }
 
 TEST_CASE("Path decoding rejects relative paths, NULs and non-bytes", "[Host][HostCodec]") {

@@ -19,6 +19,7 @@
 #include "Editor/Host/FsCodec.h"
 #include "Editor/Host/Hello.h"
 #include "Editor/Host/SearchCodec.h"
+#include "Editor/Host/WatchCodec.h"
 #include "Editor/PostQueue.h"
 #include "Editor/Protocol/Cbor.h"
 #include "Editor/Protocol/Endpoint.h"
@@ -140,6 +141,7 @@ TEST_CASE("ned-agent answers hello with its own build and settles the codec", "[
     REQUIRE(hello.codec == "zstd");
     REQUIRE(hello.capabilities.search == 1);
     REQUIRE(hello.capabilities.fs == 3);
+    REQUIRE(hello.capabilities.watch == 1);
 }
 
 TEST_CASE("ned-agent's project search matches a local search exactly", "[Host][HostAgent]") {
@@ -369,6 +371,57 @@ TEST_CASE("ned-agent makes, renames and removes paths", "[Host][HostAgent]") {
     const auto missing = client.Call(std::string(host::kFsRemove), host::PathParams(dir / "c"));
     REQUIRE(missing.error.has_value());
     CHECK(missing.error->code == host::fs_error::kNotFound);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("ned-agent reports changes to watched files and directory entries, named as they were asked for", "[Host][HostAgent]") {
+    const std::filesystem::path dir = FreshDir("ned_host_agent_watch");
+    std::filesystem::create_directories(dir / "sub");
+    std::filesystem::create_directory_symlink(dir / "sub", dir / "link");
+    std::ofstream(dir / "a.txt") << "a\n";
+    AgentClient client(FrameTransport({AgentBinary(), "--stdio"}, true));
+
+    std::vector<ned::editor::FileEvent> events;
+    bool                                overflow = false;
+    client.endpoint.HandleNotification(std::string(host::kWatchEvent), [&](const Json& params) {
+        const host::WatchEvents batch = host::WatchEventsFromJson(params);
+        events.insert(events.end(), batch.events.begin(), batch.events.end());
+        overflow = overflow || batch.overflow;
+    });
+    const auto has = [&](const std::filesystem::path& path) {
+        return std::ranges::any_of(events, [&](const ned::editor::FileEvent& event) { return event.path == path; });
+    };
+
+    const auto set = client.Call(std::string(host::kWatchSet), host::ToJson(host::WatchSetRequest{.files = {dir / "a.txt"}, .directories = {dir / "link"}}));
+    REQUIRE(set.result == Json::object());
+
+    // A watched file's sibling stays quiet; an entry in a watched directory
+    // is named through the link it was asked for by.
+    std::ofstream(dir / "b.txt") << "b\n";
+    std::ofstream(dir / "a.txt") << "changed\n";
+    std::ofstream(dir / "sub" / "new.txt") << "new\n";
+    REQUIRE(client.PumpUntil([&] { return has(dir / "a.txt") && has(dir / "link" / "new.txt"); }));
+    CHECK_FALSE(has(dir / "b.txt"));
+    CHECK_FALSE(has(dir / "sub" / "new.txt"));
+    CHECK_FALSE(overflow);
+
+    std::filesystem::remove(dir / "sub" / "new.txt");
+    events.clear();
+    REQUIRE(client.PumpUntil([&] { return has(dir / "link" / "new.txt"); }));
+    CHECK(events.back().kind == ned::editor::FileEvent::Kind::Deleted);
+
+    // An empty set stops reporting.
+    REQUIRE(client.Call(std::string(host::kWatchSet), host::ToJson(host::WatchSetRequest{})).result == Json::object());
+    events.clear();
+    std::ofstream(dir / "a.txt") << "again\n";
+    const auto quietUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(800);
+    REQUIRE(client.PumpUntil([&] { return std::chrono::steady_clock::now() > quietUntil; }));
+    CHECK(events.empty());
+
+    const auto relative = client.Call(std::string(host::kWatchSet), Json{{"files", Json::array({host::Bytes("a.txt")})}, {"directories", Json::array()}});
+    REQUIRE(relative.error.has_value());
+    CHECK(relative.error->code == error_code::kInvalidParams);
 
     std::filesystem::remove_all(dir);
 }

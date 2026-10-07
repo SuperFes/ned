@@ -11,7 +11,9 @@
 #define NED_EDITOR_HOST_DISPATCHER_H
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -20,6 +22,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Editor/FileWatch.h"
 #include "Editor/Host/Hello.h"
 #include "Editor/Lifetime.h"
 #include "Editor/PostQueue.h"
@@ -39,7 +42,7 @@ class Dispatcher {
     // to its transport. Both references must outlive this object.
     Dispatcher(protocol::Endpoint& endpoint, PostQueue& postQueue, Identity identity,
                std::function<void(std::string_view codec)> onCodec = {});
-    // Stops running searches and waits for them.
+    // Stops running searches and the watcher, and waits for them.
     ~Dispatcher();
 
     Dispatcher(const Dispatcher&)            = delete;
@@ -66,6 +69,10 @@ class Dispatcher {
     void FsMkdir(const nlohmann::json& params, protocol::Responder responder);
     void FsRename(const nlohmann::json& params, protocol::Responder responder);
     void FsRemove(const nlohmann::json& params, protocol::Responder responder);
+    void WatchSet(const nlohmann::json& params, protocol::Responder responder);
+    // One burst from the watcher, as the editor named the paths; empty when
+    // the watcher lost events.
+    void ReportWatchEvents(const std::vector<FileEvent>& burst);
 
     protocol::Endpoint&                         endpoint_;
     PostQueue&                                  postQueue_;
@@ -75,6 +82,13 @@ class Dispatcher {
     std::uint64_t                                                 nextJob_ = 0;
     std::unordered_map<std::uint64_t, std::unique_ptr<SearchJob>> searches_;
     std::unordered_map<std::uint64_t, std::unique_ptr<WorkerJob>> workerJobs_;
+
+    // watch/set's paths, keyed by the canonical paths the watcher reports.
+    std::map<std::filesystem::path, std::vector<std::filesystem::path>> watchedFiles_;
+    std::map<std::filesystem::path, std::vector<std::filesystem::path>> watchedDirectories_;
+    // Made by the first watch/set. Only its own thread touches watchBurst_.
+    std::vector<FileEvent>       watchBurst_;
+    std::unique_ptr<FileWatcher> watcher_;
 
     LifetimeGuard lifetime_;
 };
