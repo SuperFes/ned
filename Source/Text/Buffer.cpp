@@ -551,6 +551,13 @@ void Buffer::SetRemoteTimestamp(std::optional<std::filesystem::file_time_type> t
     RemoteChanged_   = false;
 }
 
+void Buffer::SetRemote(RemoteFile file) {
+    if (Remote_ != file) {
+        ++FileGeneration_;
+    }
+    Remote_ = std::move(file);
+}
+
 void Buffer::NoteRemoteChanged() {
     RemoteChanged_ = true;
 }

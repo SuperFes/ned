@@ -213,6 +213,9 @@ class Buffer {
     // such file. Setting it clears NoteRemoteChanged.
     [[nodiscard]] const std::optional<std::filesystem::file_time_type>& RemoteTimestamp() const;
     void SetRemoteTimestamp(std::optional<std::filesystem::file_time_type> timestamp);
+    // Rebinds a remote buffer to another file on its host, as SetPath does
+    // a local one; Name() is the caller's to change.
+    void SetRemote(RemoteFile file);
     // The host refused a write because its file changed since it was read:
     // ExternallyModified() holds from here, so the next save asks first.
     void NoteRemoteChanged();
@@ -673,10 +676,10 @@ class Buffer {
     [[nodiscard]] std::size_t SaveGeneration() const;
 
     // Bumped whenever the file this buffer reflects changes under it -- a
-    // Revert(), a MergeExternalChanges(), a SetPath() to a different path --
-    // and never by an edit or a save, whose content the buffer already
-    // holds. What settings read from the file (Editor/FileSettings.h) poll to
-    // know they are stale.
+    // Revert(), a MergeExternalChanges(), a SetPath() or SetRemote() to a
+    // different file -- and never by an edit or a save, whose content the
+    // buffer already holds. What settings read from the file
+    // (Editor/FileSettings.h) poll to know they are stale.
     [[nodiscard]] std::size_t FileGeneration() const;
 
     // The edits behind those generation bumps, for a holder that needs to

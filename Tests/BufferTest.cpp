@@ -344,6 +344,20 @@ TEST_CASE("Contents read apart from the buffer decode exactly as FromFile reads 
     CHECK_THROWS_AS(ReadFileContents(path), std::runtime_error);
 }
 
+TEST_CASE("SetRemote moves a remote buffer to another file on its host", "[Buffer][Remote]") {
+    using ned::text::RemoteFile;
+    Buffer              remote     = Buffer::NewRemoteFile({.destination = "host", .path = "/srv/a.txt"});
+    const std::size_t   generation = remote.FileGeneration();
+    const RemoteFile    moved{.destination = "host", .path = "/srv/b.txt"};
+
+    remote.SetRemote(moved);
+    CHECK(remote.Remote() == moved);
+    CHECK(remote.FileGeneration() == generation + 1);
+    CHECK(remote.Name() == "host:a.txt");
+    remote.SetRemote(moved);
+    CHECK(remote.FileGeneration() == generation + 1);
+}
+
 TEST_CASE("A remote file's contents decode with no local path and nothing local stating their charset", "[Buffer][Charset]") {
     using ned::text::FileContents;
     using ned::text::RemoteFile;
