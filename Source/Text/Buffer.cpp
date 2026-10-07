@@ -165,14 +165,14 @@ Buffer Buffer::FromRemoteContents(RemoteFile file, FileContents contents, bool a
     const bool    likelyBinary = BytesLookBinaryToLoad(contents.bytes, charsetChoice);
     const Charset charset      = ResolveUnstatedCharset(contents.bytes, charsetChoice);
     Buffer        buffer       = Decode(file.ToString(), std::move(contents.bytes), allowBinary, likelyBinary, charset);
-    buffer.Rename(file.path.filename().string());
+    buffer.Rename(RemoteBufferName(file));
     buffer.Remote_          = std::move(file);
     buffer.RemoteTimestamp_ = contents.timestamp;
     return buffer;
 }
 
 Buffer Buffer::NewRemoteFile(RemoteFile file) {
-    Buffer buffer(file.path.filename().string());
+    Buffer buffer(RemoteBufferName(file));
     buffer.Remote_ = std::move(file);
     return buffer;
 }

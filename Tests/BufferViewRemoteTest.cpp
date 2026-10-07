@@ -269,7 +269,7 @@ TEST_CASE("find-file opens a host:/path through the host, once, and a missing on
 
     const ned::text::Buffer& opened = fixture.activeBuffer.Get();
     CHECK(opened.Text() == "x = 1\ny = 2\n");
-    CHECK(opened.Name() == "code.py");
+    CHECK(opened.Name() == "host:code.py");
     CHECK_FALSE(opened.Path().has_value());
     REQUIRE(opened.Remote().has_value());
     CHECK(opened.Remote()->ToString() == where);
@@ -369,7 +369,7 @@ TEST_CASE("save-buffer writes a remote buffer to its host, and asks before overw
     buffer.InsertAtPoint("two\n");
 
     fixture.Command("save-buffer");
-    CHECK(fixture.statusMessage == "Saving notes.txt...");
+    CHECK(fixture.statusMessage == "Saving host:notes.txt...");
     REQUIRE(fixture.StatusStartsWith("Wrote " + where));
     CHECK(read() == "one\r\ntwo\r\n");
     CHECK_FALSE(buffer.Modified());
@@ -387,7 +387,7 @@ TEST_CASE("save-buffer writes a remote buffer to its host, and asks before overw
     CHECK(buffer.Modified());
 
     fixture.Command("save-buffer");
-    CHECK(fixture.statusMessage == "notes.txt changed on host since it was read; save anyway? (y/n)");
+    CHECK(fixture.statusMessage == "host:notes.txt changed on its host since it was read; save anyway? (y/n)");
     fixture.view.OnEvent(test::Character('y'));
     REQUIRE(fixture.StatusStartsWith("Wrote " + where));
     CHECK(read() == "one\r\ntwo\r\nthree\r\n");

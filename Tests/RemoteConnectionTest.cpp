@@ -409,3 +409,12 @@ TEST_CASE("A remote location is a destination, a colon, then an absolute path", 
     REQUIRE_FALSE(ParseLocation("box:relative"));
     REQUIRE_FALSE(ParseLocation(":/tmp"));
 }
+
+TEST_CASE("A remote buffer is named for its host and file, the host without user or domain", "[Remote]") {
+    using ned::text::ShortDestination;
+    CHECK(ShortDestination("aaron@members-dev.iad.example.com") == "members-dev");
+    CHECK(ShortDestination("prod") == "prod");
+    CHECK(ShortDestination("me@192.168.1.5") == "192.168.1.5");
+    CHECK(ShortDestination("[::1]") == "[::1]");
+    CHECK(ned::text::RemoteBufferName({.destination = "me@box.lan", .path = "/srv/app/main.py"}) == "box:main.py");
+}
