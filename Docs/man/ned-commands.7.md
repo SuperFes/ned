@@ -1302,7 +1302,7 @@ for the live keymap stack.
 
 :   Toggle whether the current buffer accepts edits.
 
-`toggle-remote-panel`
+`toggle-remote-panel` (`C-c R`)
 
 :   Show or hide the Remote panel: connected hosts and the remote roots you opened.
 
