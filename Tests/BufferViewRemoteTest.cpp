@@ -214,6 +214,47 @@ TEST_CASE("The host prompts offer the hosts ssh knows, and Tab takes one", "[Buf
     REQUIRE(popup->rows.at(0).main == "zqalias");
 }
 
+TEST_CASE("find-file completes a host's path from its listing, connecting first", "[BufferView][Remote][HostAgent]") {
+    Fixture                     fixture;
+    const std::filesystem::path dir = fixture.fake.dir / "proj";
+    std::filesystem::create_directories(dir / "sub");
+    for (const char* name : {"alpha.txt", "alps.md", "beta.txt"}) {
+        std::ofstream(dir / name) << "x\n";
+    }
+    const std::string root = "host:" + dir.string() + "/";
+
+    std::optional<ned::ui::ListPopupModel> popup;
+    fixture.view.SetOnCandidatesChanged([&](std::optional<ned::ui::ListPopupModel> model) { popup = std::move(model); });
+    const auto rowsAre = [&](std::vector<std::string> expected) {
+        return PumpUntil(fixture.queue, [&] {
+            if (!popup || popup->rows.size() != expected.size()) {
+                return false;
+            }
+            return std::ranges::equal(popup->rows, expected, {}, &ned::ui::ListPopupRow::main);
+        });
+    };
+
+    fixture.Command("find-file");
+    fixture.Type(root + "al");
+    REQUIRE(rowsAre({"alpha.txt", "alps.md"}));
+    fixture.view.OnEvent(test::Tab());
+    CHECK(fixture.statusMessage == "Find file: " + root + "alpha.txt");
+
+    // The same directory answers from its listing; a directory gets a slash.
+    fixture.view.OnEvent(test::Backspace());
+    for (int i = 0; i < 8; ++i) {
+        fixture.view.OnEvent(test::Backspace());
+    }
+    CHECK(fixture.statusMessage == "Find file: " + root);
+    REQUIRE(rowsAre({"alpha.txt", "alps.md", "beta.txt", "sub/"}));
+    fixture.view.OnEvent(test::Ctrl('g'));
+
+    // A search root is a directory, so only directories are offered.
+    fixture.Command("remote-project-search");
+    fixture.Type(root);
+    REQUIRE(rowsAre({"sub/"}));
+}
+
 TEST_CASE("The host prompts add names the resolver knows under the search domains", "[BufferView][Remote]") {
     Fixture fixture;
     std::ofstream(fixture.fake.dir / "resolv.conf") << "search example.test other.test\n";

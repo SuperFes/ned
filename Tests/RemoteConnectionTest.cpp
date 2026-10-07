@@ -20,6 +20,7 @@
 #include "Editor/Remote/Connection.h"
 #include "Editor/Remote/Hosts.h"
 #include "Editor/Remote/Location.h"
+#include "Editor/Remote/PathCompletion.h"
 #include "Editor/Remote/Search.h"
 #include "EnvOverride.h"
 #include "FakeRemoteHost.h"
@@ -408,6 +409,27 @@ TEST_CASE("A remote location is a destination, a colon, then an absolute path", 
     REQUIRE_FALSE(ParseLocation("box"));
     REQUIRE_FALSE(ParseLocation("box:relative"));
     REQUIRE_FALSE(ParseLocation(":/tmp"));
+}
+
+TEST_CASE("A typed host path splits into the directory to list and the name begun in it", "[Remote]") {
+    using ned::editor::remote::SplitRemotePathPrefix;
+    namespace host    = ned::editor::host;
+    const auto prefix = SplitRemotePathPrefix("me@box:/srv/./app/ma");
+    REQUIRE(prefix.has_value());
+    CHECK(prefix->directory == ned::text::RemoteFile{.destination = "me@box", .path = "/srv/app"});
+    CHECK(prefix->typedDirectory == "me@box:/srv/./app/");
+    CHECK(prefix->partialName == "ma");
+    CHECK(SplitRemotePathPrefix("box:/")->directory.path == "/");
+    CHECK(SplitRemotePathPrefix("box:/")->partialName.empty());
+    CHECK_FALSE(SplitRemotePathPrefix("/local/path").has_value());
+    CHECK_FALSE(SplitRemotePathPrefix("box").has_value());
+
+    const std::vector<host::DirEntry> entries{{.name = "main.py", .kind = host::FileKind::File, .link = false},
+                                              {.name = "make", .kind = host::FileKind::Directory, .link = true},
+                                              {.name = "other", .kind = host::FileKind::File, .link = false}};
+    CHECK(ned::editor::remote::CompleteRemotePath(*prefix, entries) ==
+          std::vector<std::string>{"me@box:/srv/./app/main.py", "me@box:/srv/./app/make/"});
+    CHECK(ned::editor::remote::CompleteRemotePath(*prefix, entries, true) == std::vector<std::string>{"me@box:/srv/./app/make/"});
 }
 
 TEST_CASE("A remote buffer is named for its host and file, the host without user or domain", "[Remote]") {

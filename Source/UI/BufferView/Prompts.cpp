@@ -637,6 +637,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::FindFile:
             inputMode_ = InputMode::FindFile;
             prompt_.emplace("Find file: ");
+            remoteListingDirectory_.reset();
             pathCompletionSelection_ = 0;
             RefreshPathCompletionPopup();
             return;
@@ -683,6 +684,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             }
             remoteHostCandidates_    = RemoteHostCandidates();
             remoteLookupTyped_.reset();
+            remoteListingDirectory_.reset();
             pathCompletionSelection_ = 0;
             RefreshPathCompletionPopup();
             return;

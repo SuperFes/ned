@@ -2513,6 +2513,9 @@ bool BufferView::ApplyResolvedWorkspaceEdit(const editor::lsp::Manager::Resolved
 }
 
 std::vector<std::string> BufferView::GatherPathCompletionCandidates() const {
+    if (TypedRemotePath()) {
+        return RemotePathCompletions();
+    }
     if (inputMode_ == InputMode::FindFile || inputMode_ == InputMode::OpenProjectPath) {
         return text::CompleteFilePath(prompt_->Text());
     }
@@ -2536,6 +2539,7 @@ std::vector<std::string> BufferView::GatherPathCompletionCandidates() const {
 
 void BufferView::RefreshPathCompletionPopup() {
     RequestRemoteHostLookup();
+    RequestRemoteListing();
     const std::vector<std::string> candidates = GatherPathCompletionCandidates();
     pathCompletionSelection_                  = candidates.empty() ? 0 : std::min(pathCompletionSelection_, candidates.size() - 1);
 
@@ -2547,7 +2551,7 @@ void BufferView::RefreshPathCompletionPopup() {
         onCandidatesChanged_(std::nullopt);
         return;
     }
-    const bool                                           isPathMode = inputMode_ == InputMode::FindFile || inputMode_ == InputMode::OpenProjectPath;
+    const bool                                           isPathMode = inputMode_ == InputMode::FindFile || inputMode_ == InputMode::OpenProjectPath || TypedRemotePath().has_value();
     const std::function<std::string(const std::string&)> display =
         isPathMode ? std::function<std::string(const std::string&)>(MaskPathCandidateToLastSegment)
                    : std::function<std::string(const std::string&)>{};

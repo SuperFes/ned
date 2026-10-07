@@ -8,6 +8,7 @@
 
 #include "Editor/Host/SearchCodec.h"
 #include "Editor/NextError.h"
+#include "Editor/Remote/Fs.h"
 #include "Editor/Remote/Hosts.h"
 #include "Editor/Remote/KnownHosts.h"
 #include "Editor/Remote/RemoteBuffer.h"
@@ -269,8 +270,7 @@ std::optional<std::string> BufferView::TypedRemoteHost() const {
     if (inputMode_ == InputMode::RemoteConnect) {
         return prompt_->Text();
     }
-    // Past the host there's nothing to offer until the agent can list a
-    // directory.
+    // Past the host, RemotePathCompletions takes over.
     if (inputMode_ == InputMode::RemoteSearchRoot && prompt_->Text().find(":/") == std::string::npos) {
         return prompt_->Text().substr(0, prompt_->Text().find(':'));
     }
@@ -318,6 +318,55 @@ void BufferView::RequestRemoteHostLookup() {
         }
         remoteResolvedHosts_ = std::move(resolved);
         RefreshPathCompletionPopup();
+    }));
+}
+
+std::optional<editor::remote::RemotePathPrefix> BufferView::TypedRemotePath() const {
+    if (inputMode_ != InputMode::FindFile && inputMode_ != InputMode::RemoteSearchRoot) {
+        return std::nullopt;
+    }
+    return editor::remote::SplitRemotePathPrefix(prompt_->Text());
+}
+
+std::vector<std::string> BufferView::RemotePathCompletions() const {
+    const std::optional<editor::remote::RemotePathPrefix> typed = TypedRemotePath();
+    if (!typed || typed->directory != remoteListingDirectory_ || !remoteListingEntries_) {
+        return {};
+    }
+    return editor::remote::CompleteRemotePath(*typed, *remoteListingEntries_, inputMode_ == InputMode::RemoteSearchRoot);
+}
+
+void BufferView::RequestRemoteListing() {
+    const std::optional<editor::remote::RemotePathPrefix> typed = TypedRemotePath();
+    if (remoteHosts_ == nullptr || !typed || typed->directory == remoteListingDirectory_) {
+        return;
+    }
+    // Plenty for a prompt; a bigger directory offers nothing rather than stalling it.
+    constexpr std::size_t  kMaxListedEntries = 50000;
+    const text::RemoteFile directory         = typed->directory;
+    remoteListingDirectory_                  = directory;
+    remoteListingEntries_.reset();
+    const auto settle = [this, directory](std::vector<editor::host::DirEntry> entries) {
+        if (remoteListingDirectory_ != directory) {
+            return;
+        }
+        remoteListingEntries_ = std::move(entries);
+        if (TypedRemotePath()) {
+            RefreshPathCompletionPopup();
+        }
+    };
+    remoteHosts_->Connect(directory.destination, lifetime_.Bind([this, directory, settle](const std::expected<editor::remote::Connection*, std::string>& connection) {
+        if (remoteListingDirectory_ != directory) {
+            return;
+        }
+        if (!connection) {
+            settle({});
+            return;
+        }
+        editor::remote::ListDirectory(**connection, directory.path, kMaxListedEntries,
+                                      lifetime_.Bind([settle](editor::remote::FsResult<std::vector<editor::host::DirEntry>> listed) {
+                                          settle(listed ? std::move(*listed) : std::vector<editor::host::DirEntry>{});
+                                      }));
     }));
 }
 
