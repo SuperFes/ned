@@ -73,6 +73,10 @@ struct ResponseHandlers {
     std::function<void(RemoteError error)>     onError;
     // Each $/chunk's data, in order, before the result.
     std::function<void(nlohmann::json data)> onChunk;
+    // Credit for further chunks waits on Endpoint::Grant rather than going
+    // back as each chunk is handled -- for a receiver passing chunks on at
+    // its own consumer's pace.
+    bool grantsByHand = false;
 };
 
 namespace detail {
@@ -151,6 +155,9 @@ class Endpoint {
     std::uint64_t Request(std::string method, nlohmann::json params, ResponseHandlers handlers,
                           std::optional<std::chrono::milliseconds> idleLimit = std::nullopt);
     void          Notify(std::string method, nlohmann::json params);
+    // A grantsByHand request's consumer has taken n more chunks. Does
+    // nothing for a request that has finished.
+    void Grant(std::uint64_t id, std::size_t n = 1);
     // Asks the peer to stop. Chunks after this are dropped; the one
     // response still arrives, as Cancelled or a partial result.
     void Cancel(std::uint64_t id);

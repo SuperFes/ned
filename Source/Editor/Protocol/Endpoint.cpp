@@ -57,6 +57,7 @@ namespace detail {
         bool                                      cancelled = false;
         std::uint64_t                             nextSeq   = 0;
         std::size_t                               consumed  = 0; // chunks received since the last grant
+        std::size_t                               granted   = 0; // of those, the ones Grant has released
         std::optional<std::chrono::milliseconds>  idleLimit;
         std::chrono::steady_clock::time_point     lastHeard;
     };
@@ -265,10 +266,19 @@ namespace detail {
             if (again == outgoing.end() || again->second.cancelled) {
                 return;
             }
-            if (again->second.consumed >= std::max<std::size_t>(window / 2, 1)) {
-                const std::size_t n    = again->second.consumed;
-                again->second.consumed = 0;
-                Send(Json{{"method", kCredit}, {"params", {{"id", id}, {"n", n}}}});
+            if (!again->second.handlers.grantsByHand) {
+                GrantConsumed(id, again->second, 0);
+            }
+        }
+
+        // Returns credit for consumed chunks in batches of half the window.
+        void GrantConsumed(std::uint64_t id, Outgoing& entry, std::size_t more) {
+            entry.granted += more;
+            const std::size_t ready = entry.handlers.grantsByHand ? std::min(entry.granted, entry.consumed) : entry.consumed;
+            if (ready >= std::max<std::size_t>(window / 2, 1)) {
+                entry.consumed -= ready;
+                entry.granted -= entry.handlers.grantsByHand ? ready : 0;
+                Send(Json{{"method", kCredit}, {"params", {{"id", id}, {"n", ready}}}});
             }
         }
 
@@ -432,13 +442,21 @@ std::uint64_t Endpoint::Request(std::string method, Json params, ResponseHandler
         }
         return id;
     }
-    core_->outgoing.emplace(id, detail::Outgoing{std::move(handlers), false, 0, 0, idleLimit, std::chrono::steady_clock::now()});
+    core_->outgoing.emplace(id, detail::Outgoing{std::move(handlers), false, 0, 0, 0, idleLimit, std::chrono::steady_clock::now()});
     core_->Send(Json{{"id", id}, {"method", std::move(method)}, {"params", std::move(params)}});
     return id;
 }
 
 void Endpoint::Notify(std::string method, Json params) {
     core_->Send(Json{{"method", std::move(method)}, {"params", std::move(params)}});
+}
+
+void Endpoint::Grant(std::uint64_t id, std::size_t n) {
+    const auto it = core_->outgoing.find(id);
+    if (it == core_->outgoing.end() || it->second.cancelled || !it->second.handlers.grantsByHand || core_->closed) {
+        return;
+    }
+    core_->GrantConsumed(id, it->second, n);
 }
 
 void Endpoint::Cancel(std::uint64_t id) {
