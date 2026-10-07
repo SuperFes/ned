@@ -358,6 +358,32 @@ TEST_CASE("SetRemote moves a remote buffer to another file on its host", "[Buffe
     CHECK(remote.FileGeneration() == generation + 1);
 }
 
+TEST_CASE("MergeRemoteChanges merges a host's change into local edits and takes its timestamp", "[Buffer][Remote]") {
+    using ned::text::FileContents;
+    const ned::text::RemoteFile file{.destination = "host", .path = "/srv/a.txt"};
+    const auto                  read  = std::filesystem::file_time_type::clock::now();
+    const auto                  later = read + std::chrono::seconds(1);
+
+    Buffer remote = Buffer::FromRemoteContents(file, FileContents{.bytes = "one\ntwo\nthree\n", .timestamp = read});
+    remote.SetPoint(0);
+    remote.InsertAtPoint("zero\n");
+    remote.NoteRemoteChanged();
+    REQUIRE(remote.ExternallyModified());
+
+    CHECK(remote.MergeRemoteChanges(FileContents{.bytes = "one\ntwo\nTHREE\n", .timestamp = later}) == 0);
+    CHECK(remote.Text() == "zero\none\ntwo\nTHREE\n");
+    CHECK(remote.Modified());
+    CHECK(remote.RemoteTimestamp() == later);
+    CHECK_FALSE(remote.ExternallyModified());
+
+    // Both sides changed the same line: a conflict, with their side kept as
+    // the new base.
+    remote.SetPoint(remote.Text().size() - 1);
+    remote.InsertAtPoint("!");
+    CHECK(remote.MergeRemoteChanges(FileContents{.bytes = "one\ntwo\nthree?\n", .timestamp = later + std::chrono::seconds(1)}) == 1);
+    CHECK(remote.HasConflictMarkers());
+}
+
 TEST_CASE("A remote file's contents decode with no local path and nothing local stating their charset", "[Buffer][Charset]") {
     using ned::text::FileContents;
     using ned::text::RemoteFile;

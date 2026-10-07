@@ -847,7 +847,21 @@ std::size_t Buffer::MergeExternalChanges() {
         throw std::runtime_error("ned: buffer \"" + Name_ + "\" has no associated file path");
     }
     Buffer fresh = FromFile(*Path_, false, DiskCharset_); // throws on any read failure, leaving this buffer untouched
+    return MergeFresh(fresh);
+}
 
+std::size_t Buffer::MergeRemoteChanges(FileContents contents) {
+    if (!Remote_) {
+        throw std::runtime_error("ned: buffer \"" + Name_ + "\" has no remote file");
+    }
+    Buffer            fresh     = FromRemoteContents(*Remote_, std::move(contents), false, DiskCharset_);
+    const std::size_t conflicts = MergeFresh(fresh);
+    RemoteTimestamp_            = fresh.RemoteTimestamp_;
+    RemoteChanged_              = false;
+    return conflicts;
+}
+
+std::size_t Buffer::MergeFresh(Buffer& fresh) {
     const std::string       base   = SavedSnapshot_->ToString();
     const std::string       ours   = Storage_->ToString();
     const std::string       theirs = fresh.Storage_->ToString();
