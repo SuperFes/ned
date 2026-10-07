@@ -8,6 +8,7 @@
 #define NED_EDITOR_REMOTE_REMOTEBUFFER_H
 
 #include <cstddef>
+#include <expected>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -34,6 +35,24 @@ namespace ned::editor::remote {
 // Returns why not otherwise -- a failed read, or content that looks
 // binary -- leaving the placeholder as it was.
 [[nodiscard]] std::optional<std::string> FinishRemoteLoad(text::Buffer& placeholder, const FsResult<text::FileContents>& read);
+
+enum class RemoteLoaded { Read,
+                          Created };
+
+// Whether a load filled its placeholder, why not otherwise, and whether
+// the host simply had no such file.
+struct RemoteLoadOutcome {
+    std::expected<RemoteLoaded, std::string> loaded;
+    bool                                     missing = false;
+};
+
+// Reads a loading placeholder's file from its host, connecting first when
+// needed, and settles it with FinishRemoteLoad. A file the host doesn't
+// have opens empty with createMissing, and fails otherwise. done runs on
+// the main thread with the still-open buffer; a buffer closed meanwhile,
+// or an expired token, ends the load silently.
+void LoadRemoteBuffer(Hosts& hosts, text::BufferList& buffers, const text::Buffer& placeholder, bool createMissing,
+                      LifetimeToken token, std::function<void(text::Buffer& buffer, RemoteLoadOutcome outcome)> done);
 
 // Settles a remote save (Buffer::BeginRemoteSave) with the host's answer:
 // saved, at the host's new timestamp, or abandoned with why. A file that

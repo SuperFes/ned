@@ -130,6 +130,40 @@ TEST_CASE("ProjectSessionData JSON round-trips absent optional fields", "[Projec
     REQUIRE_FALSE(loaded->sidebarWidth.has_value());
 }
 
+TEST_CASE("A session's remote files round-trip as host:/path, beside its local ones", "[ProjectSession]") {
+    const ned::editor::SessionFile remote = ned::text::RemoteFile{.destination = "user@box", .path = "/srv/app/main.py"};
+    const ned::editor::SessionFile local  = std::filesystem::path("/project/a.cpp");
+
+    ProjectSessionData data;
+    data.openFiles  = {local, remote};
+    data.activeFile = remote;
+    WindowLayoutNode leafLocal{.kind = WindowLayoutNode::Kind::Leaf, .file = local};
+    WindowLayoutNode leafRemote{.kind = WindowLayoutNode::Kind::Leaf, .file = remote};
+    WindowLayoutNode split{.kind = WindowLayoutNode::Kind::SplitBelow, .first = 0, .second = 1};
+    data.windowLayout = {leafLocal, leafRemote, split};
+
+    const std::string json = ProjectSessionToJson(data, "/project");
+    REQUIRE(json.find("\"user@box:/srv/app/main.py\"") != std::string::npos);
+    const auto loaded = ProjectSessionFromJson(json);
+    REQUIRE(loaded.has_value());
+    REQUIRE(*loaded == data);
+
+    CHECK(ned::editor::SessionFileFromString("/home/me/a:/b") == ned::editor::SessionFile(std::filesystem::path("/home/me/a:/b")));
+    CHECK_FALSE(ned::editor::SessionFileFromString("relative/a.cpp").has_value());
+    CHECK_FALSE(ned::editor::SessionFileFromString("").has_value());
+}
+
+TEST_CASE("ProjectSessionFromJson drops a file it can't place, and a layout naming one", "[ProjectSession]") {
+    const auto partial = ProjectSessionFromJson(
+        R"({"version":1,"openFiles":["/a.cpp","relative.cpp","host:/b.py"],"activeFile":"relative.cpp",)"
+        R"("windowLayout":[{"kind":"leaf","file":"relative.cpp"}]})");
+    REQUIRE(partial.has_value());
+    REQUIRE(partial->openFiles ==
+            std::vector<ned::editor::SessionFile>{std::filesystem::path("/a.cpp"), ned::text::RemoteFile{.destination = "host", .path = "/b.py"}});
+    CHECK_FALSE(partial->activeFile.has_value());
+    CHECK(partial->windowLayout.empty());
+}
+
 TEST_CASE("ProjectSessionFromJson tolerates malformed input", "[ProjectSession]") {
     REQUIRE_FALSE(ProjectSessionFromJson("not json").has_value());
     // Parseable but odd shapes degrade per-field, not wholesale.
@@ -138,7 +172,7 @@ TEST_CASE("ProjectSessionFromJson tolerates malformed input", "[ProjectSession]"
         R"("breakpoints":{"/a.cpp":[1,"x",{"line":5,"condition":"n > 1"},{"noLine":9}],"/bad":"nope"},)"
         R"("watches":["ok",3,"also-ok"]})");
     REQUIRE(partial.has_value());
-    REQUIRE(partial->openFiles == std::vector<std::filesystem::path>{"/a.cpp"});
+    REQUIRE(partial->openFiles == std::vector<ned::editor::SessionFile>{std::filesystem::path("/a.cpp")});
     REQUIRE(partial->breakpoints ==
             std::map<std::string, std::vector<ned::editor::BreakpointState>>{
                 {"/a.cpp", {{.line = 1}, {.line = 5, .condition = "n > 1"}}}});

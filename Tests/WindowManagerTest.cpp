@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <unistd.h>
 
@@ -15,15 +16,18 @@
 #include "Editor/Lsp/Manager.h"
 #include "Editor/MinimapSettings.h"
 #include "Editor/Mode.h"
+#include "Editor/PostQueue.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Session.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
+#include "Editor/Remote/Hosts.h"
 #include "Editor/Vcs/Provider.h"
 #include "Editor/Vcs/ProviderRegistry.h"
 #include "Editor/Vcs/Runner.h"
 #include "Editor/Vim/Settings.h"
 #include "FakeLspServer.h"
+#include "FakeRemoteHost.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -651,8 +655,8 @@ TEST_CASE("CaptureWindowLayout captures a split tree and the focused leaf's path
     REQUIRE(rootNode.kind == ned::editor::WindowLayoutNode::Kind::SplitRight);
     REQUIRE(rootNode.first.has_value());
     REQUIRE(rootNode.second.has_value());
-    REQUIRE(data.windowLayout[*rootNode.first].file == std::filesystem::absolute(pathA));
-    REQUIRE(data.windowLayout[*rootNode.second].file == std::filesystem::absolute(pathB));
+    REQUIRE(data.windowLayout[*rootNode.first].file == ned::editor::SessionFile(std::filesystem::absolute(pathA)));
+    REQUIRE(data.windowLayout[*rootNode.second].file == ned::editor::SessionFile(std::filesystem::absolute(pathB)));
     // The original ("first") pane, showing bufferA, had focus at capture time.
     REQUIRE(data.focusedPanePath == std::vector<int>{0});
 }
@@ -698,6 +702,80 @@ TEST_CASE("RestoreWindowLayout rebuilds a split tree and restores the recorded f
 
     REQUIRE(manager.WindowCount() == 2);
     REQUIRE(&manager.FocusedActiveBuffer().Get() == &bufferB);
+}
+
+TEST_CASE("A remote buffer joins the session and its window layout, and restores into a pane", "[WindowManager][Remote]") {
+    const std::filesystem::path   state = ned::tests::FreshRemoteDir();
+    ned::tests::ScopedEnvOverride stateHome{"XDG_STATE_HOME", state.c_str()};
+    ned::editor::ResetProjectSessionForTesting();
+    ned::editor::SetActiveProjectSessionRoot(state / "project");
+
+    const ned::text::RemoteFile shown{.destination = "user@box", .path = "/srv/app/main.py"};
+    const ned::text::RemoteFile unread{.destination = "user@box", .path = "/srv/app/notes.txt"};
+    {
+        Fixture            fixture;
+        ned::text::Buffer& placeholder = fixture.bufferList.AddRemotePlaceholder(shown);
+        // One that never loaded stays in the session, so an offline start doesn't drop it.
+        fixture.bufferList.AddRemotePlaceholder(unread).MarkLoadFailed("Connection refused");
+        ned::ui::WindowManager manager = fixture.Manager();
+        manager.TakeFocus();
+        manager.FocusedActiveBuffer().Set(placeholder);
+        manager.SaveProjectSessionNow();
+    }
+
+    const std::optional<ned::editor::ProjectSessionData> saved = ned::editor::LoadActiveProjectSession();
+    REQUIRE(saved.has_value());
+    CHECK(saved->openFiles == std::vector<ned::editor::SessionFile>{shown, unread});
+    CHECK(saved->activeFile == ned::editor::SessionFile(shown));
+    REQUIRE(saved->windowLayout.size() == 1);
+    CHECK(saved->windowLayout[0].file == ned::editor::SessionFile(shown));
+
+    Fixture                         fixture;
+    ned::text::Buffer&              restored = fixture.bufferList.AddRemotePlaceholder(shown);
+    ned::editor::ProjectSessionData split    = *saved;
+    split.windowLayout                       = {saved->windowLayout[0], saved->windowLayout[0],
+                                                ned::editor::WindowLayoutNode{.kind = ned::editor::WindowLayoutNode::Kind::SplitRight, .first = 0, .second = 1}};
+    ned::ui::WindowManager manager           = fixture.Manager();
+    manager.RestoreWindowLayout(split);
+    CHECK(manager.WindowCount() == 2);
+    CHECK(&manager.FocusedActiveBuffer().Get() == &restored);
+
+    ned::editor::ResetProjectSessionForTesting();
+    std::filesystem::remove_all(state);
+}
+
+TEST_CASE("LoadRemoteBuffers reads restored remote buffers, closes one the host lost, and keeps one it can't reach",
+          "[WindowManager][Remote][HostAgent]") {
+    ned::tests::FakeRemoteHost    fake;
+    ned::tests::ScopedEnvOverride home{"HOME", (fake.dir / "home").c_str()};
+    ned::editor::PostQueue        queue;
+    ned::editor::remote::Hosts    hosts{queue, [&fake](const std::string& destination) { return fake.Options(destination); },
+                                        ned::tests::FakeResolver(fake.dir)};
+    std::ofstream(fake.dir / "kept.txt") << "kept\n";
+
+    Fixture                                      fixture;
+    ned::text::Buffer&                           kept        = fixture.bufferList.AddRemotePlaceholder({.destination = "host", .path = fake.dir / "kept.txt"});
+    ned::text::Buffer&                           gone        = fixture.bufferList.AddRemotePlaceholder({.destination = "host", .path = fake.dir / "gone.txt"});
+    ned::text::Buffer&                           unreachable = fixture.bufferList.AddRemotePlaceholder({.destination = "denied", .path = "/etc/hosts"});
+    const ned::text::BufferIdentity              goneIdentity(gone);
+    const std::vector<ned::text::BufferIdentity> placeholders{ned::text::BufferIdentity(kept), goneIdentity,
+                                                              ned::text::BufferIdentity(unreachable)};
+
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+    manager.FocusedActiveBuffer().Set(gone);
+    manager.SetRemoteHosts(&hosts);
+    manager.LoadRemoteBuffers(placeholders);
+
+    REQUIRE(ned::tests::PumpUntil(queue, [&] {
+        return !kept.IsLoading() && unreachable.LoadFailure().has_value() && fixture.bufferList.Find(goneIdentity) == nullptr;
+    }));
+    CHECK(kept.Text() == "kept\n");
+    CHECK(unreachable.IsLoading());
+    CHECK_THAT(*unreachable.LoadFailure(), Catch::Matchers::ContainsSubstring("Permission denied"));
+    // The pane that showed the lost file moved on rather than dangling.
+    CHECK(fixture.bufferList.Find(ned::text::BufferIdentity(manager.FocusedActiveBuffer().Get())) != nullptr);
+    CHECK_FALSE(manager.FocusedActiveBuffer().Get().Remote() == ned::text::RemoteFile{.destination = "host", .path = fake.dir / "gone.txt"});
 }
 
 TEST_CASE("RestoreWindowLayout is a no-op when windowLayout is empty", "[WindowManager]") {

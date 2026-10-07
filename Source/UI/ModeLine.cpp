@@ -197,7 +197,10 @@ void ModeLine::Paint(Canvas c) {
     // alone can't be quoted in a bug report. A loader that never learned the
     // file's size has no fraction at all and keeps the plain indicator.
     std::string loadingText = "   Loading...";
-    if (buffer.IsLoading()) {
+    if (const std::optional<std::string>& failure = buffer.LoadFailure()) {
+        loadingText = "   Couldn't load: " + *failure;
+    }
+    else if (buffer.IsLoading()) {
         if (const text::LoadProgress* progress = buffer.CurrentLoadProgress();
             progress != nullptr && progress->totalBytes > 0) {
             const std::uintmax_t read = progress->bytesRead.load(std::memory_order_relaxed);

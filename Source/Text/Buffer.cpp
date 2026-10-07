@@ -620,6 +620,7 @@ bool Buffer::IsLoading() const {
 
 void Buffer::MarkLoading(bool forceReadOnly) {
     Loading_ = true;
+    LoadFailure_.reset();
     if (forceReadOnly) {
         ReadOnly_ = true;
     }
@@ -631,6 +632,14 @@ void Buffer::SetLoadProgress(std::shared_ptr<LoadProgress> progress) {
 
 const LoadProgress* Buffer::CurrentLoadProgress() const {
     return LoadProgress_.get();
+}
+
+void Buffer::MarkLoadFailed(std::string why) {
+    LoadFailure_ = std::move(why);
+}
+
+const std::optional<std::string>& Buffer::LoadFailure() const {
+    return LoadFailure_;
 }
 
 void Buffer::ReplaceContentForLoad(Rope content) {
@@ -649,6 +658,7 @@ void Buffer::FinishLoad(Rope content, std::optional<LineEnding> detectedEnding, 
     Charset_ = charset;
     Loading_ = false;
     LoadProgress_.reset();
+    LoadFailure_.reset();
     CommitBarrier();
     // Stat-after-read here, unlike FromFile's stat-before -- the async
     // loader read the content on its own thread well before this call, so
