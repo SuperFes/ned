@@ -58,8 +58,8 @@ class TaskRunner {
     // buffer unchanged -- one concurrent run per task name.
     //
     // The task runs beside from (Remote/Placement.h): on its host, in the
-    // project root there, for a remote buffer. From a task's own output
-    // buffer it runs where that task last did.
+    // project root there, for a remote buffer. Without one, or from a
+    // buffer with no file, such as its own output, it runs where it last did.
     text::Buffer* RunTask(const std::string& name, const text::Buffer* from = nullptr);
 
     // Null, the default, runs every task on this machine. hosts must
@@ -78,7 +78,7 @@ class TaskRunner {
     // Found by name on every call, so output from a run whose buffer was
     // closed lands in a recreated one instead of a freed one.
     text::Buffer& OutputBuffer(const std::string& name);
-    [[nodiscard]] std::optional<text::RemoteFile> PlacementFrom(const text::Buffer* from) const;
+    [[nodiscard]] std::optional<text::RemoteFile> PlacementFrom(const std::string& name, const text::Buffer* from) const;
     void                                          Started(const std::string& name, remote::Spawned spawned);
 
     // A run is starting, possibly on its host, until it has a process;

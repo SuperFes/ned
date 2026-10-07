@@ -21,7 +21,8 @@ namespace {
             return;
         }
         try {
-            (*done)(SpawnOnHost(*connection, std::move(spawn)));
+            std::optional<std::filesystem::path> cwd = spawn.cwd;
+            (*done)(Placed{.child = SpawnOnHost(*connection, std::move(spawn)), .cwd = std::move(cwd)});
         }
         catch (const std::exception& e) {
             (*done)(std::unexpected(std::string(e.what())));
@@ -35,7 +36,8 @@ void SpawnBeside(Hosts* hosts, const std::optional<text::RemoteFile>& beside, Re
     if (!beside) {
         Spawned spawned = std::unexpected(std::string());
         try {
-            spawned = process::ChildProcess(spawn.argv, process::SpawnOptions{.stderrMode = spawn.stderrMode, .cwd = spawn.cwd, .env = spawn.env});
+            spawned = Placed{.child = process::ChildProcess(spawn.argv, process::SpawnOptions{.stderrMode = spawn.stderrMode, .cwd = spawn.cwd, .env = spawn.env}),
+                             .cwd   = spawn.cwd};
         }
         catch (const std::exception& e) {
             spawned = std::unexpected(std::string(e.what()));

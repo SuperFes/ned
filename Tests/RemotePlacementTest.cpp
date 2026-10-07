@@ -20,6 +20,8 @@
 #include "Editor/Remote/Placement.h"
 #include "Editor/Tasks/TaskConfig.h"
 #include "Editor/Tasks/TaskRunner.h"
+#include "Editor/TestRun/Config.h"
+#include "Editor/TestRun/TestRunner.h"
 #include "FakeRemoteHost.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -62,7 +64,7 @@ struct Run {
         if (!PumpUntil(queue, [this] { return spawned.has_value(); }) || !spawned->has_value()) {
             return false;
         }
-        child.emplace(std::move(**spawned), queue, [this](std::string_view chunk) { output += chunk; }, [this](std::optional<int> code) { exit = code; });
+        child.emplace(std::move((*spawned)->child), queue, [this](std::string_view chunk) { output += chunk; }, [this](std::optional<int> code) { exit = code; });
         return PumpUntil(queue, [this] { return exit.has_value(); });
     }
 };
@@ -106,6 +108,7 @@ TEST_CASE("A remote buffer's process runs on its host, in its project root", "[R
     remote::SpawnBeside(&fixture.hosts, file, Pwd(), guard.Token(), rooted.Done());
     REQUIRE(rooted.Finish(fixture.loop));
     CHECK(rooted.output == fixture.project.string() + "\n");
+    CHECK((*rooted.spawned)->cwd == fixture.project);
     CHECK(rooted.exit == std::optional<std::optional<int>>(0));
 
     Run                 given;
@@ -167,4 +170,57 @@ TEST_CASE("A task started from a remote buffer runs on its host, and again from 
         CHECK_THAT(output->Text(), ContainsSubstring("Failed to start task \"remote-placement-test-pwd\""));
     }
     tasks::SetTaskCommand("remote-placement-test-pwd", {});
+}
+
+TEST_CASE("A test run from a remote buffer runs on its host and reads its results there", "[Remote][RemotePlacement][TestRun][HostAgent]") {
+    namespace testrun = ned::editor::testrun;
+    struct ConfigReset {
+        ~ConfigReset() {
+            testrun::SetTestCommand({}, "");
+            testrun::SetTestResultsFile("");
+        }
+    } reset;
+    Fixture               fixture;
+    ned::text::BufferList buffers;
+    testrun::TestRunner   runner(buffers, fixture.loop);
+    runner.SetHosts(&fixture.hosts);
+    testrun::SetTestCommand({"sh", "-c", "printf '1/1 Test #1: Remote ......   Passed    0.01 sec\\n' > out/results.txt; pwd"}, "ctest");
+    testrun::SetTestResultsFile("out/results.txt");
+    fs::create_directories(fixture.project / "out");
+
+    ned::text::Buffer& source = buffers.CreateBuffer("a_test.c");
+    source.SetRemote(ned::text::RemoteFile{.destination = "host", .path = fixture.project / "src" / "a_test.c"});
+
+    ned::text::Buffer* output = runner.RunAll(&source);
+    REQUIRE(output != nullptr);
+    REQUIRE(PumpUntil(fixture.loop, [&] { return !runner.IsRunning(); }));
+    CHECK_THAT(output->Text(), ContainsSubstring(fixture.project.string() + "\n"));
+    REQUIRE(runner.LatestOutcome().has_value());
+    CHECK(runner.LatestOutcome()->passed == 1);
+    REQUIRE(runner.LatestOutcome()->results.size() == 1);
+    CHECK(runner.LatestOutcome()->results.front().name == "Remote");
+
+    SECTION("again from its output, without a buffer") {
+        fs::remove(fixture.project / "out" / "results.txt");
+        (void)runner.RunAll(output);
+        REQUIRE(PumpUntil(fixture.loop, [&] { return !runner.IsRunning(); }));
+        CHECK(fs::exists(fixture.project / "out" / "results.txt"));
+    }
+
+    SECTION("a results file the host can't read says so") {
+        testrun::SetTestCommand({"true"}, "ctest");
+        testrun::SetTestResultsFile("missing.txt");
+        (void)runner.RunAll(&source);
+        REQUIRE(PumpUntil(fixture.loop, [&] { return !runner.IsRunning(); }));
+        CHECK_THAT(output->Text(), ContainsSubstring("[can't read missing.txt"));
+    }
+
+    SECTION("cancelled while it connects") {
+        REQUIRE(fixture.hosts.Disconnect("host"));
+        (void)runner.RunAll(&source);
+        REQUIRE(runner.IsRunning());
+        runner.Cancel();
+        CHECK_FALSE(runner.IsRunning());
+        CHECK(output->Text().ends_with("[cancelled]\n"));
+    }
 }

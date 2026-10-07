@@ -1174,7 +1174,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 return;
             }
             const bool alreadyRunning = testRunner_->IsRunning();
-            if (text::Buffer* buffer = testRunner_->RunAll()) {
+            if (text::Buffer* buffer = testRunner_->RunAll(&activeBuffer_.Get())) {
                 activeBuffer_.Set(*buffer);
             }
             statusMessage_ = alreadyRunning ? "Tests already running." : (testRunner_->IsRunning() ? "Running tests..." : "");

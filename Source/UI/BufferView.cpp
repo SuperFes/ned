@@ -1898,8 +1898,9 @@ void BufferView::RunSingleTest(const std::string& testName) {
         return; // callers check TestRunPreconditionsMet first; belt and braces
     }
     const text::Buffer& buffer = activeBuffer_.Get();
-    const std::string   file   = buffer.Path() ? buffer.Path()->string() : std::string();
-    if (text::Buffer* output = testRunner_->RunFiltered(testName, file)) {
+    const std::string   file   = buffer.Path() ? buffer.Path()->string() : buffer.Remote() ? buffer.Remote()->path.string()
+                                                                                           : std::string();
+    if (text::Buffer* output = testRunner_->RunFiltered(testName, file, &buffer)) {
         activeBuffer_.Set(*output);
     }
     statusMessage_ = "Running \"" + testName + "\"...";

@@ -11,6 +11,7 @@
 #define NED_EDITOR_REMOTE_PLACEMENT_H
 
 #include <expected>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -24,7 +25,14 @@ namespace ned::editor::remote {
 
 class Hosts;
 
-using Spawned = std::expected<process::ChildProcess, std::string>;
+struct Placed {
+    process::ChildProcess child;
+    // The directory it runs in, on its host for a remote one; unset for a
+    // local one left in this process's own.
+    std::optional<std::filesystem::path> cwd;
+};
+
+using Spawned = std::expected<Placed, std::string>;
 
 // Main thread only. done runs on the main thread, before this returns for a
 // local spawn, and not at all once token has died. hosts may be null when
