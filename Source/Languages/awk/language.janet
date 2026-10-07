@@ -5,6 +5,7 @@
 
 {:name "awk"
  :icon "" # nf-dev-awk
+ :icon-color "#4d5a5e"
  :extensions [".awk" ".gawk" ".mawk"]
  :injection-aliases ["gawk"]
  :line-comment "#"

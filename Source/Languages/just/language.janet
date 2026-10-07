@@ -1,5 +1,6 @@
 {:name "just"
  :icon "" # nf-seti-makefile
+ :icon-color "#6d8086"
  :extensions [".just"]
  :injection-aliases ["justfile"]
  :filenames ["justfile" "Justfile" "JUSTFILE" ".justfile" ".Justfile" ".JUSTFILE"]

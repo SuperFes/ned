@@ -2,6 +2,7 @@
 # the grammar tolerates for the common cases.
 {:name "fortran"
  :icon "" # nf-dev-fortran
+ :icon-color "#734f96"
  :extensions [".f90" ".F90" ".f95" ".F95" ".f03" ".F03" ".f08" ".F08" ".f" ".F" ".for"]
  :injection-aliases ["f90"]
  :line-comment "!"

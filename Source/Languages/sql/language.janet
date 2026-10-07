@@ -19,6 +19,7 @@
 
 {:name "sql"
  :icon "" # nf-seti-db
+ :icon-color "#dad8d8"
  :extensions [".sql"]
  :injection-aliases ["psql" "mysql" "sqlite" "postgresql" "postgres"]
  :line-comment "--"

@@ -2,6 +2,7 @@
 # the Objective-C-only directives.
 {:name "objc"
  :icon "" # nf-dev-objectivec
+ :icon-color "#599eff"
  :extensions [".m"]
  :injection-aliases ["objective-c" "objectivec"]
  :shared-extensions [".h"]

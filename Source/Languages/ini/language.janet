@@ -1,5 +1,6 @@
 {:name "ini"
  :icon "" # nf-seti-config
+ :icon-color "#6d8086"
  :extensions [".ini"]
  :injection-aliases ["cfg" "conf"]
  :line-comment ";"

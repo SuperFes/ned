@@ -7,6 +7,7 @@
 
 #include "Editor/FileIcons.h"
 #include "Editor/Remote/Fs.h"
+#include "GlyphPaint.h"
 
 namespace ned::ui {
 
@@ -505,7 +506,9 @@ void RemotePanel::PushModel() {
             }
         }
         else {
-            out.kindGlyph = directory ? editor::FolderIcon(node.expanded) : editor::FileIcon(node.location.path);
+            const editor::Glyph icon = directory ? editor::FolderIcon(node.expanded) : editor::FileIcon(node.location.path);
+            out.kindGlyph            = icon.text;
+            out.kindForeground       = GlyphForeground(icon, theme_.background);
             if (node.link) {
                 out.label += " →";
             }

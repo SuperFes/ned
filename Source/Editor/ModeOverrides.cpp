@@ -36,7 +36,7 @@ namespace {
     // See CachedModeForBuffer's doc comment in the header.
     text::PerBufferMap<Mode, const text::Buffer*> g_modeCache{&g_mutex};
     // IconForPath's answers by generic path, flushed with g_modeCache.
-    std::unordered_map<std::string, std::string> g_iconCache;
+    std::unordered_map<std::string, Glyph> g_iconCache;
 
     // set-mode's choice per buffer: outlives cache flushes (a language
     // registration clears g_modeCache), dropped with the buffer.
@@ -309,12 +309,16 @@ namespace {
         return std::nullopt;
     }
 
+    Glyph IconOf(const Mode& mode) {
+        return Glyph{.text = mode.icon, .rgb = mode.iconColor};
+    }
+
     // nullopt when no such mode exists, as ModeByName.
-    std::optional<std::string> IconForModeName(const std::string& modeName) {
+    std::optional<Glyph> IconForModeName(const std::string& modeName) {
         {
             const std::lock_guard lock(g_mutex);
             if (const auto it = g_registeredModes.find(modeName); it != g_registeredModes.end()) {
-                return it->second.icon;
+                return IconOf(it->second);
             }
         }
         constexpr std::string_view kSuffix = "-mode";
@@ -323,7 +327,10 @@ namespace {
         }
         const std::optional<LanguageDefinition> definition =
             FindLanguageDefinition(std::string_view(modeName).substr(0, modeName.size() - kSuffix.size()));
-        return definition ? std::optional(definition->icon) : std::nullopt;
+        if (!definition) {
+            return std::nullopt;
+        }
+        return Glyph{.text = definition->icon, .rgb = definition->iconColor};
     }
 
 } // namespace
@@ -353,7 +360,7 @@ Mode ModeForPathAndEnds(const std::filesystem::path& path, std::string_view ends
     return FundamentalMode();
 }
 
-std::string IconForPath(const std::filesystem::path& path) {
+Glyph IconForPath(const std::filesystem::path& path) {
     const std::string key = path.generic_string();
     {
         const std::lock_guard lock(g_mutex);
@@ -361,7 +368,7 @@ std::string IconForPath(const std::filesystem::path& path) {
             return it->second;
         }
     }
-    std::optional<std::string> icon;
+    std::optional<Glyph> icon;
     if (const std::optional<std::string> overridden = OverrideModeName(path)) {
         icon = IconForModeName(*overridden);
     }
@@ -371,22 +378,22 @@ std::string IconForPath(const std::filesystem::path& path) {
         }
     }
     const std::lock_guard lock(g_mutex);
-    return g_iconCache.insert_or_assign(key, icon.value_or(std::string())).first->second;
+    return g_iconCache.insert_or_assign(key, icon.value_or(Glyph{})).first->second;
 }
 
-std::string IconForBuffer(const text::Buffer& buffer) {
+Glyph IconForBuffer(const text::Buffer& buffer) {
     std::optional<std::string> chosen;
     {
         const std::lock_guard lock(g_mutex);
         if (const auto it = g_modeCache.find(&buffer); it != g_modeCache.end()) {
-            return it->second.icon;
+            return IconOf(it->second);
         }
         if (const auto it = g_chosenModes.find(&buffer); it != g_chosenModes.end()) {
             chosen = it->second;
         }
     }
     if (chosen) {
-        if (std::optional<std::string> icon = IconForModeName(*chosen)) {
+        if (std::optional<Glyph> icon = IconForModeName(*chosen)) {
             return std::move(*icon);
         }
     }

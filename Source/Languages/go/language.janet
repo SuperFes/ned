@@ -1,5 +1,6 @@
 {:name "go"
  :icon "" # nf-seti-go
+ :icon-color "#00add8"
  :extensions [".go"]
  :injection-aliases ["golang"]
  :line-comment "//"

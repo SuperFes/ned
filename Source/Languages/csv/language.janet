@@ -1,5 +1,6 @@
 {:name "csv"
  :icon "" # nf-seti-csv
+ :icon-color "#89e051"
  :extensions [".csv"]
  :not-applicable {:indents    "line-oriented records; nothing nests"
                   :locals     "no bindings to scope or rename"

@@ -2537,7 +2537,7 @@ void InstallEditorBindings(Environment& env) {
         "languages use (Source/Languages/`<name>`/), so everything a definition can say works: extensions and "
         "filenames (claimed automatically, no separate set-mode-for-extension call needed; a filename holding a / "
         "claims by its trailing path components, e.g. .ssh/config), an :icon (one Nerd Font glyph naming the "
-        "language in the mode line), comment syntax, "
+        "language before its files' names) and its :icon-color (\"#rrggbb\"), comment syntax, "
         "keymap, query files discovered beside it as `<kind>`.janet with an upstream/ subdirectory checked first, "
         "escapes, LSP root markers, import resolution, injection aliases, snippets, and :color-literals "
         "(a tuple of :short-hex and/or :named, widening which colour-literal spellings earn a swatch beyond the "

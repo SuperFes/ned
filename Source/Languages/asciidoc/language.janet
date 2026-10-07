@@ -2,6 +2,7 @@
 # every paragraph the way markdown-inline is.
 {:name "asciidoc"
  :icon "" # nf-oct-book
+ :icon-color "#576d7f"
  :extensions [".adoc" ".asciidoc" ".asc"]
  :injection-aliases ["adoc"]
  :line-comment "//"

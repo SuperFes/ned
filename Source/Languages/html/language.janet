@@ -2,6 +2,7 @@
 
 {:name "html"
  :icon "" # nf-seti-html
+ :icon-color "#e44d26"
  :extensions [".html" ".htm"]
  :injection-aliases ["xhtml" "htm"]
  :block-comment ["<!--" "-->"]

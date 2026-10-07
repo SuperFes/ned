@@ -1,5 +1,6 @@
 {:name "hcl"
  :icon "" # nf-seti-terraform
+ :icon-color "#5f43e9"
  :extensions [".hcl" ".tf" ".tfvars"]
  :injection-aliases ["terraform" "tf"]
  :line-comment "#"

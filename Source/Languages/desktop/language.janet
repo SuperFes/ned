@@ -3,6 +3,7 @@
 
 {:name "desktop"
  :icon "" # nf-fa-desktop
+ :icon-color "#563d7c"
  :extensions [".desktop" ".directory"]
  :line-comment "#"
 

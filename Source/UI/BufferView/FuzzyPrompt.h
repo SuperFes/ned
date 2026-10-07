@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 
+#include "Editor/Glyph.h"
 #include "UI/BufferView/CandidateList.h"
 
 namespace ned::ui::bufferview {
@@ -59,7 +60,7 @@ struct FuzzyPrompt {
 
     // The glyph before an entry (FileIcon), for prompts that pick files or
     // buffers. Null for none.
-    std::function<std::string(const std::string& entry)> icon;
+    std::function<editor::Glyph(const std::string& entry)> icon;
 
     // What picking this entry does. Runs after the session has ended.
     std::function<void(const std::string& selected)> commit;

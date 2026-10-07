@@ -5,6 +5,7 @@
 
 #include "Border.h"
 #include "DrawText.h"
+#include "GlyphPaint.h"
 #include "KeyTranslation.h"
 #include "Paint.h"
 #include "Text/DisplayWidth.h"
@@ -43,7 +44,7 @@ namespace {
     }
 
     std::string DisplayText(const table::Cell& cell) {
-        return cell.icon.empty() ? cell.text : cell.icon + " " + cell.text;
+        return cell.icon.empty() ? cell.text : cell.icon.text + " " + cell.text;
     }
 
     const table::Cell& CellAt(const table::Row& row, std::size_t column) {
@@ -333,6 +334,9 @@ void TableView::Paint(Canvas c) {
             }
             brush.bold = cell.bold;
             DrawCellText(c, columnsX + slot.x, y, slot.width, DisplayText(cell), model_.columns[slot.column].align, brush);
+            if (!selected && model_.columns[slot.column].align == table::Align::Left && slot.width > 0) {
+                TintGlyphCell(c, {.x = columnsX + slot.x, .y = y}, cell.icon);
+            }
         }
     }
 }

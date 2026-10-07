@@ -8,7 +8,8 @@
 #define NED_EDITOR_FILEICONS_H
 
 #include <filesystem>
-#include <string>
+
+#include "Glyph.h"
 
 namespace ned::text {
 class Buffer;
@@ -21,13 +22,13 @@ void               SetFileTypeIconsEnabled(bool enabled);
 [[nodiscard]] bool FileTypeIconsEnabled();
 
 // The language's icon (IconForPath), else a glyph for a common non-text
-// kind (image, archive, font, ...), else a plain document. Empty while file
+// kind (image, archive, font, ...), else an uncoloured plain document. Empty while file
 // type icons are off.
-[[nodiscard]] std::string FileIcon(const std::filesystem::path& path);
+[[nodiscard]] Glyph FileIcon(const std::filesystem::path& path);
 // As above, preferring the icon of the mode the buffer actually runs.
-[[nodiscard]] std::string FileIcon(const text::Buffer& buffer);
+[[nodiscard]] Glyph FileIcon(const text::Buffer& buffer);
 // Empty while file type icons are off.
-[[nodiscard]] std::string FolderIcon(bool open);
+[[nodiscard]] Glyph FolderIcon(bool open);
 
 } // namespace ned::editor
 

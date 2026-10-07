@@ -2,6 +2,7 @@
 
 {:name "css"
  :icon "" # nf-seti-css
+ :icon-color "#663399"
  :extensions [".css"]
  :block-comment ["/*" "*/"]
  # Stylesheet spellings: `#f0a` is a colour here rather than the start of a

@@ -3,6 +3,7 @@
 
 {:name "tsx"
  :icon "" # nf-seti-react
+ :icon-color "#1354bf"
  :extensions [".tsx"]
  :line-comment "//"
  :queries-from "typescript"

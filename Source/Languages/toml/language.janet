@@ -1,5 +1,6 @@
 {:name "toml"
  :icon "" # nf-custom-toml
+ :icon-color "#9c4221"
  :extensions [".toml"]
  :line-comment "#"
  :lsp-root-markers [".taplo.toml" "taplo.toml"]

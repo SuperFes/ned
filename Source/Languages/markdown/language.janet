@@ -4,6 +4,7 @@
 
 {:name "markdown"
  :icon "" # nf-seti-markdown
+ :icon-color "#dddddd"
  :extensions [".md" ".markdown"]
  :lsp-root-markers [".marksman.toml"]
  :injection-aliases ["md"]

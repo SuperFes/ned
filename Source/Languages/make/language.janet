@@ -1,5 +1,6 @@
 {:name "make"
  :icon "" # nf-seti-makefile
+ :icon-color "#6d8086"
  :extensions [".mk" ".mak"]
  :injection-aliases ["makefile" "mk"]
  :filenames ["Makefile" "makefile" "GNUmakefile"]

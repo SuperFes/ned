@@ -1,5 +1,6 @@
 {:name "rust"
  :icon "" # nf-seti-rust
+ :icon-color "#dea584"
  :extensions [".rs"]
  :injection-aliases ["rs"]
  :line-comment "//"

@@ -1,5 +1,6 @@
 {:name "python"
  :icon "" # nf-seti-python
+ :icon-color "#ffbc03"
  :extensions [".py" ".pyw"]
  :line-comment "#"
  :line-continuation "\\"

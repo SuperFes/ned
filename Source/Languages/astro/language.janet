@@ -1,5 +1,6 @@
 {:name "astro"
  :icon "" # nf-dev-astro
+ :icon-color "#e23f67"
  :extensions [".astro"]
  :lsp-root-markers ["package.json"]
  :block-comment ["<!--" "-->"]

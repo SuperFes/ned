@@ -4,6 +4,7 @@
 #include "ProgressBar.h"
 
 #include "Editor/FileIcons.h"
+#include "GlyphPaint.h"
 #include "Paint.h"
 #include "ThemePaints.h"
 
@@ -310,12 +311,18 @@ void ModeLine::Paint(Canvas c) {
     }
 
     // nf-cod-remote, then the host a remote buffer lives on.
-    std::string origin = "  ";
+    constexpr int kRemoteColumn = 2;
+    std::string   origin        = "  ";
     if (const std::optional<text::RemoteFile>& remote = buffer.Remote()) {
         origin += "\ueb3a " + remote->destination + "  ";
     }
-    if (editor::FileTypeIconsEnabled() && !mode_.icon.empty()) {
-        origin += mode_.icon + " ";
+    std::optional<int>  iconColumn;
+    const editor::Glyph icon{.text = mode_.icon, .rgb = mode_.iconColor};
+    if (editor::FileTypeIconsEnabled() && !icon.empty()) {
+        std::vector<std::string> before;
+        AppendUtf8Columns(before, origin);
+        iconColumn = static_cast<int>(before.size());
+        origin += icon.text + " ";
     }
 
     const std::string text = buffer.IsLoading() ? origin + buffer.Name() + loadingText
@@ -505,6 +512,13 @@ void ModeLine::Paint(Canvas c) {
         if (glyph.character.empty()) {
             c[at].character = ""; // a wide glyph's continuation, which Blend reads as "no glyph"
         }
+    }
+    if (buffer.Remote() && kRemoteColumn < c.size().width) {
+        Cell& remote            = c[{.x = kRemoteColumn, .y = 0}];
+        remote.foreground_color = EnsureContrast(theme_.borderAccent.foreground, remote.background_color, kGlyphContrast);
+    }
+    if (iconColumn) {
+        TintGlyphCell(c, {.x = *iconColumn, .y = 0}, icon);
     }
 
     ApplyTextFade(c, surface);

@@ -1,5 +1,6 @@
 {:name "gitrebase"
  :icon "" # nf-dev-git_merge
+ :icon-color "#f54d27"
  :filenames ["git-rebase-todo"]
  :line-comment "#"
  :not-applicable {:indents    "line-oriented records; nothing nests"

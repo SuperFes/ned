@@ -3,6 +3,7 @@
 # line. libmagic cannot tell the two apart.
 {:name "v"
  :icon "" # nf-custom-v_lang
+ :icon-color "#5d87bf"
  :extensions [".vsh" ".vv"]
  :injection-aliases ["vlang"]
  :shared-extensions [".v"]

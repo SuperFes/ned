@@ -1,5 +1,6 @@
 {:name "erlang"
  :icon "" # nf-dev-erlang
+ :icon-color "#b83998"
  :extensions [".erl" ".hrl" ".escript"]
  :injection-aliases ["erl"]
  :filenames ["rebar.config" "app.src" "sys.config"]

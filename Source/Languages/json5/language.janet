@@ -1,5 +1,6 @@
 {:name "json5"
  :icon "" # nf-seti-json
+ :icon-color "#cbcb41"
  :extensions [".json5"]
  :line-comment "//"
  # The outline stops two levels down; breadcrumbs follow every level.

@@ -1,6 +1,7 @@
 #include "LanguageParse.h"
 
 #include <algorithm>
+#include <cctype>
 #include <stdexcept>
 
 #include "JanetData.h"
@@ -144,6 +145,14 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
         }
         else if (key == "content-pattern") {
             definition.contentPattern = ExpectString(directoryName, value, ":content-pattern");
+        }
+        else if (key == "icon-color") {
+            const std::string color = ExpectString(directoryName, value, ":icon-color");
+            if (color.size() != 7 || color[0] != '#' ||
+                !std::ranges::all_of(color.substr(1), [](unsigned char c) { return std::isxdigit(c) != 0; })) {
+                Fail(directoryName, value.line, ":icon-color is \"#rrggbb\"");
+            }
+            definition.iconColor = static_cast<std::uint32_t>(std::stoul(color.substr(1), nullptr, 16));
         }
         else if (key == "icon") {
             definition.icon = ExpectString(directoryName, value, ":icon");

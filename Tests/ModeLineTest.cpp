@@ -23,6 +23,7 @@
 #include "Text/BufferList.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/EventLoop.h"
+#include "UI/GlyphPaint.h"
 #include "UI/ModeLine.h"
 #include "UI/Theme.h"
 
@@ -248,8 +249,31 @@ TEST_CASE("ModeLine names a remote buffer's host and the language's icon before 
     REQUIRE(RowText(screen, 0, 60).starts_with("  \ueb3a box   main.c"));
 }
 
+TEST_CASE("ModeLine paints the language's icon in its colour and a remote glyph in the accent", "[ModeLine]") {
+    ned::text::Buffer     buffer("main.c", ned::text::Rope("int main() {}"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode = ned::editor::FundamentalMode();
+    mode.icon                  = "\ue61e";
+    mode.iconColor             = 0x599eff;
+    ned::ui::Theme    theme    = ned::ui::DarkTheme();
+    ned::ui::ModeLine modeLine(activeBuffer, mode, theme);
+    buffer.SetRemote(ned::text::RemoteFile{.destination = "box", .path = "/src/main.c"});
+
+    ned::ui::Screen screen = MakeScreen(60, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 0});
+    modeLine.Paint(canvas);
+    const ned::ui::Cell& remote = screen.PixelAt(2, 0);
+    const ned::ui::Cell& icon   = screen.PixelAt(9, 0);
+    REQUIRE(icon.character == "\ue61e");
+    CHECK(remote.foreground_color ==
+          ned::ui::EnsureContrast(theme.borderAccent.foreground, remote.background_color, ned::ui::kGlyphContrast));
+    CHECK(icon.foreground_color == ned::ui::EnsureContrast(ned::ui::Color::RGB(0x599eff), icon.background_color, ned::ui::kGlyphContrast));
+    CHECK(screen.PixelAt(11, 0).foreground_color != icon.foreground_color); // the name keeps the bar's colour
+}
+
 TEST_CASE("A bundled language's icon lands on its mode", "[ModeLine]") {
     REQUIRE(ned::editor::CMode().icon == "\ue61e");
+    REQUIRE(ned::editor::CMode().iconColor == 0x599effu);
     REQUIRE(ned::editor::FundamentalMode().icon.empty());
 }
 

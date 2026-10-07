@@ -5,6 +5,7 @@
 
 {:name "bash"
  :icon "" # nf-dev-bash
+ :icon-color "#4d5a5e"
  # .ebuild/.eclass are Gentoo Portage's build-script format -- both are
  # genuinely bash (sourced by portage's own bash-based build system: EAPI,
  # inherit, src_prepare()/src_configure()/... function definitions, [[ ]]

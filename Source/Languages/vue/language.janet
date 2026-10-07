@@ -2,6 +2,7 @@
 # their declared languages.
 {:name "vue"
  :icon "" # nf-seti-vue
+ :icon-color "#8dc149"
  :extensions [".vue"]
  :lsp-root-markers ["package.json"]
  :block-comment ["<!--" "-->"]

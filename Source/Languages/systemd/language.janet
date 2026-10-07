@@ -11,6 +11,7 @@
 
 {:name "systemd"
  :icon "" # nf-fa-gears
+ :icon-color "#30d475"
  :extensions [".service" ".socket" ".timer" ".target" ".mount" ".automount" ".swap" ".path" ".device" ".scope" ".slice"
               ".network" ".netdev" ".link" ".nspawn" ".dnssd"]
  :injection-aliases ["service"]

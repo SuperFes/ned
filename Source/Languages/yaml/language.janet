@@ -1,5 +1,6 @@
 {:name "yaml"
  :icon "" # nf-seti-yml
+ :icon-color "#d70000"
  :extensions [".yaml" ".yml"]
  :line-comment "#"
  :injection-aliases ["yml"]

@@ -2557,13 +2557,13 @@ void BufferView::RefreshPathCompletionPopup() {
     const std::function<std::string(const std::string&)> display =
         isPathMode ? std::function<std::string(const std::string&)>(MaskPathCandidateToLastSegment)
                    : std::function<std::string(const std::string&)>{};
-    const std::function<std::string(const std::string&)> icon =
-        isPathMode ? std::function<std::string(const std::string&)>([](const std::string& candidate) {
+    const std::function<editor::Glyph(const std::string&)> icon =
+        isPathMode ? std::function<editor::Glyph(const std::string&)>([](const std::string& candidate) {
             return candidate.ends_with('/') ? editor::FolderIcon(false) : editor::FileIcon(std::filesystem::path(candidate));
         })
-                   : std::function<std::string(const std::string&)>{};
-    onCandidatesChanged_(
-        BuildFuzzyCandidatePopupModel(prompt_->StatusText(), candidates, pathCompletionSelection_, display, icon));
+                   : std::function<editor::Glyph(const std::string&)>{};
+    onCandidatesChanged_(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), candidates, pathCompletionSelection_, display, icon,
+                                                       theme_.background));
 }
 
 void BufferView::RequestProjectFindReferences() {

@@ -1,6 +1,7 @@
 # Shares tree-sitter-csv's corpus with csv, routed by :language(psv).
 {:name "psv"
  :icon "" # nf-seti-csv
+ :icon-color "#89e051"
  :extensions [".psv"]
  :not-applicable {:indents    "line-oriented records; nothing nests"
                   :locals     "no bindings to scope or rename"

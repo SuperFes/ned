@@ -1,5 +1,6 @@
 {:name "perl"
  :icon "" # nf-seti-perl
+ :icon-color "#519aba"
  :extensions [".pl" ".pm" ".t" ".pod"]
  :injection-aliases ["pl"]
  :line-comment "#"

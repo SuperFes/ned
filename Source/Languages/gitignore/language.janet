@@ -10,6 +10,7 @@
 
 {:name "gitignore"
  :icon "" # nf-seti-git_ignore
+ :icon-color "#f54d27"
  :filenames [".gitignore" ".gitignore_global" ".ignore" ".fdignore" ".rgignore"
              ".dockerignore" ".npmignore" ".eslintignore" ".prettierignore" ".helmignore"]
  :line-comment "#"

@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 
+#include "Glyph.h"
 #include "Mode.h"
 
 namespace ned::text {
@@ -97,11 +98,11 @@ void SetModeForFilename(const std::string& filename, const std::string& modeName
 // file that isn't on this machine's disk.
 [[nodiscard]] Mode ModeForPathAndEnds(const std::filesystem::path& path, std::string_view ends);
 
-// The icon (Mode::icon) of the mode path's name selects, without reading the
+// The icon (Mode::icon, Mode::iconColor) of the mode path's name selects, without reading the
 // file or building the mode -- cheap enough for every row of a listing.
-[[nodiscard]] std::string IconForPath(const std::filesystem::path& path);
+[[nodiscard]] Glyph IconForPath(const std::filesystem::path& path);
 // The built mode's icon once the buffer has one, else as IconForPath.
-[[nodiscard]] std::string IconForBuffer(const text::Buffer& buffer);
+[[nodiscard]] Glyph IconForBuffer(const text::Buffer& buffer);
 
 // FundamentalMode() for a buffer with no associated path (e.g. a scratch
 // buffer), otherwise ModeForPath(*buffer.Path()); a remote buffer's mode

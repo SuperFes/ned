@@ -1,5 +1,6 @@
 {:name "julia"
  :icon "" # nf-seti-julia
+ :icon-color "#a270ba"
  :extensions [".jl"]
  :injection-aliases ["jl"]
  :line-comment "#"

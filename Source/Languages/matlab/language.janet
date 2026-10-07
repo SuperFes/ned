@@ -3,6 +3,7 @@
 # A MATLAB script with none of them still opens as Objective-C.
 {:name "matlab"
  :icon "" # nf-dev-matlab
+ :icon-color "#e16737"
  :extensions [".mlx"]
  :injection-aliases ["octave"]
  :shared-extensions [".m"]

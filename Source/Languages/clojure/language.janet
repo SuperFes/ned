@@ -4,6 +4,7 @@
 
 {:name "clojure"
  :icon "" # nf-dev-clojure
+ :icon-color "#8dc149"
  :extensions [".clj" ".cljs" ".cljc" ".edn" ".bb"]
  :line-comment ";"
  :signature-template "(defn __ned_sig [{}])"

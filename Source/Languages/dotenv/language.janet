@@ -3,6 +3,7 @@
 # an extension, so only the exact spellings are claimed.
 {:name "dotenv"
  :icon "" # nf-seti-config
+ :icon-color "#faf743"
  :extensions [".env"]
  :injection-aliases ["env"]
  :filenames [".env" ".env.local" ".env.development" ".env.production" ".env.test" ".env.example"]

@@ -1,5 +1,6 @@
 {:name "csharp"
  :icon "" # nf-dev-csharp
+ :icon-color "#596706"
  :extensions [".cs"]
  :injection-aliases ["cs" "c#"]
  :line-comment "//"
