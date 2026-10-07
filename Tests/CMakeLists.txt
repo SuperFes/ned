@@ -386,6 +386,7 @@ add_executable(ned_tests
             JanetReplPanelTest.cpp
             DapThreadsPanelTest.cpp
             DebugPanelTest.cpp
+            RemotePanelTest.cpp
             TrackerPanelTest.cpp
             TimestampTest.cpp
             TrackerGithubPluginTest.cpp
