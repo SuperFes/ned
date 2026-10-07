@@ -71,6 +71,7 @@
 #include "Editor/QueryReplace.h"
 #include "Editor/Register.h"
 #include "Editor/Remote/Location.h"
+#include "Editor/Remote/PathCompletion.h"
 #include "Editor/RenameReview.h"
 #include "Editor/SearchEverywhere.h"
 #include "Editor/SearchEverywherePreview.h"
@@ -4343,6 +4344,13 @@ class BufferView : public Widget {
     // Asks the resolver about the typed host under each search domain,
     // once per change of it.
     void RequestRemoteHostLookup();
+    // The host path a path prompt holds, past its host: find-file's, or a
+    // remote search root's.
+    [[nodiscard]] std::optional<editor::remote::RemotePathPrefix> TypedRemotePath() const;
+    // Lists the typed host path's directory, connecting first when needed,
+    // once per change of it.
+    void                                   RequestRemoteListing();
+    [[nodiscard]] std::vector<std::string> RemotePathCompletions() const;
 
     editor::remote::Hosts*         remoteHosts_ = nullptr; // see SetRemoteHosts
     std::optional<RemoteSearchRun> remoteSearch_;
@@ -4351,6 +4359,10 @@ class BufferView : public Widget {
     std::vector<std::string>       remoteHostCandidates_; // read when a host prompt opens
     std::optional<std::string>     remoteLookupTyped_;    // the host text last looked up
     std::vector<std::string>       remoteResolvedHosts_;  // what resolved for it
+    // The host directory a path prompt last listed, and its entries once
+    // the host answers; a failed listing has none.
+    std::optional<text::RemoteFile>                    remoteListingDirectory_;
+    std::optional<std::vector<editor::host::DirEntry>> remoteListingEntries_;
 
     BookmarkPromptAction bookmarkPromptAction_ = BookmarkPromptAction::Jump;
     bool                 charsetPromptReverts_ = false;
