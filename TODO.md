@@ -74,9 +74,9 @@ and sync on save; don't build a remote-authoritative buffer.
       against them through `NED_TEST_AGENT`: x86_64 natively, aarch64 under
       `qemu-aarch64`.
 - [ ] Prune `<build>-<arch>` agent directories no editor has used in a while.
-- [ ] The rest of the `proc` seam, per the design doc's staging step 4: VCS against a
-      remote buffer's repository, the formatter, terminal tabs over a pty, then LSP, DAP
-      and ACP. Tasks and the test runner already run on a remote buffer's host.
+- [ ] The rest of the `proc` seam, per the design doc's staging step 4: the formatter,
+      terminal tabs over a pty, then LSP, DAP and ACP. Tasks, the test runner and VCS
+      already run on a remote buffer's host.
 
 **Client/server protocol**, ordered by the design doc's staging section.
 - [ ] `ned --protocol-dump`: decode a captured byte stream to readable JSON.
@@ -110,6 +110,13 @@ and sync on save; don't build a remote-authoritative buffer.
       delete and a create; `watch` would need to pair them (`FileWatch.h`'s `FileMove`).
 - [ ] A watch burst the host lost events from (`overflow`) checks every remote buffer
       on that host but doesn't relist the Remote panel; `g` does.
+- [ ] Merge conflicts in a host's repository: the VCS panel's conflicted rows and the
+      gutter's conflict verdict read local files (`Vcs/ConflictedFiles.h`,
+      `BufferView::RequestConflictVerdictForCurrentBuffer`), so neither shows for one.
+      Sequence-continue counts a host's unmerged file as still marked unless its buffer
+      is open and clean of markers.
+- [ ] The mode line's issue key and the project sidebar's status colours follow the
+      local project only, not a remote buffer's repository.
 - [ ] A remote test run's `*test results*` lines resolve their sources against the local
       tree (`TestRun/TestSourceResolver.h`); they should resolve on the host and open
       remote buffers.

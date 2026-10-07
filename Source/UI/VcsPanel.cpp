@@ -350,40 +350,101 @@ void VcsPanel::RefreshStatus(bool force) {
     // force=true refresh (stage/commit/etc.'s own onSuccess). Leaving it
     // unadvanced on failure makes the very next Paint() retry immediately
     // instead, which is what actually converges in practice.
-    vcsRunner_->RequestStatus(editor::vcs::LocalRepo(), [this](std::vector<editor::vcs::StatusEntry> entries) {
+    if (findingRepo_) {
+        return;
+    }
+    findingRepo_ = true;
+    vcsRunner_->RepoFor(activeBufferProvider_().Get(), lifetime_.Bind([this](std::expected<editor::vcs::Repo, std::string> repo) {
+        findingRepo_ = false;
+        if (repo) {
+            ShowRepository(*repo);
+            RefreshRepository(*repo);
+        }
+    }));
+}
+
+editor::vcs::Repo VcsPanel::Repository() const {
+    return repo_.value_or(editor::vcs::LocalRepo());
+}
+
+void VcsPanel::SetOnOpenRemoteFile(std::function<void(const text::RemoteFile& file)> handler) {
+    onOpenRemoteFile_ = std::move(handler);
+}
+
+void VcsPanel::ShowRepository(const editor::vcs::Repo& repo) {
+    const bool switched = Repository() != repo;
+    repo_               = repo;
+    if (!switched) {
+        return;
+    }
+    sections_   = {};
+    haveStatus_ = false;
+    conflictedPaths_.clear();
+    selected_.clear();
+    stashes_.clear();
+    currentBranch_.reset();
+    aheadBehind_.reset();
+    sequence_ = {};
+    pendingRevertConfirm_.reset();
+}
+
+void VcsPanel::RefreshRepository(const editor::vcs::Repo& repo) {
+    // An answer for a repository since switched away from is dropped.
+    const auto current = [this, repo] { return repo_ == repo; };
+    vcsRunner_->RequestStatus(repo, lifetime_.Bind([this, current](std::vector<editor::vcs::StatusEntry> entries) {
+            if (!current()) {
+                return;
+            }
             sections_        = editor::vcs::PartitionVcsStatus(entries);
             haveStatus_      = true;
             lastRefreshTime_ = std::chrono::steady_clock::now();
-            RefreshConflictedPaths(); }, [](const std::string&) {});
-    vcsRunner_->RequestBranchList(editor::vcs::LocalRepo(), [this](std::vector<editor::vcs::BranchEntry> entries) {
+            RefreshConflictedPaths(); }), [](const std::string&) {});
+    vcsRunner_->RequestBranchList(repo, lifetime_.Bind([this, current](std::vector<editor::vcs::BranchEntry> entries) {
+            if (!current()) {
+                return;
+            }
             for (const editor::vcs::BranchEntry& entry : entries) {
                 if (entry.current) {
                     currentBranch_ = entry.name;
                     return;
                 }
-            } }, [](const std::string&) {});
+            } }), [](const std::string&) {});
     // Stash support: same throttled cadence, silently keeps stashes_'s last-
     // known contents on error (a provider without stash vocabulary just
     // never shows the section, ParseStashList/PartitionVcsStatus's own
     // "highlighting is only meaningful when it works" precedent).
-    vcsRunner_->RequestStashList(editor::vcs::LocalRepo(), [this](std::vector<editor::vcs::StashEntry> entries) { stashes_ = std::move(entries); }, [](const std::string&) {});
+    vcsRunner_->RequestStashList(repo, lifetime_.Bind([this, current](std::vector<editor::vcs::StashEntry> entries) {
+            if (current()) {
+                stashes_ = std::move(entries);
+            } }), [](const std::string&) {});
     // Ahead/behind summary: silently keeps the last-known value on error
     // (no upstream configured is the common, expected case for a repo with
     // no remote at all) -- same "highlighting is only meaningful when it
     // works" precedent as the rest of this refresh.
-    vcsRunner_->RequestAheadBehind(editor::vcs::LocalRepo(), [this](editor::vcs::AheadBehind ab) { aheadBehind_ = ab; }, [](const std::string&) {});
+    vcsRunner_->RequestAheadBehind(repo, lifetime_.Bind([this, current](editor::vcs::AheadBehind ab) {
+            if (current()) {
+                aheadBehind_ = ab;
+            } }), [](const std::string&) {});
     // Cleared on error too: a provider with no sequence vocabulary must not
     // keep showing a rebase that has long since finished.
-    vcsRunner_->RequestSequenceState(editor::vcs::LocalRepo(), [this](editor::vcs::SequenceState state) { sequence_ = std::move(state); }, [this](const std::string&) { sequence_ = {}; });
+    vcsRunner_->RequestSequenceState(repo, lifetime_.Bind([this, current](editor::vcs::SequenceState state) {
+            if (current()) {
+                sequence_ = std::move(state);
+            } }), lifetime_.Bind([this, current](const std::string&) {
+            if (current()) {
+                sequence_ = {};
+            } }));
 }
 
 void VcsPanel::RefreshConflictedPaths() {
-    conflictedPaths_ = editor::vcs::DetectConflictedFiles(sections_, editor::ProjectRoot());
+    // The scan reads files from this machine's disk.
+    const editor::vcs::Repo repo = Repository();
+    conflictedPaths_             = repo.IsRemote() ? std::set<std::filesystem::path>() : editor::vcs::DetectConflictedFiles(sections_, repo.root);
 }
 
 std::vector<VcsPanel::Row> VcsPanel::BuildRows() const {
     std::vector<Row>            rows;
-    const std::filesystem::path root = editor::ProjectRoot();
+    const std::filesystem::path root = Repository().root;
 
     const auto addSection = [&](VcsPanelSection section, const std::vector<editor::vcs::StatusEntry>& entries) {
         Row header;
@@ -917,6 +978,17 @@ void VcsPanel::ToggleDirectory(const std::filesystem::path& path) {
 }
 
 void VcsPanel::OpenFileEntry(const std::filesystem::path& path) {
+    if (const editor::vcs::Repo repo = Repository(); repo.IsRemote()) {
+        const text::RemoteFile file{.destination = *repo.destination, .path = path};
+        if (text::Buffer* open = bufferList_.FindByRemote(file)) {
+            activeBufferProvider_().Set(*open);
+            statusMessage_.clear();
+        }
+        else if (onOpenRemoteFile_) {
+            onOpenRemoteFile_(file);
+        }
+        return;
+    }
     try {
         text::Buffer& opened = bufferList_.OpenOrCreateFile(path);
         activeBufferProvider_().Set(opened);
@@ -1035,7 +1107,7 @@ void VcsPanel::PushStash() {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    vcsRunner_->RequestStashPush(editor::vcs::LocalRepo(), "", [this] { RefreshStatus(/*force=*/true); }, [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
+    vcsRunner_->RequestStashPush(Repository(), "", [this] { RefreshStatus(/*force=*/true); }, [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
 }
 
 void VcsPanel::PopStash(const std::string& ref) {
@@ -1043,7 +1115,7 @@ void VcsPanel::PopStash(const std::string& ref) {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    vcsRunner_->RequestStashPop(editor::vcs::LocalRepo(), ref, [this] { RefreshStatus(/*force=*/true); }, [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
+    vcsRunner_->RequestStashPop(Repository(), ref, [this] { RefreshStatus(/*force=*/true); }, [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
 }
 
 void VcsPanel::DropStash(const std::string& ref) {
@@ -1051,7 +1123,7 @@ void VcsPanel::DropStash(const std::string& ref) {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    vcsRunner_->RequestStashDrop(editor::vcs::LocalRepo(), ref, [this] { RefreshStatus(/*force=*/true); }, [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
+    vcsRunner_->RequestStashDrop(Repository(), ref, [this] { RefreshStatus(/*force=*/true); }, [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
 }
 
 void VcsPanel::RunRemoteAction(RemoteAction action) {
@@ -1066,13 +1138,13 @@ void VcsPanel::RunRemoteAction(RemoteAction action) {
     auto onError = [this](const std::string& error) { statusMessage_ = "vcs: " + error; };
     switch (action) {
         case RemoteAction::Fetch:
-            vcsRunner_->RequestFetch(editor::vcs::LocalRepo(), onSuccess, onError);
+            vcsRunner_->RequestFetch(Repository(), onSuccess, onError);
             return;
         case RemoteAction::Pull:
-            vcsRunner_->RequestPull(editor::vcs::LocalRepo(), onSuccess, onError);
+            vcsRunner_->RequestPull(Repository(), onSuccess, onError);
             return;
         case RemoteAction::Push:
-            vcsRunner_->RequestPush(editor::vcs::LocalRepo(), onSuccess, onError);
+            vcsRunner_->RequestPush(Repository(), onSuccess, onError);
             return;
     }
 }
@@ -1130,10 +1202,10 @@ void VcsPanel::StagePaths(std::vector<std::filesystem::path> targets, bool stage
             }
         };
         if (stage) {
-            vcsRunner_->RequestStage(editor::vcs::LocalRepo(), path, onDone, onError);
+            vcsRunner_->RequestStage(Repository(), path, onDone, onError);
         }
         else {
-            vcsRunner_->RequestUnstage(editor::vcs::LocalRepo(), path, onDone, onError);
+            vcsRunner_->RequestUnstage(Repository(), path, onDone, onError);
         }
     }
 }
@@ -1178,7 +1250,7 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
         pendingRevertConfirm_.reset();
         if (confirmed) {
             if (vcsRunner_) {
-                vcsRunner_->RequestRevert(editor::vcs::LocalRepo(), target, [this] { RefreshStatus(/*force=*/true); }, [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
+                vcsRunner_->RequestRevert(Repository(), target, [this] { RefreshStatus(/*force=*/true); }, [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
             }
             else {
                 statusMessage_ = "no vcs runner configured";

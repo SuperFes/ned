@@ -241,6 +241,9 @@ the project-root setting, since it is the repository that matters). A provider's
 for a Janet one), looked for with `fs/stat` in registration order and cached per
 repository; one without markers is never used for a remote repository. A hunk's patch
 reaches the host as `-` on stdin when the provider takes it there (`:patches-on-stdin`).
+Repository-wide commands and the VCS panel work in the active buffer's repository
+(`Vcs/Runner.h`'s `RepoFor`); one with no file of its own, a `*vcs*` buffer or the
+commit message, works in the last one found.
 
 **Main-thread waits.** A remote process can't be waited on from the main thread, which
 is what moves its bytes. A call site that blocks there on a child (the formatter's
