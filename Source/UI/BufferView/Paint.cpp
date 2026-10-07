@@ -1116,6 +1116,7 @@ void BufferView::SyncBufferSwitch() {
         if (onActiveBufferChanged_) {
             onActiveBufferChanged_(buffer);
         }
+        ResolveIssueRepository();
         // The callback just (possibly) replaced mode_ -- but a GutterWidth()
         // call during the switch's own event handling (ScrollToShowPoint,
         // CursorPosition) may already have run the mode-derived gutter

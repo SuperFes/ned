@@ -115,8 +115,8 @@ and sync on save; don't build a remote-authoritative buffer.
       `BufferView::RequestConflictVerdictForCurrentBuffer`), so neither shows for one.
       Sequence-continue counts a host's unmerged file as still marked unless its buffer
       is open and clean of markers.
-- [ ] The mode line's issue key and the project sidebar's status colours follow the
-      local project only, not a remote buffer's repository.
+- [ ] The Remote panel doesn't colour rows by their repository's status, as the project
+      sidebar does locally.
 - [ ] A remote test run's `*test results*` lines resolve their sources against the local
       tree (`TestRun/TestSourceResolver.h`); they should resolve on the host and open
       remote buffers.

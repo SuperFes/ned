@@ -396,6 +396,10 @@ class BufferView : public Widget {
     // point, LSP request routing below.
     [[nodiscard]] std::optional<std::string> EmbeddedLanguageAtPoint();
 
+    // The issue the branch of this buffer's repository names, for the mode
+    // line -- a remote buffer's once its repository has been found.
+    [[nodiscard]] std::optional<std::string> IssueKey() const;
+
     // embedded-language-documents follow-up: EmbeddedLanguageAtPoint's
     // sibling for an arbitrary byte offset rather than point -- what
     // RequestCompletionAtPoint/RequestDefinitionAtPoint/RequestRenameAtPoint
@@ -3528,6 +3532,8 @@ class BufferView : public Widget {
     // Re-point the caches and requests that follow the active buffer, when the
     // pane has switched to a different one since the last frame.
     void SyncBufferSwitch();
+    // Finds a remote buffer's repository and its branch, for IssueKey.
+    void ResolveIssueRepository();
     // Push the scroll position and extent to whichever of the scroll bar,
     // arrows and minimap are wired up.
     void SyncScrollWidgets(std::size_t totalLines, std::size_t renderEndLine);

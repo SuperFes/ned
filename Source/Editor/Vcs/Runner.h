@@ -118,6 +118,9 @@ class Runner {
     // own (a *vcs* buffer, the commit message) works in the last one found.
     // done runs before this returns unless the host has to be asked.
     void RepoFor(const text::Buffer& buffer, std::function<void(std::expected<Repo, std::string>)> done);
+    // RepoFor's answer when it needs no host, without recording a visit;
+    // nullopt for a remote file whose repository hasn't been found yet.
+    [[nodiscard]] std::optional<Repo> KnownRepoFor(const text::Buffer& buffer) const;
 
     // Resolves the active provider for buffer's repository, calls its
     // BlameArgv(path) synchronously, spawns the resulting command, and on

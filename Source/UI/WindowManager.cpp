@@ -32,7 +32,6 @@
 #include "Editor/TabWidth.h"
 #include "Editor/Tracker/CommentBuffer.h"
 #include "Editor/Tracker/IssueBuffer.h"
-#include "Editor/Tracker/IssueKey.h"
 #include "Text/ConflictHunk.h"
 
 namespace ned::ui {
@@ -256,7 +255,7 @@ Pane::Pane(text::Buffer& buffer, text::KillRing& killRing, editor::RegisterTable
     // reasoning as SetFocusProvider just above -- shows which embedded
     // language (if any) governs this pane's buffer at its current point.
     modeLine_->SetLanguageAtPointProvider([view = bufferView_.get()] { return view->EmbeddedLanguageAtPoint(); });
-    modeLine_->SetIssueKeyProvider([] { return editor::tracker::CurrentIssueKey(); });
+    modeLine_->SetIssueKeyProvider([view = bufferView_.get()] { return view->IssueKey(); });
     bufferView_->SetMinimap(minimap_.get(), &scrollColumn_);
     // Minimap widget follow-up: exactly one of the two ever occupies row_'s
     // trailing column -- seeded here from the process-wide setting, kept in
