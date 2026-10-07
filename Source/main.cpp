@@ -1616,6 +1616,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     });
     remotePanel.SetOnMessage([&statusMessage](std::string message) { statusMessage = std::move(message); });
     remotePanel.SetOnOpenFile([wm = windowManager.get()](const ned::text::RemoteFile& file) { wm->RequestVisitRemoteFile(file); });
+    vcsPanel->SetOnOpenRemoteFile([wm = windowManager.get()](const ned::text::RemoteFile& file) { wm->RequestVisitRemoteFile(file); });
     remotePanel.SetOnRequestOpenRoot([wm = windowManager.get()] { wm->RequestRemoteOpenRoot(); });
     remotePanel.SetOnFileAction([wm = windowManager.get(), dock = leftDock.get()](ned::ui::RemotePanel::FileAction action, const ned::text::RemoteFile& target) {
         // The prompts are the focused pane's.
@@ -1955,9 +1956,9 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // own selection (what normally drives a re-fetch) hasn't moved.
     vcsDiffPreview.SetOnHunkStageToggle(
         [&vcsRunner, &vcsDiffPreview, panel = vcsPanel.get()](const std::filesystem::path& path, std::size_t newStart, bool stage) {
-            vcsRunner.RequestHunkApply(ned::editor::vcs::LocalRepo(), path, newStart, stage, [&vcsRunner, &vcsDiffPreview, panel, path, stage] {
+            vcsRunner.RequestHunkApply(panel->Repository(), path, newStart, stage, [&vcsRunner, &vcsDiffPreview, panel, path, stage] {
                     panel->ForceRefresh();
-                    vcsRunner.RequestFileDiffText(ned::editor::vcs::LocalRepo(), 
+                    vcsRunner.RequestFileDiffText(panel->Repository(), 
                         path, !stage,
                         [&vcsDiffPreview, path, stage](std::string rawDiff) {
                             vcsDiffPreview.SetModel(ned::ui::VcsDiffPreviewModel{
@@ -1966,13 +1967,13 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
                         [&vcsDiffPreview](const std::string&) { vcsDiffPreview.SetModel(std::nullopt); }); }, [](const std::string&) {});
         });
     vcsPanel->SetOnSelectionChanged(
-        [&overlays, &vcsRunner, &vcsDiffPreview](std::optional<std::filesystem::path> path, bool staged) {
+        [&overlays, &vcsRunner, &vcsDiffPreview, panel = vcsPanel.get()](std::optional<std::filesystem::path> path, bool staged) {
             if (!path) {
                 overlays.Hide(vcsDiffPreview);
                 vcsDiffPreview.SetModel(std::nullopt);
                 return;
             }
-            vcsRunner.RequestFileDiffText(ned::editor::vcs::LocalRepo(), *path, staged, [&overlays, &vcsDiffPreview, path = *path, staged](std::string rawDiff) {
+            vcsRunner.RequestFileDiffText(panel->Repository(), *path, staged, [&overlays, &vcsDiffPreview, path = *path, staged](std::string rawDiff) {
                     vcsDiffPreview.SetModel(
                         ned::ui::VcsDiffPreviewModel{path, staged, ned::editor::vcs::ParseDiffHunks(rawDiff)});
                     overlays.Show(vcsDiffPreview); }, [&overlays, &vcsDiffPreview](const std::string&) {

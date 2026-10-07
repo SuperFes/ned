@@ -38,6 +38,7 @@
 #include "UI/BufferView.h"
 #include "UI/EventLoop.h"
 #include "UI/Theme.h"
+#include "UI/VcsPanel.h"
 
 using Catch::Matchers::ContainsSubstring;
 using ned::tests::PumpUntil;
@@ -318,4 +319,59 @@ TEST_CASE("A commit begun in a remote buffer commits on its host", "[Remote][Rem
     CHECK_THAT(statusMessage, ContainsSubstring("Stage the second line"));
     CHECK_THAT(Run({"git", "-C", fixture.repo.string(), "log", "-1", "--pretty=%s"}), ContainsSubstring("Stage the second line"));
     CHECK(fixture.Staged().empty());
+}
+
+TEST_CASE("The VCS panel shows the active remote buffer's repository", "[Remote][RemoteVcs][HostAgent]") {
+    if (!GitAvailable()) {
+        SKIP("git not found on $PATH");
+    }
+    Fixture     fixture;
+    vcs::Runner runner(fixture.loop);
+    runner.SetHosts(&fixture.hosts);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::text::Buffer&    remote  = list.AddRemotePlaceholder(ned::text::RemoteFile{.destination = "host", .path = fixture.file});
+    ned::ui::ActiveBuffer activeBuffer(remote);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    panel.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 19});
+    panel.SetVcsRunner(&runner);
+    std::optional<ned::text::RemoteFile> opened;
+    panel.SetOnOpenRemoteFile([&opened](const ned::text::RemoteFile& file) { opened = file; });
+
+    ned::ui::Screen screen(40, 20);
+    const auto      shows = [&](const std::string& text) {
+        panel.Paint(ned::ui::Canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 19}));
+        for (int row = 0; row < 20; ++row) {
+            std::string line;
+            for (int col = 0; col < 40; ++col) {
+                line += screen.PixelAt(col, row).character;
+            }
+            if (line.contains(text)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    REQUIRE(PumpUntil(fixture.loop, [&] { return shows("file.txt"); }));
+    CHECK(panel.Repository() == vcs::Repo{.destination = "host", .root = fixture.repo});
+
+    // Its rows are the host's files, opened there.
+    panel.OpenFileEntry(fixture.file);
+    CHECK(activeBuffer.Get().Remote() == ned::text::RemoteFile{.destination = "host", .path = fixture.file});
+    panel.OpenFileEntry(fixture.repo / "elsewhere.txt");
+    CHECK(opened == ned::text::RemoteFile{.destination = "host", .path = fixture.repo / "elsewhere.txt"});
+
+    // A local buffer switches it back, dropping what the host showed.
+    const fs::path previousRoot = ned::editor::ProjectRoot();
+    ned::editor::SetProjectRoot(fixture.fake.dir / "nowhere");
+    ned::text::Buffer& local = list.OpenOrCreateFile(fixture.fake.dir / "nowhere" / "a.txt");
+    activeBuffer.Set(local);
+    panel.ForceRefresh();
+    CHECK(panel.Repository() == vcs::LocalRepo());
+    CHECK_FALSE(shows("file.txt"));
+    ned::editor::SetProjectRoot(previousRoot);
+    (void)scratch;
 }

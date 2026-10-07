@@ -36,7 +36,9 @@
 
 #include "ActiveBuffer.h"
 #include "Editor/ConflictResolution.h"
+#include "Editor/Lifetime.h"
 #include "Editor/Project/Tree.h"
+#include "Editor/Vcs/Repo.h"
 #include "Editor/Vcs/RowStatus.h"
 #include "Editor/Vcs/Runner.h"
 #include "Editor/Vcs/Sequence.h"
@@ -221,6 +223,12 @@ class VcsPanel : public Widget {
     // the same place it wires WindowManager::SetVcsRunner.
     void SetVcsRunner(editor::vcs::Runner* vcsRunner);
 
+    // The repository shown: the active buffer's (Runner::RepoFor), as of
+    // the last refresh. Its rows' paths are its own, the host's remotely.
+    [[nodiscard]] editor::vcs::Repo Repository() const;
+    // Opens a file from a host's repository, which this panel can't load.
+    void SetOnOpenRemoteFile(std::function<void(const text::RemoteFile& file)> handler);
+
     // Testing-only entry point, ProjectSidebar::DispatchVcsStatusForTesting's
     // own precedent -- builds the section trees directly from pre-parsed
     // entries, bypassing Runner/a real subprocess entirely.
@@ -362,6 +370,13 @@ class VcsPanel : public Widget {
     // shared cache.
     std::chrono::steady_clock::time_point lastRefreshTime_;
     void                                  RefreshStatus(bool force);
+    void                                  RefreshRepository(const editor::vcs::Repo& repo);
+    // Switching repositories drops everything shown for the last one.
+    void ShowRepository(const editor::vcs::Repo& repo);
+
+    std::optional<editor::vcs::Repo>             repo_;
+    bool                                         findingRepo_ = false;
+    std::function<void(const text::RemoteFile&)> onOpenRemoteFile_;
 
     // In-flight batch stage/unstage requests -- status is force-refreshed
     // once this drops back to 0.
@@ -378,6 +393,8 @@ class VcsPanel : public Widget {
     // small, self-contained piece of state rather than reusing a shared
     // mechanism that doesn't exist here.
     std::optional<std::filesystem::path> pendingRevertConfirm_;
+
+    editor::LifetimeGuard lifetime_;
 
     [[nodiscard]] int ContentHeight() const;
 
