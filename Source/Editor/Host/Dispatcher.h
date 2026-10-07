@@ -61,6 +61,8 @@ class Dispatcher {
     void FsStat(const nlohmann::json& params, protocol::Responder responder);
     void FsRead(const nlohmann::json& params, protocol::Responder responder);
     void FsWrite(const nlohmann::json& params, protocol::Responder responder);
+    void FsReaddir(const nlohmann::json& params, protocol::Responder responder);
+    void FsRealpath(const nlohmann::json& params, protocol::Responder responder);
 
     protocol::Endpoint&                         endpoint_;
     PostQueue&                                  postQueue_;

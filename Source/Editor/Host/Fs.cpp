@@ -77,4 +77,38 @@ FileStat WritePath(const FsWriteRequest& request) {
     return StatPath(request.path);
 }
 
+std::vector<DirEntry> ListPath(const std::filesystem::path& path) {
+    const FileStat stat = StatPath(path);
+    if (stat.kind == FileKind::Missing) {
+        throw FsError(fs_error::kNotFound, "no such directory: " + path.string());
+    }
+    if (stat.kind != FileKind::Directory) {
+        throw FsError(fs_error::kFailed, path.string() + " is not a directory");
+    }
+    std::error_code                     ec;
+    std::filesystem::directory_iterator it(path, ec);
+    if (ec) {
+        throw FsError(fs_error::kFailed, path.string() + ": " + ec.message());
+    }
+    std::vector<DirEntry> entries;
+    for (; it != std::filesystem::directory_iterator(); it.increment(ec)) {
+        std::error_code entryEc;
+        const bool      link = it->is_symlink(entryEc);
+        entries.push_back(DirEntry{.name = it->path().filename().string(), .kind = StatPath(it->path()).kind, .link = link});
+    }
+    if (ec) {
+        throw FsError(fs_error::kFailed, path.string() + ": " + ec.message());
+    }
+    return entries;
+}
+
+std::filesystem::path RealPath(const std::filesystem::path& path) {
+    std::error_code             ec;
+    const std::filesystem::path resolved = std::filesystem::canonical(path, ec);
+    if (ec) {
+        throw FsError(fs_error::kNotFound, path.string() + ": " + ec.message());
+    }
+    return resolved;
+}
+
 } // namespace ned::editor::host

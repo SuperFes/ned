@@ -137,6 +137,24 @@ TEST_CASE("Malformed fs messages are protocol errors", "[Host][HostCodec]") {
     CHECK_THROWS_AS(host::PathParamsFromJson(Json{{"path", host::Bytes("relative")}}), ProtocolError);
 }
 
+TEST_CASE("Directory entries round-trip, and one that isn't a plain file name is a protocol error", "[Host][HostCodec]") {
+    const std::vector<host::DirEntry> entries{{.name = "a.txt", .kind = host::FileKind::File, .link = false},
+                                              {.name = "caf\xC3\xA9", .kind = host::FileKind::Directory, .link = true},
+                                              {.name = "gone", .kind = host::FileKind::Missing, .link = true}};
+    CHECK(host::DirEntriesFromJson(OverTheWire(host::DirEntriesToJson(entries))) == entries);
+
+    for (const std::string& name : std::vector<std::string>{"", ".", "..", "a/b", std::string("a\0b", 3)}) {
+        CAPTURE(name);
+        CHECK_THROWS_AS(host::DirEntriesFromJson(Json::array({Json{{"name", host::Bytes(name)}, {"kind", "file"}, {"link", false}}})), ProtocolError);
+    }
+    CHECK_THROWS_AS(host::DirEntriesFromJson(Json::array({Json{{"name", host::Bytes("a")}, {"kind", "file"}}})), ProtocolError);
+    CHECK_THROWS_AS(host::DirEntriesFromJson(Json::object()), ProtocolError);
+
+    CHECK(host::RealpathParamsFromJson(Json{{"path", host::Bytes("")}}) == ".");
+    CHECK(host::RealpathParamsFromJson(Json{{"path", host::Bytes("src/a")}}) == "src/a");
+    CHECK_THROWS_AS(host::RealpathParamsFromJson(Json{{"path", host::Bytes(std::string("a\0b", 3))}}), ProtocolError);
+}
+
 TEST_CASE("Path decoding rejects relative paths, NULs and non-bytes", "[Host][HostCodec]") {
     REQUIRE(host::RequirePath(Json{{"p", host::Bytes("/a/./b/../c")}}, "p") == "/a/c");
     REQUIRE_THROWS_AS(host::RequirePath(Json{{"p", host::Bytes("a/b")}}, "p"), ProtocolError);
