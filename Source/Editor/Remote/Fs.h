@@ -57,6 +57,12 @@ std::uint64_t ListDirectory(Connection& connection, const std::filesystem::path&
 // directory, the login's home, with its symlinks followed.
 std::uint64_t ResolvePath(Connection& connection, const std::filesystem::path& path, std::function<void(FsResult<std::filesystem::path>)> done);
 
+// Project/FileOps.h's operations on the host: a directory with its missing
+// parents, a rename that won't overwrite, a recursive remove.
+std::uint64_t MakeDirectory(Connection& connection, const std::filesystem::path& path, std::function<void(FsResult<host::FileStat>)> done);
+std::uint64_t RenamePath(Connection& connection, host::FsRenameRequest request, std::function<void(FsResult<void>)> done);
+std::uint64_t RemovePath(Connection& connection, const std::filesystem::path& path, std::function<void(FsResult<void>)> done);
+
 } // namespace ned::editor::remote
 
 #endif // NED_EDITOR_REMOTE_FS_H
