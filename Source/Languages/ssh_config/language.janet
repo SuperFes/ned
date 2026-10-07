@@ -1,5 +1,6 @@
 {:name "ssh_config"
  :icon "" # nf-dev-ssh
+ :icon-color "#6d8086"
  :extensions [".ssh_config"]
  :injection-aliases ["ssh-config"]
  :filenames ["ssh_config" ".ssh/config"]

@@ -1,5 +1,6 @@
 {:name "gitattributes"
  :icon "" # nf-dev-git
+ :icon-color "#f54d27"
  :filenames [".gitattributes"]
  :line-comment "#"
  :not-applicable {:indents    "line-oriented records; nothing nests"

@@ -2,6 +2,7 @@
 # separate fsharp_signature grammar is not bundled.
 {:name "fsharp"
  :icon "" # nf-dev-fsharp
+ :icon-color "#519aba"
  :extensions [".fs" ".fsx" ".fsi"]
  :injection-aliases ["fs" "f#"]
  :preserve-indent true

@@ -1,5 +1,6 @@
 {:name "nim"
  :icon "" # nf-seti-nim
+ :icon-color "#f3d400"
  :extensions [".nim" ".nims" ".nimble"]
  :line-comment "#"
  :lsp-root-markers ["nim.cfg" "config.nims"]

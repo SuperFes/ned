@@ -1,5 +1,6 @@
 {:name "gitcommit"
  :icon "" # nf-dev-git_commit
+ :icon-color "#f54d27"
  :filenames ["COMMIT_EDITMSG" "MERGE_MSG" "TAG_EDITMSG"]
  :line-comment "#"
  :not-applicable {:indents    "prose"

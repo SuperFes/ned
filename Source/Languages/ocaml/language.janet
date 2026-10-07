@@ -1,5 +1,6 @@
 {:name "ocaml"
  :icon "" # nf-seti-ocaml
+ :icon-color "#e37933"
  :extensions [".ml"]
  :injection-aliases ["ml"]
  :block-comment ["(*" "*)"]

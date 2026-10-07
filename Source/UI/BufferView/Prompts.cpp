@@ -4456,7 +4456,8 @@ void BufferView::RefreshFuzzyPrompt(const bufferview::FuzzyPrompt& prompt) {
     if (onCandidatesChanged_) {
         onCandidatesChanged_(list.Empty() ? std::nullopt
                                           : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), list.Ranked(),
-                                                                                        list.Selection(), nullptr, prompt.icon)));
+                                                                                        list.Selection(), nullptr, prompt.icon,
+                                                                                        theme_.background)));
     }
 }
 
@@ -5195,7 +5196,7 @@ bufferview::FuzzyPrompt BufferView::SwitchToBufferPrompt() {
             .pool          = [this] { return text::CompleteBufferNames(bufferList_, ""); },
             .icon          = [this](const std::string& name) {
                 const text::Buffer* buffer = bufferList_.Find(name);
-                return buffer != nullptr ? editor::FileIcon(*buffer) : std::string(); },
+                return buffer != nullptr ? editor::FileIcon(*buffer) : editor::Glyph{}; },
             .commit        = [this](const std::string& selected) {
                 if (text::Buffer* found = bufferList_.Find(selected)) {
                     activeBuffer_.Set(*found);

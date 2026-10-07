@@ -1,5 +1,6 @@
 {:name "diff"
  :icon "" # nf-oct-diff
+ :icon-color "#41535b"
  :extensions [".diff" ".patch"]
  :injection-aliases ["udiff" "patch"]
  :not-applicable {:indents    "line-oriented records; nothing nests"

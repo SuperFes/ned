@@ -1,5 +1,6 @@
 {:name "typescript"
  :icon "" # nf-seti-typescript
+ :icon-color "#519aba"
  :extensions [".ts" ".mts" ".cts"]
  :line-comment "//"
 

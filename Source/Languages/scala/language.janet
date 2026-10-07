@@ -1,5 +1,6 @@
 {:name "scala"
  :icon "" # nf-seti-scala
+ :icon-color "#cc3e44"
  :extensions [".scala" ".sbt" ".sc"]
  :injection-aliases ["sc"]
  :line-comment "//"

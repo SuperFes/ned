@@ -1,5 +1,6 @@
 {:name "svelte"
  :icon "" # nf-seti-svelte
+ :icon-color "#ff3e00"
  :extensions [".svelte"]
  :lsp-root-markers ["package.json"]
  :block-comment ["<!--" "-->"]

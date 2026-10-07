@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "Editor/Glyph.h"
 #include "UI/Widget.h"
 
 namespace ned::ui::table {
@@ -46,7 +47,7 @@ struct Column {
 
 struct Cell {
     std::string          text;
-    std::string          icon;       // drawn before text, never sorted on
+    editor::Glyph        icon;       // drawn before text, never sorted on
     std::optional<Color> foreground; // the selection brush still wins
     bool                 bold = false;
     // Compared instead of text when both cells being compared have one.

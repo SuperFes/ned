@@ -1,5 +1,6 @@
 {:name "c"
  :icon "" # nf-custom-c
+ :icon-color "#599eff"
  :extensions [".c" ".h"]
  :line-comment "//"
  :line-continuation "\\"

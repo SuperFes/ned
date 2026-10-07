@@ -1,5 +1,6 @@
 {:name "requirements"
  :icon "" # nf-seti-python
+ :icon-color "#ffbc03"
  :extensions [".pip"]
  :filenames ["requirements.txt" "requirements-dev.txt" "requirements_dev.txt"
              "dev-requirements.txt" "test-requirements.txt" "constraints.txt"]

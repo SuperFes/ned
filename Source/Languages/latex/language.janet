@@ -1,5 +1,6 @@
 {:name "latex"
  :icon "" # nf-seti-tex
+ :icon-color "#3d6117"
  :extensions [".tex" ".sty" ".cls" ".ltx" ".dtx" ".ins"]
  :injection-aliases ["tex"]
  :line-comment "%"

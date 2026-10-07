@@ -7,6 +7,7 @@
 #include "TestEvents.h"
 #include "Text/BufferList.h"
 #include "UI/ActiveBuffer.h"
+#include "UI/GlyphPaint.h"
 #include "UI/TabBar.h"
 #include "UI/Theme.h"
 
@@ -79,7 +80,9 @@ TEST_CASE("A tab shows its file's icon before the name", "[TabBar]") {
     tabBar.Paint(canvas);
 
     CHECK(RowText(screen, 0, 40).starts_with(" \ue61e main.c "));
-    CHECK(screen.PixelAt(1, 0).character == "\ue61e");
+    const ned::ui::Cell& icon = screen.PixelAt(1, 0);
+    CHECK(icon.character == "\ue61e");
+    CHECK(icon.foreground_color == ned::ui::EnsureContrast(ned::ui::Color::RGB(0x599eff), icon.background_color, ned::ui::kGlyphContrast));
 }
 
 TEST_CASE("TabBar shows a modified marker on a tab whose buffer has unsaved changes", "[TabBar]") {

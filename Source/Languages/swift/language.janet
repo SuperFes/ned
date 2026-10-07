@@ -1,5 +1,6 @@
 {:name "swift"
  :icon "" # nf-seti-swift
+ :icon-color "#e37933"
  :extensions [".swift"]
  :line-comment "//"
  :lsp-root-markers ["Package.swift"]

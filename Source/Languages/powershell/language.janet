@@ -1,5 +1,6 @@
 {:name "powershell"
  :icon "" # nf-seti-powershell
+ :icon-color "#4273ca"
  :extensions [".ps1" ".psm1" ".psd1"]
  :injection-aliases ["ps1" "pwsh"]
  :line-comment "#"

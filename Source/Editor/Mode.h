@@ -1002,6 +1002,7 @@ inline constexpr std::size_t kMaxLineInspectExpressions = 16;
 struct Mode {
     std::string       name;
     std::string       icon; // a Nerd Font glyph, empty when the language has none
+    std::optional<std::uint32_t> iconColor; // 0xRRGGBB
     Keymap            keymap;
     HighlightFunction highlight; // empty function = no highlighting
     FoldFunction      fold;      // empty function = no folding

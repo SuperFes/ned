@@ -2,6 +2,7 @@
 # JetBrains HTTP client).
 {:name "http"
  :icon "" # nf-cod-globe
+ :icon-color "#008ec7"
  :extensions [".http" ".rest"]
  :line-comment "#"
  :not-applicable {:indents           "requests are flat; bodies indent as their own language"

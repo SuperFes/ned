@@ -9,6 +9,7 @@
 
 {:name "nginx"
  :icon "" # nf-dev-nginx
+ :icon-color "#009639"
  :extensions [".nginx"]
  :filenames ["nginx.conf" "mime.types"]
  :line-comment "#"

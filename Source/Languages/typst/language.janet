@@ -1,5 +1,6 @@
 {:name "typst"
  :icon "" # nf-linux-typst
+ :icon-color "#0dbcc0"
  :extensions [".typ"]
  :injection-aliases ["typ"]
  :line-comment "//"

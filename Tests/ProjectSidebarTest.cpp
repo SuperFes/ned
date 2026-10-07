@@ -12,6 +12,7 @@
 #include "TestEvents.h"
 #include "Text/BufferList.h"
 #include "UI/ActiveBuffer.h"
+#include "UI/GlyphPaint.h"
 #include "UI/LeftDock.h"
 #include "UI/ProjectSidebar.h"
 #include "UI/Theme.h"
@@ -137,6 +138,10 @@ TEST_CASE("ProjectSidebar shows a folder icon on directories and a language icon
 
     CHECK(RowText(screen, 1, 28).find("▸ \uf07b sub/") != std::string::npos);
     CHECK(RowText(screen, 2, 28).find("\ue61e main.c") != std::string::npos);
+    const int            iconColumn = ColumnOf(screen, 2, 28, "\ue61e");
+    const ned::ui::Cell& icon       = screen.PixelAt(iconColumn, 2);
+    CHECK(icon.foreground_color == ned::ui::EnsureContrast(ned::ui::Color::RGB(0x599eff), icon.background_color, ned::ui::kGlyphContrast));
+    CHECK(screen.PixelAt(iconColumn + 2, 2).foreground_color != icon.foreground_color);
 
     std::filesystem::remove_all(dir);
 }

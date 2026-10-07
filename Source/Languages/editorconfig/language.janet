@@ -1,5 +1,6 @@
 {:name "editorconfig"
  :icon "" # nf-seti-editorconfig
+ :icon-color "#fff2f2"
  :filenames [".editorconfig"]
  :line-comment "#"
  :not-applicable {:indents    "line-oriented records; nothing nests"

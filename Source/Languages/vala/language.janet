@@ -1,5 +1,6 @@
 {:name "vala"
  :icon "" # nf-seti-vala
+ :icon-color "#7b3db9"
  :extensions [".vala" ".vapi"]
  :line-comment "//"
  :signature-template "void __ned_sig ({}) {}"

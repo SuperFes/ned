@@ -1,5 +1,6 @@
 {:name "elixir"
  :icon "" # nf-seti-elixir
+ :icon-color "#b88cd9"
  :extensions [".ex" ".exs"]
  :injection-aliases ["ex" "exs"]
  :line-comment "#"

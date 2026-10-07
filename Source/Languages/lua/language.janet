@@ -1,5 +1,6 @@
 {:name "lua"
  :icon "" # nf-seti-lua
+ :icon-color "#51a0cf"
  :extensions [".lua"]
  :line-comment "--"
 

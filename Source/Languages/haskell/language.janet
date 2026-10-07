@@ -1,5 +1,6 @@
 {:name "haskell"
  :icon "" # nf-seti-haskell
+ :icon-color "#a074c4"
  :extensions [".hs" ".hs-boot"]
  :injection-aliases ["hs"]
  :preserve-indent true

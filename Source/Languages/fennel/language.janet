@@ -1,5 +1,6 @@
 {:name "fennel"
  :icon "" # nf-custom-fennel
+ :icon-color "#fff3d7"
  :extensions [".fnl"]
  :injection-aliases ["fnl"]
  :line-comment ";"

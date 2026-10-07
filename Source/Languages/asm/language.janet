@@ -2,6 +2,7 @@
 # too: the grammar treats # lines as comments.
 {:name "asm"
  :icon "" # nf-seti-asm
+ :icon-color "#0071c5"
  :extensions [".s" ".S" ".asm" ".nasm"]
  :injection-aliases ["nasm" "assembly" "x86asm"]
  :line-comment ";"

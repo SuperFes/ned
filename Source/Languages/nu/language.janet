@@ -1,5 +1,6 @@
 {:name "nu"
  :icon "" # nf-oct-terminal
+ :icon-color "#3aa675"
  :extensions [".nu"]
  :injection-aliases ["nushell"]
  :line-comment "#"

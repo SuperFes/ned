@@ -10,6 +10,7 @@
 
 {:name "wgsl"
  :icon "" # nf-dev-webgpu
+ :icon-color "#005a9c"
  :extensions [".wgsl"]
  :line-comment "//"
  :signature-template "fn __ned_sig({}) {}"

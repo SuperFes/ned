@@ -22,6 +22,7 @@
 #include "UI/BufferView/RenderTypes.h"
 #include "UI/Compositing.h"
 #include "UI/DrawText.h"
+#include "UI/GlyphPaint.h"
 #include "UI/ThemePaints.h"
 
 #include <algorithm>
@@ -335,11 +336,13 @@ inline CandidatePopupWindow ComputeCandidatePopupWindow(std::size_t selected, st
     return CandidatePopupWindow{.start = windowStart, .end = windowEnd};
 }
 
-// `icon`, when set, fills each candidate's left column (a file's glyph).
+// `icon`, when set, fills each candidate's left column (a file's glyph),
+// its colour kept readable against `iconBackground`.
 inline ListPopupModel BuildFuzzyCandidatePopupModel(const std::string& title, const std::vector<std::string>& ranked,
-                                                    std::size_t                                           selected,
-                                                    const std::function<std::string(const std::string&)>& display = nullptr,
-                                                    const std::function<std::string(const std::string&)>& icon    = nullptr) {
+                                                    std::size_t                                             selected,
+                                                    const std::function<std::string(const std::string&)>&   display        = nullptr,
+                                                    const std::function<editor::Glyph(const std::string&)>& icon           = nullptr,
+                                                    const Color&                                            iconBackground = Color::Default) {
     ListPopupModel model;
     model.title = title;
     if (ranked.empty()) {
@@ -354,7 +357,10 @@ inline ListPopupModel BuildFuzzyCandidatePopupModel(const std::string& title, co
         model.rows.push_back({.left = icon ? " " : "", .main = "↑ " + std::to_string(windowStart) + " more above"});
     }
     for (std::size_t i = windowStart; i < windowEnd; ++i) {
-        model.rows.push_back({.left = icon ? icon(ranked[i]) : std::string(), .main = display ? display(ranked[i]) : ranked[i]});
+        const editor::Glyph glyph = icon ? icon(ranked[i]) : editor::Glyph{};
+        model.rows.push_back({.left           = glyph.text,
+                              .main           = display ? display(ranked[i]) : ranked[i],
+                              .leftForeground = GlyphForeground(glyph, iconBackground)});
     }
     model.selectedIndex = (selected - windowStart) + (windowStart > 0 ? 1 : 0);
 

@@ -2,6 +2,7 @@
 
 {:name "xml"
  :icon "" # nf-seti-xml
+ :icon-color "#e37933"
  :extensions [".xml" ".xsd" ".xsl" ".xslt" ".svg"]
  :injection-aliases ["svg" "xsl" "plist"]
  :block-comment ["<!--" "-->"]

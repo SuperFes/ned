@@ -2,6 +2,7 @@
 # ~/.config/git/config share the syntax.
 {:name "gitconfig"
  :icon "" # nf-dev-git
+ :icon-color "#f54d27"
  :extensions [".gitconfig"]
  :filenames [".gitconfig" ".gitmodules" "gitconfig" ".git/config" "git/config"]
  :line-comment "#"

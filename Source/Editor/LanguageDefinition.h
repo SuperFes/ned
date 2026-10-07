@@ -24,7 +24,9 @@
 #ifndef NED_EDITOR_LANGUAGEDEFINITION_H
 #define NED_EDITOR_LANGUAGEDEFINITION_H
 
+#include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -132,6 +134,8 @@ struct LanguageDefinition {
     std::string              contentPattern;
     // `:icon ""`: the Nerd Font glyph naming the language in the chrome.
     std::string icon;
+    // `:icon-color "#rrggbb"`: the icon's colour, the language's brand one.
+    std::optional<std::uint32_t> iconColor;
     // Empty = no line-comment syntax (JSON, HTML, CSS, XML, Markdown).
     std::string lineCommentPrefix;
     // `:block-comment ["(*" "*)"]`: opener and closer, both empty when unset.

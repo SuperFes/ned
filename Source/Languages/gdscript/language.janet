@@ -1,5 +1,6 @@
 {:name "gdscript"
  :icon "" # nf-seti-godot
+ :icon-color "#6d8086"
  :extensions [".gd"]
  :injection-aliases ["gd"]
  :line-comment "#"

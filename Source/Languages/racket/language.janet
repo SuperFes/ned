@@ -1,5 +1,6 @@
 {:name "racket"
  :icon "" # nf-dev-racket
+ :icon-color "#9f1d20"
  :extensions [".rkt" ".rktl" ".rktd"]
  :injection-aliases ["rkt"]
  :line-comment ";"

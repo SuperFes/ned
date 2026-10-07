@@ -3,6 +3,7 @@
 
 {:name "org"
  :icon "" # nf-custom-orgmode
+ :icon-color "#77aa99"
  :extensions [".org"]
  :line-comment "#"
  :import-resolution {:home-prefix true}

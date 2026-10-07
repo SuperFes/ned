@@ -18,6 +18,7 @@
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Tree.h"
 #include "Editor/Vcs/ConflictedFiles.h"
+#include "GlyphPaint.h"
 #include "KeyTranslation.h"
 #include "Text/BinaryDetect.h"
 #include "Text/Utf8.h"
@@ -103,8 +104,14 @@ namespace {
         return out;
     }
 
-    std::string BuildLabel(const std::vector<editor::ProjectTreeEntry>& entries, std::size_t index,
-                           const std::set<std::filesystem::path>& expandedDirs) {
+    struct Label {
+        std::string   text;
+        editor::Glyph icon;
+        int           iconColumn = 0;
+    };
+
+    Label BuildLabel(const std::vector<editor::ProjectTreeEntry>& entries, std::size_t index,
+                     const std::set<std::filesystem::path>& expandedDirs) {
         const editor::ProjectTreeEntry& entry = entries[index];
 
         const bool     expanded = entry.isDirectory && expandedDirs.contains(entry.path);
@@ -114,14 +121,15 @@ namespace {
             prefix += expanded ? kExpandedTriangle : kCollapsedTriangle;
             prefix += U' ';
         }
-        std::string label = Utf8(prefix);
-        if (const std::string icon = entry.isDirectory ? editor::FolderIcon(expanded) : editor::FileIcon(entry.path);
-            !icon.empty()) {
-            label += icon + " ";
+        Label label{.text       = Utf8(prefix),
+                    .icon       = entry.isDirectory ? editor::FolderIcon(expanded) : editor::FileIcon(entry.path),
+                    .iconColumn = static_cast<int>(prefix.size())};
+        if (!label.icon.empty()) {
+            label.text += label.icon.text + " ";
         }
-        label += entry.path.filename().string();
+        label.text += entry.path.filename().string();
         if (entry.isDirectory) {
-            label += '/';
+            label.text += '/';
         }
         return label;
     }
@@ -483,7 +491,12 @@ void ProjectSidebar::Paint(Canvas c) {
             }
         }
 
-        DrawText(c, 0, row, BuildLabel(entries, *index, expandedDirs_), brush, contentColumns);
+        const Label label = BuildLabel(entries, *index, expandedDirs_);
+        DrawText(c, 0, row, label.text, brush, contentColumns);
+        // The selection brush wins, as TreeView's kind marker.
+        if (!isSelected && label.iconColumn < contentColumns) {
+            TintGlyphCell(c, {.x = label.iconColumn, .y = row}, label.icon);
+        }
     }
 }
 

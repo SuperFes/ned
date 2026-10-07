@@ -1,5 +1,6 @@
 {:name "gleam"
  :icon "" # nf-dev-gleam
+ :icon-color "#ffaff3"
  :extensions [".gleam"]
  :line-comment "//"
  :lsp-root-markers ["gleam.toml"]

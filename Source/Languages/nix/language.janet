@@ -1,5 +1,6 @@
 {:name "nix"
  :icon "" # nf-linux-nixos
+ :icon-color "#7ebae4"
  :extensions [".nix"]
  :line-comment "#"
  :lsp-root-markers ["flake.nix"]

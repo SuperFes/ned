@@ -1,5 +1,6 @@
 {:name "scss"
  :icon "" # nf-seti-sass
+ :icon-color "#f55385"
  :extensions [".scss"]
  # Stylesheet spellings: `#f0a` is a colour here rather than the start of a
  # comment, and `tomato` a colour rather than an identifier

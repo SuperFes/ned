@@ -1,5 +1,6 @@
 {:name "r"
  :icon "" # nf-seti-r
+ :icon-color "#2266ba"
  :extensions [".R" ".r"]
  :injection-aliases ["rscript"]
  :line-comment "#"

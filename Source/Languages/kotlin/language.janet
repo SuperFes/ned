@@ -3,6 +3,7 @@
 
 {:name "kotlin"
  :icon "" # nf-seti-kotlin
+ :icon-color "#7f52ff"
  :extensions [".kt" ".kts"]
  :injection-aliases ["kt" "kts"]
  :line-comment "//"

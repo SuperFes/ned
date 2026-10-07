@@ -1,5 +1,6 @@
 {:name "groovy"
  :icon "" # nf-dev-groovy
+ :icon-color "#005f87"
  :extensions [".groovy" ".gvy" ".gy" ".gsh" ".gradle"]
  :injection-aliases ["gradle"]
  :filenames ["Jenkinsfile"]

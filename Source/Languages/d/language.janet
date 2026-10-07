@@ -1,5 +1,6 @@
 {:name "d"
  :icon "" # nf-seti-d
+ :icon-color "#b03931"
  :extensions [".d" ".di" ".dd"]
  :injection-aliases ["dlang"]
  :line-comment "//"

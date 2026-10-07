@@ -1,5 +1,6 @@
 {:name "vhdl"
  :icon "" # nf-cod-chip
+ :icon-color "#019833"
  :extensions [".vhd" ".vhdl"]
  :line-comment "--"
  :signature-template "package __ned_p is procedure __ned_sig({}); end package;"

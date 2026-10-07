@@ -1,6 +1,7 @@
 #include "TabBar.h"
 
 #include "DrawText.h"
+#include "GlyphPaint.h"
 #include "Paint.h"
 #include "ThemePaints.h"
 
@@ -35,8 +36,8 @@ namespace {
     // so its .size() is the tab's column width.
     std::vector<std::string> TabLabel(const text::Buffer& buffer) {
         std::string label = " ";
-        if (const std::string icon = editor::FileIcon(buffer); !icon.empty()) {
-            label += icon + " ";
+        if (const editor::Glyph icon = editor::FileIcon(buffer); !icon.empty()) {
+            label += icon.text + " ";
         }
         label += buffer.Name();
         if (buffer.Modified()) {
@@ -164,6 +165,7 @@ void TabBar::Paint(Canvas c) {
 
         const std::vector<std::string> label    = TabLabel(*tab.buffer);
         const int                      tabWidth = static_cast<int>(label.size());
+        const editor::Glyph            icon     = editor::FileIcon(*tab.buffer);
 
         auto fillColourAt = [&](int index) {
             if (!PaintsColour(surface.fill)) {
@@ -190,6 +192,9 @@ void TabBar::Paint(Canvas c) {
             c.Blend(at, cell);
             if (label[i].empty()) {
                 c[at].character = ""; // a wide glyph's continuation, which Blend reads as "no glyph"
+            }
+            if (i == 1) {
+                TintGlyphCell(c, at, icon); // TabLabel's icon column
             }
         }
 

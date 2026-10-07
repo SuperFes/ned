@@ -1,5 +1,6 @@
 {:name "crystal"
  :icon "" # nf-seti-crystal
+ :icon-color "#c8c8c8"
  :extensions [".cr"]
  :injection-aliases ["cr"]
  :line-comment "#"

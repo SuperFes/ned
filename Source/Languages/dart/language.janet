@@ -1,5 +1,6 @@
 {:name "dart"
  :icon "" # nf-seti-dart
+ :icon-color "#03589c"
  :extensions [".dart"]
  :line-comment "//"
  :lsp-root-markers ["pubspec.yaml"]

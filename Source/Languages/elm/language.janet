@@ -1,5 +1,6 @@
 {:name "elm"
  :icon "" # nf-seti-elm
+ :icon-color "#519aba"
  :extensions [".elm"]
  :preserve-indent true
  :line-comment "--"

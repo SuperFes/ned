@@ -1,5 +1,6 @@
 {:name "scheme"
  :icon "" # nf-custom-scheme
+ :icon-color "#eeeeee"
  :extensions [".scm" ".ss" ".sld" ".sls"]
  :injection-aliases ["scm"]
  :line-comment ";"
