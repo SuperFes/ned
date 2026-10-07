@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "Editor/Host/SearchCodec.h"
+#include "Editor/ModeOverrides.h"
 #include "Editor/NextError.h"
 #include "Editor/Remote/Fs.h"
 #include "Editor/Remote/Hosts.h"
@@ -14,6 +15,7 @@
 #include "Editor/Remote/RemoteBuffer.h"
 #include "Editor/Remote/Search.h"
 #include "UI/BufferView.h"
+#include "UI/RemotePanel.h"
 
 namespace ned::ui {
 
@@ -73,6 +75,87 @@ void BufferView::DisconnectFromHost(const std::string& destination) {
         CancelRemoteSearch();
     }
     statusMessage_ = remoteHosts_->Disconnect(destination) ? "Disconnected from " + destination : "Not connected to " + destination;
+}
+
+void BufferView::WithRemoteHost(const std::string& destination, std::function<void(editor::remote::Connection&)> then) {
+    if (remoteHosts_ == nullptr) {
+        statusMessage_ = "No remote hosts.";
+        return;
+    }
+    remoteHosts_->Connect(destination, lifetime_.Bind([this, destination, then = std::move(then)](
+                                                          const std::expected<editor::remote::Connection*, std::string>& connection) {
+        if (!connection) {
+            ReportError("Couldn't connect to " + destination + ": " + connection.error());
+            return;
+        }
+        then(**connection);
+    }));
+}
+
+void BufferView::CreateRemoteDirectory(const editor::remote::Location& directory) {
+    WithRemoteHost(directory.destination, [this, directory](editor::remote::Connection& connection) {
+        editor::remote::MakeDirectory(connection, directory.path, lifetime_.Bind([this, directory](editor::remote::FsResult<editor::host::FileStat> made) {
+            if (!made) {
+                ReportError("Couldn't create " + directory.ToString() + ": " + made.error().message);
+                return;
+            }
+            statusMessage_ = "Created directory " + directory.ToString();
+            if (remotePanel_ != nullptr) {
+                remotePanel_->Changed(directory);
+            }
+        }));
+    });
+}
+
+void BufferView::RenameRemotePath(const editor::remote::Location& from, const editor::remote::Location& to) {
+    if (from.destination != to.destination) {
+        ReportError("Can't move " + from.ToString() + " to another host");
+        return;
+    }
+    WithRemoteHost(from.destination, [this, from, to](editor::remote::Connection& connection) {
+        editor::remote::RenamePath(connection, {.from = from.path, .to = to.path}, lifetime_.Bind([this, from, to](editor::remote::FsResult<void> renamed) {
+            if (!renamed) {
+                ReportError("Couldn't rename " + from.ToString() + ": " + renamed.error().message);
+                return;
+            }
+            // Buffers on the file itself, or on files under a renamed directory.
+            for (const auto& candidate : bufferList_.Buffers()) {
+                const std::optional<text::RemoteFile>& remote = candidate->Remote();
+                if (!remote || remote->destination != from.destination) {
+                    continue;
+                }
+                if (remote->path == from.path) {
+                    candidate->SetRemote(to);
+                    candidate->Rename(text::RemoteBufferName(to));
+                    editor::ClearModeCacheFor(*candidate);
+                }
+                else if (const std::filesystem::path relative = remote->path.lexically_relative(from.path); !relative.empty() && *relative.begin() != "..") {
+                    candidate->SetRemote({.destination = to.destination, .path = to.path / relative});
+                    editor::ClearModeCacheFor(*candidate);
+                }
+            }
+            statusMessage_ = "Renamed to " + to.ToString();
+            if (remotePanel_ != nullptr) {
+                remotePanel_->Changed(from);
+                remotePanel_->Changed(to);
+            }
+        }));
+    });
+}
+
+void BufferView::DeleteRemotePath(const editor::remote::Location& target) {
+    WithRemoteHost(target.destination, [this, target](editor::remote::Connection& connection) {
+        editor::remote::RemovePath(connection, target.path, lifetime_.Bind([this, target](editor::remote::FsResult<void> removed) {
+            if (!removed) {
+                ReportError("Couldn't delete " + target.ToString() + ": " + removed.error().message);
+                return;
+            }
+            statusMessage_ = "Deleted " + target.ToString();
+            if (remotePanel_ != nullptr) {
+                remotePanel_->Changed(target);
+            }
+        }));
+    });
 }
 
 void BufferView::VisitRemoteFile(const editor::remote::Location& file, std::optional<std::size_t> line, bool createMissing) {

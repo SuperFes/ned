@@ -2944,6 +2944,10 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
         ActivateProjectAndReport(root);
     }
     else if (inputMode_ == InputMode::CreateDirectory) {
+        if (const std::optional<editor::remote::Location> remote = editor::remote::ParsePromptLocation(input)) {
+            CreateRemoteDirectory(*remote);
+            return bufferview::PromptCommit::Finished;
+        }
         try {
             editor::CreateProjectDirectory(input);
             statusMessage_ = "Created directory " + input;
@@ -3779,7 +3783,13 @@ bufferview::ConfirmPrompt BufferView::ConfirmDeleteFilePrompt() {
     // in PerformProjectDelete now -- file-operation-create-delete
     // follow-up, which wraps them in the server's own willDelete/didDelete
     // round trip the same way PerformProjectRename does for a rename.
-    return {.cancelMessage = "Delete cancelled.", .onConfirm = [this, target = deleteTarget_] { PerformProjectDelete(target); }};
+    return {.cancelMessage = "Delete cancelled.", .onConfirm = [this, target = deleteTarget_] {
+                if (const std::optional<editor::remote::Location> remote = editor::remote::ParsePromptLocation(target.string())) {
+                    DeleteRemotePath(*remote);
+                    return;
+                }
+                PerformProjectDelete(target);
+            }};
 }
 
 bufferview::ConfirmPrompt BufferView::ConfirmRecoverFilePrompt() {
@@ -4033,7 +4043,8 @@ void BufferView::StartDeleteFileAt(const std::filesystem::path& path) {
         statusMessage_ = "Finish the current prompt first.";
         return;
     }
-    if (!std::filesystem::exists(path)) {
+    // A remote path's host says whether it's there when asked to delete it.
+    if (!std::filesystem::exists(path) && !editor::remote::ParseLocation(path.string())) {
         statusMessage_ = "No such file or directory: " + path.string();
         return;
     }
@@ -4047,7 +4058,7 @@ void BufferView::HandleDeleteFileKey(const editor::KeyChord& chord) {
     if (deleteStage_ == DeleteFileStage::EnteringPath) {
         if (chord.Special == editor::SpecialKey::Enter) {
             const std::string input = prompt_->Text();
-            if (!std::filesystem::exists(input)) {
+            if (!std::filesystem::exists(input) && !editor::remote::ParseLocation(input)) {
                 statusMessage_ = "No such file or directory: " + input;
                 EndInteractiveSession();
                 return;

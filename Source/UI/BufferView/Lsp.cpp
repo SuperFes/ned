@@ -2811,7 +2811,7 @@ void BufferView::StartRenameFileAt(const std::filesystem::path& path) {
         statusMessage_ = "Finish the current prompt first.";
         return;
     }
-    if (!std::filesystem::exists(path)) {
+    if (!std::filesystem::exists(path) && !editor::remote::ParseLocation(path.string())) {
         statusMessage_ = "No such file or directory: " + path.string();
         return;
     }
@@ -2828,7 +2828,7 @@ void BufferView::HandleRenameFileKey(const editor::KeyChord& chord) {
         const std::string input = prompt_->Text();
 
         if (renameStage_ == RenameFileStage::EnteringSource) {
-            if (!std::filesystem::exists(input)) {
+            if (!std::filesystem::exists(input) && !editor::remote::ParseLocation(input)) {
                 statusMessage_ = "No such file or directory: " + input;
                 EndInteractiveSession();
                 return;
@@ -2844,6 +2844,19 @@ void BufferView::HandleRenameFileKey(const editor::KeyChord& chord) {
         const std::filesystem::path destination = input;
         const std::filesystem::path source      = renameSource_;
         EndInteractiveSession();
+        if (const std::optional<editor::remote::Location> remote = editor::remote::ParsePromptLocation(source.string())) {
+            // A bare absolute path stays on the source's host.
+            std::optional<editor::remote::Location> to = editor::remote::ParseLocation(input);
+            if (!to && destination.is_absolute()) {
+                to = editor::remote::ParseLocation(remote->destination + ":" + input);
+            }
+            if (!to) {
+                ReportError("Expected host:/path, not \"" + input + "\"");
+                return;
+            }
+            RenameRemotePath(*remote, *to);
+            return;
+        }
         PerformProjectRename(source, destination);
         return;
     }

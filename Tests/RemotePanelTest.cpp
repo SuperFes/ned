@@ -42,7 +42,9 @@ struct Fixture {
     ned::ui::RemotePanel          panel{theme, hosts};
     ned::ui::Screen               screen{kWidth, kHeight};
 
-    std::vector<ned::text::RemoteFile> opened;
+    using FileAction = ned::ui::RemotePanel::FileAction;
+    std::vector<ned::text::RemoteFile>                         opened;
+    std::vector<std::pair<FileAction, ned::text::RemoteFile>> actions;
     int                                openRootRequests = 0;
     int                                rootsChanged     = 0;
     std::string                        message;
@@ -56,6 +58,7 @@ struct Fixture {
         panel.SetOnRequestOpenRoot([this] { ++openRootRequests; });
         panel.SetOnRootsChanged([this] { ++rootsChanged; });
         panel.SetOnMessage([this](std::string text) { message = std::move(text); });
+        panel.SetOnFileAction([this](FileAction action, const ned::text::RemoteFile& target) { actions.emplace_back(action, target); });
     }
 
     [[nodiscard]] std::string RowText(int y) {
@@ -173,6 +176,63 @@ TEST_CASE("The Remote panel lists an opened root as it's expanded, and opens its
     CHECK(fixture.panel.Roots().empty());
     CHECK(fixture.rootsChanged == 2);
     CHECK_THAT(fixture.Rows()[0], ContainsSubstring("o opens host:/path"));
+}
+
+TEST_CASE("The Remote panel's file keys name the selected row, and a change relists its directory", "[RemotePanel][Remote][HostAgent]") {
+    using FileAction            = Fixture::FileAction;
+    Fixture                     fixture;
+    const std::filesystem::path dir = fixture.fake.dir / "proj";
+    std::filesystem::create_directories(dir / "sub" / "deep");
+    std::ofstream(dir / "a.txt") << "a\n";
+    std::ofstream(dir / "sub" / "c.txt") << "c\n";
+    const auto at = [](const std::filesystem::path& path) { return ned::text::RemoteFile{.destination = "host", .path = path}; };
+
+    fixture.panel.OpenRoot("host:" + dir.string());
+    REQUIRE(fixture.RowsSettle(3));
+    fixture.Select("sub");
+    fixture.panel.Tree().OnEvent(test::Return());
+    REQUIRE(fixture.RowsSettle(5));
+    fixture.Select("deep");
+    fixture.panel.Tree().OnEvent(test::Return());
+    REQUIRE(fixture.RowsSettle(5));
+
+    // A new file or directory goes in a selected directory, or beside a file.
+    fixture.Select("c.txt");
+    for (const char* key : {"n", "+", "R", "D"}) {
+        fixture.panel.Tree().OnEvent(test::Character(key));
+    }
+    fixture.Select("deep");
+    fixture.panel.Tree().OnEvent(test::Character("+"));
+    CHECK(fixture.actions == std::vector<std::pair<FileAction, ned::text::RemoteFile>>{{FileAction::NewFile, at(dir / "sub")},
+                                                                                       {FileAction::NewDirectory, at(dir / "sub")},
+                                                                                       {FileAction::Rename, at(dir / "sub" / "c.txt")},
+                                                                                       {FileAction::Delete, at(dir / "sub" / "c.txt")},
+                                                                                       {FileAction::NewDirectory, at(dir / "sub" / "deep")}});
+
+    // A root is removed with x, never renamed or deleted.
+    fixture.actions.clear();
+    fixture.Select("host:" + dir.string());
+    fixture.panel.Tree().OnEvent(test::Character("D"));
+    CHECK(fixture.actions.empty());
+    CHECK(fixture.message == "x removes a root from the panel");
+
+    // A new file under sub relists it; deep stays expanded and the
+    // selection stays on c.txt.
+    fixture.Select("c.txt");
+    std::ofstream(dir / "sub" / "b.txt") << "b\n";
+    fixture.panel.Changed(at(dir / "sub" / "b.txt"));
+    REQUIRE(fixture.RowsSettle(6));
+    std::vector<std::string> rows = fixture.Rows();
+    CHECK_THAT(rows[2], ContainsSubstring("deep"));
+    CHECK(rows[2].find("▸") == std::string::npos);
+    CHECK_THAT(rows[3], ContainsSubstring("b.txt"));
+    CHECK(fixture.panel.Tree().SelectedRow() == 4u);
+
+    // A directory made several levels down shows in its nearest listed ancestor.
+    std::filesystem::create_directories(dir / "x" / "y");
+    fixture.panel.Changed(at(dir / "x" / "y"));
+    REQUIRE(fixture.RowsSettle(7));
+    CHECK_THAT(fixture.AllRows(), ContainsSubstring("▸ x"));
 }
 
 TEST_CASE("The Remote panel hides and shows dotfiles with '.'", "[RemotePanel][Remote][HostAgent]") {
