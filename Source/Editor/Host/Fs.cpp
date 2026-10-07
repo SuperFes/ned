@@ -3,10 +3,32 @@
 #include <ostream>
 #include <system_error>
 
+#include "Editor/Project/FileOps.h"
 #include "Text/FilePreservation.h"
 #include "Text/SavePlan.h"
 
 namespace ned::editor::host {
+
+namespace {
+
+    void RequirePresent(const std::filesystem::path& path) {
+        std::error_code ec;
+        if (!std::filesystem::exists(std::filesystem::symlink_status(path, ec))) {
+            throw FsError(fs_error::kNotFound, "no such file or directory: " + path.string());
+        }
+    }
+
+    template <typename Op>
+    void RunFileOp(Op op) {
+        try {
+            op();
+        }
+        catch (const std::exception& e) {
+            throw FsError(fs_error::kFailed, e.what());
+        }
+    }
+
+} // namespace
 
 FileStat StatPath(const std::filesystem::path& path) {
     std::error_code                    ec;
@@ -109,6 +131,21 @@ std::filesystem::path RealPath(const std::filesystem::path& path) {
         throw FsError(fs_error::kNotFound, path.string() + ": " + ec.message());
     }
     return resolved;
+}
+
+FileStat MakeDirectory(const std::filesystem::path& path) {
+    RunFileOp([&path] { CreateProjectDirectory(path); });
+    return StatPath(path);
+}
+
+void RenamePath(const FsRenameRequest& request) {
+    RequirePresent(request.from);
+    RunFileOp([&request] { RenameProjectPath(request.from, request.to); });
+}
+
+void RemovePath(const std::filesystem::path& path) {
+    RequirePresent(path);
+    RunFileOp([&path] { DeleteProjectPath(path); });
 }
 
 } // namespace ned::editor::host

@@ -225,7 +225,6 @@ add_library(ned_lib STATIC
         Editor/FlatModules.cpp
         Editor/BazelLabels.cpp
         Editor/OdinCollections.cpp
-        Editor/Project/FileOps.cpp
         Editor/AutoRevert.cpp
         Editor/AutoMerge.cpp
         Editor/BackgroundActivity.cpp

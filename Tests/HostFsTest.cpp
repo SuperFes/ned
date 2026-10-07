@@ -159,3 +159,47 @@ TEST_CASE("A host realpath resolves symlinks and a relative path against the wor
     CHECK(host::RealPath(".") == fs::current_path());
     CHECK(CodeOf([&] { (void)host::RealPath(dir.path / "missing"); }) == fs_error::kNotFound);
 }
+
+TEST_CASE("A host mkdir makes the directory and its missing parents", "[Host][HostFs]") {
+    Dir dir;
+    const host::FileStat made = host::MakeDirectory(dir.path / "a" / "b");
+    CHECK(made.kind == host::FileKind::Directory);
+    CHECK(fs::is_directory(dir.path / "a" / "b"));
+    CHECK(host::MakeDirectory(dir.path / "a").kind == host::FileKind::Directory);
+
+    Write(dir.path / "file", "x");
+    CHECK(CodeOf([&] { (void)host::MakeDirectory(dir.path / "file"); }) == fs_error::kFailed);
+}
+
+TEST_CASE("A host rename moves a path and refuses to overwrite one", "[Host][HostFs]") {
+    Dir dir;
+    Write(dir.path / "a.txt", "a");
+    Write(dir.path / "b.txt", "b");
+    fs::create_symlink(dir.path / "nowhere", dir.path / "dangling");
+
+    host::RenamePath({.from = dir.path / "a.txt", .to = dir.path / "c.txt"});
+    CHECK(Read(dir.path / "c.txt") == "a");
+    CHECK_FALSE(fs::exists(dir.path / "a.txt"));
+
+    CHECK(CodeOf([&] { host::RenamePath({.from = dir.path / "c.txt", .to = dir.path / "b.txt"}); }) == fs_error::kFailed);
+    CHECK(Read(dir.path / "b.txt") == "b");
+    CHECK(CodeOf([&] { host::RenamePath({.from = dir.path / "missing", .to = dir.path / "d.txt"}); }) == fs_error::kNotFound);
+
+    host::RenamePath({.from = dir.path / "dangling", .to = dir.path / "moved"});
+    CHECK(fs::is_symlink(dir.path / "moved"));
+}
+
+TEST_CASE("A host remove deletes a file, a directory tree and a dangling link", "[Host][HostFs]") {
+    Dir dir;
+    fs::create_directories(dir.path / "tree" / "sub");
+    Write(dir.path / "tree" / "sub" / "f", "x");
+    Write(dir.path / "file", "x");
+    fs::create_symlink(dir.path / "nowhere", dir.path / "dangling");
+
+    host::RemovePath(dir.path / "tree");
+    host::RemovePath(dir.path / "file");
+    host::RemovePath(dir.path / "dangling");
+    CHECK(fs::is_empty(dir.path));
+
+    CHECK(CodeOf([&] { host::RemovePath(dir.path / "missing"); }) == fs_error::kNotFound);
+}

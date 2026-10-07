@@ -139,7 +139,7 @@ TEST_CASE("ned-agent answers hello with its own build and settles the codec", "[
     REQUIRE(hello.arch == host::BuildArch());
     REQUIRE(hello.codec == "zstd");
     REQUIRE(hello.capabilities.search == 1);
-    REQUIRE(hello.capabilities.fs == 2);
+    REQUIRE(hello.capabilities.fs == 3);
 }
 
 TEST_CASE("ned-agent's project search matches a local search exactly", "[Host][HostAgent]") {
@@ -342,6 +342,33 @@ TEST_CASE("ned-agent lists a directory in chunks and resolves a path", "[Host][H
     const auto home = client.Call(std::string(host::kFsRealpath), Json{{"path", host::Bytes(".")}});
     REQUIRE(home.result.has_value());
     CHECK(host::RequirePath(*home.result, "path") == std::filesystem::current_path());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("ned-agent makes, renames and removes paths", "[Host][HostAgent]") {
+    const std::filesystem::path dir = FreshDir("ned_host_agent_fileops");
+    AgentClient                 client(FrameTransport({AgentBinary(), "--stdio"}, true));
+
+    const auto made = client.Call(std::string(host::kFsMkdir), host::PathParams(dir / "a" / "b"));
+    REQUIRE(made.result.has_value());
+    CHECK(host::FileStatFromJson(*made.result).kind == host::FileKind::Directory);
+
+    const auto renamed = client.Call(std::string(host::kFsRename), host::ToJson(host::FsRenameRequest{.from = dir / "a", .to = dir / "c"}));
+    REQUIRE(renamed.result == Json::object());
+    CHECK(std::filesystem::is_directory(dir / "c" / "b"));
+
+    const auto clash = client.Call(std::string(host::kFsRename), host::ToJson(host::FsRenameRequest{.from = dir / "c" / "b", .to = dir / "c"}));
+    REQUIRE(clash.error.has_value());
+    CHECK(clash.error->code == host::fs_error::kFailed);
+
+    const auto removed = client.Call(std::string(host::kFsRemove), host::PathParams(dir / "c"));
+    REQUIRE(removed.result == Json::object());
+    CHECK(std::filesystem::is_empty(dir));
+
+    const auto missing = client.Call(std::string(host::kFsRemove), host::PathParams(dir / "c"));
+    REQUIRE(missing.error.has_value());
+    CHECK(missing.error->code == host::fs_error::kNotFound);
 
     std::filesystem::remove_all(dir);
 }

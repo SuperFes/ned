@@ -51,6 +51,14 @@ FileStat WritePath(const FsWriteRequest& request);
 // Throws FsError kNotFound for a path that doesn't resolve.
 [[nodiscard]] std::filesystem::path RealPath(const std::filesystem::path& path);
 
+// The mkdir, rename and remove a local project tree runs
+// (Project/FileOps.h), each throwing FsError kFailed when it fails. Rename
+// and remove throw kNotFound for a path that isn't there; a dangling
+// symlink is there.
+FileStat MakeDirectory(const std::filesystem::path& path);
+void     RenamePath(const FsRenameRequest& request);
+void     RemovePath(const std::filesystem::path& path);
+
 } // namespace ned::editor::host
 
 #endif // NED_EDITOR_HOST_FS_H
