@@ -8,9 +8,16 @@
 //             result stat, its mtime taken before the read
 //   fs/write  params {path, data: bytes, expect?: mtime | null}
 //             result stat of what was written
+//   fs/readdir params {path}
+//             chunk  [entry], at most kFsReaddirChunk each
+//             result {}
+//   fs/realpath params {path}, which may be relative, to the agent's
+//             working directory: the login's home
+//             result {path}
 //
 //   stat      {kind: "missing" | "file" | "directory" | "other",
 //              size: uint, mode: uint, mtime: int | null}
+//   entry     {name, kind, link: bool}, kind as stat's, through a symlink
 //
 // An mtime is nanoseconds since the Unix epoch, as the host's clock reads
 // it. A write with expect is refused (kFileChanged) unless the file still
@@ -24,8 +31,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -34,8 +43,11 @@ namespace ned::editor::host {
 inline constexpr std::string_view kFsStat  = "fs/stat";
 inline constexpr std::string_view kFsRead  = "fs/read";
 inline constexpr std::string_view kFsWrite = "fs/write";
+inline constexpr std::string_view kFsReaddir  = "fs/readdir";
+inline constexpr std::string_view kFsRealpath = "fs/realpath";
 
-inline constexpr std::size_t kFsChunkBytes = 256 * 1024;
+inline constexpr std::size_t kFsChunkBytes   = 256 * 1024;
+inline constexpr std::size_t kFsReaddirChunk = 1024;
 
 // Error codes an fs request answers with, past the protocol's own.
 namespace fs_error {
@@ -58,6 +70,14 @@ struct FileStat {
     [[nodiscard]] bool operator==(const FileStat&) const = default;
 };
 
+struct DirEntry {
+    std::string name;
+    FileKind    kind = FileKind::Missing;
+    bool        link = false;
+
+    [[nodiscard]] bool operator==(const DirEntry&) const = default;
+};
+
 struct FsWriteRequest {
     std::filesystem::path path;
     std::string           data;
@@ -74,6 +94,12 @@ struct FsWriteRequest {
 
 [[nodiscard]] nlohmann::json ToJson(const FsWriteRequest& request);
 [[nodiscard]] FsWriteRequest FsWriteRequestFromJson(const nlohmann::json& json);
+
+[[nodiscard]] nlohmann::json        DirEntriesToJson(std::span<const DirEntry> entries);
+[[nodiscard]] std::vector<DirEntry> DirEntriesFromJson(const nlohmann::json& json);
+
+// fs/realpath's params, whose path may be relative; empty means ".".
+[[nodiscard]] std::filesystem::path RealpathParamsFromJson(const nlohmann::json& json);
 
 } // namespace ned::editor::host
 

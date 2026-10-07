@@ -1,5 +1,6 @@
 #include "Dispatcher.h"
 
+#include <algorithm>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -64,6 +65,8 @@ Dispatcher::Dispatcher(protocol::Endpoint& endpoint, PostQueue& postQueue, Ident
     endpoint_.Handle(std::string(kFsStat), lifetime_.Bind([this](Json params, Responder responder) { FsStat(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsRead), lifetime_.Bind([this](Json params, Responder responder) { FsRead(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsWrite), lifetime_.Bind([this](Json params, Responder responder) { FsWrite(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kFsReaddir), lifetime_.Bind([this](Json params, Responder responder) { FsReaddir(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kFsRealpath), lifetime_.Bind([this](Json params, Responder responder) { FsRealpath(params, std::move(responder)); }));
 }
 
 Dispatcher::~Dispatcher() {
@@ -89,7 +92,7 @@ void Dispatcher::Hello(const Json& params, Responder responder) {
     response.arch         = identity_.arch;
     response.codec        = ChooseCodec(request.codecs);
     response.window       = protocol::kDefaultWindow;
-    response.capabilities = Capabilities{.fs = 1, .search = 1};
+    response.capabilities = Capabilities{.fs = 2, .search = 1};
     responder.Result(ToJson(response));
     if (onCodec_) {
         onCodec_(response.codec);
@@ -254,6 +257,49 @@ void Dispatcher::FsWrite(const Json& params, Responder responder) {
             return [code = e.Code(), message = std::string(e.what())](Responder& answer) { answer.Error(code, message); };
         }
     });
+}
+
+void Dispatcher::FsReaddir(const Json& params, Responder responder) {
+    std::filesystem::path path;
+    try {
+        path = PathParamsFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    RunOnWorker(std::move(responder), [path = std::move(path)]() -> WorkerAnswer {
+        try {
+            auto entries = std::make_shared<const std::vector<DirEntry>>(ListPath(path));
+            return [entries](Responder& answer) {
+                const std::span<const DirEntry> all(*entries);
+                for (std::size_t at = 0; at < all.size(); at += kFsReaddirChunk) {
+                    answer.Chunk(DirEntriesToJson(all.subspan(at, std::min(kFsReaddirChunk, all.size() - at))));
+                }
+                answer.Result(Json::object());
+            };
+        }
+        catch (const FsError& e) {
+            return [code = e.Code(), message = std::string(e.what())](Responder& answer) { answer.Error(code, message); };
+        }
+    });
+}
+
+void Dispatcher::FsRealpath(const Json& params, Responder responder) {
+    std::filesystem::path path;
+    try {
+        path = RealpathParamsFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    try {
+        responder.Result(Json{{"path", PathToJson(RealPath(path))}});
+    }
+    catch (const FsError& e) {
+        responder.Error(e.Code(), e.what());
+    }
 }
 
 } // namespace ned::editor::host

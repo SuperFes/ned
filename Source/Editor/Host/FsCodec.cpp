@@ -29,6 +29,19 @@ namespace {
         return static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(system.time_since_epoch()).count());
     }
 
+    FileKind KindFromJson(const Json& json) {
+        const std::string kind = RequireString(json, "kind");
+        const auto        it   = std::ranges::find(kKindNames, kind, &std::pair<FileKind, std::string_view>::second);
+        if (it == kKindNames.end()) {
+            throw protocol::ProtocolError("ned: unknown file kind '" + kind + "'");
+        }
+        return it->first;
+    }
+
+    std::string_view KindName(FileKind kind) {
+        return std::ranges::find(kKindNames, kind, &std::pair<FileKind, std::string_view>::first)->second;
+    }
+
     std::optional<std::filesystem::file_time_type> TimeFromJson(const Json& json, const char* field) {
         if (!json.contains(field)) {
             throw protocol::ProtocolError(std::string("ned: host message lacks '") + field + "'");
@@ -51,23 +64,12 @@ std::filesystem::path PathParamsFromJson(const Json& json) {
 }
 
 Json ToJson(const FileStat& stat) {
-    std::string_view kind;
-    for (const auto& [value, name] : kKindNames) {
-        if (value == stat.kind) {
-            kind = name;
-        }
-    }
-    return Json{{"kind", kind}, {"size", stat.size}, {"mode", stat.mode}, {"mtime", TimeToJson(stat.timestamp)}};
+    return Json{{"kind", KindName(stat.kind)}, {"size", stat.size}, {"mode", stat.mode}, {"mtime", TimeToJson(stat.timestamp)}};
 }
 
 FileStat FileStatFromJson(const Json& json) {
-    FileStat          stat;
-    const std::string kind = RequireString(json, "kind");
-    const auto        it   = std::ranges::find(kKindNames, kind, &std::pair<FileKind, std::string_view>::second);
-    if (it == kKindNames.end()) {
-        throw protocol::ProtocolError("ned: unknown file kind '" + kind + "'");
-    }
-    stat.kind                = it->first;
+    FileStat stat;
+    stat.kind                = KindFromJson(json);
     stat.size                = RequireUnsigned(json, "size");
     const std::uint64_t mode = RequireUnsigned(json, "mode");
     if (mode > 07777) {
@@ -94,6 +96,45 @@ FsWriteRequest FsWriteRequestFromJson(const Json& json) {
         request.expect = TimeFromJson(json, "expect");
     }
     return request;
+}
+
+Json DirEntriesToJson(std::span<const DirEntry> entries) {
+    Json json = Json::array();
+    for (const DirEntry& entry : entries) {
+        json.push_back(Json{{"name", PathToJson(entry.name)}, {"kind", KindName(entry.kind)}, {"link", entry.link}});
+    }
+    return json;
+}
+
+std::vector<DirEntry> DirEntriesFromJson(const Json& json) {
+    if (!json.is_array()) {
+        throw protocol::ProtocolError("ned: directory entries are not an array");
+    }
+    std::vector<DirEntry> entries;
+    entries.reserve(json.size());
+    for (const Json& item : json) {
+        if (!item.is_object()) {
+            throw protocol::ProtocolError("ned: a directory entry is not an object");
+        }
+        DirEntry entry{.name = RequireBytes(item, "name"), .kind = KindFromJson(item), .link = false};
+        if (entry.name.empty() || entry.name == "." || entry.name == ".." || entry.name.find_first_of(std::string_view("/\0", 2)) != std::string::npos) {
+            throw protocol::ProtocolError("ned: directory entry name '" + entry.name + "' is not a file name");
+        }
+        if (!item.contains("link") || !item.at("link").is_boolean()) {
+            throw protocol::ProtocolError("ned: host message lacks 'link'");
+        }
+        entry.link = item.at("link").get<bool>();
+        entries.push_back(std::move(entry));
+    }
+    return entries;
+}
+
+std::filesystem::path RealpathParamsFromJson(const Json& json) {
+    const std::string bytes = RequireBytes(json, "path");
+    if (bytes.find('\0') != std::string::npos) {
+        throw protocol::ProtocolError("ned: host field 'path' holds a NUL");
+    }
+    return bytes.empty() ? std::filesystem::path(".") : std::filesystem::path(bytes);
 }
 
 } // namespace ned::editor::host

@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "Editor/Host/FsCodec.h"
 #include "Text/FileContents.h"
@@ -41,6 +42,14 @@ class FsError : public std::runtime_error {
 // and returns its stat afterwards. Throws FsError: kFileChanged when
 // request.expect no longer holds, kFailed when the write fails.
 FileStat WritePath(const FsWriteRequest& request);
+
+// A directory's entries, unsorted. Throws FsError: kNotFound, or kFailed
+// for anything but a directory and for one that can't be read.
+[[nodiscard]] std::vector<DirEntry> ListPath(const std::filesystem::path& path);
+
+// path made absolute against the working directory, its symlinks resolved.
+// Throws FsError kNotFound for a path that doesn't resolve.
+[[nodiscard]] std::filesystem::path RealPath(const std::filesystem::path& path);
 
 } // namespace ned::editor::host
 

@@ -1,9 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <thread>
@@ -137,7 +139,7 @@ TEST_CASE("ned-agent answers hello with its own build and settles the codec", "[
     REQUIRE(hello.arch == host::BuildArch());
     REQUIRE(hello.codec == "zstd");
     REQUIRE(hello.capabilities.search == 1);
-    REQUIRE(hello.capabilities.fs == 1);
+    REQUIRE(hello.capabilities.fs == 2);
 }
 
 TEST_CASE("ned-agent's project search matches a local search exactly", "[Host][HostAgent]") {
@@ -312,6 +314,35 @@ TEST_CASE("ned-agent reads and writes files, streaming a read under credit", "[H
     CHECK(client.Call(std::string(host::kFsRead), host::PathParams(dir / "missing")).error->code == host::fs_error::kNotFound);
     CHECK(client.Call(std::string(host::kFsRead), Json{{"path", "/not/bytes"}}).error->code == error_code::kInvalidParams);
     CHECK(client.Call(std::string(host::kFsWrite), Json{{"path", host::Bytes("/x")}}).error->code == error_code::kInvalidParams);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("ned-agent lists a directory in chunks and resolves a path", "[Host][HostAgent]") {
+    const std::filesystem::path dir = FreshDir("ned_host_agent_readdir");
+    for (std::size_t i = 0; i < host::kFsReaddirChunk + 5; ++i) {
+        std::ofstream(dir / ("f" + std::to_string(i)));
+    }
+    std::filesystem::create_directory(dir / "sub");
+
+    AgentClient client(FrameTransport({AgentBinary(), "--stdio"}, true));
+    const auto  listed = client.Call(std::string(host::kFsReaddir), host::PathParams(dir));
+    REQUIRE(listed.result == Json::object());
+    REQUIRE(listed.chunks.size() == 2);
+    std::vector<host::DirEntry> entries;
+    for (const Json& chunk : listed.chunks) {
+        std::ranges::move(host::DirEntriesFromJson(chunk), std::back_inserter(entries));
+    }
+    CHECK(entries.size() == host::kFsReaddirChunk + 6);
+    CHECK(std::ranges::count(entries, host::FileKind::Directory, &host::DirEntry::kind) == 1);
+
+    const auto missing = client.Call(std::string(host::kFsReaddir), host::PathParams(dir / "nope"));
+    REQUIRE(missing.error.has_value());
+    CHECK(missing.error->code == host::fs_error::kNotFound);
+
+    const auto home = client.Call(std::string(host::kFsRealpath), Json{{"path", host::Bytes(".")}});
+    REQUIRE(home.result.has_value());
+    CHECK(host::RequirePath(*home.result, "path") == std::filesystem::current_path());
+
     std::filesystem::remove_all(dir);
 }
 

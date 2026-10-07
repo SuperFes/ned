@@ -1,10 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <vector>
 
 #include <stdlib.h>
 #include <sys/stat.h>
@@ -126,4 +128,34 @@ TEST_CASE("A host write refuses a file that changed since it was read", "[Host][
 
     CHECK(host::WritePath({.path = file, .data = "mine\n", .expect = seen + std::chrono::seconds(5)}).size == 5);
     CHECK(Read(file) == "mine\n");
+}
+
+TEST_CASE("A host listing names a directory's entries and what each is", "[Host][HostFs]") {
+    Dir dir;
+    Write(dir.path / "a.txt", "a");
+    fs::create_directory(dir.path / "sub");
+    fs::create_symlink(dir.path / "sub", dir.path / "to-sub");
+    fs::create_symlink(dir.path / "nowhere", dir.path / "dangling");
+
+    std::vector<host::DirEntry> entries = host::ListPath(dir.path);
+    std::ranges::sort(entries, {}, &host::DirEntry::name);
+    CHECK(entries == std::vector<host::DirEntry>{{.name = "a.txt", .kind = host::FileKind::File, .link = false},
+                                                 {.name = "dangling", .kind = host::FileKind::Missing, .link = true},
+                                                 {.name = "sub", .kind = host::FileKind::Directory, .link = false},
+                                                 {.name = "to-sub", .kind = host::FileKind::Directory, .link = true}});
+    CHECK(host::ListPath(dir.path / "sub").empty());
+
+    CHECK(CodeOf([&] { (void)host::ListPath(dir.path / "missing"); }) == fs_error::kNotFound);
+    CHECK(CodeOf([&] { (void)host::ListPath(dir.path / "a.txt"); }) == fs_error::kFailed);
+}
+
+TEST_CASE("A host realpath resolves symlinks and a relative path against the working directory", "[Host][HostFs]") {
+    Dir dir;
+    fs::create_directory(dir.path / "sub");
+    fs::create_symlink(dir.path / "sub", dir.path / "to-sub");
+    const fs::path real = fs::canonical(dir.path);
+
+    CHECK(host::RealPath(dir.path / "to-sub" / ".." / "to-sub") == real / "sub");
+    CHECK(host::RealPath(".") == fs::current_path());
+    CHECK(CodeOf([&] { (void)host::RealPath(dir.path / "missing"); }) == fs_error::kNotFound);
 }
