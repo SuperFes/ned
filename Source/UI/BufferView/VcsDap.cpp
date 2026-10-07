@@ -9,6 +9,7 @@
 #include "Editor/Tracker/IssueKey.h"
 #include "Editor/Tracker/KeyCompletion.h"
 #include "Editor/Tracker/Registry.h"
+#include "Editor/Vcs/ConflictedFiles.h"
 #include "Editor/Vcs/CurrentBranch.h"
 #include "Editor/Vcs/Sequence.h"
 #include "UI/BufferView/Internal.h"
@@ -255,38 +256,45 @@ namespace {
 
 void BufferView::RequestConflictVerdictForCurrentBuffer() {
     text::Buffer* buffer = &activeBuffer_.Get();
-    if (!vcsRunner_ || !buffer->Path() || !buffer->HasConflictMarkers()) {
+    if (!vcsRunner_ || !(buffer->Path() || buffer->Remote()) || !buffer->HasConflictMarkers()) {
         // No marker text means nothing to gate -- ConflictHunks() is already
         // empty, and asking the VCS about every buffer would spawn a `git
         // status` per debounce tick for the whole session.
         return;
     }
 
-    // Resolved once here rather than inside the completion: the project root
-    // is what the status paths are relative to, and it must be the one that
-    // was current when the request went out.
-    const std::filesystem::path root   = editor::ProjectRoot();
-    const std::filesystem::path wanted = NormalizedForCompare(*buffer->Path());
-
-    vcsRunner_->RequestStatus(editor::vcs::LocalRepo(),
-                              lifetime_.Bind([this, bufferId = text::BufferIdentity(*buffer), root, wanted](std::vector<editor::vcs::StatusEntry> entries) {
-                                  if (!bufferId.Is(activeBuffer_.Get())) {
-                                      return; // active buffer changed while the request was in flight -- stale
-                                  }
-                                  const bool unmerged = std::any_of(entries.begin(), entries.end(),
-                                                                    [&](const editor::vcs::StatusEntry& entry) {
-                                                                        return editor::vcs::IsUnmergedStatus(entry.state) &&
-                                                                               NormalizedForCompare(root / entry.path) == wanted;
-                                                                    });
-                                  // A file the VCS does not list at all is Clean, not Unknown: git
-                                  // always lists an unmerged path, so absence from a status answer
-                                  // we did receive is a real "no conflict here" -- an unmodified
-                                  // tracked file whose committed content contains marker text
-                                  // (documentation, a test fixture) is exactly that case.
-                                  ApplyConflictVerdict(&activeBuffer_.Get(), unmerged ? bufferview::GutterModel::VcsConflictVerdict::Conflicted
-                                                                                      : bufferview::GutterModel::VcsConflictVerdict::Clean);
-                              }),
-                              [](const std::string&) {}); // silent, previous verdict stands -- see this method's own declaration
+    // A host's paths can't be resolved here, and are already its own.
+    const auto ask = [this, bufferId = text::BufferIdentity(*buffer)](const editor::vcs::Repo& repo, const std::filesystem::path& wanted) {
+        const auto normalize = repo.IsRemote() ? [](const std::filesystem::path& path) { return path.lexically_normal(); } : NormalizedForCompare;
+        vcsRunner_->RequestStatus(repo,
+                                  lifetime_.Bind([this, bufferId, repo, wanted = normalize(wanted), normalize](std::vector<editor::vcs::StatusEntry> entries) {
+                                      if (!bufferId.Is(activeBuffer_.Get())) {
+                                          return; // active buffer changed while the request was in flight -- stale
+                                      }
+                                      const bool unmerged = std::ranges::any_of(entries, [&](const editor::vcs::StatusEntry& entry) {
+                                          return editor::vcs::IsUnmergedStatus(entry.state) && normalize(repo.root / entry.path) == wanted;
+                                      });
+                                      // A file the VCS does not list at all is Clean, not Unknown: git
+                                      // always lists an unmerged path, so absence from a status answer
+                                      // we did receive is a real "no conflict here" -- an unmodified
+                                      // tracked file whose committed content contains marker text
+                                      // (documentation, a test fixture) is exactly that case.
+                                      ApplyConflictVerdict(&activeBuffer_.Get(), unmerged ? bufferview::GutterModel::VcsConflictVerdict::Conflicted
+                                                                                          : bufferview::GutterModel::VcsConflictVerdict::Clean);
+                                  }),
+                                  [](const std::string&) {}); // silent, previous verdict stands -- see this method's own declaration
+    };
+    if (buffer->Path()) {
+        // The root is resolved now: status paths are relative to the one
+        // current when the request went out.
+        ask(editor::vcs::LocalRepo(), *buffer->Path());
+        return;
+    }
+    vcsRunner_->RepoFor(*buffer, lifetime_.Bind([ask, wanted = buffer->Remote()->path](std::expected<editor::vcs::Repo, std::string> repo) {
+        if (repo) {
+            ask(*repo, wanted);
+        }
+    }));
 }
 
 void BufferView::RefreshVcsDiff() {
@@ -721,45 +729,43 @@ void BufferView::RunVcsSequenceStep(VcsSequenceStep step) {
 void BufferView::ContinueVcsSequence(const editor::vcs::Repo& repo) {
     vcsRunner_->RequestStatus(
         repo,
-        lifetime_.Bind([this, repo](const std::vector<editor::vcs::StatusEntry>& entries) {
-            // A host's files are only seen through their open buffers, so one
-            // that isn't open counts as still marked: resolving it stays a
-            // deliberate stage, never an automatic one.
-            const editor::vcs::SequenceFileProbe probe = {
-                .hasUnsavedBuffer =
-                    [this, &repo](const std::filesystem::path& path) {
-                        const text::Buffer* buffer = repo.IsRemote() ? bufferList_.FindByRemote(text::RemoteFile{.destination = *repo.destination, .path = path})
-                                                                     : bufferList_.FindByPath(path);
-                        return buffer != nullptr && buffer->Modified();
-                    },
-                .hasConflictMarkers =
-                    [this, &repo](const std::filesystem::path& path) {
-                        if (!repo.IsRemote()) {
-                            return editor::vcs::FileHasConflictMarkers(path);
-                        }
-                        const text::Buffer* buffer = bufferList_.FindByRemote(text::RemoteFile{.destination = *repo.destination, .path = path});
-                        return buffer == nullptr || buffer->HasConflictMarkers();
-                    },
-            };
-            editor::vcs::SequenceContinuePlan plan =
-                editor::vcs::PlanSequenceContinue(entries, repo.root, probe, editor::vcs::SequenceAutoStageEnabled());
-            if (!plan.Ready()) {
-                statusMessage_ = editor::vcs::SequenceContinueBlockedMessage(plan, repo.root);
-                return;
-            }
-            // Re-probed rather than threaded through: the status round trip
-            // is the only thing between the two and it can't change the kind.
-            vcsRunner_->RequestSequenceState(repo,
-                                             lifetime_.Bind([this, repo, toStage = std::move(plan.toStage)](const editor::vcs::SequenceState& state) mutable {
-                                                 if (state.kind.empty()) {
-                                                     statusMessage_ = "No rebase, merge or cherry-pick in progress.";
-                                                     return;
-                                                 }
-                                                 StageThenContinueVcsSequence(repo, std::move(toStage), state.kind);
-                                             }),
-                                             lifetime_.Bind([this](std::string error) { statusMessage_ = error; }));
+        lifetime_.Bind([this, repo](std::vector<editor::vcs::StatusEntry> entries) {
+            vcsRunner_->RequestMarkedFiles(
+                repo, editor::vcs::UnmergedPaths(editor::vcs::PartitionVcsStatus(entries), repo.root), editor::vcs::OpenBufferMarkers(bufferList_, repo),
+                lifetime_.Bind([this, repo, entries = std::move(entries)](const std::set<std::filesystem::path>& marked) {
+                    ContinueVcsSequence(repo, entries, marked);
+                }));
         }),
         lifetime_.Bind([this](std::string error) { statusMessage_ = error; }));
+}
+
+void BufferView::ContinueVcsSequence(const editor::vcs::Repo& repo, const std::vector<editor::vcs::StatusEntry>& entries,
+                                     const std::set<std::filesystem::path>& marked) {
+    const editor::vcs::SequenceFileProbe probe = {
+        .hasUnsavedBuffer =
+            [this, &repo](const std::filesystem::path& path) {
+                const text::Buffer* buffer = repo.IsRemote() ? bufferList_.FindByRemote(text::RemoteFile{.destination = *repo.destination, .path = path})
+                                                             : bufferList_.FindByPath(path);
+                return buffer != nullptr && buffer->Modified();
+            },
+        .hasConflictMarkers = [&marked](const std::filesystem::path& path) { return marked.contains(path); },
+    };
+    editor::vcs::SequenceContinuePlan plan = editor::vcs::PlanSequenceContinue(entries, repo.root, probe, editor::vcs::SequenceAutoStageEnabled());
+    if (!plan.Ready()) {
+        statusMessage_ = editor::vcs::SequenceContinueBlockedMessage(plan, repo.root);
+        return;
+    }
+    // Re-probed rather than threaded through: the round trips between can't
+    // change the kind.
+    vcsRunner_->RequestSequenceState(repo,
+                                     lifetime_.Bind([this, repo, toStage = std::move(plan.toStage)](const editor::vcs::SequenceState& state) mutable {
+                                         if (state.kind.empty()) {
+                                             statusMessage_ = "No rebase, merge or cherry-pick in progress.";
+                                             return;
+                                         }
+                                         StageThenContinueVcsSequence(repo, std::move(toStage), state.kind);
+                                     }),
+                                     lifetime_.Bind([this](std::string error) { statusMessage_ = error; }));
 }
 
 void BufferView::StageThenContinueVcsSequence(const editor::vcs::Repo& repo, std::vector<std::filesystem::path> paths, std::string kind) {

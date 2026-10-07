@@ -110,11 +110,6 @@ and sync on save; don't build a remote-authoritative buffer.
       delete and a create; `watch` would need to pair them (`FileWatch.h`'s `FileMove`).
 - [ ] A watch burst the host lost events from (`overflow`) checks every remote buffer
       on that host but doesn't relist the Remote panel; `g` does.
-- [ ] Merge conflicts in a host's repository: the VCS panel's conflicted rows and the
-      gutter's conflict verdict read local files (`Vcs/ConflictedFiles.h`,
-      `BufferView::RequestConflictVerdictForCurrentBuffer`), so neither shows for one.
-      Sequence-continue counts a host's unmerged file as still marked unless its buffer
-      is open and clean of markers.
 - [ ] The Remote panel doesn't colour rows by their repository's status, as the project
       sidebar does locally.
 - [ ] A remote test run's `*test results*` lines resolve their sources against the local

@@ -334,6 +334,9 @@ class VcsPanel : public Widget {
     // concept that doesn't apply to a file git doesn't know about yet.
     std::set<std::filesystem::path> conflictedPaths_;
     void                            RefreshConflictedPaths();
+    // The buffer a conflicted file is resolved in; nullptr while a host's is
+    // still opening (asked for here). Throws as OpenOrCreateFile.
+    text::Buffer* ConflictedBuffer(const std::filesystem::path& path);
 
     // Stash support: refreshed on the same throttled cadence as sections_.
     // PopStash/DropStash are declared public above (context-menu reuse).

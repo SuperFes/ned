@@ -18,9 +18,17 @@
 #define NED_EDITOR_VCS_CONFLICTEDFILES_H
 
 #include <filesystem>
+#include <functional>
+#include <optional>
 #include <set>
+#include <vector>
 
+#include "Repo.h"
 #include "RowStatus.h"
+
+namespace ned::text {
+class BufferList;
+} // namespace ned::text
 
 namespace ned::editor::vcs {
 
@@ -30,6 +38,17 @@ namespace ned::editor::vcs {
 // never marks an untracked path unmerged in the first place.
 [[nodiscard]] std::set<std::filesystem::path> DetectConflictedFiles(const StatusSections& sections,
                                                                     const std::filesystem::path& root);
+
+// The absolute, lexically-normalized paths `sections` lists unmerged, each
+// once -- what a marker check (DetectConflictedFiles, or
+// Runner::RequestMarkedFiles for a host's) narrows.
+[[nodiscard]] std::vector<std::filesystem::path> UnmergedPaths(const StatusSections& sections, const std::filesystem::path& root);
+
+// Whether the buffer holding path (on repo's machine) carries markers;
+// nullopt when none is open. Runner::RequestMarkedFiles' `live`, called
+// only before that returns.
+[[nodiscard]] std::function<std::optional<bool>(const std::filesystem::path&)> OpenBufferMarkers(text::BufferList& buffers,
+                                                                                                 const Repo&       repo);
 
 } // namespace ned::editor::vcs
 

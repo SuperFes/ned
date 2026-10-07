@@ -11,11 +11,14 @@
 #include "DiffPatch.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/ProcessTimeouts.h"
+#include "Editor/Remote/Fs.h"
 #include "Editor/Remote/Hosts.h"
 #include "Editor/Tasks/TaskProcess.h"
 #include "HostRepo.h"
 #include "ProviderRegistry.h"
+#include "Sequence.h"
 #include "Text/Buffer.h"
+#include "Text/ThreeWayMerge.h"
 
 namespace ned::editor::vcs {
 
@@ -229,6 +232,65 @@ std::optional<Repo> Runner::KnownRepoFor(const text::Buffer& buffer) const {
     }
     const auto found = remoteRepos_.find(buffer.Remote()->ToString());
     return found != remoteRepos_.end() ? std::optional(found->second) : std::nullopt;
+}
+
+void Runner::RequestMarkedFiles(const Repo& repo, std::vector<std::filesystem::path> paths, LiveMarkers live,
+                                std::function<void(std::set<std::filesystem::path>)> done) {
+    // Far past any file resolved by hand; a bigger one fails the read, so
+    // counts as marked.
+    constexpr std::size_t kMaxMarkerScanBytes = std::size_t{16} << 20;
+
+    std::set<std::filesystem::path>    marked;
+    std::vector<std::filesystem::path> ask;
+    for (std::filesystem::path& path : paths) {
+        if (const std::optional<bool> open = live ? live(path) : std::nullopt) {
+            if (*open) {
+                marked.insert(std::move(path));
+            }
+        }
+        else if (!repo.IsRemote()) {
+            if (FileHasConflictMarkers(path)) {
+                marked.insert(std::move(path));
+            }
+        }
+        else {
+            ask.push_back(std::move(path));
+        }
+    }
+    if (ask.empty()) {
+        done(std::move(marked));
+        return;
+    }
+    if (hosts_ == nullptr) {
+        marked.insert(ask.begin(), ask.end());
+        done(std::move(marked));
+        return;
+    }
+
+    struct Scan {
+        std::set<std::filesystem::path>                      marked;
+        std::size_t                                          pending = 0;
+        std::function<void(std::set<std::filesystem::path>)> done;
+    };
+    auto scan = std::make_shared<Scan>(Scan{.marked = std::move(marked), .pending = ask.size(), .done = std::move(done)});
+    hosts_->Connect(*repo.destination, lifetime_.Bind([this, scan, ask = std::move(ask)](std::expected<remote::Connection*, std::string> connection) {
+        if (!connection) {
+            scan->marked.insert(ask.begin(), ask.end());
+            scan->done(std::move(scan->marked));
+            return;
+        }
+        for (const std::filesystem::path& path : ask) {
+            (void)remote::ReadFile(**connection, path, kMaxMarkerScanBytes,
+                                   lifetime_.Bind([scan, path](remote::FsResult<text::FileContents> contents) {
+                                       if (contents ? text::HasConflictMarkers(contents->bytes) : contents.error().code != host::fs_error::kNotFound) {
+                                           scan->marked.insert(path);
+                                       }
+                                       if (--scan->pending == 0) {
+                                           scan->done(std::move(scan->marked));
+                                       }
+                                   }));
+        }
+    }));
 }
 
 void Runner::RunAndCollect(const Repo& repo, const std::string& key, CommandSpec spec,
