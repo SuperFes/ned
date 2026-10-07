@@ -135,7 +135,11 @@ ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stde
     int        stdoutPipe[2] = {-1, -1};
     int        stderrPipe[2] = {-1, -1};
     const bool captureStderr = (stderrMode == StderrMode::Capture);
-    if (::pipe(stdinPipe) != 0 || ::pipe(stdoutPipe) != 0 || (captureStderr && ::pipe(stderrPipe) != 0)) {
+    // Close-on-exec, so no other child spawned meanwhile keeps an end open
+    // and holds off this one's EOF; the dup2s below give the child its own
+    // copies without the flag.
+    if (::pipe2(stdinPipe, O_CLOEXEC) != 0 || ::pipe2(stdoutPipe, O_CLOEXEC) != 0 ||
+        (captureStderr && ::pipe2(stderrPipe, O_CLOEXEC) != 0)) {
         throw std::runtime_error(std::string("ned: ChildProcess: pipe() failed: ") + std::strerror(errno));
     }
 

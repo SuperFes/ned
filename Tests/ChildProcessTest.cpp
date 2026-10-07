@@ -26,6 +26,16 @@ TEST_CASE("ChildProcess constructor throws for an empty argv", "[Process]") {
     REQUIRE_THROWS_AS(ChildProcess(std::vector<std::string>{}), std::runtime_error);
 }
 
+TEST_CASE("A child spawned later holds none of an earlier child's pipes", "[Process]") {
+    ChildProcess cat({"cat"});
+    ChildProcess bystander({"sleep", "30"}, StderrMode::Capture);
+    cat.CloseInput();
+    // cat only sees EOF, and exits, if the bystander didn't inherit its stdin.
+    REQUIRE(cat.WaitReadable(std::chrono::seconds(5)));
+    CHECK(cat.ReadSome().empty());
+    bystander.Kill();
+}
+
 TEST_CASE("ChildProcess round-trips data through a real pipe pair with no subprocess", "[Process]") {
     int toChild[2];
     int toParent[2];
