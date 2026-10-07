@@ -272,6 +272,7 @@ add_library(ned_lib STATIC
         Editor/Vcs/ConflictedFiles.cpp
         Editor/Vcs/Sequence.cpp
         Editor/Vcs/CurrentBranch.cpp
+        Editor/Vcs/Repo.cpp
         Editor/Vcs/Runner.cpp
         Editor/Tracker/Clocking.cpp
         Editor/Tracker/CommentBuffer.cpp

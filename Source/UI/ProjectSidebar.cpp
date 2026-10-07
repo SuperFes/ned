@@ -335,9 +335,7 @@ void ProjectSidebar::RefreshVcsStatus(const std::filesystem::path& root) {
     // until the next tick's request actually completes. No VCS provider
     // resolving for root behaves the same way, which is exactly
     // "highlighting is only meaningful in a VCS-tracked project tree".
-    vcsRunner_->RequestStatus(
-        [this, root](std::vector<editor::vcs::StatusEntry> entries) { vcsStatus_ = BuildVcsStatusIndex(entries, root); },
-        [](const std::string&) {});
+    vcsRunner_->RequestStatus(editor::vcs::LocalRepo(), [this, root](std::vector<editor::vcs::StatusEntry> entries) { vcsStatus_ = BuildVcsStatusIndex(entries, root); }, [](const std::string&) {});
 }
 
 void ProjectSidebar::SetOnBufferClosed(std::function<void(text::Buffer&)> handler) {

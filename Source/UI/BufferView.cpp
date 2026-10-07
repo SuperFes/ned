@@ -1799,10 +1799,10 @@ void BufferView::StageOrUnstageFileAtPoint(bool stage) {
         statusMessage_ = std::string("vcs ") + (stage ? "stage" : "unstage") + ": " + error;
     });
     if (stage) {
-        vcsRunner_->RequestStage(*target, std::move(onSuccess), std::move(onError));
+        vcsRunner_->RequestStage(editor::vcs::LocalRepo(), *target, std::move(onSuccess), std::move(onError));
     }
     else {
-        vcsRunner_->RequestUnstage(*target, std::move(onSuccess), std::move(onError));
+        vcsRunner_->RequestUnstage(editor::vcs::LocalRepo(), *target, std::move(onSuccess), std::move(onError));
     }
 }
 

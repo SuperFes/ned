@@ -11,7 +11,7 @@
 #include "DiffPatch.h"
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/ProcessTimeouts.h"
-#include "Editor/Project/Root.h"
+#include "Editor/Remote/Hosts.h"
 #include "Editor/Tasks/TaskProcess.h"
 #include "ProviderRegistry.h"
 #include "Text/Buffer.h"
@@ -113,233 +113,146 @@ namespace {
 Runner::Runner(ned::ui::EventLoop& eventLoop) : eventLoop_(eventLoop) {
 }
 
+void Runner::SetHosts(remote::Hosts* hosts) {
+    hosts_ = hosts;
+}
+
 bool Runner::IsRunning(const std::string& key) const {
     return running_.contains(key);
 }
 
-void Runner::RunAndCollect(const std::string& key, const CommandSpec& spec,
-                           std::function<void(std::string, std::optional<int>)> onDone) {
-    auto output = std::make_shared<std::string>();
-    try {
-        process::ChildProcess child(spec.argv, process::StderrMode::MergeWithStdout);
-        if (spec.input) {
-            child.WriteAll(*spec.input, SubprocessWriteTimeoutMs());
-            child.CloseInput();
-        }
-        running_[key] = std::make_unique<tasks::TaskProcess>(
-            std::move(child), eventLoop_, [output](std::string_view chunk) { output->append(chunk); },
-            [this, key, output, onDone](std::optional<int> exitCode) {
-                std::string collected = std::move(*output);
-                // erase() destroys the owning TaskProcess -- including this
-                // very closure's own storage (onExit_) -- so it must be the
-                // unconditional LAST statement here, exactly mirroring
-                // TaskRunner::RunTask's own onExit lambda; calling onDone
-                // afterward (the original, buggy order) reads captured
-                // state (onDone/output/provider by extension) out of
-                // already-freed memory -- a real, crash-confirmed bug
-                // caught via a coredump: `provider` came out pointing at
-                // unmapped memory and the call through it segfaulted.
-                onDone(std::move(collected), exitCode);
-                running_.erase(key);
-            });
-    }
-    catch (const std::exception& e) {
-        // couldn't even spawn -- e.g. the configured executable isn't on
-        // $PATH. onDone's (string, optional<int>) signature has nowhere to
-        // carry e.what() through to the caller, so this is the one place
-        // that text is visible at all -- diagnostics-log-round-2 follow-up.
-        LogMessage(LogCategory::Vcs, LogSeverity::Error, std::string("failed to run VCS command: ") + e.what());
-        onDone({}, std::nullopt);
-    }
+std::filesystem::path Runner::Canonical(const Repo& repo, const std::filesystem::path& path) {
+    // A path as typed can be relative to ned's cwd, which a provider's "-C
+    // <dirname>" would re-resolve against the wrong directory. A host's
+    // paths are absolute already, and this machine can't resolve them.
+    return repo.IsRemote() ? path.lexically_normal() : std::filesystem::weakly_canonical(path);
 }
 
-void Runner::RequestBlame(const text::Buffer& buffer, std::function<void(std::vector<BlameLine>)> onComplete,
-                             std::function<void(std::string)> onError) {
+Provider* Runner::ProviderFor(const Repo& repo) const {
+    return repo.IsRemote() ? nullptr : ActiveProviderFor(repo.root);
+}
+
+void Runner::InBufferRepo(const text::Buffer& buffer, const std::function<void(std::string)>& onError,
+                          const std::function<void(const Repo& repo, const std::filesystem::path& path)>& run) {
     if (!buffer.Path()) {
         onError("no file associated with this buffer");
         return;
     }
-    // weakly_canonical, not a bare copy of buffer.Path(): a provider's
-    // BlameArgv/LogArgv may run the command via "-C <dirname(path)>" (the
-    // bundled git plugin does, see vcs-git.janet), which changes the
-    // subprocess's own cwd -- a *relative* path (e.g. "../ROADMAP.md", the
-    // literal string ned was invoked with from a subdirectory) would then
-    // get re-resolved against that *new* cwd instead of the original one,
-    // landing somewhere entirely different. A real, reported bug: git
-    // reported "'../ROADMAP.md' outside repository" because "-C .." plus
-    // the still-relative "../ROADMAP.md" compounds to one directory too
-    // far up. An absolute, ".."-resolved path has no such ambiguity
-    // regardless of what cwd a provider's own command ends up running
-    // from. Mirrors BufferView::HandleRenameFileKey's own use of
-    // weakly_canonical for the same "make this path trustworthy regardless
-    // of how it was originally typed" reason.
-    const std::filesystem::path path = std::filesystem::weakly_canonical(*buffer.Path());
+    const Repo repo = LocalRepo();
+    run(repo, Canonical(repo, *buffer.Path()));
+}
 
-    Provider* provider = ActiveProviderFor(ProjectRoot());
-    if (!provider) {
-        onError("no vcs provider registered for this project");
+void Runner::RunAndCollect(const Repo& repo, const std::string& key, CommandSpec spec,
+                           std::function<void(std::string, std::optional<int>)> onDone) {
+    Run& run     = running_[key];
+    run.starting = std::make_unique<LifetimeGuard>();
+    remote::SpawnBeside(hosts_, repo.Beside(),
+                        remote::RemoteSpawn{.argv       = std::move(spec.argv),
+                                            .cwd        = repo.IsRemote() ? std::optional(repo.root) : std::nullopt,
+                                            .env        = {},
+                                            .stderrMode = process::StderrMode::MergeWithStdout},
+                        run.starting->Token(),
+                        [this, key, input = std::move(spec.input), onDone = std::move(onDone)](remote::Spawned spawned) mutable {
+                            Started(key, std::move(spawned), std::move(input), std::move(onDone));
+                        });
+}
+
+void Runner::Started(const std::string& key, remote::Spawned spawned, std::optional<std::string> input,
+                     std::function<void(std::string, std::optional<int>)> onDone) {
+    const auto failed = [this, &key, &onDone](const std::string& why) {
+        // onDone's (string, optional<int>) has nowhere to carry why, so the
+        // log is the one place it shows.
+        LogMessage(LogCategory::Vcs, LogSeverity::Error, "failed to run VCS command: " + why);
+        running_.erase(key);
+        onDone({}, std::nullopt);
+    };
+    if (!spawned) {
+        failed(spawned.error());
         return;
     }
-
-    const std::string key = "blame:" + path.string();
-    if (IsRunning(key)) {
-        onError("blame is already running for this file");
-        return;
-    }
-
-    CommandSpec spec;
     try {
-        spec = provider->BlameArgv(path);
+        if (input) {
+            spawned->child.WriteAll(*input, SubprocessWriteTimeoutMs());
+            spawned->child.CloseInput();
+        }
     }
     catch (const std::exception& e) {
-        onError(e.what());
+        failed(e.what());
         return;
     }
+    auto output = std::make_shared<std::string>();
+    Run& run    = running_[key];
+    run.starting.reset();
+    run.process = std::make_unique<tasks::TaskProcess>(
+        std::move(spawned->child), eventLoop_, [output](std::string_view chunk) { output->append(chunk); },
+        [this, key, output, onDone = std::move(onDone)](std::optional<int> exitCode) {
+            std::string collected = std::move(*output);
+            // erase() destroys the TaskProcess that owns this closure, so it
+            // must come last: anything after it reads freed captures.
+            onDone(std::move(collected), exitCode);
+            running_.erase(key);
+        });
+}
 
-    RunAndCollect(key, spec, [provider, onComplete, onError](std::string output, std::optional<int> exitCode) {
-        if (!exitCode || *exitCode != 0) {
-            onError(OperationFailureDetail("blame", exitCode, output));
-            return;
-        }
-        try {
-            onComplete(provider->ParseBlame(output));
-        }
-        catch (const std::exception& e) {
-            onError(e.what());
-        }
+void Runner::RequestBlame(const text::Buffer& buffer, std::function<void(std::vector<BlameLine>)> onComplete,
+                          std::function<void(std::string)> onError) {
+    InBufferRepo(buffer, onError, [this, &onComplete, &onError](const Repo& repo, const std::filesystem::path& path) {
+        RunProviderOperation(
+            repo, "blame", "blame:" + path.string(), [&path](Provider& provider) { return provider.BlameArgv(path); },
+            [onComplete](Provider& provider, std::string output) { onComplete(provider.ParseBlame(output)); }, onError);
     });
 }
 
 void Runner::RequestLog(const text::Buffer& buffer, std::function<void(std::vector<LogEntry>)> onComplete,
-                           std::function<void(std::string)> onError) {
-    if (!buffer.Path()) {
-        onError("no file associated with this buffer");
-        return;
-    }
-    // weakly_canonical, not a bare copy of buffer.Path(): a provider's
-    // BlameArgv/LogArgv may run the command via "-C <dirname(path)>" (the
-    // bundled git plugin does, see vcs-git.janet), which changes the
-    // subprocess's own cwd -- a *relative* path (e.g. "../ROADMAP.md", the
-    // literal string ned was invoked with from a subdirectory) would then
-    // get re-resolved against that *new* cwd instead of the original one,
-    // landing somewhere entirely different. A real, reported bug: git
-    // reported "'../ROADMAP.md' outside repository" because "-C .." plus
-    // the still-relative "../ROADMAP.md" compounds to one directory too
-    // far up. An absolute, ".."-resolved path has no such ambiguity
-    // regardless of what cwd a provider's own command ends up running
-    // from. Mirrors BufferView::HandleRenameFileKey's own use of
-    // weakly_canonical for the same "make this path trustworthy regardless
-    // of how it was originally typed" reason.
-    const std::filesystem::path path = std::filesystem::weakly_canonical(*buffer.Path());
-
-    Provider* provider = ActiveProviderFor(ProjectRoot());
-    if (!provider) {
-        onError("no vcs provider registered for this project");
-        return;
-    }
-
-    const std::string key = "log:" + path.string();
-    if (IsRunning(key)) {
-        onError("log is already running for this file");
-        return;
-    }
-
-    CommandSpec spec;
-    try {
-        spec = provider->LogArgv(path);
-    }
-    catch (const std::exception& e) {
-        onError(e.what());
-        return;
-    }
-
-    RunAndCollect(key, spec, [provider, onComplete, onError](std::string output, std::optional<int> exitCode) {
-        if (!exitCode || *exitCode != 0) {
-            onError(OperationFailureDetail("log", exitCode, output));
-            return;
-        }
-        try {
-            onComplete(provider->ParseLog(output));
-        }
-        catch (const std::exception& e) {
-            onError(e.what());
-        }
+                        std::function<void(std::string)> onError) {
+    InBufferRepo(buffer, onError, [this, &onComplete, &onError](const Repo& repo, const std::filesystem::path& path) {
+        RunProviderOperation(
+            repo, "log", "log:" + path.string(), [&path](Provider& provider) { return provider.LogArgv(path); },
+            [onComplete](Provider& provider, std::string output) { onComplete(provider.ParseLog(output)); }, onError);
     });
 }
 
 void Runner::RequestDiff(const text::Buffer& buffer, std::function<void(std::vector<DiffHunk>)> onComplete,
-                            std::function<void(std::string)> onError) {
-    if (!buffer.Path()) {
-        onError("no file associated with this buffer");
-        return;
-    }
-    const std::filesystem::path path = std::filesystem::weakly_canonical(*buffer.Path());
-
-    Provider* provider = ActiveProviderFor(ProjectRoot());
-    if (!provider) {
-        onError("no vcs provider registered for this project");
-        return;
-    }
-
-    const std::string key = "diff:" + path.string();
-    if (IsRunning(key)) {
-        onError("diff is already running for this file");
-        return;
-    }
-
-    CommandSpec spec;
-    try {
-        spec = provider->DiffArgv(path);
-    }
-    catch (const std::exception& e) {
-        onError(e.what());
-        return;
-    }
-
-    RunAndCollect(key, spec, [provider, onComplete, onError](std::string output, std::optional<int> exitCode) {
-        if (!exitCode || *exitCode != 0) {
-            onError(OperationFailureDetail("diff", exitCode, output));
-            return;
-        }
-        try {
-            onComplete(provider->ParseDiff(output));
-        }
-        catch (const std::exception& e) {
-            onError(e.what());
-        }
+                         std::function<void(std::string)> onError) {
+    InBufferRepo(buffer, onError, [this, &onComplete, &onError](const Repo& repo, const std::filesystem::path& path) {
+        RunProviderOperation(
+            repo, "diff", "diff:" + path.string(), [&path](Provider& provider) { return provider.DiffArgv(path); },
+            [onComplete](Provider& provider, std::string output) { onComplete(provider.ParseDiff(output)); }, onError);
     });
 }
 
-void Runner::RequestFullDiff(std::function<void(std::string)> onComplete, std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestFullDiff(const Repo& repo, std::function<void(std::string)> onComplete, std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "full diff", "full-diff:" + root.string(),
+        repo, "full diff", "full-diff:" + root.string(),
         [&root](Provider& provider) { return provider.WorkingDiffArgv(root); },
         [onComplete = std::move(onComplete)](Provider&, std::string output) { onComplete(std::move(output)); },
         std::move(onError));
 }
 
-void Runner::RequestCommitDiff(const std::string& commitHash, std::function<void(std::string)> onComplete,
-                                  std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestCommitDiff(const Repo& repo, const std::string& commitHash, std::function<void(std::string)> onComplete,
+                               std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "commit diff", "commit-diff:" + commitHash,
+        repo, "commit diff", "commit-diff:" + root.string() + ":" + commitHash,
         [&root, &commitHash](Provider& provider) { return provider.CommitDiffArgv(root, commitHash); },
         [onComplete = std::move(onComplete)](Provider&, std::string output) { onComplete(std::move(output)); },
         std::move(onError));
 }
 
-void Runner::RunProviderOperation(const char* operation, const std::string& key,
-                                     const std::function<CommandSpec(Provider&)>& buildSpec,
-                                     std::function<void(Provider&, std::string)>     onOutput,
-                                     std::function<void(std::string)>                   onError) {
-    Provider* provider = ActiveProviderFor(ProjectRoot());
+void Runner::RunProviderOperation(const Repo& repo, const char* operation, const std::string& key,
+                                  const std::function<CommandSpec(Provider&)>& buildSpec,
+                                  std::function<void(Provider&, std::string)>  onOutput,
+                                  std::function<void(std::string)>             onError) {
+    Provider* provider = ProviderFor(repo);
     if (!provider) {
         onError("no vcs provider registered for this project");
         return;
     }
 
-    if (IsRunning(key)) {
+    // A host's paths can match this machine's, so its runs are keyed apart.
+    const std::string scoped = repo.destination ? *repo.destination + ":" + key : key;
+    if (IsRunning(scoped)) {
         onError(std::string(operation) + " is already running");
         return;
     }
@@ -353,7 +266,7 @@ void Runner::RunProviderOperation(const char* operation, const std::string& key,
         return;
     }
 
-    RunAndCollect(key, spec,
+    RunAndCollect(repo, scoped, std::move(spec),
                   [operation, provider, onOutput = std::move(onOutput), onError](std::string output, std::optional<int> exitCode) {
                       if (!exitCode || *exitCode != 0) {
                           onError(OperationFailureDetail(operation, exitCode, output));
@@ -368,7 +281,7 @@ void Runner::RunProviderOperation(const char* operation, const std::string& key,
                   });
 }
 
-void Runner::ApplyPatch(const char* operation, const std::string& key, std::string patch,
+void Runner::ApplyPatch(const Repo& repo, const char* operation, const std::string& key, std::string patch,
                         std::function<CommandSpec(Provider&, const std::filesystem::path& patchPath)> argv,
                         std::function<void()> onSuccess, std::function<void(std::string)> onError) {
     auto patchFile       = std::make_shared<std::optional<std::filesystem::path>>();
@@ -379,12 +292,15 @@ void Runner::ApplyPatch(const char* operation, const std::string& key, std::stri
         }
     };
     RunProviderOperation(
-        operation, key,
-        [&patch, &argv, &patchFile](Provider& provider) {
+        repo, operation, key,
+        [&repo, &patch, &argv, &patchFile](Provider& provider) {
             if (provider.PatchesOnStdin()) {
                 CommandSpec spec = argv(provider, "-");
                 spec.input       = std::move(patch);
                 return spec;
+            }
+            if (repo.IsRemote()) {
+                throw std::runtime_error("this provider can only apply a patch from a file on this machine");
             }
             *patchFile = WritePatchFile(patch);
             if (!*patchFile) {
@@ -402,11 +318,11 @@ void Runner::ApplyPatch(const char* operation, const std::string& key, std::stri
         });
 }
 
-void Runner::RequestStatus(std::function<void(std::vector<StatusEntry>)> onComplete,
-                              std::function<void(std::string)>                 onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestStatus(const Repo& repo, std::function<void(std::vector<StatusEntry>)> onComplete,
+                           std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "status", "status:" + root.string(),
+        repo, "status", "status:" + root.string(),
         [&root](Provider& provider) { return provider.StatusArgv(root); },
         [onComplete = std::move(onComplete)](Provider& provider, std::string output) {
             onComplete(provider.ParseStatus(output));
@@ -414,80 +330,69 @@ void Runner::RequestStatus(std::function<void(std::vector<StatusEntry>)> onCompl
         std::move(onError));
 }
 
-void Runner::RequestStage(const std::filesystem::path& path, std::function<void()> onSuccess,
-                             std::function<void(std::string)> onError) {
-    // weakly_canonical for the same relative-path-vs-"-C" reason
-    // RequestBlame spells out above.
-    const std::filesystem::path canonical = std::filesystem::weakly_canonical(path);
+void Runner::RequestStage(const Repo& repo, const std::filesystem::path& path, std::function<void()> onSuccess,
+                          std::function<void(std::string)> onError) {
+    const std::filesystem::path canonical = Canonical(repo, path);
     RunProviderOperation(
-        "stage", "stage:" + canonical.string(),
+        repo, "stage", "stage:" + canonical.string(),
         [&canonical](Provider& provider) { return provider.StageArgv(canonical); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
 }
 
-void Runner::RequestUnstage(const std::filesystem::path& path, std::function<void()> onSuccess,
-                               std::function<void(std::string)> onError) {
-    const std::filesystem::path canonical = std::filesystem::weakly_canonical(path);
+void Runner::RequestUnstage(const Repo& repo, const std::filesystem::path& path, std::function<void()> onSuccess,
+                            std::function<void(std::string)> onError) {
+    const std::filesystem::path canonical = Canonical(repo, path);
     RunProviderOperation(
-        "unstage", "unstage:" + canonical.string(),
+        repo, "unstage", "unstage:" + canonical.string(),
         [&canonical](Provider& provider) { return provider.UnstageArgv(canonical); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
 }
 
 void Runner::RequestHunkApply(const text::Buffer& buffer, std::size_t targetLine, bool stage,
-                                 std::function<void()> onSuccess, std::function<void(std::string)> onError) {
-    if (!buffer.Path()) {
-        onError("no file associated with this buffer");
-        return;
-    }
-    if (stage) {
-        RequestHunkApplyForPath(*buffer.Path(), targetLine, stage, std::move(onSuccess), std::move(onError));
-        return;
-    }
-    // Point counts worktree lines but the staged diff counts index lines;
-    // unstaged edits above the hunk shift one against the other, so translate
-    // through the unstaged diff first.
-    const std::filesystem::path path = std::filesystem::weakly_canonical(*buffer.Path());
-    RunProviderOperation(
-        "unstage hunk", "unstage-hunk-map:" + path.string(),
-        [&path](Provider& provider) {
-            (void)provider.StagedDiffArgv(path); // fail before spawning anything if the chain can't finish
-            return provider.DiffArgv(path);
-        },
-        [this, path, targetLine, onSuccess = std::move(onSuccess), onError](Provider&, std::string diffOutput) {
-            RequestHunkApplyForPath(path, MapNewLineToOldLine(diffOutput, targetLine), /*stage=*/false, onSuccess,
-                                    onError);
-        },
-        onError);
+                              std::function<void()> onSuccess, std::function<void(std::string)> onError) {
+    InBufferRepo(buffer, onError, [this, targetLine, stage, &onSuccess, &onError](const Repo& repo, const std::filesystem::path& path) {
+        if (stage) {
+            RequestHunkApplyForPath(repo, path, targetLine, stage, onSuccess, onError);
+            return;
+        }
+        // Point counts worktree lines but the staged diff counts index
+        // lines; unstaged edits above the hunk shift one against the other,
+        // so translate through the unstaged diff first.
+        RunProviderOperation(
+            repo, "unstage hunk", "unstage-hunk-map:" + path.string(),
+            [&path](Provider& provider) {
+                (void)provider.StagedDiffArgv(path); // fail before spawning anything if the chain can't finish
+                return provider.DiffArgv(path);
+            },
+            [this, repo, path, targetLine, onSuccess, onError](Provider&, std::string diffOutput) {
+                RequestHunkApplyForPath(repo, path, MapNewLineToOldLine(diffOutput, targetLine), /*stage=*/false, onSuccess, onError);
+            },
+            onError);
+    });
 }
 
-void Runner::RequestHunkApply(const std::filesystem::path& path, std::size_t targetLine, bool stage,
-                                 std::function<void()> onSuccess, std::function<void(std::string)> onError) {
-    RequestHunkApplyForPath(path, targetLine, stage, std::move(onSuccess), std::move(onError));
+void Runner::RequestHunkApply(const Repo& repo, const std::filesystem::path& path, std::size_t targetLine, bool stage,
+                              std::function<void()> onSuccess, std::function<void(std::string)> onError) {
+    RequestHunkApplyForPath(repo, Canonical(repo, path), targetLine, stage, std::move(onSuccess), std::move(onError));
 }
 
-void Runner::RequestHunkApplyForPath(const std::filesystem::path& pathArg, std::size_t targetLine, bool stage,
-                                        std::function<void()> onSuccess, std::function<void(std::string)> onError) {
-    // weakly_canonical for the same relative-path-vs-"-C" reason
-    // RequestBlame spells out above.
-    const std::filesystem::path path      = std::filesystem::weakly_canonical(pathArg);
-    const char*                 operation = stage ? "stage hunk" : "unstage hunk";
-    const std::string           keyPrefix = stage ? "stage-hunk" : "unstage-hunk";
+void Runner::RequestHunkApplyForPath(const Repo& repo, const std::filesystem::path& path, std::size_t targetLine, bool stage,
+                                     std::function<void()> onSuccess, std::function<void(std::string)> onError) {
+    const char*       operation = stage ? "stage hunk" : "unstage hunk";
+    const std::string keyPrefix = stage ? "stage-hunk" : "unstage-hunk";
 
     RunProviderOperation(
-        operation, keyPrefix + "-diff:" + path.string(),
+        repo, operation, keyPrefix + "-diff:" + path.string(),
         [&path, stage](Provider& provider) { return stage ? provider.DiffArgv(path) : provider.StagedDiffArgv(path); },
-        [this, path, targetLine, stage, operation, keyPrefix, onSuccess = std::move(onSuccess),
-         onError](Provider&, std::string diffOutput) {
+        [this, repo, path, targetLine, stage, operation, keyPrefix, onSuccess = std::move(onSuccess), onError](Provider&, std::string diffOutput) {
             std::optional<std::string> patch = ExtractHunkPatch(diffOutput, targetLine);
             if (!patch) {
                 onError(stage ? "no unstaged change at this line" : "no staged change at this line");
                 return;
             }
-            const std::filesystem::path root = ProjectRoot();
             ApplyPatch(
-                operation, keyPrefix + "-apply:" + path.string(), std::move(*patch),
-                [root, stage](Provider& provider, const std::filesystem::path& patchPath) {
+                repo, operation, keyPrefix + "-apply:" + path.string(), std::move(*patch),
+                [root = repo.root, stage](Provider& provider, const std::filesystem::path& patchPath) {
                     return stage ? provider.StagePatchArgv(root, patchPath) : provider.UnstagePatchArgv(root, patchPath);
                 },
                 onSuccess, onError);
@@ -496,38 +401,30 @@ void Runner::RequestHunkApplyForPath(const std::filesystem::path& pathArg, std::
 }
 
 void Runner::RequestHunkRevert(const text::Buffer& buffer, std::size_t targetLine, std::function<void()> onSuccess,
-                                  std::function<void(std::string)> onError) {
-    if (!buffer.Path()) {
-        onError("no file associated with this buffer");
-        return;
-    }
-    // weakly_canonical for the same relative-path-vs-"-C" reason
-    // RequestBlame/RequestHunkApplyForPath spell out.
-    const std::filesystem::path path = std::filesystem::weakly_canonical(*buffer.Path());
-
-    RunProviderOperation(
-        "revert hunk", "revert-hunk-diff:" + path.string(),
-        [&path](Provider& provider) { return provider.DiffArgv(path); },
-        [this, path, targetLine, onSuccess = std::move(onSuccess), onError](Provider&, std::string diffOutput) {
-            std::optional<std::string> patch = ExtractHunkPatch(diffOutput, targetLine);
-            if (!patch) {
-                onError("no unstaged change at this line");
-                return;
-            }
-            const std::filesystem::path root = ProjectRoot();
-            ApplyPatch(
-                "revert hunk", "revert-hunk-apply:" + path.string(), std::move(*patch),
-                [root](Provider& provider, const std::filesystem::path& patchPath) { return provider.RevertPatchArgv(root, patchPath); },
-                onSuccess, onError);
-        },
-        onError);
+                               std::function<void(std::string)> onError) {
+    InBufferRepo(buffer, onError, [this, targetLine, &onSuccess, &onError](const Repo& repo, const std::filesystem::path& path) {
+        RunProviderOperation(
+            repo, "revert hunk", "revert-hunk-diff:" + path.string(), [&path](Provider& provider) { return provider.DiffArgv(path); },
+            [this, repo, path, targetLine, onSuccess, onError](Provider&, std::string diffOutput) {
+                std::optional<std::string> patch = ExtractHunkPatch(diffOutput, targetLine);
+                if (!patch) {
+                    onError("no unstaged change at this line");
+                    return;
+                }
+                ApplyPatch(
+                    repo, "revert hunk", "revert-hunk-apply:" + path.string(), std::move(*patch),
+                    [root = repo.root](Provider& provider, const std::filesystem::path& patchPath) { return provider.RevertPatchArgv(root, patchPath); },
+                    onSuccess, onError);
+            },
+            onError);
+    });
 }
 
-void Runner::RequestCommit(const std::string& message, std::function<void(std::string)> onSuccess,
-                              std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestCommit(const Repo& repo, const std::string& message, std::function<void(std::string)> onSuccess,
+                           std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "commit", "commit:" + root.string(),
+        repo, "commit", "commit:" + root.string(),
         [&root, &message](Provider& provider) { return provider.CommitArgv(root, message); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string output) {
             // The first output line is the VCS's own one-line summary of
@@ -538,11 +435,11 @@ void Runner::RequestCommit(const std::string& message, std::function<void(std::s
         std::move(onError));
 }
 
-void Runner::RequestAmendCommit(const std::string& message, std::function<void(std::string)> onSuccess,
-                                   std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestAmendCommit(const Repo& repo, const std::string& message, std::function<void(std::string)> onSuccess,
+                                std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "amend commit", "commit:" + root.string(),
+        repo, "amend commit", "commit:" + root.string(),
         [&root, &message](Provider& provider) { return provider.AmendCommitArgv(root, message); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string output) {
             onSuccess(output.substr(0, output.find('\n')));
@@ -550,20 +447,20 @@ void Runner::RequestAmendCommit(const std::string& message, std::function<void(s
         std::move(onError));
 }
 
-void Runner::RequestPreviousCommitMessage(std::function<void(std::string)> onComplete,
-                                             std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestPreviousCommitMessage(const Repo& repo, std::function<void(std::string)> onComplete,
+                                          std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "previous commit message", "previous-commit-message:" + root.string(),
+        repo, "previous commit message", "previous-commit-message:" + root.string(),
         [&root](Provider& provider) { return provider.PreviousCommitMessageArgv(root); },
         [onComplete = std::move(onComplete)](Provider&, std::string output) { onComplete(std::move(output)); },
         std::move(onError));
 }
 
-void Runner::RequestExtendCommit(std::function<void(std::string)> onSuccess, std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestExtendCommit(const Repo& repo, std::function<void(std::string)> onSuccess, std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "extend commit", "commit:" + root.string(),
+        repo, "extend commit", "commit:" + root.string(),
         [&root](Provider& provider) { return provider.ExtendCommitArgv(root); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string output) {
             onSuccess(output.substr(0, output.find('\n')));
@@ -571,11 +468,11 @@ void Runner::RequestExtendCommit(std::function<void(std::string)> onSuccess, std
         std::move(onError));
 }
 
-void Runner::RequestRewordCommit(const std::string& message, std::function<void(std::string)> onSuccess,
-                                    std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestRewordCommit(const Repo& repo, const std::string& message, std::function<void(std::string)> onSuccess,
+                                 std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "reword commit", "commit:" + root.string(),
+        repo, "reword commit", "commit:" + root.string(),
         [&root, &message](Provider& provider) { return provider.RewordCommitArgv(root, message); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string output) {
             onSuccess(output.substr(0, output.find('\n')));
@@ -583,69 +480,69 @@ void Runner::RequestRewordCommit(const std::string& message, std::function<void(
         std::move(onError));
 }
 
-void Runner::RequestBranchList(std::function<void(std::vector<BranchEntry>)> onComplete,
-                                  std::function<void(std::string)>                 onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestBranchList(const Repo& repo, std::function<void(std::vector<BranchEntry>)> onComplete,
+                               std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "branch listing", "branch-list:" + root.string(),
+        repo, "branch listing", "branch-list:" + root.string(),
         [&root](Provider& provider) { return provider.BranchListArgv(root); },
-        [root, onComplete = std::move(onComplete)](Provider& provider, std::string output) {
+        [repo, onComplete = std::move(onComplete)](Provider& provider, std::string output) {
             std::vector<BranchEntry> branches = provider.ParseBranchList(output);
             const auto               current  = std::ranges::find(branches, true, &BranchEntry::current);
-            SetCurrentBranch(root, current != branches.end() ? std::optional(current->name) : std::nullopt);
+            SetCurrentBranch(repo, current != branches.end() ? std::optional(current->name) : std::nullopt);
             onComplete(std::move(branches));
         },
         std::move(onError));
 }
 
-void Runner::RefreshCurrentBranch(std::function<void()> onDone) {
-    RequestBranchList([onDone](const std::vector<BranchEntry>&) {
+void Runner::RefreshCurrentBranch(const Repo& repo, std::function<void()> onDone) {
+    RequestBranchList(repo, [onDone](const std::vector<BranchEntry>&) {
         if (onDone) {
             onDone();
         }
     });
 }
 
-void Runner::RequestBranchSwitch(const std::string& name, std::function<void()> onSuccess,
-                                    std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestBranchSwitch(const Repo& repo, const std::string& name, std::function<void()> onSuccess,
+                                 std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "branch switch", "branch-switch:" + root.string(),
+        repo, "branch switch", "branch-switch:" + root.string(),
         [&root, &name](Provider& provider) { return provider.BranchSwitchArgv(root, name); },
-        [root, name, onSuccess = std::move(onSuccess)](Provider&, std::string) {
-            SetCurrentBranch(root, name);
+        [repo, name, onSuccess = std::move(onSuccess)](Provider&, std::string) {
+            SetCurrentBranch(repo, name);
             onSuccess();
         },
         std::move(onError));
 }
 
-void Runner::RequestBranchCreate(const std::string& name, std::function<void()> onSuccess,
-                                    std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestBranchCreate(const Repo& repo, const std::string& name, std::function<void()> onSuccess,
+                                 std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "branch creation", "branch-create:" + root.string(),
+        repo, "branch creation", "branch-create:" + root.string(),
         [&root, &name](Provider& provider) { return provider.BranchCreateArgv(root, name); },
-        [root, name, onSuccess = std::move(onSuccess)](Provider&, std::string) {
-            SetCurrentBranch(root, name);
+        [repo, name, onSuccess = std::move(onSuccess)](Provider&, std::string) {
+            SetCurrentBranch(repo, name);
             onSuccess();
         },
         std::move(onError));
 }
 
-void Runner::RequestRevert(const std::filesystem::path& path, std::function<void()> onSuccess,
-                              std::function<void(std::string)> onError) {
-    const std::filesystem::path canonical = std::filesystem::weakly_canonical(path);
+void Runner::RequestRevert(const Repo& repo, const std::filesystem::path& path, std::function<void()> onSuccess,
+                           std::function<void(std::string)> onError) {
+    const std::filesystem::path canonical = Canonical(repo, path);
     RunProviderOperation(
-        "revert", "revert:" + canonical.string(),
+        repo, "revert", "revert:" + canonical.string(),
         [&canonical](Provider& provider) { return provider.RevertArgv(canonical); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
 }
 
-void Runner::RequestStashList(std::function<void(std::vector<StashEntry>)> onComplete,
-                                 std::function<void(std::string)>                onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestStashList(const Repo& repo, std::function<void(std::vector<StashEntry>)> onComplete,
+                              std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "stash listing", "stash-list:" + root.string(),
+        repo, "stash listing", "stash-list:" + root.string(),
         [&root](Provider& provider) { return provider.StashListArgv(root); },
         [onComplete = std::move(onComplete)](Provider& provider, std::string output) {
             onComplete(provider.ParseStashList(output));
@@ -653,59 +550,59 @@ void Runner::RequestStashList(std::function<void(std::vector<StashEntry>)> onCom
         std::move(onError));
 }
 
-void Runner::RequestStashPush(const std::string& message, std::function<void()> onSuccess,
-                                 std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestStashPush(const Repo& repo, const std::string& message, std::function<void()> onSuccess,
+                              std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "stash push", "stash-push:" + root.string(),
+        repo, "stash push", "stash-push:" + root.string(),
         [&root, &message](Provider& provider) { return provider.StashPushArgv(root, message); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
 }
 
-void Runner::RequestStashPop(const std::string& stashRef, std::function<void()> onSuccess,
-                                std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestStashPop(const Repo& repo, const std::string& stashRef, std::function<void()> onSuccess,
+                             std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "stash pop", "stash-pop:" + root.string() + ":" + stashRef,
+        repo, "stash pop", "stash-pop:" + root.string() + ":" + stashRef,
         [&root, &stashRef](Provider& provider) { return provider.StashPopArgv(root, stashRef); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
 }
 
-void Runner::RequestStashDrop(const std::string& stashRef, std::function<void()> onSuccess,
-                                 std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestStashDrop(const Repo& repo, const std::string& stashRef, std::function<void()> onSuccess,
+                              std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "stash drop", "stash-drop:" + root.string() + ":" + stashRef,
+        repo, "stash drop", "stash-drop:" + root.string() + ":" + stashRef,
         [&root, &stashRef](Provider& provider) { return provider.StashDropArgv(root, stashRef); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
 }
 
-void Runner::RequestPush(std::function<void()> onSuccess, std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestPush(const Repo& repo, std::function<void()> onSuccess, std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "push", "push:" + root.string(), [&root](Provider& provider) { return provider.PushArgv(root); },
+        repo, "push", "push:" + root.string(), [&root](Provider& provider) { return provider.PushArgv(root); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
 }
 
-void Runner::RequestPull(std::function<void()> onSuccess, std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestPull(const Repo& repo, std::function<void()> onSuccess, std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "pull", "pull:" + root.string(), [&root](Provider& provider) { return provider.PullArgv(root); },
+        repo, "pull", "pull:" + root.string(), [&root](Provider& provider) { return provider.PullArgv(root); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
 }
 
-void Runner::RequestFetch(std::function<void()> onSuccess, std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestFetch(const Repo& repo, std::function<void()> onSuccess, std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "fetch", "fetch:" + root.string(), [&root](Provider& provider) { return provider.FetchArgv(root); },
+        repo, "fetch", "fetch:" + root.string(), [&root](Provider& provider) { return provider.FetchArgv(root); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
 }
 
-void Runner::RequestAheadBehind(std::function<void(AheadBehind)> onComplete,
-                                   std::function<void(std::string)>    onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestAheadBehind(const Repo& repo, std::function<void(AheadBehind)> onComplete,
+                                std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "ahead/behind", "ahead-behind:" + root.string(),
+        repo, "ahead/behind", "ahead-behind:" + root.string(),
         [&root](Provider& provider) { return provider.AheadBehindArgv(root); },
         [onComplete = std::move(onComplete)](Provider& provider, std::string output) {
             onComplete(provider.ParseAheadBehind(output));
@@ -713,11 +610,11 @@ void Runner::RequestAheadBehind(std::function<void(AheadBehind)> onComplete,
         std::move(onError));
 }
 
-void Runner::RequestSequenceState(std::function<void(SequenceState)> onComplete,
-                                  std::function<void(std::string)>   onError) {
-    const std::filesystem::path root = ProjectRoot();
+void Runner::RequestSequenceState(const Repo& repo, std::function<void(SequenceState)> onComplete,
+                                  std::function<void(std::string)> onError) {
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "sequence state", "sequence-state:" + root.string(),
+        repo, "sequence state", "sequence-state:" + root.string(),
         [&root](Provider& provider) { return provider.SequenceStateArgv(root); },
         [onComplete = std::move(onComplete)](Provider& provider, std::string output) {
             onComplete(provider.ParseSequenceState(output));
@@ -725,39 +622,39 @@ void Runner::RequestSequenceState(std::function<void(SequenceState)> onComplete,
         std::move(onError));
 }
 
-void Runner::RequestSequenceContinue(const std::string& kind, std::function<void()> onSuccess,
+void Runner::RequestSequenceContinue(const Repo& repo, const std::string& kind, std::function<void()> onSuccess,
                                      std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "continue", "sequence:" + root.string(),
+        repo, "continue", "sequence:" + root.string(),
         [&root, &kind](Provider& provider) { return provider.SequenceContinueArgv(root, kind); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
 }
 
-void Runner::RequestSequenceAbort(const std::string& kind, std::function<void()> onSuccess,
+void Runner::RequestSequenceAbort(const Repo& repo, const std::string& kind, std::function<void()> onSuccess,
                                   std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "abort", "sequence:" + root.string(),
+        repo, "abort", "sequence:" + root.string(),
         [&root, &kind](Provider& provider) { return provider.SequenceAbortArgv(root, kind); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
 }
 
-void Runner::RequestSequenceSkip(const std::string& kind, std::function<void()> onSuccess,
+void Runner::RequestSequenceSkip(const Repo& repo, const std::string& kind, std::function<void()> onSuccess,
                                  std::function<void(std::string)> onError) {
-    const std::filesystem::path root = ProjectRoot();
+    const std::filesystem::path& root = repo.root;
     RunProviderOperation(
-        "skip", "sequence:" + root.string(),
+        repo, "skip", "sequence:" + root.string(),
         [&root, &kind](Provider& provider) { return provider.SequenceSkipArgv(root, kind); },
         [onSuccess = std::move(onSuccess)](Provider&, std::string) { onSuccess(); }, std::move(onError));
 }
 
-void Runner::RequestFileDiffText(const std::filesystem::path& path, bool staged,
-                                    std::function<void(std::string)> onComplete, std::function<void(std::string)> onError) {
-    const std::filesystem::path canonical = std::filesystem::weakly_canonical(path);
+void Runner::RequestFileDiffText(const Repo& repo, const std::filesystem::path& path, bool staged,
+                                 std::function<void(std::string)> onComplete, std::function<void(std::string)> onError) {
+    const std::filesystem::path canonical = Canonical(repo, path);
     const std::string           keyPrefix = staged ? "file-diff-staged:" : "file-diff:";
     RunProviderOperation(
-        "diff preview", keyPrefix + canonical.string(),
+        repo, "diff preview", keyPrefix + canonical.string(),
         [&canonical, staged](Provider& provider) {
             return staged ? provider.StagedDiffArgv(canonical) : provider.DiffArgv(canonical);
         },

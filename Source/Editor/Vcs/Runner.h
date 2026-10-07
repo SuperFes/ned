@@ -23,8 +23,11 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Editor/Lifetime.h"
+#include "Editor/Remote/Placement.h"
 #include "Editor/Tasks/TaskProcess.h"
 #include "Provider.h"
+#include "Repo.h"
 
 namespace ned::text {
 class Buffer;
@@ -101,12 +104,16 @@ class Runner {
     Runner(const Runner&)            = delete;
     Runner& operator=(const Runner&) = delete;
 
-    // Resolves the active provider for editor::ProjectRoot(), calls its
+    // Null, the default, leaves every remote repository unreachable. hosts
+    // must outlive this Runner.
+    void SetHosts(remote::Hosts* hosts);
+
+    // Resolves the active provider for buffer's repository, calls its
     // BlameArgv(path) synchronously, spawns the resulting command, and on
     // exit calls ParseBlame(stdout) synchronously before invoking
     // onComplete on the main thread. onError fires instead of onComplete
     // (never both) if buffer has no associated path, no provider resolves
-    // for the current project root, the process fails to spawn or exits
+    // for its repository, the process fails to spawn or exits
     // non-zero, or either provider callback throws -- matching
     // TaskRunner/Manager's "nothing configured/a failure isn't a crash"
     // convention: report it, don't propagate an exception to the caller.
@@ -128,7 +135,7 @@ class Runner {
     // doc comment for how this differs from RequestDiff above. No parse
     // half: onComplete gets the raw stdout, meant for Vcs/DiffPatch.h's
     // ParseDiffHunks, not a provider-side structured parse.
-    void RequestFullDiff(std::function<void(std::string rawDiff)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestFullDiff(const Repo& repo, std::function<void(std::string rawDiff)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
 
     // Full commit diff view follow-up: RequestFullDiff's own single-commit
     // sibling -- calls Provider::CommitDiffArgv(root, commitHash) instead
@@ -137,14 +144,14 @@ class Runner {
     // is passed through verbatim to whatever the active provider considers
     // an addressable commit (git: an abbreviated or full hash) -- this
     // method does no interpretation of it itself.
-    void RequestCommitDiff(const std::string& commitHash, std::function<void(std::string rawDiff)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestCommitDiff(const Repo& repo, const std::string& commitHash, std::function<void(std::string rawDiff)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
 
     // Vocabulary-completion follow-up: the status/stage/unstage/commit/
     // branch operations, same provider-resolution/duplicate-guard/error
     // conventions as the three above. Root-scoped operations (status,
-    // commit, branch*) act on editor::ProjectRoot() rather than any one
-    // buffer, so they take no Buffer at all; stage/unstage take the target
-    // file's path directly (BufferView resolves it from the *vcs status*
+    // commit, branch*) act on a repository rather than any one buffer, so
+    // they take a Repo, not a Buffer; stage/unstage take the target file's
+    // path there directly (BufferView resolves it from the *vcs status*
     // buffer's line at point, or the active buffer's own path -- see its
     // ResolveVcsFileTarget), canonicalized here for the same
     // relative-path-vs-"-C" reason RequestBlame documents. Operations
@@ -153,9 +160,9 @@ class Runner {
     // handed the subprocess output's first line (e.g. git's own
     // "[main abc1234] message" summary) since that's genuinely worth
     // showing, while the rest report nothing beyond success.
-    void RequestStatus(std::function<void(std::vector<StatusEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestStage(const std::filesystem::path& path, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestUnstage(const std::filesystem::path& path, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestStatus(const Repo& repo, std::function<void(std::vector<StatusEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestStage(const Repo& repo, const std::filesystem::path& path, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestUnstage(const Repo& repo, const std::filesystem::path& path, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
 
     // Hunk-staging follow-up: the whole stage/unstage-one-hunk chain in
     // one call -- raw diff first (the provider's worktree DiffArgv for a
@@ -184,7 +191,7 @@ class Runner {
     // modified" guard that gates the point-driven caller lives in
     // BufferView::StageOrUnstageHunkAtPoint, not here). Unlike the Buffer&
     // overload, targetLine is already on the chosen diff's own new side.
-    void RequestHunkApply(const std::filesystem::path& path, std::size_t targetLine, bool stage, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestHunkApply(const Repo& repo, const std::filesystem::path& path, std::size_t targetLine, bool stage, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     // mouse-ergonomics follow-up: discards one hunk's change from the
     // working tree -- RequestHunkApply's own diff-then-patch chain, reading
     // from the same unstaged diff `stage=true` does (Provider::DiffArgv),
@@ -193,34 +200,34 @@ class Runner {
     // RequestRevert above -- BufferView::RevertHunkAtPoint's own y/n gate is
     // what makes this safe to call, not anything here.
     void RequestHunkRevert(const text::Buffer& buffer, std::size_t targetLine, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestCommit(const std::string& message, std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestCommit(const Repo& repo, const std::string& message, std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     // VcsPanel amend follow-up: RequestCommit's own sibling (Provider::
     // AmendCommitArgv instead of CommitArgv), same "first output line is
     // the summary" contract. Shares RequestCommit's own "commit:" +root
     // guard key -- an amend and a plain commit against the same root are
     // still mutually exclusive, not two independent operations.
-    void RequestAmendCommit(const std::string& message, std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestAmendCommit(const Repo& repo, const std::string& message, std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     // VcsPanel amend follow-up: the previous commit's own message, for
     // pre-filling the amend buffer -- RequestFullDiff's own "no parse
     // half, hand back raw stdout" shape, root-scoped like RequestCommit.
-    void RequestPreviousCommitMessage(std::function<void(std::string message)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestPreviousCommitMessage(const Repo& repo, std::function<void(std::string message)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
     // VcsPanel commit-variants follow-up: Magit's own "extend" -- folds
     // whatever's staged into HEAD keeping its message, no buffer/message
     // argument at all. Same "commit:" +root guard key as RequestCommit/
     // RequestAmendCommit (still mutually exclusive against either), same
     // "first output line is the summary" contract.
-    void RequestExtendCommit(std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestExtendCommit(const Repo& repo, std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     // Reword follow-up: RequestAmendCommit's own sibling (Provider::
     // RewordCommitArgv instead of AmendCommitArgv) -- same "first output
     // line is the summary" contract and the same "commit:" +root guard key,
     // still mutually exclusive against a plain commit/amend/extend.
-    void RequestRewordCommit(const std::string& message, std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestBranchList(std::function<void(std::vector<BranchEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestRewordCommit(const Repo& repo, const std::string& message, std::function<void(std::string summary)> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestBranchList(const Repo& repo, std::function<void(std::vector<BranchEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
     // Lists branches only to record the current one (Vcs/CurrentBranch.h);
     // onDone runs once it has, and not at all if listing fails.
-    void RefreshCurrentBranch(std::function<void()> onDone = {});
-    void RequestBranchSwitch(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestBranchCreate(const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RefreshCurrentBranch(const Repo& repo, std::function<void()> onDone = {});
+    void RequestBranchSwitch(const Repo& repo, const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestBranchCreate(const Repo& repo, const std::string& name, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
 
     // VCS side panel follow-up: discard/revert/stash/push-pull-fetch/
     // ahead-behind, same guarantees/conventions as everything above.
@@ -229,16 +236,16 @@ class Runner {
     // root-scoped operations (stash list/push, push/pull/fetch,
     // ahead-behind) take no path, matching RequestStatus/RequestCommit's
     // own shape.
-    void RequestRevert(const std::filesystem::path& path, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestStashList(std::function<void(std::vector<StashEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestRevert(const Repo& repo, const std::filesystem::path& path, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestStashList(const Repo& repo, std::function<void(std::vector<StashEntry>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
     // message may be empty -- see Provider::StashPushArgv's own doc comment.
-    void RequestStashPush(const std::string& message, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestStashPop(const std::string& stashRef, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestStashDrop(const std::string& stashRef, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestPush(std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestPull(std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestFetch(std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestAheadBehind(std::function<void(AheadBehind)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestStashPush(const Repo& repo, const std::string& message, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestStashPop(const Repo& repo, const std::string& stashRef, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestStashDrop(const Repo& repo, const std::string& stashRef, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestPush(const Repo& repo, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestPull(const Repo& repo, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestFetch(const Repo& repo, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestAheadBehind(const Repo& repo, std::function<void(AheadBehind)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
 
     // In-progress rebase/merge/cherry-pick/revert. kind is whatever
     // RequestSequenceState last reported, passed back to the provider
@@ -246,10 +253,10 @@ class Runner {
     // mutually exclusive steps of the same operation, not independent ones.
     // A continue that stops again on the next conflicting commit exits
     // non-zero and lands in onError; callers re-probe the state either way.
-    void RequestSequenceState(std::function<void(SequenceState)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestSequenceContinue(const std::string& kind, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestSequenceAbort(const std::string& kind, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
-    void RequestSequenceSkip(const std::string& kind, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestSequenceState(const Repo& repo, std::function<void(SequenceState)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestSequenceContinue(const Repo& repo, const std::string& kind, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestSequenceAbort(const Repo& repo, const std::string& kind, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestSequenceSkip(const Repo& repo, const std::string& kind, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
 
     // VCS side panel follow-up: raw diff text for one file (unstaged
     // worktree diff, or -- when staged is true -- the staged/index-vs-HEAD
@@ -259,21 +266,32 @@ class Runner {
     // deliberately header-only (no +/- line bodies, see DiffHunk's own
     // doc comment in Provider.h); Editor/Vcs/DiffPatch.h's
     // ParseDiffHunks is what turns this raw text into renderable hunks.
-    void RequestFileDiffText(const std::filesystem::path& path, bool staged, std::function<void(std::string rawDiff)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+    void RequestFileDiffText(const Repo& repo, const std::filesystem::path& path, bool staged, std::function<void(std::string rawDiff)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
 
   private:
     // Spawns argv (keyed by key, to guard against a duplicate concurrent
     // request), collects its full combined stdout+stderr, and calls onDone
     // once it exits with (output, exitCode) -- exitCode is std::nullopt if
     // the process couldn't even be spawned or was terminated by a signal.
-    void RunAndCollect(const std::string& key, const CommandSpec& spec,
+    // Runs in repo, beside it (Remote/Placement.h); until the process
+    // starts, key is held by a pending run.
+    void RunAndCollect(const Repo& repo, const std::string& key, CommandSpec spec,
                        std::function<void(std::string output, std::optional<int> exitCode)> onDone);
+    void Started(const std::string& key, remote::Spawned spawned, std::optional<std::string> input,
+                 std::function<void(std::string output, std::optional<int> exitCode)> onDone);
 
     [[nodiscard]] bool IsRunning(const std::string& key) const;
 
+    [[nodiscard]] static std::filesystem::path Canonical(const Repo& repo, const std::filesystem::path& path);
+    [[nodiscard]] Provider*                    ProviderFor(const Repo& repo) const;
+    // Runs run with buffer's repository and its file's path there, or
+    // reports why there is none.
+    void InBufferRepo(const text::Buffer& buffer, const std::function<void(std::string)>& onError,
+                      const std::function<void(const Repo& repo, const std::filesystem::path& path)>& run);
+
     // Shared core both RequestHunkApply overloads delegate to -- see the
-    // path-based overload's own doc comment above.
-    void RequestHunkApplyForPath(const std::filesystem::path& path, std::size_t targetLine, bool stage, std::function<void()> onSuccess, std::function<void(std::string)> onError);
+    // path-based overload's own doc comment above. path is canonical.
+    void RequestHunkApplyForPath(const Repo& repo, const std::filesystem::path& path, std::size_t targetLine, bool stage, std::function<void()> onSuccess, std::function<void(std::string)> onError);
 
     // The shared resolve-provider/guard/run/report skeleton the
     // vocabulary-completion operations all use (blame/log/diff predate it
@@ -283,21 +301,28 @@ class Runner {
     // onOutput runs on the main thread with the successful run's output
     // (parse there, or ignore it for exit-code-only operations); any
     // throw from either lands in onError.
-    void RunProviderOperation(const char* operation, const std::string& key,
-                              const std::function<CommandSpec(Provider&)>&    buildSpec,
+    void RunProviderOperation(const Repo& repo, const char* operation, const std::string& key,
+                              const std::function<CommandSpec(Provider&)>&       buildSpec,
                               std::function<void(Provider&, std::string output)> onOutput,
-                              std::function<void(std::string)>                      onError);
+                              std::function<void(std::string)>                   onError);
 
     // Applies patch with the argv built for its path: "-" with the patch on
     // stdin when the provider takes it there, else a temp file removed once
     // the command is done.
-    void ApplyPatch(const char* operation, const std::string& key, std::string patch,
+    void ApplyPatch(const Repo& repo, const char* operation, const std::string& key, std::string patch,
                     std::function<CommandSpec(Provider&, const std::filesystem::path& patchPath)> argv,
                     std::function<void()> onSuccess, std::function<void(std::string)> onError);
 
-    ned::ui::EventLoop& eventLoop_;
+    // Starting, possibly on its host, until it has a process.
+    struct Run {
+        std::unique_ptr<LifetimeGuard>      starting;
+        std::unique_ptr<tasks::TaskProcess> process;
+    };
 
-    std::unordered_map<std::string, std::unique_ptr<tasks::TaskProcess>> running_;
+    ned::ui::EventLoop& eventLoop_;
+    remote::Hosts*      hosts_ = nullptr;
+
+    std::unordered_map<std::string, Run> running_;
 };
 
 } // namespace ned::editor::vcs

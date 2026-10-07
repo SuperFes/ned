@@ -3389,14 +3389,14 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             // to say "not reloaded"); a *modified* buffer is still left
             // alone, and its save will hit the supersession y/n rather
             // than a confusing stale-content overwrite.
-            vcsRunner_->RequestBranchCreate(
-                input,
-                lifetime_.Bind([this, input] {
-                    statusMessage_ = "Created and switched to " + input + " (modified buffers not reloaded)";
-                    RefreshVcsStatusBuffer();
-                    RequestDiffForCurrentBuffer();
-                }),
-                lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs branch: " + error; }));
+            vcsRunner_->RequestBranchCreate(editor::vcs::LocalRepo(),
+                                            input,
+                                            lifetime_.Bind([this, input] {
+                                                statusMessage_ = "Created and switched to " + input + " (modified buffers not reloaded)";
+                                                RefreshVcsStatusBuffer();
+                                                RequestDiffForCurrentBuffer();
+                                            }),
+                                            lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs branch: " + error; }));
         }
     }
     else if (inputMode_ == InputMode::GotoLine) {
