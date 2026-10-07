@@ -531,6 +531,7 @@ add_library(ned_lib STATIC
         UI/TabBar.cpp
         UI/ScrollArrowButton.cpp
         UI/ProjectSidebar.cpp
+        UI/RemotePanel.cpp
         UI/LeftDock.cpp
         UI/VcsPanel.cpp
         UI/VcsDiffPreview.cpp
