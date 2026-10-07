@@ -780,7 +780,24 @@ void Buffer::RevertDecoding(std::optional<Charset> charset) {
         throw std::runtime_error("ned: huge-file reverting reads UTF-8 only, not " + std::string(CharsetName(*charset)));
     }
     Buffer fresh = reloadAsHuge ? FromHugeFile(*Path_) : FromFile(*Path_, false, charset); // throws on any read failure, leaving this buffer untouched
+    AdoptReverted(fresh);
+}
 
+void Buffer::RevertFromRemote(FileContents contents, std::optional<Charset> charset) {
+    if (!Remote_) {
+        throw std::runtime_error("ned: buffer \"" + Name_ + "\" has no remote file");
+    }
+    Buffer fresh = FromRemoteContents(*Remote_, std::move(contents), false, charset ? charset : DiskCharset_);
+    AdoptReverted(fresh);
+    RemoteTimestamp_ = fresh.RemoteTimestamp_;
+    RemoteChanged_   = false;
+    if (charset) {
+        DiskCharset_   = charset;
+        CharsetChosen_ = true;
+    }
+}
+
+void Buffer::AdoptReverted(Buffer& fresh) {
     Storage_ = std::move(fresh.Storage_);
     Charset_ = fresh.Charset_;
     Point_   = SnapToGraphemeBoundary(*Storage_, std::min(Point_, Storage_->ByteLength()));

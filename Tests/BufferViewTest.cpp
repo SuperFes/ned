@@ -16646,3 +16646,36 @@ TEST_CASE("tracker-panel hands the chosen panel's name to the focus hook", "[Buf
 
     ned::editor::tracker::ClearRegistry();
 }
+
+TEST_CASE("revert-buffer reloads the file as one undoable step, and says when that drops edits", "[BufferView][Revert]") {
+    Fixture                     fixture;
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_revert_buffer_test.txt";
+    std::ofstream(path, std::ios::binary) << "disk\n";
+    ned::text::Buffer& opened = fixture.bufferList.OpenOrCreateFile(path);
+    fixture.activeBuffer.Set(opened);
+    ned::ui::BufferView view   = fixture.View();
+    const auto          revert = [&view] {
+        view.OnEvent(ned::ui::test::Alt('x'));
+        TypeText(view, "revert-buffer");
+        view.OnEvent(ned::ui::test::Return());
+    };
+
+    opened.SetPoint(opened.Size());
+    opened.InsertAtPoint("mine\n");
+    std::ofstream(path, std::ios::binary) << "theirs\n";
+    revert();
+    CHECK(opened.Text() == "theirs\n");
+    CHECK_FALSE(opened.Modified());
+    CHECK(fixture.statusMessage == "Reloaded ned_revert_buffer_test.txt. Undo brings back your edits.");
+    opened.Undo();
+    CHECK(opened.Text() == "disk\nmine\n");
+
+    opened.Redo();
+    revert();
+    CHECK(fixture.statusMessage == "Reloaded ned_revert_buffer_test.txt.");
+
+    fixture.activeBuffer.Set(fixture.buffer);
+    revert();
+    CHECK(fixture.statusMessage == "Buffer \"scratch\" has no file to reload.");
+    std::filesystem::remove(path);
+}

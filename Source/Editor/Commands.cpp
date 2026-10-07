@@ -2510,6 +2510,8 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("set-buffer-charset",
                       "Save this buffer in another charset (utf-8, utf-8-bom, latin1, utf-16le, utf-16be) from its next save on.",
                       [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::SetBufferCharset; });
+    registry.Register("revert-buffer", "Reload this buffer from its file, as one step undo can take back.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::RevertBuffer; });
     registry.Register("revert-buffer-with-charset", "Reload this buffer's file, decoding it as a charset you name.",
                       [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::RevertBufferWithCharset; });
 

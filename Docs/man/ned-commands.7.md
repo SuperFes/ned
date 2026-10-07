@@ -1086,6 +1086,10 @@ for the live keymap stack.
 
 :   Re-run every currently-failed test, one filtered run per test, merging the results.
 
+`revert-buffer`
+
+:   Reload this buffer from its file, as one step undo can take back.
+
 `revert-buffer-with-charset`
 
 :   Reload this buffer's file, decoding it as a charset you name.

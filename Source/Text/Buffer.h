@@ -263,6 +263,12 @@ class Buffer {
     // untouched.
     void RevertWithCharset(Charset charset);
 
+    // Revert() for a remote buffer, from the contents its host sent:
+    // decoded as `charset` when given, which later reverts keep using, and
+    // as the last chosen one otherwise. Throws BinaryFileError if they
+    // don't decode, leaving the buffer untouched.
+    void RevertFromRemote(FileContents contents, std::optional<Charset> charset = std::nullopt);
+
     // Throws std::runtime_error for a file the huge-file path can't read as
     // text: it maps a file's bytes rather than decoding them, so a UTF-16
     // one would open as mojibake. Latin-1 opens byte for byte. A no-op with
@@ -1293,6 +1299,8 @@ class Buffer {
 
     void ClampCursorsToContent();
     void RevertDecoding(std::optional<Charset> charset);
+    // Takes fresh's content as one undoable step that matches the file.
+    void AdoptReverted(Buffer& fresh);
     void MoveToLine(std::size_t targetLine, std::size_t tabWidth);
 
     // Shared body of InsertAt/AppendWhileReadOnly -- both public entry

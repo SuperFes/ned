@@ -100,6 +100,48 @@ void BufferView::VisitRemoteFile(const editor::remote::Location& file, std::opti
                                      });
 }
 
+void BufferView::RevertRemoteBuffer(text::Buffer& buffer, std::optional<text::Charset> charset) {
+    if (remoteHosts_ == nullptr) {
+        statusMessage_ = "No remote hosts.";
+        return;
+    }
+    const std::string where = buffer.Remote()->ToString();
+    if (buffer.IsLoading()) {
+        if (!buffer.LoadFailure()) {
+            statusMessage_ = where + " is still loading.";
+            return;
+        }
+        if (charset) {
+            statusMessage_ = where + " isn't loaded yet; revert-buffer reads it first.";
+            return;
+        }
+        buffer.MarkLoading();
+        statusMessage_ = "Reading " + where + "...";
+        editor::remote::LoadRemoteBuffer(*remoteHosts_, bufferList_, buffer, false, lifetime_.Token(),
+                                         [this, where](text::Buffer& loading, const editor::remote::RemoteLoadOutcome& outcome) {
+                                             if (!outcome.loaded) {
+                                                 loading.MarkLoadFailed(outcome.loaded.error());
+                                                 ReportError("Couldn't open " + where + ": " + outcome.loaded.error());
+                                                 return;
+                                             }
+                                             statusMessage_ = "Opened " + where;
+                                         });
+        return;
+    }
+    const bool discarded = buffer.Modified();
+    statusMessage_       = "Reading " + where + "...";
+    editor::remote::ReloadRemoteBuffer(
+        *remoteHosts_, bufferList_, buffer, charset, lifetime_.Token(),
+        [this, where, charset, discarded](text::Buffer&, const std::optional<std::string>& failure) {
+            if (failure) {
+                ReportError("Couldn't reload " + where + ": " + *failure);
+                return;
+            }
+            statusMessage_ = "Reloaded " + where + (charset ? " as " + std::string(text::CharsetName(*charset)) : "") + "." +
+                             (discarded ? " Undo brings back your edits." : "");
+        });
+}
+
 void BufferView::StartRemoteSearch(const editor::remote::Location& root, const std::string& pattern) {
     if (remoteHosts_ == nullptr) {
         statusMessage_ = "No remote hosts.";
