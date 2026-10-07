@@ -1650,7 +1650,11 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         }
         ned::editor::SetVariable("remote-panel-roots", roots);
     });
-    remoteHosts.SetOnChanged([panel = &remotePanel](const std::string&) { panel->Refresh(); });
+    remoteHosts.SetOnChanged([panel = &remotePanel, wm = windowManager.get()](const std::string&) {
+        panel->Refresh();
+        wm->ResyncRemoteWatches();
+    });
+    remotePanel.SetOnListedChanged([wm = windowManager.get()] { wm->ResyncRemoteWatches(); });
 
     // Issue-tracker panels, below the built-in ones in declaration order:
     // init.janet's (already loaded), the project's own, then any its git

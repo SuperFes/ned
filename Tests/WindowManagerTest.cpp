@@ -35,6 +35,7 @@
 #include "UI/AcpPanel.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/EventLoop.h"
+#include "UI/RemotePanel.h"
 #include "UI/Theme.h"
 #include "UI/WindowManager.h"
 
@@ -776,6 +777,64 @@ TEST_CASE("LoadRemoteBuffers reads restored remote buffers, closes one the host 
     // The pane that showed the lost file moved on rather than dangling.
     CHECK(fixture.bufferList.Find(ned::text::BufferIdentity(manager.FocusedActiveBuffer().Get())) != nullptr);
     CHECK_FALSE(manager.FocusedActiveBuffer().Get().Remote() == ned::text::RemoteFile{.destination = "host", .path = fake.dir / "gone.txt"});
+}
+
+TEST_CASE("A remote buffer and the Remote panel follow their host's changes once the file watcher starts", "[WindowManager][Remote][HostAgent]") {
+    ned::tests::FakeRemoteHost    fake;
+    ned::tests::ScopedEnvOverride home{"HOME", (fake.dir / "home").c_str()};
+    ned::editor::PostQueue        queue;
+    ned::editor::remote::Hosts    hosts{queue, [&fake](const std::string& destination) { return fake.Options(destination); },
+                                        ned::tests::FakeResolver(fake.dir)};
+    const std::filesystem::path   file = fake.dir / "notes.txt";
+    std::ofstream(file) << "before\n";
+
+    Fixture                         fixture;
+    ned::text::Buffer&              remote = fixture.bufferList.AddRemotePlaceholder({.destination = "host", .path = file});
+    const ned::text::BufferIdentity identity(remote);
+    ned::ui::WindowManager          manager = fixture.Manager();
+    manager.TakeFocus();
+    manager.SetRemoteHosts(&hosts);
+    manager.LoadRemoteBuffers(std::vector{identity});
+    REQUIRE(ned::tests::PumpUntil(queue, [&] { return !remote.IsLoading(); }));
+
+    ned::ui::EventLoop eventLoop;
+    manager.StartFileWatcher(eventLoop);
+    // Rewritten until noticed: the watch is in force once the host has it.
+    REQUIRE(ned::tests::PumpUntil(queue, [&] {
+        if (remote.Text() == "after\n") {
+            return true;
+        }
+        std::ofstream(file) << "after\n";
+        return false;
+    }));
+    CHECK_FALSE(remote.Modified());
+    CHECK(fixture.statusMessage == "Reverted (changed on its host): " + remote.Name());
+
+    // A directory the panel shows is watched as soon as it's listed.
+    ned::ui::RemotePanel panel(fixture.theme, hosts);
+    manager.SetRemotePanel(&panel);
+    panel.SetOnListedChanged([&manager] { manager.ResyncRemoteWatches(); });
+    panel.OpenRoot("host:" + fake.dir.string());
+    panel.Tree().SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 15});
+    ned::ui::Screen screen(60, 16);
+    const auto      shown = [&](const std::string& name) {
+        panel.Tree().Paint(ned::ui::Canvas(screen, panel.Tree().Box_()));
+        std::string painted;
+        for (int y = 0; y < 16; ++y) {
+            for (int x = 0; x < 60; ++x) {
+                painted += screen.PixelAt(x, y).character;
+            }
+        }
+        return painted.find(name) != std::string::npos;
+    };
+    REQUIRE(ned::tests::PumpUntil(queue, [&] { return shown("notes.txt"); }));
+    REQUIRE(ned::tests::PumpUntil(queue, [&] {
+        if (shown("made.txt")) {
+            return true;
+        }
+        std::ofstream(fake.dir / "made.txt") << "made\n";
+        return false;
+    }));
 }
 
 TEST_CASE("RestoreWindowLayout is a no-op when windowLayout is empty", "[WindowManager]") {

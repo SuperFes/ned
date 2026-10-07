@@ -48,6 +48,7 @@ struct Fixture {
     std::vector<std::pair<FileAction, ned::text::RemoteFile>> actions;
     int                                openRootRequests = 0;
     int                                rootsChanged     = 0;
+    int                                                        listedChanges    = 0;
     std::string                        message;
 
     Fixture() {
@@ -60,6 +61,7 @@ struct Fixture {
         panel.SetOnRootsChanged([this] { ++rootsChanged; });
         panel.SetOnMessage([this](std::string text) { message = std::move(text); });
         panel.SetOnFileAction([this](FileAction action, const ned::text::RemoteFile& target) { actions.emplace_back(action, target); });
+        panel.SetOnListedChanged([this] { ++listedChanges; });
     }
 
     [[nodiscard]] std::string RowText(int y) {
@@ -137,9 +139,15 @@ TEST_CASE("The Remote panel lists an opened root as it's expanded, and opens its
     CHECK_THAT(rows[2], ContainsSubstring("a.txt"));
     CHECK_THAT(rows[3], ContainsSubstring("b.txt"));
 
+    const auto at = [](const std::filesystem::path& path) { return ned::text::RemoteFile{.destination = "host", .path = path}; };
+    CHECK(fixture.panel.ListedDirectories() == std::vector{at(dir)});
+    const int listedChanges = fixture.listedChanges;
+
     fixture.Select("sub");
     fixture.panel.Tree().OnEvent(test::ArrowRight());
     REQUIRE(fixture.RowsSettle(6));
+    CHECK(fixture.panel.ListedDirectories() == std::vector{at(dir), at(dir / "sub")});
+    CHECK(fixture.listedChanges == listedChanges + 1);
     rows = fixture.Rows();
     CHECK_THAT(rows[2], ContainsSubstring("▸ deep"));
     CHECK_THAT(rows[3], ContainsSubstring("c.txt"));
@@ -161,8 +169,10 @@ TEST_CASE("The Remote panel lists an opened root as it's expanded, and opens its
     CHECK_THAT(fixture.AllRows(), ContainsSubstring("new.txt"));
 
     // Left collapses, and the selection keeps its row across a refresh.
+    // What's collapsed, and everything under it, isn't watched.
     fixture.panel.Tree().OnEvent(test::ArrowLeft());
     REQUIRE(fixture.Rows().size() == 4);
+    CHECK(fixture.panel.ListedDirectories() == std::vector{at(dir)});
     fixture.panel.Refresh();
     CHECK(fixture.panel.Tree().SelectedRow() == 1u);
 

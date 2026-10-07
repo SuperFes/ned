@@ -526,6 +526,29 @@ void RemotePanel::PushModel() {
     selectedIndex_      = std::min(selectedIndex_, model.rows.size() - 1);
     model.selectedIndex = selectedIndex_;
     tree_.SetModel(std::move(model));
+
+    if (std::vector<text::RemoteFile> listed = ListedDirectories(); listed != listed_) {
+        listed_ = std::move(listed);
+        if (onListedChanged_) {
+            onListedChanged_();
+        }
+    }
+}
+
+std::vector<text::RemoteFile> RemotePanel::ListedDirectories() const {
+    std::vector<text::RemoteFile> listed;
+    for (const Row& row : rows_) {
+        const Node& node = *row.node;
+        if (node.kind == editor::host::FileKind::Directory && node.expanded && node.children && !node.location.path.empty() &&
+            std::ranges::find(listed, node.location) == listed.end()) {
+            listed.push_back(node.location);
+        }
+    }
+    return listed;
+}
+
+void RemotePanel::SetOnListedChanged(std::function<void()> handler) {
+    onListedChanged_ = std::move(handler);
 }
 
 } // namespace ned::ui

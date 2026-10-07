@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <utility>
@@ -24,6 +25,7 @@
 #include "Editor/Project/Session.h"
 #include "Editor/Project/Tree.h"
 #include "Editor/RecentFiles.h"
+#include "Editor/Remote/ExternalChanges.h"
 #include "Editor/Remote/Hosts.h"
 #include "Editor/ScratchPad.h"
 #include "Editor/Session.h"
@@ -1522,7 +1524,57 @@ void WindowManager::StartFileWatcher(EventLoop& eventLoop) {
         [this, &eventLoop](std::vector<editor::FileEvent> events) {
             eventLoop.Post([this, events = std::move(events)] { ReportWatchedFileChanges(events); });
         });
+    if (remoteHosts_ != nullptr) {
+        remoteWatches_ = std::make_unique<editor::remote::Watches>(
+            *remoteHosts_, [this](const std::string& destination, const editor::host::WatchEvents& events) { HandleRemoteWatchEvents(destination, events); });
+    }
     ResyncFileWatcher();
+}
+
+void WindowManager::ResyncRemoteWatches() {
+    if (!remoteWatches_) {
+        return;
+    }
+    std::map<std::string, editor::remote::WatchSet> wanted;
+    if (editor::FileWatchEnabled()) {
+        for (const auto& buffer : bufferList_.Buffers()) {
+            if (const std::optional<text::RemoteFile>& file = buffer->Remote()) {
+                wanted[file->destination].files.insert(file->path);
+            }
+        }
+        if (remotePanel_ != nullptr) {
+            for (const text::RemoteFile& directory : remotePanel_->ListedDirectories()) {
+                wanted[directory.destination].directories.insert(directory.path);
+            }
+        }
+    }
+    remoteWatches_->Set(std::move(wanted));
+}
+
+void WindowManager::HandleRemoteWatchEvents(const std::string& destination, const editor::host::WatchEvents& events) {
+    editor::remote::FollowRemoteChanges(*remoteHosts_, bufferList_, destination, events, lifetime_.Token(),
+                                        [this](const editor::remote::RemoteChange& change) {
+                                            using Outcome = editor::remote::RemoteChange::Outcome;
+                                            switch (change.outcome) {
+                                                case Outcome::Reverted:
+                                                    statusMessage_ = "Reverted (changed on its host): " + change.name;
+                                                    break;
+                                                case Outcome::Merged:
+                                                    statusMessage_ = change.conflicts == 0
+                                                                         ? "Merged external changes: " + change.name
+                                                                         : "conflict(s) in " + change.name + " (" + std::to_string(change.conflicts) +
+                                                                               ") -- resolve <<<<<<< markers";
+                                                    break;
+                                                case Outcome::Noted:
+                                                    statusMessage_ = change.name + " changed on its host; saving asks before overwriting it";
+                                                    break;
+                                            }
+                                        });
+    if (remotePanel_ != nullptr) {
+        for (const editor::FileEvent& event : events.events) {
+            remotePanel_->Changed(text::RemoteFile{.destination = destination, .path = event.path});
+        }
+    }
 }
 
 void WindowManager::HandleExternalMoves(const std::vector<editor::FileMove>& moves) {
@@ -1639,6 +1691,7 @@ void WindowManager::ResyncFileWatcher() {
     }
     fileWatcher_->SetWatchedFiles(files, projectTreeWatchDirectories_);
     fileWatcher_->SetReportsDirectoryEntries(wantsTreeWatch);
+    ResyncRemoteWatches();
 
     // project-tree-watch follow-up: edge-triggered so a project past the
     // inotify watch budget logs once, not every refresh -- there is no

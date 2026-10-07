@@ -51,6 +51,7 @@
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Editor/Remote/RemoteBuffer.h"
+#include "Editor/Remote/Watch.h"
 #include "Editor/Tasks/TaskRunner.h"
 #include "Editor/TestRun/TestRunner.h"
 #include "Editor/Tracker/IssueAction.h"
@@ -551,6 +552,12 @@ class WindowManager {
     // Every pane's remote commands go through remoteHosts; a connection
     // that drops says so in the status line.
     void SetRemoteHosts(editor::remote::Hosts* remoteHosts);
+    // Tells each connected host what to watch for this editor: its remote
+    // buffers' files and the Remote panel's expanded directories. Runs with
+    // ResyncFileWatcher; wire it as well to the hosts' and the panel's
+    // changes, so a host that connects or a directory just expanded is
+    // watched at once. No-op before StartFileWatcher.
+    void ResyncRemoteWatches();
 
     // ACP auto-reconnect follow-up: seeds SaveProjectSessionNow's own
     // lastAcpAgent field for a run where Manager::AgentName() never gets
@@ -641,6 +648,9 @@ class WindowManager {
     // pane's review -- the same three things an in-editor rename does, in
     // the same order, just after the fact rather than before it.
     void HandleExternalMoves(const std::vector<editor::FileMove>& moves);
+    // A host's watch events: its remote buffers follow the change
+    // (Remote/ExternalChanges.h) and the Remote panel relists.
+    void HandleRemoteWatchEvents(const std::string& destination, const editor::host::WatchEvents& events);
 
     // lsp-did-change-watched-files follow-up: hands one burst of per-entry
     // file events to the LSP manager, which drops everything no server
@@ -1174,6 +1184,8 @@ class WindowManager {
     std::vector<std::unique_ptr<AsyncFileSaver>> asyncFileSavers_;
     bool                                         asyncSaveDispatcherInstalled_ = false;
     std::unique_ptr<editor::remote::RemoteSaver> remoteSaver_;
+    // Made by StartFileWatcher when there are remote hosts.
+    std::unique_ptr<editor::remote::Watches> remoteWatches_;
 
     // See StartFileWatcher's own comment above. Shares autoSaveThread_'s
     // accepted latent shutdown ordering: main.cpp declares eventLoop after
