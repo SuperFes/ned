@@ -495,6 +495,7 @@ bool BufferView::HandleChord(const editor::KeyChord& chord) {
         case InputMode::RemoteDisconnect:
         case InputMode::RemoteSearchRoot:
         case InputMode::RemoteSearchPattern:
+        case InputMode::RemoteOpenRoot:
         case InputMode::ReplName:
         case InputMode::SearchInResults:
         case InputMode::SetHeadlineTags:

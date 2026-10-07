@@ -14,6 +14,7 @@
 #include <iterator>
 #include <string>
 
+#include "Editor/BufferSave.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
@@ -22,7 +23,6 @@
 #include "Editor/PostQueue.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
-#include "Editor/BufferSave.h"
 #include "Editor/Remote/Hosts.h"
 #include "Editor/Remote/RemoteBuffer.h"
 #include "FakeRemoteHost.h"
@@ -33,6 +33,7 @@
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferView.h"
 #include "UI/ListPopup.h"
+#include "UI/RemotePanel.h"
 #include "UI/Theme.h"
 
 using Catch::Matchers::ContainsSubstring;
@@ -253,6 +254,30 @@ TEST_CASE("find-file completes a host's path from its listing, connecting first"
     fixture.Command("remote-project-search");
     fixture.Type(root);
     REQUIRE(rowsAre({"sub/"}));
+}
+
+TEST_CASE("remote-open-root adds a host's directory to the Remote panel, completing directories", "[BufferView][Remote][HostAgent]") {
+    Fixture                     fixture;
+    ned::ui::RemotePanel        panel(fixture.theme, fixture.hosts);
+    const std::filesystem::path dir = fixture.fake.dir / "proj";
+    std::filesystem::create_directories(dir / "src");
+    std::ofstream(dir / "readme.txt") << "x\n";
+    fixture.view.SetRemotePanel(&panel);
+
+    std::optional<ned::ui::ListPopupModel> popup;
+    fixture.view.SetOnCandidatesChanged([&](std::optional<ned::ui::ListPopupModel> model) { popup = std::move(model); });
+    fixture.Command("remote-open-root");
+    CHECK_THAT(fixture.statusMessage, StartsWith("Open remote root (host:/path, or a host for its home): "));
+    fixture.Type("host:" + dir.string() + "/");
+    REQUIRE(PumpUntil(fixture.queue, [&] { return popup && popup->rows.size() == 1 && popup->rows[0].main == "src/"; }));
+    fixture.view.OnEvent(test::Tab());
+    fixture.view.OnEvent(test::Return());
+    CHECK(panel.Roots() == std::vector<ned::text::RemoteFile>{{.destination = "host", .path = dir / "src"}});
+
+    // Without a panel there's nothing to add to.
+    fixture.view.SetRemotePanel(nullptr);
+    fixture.Command("remote-open-root");
+    CHECK(fixture.statusMessage == "No Remote panel.");
 }
 
 TEST_CASE("The host prompts add names the resolver knows under the search domains", "[BufferView][Remote]") {

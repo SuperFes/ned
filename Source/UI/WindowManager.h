@@ -64,6 +64,7 @@
 #include "Minimap.h"
 #include "ModeLine.h"
 #include "ProjectSidebar.h"
+#include "RemotePanel.h"
 #include "ScrollArrowButton.h"
 #include "ScrollBar.h"
 #include "Text/Buffer.h"
@@ -281,6 +282,9 @@ class WindowManager {
     // as SetVcsPanel above -- see BufferView::SetDebugPanel's own doc
     // comment.
     void SetDebugPanel(DebugPanel* panel);
+
+    // Same, for the Remote panel.
+    void SetRemotePanel(RemotePanel* panel);
 
     // LSP client follow-up: same "forwarded to every pane, present and
     // future" shape as SetProjectSidebar above. Also used by
@@ -686,6 +690,11 @@ class WindowManager {
     bool DispatchGlobalChord(const editor::KeyChord& chord);
 
     void RequestVisitLocation(const std::filesystem::path& path, std::size_t line);
+    // The Remote panel's Enter on a file and 'o': the file opened, or
+    // remote-open-root's prompt started, in the focused pane (the first
+    // leaf while the panel holds focus). The prompt takes focus to type in.
+    void RequestVisitRemoteFile(const text::RemoteFile& file);
+    void RequestRemoteOpenRoot();
     // Opens the ACP compose buffer in the focused pane (the first leaf when
     // no pane has focus) and focuses it -- AcpPanel's C-c '.
     void RequestAcpCompose(std::string seed, editor::acp::ComposeCallbacks callbacks);
@@ -1039,6 +1048,7 @@ class WindowManager {
     LeftDock*                                          leftDock_       = nullptr;
     VcsPanel*                                          vcsPanel_       = nullptr;
     DebugPanel*                                        debugPanel_     = nullptr;
+    RemotePanel*                                       remotePanel_    = nullptr;
     editor::lsp::Manager*                           lspManager_     = nullptr;
     editor::tasks::TaskRunner*                         taskRunner_     = nullptr;
     editor::testrun::TestRunner*                       testRunner_     = nullptr; // see SetTestRunner

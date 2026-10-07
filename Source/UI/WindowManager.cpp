@@ -567,6 +567,7 @@ std::unique_ptr<Pane> WindowManager::MakePane(text::Buffer& buffer, editor::Mode
     pane->Buffer().SetVcsPanel(vcsPanel_);
     pane->Buffer().SetRemoteHosts(remoteHosts_);
     pane->Buffer().SetDebugPanel(debugPanel_);
+    pane->Buffer().SetRemotePanel(remotePanel_);
     pane->Buffer().SetThemeApplier(themeApplier_);
     pane->Buffer().SetThemeDetector(themeDetector_);
     pane->Buffer().SetOnTerminalToggle(onTerminalToggle_);
@@ -630,6 +631,13 @@ void WindowManager::SetDebugPanel(DebugPanel* panel) {
     debugPanel_ = panel;
     for (Pane* pane : Leaves()) {
         pane->Buffer().SetDebugPanel(panel);
+    }
+}
+
+void WindowManager::SetRemotePanel(RemotePanel* panel) {
+    remotePanel_ = panel;
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().SetRemotePanel(panel);
     }
 }
 
@@ -1195,6 +1203,28 @@ void WindowManager::RequestVisitLocation(const std::filesystem::path& path, std:
     if (pane != nullptr) {
         pane->Buffer().JumpToPathLine(path, line);
     }
+}
+
+void WindowManager::RequestVisitRemoteFile(const text::RemoteFile& file) {
+    Pane* pane = FocusedPane();
+    if (pane == nullptr && !Leaves().empty()) {
+        pane = Leaves().front();
+    }
+    if (pane != nullptr) {
+        pane->Buffer().VisitRemoteFile(file);
+    }
+}
+
+void WindowManager::RequestRemoteOpenRoot() {
+    Pane* pane = FocusedPane();
+    if (pane == nullptr && !Leaves().empty()) {
+        pane = Leaves().front();
+    }
+    if (pane == nullptr) {
+        return;
+    }
+    TakeFocus();
+    pane->Buffer().BeginRemoteOpenRoot();
 }
 
 void WindowManager::RequestAcpCompose(std::string seed, editor::acp::ComposeCallbacks callbacks) {

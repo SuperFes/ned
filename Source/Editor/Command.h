@@ -121,6 +121,9 @@ enum class InteractiveRequest { None,
                                 // everything else the debugger knows.
                                 ToggleDebugPanel,
                                 FocusDebugPanel,
+                                ToggleRemotePanel,
+                                FocusRemotePanel,
+                                RemoteOpenRoot,
                                 // Issue-tracker panels: pick one by name and
                                 // focus it; pick a fetched issue and insert
                                 // its key at point.

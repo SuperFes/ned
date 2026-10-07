@@ -15,6 +15,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <ranges>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -140,6 +141,7 @@
 #include "UI/PaintParse.h"
 #include "UI/PanelDock.h"
 #include "UI/ProjectSidebar.h"
+#include "UI/RemotePanel.h"
 #include "UI/TabBar.h"
 #include "UI/TerminalPanel.h"
 #include "UI/Theme.h"
@@ -1597,6 +1599,38 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // on or the session ends.
     dapManager.SetOnSessionStateChanged(
         [panel = &debugPanel](ned::editor::dap::Manager::SessionState) { panel->NotifySessionStateChanged(); });
+
+    // Hosts and the remote roots opened in it. Roots are remembered across
+    // runs; nothing connects until one is expanded.
+    ned::ui::RemotePanel remotePanel(theme, remoteHosts);
+    windowManager->SetRemotePanel(&remotePanel);
+    remotePanel.Tree().SetDrawBorder(false);
+    // nerd-font-glyph follow-up: server glyph (U+F233).
+    leftDock->AddPanel(U'\uF233', "Remote", remotePanel.Tree());
+    remotePanel.Tree().SetOnCancel([wm = windowManager.get(), dock = leftDock.get()] {
+        wm->TakeFocus();
+        dock->NoteFocusReturned();
+    });
+    remotePanel.SetOnMessage([&statusMessage](std::string message) { statusMessage = std::move(message); });
+    remotePanel.SetOnOpenFile([wm = windowManager.get()](const ned::text::RemoteFile& file) { wm->RequestVisitRemoteFile(file); });
+    remotePanel.SetOnRequestOpenRoot([wm = windowManager.get()] { wm->RequestRemoteOpenRoot(); });
+    if (std::optional<std::string> remembered = ned::editor::Variable("remote-panel-roots")) {
+        std::vector<ned::text::RemoteFile> roots;
+        for (const auto line : std::views::split(*remembered, '\n')) {
+            if (std::optional<ned::text::RemoteFile> root = ned::text::ParseRemoteFile(std::string_view(line.begin(), line.end()))) {
+                roots.push_back(std::move(*root));
+            }
+        }
+        remotePanel.SetRoots(std::move(roots));
+    }
+    remotePanel.SetOnRootsChanged([panel = &remotePanel] {
+        std::string roots;
+        for (const ned::text::RemoteFile& root : panel->Roots()) {
+            roots += (roots.empty() ? "" : "\n") + root.ToString();
+        }
+        ned::editor::SetVariable("remote-panel-roots", roots);
+    });
+    remoteHosts.SetOnChanged([panel = &remotePanel](const std::string&) { panel->Refresh(); });
 
     // Issue-tracker panels, below the built-in ones in declaration order:
     // init.janet's (already loaded), the project's own, then any its git

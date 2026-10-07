@@ -2522,7 +2522,8 @@ std::vector<std::string> BufferView::GatherPathCompletionCandidates() const {
     if (inputMode_ == InputMode::FindScratch) {
         return editor::CompleteScratchNames(prompt_->Text());
     }
-    if (inputMode_ == InputMode::RemoteConnect || inputMode_ == InputMode::RemoteDisconnect || inputMode_ == InputMode::RemoteSearchRoot) {
+    if (inputMode_ == InputMode::RemoteConnect || inputMode_ == InputMode::RemoteDisconnect || inputMode_ == InputMode::RemoteSearchRoot ||
+        inputMode_ == InputMode::RemoteOpenRoot) {
         return RemoteHostCompletions();
     }
     return {};

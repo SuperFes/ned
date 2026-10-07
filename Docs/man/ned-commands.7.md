@@ -482,6 +482,10 @@ for the live keymap stack.
 
 :   Move keyboard focus into the project sidebar tree (Up/Down or C-p/C-n to move, Enter to open/toggle, Left/Right to collapse/expand, Escape or C-g to return to the editor).
 
+`focus-remote-panel`
+
+:   Move keyboard focus into the Remote panel, showing it if hidden.
+
 `focus-vcs-panel` (`C-c v p`)
 
 :   Move keyboard focus into the VCS status panel (Up/Down to move, Space to mark, Enter to open/toggle, 'a'/'u' to stage/unstage the marked (or focused) file, 'c' to compose a commit, 'w'/'n' to switch/create a branch, Escape or C-g to return to the editor).
@@ -1058,6 +1062,10 @@ for the live keymap stack.
 
 :   Close the connection to a host.
 
+`remote-open-root`
+
+:   Add a host's directory (host:/path, or a host for its home) to the Remote panel.
+
 `remote-project-search`
 
 :   Search all files under host:/path for a regex pattern on that host, in a new results buffer.
@@ -1293,6 +1301,10 @@ for the live keymap stack.
 `toggle-read-only`
 
 :   Toggle whether the current buffer accepts edits.
+
+`toggle-remote-panel`
+
+:   Show or hide the Remote panel: connected hosts and the remote roots you opened.
 
 `toggle-tab-glyphs`
 
