@@ -13,11 +13,15 @@
 #define NED_EDITOR_TASKS_TASKRUNNER_H
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 
+#include "Editor/Lifetime.h"
+#include "Editor/Remote/Placement.h"
 #include "TaskProcess.h"
+#include "Text/RemoteFile.h"
 #include "UI/EventLoop.h"
 
 namespace ned::text {
@@ -52,7 +56,15 @@ class TaskRunner {
     // buffer so the caller (BufferView) can switch to it. Starting name
     // while it's already running is a no-op that returns the existing
     // buffer unchanged -- one concurrent run per task name.
-    text::Buffer* RunTask(const std::string& name);
+    //
+    // The task runs beside from (Remote/Placement.h): on its host, in the
+    // project root there, for a remote buffer. From a task's own output
+    // buffer it runs where that task last did.
+    text::Buffer* RunTask(const std::string& name, const text::Buffer* from = nullptr);
+
+    // Null, the default, runs every task on this machine. hosts must
+    // outlive this TaskRunner.
+    void SetHosts(remote::Hosts* hosts);
 
     // Cancels the running task named name, if any -- a no-op otherwise. The
     // same "\n[cancelled]\n" trailer/running_ cleanup that a natural exit
@@ -66,11 +78,22 @@ class TaskRunner {
     // Found by name on every call, so output from a run whose buffer was
     // closed lands in a recreated one instead of a freed one.
     text::Buffer& OutputBuffer(const std::string& name);
+    [[nodiscard]] std::optional<text::RemoteFile> PlacementFrom(const text::Buffer* from) const;
+    void                                          Started(const std::string& name, remote::Spawned spawned);
+
+    // A run is starting, possibly on its host, until it has a process;
+    // cancelling it then drops starting, so nothing is spawned for it.
+    struct Run {
+        std::unique_ptr<LifetimeGuard> starting;
+        std::unique_ptr<TaskProcess>   process;
+    };
 
     text::BufferList&   bufferList_;
     ned::ui::EventLoop& eventLoop_;
+    remote::Hosts*      hosts_ = nullptr;
 
-    std::unordered_map<std::string, std::unique_ptr<TaskProcess>> running_;
+    std::unordered_map<std::string, Run>                             running_;
+    std::unordered_map<std::string, std::optional<text::RemoteFile>> placedAt_;
 };
 
 } // namespace ned::editor::tasks

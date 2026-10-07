@@ -30,7 +30,23 @@ text::Buffer& TaskRunner::OutputBuffer(const std::string& name) {
     return buffer;
 }
 
-text::Buffer* TaskRunner::RunTask(const std::string& name) {
+void TaskRunner::SetHosts(remote::Hosts* hosts) {
+    hosts_ = hosts;
+}
+
+std::optional<text::RemoteFile> TaskRunner::PlacementFrom(const text::Buffer* from) const {
+    if (from == nullptr) {
+        return std::nullopt;
+    }
+    for (const auto& [name, placed] : placedAt_) {
+        if (from->Name() == TaskOutputBufferName(name)) {
+            return placed;
+        }
+    }
+    return from->Remote();
+}
+
+text::Buffer* TaskRunner::RunTask(const std::string& name, const text::Buffer* from) {
     text::Buffer* buffer = &OutputBuffer(name);
 
     if (running_.contains(name)) {
@@ -47,6 +63,25 @@ text::Buffer* TaskRunner::RunTask(const std::string& name) {
         return buffer;
     }
 
+    const std::optional<text::RemoteFile> placement = PlacementFrom(from);
+    placedAt_[name]                                 = placement;
+    Run& run                                        = running_[name];
+    run.starting                                    = std::make_unique<LifetimeGuard>();
+    remote::SpawnBeside(hosts_, placement,
+                        remote::RemoteSpawn{.argv = *argv, .cwd = std::nullopt, .env = {}, .stderrMode = process::StderrMode::MergeWithStdout},
+                        run.starting->Token(), [this, name](remote::Spawned spawned) { Started(name, std::move(spawned)); });
+    return buffer;
+}
+
+void TaskRunner::Started(const std::string& name, remote::Spawned spawned) {
+    const auto run = running_.find(name);
+    if (!spawned) {
+        const std::string message = "Failed to start task \"" + name + "\": " + spawned.error();
+        LogMessage(LogCategory::Task, LogSeverity::Error, message);
+        OutputBuffer(name).AppendWhileReadOnly(message + "\n");
+        running_.erase(run);
+        return;
+    }
     try {
         // sanitizer-output-parser follow-up: accumulated alongside the
         // streamed buffer append (not read back from buffer->Text(), which
@@ -54,8 +89,9 @@ text::Buffer* TaskRunner::RunTask(const std::string& name) {
         // history) so a nonzero-exit run's own output can be scanned for an
         // ASan/UBSan/TSan/MSan/LSan report on exit.
         auto accumulated = std::make_shared<std::string>();
-        running_[name]   = std::make_unique<TaskProcess>(
-            *argv, eventLoop_,
+        run->second.starting.reset();
+        run->second.process = std::make_unique<TaskProcess>(
+            std::move(*spawned), eventLoop_,
             [this, name, accumulated](std::string_view chunk) {
                 OutputBuffer(name).AppendWhileReadOnly(chunk);
                 *accumulated += chunk;
@@ -106,17 +142,22 @@ text::Buffer* TaskRunner::RunTask(const std::string& name) {
     catch (const std::exception& e) {
         const std::string message = "Failed to start task \"" + name + "\": " + e.what();
         LogMessage(LogCategory::Task, LogSeverity::Error, message);
-        buffer->AppendWhileReadOnly(message + "\n");
+        OutputBuffer(name).AppendWhileReadOnly(message + "\n");
+        running_.erase(name);
     }
-
-    return buffer;
 }
 
 void TaskRunner::CancelTask(const std::string& name) {
     const auto it = running_.find(name);
-    if (it != running_.end()) {
-        it->second->Cancel();
+    if (it == running_.end()) {
+        return;
     }
+    if (it->second.process) {
+        it->second.process->Cancel();
+        return;
+    }
+    OutputBuffer(name).AppendWhileReadOnly("\n[cancelled]\n");
+    running_.erase(it);
 }
 
 bool TaskRunner::IsRunning(const std::string& name) const {

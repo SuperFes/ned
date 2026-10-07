@@ -225,12 +225,13 @@ of times per process, never per byte. Its exit arrives through the main thread, 
 relayed child's `Kill()` and destructor send the signal and return rather than waiting
 for the reap, and it is never waited for on the main thread.
 
-Consumers get a process from one place, so a different seam later means changing that
-place and `ChildProcess`, not the call sites.
+Consumers get a process from one place, `Remote/Placement.h`'s `SpawnBeside`, so a
+different seam later means changing that place and `ChildProcess`, not the call sites.
 
 **Where a process runs.** A process that works on a buffer or its project runs where
-the buffer's file is: on its host for a remote buffer (`Text/RemoteFile.h`), with the
-project root found on that host. The clipboard, desktop helpers, URL opening, the LSP
+the buffer's file is: on its host for a remote buffer (`Text/RemoteFile.h`), connecting
+first if need be, in the project root `fs/project-root` finds there unless the caller
+names a directory. A task re-run from its output buffer runs where it last ran. The clipboard, desktop helpers, URL opening, the LSP
 broker and ssh itself are always local.
 
 **Main-thread waits.** A remote process can't be waited on from the main thread, which
