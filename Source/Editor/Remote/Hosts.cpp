@@ -33,6 +33,7 @@ void Hosts::Connect(const std::string& destination, Connected done) {
     attempt.connector = std::make_unique<Connector>(options_(destination), postQueue_, [this, destination, id = attempt.id](Connector::Result result) {
         Finish(destination, id, std::move(result));
     });
+    NoteChanged(destination);
 }
 
 void Hosts::Finish(const std::string& destination, std::uint64_t id, Connector::Result result) {
@@ -46,6 +47,7 @@ void Hosts::Finish(const std::string& destination, std::uint64_t id, Connector::
     }
     auto attempt = attempts_.extract(destination);
     retire(std::move(attempt.mapped().connector));
+    NoteChanged(destination);
 
     if (!result) {
         for (Connected& waiter : attempt.mapped().waiters) {
@@ -58,6 +60,7 @@ void Hosts::Finish(const std::string& destination, std::uint64_t id, Connector::
         postQueue_.Post(lifetime_.Bind([this, destination, connection] {
             if (const auto live = connections_.find(destination); live != connections_.end() && live->second.get() == connection) {
                 connections_.erase(live);
+                NoteChanged(destination);
             }
         }));
         if (onDropped_) {
@@ -77,6 +80,7 @@ bool Hosts::Disconnect(const std::string& destination) {
         for (Connected& waiter : attempt.mapped().waiters) {
             waiter(std::unexpected(std::string("cancelled")));
         }
+        NoteChanged(destination);
         return true;
     }
     auto live = connections_.extract(destination);
@@ -85,6 +89,7 @@ bool Hosts::Disconnect(const std::string& destination) {
     }
     live.mapped()->SetOnDisconnected({});
     live.mapped()->Close("disconnected from " + destination);
+    NoteChanged(destination);
     return true;
 }
 
@@ -119,6 +124,18 @@ std::vector<std::string> Hosts::Destinations() const {
 
 void Hosts::SetOnDropped(Dropped handler) {
     onDropped_ = std::move(handler);
+}
+
+void Hosts::SetOnChanged(Changed handler) {
+    onChanged_ = std::move(handler);
+}
+
+void Hosts::NoteChanged(const std::string& destination) {
+    postQueue_.Post(lifetime_.Bind([this, destination] {
+        if (onChanged_) {
+            onChanged_(destination);
+        }
+    }));
 }
 
 HostLookup& Hosts::Lookup() noexcept {
