@@ -1,11 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "Editor/Host/Codec.h"
 #include "Editor/Host/FsCodec.h"
@@ -92,6 +94,64 @@ TEST_CASE("A connected host's files are stat'd, read and written", "[Remote][Rem
         CHECK_THAT(huge.value->error().message, ContainsSubstring("too large to write to a host (48 MiB, at most 48)"));
         CHECK(connection.Endpoint().PendingRequests() == 0);
     }
+}
+
+TEST_CASE("A connected host's directories are listed and its paths resolved", "[Remote][RemoteFs][HostAgent]") {
+    const ned::tests::FakeRemoteHost fake;
+    PostQueue                        queue;
+    remote::Connection               connection(remote::Connect(fake.Options()), queue);
+    const fs::path                   dir = fake.dir / "tree";
+    fs::create_directories(dir / "sub");
+    for (std::size_t i = 0; i < host::kFsReaddirChunk; ++i) {
+        std::ofstream(dir / ("f" + std::to_string(i)));
+    }
+
+    Answer<std::vector<host::DirEntry>> listed;
+    remote::ListDirectory(connection, dir, 5000, listed.Done());
+    REQUIRE(PumpUntil(queue, [&] { return listed.value.has_value(); }));
+    REQUIRE(listed.value->has_value());
+    CHECK((*listed.value)->size() == host::kFsReaddirChunk + 1);
+    CHECK(std::ranges::count((**listed.value), host::FileKind::Directory, &host::DirEntry::kind) == 1);
+
+    // Past the limit, in its second chunk.
+    Answer<std::vector<host::DirEntry>> capped;
+    remote::ListDirectory(connection, dir, host::kFsReaddirChunk, capped.Done());
+    REQUIRE(PumpUntil(queue, [&] { return capped.value.has_value(); }));
+    REQUIRE_FALSE(capped.value->has_value());
+    CHECK_THAT(capped.value->error().message, ContainsSubstring("holds more than 1024 entries"));
+
+    Answer<std::vector<host::DirEntry>> missing;
+    remote::ListDirectory(connection, dir / "none", 5000, missing.Done());
+    REQUIRE(PumpUntil(queue, [&] { return missing.value.has_value(); }));
+    CHECK(missing.value->error().code == host::fs_error::kNotFound);
+
+    Answer<fs::path> resolved;
+    remote::ResolvePath(connection, dir / "sub" / ".." / "sub", resolved.Done());
+    REQUIRE(PumpUntil(queue, [&] { return resolved.value.has_value(); }));
+    REQUIRE(resolved.value->has_value());
+    CHECK(**resolved.value == fs::canonical(dir / "sub"));
+
+    Answer<fs::path> gone;
+    remote::ResolvePath(connection, dir / "none", gone.Done());
+    REQUIRE(PumpUntil(queue, [&] { return gone.value.has_value(); }));
+    CHECK(gone.value->error().code == host::fs_error::kNotFound);
+}
+
+TEST_CASE("A listing answered malformed is cancelled", "[Remote][RemoteFs]") {
+    const fs::path       dir = ned::tests::FreshRemoteDir();
+    PostQueue            queue;
+    ned::tests::PipePeer peer(queue, dir);
+
+    Answer<std::vector<host::DirEntry>> listed;
+    const std::uint64_t                 id = remote::ListDirectory(*peer.connection, "/srv", 100, listed.Done());
+    CHECK(peer.Receive()["method"] == host::kFsReaddir);
+    peer.Send(Json{{"method", "$/chunk"}, {"params", {{"id", id}, {"seq", 0}, {"data", Json::array({Json{{"name", host::Bytes("../up")}, {"kind", "file"}, {"link", false}}})}}}});
+    REQUIRE(PumpUntil(queue, [&] { return peer.HasMessage(); }));
+    CHECK(peer.Receive() == Json{{"method", "$/cancel"}, {"params", {{"id", id}}}});
+    peer.Send(Json{{"id", id}, {"error", {{"code", error_code::kCancelled}, {"message", "cancelled"}}}});
+    REQUIRE(PumpUntil(queue, [&] { return listed.value.has_value(); }));
+    CHECK_THAT(listed.value->error().message, ContainsSubstring("is not a file name"));
+    fs::remove_all(dir);
 }
 
 TEST_CASE("A host that goes quiet fails its fs requests, and one answering malformed is cancelled", "[Remote][RemoteFs]") {

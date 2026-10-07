@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "Editor/Host/FsCodec.h"
 #include "Editor/Remote/Connection.h"
@@ -48,6 +49,13 @@ std::uint64_t StatFile(Connection& connection, const std::filesystem::path& path
 std::uint64_t ReadFile(Connection& connection, const std::filesystem::path& path, std::size_t maxBytes,
                        std::function<void(FsResult<text::FileContents>)> done);
 std::uint64_t WriteFile(Connection& connection, host::FsWriteRequest request, std::function<void(FsResult<host::FileStat>)> done);
+// A directory's entries, unsorted. One with more than maxEntries is
+// cancelled and fails.
+std::uint64_t ListDirectory(Connection& connection, const std::filesystem::path& path, std::size_t maxEntries,
+                            std::function<void(FsResult<std::vector<host::DirEntry>>)> done);
+// path resolved on the host: made absolute against the agent's working
+// directory, the login's home, with its symlinks followed.
+std::uint64_t ResolvePath(Connection& connection, const std::filesystem::path& path, std::function<void(FsResult<std::filesystem::path>)> done);
 
 } // namespace ned::editor::remote
 
