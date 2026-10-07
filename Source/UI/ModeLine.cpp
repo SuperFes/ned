@@ -3,7 +3,7 @@
 #include "DrawText.h"
 #include "ProgressBar.h"
 
-#include "Editor/IconSettings.h"
+#include "Editor/FileIcons.h"
 #include "Paint.h"
 #include "ThemePaints.h"
 

@@ -27,6 +27,7 @@
 #include "Editor/Project/Session.h"
 #include "Editor/Project/Undo.h"
 #include "EmbeddedDocuments.h"
+#include "FileIcons.h"
 #include "Fill.h"
 #include "FillColumn.h"
 #include "Format.h"
@@ -39,7 +40,6 @@
 #include "FormatRewrite.h"
 #include "FormatSpacing.h"
 #include "FormatWrap.h"
-#include "IconSettings.h"
 #include "Indent.h"
 #include "IndentStyle.h"
 #include "InlineDebugValues.h"
@@ -3535,7 +3535,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       });
 
     registry.Register("toggle-file-type-icons",
-                      "Show or hide the language glyph beside a file's name.",
+                      "Show or hide the file and folder glyphs before names.",
                       [](CommandContext& context) {
                           const bool enabled = !FileTypeIconsEnabled();
                           SetFileTypeIconsEnabled(enabled);

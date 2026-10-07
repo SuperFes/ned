@@ -5,6 +5,7 @@
 #include <string_view>
 #include <utility>
 
+#include "Editor/FileIcons.h"
 #include "Editor/Remote/Fs.h"
 
 namespace ned::ui {
@@ -503,8 +504,11 @@ void RemotePanel::PushModel() {
                 out.right = "connecting";
             }
         }
-        else if (node.link) {
-            out.label += " →";
+        else {
+            out.kindGlyph = directory ? editor::FolderIcon(node.expanded) : editor::FileIcon(node.location.path);
+            if (node.link) {
+                out.label += " →";
+            }
         }
         if (!directory && node.kind != editor::host::FileKind::File) {
             out.labelForeground = theme_.indentGuideForeground; // a dangling link, a socket, a device

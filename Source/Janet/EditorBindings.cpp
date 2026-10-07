@@ -30,6 +30,7 @@
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/DiffRefreshSettings.h"
 #include "Editor/EditorConfig.h"
+#include "Editor/FileIcons.h"
 #include "Editor/FileNaming.h"
 #include "Editor/FileWatch.h"
 #include "Editor/FillColumn.h"
@@ -38,7 +39,6 @@
 #include "Editor/FormatRules.h"
 #include "Editor/HighlightSettings.h"
 #include "Editor/HugeStructuralWindow.h"
-#include "Editor/IconSettings.h"
 #include "Editor/ImportFixupSettings.h"
 #include "Editor/IndentDetect.h"
 #include "Editor/IndentRuleOverride.h"
@@ -2176,8 +2176,9 @@ void InstallEditorBindings(Environment& env) {
         "set-trailing-whitespace-highlight-enabled.");
     env.Register<&NedSetFileTypeIconsEnabled>(
         "ned", "set-file-type-icons-enabled",
-        "Enable/disable showing a file's type as its language's Nerd Font glyph (a language.janet's :icon) "
-        "beside its name in the mode line. Default true.");
+        "Enable/disable the Nerd Font glyph before a file's name -- its language's :icon, else one for its kind "
+        "-- and before a folder's, in the mode line, tabs, project sidebar, Remote panel, buffer list and file "
+        "prompts. Default true.");
     env.Register<&NedSetAutoDetectProjectRoot>(
         "ned", "set-auto-detect-project-root",
         "Enable/disable walking upward from an opened file for a VCS marker directory to find the project root "

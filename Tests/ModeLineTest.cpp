@@ -12,7 +12,7 @@
 #include <unistd.h>
 
 #include "Editor/BackgroundActivity.h"
-#include "Editor/IconSettings.h"
+#include "Editor/FileIcons.h"
 #include "Editor/IndentStyle.h"
 #include "Editor/Lsp/Client.h"
 #include "Editor/Lsp/Manager.h"

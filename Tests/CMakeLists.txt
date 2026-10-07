@@ -420,6 +420,7 @@ add_executable(ned_tests
             GrammarUnicodeTest.cpp
             ParseConformanceTest.cpp
             ParseLexerTest.cpp
+            FileIconsTest.cpp
             ModeOverridesTest.cpp
             ModePrewarmTest.cpp
             BufferViewSearchInResultsTest.cpp

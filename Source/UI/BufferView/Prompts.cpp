@@ -15,6 +15,7 @@
 #include <re2/re2.h>
 
 #include "Editor/BindingsReport.h"
+#include "Editor/FileIcons.h"
 #include "Editor/FileNaming.h"
 #include "Editor/FormatCase.h"
 #include "Editor/FormatRules.h"
@@ -4454,8 +4455,8 @@ void BufferView::RefreshFuzzyPrompt(const bufferview::FuzzyPrompt& prompt) {
     statusMessage_ = prompt_->StatusText();
     if (onCandidatesChanged_) {
         onCandidatesChanged_(list.Empty() ? std::nullopt
-                                          : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(),
-                                                                                        list.Ranked(), list.Selection())));
+                                          : std::optional(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), list.Ranked(),
+                                                                                        list.Selection(), nullptr, prompt.icon)));
     }
 }
 
@@ -5130,6 +5131,7 @@ bufferview::FuzzyPrompt BufferView::ProjectFindFilePrompt() {
             .historyKey    = "project-find-file",
             .cancelMessage = "Project find file cancelled.",
             .emptyMessage  = [](const std::string& query) { return "No file matching \"" + query + "\""; },
+            .icon          = [](const std::string& entry) { return editor::FileIcon(std::filesystem::path(entry)); },
             .commit        = [this](const std::string& selected) {
                 const std::filesystem::path absolutePath = editor::ProjectRoot() / selected;
                 try {
@@ -5149,6 +5151,7 @@ bufferview::FuzzyPrompt BufferView::FindRecentFilePrompt() {
             .historyKey    = "find-recent-file",
             .cancelMessage = "Find recent file cancelled.",
             .emptyMessage  = [](const std::string& query) { return "No recent file matching \"" + query + "\""; },
+            .icon          = [](const std::string& entry) { return editor::FileIcon(std::filesystem::path(entry)); },
             .commit        = [this](const std::string& selected) {
                 try {
                     text::Buffer& opened = bufferList_.OpenOrCreateFile(std::filesystem::path(selected));
@@ -5190,6 +5193,9 @@ bufferview::FuzzyPrompt BufferView::SwitchToBufferPrompt() {
             .cancelMessage = "Switch to buffer cancelled.",
             .emptyMessage  = [](const std::string& query) { return "No buffer matching \"" + query + "\""; },
             .pool          = [this] { return text::CompleteBufferNames(bufferList_, ""); },
+            .icon          = [this](const std::string& name) {
+                const text::Buffer* buffer = bufferList_.Find(name);
+                return buffer != nullptr ? editor::FileIcon(*buffer) : std::string(); },
             .commit        = [this](const std::string& selected) {
                 if (text::Buffer* found = bufferList_.Find(selected)) {
                     activeBuffer_.Set(*found);

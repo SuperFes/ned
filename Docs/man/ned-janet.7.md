@@ -422,7 +422,7 @@ configuration is Janet code, and these are the bindings it calls.
 
 `ned/set-file-type-icons-enabled`
 
-:   Enable/disable showing a file's type as its language's Nerd Font glyph (a language.janet's :icon) beside its name in the mode line. Default true.
+:   Enable/disable the Nerd Font glyph before a file's name -- its language's :icon, else one for its kind -- and before a folder's, in the mode line, tabs, project sidebar, Remote panel, buffer list and file prompts. Default true.
 
 `ned/set-file-watch`
 

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "Editor/FileIcons.h"
 #include "Text/Utf8.h"
 
 namespace ned::ui {
@@ -24,20 +25,20 @@ namespace {
     // U+258C LEFT HALF BLOCK (tab-restyle follow-up): the one-column end
     // cap after each tab's close icon. Drawn with the tab's own block
     // color as *foreground* on the row's buffer background, so the cell
-    // reads as the tab's block tapering off at half a column -- Block
-    // Elements are single-width in any monospace font, the same
-    // portability bar every other chrome glyph here already clears
-    // (Powerline-style rounded caps need a patched font, per
-    // ProjectSidebar's own long-standing no-Nerd-Font note).
+    // reads as the tab's block tapering off at half a column.
     constexpr char32_t kTabEndCap = U'▌';
 
-    // 1-space padding, an asterisk if modified, a space, then the close
-    // icon; one blank widget-background column as a separator before the
+    // 1-space padding, the file's icon, an asterisk if modified, a space,
+    // then the close icon; one blank widget-background column as a separator before the
     // next tab (added by the caller, not here) keeps adjacent inactive tabs
     // from visually merging into one block. One entry per cell (TextCells),
     // so its .size() is the tab's column width.
     std::vector<std::string> TabLabel(const text::Buffer& buffer) {
-        std::string label = " " + buffer.Name();
+        std::string label = " ";
+        if (const std::string icon = editor::FileIcon(buffer); !icon.empty()) {
+            label += icon + " ";
+        }
+        label += buffer.Name();
         if (buffer.Modified()) {
             label += '*';
         }

@@ -57,6 +57,10 @@ struct FuzzyPrompt {
     // captured once at session start and the list already owns it.
     std::function<std::vector<std::string>()> pool;
 
+    // The glyph before an entry (FileIcon), for prompts that pick files or
+    // buffers. Null for none.
+    std::function<std::string(const std::string& entry)> icon;
+
     // What picking this entry does. Runs after the session has ended.
     std::function<void(const std::string& selected)> commit;
 
