@@ -121,7 +121,11 @@ std::optional<std::string> ResolveExecutable(const std::string& name) {
     return std::nullopt;
 }
 
-ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stderrMode) {
+ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stderrMode) : ChildProcess(argv, SpawnOptions{.stderrMode = stderrMode, .cwd = std::nullopt, .env = {}}) {
+}
+
+ChildProcess::ChildProcess(const std::vector<std::string>& argv, const SpawnOptions& options) {
+    const StderrMode stderrMode = options.stderrMode;
     if (argv.empty()) {
         throw std::runtime_error("ned: ChildProcess: empty argv");
     }
@@ -145,6 +149,9 @@ ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stde
 
     posix_spawn_file_actions_t fileActions;
     posix_spawn_file_actions_init(&fileActions);
+    if (options.cwd) {
+        posix_spawn_file_actions_addchdir_np(&fileActions, options.cwd->c_str());
+    }
     posix_spawn_file_actions_adddup2(&fileActions, stdinPipe[0], STDIN_FILENO);
     posix_spawn_file_actions_addclose(&fileActions, stdinPipe[0]);
     posix_spawn_file_actions_addclose(&fileActions, stdinPipe[1]);
@@ -195,7 +202,26 @@ ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stde
     posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
 
     pid_t     childPid    = -1;
-    const int spawnResult = posix_spawn(&childPid, resolved->c_str(), &fileActions, &attr, childArgv.data(), environ);
+    std::vector<std::string> environment;
+    std::vector<char*>       childEnv;
+    char**                   envp = environ;
+    if (!options.env.empty()) {
+        for (char** entry = environ; *entry != nullptr; ++entry) {
+            environment.emplace_back(*entry);
+        }
+        for (const auto& [name, value] : options.env) {
+            std::erase_if(environment, [&name](const std::string& entry) { return entry.starts_with(name + "="); });
+            if (value) {
+                environment.push_back(name + "=" + *value);
+            }
+        }
+        for (std::string& entry : environment) {
+            childEnv.push_back(entry.data());
+        }
+        childEnv.push_back(nullptr);
+        envp = childEnv.data();
+    }
+    const int spawnResult = posix_spawn(&childPid, resolved->c_str(), &fileActions, &attr, childArgv.data(), envp);
     posix_spawnattr_destroy(&attr);
     posix_spawn_file_actions_destroy(&fileActions);
 
@@ -229,6 +255,11 @@ ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stde
 }
 
 ChildProcess::ChildProcess(int readFd, int writeFd, pid_t pid) : writeFd_(writeFd), readFd_(readFd), pid_(pid) {
+    SetNonBlocking(writeFd_);
+    OpenControlFds();
+}
+
+ChildProcess::ChildProcess(int readFd, int writeFd, int stderrFd, std::unique_ptr<ProcessControl> control) : writeFd_(writeFd), readFd_(readFd), stderrFd_(stderrFd), control_(std::move(control)) {
     SetNonBlocking(writeFd_);
     OpenControlFds();
 }
@@ -301,6 +332,10 @@ void ChildProcess::Release() noexcept {
             *fd = -1;
         }
     }
+    if (control_) {
+        control_->Release();
+        control_.reset();
+    }
     if (pidFd_ >= 0) {
         if (!WaitChildExited(kExitGrace)) {
             SignalGroupIfUnreaped(SIGKILL);
@@ -327,7 +362,8 @@ ChildProcess::~ChildProcess() {
 ChildProcess::ChildProcess(ChildProcess&& other) noexcept
     : writeFd_(std::exchange(other.writeFd_, -1)), readFd_(std::exchange(other.readFd_, -1)),
       stderrFd_(std::exchange(other.stderrFd_, -1)), pid_(std::exchange(other.pid_, -1)), pidFd_(std::exchange(other.pidFd_, -1)),
-      wakeFd_(std::exchange(other.wakeFd_, -1)), closed_(other.closed_.exchange(false)), reaped_(std::exchange(other.reaped_, false)),
+      control_(std::move(other.control_)), wakeFd_(std::exchange(other.wakeFd_, -1)), closed_(other.closed_.exchange(false)),
+      reaped_(std::exchange(other.reaped_, false)),
       exitCode_(std::exchange(other.exitCode_, std::nullopt)) {
 }
 
@@ -339,6 +375,7 @@ ChildProcess& ChildProcess::operator=(ChildProcess&& other) noexcept {
         stderrFd_ = std::exchange(other.stderrFd_, -1);
         pid_      = std::exchange(other.pid_, -1);
         pidFd_    = std::exchange(other.pidFd_, -1);
+        control_  = std::move(other.control_);
         wakeFd_   = std::exchange(other.wakeFd_, -1);
         closed_   = other.closed_.exchange(false);
         reaped_   = std::exchange(other.reaped_, false);
@@ -450,8 +487,12 @@ pid_t ChildProcess::Pid() const noexcept {
     return pid_;
 }
 
+int ChildProcess::ExitWatchFd() const noexcept {
+    return control_ ? control_->ExitFd() : pidFd_;
+}
+
 bool ChildProcess::WaitChildExited(std::chrono::milliseconds timeout) const {
-    if (pidFd_ < 0) {
+    if (ExitWatchFd() < 0) {
         return true;
     }
     {
@@ -460,7 +501,7 @@ bool ChildProcess::WaitChildExited(std::chrono::milliseconds timeout) const {
             return true;
         }
     }
-    pollfd pfd{pidFd_, POLLIN, 0}; // a pidfd turns readable when its process exits
+    pollfd pfd{ExitWatchFd(), POLLIN, 0}; // a pidfd turns readable when its process exits
     while (true) {
         const int result = ::poll(&pfd, 1, static_cast<int>(timeout.count()));
         if (result < 0 && errno == EINTR) {
@@ -472,6 +513,10 @@ bool ChildProcess::WaitChildExited(std::chrono::milliseconds timeout) const {
 
 void ChildProcess::SignalGroupIfUnreaped(int signal) noexcept {
     const std::lock_guard<std::mutex> lock(reapMutex_);
+    if (control_ && !reaped_) {
+        control_->Signal(signal);
+        return;
+    }
     if (pidFd_ >= 0 && !reaped_) {
         ::kill(-pid_, signal); // whole process group -- see the spawn site's own comment
     }
@@ -479,6 +524,14 @@ void ChildProcess::SignalGroupIfUnreaped(int signal) noexcept {
 
 void ChildProcess::ReapIfExited() noexcept {
     const std::lock_guard<std::mutex> lock(reapMutex_);
+    if (control_ && !reaped_) {
+        pollfd pfd{control_->ExitFd(), POLLIN, 0};
+        if (::poll(&pfd, 1, 0) > 0) {
+            reaped_   = true;
+            exitCode_ = control_->ExitCode();
+        }
+        return;
+    }
     if (pidFd_ < 0 || reaped_) {
         return;
     }
@@ -494,7 +547,7 @@ void ChildProcess::ReapIfExited() noexcept {
 }
 
 std::optional<int> ChildProcess::WaitForExit() noexcept {
-    if (pidFd_ < 0) {
+    if (ExitWatchFd() < 0) {
         return std::nullopt;
     }
     {
@@ -503,7 +556,7 @@ std::optional<int> ChildProcess::WaitForExit() noexcept {
             return exitCode_;
         }
     }
-    pollfd fds[2] = {{pidFd_, POLLIN, 0}, {wakeFd_, POLLIN, 0}};
+    pollfd fds[2] = {{ExitWatchFd(), POLLIN, 0}, {wakeFd_, POLLIN, 0}};
     while (::poll(fds, 2, -1) < 0 && errno == EINTR) {
     }
     ReapIfExited();
@@ -513,9 +566,16 @@ std::optional<int> ChildProcess::WaitForExit() noexcept {
 
 void ChildProcess::Kill() noexcept {
     SignalGroupIfUnreaped(SIGKILL);
+    if (control_) {
+        return;
+    }
     if (WaitChildExited(kKillReapBudget)) {
         ReapIfExited();
     }
+}
+
+void ChildProcess::Signal(int signal) noexcept {
+    SignalGroupIfUnreaped(signal);
 }
 
 std::optional<std::string> RunCapturingStdout(const std::vector<std::string>& argv) {

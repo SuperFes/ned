@@ -2,6 +2,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -9,6 +13,8 @@
 #include <vector>
 
 #include <signal.h>
+#include <sys/eventfd.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -16,7 +22,55 @@
 #include "Editor/Process/ChildProcess.h"
 
 using ned::editor::process::ChildProcess;
+using ned::editor::process::ProcessControl;
+using ned::editor::process::SpawnOptions;
 using ned::editor::process::StderrMode;
+
+namespace {
+
+std::string ReadAll(ChildProcess& child) {
+    std::string output;
+    for (std::string chunk; !(chunk = child.ReadSome()).empty();) {
+        output += chunk;
+    }
+    return output;
+}
+
+// A child "run elsewhere": the test is the other side, setting the exit.
+struct FakeControl final : ProcessControl {
+    struct State {
+        int                exitFd = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+        std::optional<int> exitCode;
+        std::vector<int>   signals;
+        bool               released = false;
+        ~State() {
+            ::close(exitFd);
+        }
+        void Exit(std::optional<int> code) {
+            exitCode                = code;
+            const std::uint64_t one = 1;
+            (void)!::write(exitFd, &one, sizeof one);
+        }
+    };
+    explicit FakeControl(std::shared_ptr<State> state) : state_(std::move(state)) {
+    }
+    int ExitFd() const noexcept override {
+        return state_->exitFd;
+    }
+    std::optional<int> ExitCode() const noexcept override {
+        return state_->exitCode;
+    }
+    void Signal(int signal) noexcept override {
+        state_->signals.push_back(signal);
+    }
+    void Release() noexcept override {
+        state_->released = true;
+    }
+
+    std::shared_ptr<State> state_;
+};
+
+} // namespace
 
 TEST_CASE("ChildProcess constructor throws for an executable that can't be found on $PATH", "[Process]") {
     REQUIRE_THROWS_AS(ChildProcess({"ned-definitely-not-a-real-binary-xyz"}), std::runtime_error);
@@ -415,4 +469,68 @@ TEST_CASE("ChildProcess::ReadSome returns EOF rather than parking once the conne
     const auto start = std::chrono::steady_clock::now();
     REQUIRE(child.ReadSome().empty()); // empty == EOF
     REQUIRE(std::chrono::steady_clock::now() - start < std::chrono::seconds(1));
+}
+
+TEST_CASE("ChildProcess starts a child in the given directory with the given environment", "[Process]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path();
+    ::setenv("NED_CHILD_TEST_REMOVED", "still here", 1);
+    ChildProcess child({"sh", "-c", "pwd; echo \"$NED_CHILD_TEST_SET\"; echo \"[${NED_CHILD_TEST_REMOVED-gone}]\""},
+                       SpawnOptions{.stderrMode = StderrMode::Discard,
+                                    .cwd        = dir,
+                                    .env        = {{"NED_CHILD_TEST_SET", "set"}, {"NED_CHILD_TEST_REMOVED", std::nullopt}}});
+    CHECK(ReadAll(child) == std::filesystem::canonical(dir).string() + "\nset\n[gone]\n");
+    CHECK(child.WaitForExit() == 0);
+    ::unsetenv("NED_CHILD_TEST_REMOVED");
+}
+
+TEST_CASE("ChildProcess refuses to start in a directory that doesn't exist", "[Process]") {
+    CHECK_THROWS_AS(ChildProcess({"true"}, SpawnOptions{.stderrMode = StderrMode::Discard, .cwd = "/nonexistent/ned/dir", .env = {}}),
+                    std::runtime_error);
+}
+
+TEST_CASE("ChildProcess::Signal reaches the child's process group", "[Process]") {
+    ChildProcess child({"sh", "-c", "trap 'echo term; exit 3' TERM; echo ready; while :; do sleep 0.05; done"});
+    REQUIRE(child.ReadSome(std::chrono::seconds(10)) == std::optional<std::string>("ready\n"));
+    child.Signal(SIGTERM);
+    CHECK(ReadAll(child) == "term\n");
+    CHECK(child.WaitForExit() == 3);
+}
+
+TEST_CASE("A ChildProcess backed by a ProcessControl signals through it and waits on its exit", "[Process]") {
+    int ours[2]   = {-1, -1};
+    int theirs[2] = {-1, -1};
+    REQUIRE(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, ours) == 0);
+    REQUIRE(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, theirs) == 0);
+    auto state = std::make_shared<FakeControl::State>();
+    {
+        ChildProcess child(ours[0], ::dup(ours[0]), theirs[0], std::make_unique<FakeControl>(state));
+        CHECK(child.Pid() == -1);
+
+        child.WriteAll("in", std::chrono::seconds(5));
+        char buffer[8] = {};
+        REQUIRE(ned::test::TryBoundedRead(ours[1], buffer, sizeof buffer, std::chrono::seconds(5)) == 2);
+        CHECK(std::string(buffer, 2) == "in");
+        REQUIRE(::write(ours[1], "out", 3) == 3);
+        CHECK(child.ReadSome() == "out");
+        REQUIRE(::write(theirs[1], "err", 3) == 3);
+        CHECK(child.ReadSomeStderr() == "err");
+
+        // Kill only signals: the exit is the other side's to report.
+        child.Kill();
+        child.Signal(SIGINT);
+        CHECK(state->signals == std::vector<int>{SIGKILL, SIGINT});
+
+        std::jthread exits([&state] {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            state->Exit(9);
+        });
+        CHECK(child.WaitForExit() == 9);
+        CHECK(child.WaitForExit() == 9);
+        child.Signal(SIGTERM); // reaped: nothing more is sent
+        CHECK(state->signals.size() == 2);
+        CHECK_FALSE(state->released);
+    }
+    CHECK(state->released);
+    ::close(ours[1]);
+    ::close(theirs[1]);
 }

@@ -2,9 +2,10 @@
 
 The wire protocol between the editor and a **host**: the machine whose files, processes
 and toolchain a project lives on. Its consumer is the remote agent (`ned-agent`), a
-headless build over `ned_host` started with `ssh host ned-agent --stdio`. Local execution
-is the degenerate case. The local host is the same server-side dispatcher reached through
-an in-process transport, not a separate code path around it.
+headless build over `ned_host` started with `ssh host ned-agent --stdio`. Local work never
+goes through it: the editor calls the same functions the agent's handlers run
+(`Text/FileContents.h`, `Text/SavePlan.h`, `Process/ChildProcess.h`, ...) directly, and the
+protocol is exercised by tests against the real agent.
 
 The editor is always authoritative for buffers: edit locally, send operations to the
 host, sync on save. There is no remote-authoritative buffer and no attach mode (see
@@ -144,19 +145,11 @@ hello  -> {protocol: {major, minor}, codecs: [str], window: uint}
   merges into its edits otherwise, or, with `ned/set-auto-revert` or
   `ned/set-auto-merge` off, marks it so the next save asks first. The panel relists a
   directory whose entries changed.
-- The in-process transport skips `hello`. Both ends are the same build.
 
 ## 5. Transports
 
-Two transports, a closed set known at compile time, held as a `std::variant` in the host
-connection rather than behind a virtual interface:
+One transport:
 
-- **In-process.** It moves `Json` values between the client stub and the dispatcher on
-  the same `EventLoop`. There is no encoding, no compression and no threads, so local
-  overhead is one `Json` construction per operation. The handler code, the
-  stream/credit/cancel machinery and the client stub are exactly what a remote
-  connection runs. That is the point: the whole test suite exercises the protocol
-  continuously.
 - **stdio over ssh.** `ssh [ControlMaster opts] host <agent> --stdio`, with the wire
   format from section 2 over the child's stdin/stdout. The child's stderr goes to the
   diagnostics log, the way `FramedConnection` already drains a server's stderr. It is
@@ -207,7 +200,7 @@ CBOR byte strings because POSIX paths are bytes, not UTF-8.
 | Namespace | Methods | Notes |
 |---|---|---|
 | `fs` | `stat`, `read` (streamed), `write` (atomic rename), `readdir`, `rename`, `remove`, `mkdir`, `realpath` | `Host/FsCodec.h` has the wire forms; all of them exist. `mkdir`, `rename` and `remove` run `Project/FileOps.h`, as the local project tree does: `mkdir` makes missing parents, `rename` refuses an existing destination and doesn't cross filesystems, and `remove` takes a directory with everything in it. `readdir` streams entries (name, kind through a symlink, whether it is one) in chunks of 1024; `realpath` takes a relative path against the agent's working directory, the login's home. A read runs `Text/FileContents.h`'s `ReadFileContents` and streams 256 KiB chunks; a write runs `Text/SavePlan.h`'s `ReplaceFileContent` (temp file, fsync, rename, symlinks followed, mode and xattrs kept), so a failed write leaves the original intact. A write's `expect` carries the mtime the editor read, and a file changed since is refused. Its content travels in the request, under the frame cap, until a streamed upload is needed. |
-| `proc` | `spawn` → handle; `stdin` (editor-to-host stream), `stdout`/`stderr` (streams), `signal`, `wait`; `pty` variant | Byte streams only. LSP's Content-Length framing and ACP's line framing are parsed on the editor side over the relayed bytes. |
+| `proc` | `spawn` (streamed output, exit as its result), `write`, `close-stdin`, `signal`; `resize` for a pty | `Host/ProcCodec.h` has the wire forms. Byte streams only: LSP's Content-Length framing and ACP's line framing are parsed on the editor side over the relayed bytes. See "Plugging processes in" below. |
 | `search` | `project` (streamed results) | Runs the agent's own in-process `Project/SearchEngine.h`, so results match exactly, including gitignore, binary sniffing and RE2. The request carries the editor's search settings (scan threads, `.editorconfig` charsets), and matches stream in walk order as files finish, coalesced into fuller chunks while the editor's credit is spent. Unsaved edits travel with the request as `LiveContent`: modified buffers under the root only, a huge one as its editor-side matches (`preScanned`), and each canonical path from `fs/realpath` rather than a local syscall. |
 | `watch` | `set`; `$/watch/event` notifications | `Host/WatchCodec.h` has the wire forms. `set` replaces everything the connection watches, so the editor resends the whole set when it changes and after a reconnect, never a diff the two sides could disagree about. A file is watched by its name in its directory, a directory by every entry directly in it, both through `FileWatch.h` on the host. Each debounced burst is one notification naming the paths as `set` did, symlinks and all, with `overflow` when inotify lost events. |
 
@@ -218,14 +211,49 @@ local to that machine and no port forwarding is needed.
 
 ### Plugging processes in
 
-`FramedConnection<TransportT>` and the 48 `ChildProcess`/`PtyProcess`/`StreamedChild`
-users go through the host. The deciding seam is the byte source under each framing
-layer. `Lsp/Transport.h` and `LineTransport.h` are built on `ChildProcess` today, and
-need to be built on a host process handle that is either a local `ChildProcess` (through
-the in-process transport) or a relayed stream. This is the largest piece of the design,
-and the exact shape (a template parameter on the framing layer versus a single host
-process type wrapping both) is settled by the `proc` slice in section 8, against the
-real call sites, not here.
+`FramedConnection<TransportT>`, every Transport, `StreamedChild` and `TaskProcess` already
+take an already-open `ChildProcess`, or the descriptors one wraps. So a host's process is
+handed to them as one: `Remote/Proc.h` spawns it on the host and returns a `ChildProcess`
+over local socketpairs, with a relay moving bytes between those and the host's streams.
+The framing layers, and everything above them, can't tell it from a local child.
+
+Only the half of `ChildProcess` that owns a process differs: waiting, signalling and the
+destructor's hang-up. A relayed child holds a `process::ProcessControl` for that half
+instead of a pidfd. That one is an interface rather than a variant because `ned_core`,
+where `ChildProcess` lives, can't name the editor's remote types; it is called a handful
+of times per process, never per byte. Its exit arrives through the main thread, so a
+relayed child's `Kill()` and destructor send the signal and return rather than waiting
+for the reap, and it is never waited for on the main thread.
+
+Consumers get a process from one place, so a different seam later means changing that
+place and `ChildProcess`, not the call sites.
+
+**Where a process runs.** A process that works on a buffer or its project runs where
+the buffer's file is: on its host for a remote buffer (`Text/RemoteFile.h`), with the
+project root found on that host. The clipboard, desktop helpers, URL opening, the LSP
+broker and ssh itself are always local.
+
+**Main-thread waits.** A remote process can't be waited on from the main thread, which
+is what moves its bytes. A call site that blocks there on a child (the formatter's
+`std::system`, the toolchain probes) becomes asynchronous, or moves to a worker, before
+it can run remotely. One that hands a child a local temp file's path (hunk apply, the
+formatter) passes the content on stdin instead.
+
+```
+proc/spawn   params {handle: uint, argv: [bytes], cwd: path | null,
+                     env: {name: bytes | null}, stderr: "discard" | "merge" | "capture"}
+             chunk  {fd: 1 | 2, data: bytes}
+             result {exit: int | null}       null: killed by a signal
+proc/write   params {handle, data: bytes}    answered once written
+proc/close-stdin params {handle}             after every write before it
+proc/signal  params {handle, signal: "kill" | "term" | "int" | "hup"}
+```
+
+The editor numbers `handle`, so it can write before the spawn answers anything.
+Cancelling `proc/spawn` kills the process group, as a dropped connection does. Output
+is paced by credit, granted as the relay hands each chunk on rather than as it arrives,
+so a consumer that stops reading stops the host's child rather than filling editor
+memory; stdin is paced by one `write` in flight per process.
 
 ### Out of scope for the first slices
 
@@ -250,12 +278,20 @@ Each step is unit-tested on its own and lands working.
 3. **`fs`.** A load splits into reading (`Text/FileContents.h`) and decoding
    (`Buffer::FromContents`), a save into encoding and replacing the file
    (`Text/SavePlan.h`), and the agent's `fs` handlers run the same functions a local load
-   and save do. Local files call them directly rather than through an in-process host:
-   load and revert are synchronous in many places, which an inline in-process answer
-   would keep only by blocking the dispatcher. The in-process transport comes with
-   `proc`, which needs it.
-4. **`proc`.** Settle the process-seam shape from section 7, then move the framing layers
-   onto it, one consumer family at a time (LSP, DAP, ACP, tasks, VCS, terminal).
+   and save do. Local files call them directly: load and revert are synchronous in many
+   places, which an in-process host would keep only by blocking its dispatcher.
+4. **`proc`.** In order, each landing working:
+   1. `ChildProcess` takes a working directory and environment, sends any signal, and
+      can be backed by a `ProcessControl`.
+   2. Credit the receiver grants by hand, for a stream relayed onward at its consumer's
+      pace.
+   3. The agent's `proc` handlers.
+   4. `Remote/Proc.h`: a host's process as a relayed `ChildProcess`.
+   5. Tasks and the test runner for a remote buffer.
+   6. VCS against a remote buffer's repository, patches on stdin.
+   7. The formatter as a `ChildProcess` over stdin and stdout, then on its host.
+   8. A pty variant (`resize`) for terminal tabs.
+   9. LSP for remote buffers, outside the broker; then DAP and ACP.
 5. **ssh transport + `hello` + deploy.** `ned-agent` executable, version handshake,
    host-key prompt, connection-drop failure handling.
 6. **`search`, `watch`.** Sidebar listing, project search, external-modification and

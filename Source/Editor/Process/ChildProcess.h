@@ -19,10 +19,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include <sys/types.h>
@@ -41,6 +44,36 @@ namespace ned::editor::process {
 enum class StderrMode { Discard,
                         MergeWithStdout,
                         Capture };
+
+// Where and with what a spawned child starts, beyond its argv.
+struct SpawnOptions {
+    StderrMode stderrMode = StderrMode::Discard;
+    // The editor's own when unset.
+    std::optional<std::filesystem::path> cwd;
+    // Over the editor's environment, in order: a value sets the variable,
+    // nullopt removes it.
+    std::vector<std::pair<std::string, std::optional<std::string>>> env;
+};
+
+// The owning half of a child that isn't this process's own -- one run on a
+// remote host, whose bytes a relay carries to the descriptors ChildProcess
+// was given. Its exit arrives asynchronously, so nothing here waits for it.
+// An interface because ned_core can't name the types implementing it.
+class ProcessControl {
+  public:
+    virtual ~ProcessControl() = default;
+
+    // Readable once the child has exited. Owned by the control.
+    [[nodiscard]] virtual int ExitFd() const noexcept = 0;
+    // Once ExitFd is readable: the exit code, or nullopt when a signal ended
+    // the child or it was lost with its host.
+    [[nodiscard]] virtual std::optional<int> ExitCode() const noexcept = 0;
+    // To the child's whole process group.
+    virtual void Signal(int signal) noexcept = 0;
+    // The owner is done with the child: it gets EOF on stdin and, should it
+    // outstay a grace period, SIGKILL. Returns at once.
+    virtual void Release() noexcept = 0;
+};
 
 // Resolves a command name against $PATH (or validates it directly if it
 // contains a '/', execvp's own convention), returning the runnable path or
@@ -64,6 +97,9 @@ class ChildProcess {
     // resolved/isn't executable, pipe creation fails, or posix_spawn itself
     // fails synchronously.
     explicit ChildProcess(const std::vector<std::string>& argv, StderrMode stderrMode = StderrMode::Discard);
+    // As above, in options.cwd with options.env applied. argv[0] is still
+    // resolved against the editor's own $PATH and working directory.
+    ChildProcess(const std::vector<std::string>& argv, const SpawnOptions& options);
 
     // Wraps already-open, already-connected file descriptors directly,
     // taking ownership of both -- for a caller that manages the underlying
@@ -75,6 +111,10 @@ class ChildProcess {
     // std::runtime_error, after releasing the fds and killing pid, if the
     // descriptors this class needs of its own can't be created.
     ChildProcess(int readFd, int writeFd, pid_t pid = -1);
+    // A child run elsewhere: its output arrives on readFd (and stderrFd, -1
+    // for none), its input leaves through writeFd, and control owns the
+    // process itself. Takes ownership of all three descriptors.
+    ChildProcess(int readFd, int writeFd, int stderrFd, std::unique_ptr<ProcessControl> control);
 
     ~ChildProcess();
 
@@ -178,7 +218,13 @@ class ChildProcess {
     // already reaped. Does not close the fds -- ReadSome() still observes
     // a clean EOF once the kernel tears down the killed process's own fd
     // table, same as any other process exit.
+    //
+    // A ProcessControl's child is only signalled: its reap is the other
+    // side's, reported through ExitFd, so nothing here waits for it.
     void Kill() noexcept;
+    // Sends signal to the child's process group, unless it is already
+    // reaped. A no-op with no managed process.
+    void Signal(int signal) noexcept;
 
     // broker-reader-deadlock follow-up. Hangs up without destroying the
     // object: every read, wait and write in progress on another thread
@@ -203,6 +249,8 @@ class ChildProcess {
     // Polls fd (and the hang-up signal) for events; false on timeout or
     // once the connection is closed.
     [[nodiscard]] bool WaitFor(int fd, short events, std::chrono::milliseconds timeout) const;
+    // The pidfd, or the control's exit fd; -1 with no managed process.
+    [[nodiscard]] int ExitWatchFd() const noexcept;
     // True once the child has exited (reaped or not) within timeout.
     [[nodiscard]] bool WaitChildExited(std::chrono::milliseconds timeout) const;
     void               SignalGroupIfUnreaped(int signal) noexcept;
@@ -215,6 +263,8 @@ class ChildProcess {
     int   stderrFd_ = -1; // lsp-stderr-capture follow-up -- see StderrFd()
     pid_t pid_      = -1;
     int   pidFd_    = -1;
+    // Instead of pid_/pidFd_, for a child run elsewhere.
+    std::unique_ptr<ProcessControl> control_;
     // An eventfd made readable by CloseConnection, polled alongside every
     // wait so the hang-up wakes it.
     int               wakeFd_ = -1;
