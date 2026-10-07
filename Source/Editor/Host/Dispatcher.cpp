@@ -67,6 +67,9 @@ Dispatcher::Dispatcher(protocol::Endpoint& endpoint, PostQueue& postQueue, Ident
     endpoint_.Handle(std::string(kFsWrite), lifetime_.Bind([this](Json params, Responder responder) { FsWrite(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsReaddir), lifetime_.Bind([this](Json params, Responder responder) { FsReaddir(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsRealpath), lifetime_.Bind([this](Json params, Responder responder) { FsRealpath(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kFsMkdir), lifetime_.Bind([this](Json params, Responder responder) { FsMkdir(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kFsRename), lifetime_.Bind([this](Json params, Responder responder) { FsRename(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kFsRemove), lifetime_.Bind([this](Json params, Responder responder) { FsRemove(params, std::move(responder)); }));
 }
 
 Dispatcher::~Dispatcher() {
@@ -92,7 +95,7 @@ void Dispatcher::Hello(const Json& params, Responder responder) {
     response.arch         = identity_.arch;
     response.codec        = ChooseCodec(request.codecs);
     response.window       = protocol::kDefaultWindow;
-    response.capabilities = Capabilities{.fs = 2, .search = 1};
+    response.capabilities = Capabilities{.fs = 3, .search = 1};
     responder.Result(ToJson(response));
     if (onCodec_) {
         onCodec_(response.codec);
@@ -300,6 +303,66 @@ void Dispatcher::FsRealpath(const Json& params, Responder responder) {
     catch (const FsError& e) {
         responder.Error(e.Code(), e.what());
     }
+}
+
+void Dispatcher::FsMkdir(const Json& params, Responder responder) {
+    std::filesystem::path path;
+    try {
+        path = PathParamsFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    RunOnWorker(std::move(responder), [path = std::move(path)]() -> WorkerAnswer {
+        try {
+            return [stat = MakeDirectory(path)](Responder& answer) { answer.Result(ToJson(stat)); };
+        }
+        catch (const FsError& e) {
+            return [code = e.Code(), message = std::string(e.what())](Responder& answer) { answer.Error(code, message); };
+        }
+    });
+}
+
+void Dispatcher::FsRename(const Json& params, Responder responder) {
+    FsRenameRequest request;
+    try {
+        request = FsRenameRequestFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    RunOnWorker(std::move(responder), [request = std::move(request)]() -> WorkerAnswer {
+        try {
+            RenamePath(request);
+            return [](Responder& answer) { answer.Result(Json::object()); };
+        }
+        catch (const FsError& e) {
+            return [code = e.Code(), message = std::string(e.what())](Responder& answer) { answer.Error(code, message); };
+        }
+    });
+}
+
+void Dispatcher::FsRemove(const Json& params, Responder responder) {
+    std::filesystem::path path;
+    try {
+        path = PathParamsFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    // A big tree takes a while; a worker keeps the connection answering.
+    RunOnWorker(std::move(responder), [path = std::move(path)]() -> WorkerAnswer {
+        try {
+            RemovePath(path);
+            return [](Responder& answer) { answer.Result(Json::object()); };
+        }
+        catch (const FsError& e) {
+            return [code = e.Code(), message = std::string(e.what())](Responder& answer) { answer.Error(code, message); };
+        }
+    });
 }
 
 } // namespace ned::editor::host

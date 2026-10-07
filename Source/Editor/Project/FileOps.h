@@ -25,9 +25,10 @@ namespace ned::editor {
 void CreateProjectDirectory(const std::filesystem::path& path);
 
 // Deletes path -- a single file, or a directory and everything inside it,
-// recursively. Throws std::runtime_error if path doesn't exist or deletion
-// fails (permissions, etc.). Irreversible; callers are expected to confirm
-// with the user first (see BufferView::HandleDeleteFileKey).
+// recursively. Throws std::runtime_error if path doesn't exist, is a
+// filesystem root, or deletion fails (permissions, etc.). Irreversible;
+// callers are expected to confirm with the user first (see
+// BufferView::HandleDeleteFileKey).
 void DeleteProjectPath(const std::filesystem::path& path);
 
 // Renames/moves from to to. Throws std::runtime_error if from doesn't

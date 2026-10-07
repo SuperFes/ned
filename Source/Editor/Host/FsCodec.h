@@ -14,6 +14,12 @@
 //   fs/realpath params {path}, which may be relative, to the agent's
 //             working directory: the login's home
 //             result {path}
+//   fs/mkdir  params {path}, its missing parents made too
+//             result stat
+//   fs/rename params {from, to}, refused when to exists
+//             result {}
+//   fs/remove params {path}, a directory with everything in it
+//             result {}
 //
 //   stat      {kind: "missing" | "file" | "directory" | "other",
 //              size: uint, mode: uint, mtime: int | null}
@@ -45,6 +51,9 @@ inline constexpr std::string_view kFsRead  = "fs/read";
 inline constexpr std::string_view kFsWrite = "fs/write";
 inline constexpr std::string_view kFsReaddir  = "fs/readdir";
 inline constexpr std::string_view kFsRealpath = "fs/realpath";
+inline constexpr std::string_view kFsMkdir    = "fs/mkdir";
+inline constexpr std::string_view kFsRename   = "fs/rename";
+inline constexpr std::string_view kFsRemove   = "fs/remove";
 
 inline constexpr std::size_t kFsChunkBytes   = 256 * 1024;
 inline constexpr std::size_t kFsReaddirChunk = 1024;
@@ -85,6 +94,13 @@ struct FsWriteRequest {
     std::optional<std::optional<std::filesystem::file_time_type>> expect;
 };
 
+struct FsRenameRequest {
+    std::filesystem::path from;
+    std::filesystem::path to;
+
+    [[nodiscard]] bool operator==(const FsRenameRequest&) const = default;
+};
+
 // The decoders throw protocol::ProtocolError on a malformed field.
 [[nodiscard]] nlohmann::json        PathParams(const std::filesystem::path& path);
 [[nodiscard]] std::filesystem::path PathParamsFromJson(const nlohmann::json& json);
@@ -94,6 +110,9 @@ struct FsWriteRequest {
 
 [[nodiscard]] nlohmann::json ToJson(const FsWriteRequest& request);
 [[nodiscard]] FsWriteRequest FsWriteRequestFromJson(const nlohmann::json& json);
+
+[[nodiscard]] nlohmann::json  ToJson(const FsRenameRequest& request);
+[[nodiscard]] FsRenameRequest FsRenameRequestFromJson(const nlohmann::json& json);
 
 [[nodiscard]] nlohmann::json        DirEntriesToJson(std::span<const DirEntry> entries);
 [[nodiscard]] std::vector<DirEntry> DirEntriesFromJson(const nlohmann::json& json);

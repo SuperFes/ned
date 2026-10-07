@@ -98,6 +98,14 @@ FsWriteRequest FsWriteRequestFromJson(const Json& json) {
     return request;
 }
 
+Json ToJson(const FsRenameRequest& request) {
+    return Json{{"from", PathToJson(request.from)}, {"to", PathToJson(request.to)}};
+}
+
+FsRenameRequest FsRenameRequestFromJson(const Json& json) {
+    return FsRenameRequest{.from = RequirePath(json, "from"), .to = RequirePath(json, "to")};
+}
+
 Json DirEntriesToJson(std::span<const DirEntry> entries) {
     Json json = Json::array();
     for (const DirEntry& entry : entries) {

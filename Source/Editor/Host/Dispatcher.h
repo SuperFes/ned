@@ -63,6 +63,9 @@ class Dispatcher {
     void FsWrite(const nlohmann::json& params, protocol::Responder responder);
     void FsReaddir(const nlohmann::json& params, protocol::Responder responder);
     void FsRealpath(const nlohmann::json& params, protocol::Responder responder);
+    void FsMkdir(const nlohmann::json& params, protocol::Responder responder);
+    void FsRename(const nlohmann::json& params, protocol::Responder responder);
+    void FsRemove(const nlohmann::json& params, protocol::Responder responder);
 
     protocol::Endpoint&                         endpoint_;
     PostQueue&                                  postQueue_;

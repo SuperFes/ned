@@ -155,6 +155,13 @@ TEST_CASE("Directory entries round-trip, and one that isn't a plain file name is
     CHECK_THROWS_AS(host::RealpathParamsFromJson(Json{{"path", host::Bytes(std::string("a\0b", 3))}}), ProtocolError);
 }
 
+TEST_CASE("Rename requests round-trip and need both absolute paths", "[Host][HostCodec]") {
+    const host::FsRenameRequest request{.from = "/a/caf\xC3\xA9", .to = "/b/c"};
+    CHECK(host::FsRenameRequestFromJson(OverTheWire(host::ToJson(request))) == request);
+    CHECK_THROWS_AS(host::FsRenameRequestFromJson(Json{{"from", host::Bytes("/a")}}), ProtocolError);
+    CHECK_THROWS_AS(host::FsRenameRequestFromJson(Json{{"from", host::Bytes("/a")}, {"to", host::Bytes("b")}}), ProtocolError);
+}
+
 TEST_CASE("Path decoding rejects relative paths, NULs and non-bytes", "[Host][HostCodec]") {
     REQUIRE(host::RequirePath(Json{{"p", host::Bytes("/a/./b/../c")}}, "p") == "/a/c");
     REQUIRE_THROWS_AS(host::RequirePath(Json{{"p", host::Bytes("a/b")}}, "p"), ProtocolError);

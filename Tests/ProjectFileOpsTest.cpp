@@ -151,3 +151,21 @@ TEST_CASE("RenameProjectPath throws when the destination already exists", "[Proj
 
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("A dangling symlink is deleted, renamed and blocks a rename onto it", "[ProjectFileOps]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_fileops_test_dangling";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    std::filesystem::create_symlink(dir / "nowhere", dir / "link");
+    {
+        std::ofstream(dir / "file.txt") << "x";
+    }
+
+    REQUIRE_THROWS_AS(RenameProjectPath(dir / "file.txt", dir / "link"), std::runtime_error);
+    RenameProjectPath(dir / "link", dir / "moved");
+    REQUIRE(std::filesystem::is_symlink(dir / "moved"));
+    DeleteProjectPath(dir / "moved");
+    REQUIRE_FALSE(std::filesystem::exists(std::filesystem::symlink_status(dir / "moved")));
+
+    std::filesystem::remove_all(dir);
+}
