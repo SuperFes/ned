@@ -1,5 +1,6 @@
 #include "ProviderRegistry.h"
 
+#include <map>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
@@ -30,6 +31,11 @@ namespace {
 
     std::unordered_map<std::filesystem::path, Provider*>& RootCache() {
         static std::unordered_map<std::filesystem::path, Provider*> cache;
+        return cache;
+    }
+
+    std::map<std::pair<std::string, std::filesystem::path>, Provider*>& HostCache() {
+        static std::map<std::pair<std::string, std::filesystem::path>, Provider*> cache;
         return cache;
     }
 
@@ -69,9 +75,41 @@ Provider* ActiveProviderFor(const std::filesystem::path& root) {
     return nullptr;
 }
 
+std::vector<MarkedProvider> MarkedProviders() {
+    const std::lock_guard       lock(RegistryMutex());
+    std::vector<MarkedProvider> marked;
+    for (const auto& [name, provider] : Providers()) {
+        if (std::vector<std::string> markers = provider->Markers(); !markers.empty()) {
+            marked.push_back(MarkedProvider{.name = name, .markers = std::move(markers)});
+        }
+    }
+    return marked;
+}
+
+Provider* ProviderNamed(const std::string& name) {
+    const std::lock_guard lock(RegistryMutex());
+    const auto            found = NameIndex().find(name);
+    return found != NameIndex().end() ? Providers()[found->second].second.get() : nullptr;
+}
+
+std::optional<Provider*> CachedHostProvider(const std::string& destination, const std::filesystem::path& root) {
+    const std::lock_guard lock(RegistryMutex());
+    const auto            found = HostCache().find({destination, root});
+    if (found == HostCache().end()) {
+        return std::nullopt;
+    }
+    return found->second;
+}
+
+void CacheHostProvider(const std::string& destination, const std::filesystem::path& root, Provider* provider) {
+    const std::lock_guard lock(RegistryMutex());
+    HostCache().insert_or_assign({destination, root}, provider);
+}
+
 void ClearProviderCache() {
     const std::lock_guard lock(RegistryMutex());
     RootCache().clear();
+    HostCache().clear();
 }
 
 void ClearRegistry() {
@@ -79,6 +117,7 @@ void ClearRegistry() {
     Providers().clear();
     NameIndex().clear();
     RootCache().clear();
+    HostCache().clear();
 }
 
 } // namespace ned::editor::vcs

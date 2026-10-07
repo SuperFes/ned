@@ -11,7 +11,9 @@
 
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "Provider.h"
 
@@ -37,6 +39,22 @@ void RegisterProvider(const std::string& name, std::unique_ptr<Provider> provide
 // this must not run on every frame/every call. Returns nullptr if no
 // registered provider's Detect matches.
 [[nodiscard]] Provider* ActiveProviderFor(const std::filesystem::path& root);
+
+// A registered provider that names its repository markers, for finding
+// it where Detect can't run.
+struct MarkedProvider {
+    std::string              name;
+    std::vector<std::string> markers;
+};
+// In registration order.
+[[nodiscard]] std::vector<MarkedProvider> MarkedProviders();
+[[nodiscard]] Provider*                   ProviderNamed(const std::string& name);
+
+// The provider last found for root on destination's host: nullopt until
+// one has been looked for, nullptr when none matched. Cleared with
+// ActiveProviderFor's cache.
+[[nodiscard]] std::optional<Provider*> CachedHostProvider(const std::string& destination, const std::filesystem::path& root);
+void                                   CacheHostProvider(const std::string& destination, const std::filesystem::path& root, Provider* provider);
 
 // Clears any cached root -> provider resolutions from ActiveProviderFor,
 // without touching the registry itself. Call after registering a

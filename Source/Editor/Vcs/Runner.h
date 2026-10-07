@@ -14,6 +14,7 @@
 #ifndef NED_EDITOR_VCS_RUNNER_H
 #define NED_EDITOR_VCS_RUNNER_H
 
+#include <expected>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -107,6 +108,10 @@ class Runner {
     // Null, the default, leaves every remote repository unreachable. hosts
     // must outlive this Runner.
     void SetHosts(remote::Hosts* hosts);
+
+    // The repository a remote file is in, on its host (Vcs/HostRepo.h).
+    // done runs on the main thread, and not at all once this Runner is gone.
+    void FindRepo(const text::RemoteFile& file, std::function<void(std::expected<Repo, std::string>)> done);
 
     // Resolves the active provider for buffer's repository, calls its
     // BlameArgv(path) synchronously, spawns the resulting command, and on
@@ -283,26 +288,27 @@ class Runner {
     [[nodiscard]] bool IsRunning(const std::string& key) const;
 
     [[nodiscard]] static std::filesystem::path Canonical(const Repo& repo, const std::filesystem::path& path);
-    [[nodiscard]] Provider*                    ProviderFor(const Repo& repo) const;
-    // Runs run with buffer's repository and its file's path there, or
-    // reports why there is none.
-    void InBufferRepo(const text::Buffer& buffer, const std::function<void(std::string)>& onError,
-                      const std::function<void(const Repo& repo, const std::filesystem::path& path)>& run);
+    // run gets repo's provider, at once here and once found on a host, or
+    // onError why there is none.
+    void WithProvider(const Repo& repo, std::function<void(std::string)> onError, std::function<void(Provider& provider)> run);
+    // run gets buffer's repository and its file's path there, or onError
+    // why there is none.
+    void InBufferRepo(const text::Buffer& buffer, std::function<void(std::string)> onError,
+                      std::function<void(const Repo& repo, const std::filesystem::path& path)> run);
 
     // Shared core both RequestHunkApply overloads delegate to -- see the
     // path-based overload's own doc comment above. path is canonical.
     void RequestHunkApplyForPath(const Repo& repo, const std::filesystem::path& path, std::size_t targetLine, bool stage, std::function<void()> onSuccess, std::function<void(std::string)> onError);
 
-    // The shared resolve-provider/guard/run/report skeleton the
-    // vocabulary-completion operations all use (blame/log/diff predate it
-    // and keep their own spelled-out copies -- their per-operation
-    // comments carry real history not worth flattening into this).
-    // buildSpec runs synchronously against the resolved provider;
-    // onOutput runs on the main thread with the successful run's output
-    // (parse there, or ignore it for exit-code-only operations); any
-    // throw from either lands in onError.
+    // The shared resolve-provider/guard/run/report skeleton every
+    // operation uses. buildSpec runs on the main thread against the
+    // resolved provider, later than this call for a host's repository not
+    // yet looked at, so it holds what it needs by value; onOutput runs on
+    // the main thread with the successful run's output (parse there, or
+    // ignore it for exit-code-only operations); any throw from either
+    // lands in onError.
     void RunProviderOperation(const Repo& repo, const char* operation, const std::string& key,
-                              const std::function<CommandSpec(Provider&)>&       buildSpec,
+                              std::function<CommandSpec(Provider&)>              buildSpec,
                               std::function<void(Provider&, std::string output)> onOutput,
                               std::function<void(std::string)>                   onError);
 
@@ -323,6 +329,7 @@ class Runner {
     remote::Hosts*      hosts_ = nullptr;
 
     std::unordered_map<std::string, Run> running_;
+    LifetimeGuard                        lifetime_;
 };
 
 } // namespace ned::editor::vcs
