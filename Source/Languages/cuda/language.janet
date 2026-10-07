@@ -1,4 +1,5 @@
 {:name "cuda"
+ :icon "" # nf-seti-cu
  :extensions [".cu" ".cuh"]
  :injection-aliases ["cu"]
  :line-comment "//"

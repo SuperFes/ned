@@ -1,4 +1,5 @@
 {:name "java"
+ :icon "" # nf-dev-java
  :extensions [".java"]
  :line-comment "//"
 

@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-376 commands.
+377 commands.
 
 ## `acp-close-session`
 
@@ -1631,6 +1631,10 @@ Toggle whether a binary-detected buffer's format/line-ending/final-newline safeg
 Key: `S-F9`
 
 Show or hide the left-side debug panel (source, function, data and exception breakpoints).
+
+## `toggle-file-type-icons`
+
+Show or hide the language glyph beside a file's name.
 
 ## `toggle-indent-guides`
 

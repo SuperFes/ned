@@ -1,4 +1,5 @@
 {:name "rst"
+ :icon "" # nf-oct-book
  :extensions [".rst"]
  :injection-aliases ["restructuredtext"]
  :line-comment ".."

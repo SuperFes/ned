@@ -1,4 +1,5 @@
 {:name "d"
+ :icon "" # nf-seti-d
  :extensions [".d" ".di" ".dd"]
  :injection-aliases ["dlang"]
  :line-comment "//"

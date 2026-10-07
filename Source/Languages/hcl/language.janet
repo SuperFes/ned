@@ -1,4 +1,5 @@
 {:name "hcl"
+ :icon "" # nf-seti-terraform
  :extensions [".hcl" ".tf" ".tfvars"]
  :injection-aliases ["terraform" "tf"]
  :line-comment "#"

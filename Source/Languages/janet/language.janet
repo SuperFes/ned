@@ -1,4 +1,5 @@
 {:name "janet"
+ :icon "󰘧" # nf-md-lambda
  :extensions [".janet"]
 
  # `#`, not the Lisp `;` -- in Janet `;` is the splice operator.

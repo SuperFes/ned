@@ -1,6 +1,7 @@
 # GNU as / NASM-style x86 and ARM assembly. .S (preprocessed) is claimed
 # too: the grammar treats # lines as comments.
 {:name "asm"
+ :icon "" # nf-seti-asm
  :extensions [".s" ".S" ".asm" ".nasm"]
  :injection-aliases ["nasm" "assembly" "x86asm"]
  :line-comment ";"

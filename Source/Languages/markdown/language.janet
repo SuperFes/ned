@@ -3,6 +3,7 @@
 # are highlighted as their language but not synced to its server.
 
 {:name "markdown"
+ :icon "" # nf-seti-markdown
  :extensions [".md" ".markdown"]
  :lsp-root-markers [".marksman.toml"]
  :injection-aliases ["md"]

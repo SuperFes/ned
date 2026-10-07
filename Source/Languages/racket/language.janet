@@ -1,4 +1,5 @@
 {:name "racket"
+ :icon "" # nf-dev-racket
  :extensions [".rkt" ".rktl" ".rktd"]
  :injection-aliases ["rkt"]
  :line-comment ";"

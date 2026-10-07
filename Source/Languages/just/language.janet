@@ -1,4 +1,5 @@
 {:name "just"
+ :icon "" # nf-seti-makefile
  :extensions [".just"]
  :injection-aliases ["justfile"]
  :filenames ["justfile" "Justfile" "JUSTFILE" ".justfile" ".Justfile" ".JUSTFILE"]

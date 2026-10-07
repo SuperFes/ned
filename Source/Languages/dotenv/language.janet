@@ -2,6 +2,7 @@
 # ".env.production"); the variants carry ".env" as a basename prefix, not
 # an extension, so only the exact spellings are claimed.
 {:name "dotenv"
+ :icon "" # nf-seti-config
  :extensions [".env"]
  :injection-aliases ["env"]
  :filenames [".env" ".env.local" ".env.development" ".env.production" ".env.test" ".env.example"]

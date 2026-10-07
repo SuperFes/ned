@@ -130,6 +130,8 @@ struct LanguageDefinition {
     std::vector<std::string> sharedExtensions;
     std::vector<std::string> mimeTypes;
     std::string              contentPattern;
+    // `:icon ""`: the Nerd Font glyph naming the language in the chrome.
+    std::string icon;
     // Empty = no line-comment syntax (JSON, HTML, CSS, XML, Markdown).
     std::string lineCommentPrefix;
     // `:block-comment ["(*" "*)"]`: opener and closer, both empty when unset.

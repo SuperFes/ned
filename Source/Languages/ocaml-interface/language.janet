@@ -1,5 +1,6 @@
 # The interface grammar of tree-sitter-ocaml, for .mli files.
 {:name "ocaml-interface"
+ :icon "" # nf-seti-ocaml
  :extensions [".mli"]
  :block-comment ["(*" "*)"]
  :queries {:indents ["ocaml/indents.janet"]}

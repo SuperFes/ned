@@ -1,4 +1,5 @@
 {:name "typescript"
+ :icon "" # nf-seti-typescript
  :extensions [".ts" ".mts" ".cts"]
  :line-comment "//"
 

@@ -2,6 +2,7 @@
 # grammar lacks.
 
 {:name "ron"
+ :icon "" # nf-seti-rust
  :extensions [".ron"]
  :line-comment "//"
  :queries {:highlights ["ron/highlights.janet"

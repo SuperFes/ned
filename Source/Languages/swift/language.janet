@@ -1,4 +1,5 @@
 {:name "swift"
+ :icon "" # nf-seti-swift
  :extensions [".swift"]
  :line-comment "//"
  :lsp-root-markers ["Package.swift"]

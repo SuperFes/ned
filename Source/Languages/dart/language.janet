@@ -1,4 +1,5 @@
 {:name "dart"
+ :icon "" # nf-seti-dart
  :extensions [".dart"]
  :line-comment "//"
  :lsp-root-markers ["pubspec.yaml"]

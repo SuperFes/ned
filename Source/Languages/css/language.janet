@@ -1,6 +1,7 @@
 # No :line-comment -- CSS only has block comments (/* */).
 
 {:name "css"
+ :icon "" # nf-seti-css
  :extensions [".css"]
  :block-comment ["/*" "*/"]
  # Stylesheet spellings: `#f0a` is a colour here rather than the start of a

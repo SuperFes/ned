@@ -9,6 +9,7 @@
 # is not claimed -- "exclude" is too generic a basename to take.
 
 {:name "gitignore"
+ :icon "" # nf-seti-git_ignore
  :filenames [".gitignore" ".gitignore_global" ".ignore" ".fdignore" ".rgignore"
              ".dockerignore" ".npmignore" ".eslintignore" ".prettierignore" ".helmignore"]
  :line-comment "#"

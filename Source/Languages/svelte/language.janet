@@ -1,4 +1,5 @@
 {:name "svelte"
+ :icon "" # nf-seti-svelte
  :extensions [".svelte"]
  :lsp-root-markers ["package.json"]
  :block-comment ["<!--" "-->"]

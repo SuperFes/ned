@@ -32,6 +32,7 @@ namespace {
     }
 
     void ApplyDefinition(Mode& mode, const LanguageDefinition& definition) {
+        mode.icon                  = definition.icon;
         mode.lineCommentPrefix = definition.lineCommentPrefix;
         mode.blockCommentOpen  = definition.blockCommentOpen;
         mode.blockCommentClose = definition.blockCommentClose;

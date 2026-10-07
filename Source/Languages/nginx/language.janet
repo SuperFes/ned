@@ -8,6 +8,7 @@
 # are claimed; a bare *.conf belongs to nobody in particular.
 
 {:name "nginx"
+ :icon "" # nf-dev-nginx
  :extensions [".nginx"]
  :filenames ["nginx.conf" "mime.types"]
  :line-comment "#"

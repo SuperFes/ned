@@ -1,4 +1,5 @@
 {:name "pascal"
+ :icon "" # nf-dev-delphi
  :extensions [".pas" ".pp" ".lpr" ".dpr" ".dpk" ".inc"]
  :injection-aliases ["delphi" "pas"]
  :line-comment "//"

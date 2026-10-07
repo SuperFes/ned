@@ -1,4 +1,5 @@
 {:name "scheme"
+ :icon "" # nf-custom-scheme
  :extensions [".scm" ".ss" ".sld" ".sls"]
  :injection-aliases ["scm"]
  :line-comment ";"

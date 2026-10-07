@@ -1,4 +1,5 @@
 {:name "csharp"
+ :icon "" # nf-dev-csharp
  :extensions [".cs"]
  :injection-aliases ["cs" "c#"]
  :line-comment "//"

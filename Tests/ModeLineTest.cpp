@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "Editor/BackgroundActivity.h"
+#include "Editor/IconSettings.h"
 #include "Editor/IndentStyle.h"
 #include "Editor/Lsp/Client.h"
 #include "Editor/Lsp/Manager.h"
@@ -222,6 +223,34 @@ TEST_CASE("ModeLine shows the active mode's name", "[ModeLine]") {
     modeLine.Paint(canvas);
 
     REQUIRE(RowText(screen, 0, 40).find("(c-mode)") != std::string::npos);
+}
+
+TEST_CASE("ModeLine names a remote buffer's host and the language's icon before the buffer", "[ModeLine]") {
+    ned::text::Buffer     buffer("main.c", ned::text::Rope("int main() {}"));
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode = ned::editor::FundamentalMode();
+    mode.icon                  = "\ue61e";
+    ned::ui::Theme    theme    = ned::ui::DarkTheme();
+    ned::ui::ModeLine modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(60, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 0});
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).starts_with("  \ue61e  main.c"));
+
+    buffer.SetRemote(ned::text::RemoteFile{.destination = "box", .path = "/src/main.c"});
+    modeLine.Paint(canvas);
+    REQUIRE(RowText(screen, 0, 60).starts_with("  \ueb3a box  \ue61e  main.c"));
+
+    ned::editor::SetFileTypeIconsEnabled(false);
+    modeLine.Paint(canvas);
+    ned::editor::SetFileTypeIconsEnabled(true);
+    REQUIRE(RowText(screen, 0, 60).starts_with("  \ueb3a box   main.c"));
+}
+
+TEST_CASE("A bundled language's icon lands on its mode", "[ModeLine]") {
+    REQUIRE(ned::editor::CMode().icon == "\ue61e");
+    REQUIRE(ned::editor::FundamentalMode().icon.empty());
 }
 
 // indent-style-indicator follow-up: explicit, deterministic-regardless-of-

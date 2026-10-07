@@ -2,6 +2,7 @@
 # escapes (Languages/Org.cpp). "#" is org-comment-string's default.
 
 {:name "org"
+ :icon "" # nf-custom-orgmode
  :extensions [".org"]
  :line-comment "#"
  :import-resolution {:home-prefix true}

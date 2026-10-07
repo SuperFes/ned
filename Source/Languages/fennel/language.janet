@@ -1,4 +1,5 @@
 {:name "fennel"
+ :icon "" # nf-custom-fennel
  :extensions [".fnl"]
  :injection-aliases ["fnl"]
  :line-comment ";"

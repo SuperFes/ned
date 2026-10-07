@@ -1,4 +1,5 @@
 {:name "r"
+ :icon "" # nf-seti-r
  :extensions [".R" ".r"]
  :injection-aliases ["rscript"]
  :line-comment "#"

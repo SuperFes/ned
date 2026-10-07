@@ -1,4 +1,5 @@
 {:name "cmake"
+ :icon "" # nf-dev-cmake
  :extensions [".cmake"]
  :filenames ["CMakeLists.txt"]
  :line-comment "#"

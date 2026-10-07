@@ -9,6 +9,7 @@
 # `const_assert`.
 
 {:name "wgsl"
+ :icon "" # nf-dev-webgpu
  :extensions [".wgsl"]
  :line-comment "//"
  :signature-template "fn __ned_sig({}) {}"

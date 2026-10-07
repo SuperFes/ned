@@ -1,4 +1,5 @@
 {:name "cpp"
+ :icon "" # nf-custom-cpp
  :extensions [".cpp" ".cc" ".cxx" ".hpp" ".hh"]
  # A .h is C's unless libmagic or the C++-only keywords say otherwise.
  :shared-extensions [".h"]

@@ -2,6 +2,7 @@
 # Admission facts (Docs/LanguageCoverage.md): generated ABI 15, scanner 0 lines, corpus 1 file.
 
 {:name "desktop"
+ :icon "" # nf-fa-desktop
  :extensions [".desktop" ".directory"]
  :line-comment "#"
 

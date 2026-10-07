@@ -1,6 +1,7 @@
 # Meson has no extension of its own: a build file is meson.build, its
 # options file meson.options (meson_options.txt before 1.1).
 {:name "meson"
+ :icon "" # nf-fa-gears
  :filenames ["meson.build" "meson.options" "meson_options.txt"]
  :line-comment "#"
  :lsp-root-markers ["meson.options" "meson_options.txt"]

@@ -1,4 +1,5 @@
 {:name "pem"
+ :icon "" # nf-fa-certificate
  :extensions [".pem" ".crt" ".cer" ".csr"]
  :not-applicable {:indents    "line-oriented records; nothing nests"
                   :locals     "no bindings to scope or rename"

@@ -1,4 +1,5 @@
 {:name "scala"
+ :icon "" # nf-seti-scala
  :extensions [".scala" ".sbt" ".sc"]
  :injection-aliases ["sc"]
  :line-comment "//"

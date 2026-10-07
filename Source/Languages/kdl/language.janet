@@ -1,4 +1,5 @@
 {:name "kdl"
+ :icon "" # nf-seti-config
  :extensions [".kdl"]
  :line-comment "//"
  # The outline stops two levels down; breadcrumbs follow every level.

@@ -1,4 +1,5 @@
 {:name "javascript"
+ :icon "" # nf-seti-javascript
  :extensions [".js" ".mjs" ".cjs"]
  :line-comment "//"
  :lsp-root-markers ["package.json" "jsconfig.json"]

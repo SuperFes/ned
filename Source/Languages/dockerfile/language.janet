@@ -1,4 +1,5 @@
 {:name "dockerfile"
+ :icon "" # nf-dev-docker
  :extensions [".dockerfile"]
  :injection-aliases ["docker"]
  :filenames ["Dockerfile" "Containerfile"]

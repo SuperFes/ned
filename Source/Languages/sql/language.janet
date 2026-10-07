@@ -18,6 +18,7 @@
 # the same as json/css/toml/php (no query source at all).
 
 {:name "sql"
+ :icon "" # nf-seti-db
  :extensions [".sql"]
  :injection-aliases ["psql" "mysql" "sqlite" "postgresql" "postgres"]
  :line-comment "--"

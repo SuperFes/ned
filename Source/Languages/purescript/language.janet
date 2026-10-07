@@ -1,4 +1,5 @@
 {:name "purescript"
+ :icon "" # nf-seti-purescript
  :extensions [".purs"]
  :injection-aliases ["purs"]
  :preserve-indent true

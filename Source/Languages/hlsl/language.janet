@@ -1,4 +1,5 @@
 {:name "hlsl"
+ :icon "" # nf-cod-chip
  :extensions [".hlsl" ".hlsli" ".fx" ".fxh"]
  :line-comment "//"
  :line-continuation "\\"

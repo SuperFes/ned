@@ -1,4 +1,5 @@
 {:name "diff"
+ :icon "" # nf-oct-diff
  :extensions [".diff" ".patch"]
  :injection-aliases ["udiff" "patch"]
  :not-applicable {:indents    "line-oriented records; nothing nests"

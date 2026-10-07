@@ -1,4 +1,5 @@
 {:name "udev"
+ :icon "" # nf-fa-usb
  :extensions [".rules"]
  :line-comment "#"
  :not-applicable {:indents    "rules are single lines"

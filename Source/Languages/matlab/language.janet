@@ -2,6 +2,7 @@
 # a `function`/`classdef` declaration, a `%` comment line, a bare `end`.
 # A MATLAB script with none of them still opens as Objective-C.
 {:name "matlab"
+ :icon "" # nf-dev-matlab
  :extensions [".mlx"]
  :injection-aliases ["octave"]
  :shared-extensions [".m"]

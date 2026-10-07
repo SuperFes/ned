@@ -1,4 +1,5 @@
 {:name "gitcommit"
+ :icon "" # nf-dev-git_commit
  :filenames ["COMMIT_EDITMSG" "MERGE_MSG" "TAG_EDITMSG"]
  :line-comment "#"
  :not-applicable {:indents    "prose"

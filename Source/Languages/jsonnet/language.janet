@@ -4,6 +4,7 @@
 # Source/Editor/Languages/Scanners/JsonnetScanner.cpp), corpus 7 files.
 
 {:name "jsonnet"
+ :icon "" # nf-seti-json
  :extensions [".jsonnet" ".libsonnet"]
  :injection-aliases ["libsonnet"]
  :line-comment "//"

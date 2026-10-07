@@ -1,4 +1,5 @@
 {:name "yaml"
+ :icon "" # nf-seti-yml
  :extensions [".yaml" ".yml"]
  :line-comment "#"
  :injection-aliases ["yml"]

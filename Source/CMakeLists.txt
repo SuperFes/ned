@@ -209,6 +209,7 @@ add_library(ned_lib STATIC
         Editor/MinimapSettings.cpp
         Editor/RulerSettings.cpp
         Editor/WhitespaceSettings.cpp
+        Editor/IconSettings.cpp
         Editor/Project/Search.cpp
         Editor/Project/Agenda.cpp
         Editor/Project/CaseCheck.cpp
