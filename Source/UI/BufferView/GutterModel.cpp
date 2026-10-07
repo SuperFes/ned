@@ -523,7 +523,9 @@ void GutterModel::EnsureTestEntries() const {
     static const editor::testrun::Outcome kNoOutcome{};
     const editor::testrun::Outcome&       outcome =
         context_.testRunner->LatestOutcome() ? *context_.testRunner->LatestOutcome() : kNoOutcome;
-    const std::string bufferBasename = buffer.Path() ? buffer.Path()->filename().string() : std::string();
+    const std::string bufferBasename = buffer.Path()     ? buffer.Path()->filename().string()
+                                       : buffer.Remote() ? buffer.Remote()->path.filename().string()
+                                                         : std::string();
 
     testEntries_.clear();
     // huge-file-structural-gutters follow-up: a huge buffer feeds

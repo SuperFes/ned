@@ -74,9 +74,9 @@ and sync on save; don't build a remote-authoritative buffer.
       against them through `NED_TEST_AGENT`: x86_64 natively, aarch64 under
       `qemu-aarch64`.
 - [ ] Prune `<build>-<arch>` agent directories no editor has used in a while.
-- [ ] The `proc` seam: LSP/DAP/task/VCS subprocesses spawn through the host, local ones
-      included, and remote inotify relays through `watch`. This is the biggest lift in
-      the section.
+- [ ] The rest of the `proc` seam, per the design doc's staging step 4: VCS against a
+      remote buffer's repository, the formatter, terminal tabs over a pty, then LSP, DAP
+      and ACP. Tasks and the test runner already run on a remote buffer's host.
 
 **Client/server protocol**, ordered by the design doc's staging section.
 - [ ] `ned --protocol-dump`: decode a captured byte stream to readable JSON.
@@ -84,9 +84,6 @@ and sync on save; don't build a remote-authoritative buffer.
       the host through `proc`).
 
 **File I/O and editing**
-- [ ] Remote semantics for `ExternallyModified`/`AutoRevert`/`AutoMerge`/`FileWatch`,
-      driven by `watch` events rather than polling. Today a remote buffer only learns its
-      file changed when the host refuses a write.
 - [ ] Remote saves over 48 MiB: `fs/write` carries the content in one request, so a
       bigger file needs a streamed upload. Decoding a read and encoding a save run on the
       main thread, which only matters at that size too.
@@ -113,6 +110,9 @@ and sync on save; don't build a remote-authoritative buffer.
       delete and a create; `watch` would need to pair them (`FileWatch.h`'s `FileMove`).
 - [ ] A watch burst the host lost events from (`overflow`) checks every remote buffer
       on that host but doesn't relist the Remote panel; `g` does.
+- [ ] A remote test run's `*test results*` lines resolve their sources against the local
+      tree (`TestRun/TestSourceResolver.h`); they should resolve on the host and open
+      remote buffers.
 - [ ] Send remote buffers' unsaved edits with a remote project search, as `LiveContent`.
       Unsaved text can exceed the 64 MiB frame cap in total, so it needs to go up as a
       stream rather than inside the request. Decide how project-replace, find-references

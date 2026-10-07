@@ -34,16 +34,12 @@ void TaskRunner::SetHosts(remote::Hosts* hosts) {
     hosts_ = hosts;
 }
 
-std::optional<text::RemoteFile> TaskRunner::PlacementFrom(const text::Buffer* from) const {
-    if (from == nullptr) {
-        return std::nullopt;
+std::optional<text::RemoteFile> TaskRunner::PlacementFrom(const std::string& name, const text::Buffer* from) const {
+    if (from != nullptr && (from->Path() || from->Remote())) {
+        return from->Remote();
     }
-    for (const auto& [name, placed] : placedAt_) {
-        if (from->Name() == TaskOutputBufferName(name)) {
-            return placed;
-        }
-    }
-    return from->Remote();
+    const auto placed = placedAt_.find(name);
+    return placed == placedAt_.end() ? std::nullopt : placed->second;
 }
 
 text::Buffer* TaskRunner::RunTask(const std::string& name, const text::Buffer* from) {
@@ -63,7 +59,7 @@ text::Buffer* TaskRunner::RunTask(const std::string& name, const text::Buffer* f
         return buffer;
     }
 
-    const std::optional<text::RemoteFile> placement = PlacementFrom(from);
+    const std::optional<text::RemoteFile> placement = PlacementFrom(name, from);
     placedAt_[name]                                 = placement;
     Run& run                                        = running_[name];
     run.starting                                    = std::make_unique<LifetimeGuard>();
@@ -91,7 +87,7 @@ void TaskRunner::Started(const std::string& name, remote::Spawned spawned) {
         auto accumulated = std::make_shared<std::string>();
         run->second.starting.reset();
         run->second.process = std::make_unique<TaskProcess>(
-            std::move(*spawned), eventLoop_,
+            std::move(spawned->child), eventLoop_,
             [this, name, accumulated](std::string_view chunk) {
                 OutputBuffer(name).AppendWhileReadOnly(chunk);
                 *accumulated += chunk;

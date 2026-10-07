@@ -5,12 +5,15 @@
 #include <sstream>
 #include <utility>
 
+#include "Config.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/DiagnosticsLog.h"
+#include "Editor/Remote/Fs.h"
+#include "Editor/Remote/Hosts.h"
+#include "Editor/Remote/RemoteBuffer.h"
 #include "Editor/SanitizerOutputParser.h"
 #include "Editor/ValgrindOutputParser.h"
 #include "TestOutputParser.h"
-#include "Config.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 
@@ -51,7 +54,7 @@ text::Buffer* TestRunner::OutputBuffer() {
     return buffer;
 }
 
-text::Buffer* TestRunner::RunAll() {
+text::Buffer* TestRunner::RunAll(const text::Buffer* from) {
     text::Buffer* buffer = OutputBuffer();
     if (running_) {
         return buffer;
@@ -64,10 +67,10 @@ text::Buffer* TestRunner::RunAll() {
         buffer->AppendWhileReadOnly("No test command configured (see ned/set-test-command).\n");
         return buffer;
     }
-    return StartRun(config->argv, /*filtered=*/false);
+    return StartRun(config->argv, /*filtered=*/false, from);
 }
 
-text::Buffer* TestRunner::RunFiltered(const std::string& testName, const std::string& file) {
+text::Buffer* TestRunner::RunFiltered(const std::string& testName, const std::string& file, const text::Buffer* from) {
     text::Buffer* buffer = OutputBuffer();
     if (running_) {
         return buffer;
@@ -80,7 +83,7 @@ text::Buffer* TestRunner::RunFiltered(const std::string& testName, const std::st
         buffer->AppendWhileReadOnly("No test filter command configured (see ned/set-test-filter-command).\n");
         return buffer;
     }
-    return StartRun(SubstituteFilterTemplate(*filterTemplate, testName, file), /*filtered=*/true);
+    return StartRun(SubstituteFilterTemplate(*filterTemplate, testName, file), /*filtered=*/true, from);
 }
 
 std::size_t TestRunner::RerunFailed() {
@@ -103,7 +106,7 @@ std::size_t TestRunner::RerunFailed() {
     return queued;
 }
 
-text::Buffer* TestRunner::StartRun(const std::vector<std::string>& argv, bool filtered) {
+text::Buffer* TestRunner::StartRun(const std::vector<std::string>& argv, bool filtered, const text::Buffer* from) {
     text::Buffer* buffer = OutputBuffer();
     if (!buffer->Text().empty()) {
         buffer->AppendWhileReadOnly("\n--- re-run ---\n");
@@ -111,21 +114,46 @@ text::Buffer* TestRunner::StartRun(const std::vector<std::string>& argv, bool fi
 
     accumulated_.clear();
     currentFiltered_ = filtered;
+    if (from != nullptr && (from->Path() || from->Remote())) {
+        placedAt_ = from->Remote();
+    }
+    ranIn_    = std::nullopt;
+    running_  = true;
+    starting_ = std::make_unique<LifetimeGuard>();
+    BeginBackgroundActivity(kActivityName);
+    remote::SpawnBeside(hosts_, placedAt_,
+                        remote::RemoteSpawn{.argv = argv, .cwd = std::nullopt, .env = {}, .stderrMode = process::StderrMode::MergeWithStdout},
+                        starting_->Token(), [this](remote::Spawned spawned) { Started(std::move(spawned)); });
+    return buffer;
+}
 
+void TestRunner::Started(remote::Spawned spawned) {
+    starting_.reset();
+    if (!spawned) {
+        OutputBuffer()->AppendWhileReadOnly("Failed to start tests: " + spawned.error() + "\n");
+        Stopped();
+        return;
+    }
+    ranIn_ = spawned->cwd;
     try {
         auto process = std::make_unique<tasks::TaskProcess>(
-            argv, eventLoop_, [this](std::string_view chunk) { DispatchProcessOutput(chunk); },
+            std::move(spawned->child), eventLoop_, [this](std::string_view chunk) { DispatchProcessOutput(chunk); },
             [this](std::optional<int> exitCode) { DispatchProcessExit(exitCode); });
         // The previous run's (long-exited) process is only released here,
         // never from inside its own exit callback -- see the header.
         process_ = std::move(process);
-        running_ = true;
-        BeginBackgroundActivity(kActivityName);
     }
     catch (const std::exception& e) {
-        buffer->AppendWhileReadOnly(std::string("Failed to start tests: ") + e.what() + "\n");
+        OutputBuffer()->AppendWhileReadOnly(std::string("Failed to start tests: ") + e.what() + "\n");
+        Stopped();
     }
-    return buffer;
+}
+
+void TestRunner::Stopped() {
+    if (running_) {
+        EndBackgroundActivity(kActivityName);
+        running_ = false;
+    }
 }
 
 void TestRunner::DispatchProcessOutput(std::string_view chunk) {
@@ -134,16 +162,12 @@ void TestRunner::DispatchProcessOutput(std::string_view chunk) {
 }
 
 void TestRunner::DispatchProcessExit(std::optional<int> exitCode) {
-    if (running_) {
-        EndBackgroundActivity(kActivityName);
-        running_ = false;
-    }
-
     text::Buffer* buffer = OutputBuffer();
     if (exitCode) {
         buffer->AppendWhileReadOnly("\n[exited " + std::to_string(*exitCode) + "]\n");
     }
     else {
+        Stopped();
         buffer->AppendWhileReadOnly("\n[cancelled]\n");
         rerunQueue_.clear(); // a cancel abandons any pending rerun-failed sequence too
         return;              // a cancelled run's partial output would parse misleadingly
@@ -184,12 +208,39 @@ void TestRunner::DispatchProcessExit(std::optional<int> exitCode) {
     const std::string                      format = config ? config->format : std::string();
 
     const std::optional<std::string> resultsFile = TestResultsFile();
-    std::string                      fileContents;
-    const std::string*               parseInput = &accumulated_;
-    if (resultsFile) {
-        fileContents = ReadWholeFile(*resultsFile);
-        parseInput   = &fileContents;
+    if (!resultsFile) {
+        ParseResults(format, accumulated_);
     }
+    else if (placedAt_) {
+        ReadRemoteResults(*resultsFile, format);
+    }
+    else {
+        ParseResults(format, ReadWholeFile(*resultsFile));
+    }
+}
+
+void TestRunner::ReadRemoteResults(const std::string& resultsFile, const std::string& format) {
+    const std::filesystem::path relative(resultsFile);
+    remote::Connection*         connection = hosts_ == nullptr ? nullptr : hosts_->Find(placedAt_->destination);
+    if (connection == nullptr || !connection->Connected() || (relative.is_relative() && !ranIn_)) {
+        OutputBuffer()->AppendWhileReadOnly("[can't read " + resultsFile + " from " + placedAt_->destination + "]\n");
+        ParseResults(format, std::string());
+        return;
+    }
+    const std::filesystem::path path = relative.is_relative() ? *ranIn_ / relative : relative;
+    remote::ReadFile(*connection, path.lexically_normal(), remote::MaxRemoteFileBytes(),
+                     lifetime_.Bind([this, resultsFile, format](const remote::FsResult<text::FileContents>& read) {
+                         if (!read) {
+                             OutputBuffer()->AppendWhileReadOnly("[can't read " + resultsFile + ": " + read.error().message + "]\n");
+                         }
+                         ParseResults(format, read ? read->bytes : std::string());
+                     }));
+}
+
+void TestRunner::ParseResults(const std::string& format, const std::string& input) {
+    Stopped();
+    text::Buffer*      buffer     = OutputBuffer();
+    const std::string* parseInput = &input;
 
     Outcome fresh;
     if (const std::optional<TestParserFn> registered = RegisteredTestParser(format)) {
@@ -291,6 +342,13 @@ void TestRunner::MergeOutcome(Outcome fresh) {
 }
 
 void TestRunner::Cancel() {
+    if (starting_) {
+        starting_.reset();
+        Stopped();
+        OutputBuffer()->AppendWhileReadOnly("\n[cancelled]\n");
+        rerunQueue_.clear();
+        return;
+    }
     if (running_ && process_) {
         process_->Cancel();
     }
@@ -314,6 +372,10 @@ bool TestRunner::LastRunWasFiltered() const {
 
 void TestRunner::SetOnOutcomeChanged(std::function<void()> fn) {
     onOutcomeChanged_ = std::move(fn);
+}
+
+void TestRunner::SetHosts(remote::Hosts* hosts) {
+    hosts_ = hosts;
 }
 
 } // namespace ned::editor::testrun

@@ -1522,6 +1522,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     ned::editor::remote::Hosts remoteHosts(eventLoop);
     windowManager->SetRemoteHosts(&remoteHosts);
     taskRunner.SetHosts(&remoteHosts);
+    testRunner.SetHosts(&remoteHosts);
     windowManager->EnableRemoteSaving(eventLoop);
     windowManager->LoadRemoteBuffers(restoredRemoteBuffers);
 

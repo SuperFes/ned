@@ -23,8 +23,11 @@
 #include <utility>
 #include <vector>
 
+#include "Editor/Lifetime.h"
+#include "Editor/Remote/Placement.h"
 #include "Editor/Tasks/TaskProcess.h"
 #include "TestResult.h"
+#include "Text/RemoteFile.h"
 #include "UI/EventLoop.h"
 
 namespace ned::text {
@@ -51,13 +54,17 @@ class TestRunner {
     // to the output buffer instead (TaskRunner's no-crash convention).
     // Returns the output buffer for the caller to switch to; a no-op
     // returning the existing buffer while a run is already in flight.
-    text::Buffer* RunAll();
+    //
+    // A run goes beside from (Remote/Placement.h): on its host, in the
+    // project root there, for a remote buffer. Without one, or from a
+    // buffer with no file, it goes where the latest run did.
+    text::Buffer* RunAll(const text::Buffer* from = nullptr);
 
     // TestFilterCommand()'s template with {test}/{file} substituted -- a
     // single test's run whose parsed results MERGE by name into the stored
     // outcome instead of replacing it (a filtered run says nothing about
     // the tests it didn't run).
-    text::Buffer* RunFiltered(const std::string& testName, const std::string& file);
+    text::Buffer* RunFiltered(const std::string& testName, const std::string& file, const text::Buffer* from = nullptr);
 
     // Re-runs every currently-Failed result through the filter template,
     // one sequential filtered run per test (the next spawned from the
@@ -85,6 +92,10 @@ class TestRunner {
     // rebuild-results-buffer-and-repaint hook. Single-slot, unset is fine.
     void SetOnOutcomeChanged(std::function<void()> fn);
 
+    // Null, the default, runs every test command on this machine. hosts
+    // must outlive this TestRunner.
+    void SetHosts(remote::Hosts* hosts);
+
     // Public primarily for tests, mirroring TaskProcess::DispatchOutput/
     // DispatchExit's own precedent: the real TaskProcess callbacks route
     // here via EventLoop::Post, which no unit test can drive; calling these
@@ -94,7 +105,12 @@ class TestRunner {
     void DispatchProcessExit(std::optional<int> exitCode);
 
   private:
-    text::Buffer* StartRun(const std::vector<std::string>& argv, bool filtered);
+    text::Buffer* StartRun(const std::vector<std::string>& argv, bool filtered, const text::Buffer* from);
+    void          Started(remote::Spawned spawned);
+    void          Stopped();
+    // A remote run's results file, read from its host.
+    void          ReadRemoteResults(const std::string& resultsFile, const std::string& format);
+    void          ParseResults(const std::string& format, const std::string& input);
     text::Buffer* OutputBuffer();
     void          MergeOutcome(Outcome fresh);
 
@@ -108,6 +124,11 @@ class TestRunner {
     bool                          currentFiltered_ = false;
     bool                          lastFiltered_    = false;
     std::function<void()>         onOutcomeChanged_;
+    remote::Hosts*                hosts_ = nullptr;
+
+    // Where the latest run went, and the directory it ran in there.
+    std::optional<text::RemoteFile>      placedAt_;
+    std::optional<std::filesystem::path> ranIn_;
 
     // RerunFailed's pending (name, file) pairs -- popped one per exit,
     // cleared outright by a cancel.
@@ -118,6 +139,10 @@ class TestRunner {
     // onExit callback would destroy the closure mid-execution, the exact
     // use-after-free Runner::RunAndCollect's ordering comment documents.
     std::unique_ptr<tasks::TaskProcess> process_;
+    // Held while a run starts, possibly on its host; a cancel drops it, so
+    // nothing is spawned for that run.
+    std::unique_ptr<LifetimeGuard> starting_;
+    LifetimeGuard                  lifetime_;
 };
 
 } // namespace ned::editor::testrun
