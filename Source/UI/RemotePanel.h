@@ -7,6 +7,7 @@
 //
 // A connected host with no root of its own shows its login's home. Roots
 // stay listed while their host is disconnected; expanding one connects.
+// Dotfiles show unless '.' hides them.
 //
 
 #ifndef NED_UI_REMOTEPANEL_H
@@ -86,6 +87,10 @@ class RemotePanel {
     [[nodiscard]] Node*              FindNode(const std::string& topKey, const std::filesystem::path& path);
     [[nodiscard]] Node*              SelectedNode();
     [[nodiscard]] std::string        TopKeyOfRow(std::size_t index) const;
+    [[nodiscard]] bool               Shown(const Node& node) const;
+
+    // Selects the row at path under topKey, or else its nearest shown ancestor.
+    void SelectNearest(const std::string& topKey, std::filesystem::path path);
 
     void Expand(Node& node);
     void List(const std::string& topKey, const text::RemoteFile& directory, std::uint64_t listing);
@@ -105,6 +110,7 @@ class RemotePanel {
     std::vector<Row>              rows_;
     std::size_t                   selectedIndex_ = 0;
     std::uint64_t                 nextListing_   = 0;
+    bool                          showDotfiles_  = true;
 
     std::function<void(const text::RemoteFile&)> onOpenFile_;
     std::function<void()>                        onRequestOpenRoot_;

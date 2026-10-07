@@ -853,6 +853,53 @@ TEST_CASE("While focused, Right/Left expand/collapse a directory and Escape retu
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("While focused, '.' shows and hides dot-directories, keeping the selection on its entry or ancestor",
+          "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_dot_dirs";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / ".github");
+    {
+        std::ofstream(dir / ".github" / "ci.yml") << "x";
+        std::ofstream(dir / "z.txt") << "x";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 6);
+    sidebar.TakeFocus();
+
+    ned::ui::Screen screen = ned::ui::Screen(28, 6);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 5});
+    const auto      rows = [&] {
+        sidebar.Paint(canvas);
+        return RowText(screen, 1, 28) + "|" + RowText(screen, 2, 28) + "|" + RowText(screen, 3, 28);
+    };
+    REQUIRE(rows().find(".github") == std::string::npos);
+
+    // z.txt stays selected as .github appears above it.
+    sidebar.OnEvent(ned::ui::test::Character("."));
+    CHECK(statusMessage == "Showing dot-directories");
+    REQUIRE(rows().find(".github") != std::string::npos);
+    sidebar.OnEvent(ned::ui::test::ArrowUp());
+    sidebar.OnEvent(ned::ui::test::ArrowRight()); // expand .github
+    REQUIRE(rows().find("ci.yml") != std::string::npos);
+
+    // With neither ci.yml nor .github listed, the selection falls back to the first row.
+    sidebar.OnEvent(ned::ui::test::ArrowDown());
+    sidebar.OnEvent(ned::ui::test::Character("."));
+    CHECK(statusMessage == "Hiding dot-directories");
+    REQUIRE(rows().find(".github") == std::string::npos);
+    sidebar.OnEvent(ned::ui::test::Return());
+    CHECK(activeBuffer.Get().Path() == dir / "z.txt");
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("Key events are ignored while the sidebar is not focused", "[ProjectSidebar]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_kbd_unfocused";
     std::filesystem::remove_all(dir);

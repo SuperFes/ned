@@ -22,7 +22,8 @@ namespace {
     // this exists (without it, the sidebar eagerly walks build/,
     // node_modules/, and similar generated/dependency directories too).
     void WalkTree(const std::filesystem::path& directory, const std::filesystem::path& absoluteRoot, const GitIgnoreMatcher& gitIgnore,
-                  int depth, const std::function<bool(const std::filesystem::path&)>& shouldExpand, std::vector<ProjectTreeEntry>& out) {
+                  int depth, const std::function<bool(const std::filesystem::path&)>& shouldExpand, bool includeDotDirectories,
+                  std::vector<ProjectTreeEntry>& out) {
         std::vector<std::filesystem::path> directories;
         std::vector<std::filesystem::path> files;
 
@@ -31,7 +32,7 @@ namespace {
              std::filesystem::directory_iterator(directory, std::filesystem::directory_options::skip_permission_denied, ec)) {
             const std::filesystem::path relative = std::filesystem::relative(entry.path(), absoluteRoot);
             if (entry.is_directory()) {
-                if (!IsDotDirectory(entry) && !gitIgnore.IsIgnored(relative, /*isDirectory=*/true)) {
+                if ((includeDotDirectories || !IsDotDirectory(entry)) && !gitIgnore.IsIgnored(relative, /*isDirectory=*/true)) {
                     directories.push_back(entry.path());
                 }
             }
@@ -49,7 +50,7 @@ namespace {
         for (const std::filesystem::path& dir : directories) {
             out.push_back(ProjectTreeEntry{dir, depth, true});
             if (!shouldExpand || shouldExpand(dir)) {
-                WalkTree(dir, absoluteRoot, gitIgnore, depth + 1, shouldExpand, out);
+                WalkTree(dir, absoluteRoot, gitIgnore, depth + 1, shouldExpand, includeDotDirectories, out);
             }
         }
         for (const std::filesystem::path& file : files) {
@@ -60,7 +61,8 @@ namespace {
 } // namespace
 
 std::vector<ProjectTreeEntry> BuildProjectTree(const std::filesystem::path&                             root,
-                                               const std::function<bool(const std::filesystem::path&)>& shouldExpand) {
+                                               const std::function<bool(const std::filesystem::path&)>& shouldExpand,
+                                               bool                                                     includeDotDirectories) {
     std::vector<ProjectTreeEntry> entries;
 
     std::error_code             ec;
@@ -70,7 +72,7 @@ std::vector<ProjectTreeEntry> BuildProjectTree(const std::filesystem::path&     
     }
 
     const GitIgnoreMatcher& gitIgnore = CachedGitIgnoreMatcher(absoluteRoot);
-    WalkTree(absoluteRoot, absoluteRoot, gitIgnore, 0, shouldExpand, entries);
+    WalkTree(absoluteRoot, absoluteRoot, gitIgnore, 0, shouldExpand, includeDotDirectories, entries);
     return entries;
 }
 
