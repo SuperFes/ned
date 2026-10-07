@@ -137,6 +137,42 @@ TEST_CASE("A connected host's directories are listed and its paths resolved", "[
     CHECK(gone.value->error().code == host::fs_error::kNotFound);
 }
 
+TEST_CASE("A connected host's paths are made, renamed and removed", "[Remote][RemoteFs][HostAgent]") {
+    const ned::tests::FakeRemoteHost fake;
+    PostQueue                        queue;
+    remote::Connection               connection(remote::Connect(fake.Options()), queue);
+    const fs::path                   dir = fake.dir / "ops";
+
+    Answer<host::FileStat> made;
+    remote::MakeDirectory(connection, dir / "a" / "b", made.Done());
+    REQUIRE(PumpUntil(queue, [&] { return made.value.has_value(); }));
+    REQUIRE(made.value->has_value());
+    CHECK((*made.value)->kind == host::FileKind::Directory);
+
+    Answer<void> renamed;
+    remote::RenamePath(connection, {.from = dir / "a", .to = dir / "c"}, renamed.Done());
+    REQUIRE(PumpUntil(queue, [&] { return renamed.value.has_value(); }));
+    REQUIRE(renamed.value->has_value());
+    CHECK(fs::is_directory(dir / "c" / "b"));
+
+    Answer<void> clash;
+    remote::RenamePath(connection, {.from = dir / "c" / "b", .to = dir / "c"}, clash.Done());
+    REQUIRE(PumpUntil(queue, [&] { return clash.value.has_value(); }));
+    REQUIRE_FALSE(clash.value->has_value());
+    CHECK_THAT(clash.value->error().message, ContainsSubstring("already exists"));
+
+    Answer<void> removed;
+    remote::RemovePath(connection, dir / "c", removed.Done());
+    REQUIRE(PumpUntil(queue, [&] { return removed.value.has_value(); }));
+    REQUIRE(removed.value->has_value());
+    CHECK(fs::is_empty(dir));
+
+    Answer<void> gone;
+    remote::RemovePath(connection, dir / "c", gone.Done());
+    REQUIRE(PumpUntil(queue, [&] { return gone.value.has_value(); }));
+    CHECK(gone.value->error().code == host::fs_error::kNotFound);
+}
+
 TEST_CASE("A listing answered malformed is cancelled", "[Remote][RemoteFs]") {
     const fs::path       dir = ned::tests::FreshRemoteDir();
     PostQueue            queue;

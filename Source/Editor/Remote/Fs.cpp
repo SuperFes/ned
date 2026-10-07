@@ -41,6 +41,14 @@ namespace {
                                           {}};
     }
 
+    // An answer with nothing in it but success.
+    protocol::ResponseHandlers DoneHandlers(std::function<void(FsResult<void>)> done) {
+        auto shared = std::make_shared<std::function<void(FsResult<void>)>>(std::move(done));
+        return protocol::ResponseHandlers{[shared](const Json&) { (*shared)({}); },
+                                          [shared](const protocol::RemoteError& error) { (*shared)(std::unexpected(FromRemote(error))); },
+                                          {}};
+    }
+
 } // namespace
 
 std::chrono::milliseconds WriteIdleLimit(std::size_t bytes) {
@@ -170,6 +178,18 @@ std::uint64_t ResolvePath(Connection& connection, const std::filesystem::path& p
                                    [shared](const protocol::RemoteError& error) { (*shared)(std::unexpected(FromRemote(error))); },
                                    {}},
         ProtocolRequestTimeoutMs());
+}
+
+std::uint64_t MakeDirectory(Connection& connection, const std::filesystem::path& path, std::function<void(FsResult<host::FileStat>)> done) {
+    return connection.Endpoint().Request(std::string(host::kFsMkdir), host::PathParams(path), StatHandlers(std::move(done)), ProtocolRequestTimeoutMs());
+}
+
+std::uint64_t RenamePath(Connection& connection, host::FsRenameRequest request, std::function<void(FsResult<void>)> done) {
+    return connection.Endpoint().Request(std::string(host::kFsRename), host::ToJson(request), DoneHandlers(std::move(done)), ProtocolRequestTimeoutMs());
+}
+
+std::uint64_t RemovePath(Connection& connection, const std::filesystem::path& path, std::function<void(FsResult<void>)> done) {
+    return connection.Endpoint().Request(std::string(host::kFsRemove), host::PathParams(path), DoneHandlers(std::move(done)), ProtocolRequestTimeoutMs());
 }
 
 } // namespace ned::editor::remote
