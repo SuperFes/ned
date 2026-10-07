@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <stdexcept>
 #include <vector>
 
 #include <unistd.h>
@@ -9,6 +10,7 @@
 #include "CurrentBranch.h"
 #include "DiffPatch.h"
 #include "Editor/DiagnosticsLog.h"
+#include "Editor/ProcessTimeouts.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Tasks/TaskProcess.h"
 #include "ProviderRegistry.h"
@@ -115,12 +117,17 @@ bool Runner::IsRunning(const std::string& key) const {
     return running_.contains(key);
 }
 
-void Runner::RunAndCollect(const std::string& key, const std::vector<std::string>& argv,
-                              std::function<void(std::string, std::optional<int>)> onDone) {
+void Runner::RunAndCollect(const std::string& key, const CommandSpec& spec,
+                           std::function<void(std::string, std::optional<int>)> onDone) {
     auto output = std::make_shared<std::string>();
     try {
+        process::ChildProcess child(spec.argv, process::StderrMode::MergeWithStdout);
+        if (spec.input) {
+            child.WriteAll(*spec.input, SubprocessWriteTimeoutMs());
+            child.CloseInput();
+        }
         running_[key] = std::make_unique<tasks::TaskProcess>(
-            argv, eventLoop_, [output](std::string_view chunk) { output->append(chunk); },
+            std::move(child), eventLoop_, [output](std::string_view chunk) { output->append(chunk); },
             [this, key, output, onDone](std::optional<int> exitCode) {
                 std::string collected = std::move(*output);
                 // erase() destroys the owning TaskProcess -- including this
@@ -189,7 +196,7 @@ void Runner::RequestBlame(const text::Buffer& buffer, std::function<void(std::ve
         return;
     }
 
-    RunAndCollect(key, spec.argv, [provider, onComplete, onError](std::string output, std::optional<int> exitCode) {
+    RunAndCollect(key, spec, [provider, onComplete, onError](std::string output, std::optional<int> exitCode) {
         if (!exitCode || *exitCode != 0) {
             onError(OperationFailureDetail("blame", exitCode, output));
             return;
@@ -246,7 +253,7 @@ void Runner::RequestLog(const text::Buffer& buffer, std::function<void(std::vect
         return;
     }
 
-    RunAndCollect(key, spec.argv, [provider, onComplete, onError](std::string output, std::optional<int> exitCode) {
+    RunAndCollect(key, spec, [provider, onComplete, onError](std::string output, std::optional<int> exitCode) {
         if (!exitCode || *exitCode != 0) {
             onError(OperationFailureDetail("log", exitCode, output));
             return;
@@ -289,7 +296,7 @@ void Runner::RequestDiff(const text::Buffer& buffer, std::function<void(std::vec
         return;
     }
 
-    RunAndCollect(key, spec.argv, [provider, onComplete, onError](std::string output, std::optional<int> exitCode) {
+    RunAndCollect(key, spec, [provider, onComplete, onError](std::string output, std::optional<int> exitCode) {
         if (!exitCode || *exitCode != 0) {
             onError(OperationFailureDetail("diff", exitCode, output));
             return;
@@ -346,7 +353,7 @@ void Runner::RunProviderOperation(const char* operation, const std::string& key,
         return;
     }
 
-    RunAndCollect(key, spec.argv,
+    RunAndCollect(key, spec,
                   [operation, provider, onOutput = std::move(onOutput), onError](std::string output, std::optional<int> exitCode) {
                       if (!exitCode || *exitCode != 0) {
                           onError(OperationFailureDetail(operation, exitCode, output));
@@ -359,6 +366,40 @@ void Runner::RunProviderOperation(const char* operation, const std::string& key,
                           onError(e.what());
                       }
                   });
+}
+
+void Runner::ApplyPatch(const char* operation, const std::string& key, std::string patch,
+                        std::function<CommandSpec(Provider&, const std::filesystem::path& patchPath)> argv,
+                        std::function<void()> onSuccess, std::function<void(std::string)> onError) {
+    auto patchFile       = std::make_shared<std::optional<std::filesystem::path>>();
+    auto removePatchFile = [patchFile] {
+        if (*patchFile) {
+            std::error_code ec;
+            std::filesystem::remove(**patchFile, ec); // best-effort -- a leftover temp file isn't worth an error
+        }
+    };
+    RunProviderOperation(
+        operation, key,
+        [&patch, &argv, &patchFile](Provider& provider) {
+            if (provider.PatchesOnStdin()) {
+                CommandSpec spec = argv(provider, "-");
+                spec.input       = std::move(patch);
+                return spec;
+            }
+            *patchFile = WritePatchFile(patch);
+            if (!*patchFile) {
+                throw std::runtime_error("couldn't write the patch to a temp file");
+            }
+            return argv(provider, **patchFile);
+        },
+        [removePatchFile, onSuccess = std::move(onSuccess)](Provider&, std::string) {
+            removePatchFile();
+            onSuccess();
+        },
+        [removePatchFile, onError = std::move(onError)](std::string error) {
+            removePatchFile();
+            onError(std::move(error));
+        });
 }
 
 void Runner::RequestStatus(std::function<void(std::vector<StatusEntry>)> onComplete,
@@ -438,34 +479,18 @@ void Runner::RequestHunkApplyForPath(const std::filesystem::path& pathArg, std::
         [&path, stage](Provider& provider) { return stage ? provider.DiffArgv(path) : provider.StagedDiffArgv(path); },
         [this, path, targetLine, stage, operation, keyPrefix, onSuccess = std::move(onSuccess),
          onError](Provider&, std::string diffOutput) {
-            const std::optional<std::string> patch = ExtractHunkPatch(diffOutput, targetLine);
+            std::optional<std::string> patch = ExtractHunkPatch(diffOutput, targetLine);
             if (!patch) {
                 onError(stage ? "no unstaged change at this line" : "no staged change at this line");
                 return;
             }
-            const std::optional<std::filesystem::path> patchFile = WritePatchFile(*patch);
-            if (!patchFile) {
-                onError("couldn't write the patch to a temp file");
-                return;
-            }
-            auto removePatchFile = [patchFile] {
-                std::error_code ec;
-                std::filesystem::remove(*patchFile, ec); // best-effort -- a leftover temp file isn't worth an error
-            };
             const std::filesystem::path root = ProjectRoot();
-            RunProviderOperation(
-                operation, keyPrefix + "-apply:" + path.string(),
-                [&root, &patchFile, stage](Provider& provider) {
-                    return stage ? provider.StagePatchArgv(root, *patchFile) : provider.UnstagePatchArgv(root, *patchFile);
+            ApplyPatch(
+                operation, keyPrefix + "-apply:" + path.string(), std::move(*patch),
+                [root, stage](Provider& provider, const std::filesystem::path& patchPath) {
+                    return stage ? provider.StagePatchArgv(root, patchPath) : provider.UnstagePatchArgv(root, patchPath);
                 },
-                [removePatchFile, onSuccess](Provider&, std::string) {
-                    removePatchFile();
-                    onSuccess();
-                },
-                [removePatchFile, onError](std::string error) {
-                    removePatchFile();
-                    onError(error);
-                });
+                onSuccess, onError);
         },
         onError);
 }
@@ -484,32 +509,16 @@ void Runner::RequestHunkRevert(const text::Buffer& buffer, std::size_t targetLin
         "revert hunk", "revert-hunk-diff:" + path.string(),
         [&path](Provider& provider) { return provider.DiffArgv(path); },
         [this, path, targetLine, onSuccess = std::move(onSuccess), onError](Provider&, std::string diffOutput) {
-            const std::optional<std::string> patch = ExtractHunkPatch(diffOutput, targetLine);
+            std::optional<std::string> patch = ExtractHunkPatch(diffOutput, targetLine);
             if (!patch) {
                 onError("no unstaged change at this line");
                 return;
             }
-            const std::optional<std::filesystem::path> patchFile = WritePatchFile(*patch);
-            if (!patchFile) {
-                onError("couldn't write the patch to a temp file");
-                return;
-            }
-            auto removePatchFile = [patchFile] {
-                std::error_code ec;
-                std::filesystem::remove(*patchFile, ec); // best-effort -- a leftover temp file isn't worth an error
-            };
             const std::filesystem::path root = ProjectRoot();
-            RunProviderOperation(
-                "revert hunk", "revert-hunk-apply:" + path.string(),
-                [&root, &patchFile](Provider& provider) { return provider.RevertPatchArgv(root, *patchFile); },
-                [removePatchFile, onSuccess](Provider&, std::string) {
-                    removePatchFile();
-                    onSuccess();
-                },
-                [removePatchFile, onError](std::string error) {
-                    removePatchFile();
-                    onError(error);
-                });
+            ApplyPatch(
+                "revert hunk", "revert-hunk-apply:" + path.string(), std::move(*patch),
+                [root](Provider& provider, const std::filesystem::path& patchPath) { return provider.RevertPatchArgv(root, patchPath); },
+                onSuccess, onError);
         },
         onError);
 }

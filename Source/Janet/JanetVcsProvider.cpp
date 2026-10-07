@@ -248,6 +248,28 @@ JanetVcsProvider::JanetVcsProvider(JanetTable* env, std::string name, Janet call
     if (!callbackNames_.contains("detect")) {
         throw std::runtime_error("ned: vcs provider \"" + name_ + "\" is missing the required :detect callback");
     }
+    if (const Janet markers = janet_get(callbacks, janet_ckeywordv("markers")); !janet_checktype(markers, JANET_NIL)) {
+        const Janet* items = nullptr;
+        std::int32_t count = 0;
+        if (!janet_indexed_view(markers, &items, &count)) {
+            throw std::runtime_error("ned: vcs provider \"" + name_ + "\"'s :markers must be an array of names");
+        }
+        for (std::int32_t i = 0; i < count; ++i) {
+            if (!janet_checktype(items[i], JANET_STRING)) {
+                throw std::runtime_error("ned: vcs provider \"" + name_ + "\"'s :markers must be an array of names");
+            }
+            markers_.push_back(FromJanet<std::string>(items[i]));
+        }
+    }
+    patchesOnStdin_ = janet_truthy(janet_get(callbacks, janet_ckeywordv("patches-on-stdin")));
+}
+
+std::vector<std::string> JanetVcsProvider::Markers() const {
+    return markers_;
+}
+
+bool JanetVcsProvider::PatchesOnStdin() const {
+    return patchesOnStdin_;
 }
 
 const std::string* JanetVcsProvider::InternalName(const std::string& key) const {

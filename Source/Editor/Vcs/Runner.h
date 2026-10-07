@@ -163,10 +163,8 @@ class Runner {
     // to pull back out of the index isn't in the worktree diff), then
     // ExtractHunkPatch (DiffPatch.h) slices the hunk covering targetLine
     // (1-indexed, counted on the diff's new side -- buffer lines for a
-    // stage, index lines for an unstage), the patch is written to a
-    // mkstemp temp file (FormatOnSave's exact pattern; TaskProcess has no
-    // stdin, deliberately), and Stage/UnstagePatchArgv applies it, with
-    // the temp file removed on success and failure alike. Two chained
+    // stage, index lines for an unstage), and Stage/UnstagePatchArgv
+    // applies the patch (see ApplyPatch). Two chained
     // subprocesses means two distinct running_ keys ("<op>-diff:"/
     // "<op>-apply:") -- reusing one key across the chain would make
     // RunAndCollect's erase-after-onDone destroy the second process the
@@ -268,7 +266,7 @@ class Runner {
     // request), collects its full combined stdout+stderr, and calls onDone
     // once it exits with (output, exitCode) -- exitCode is std::nullopt if
     // the process couldn't even be spawned or was terminated by a signal.
-    void RunAndCollect(const std::string& key, const std::vector<std::string>& argv,
+    void RunAndCollect(const std::string& key, const CommandSpec& spec,
                        std::function<void(std::string output, std::optional<int> exitCode)> onDone);
 
     [[nodiscard]] bool IsRunning(const std::string& key) const;
@@ -289,6 +287,13 @@ class Runner {
                               const std::function<CommandSpec(Provider&)>&    buildSpec,
                               std::function<void(Provider&, std::string output)> onOutput,
                               std::function<void(std::string)>                      onError);
+
+    // Applies patch with the argv built for its path: "-" with the patch on
+    // stdin when the provider takes it there, else a temp file removed once
+    // the command is done.
+    void ApplyPatch(const char* operation, const std::string& key, std::string patch,
+                    std::function<CommandSpec(Provider&, const std::filesystem::path& patchPath)> argv,
+                    std::function<void()> onSuccess, std::function<void(std::string)> onError);
 
     ned::ui::EventLoop& eventLoop_;
 
