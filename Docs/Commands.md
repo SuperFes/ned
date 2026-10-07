@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-372 commands.
+373 commands.
 
 ## `acp-close-session`
 
@@ -1383,6 +1383,10 @@ Rename the type declared in this file after the file's own name -- the inverse o
 Key: `C-c T f`
 
 Re-run every currently-failed test, one filtered run per test, merging the results.
+
+## `revert-buffer`
+
+Reload this buffer from its file, as one step undo can take back.
 
 ## `revert-buffer-with-charset`
 

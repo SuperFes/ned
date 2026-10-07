@@ -395,6 +395,88 @@ TEST_CASE("save-buffer writes a remote buffer to its host, and asks before overw
     CHECK_FALSE(buffer.Modified());
 }
 
+TEST_CASE("revert-buffer reads a remote buffer from its host again, as one undoable step", "[BufferView][Remote][HostAgent]") {
+    Fixture                          fixture;
+    ned::editor::remote::RemoteSaver saver(fixture.hosts, fixture.bufferList, fixture.queue, [&](std::string message) { fixture.statusMessage = std::move(message); });
+    ned::editor::SetRemoteSaveDispatcher([&saver](ned::editor::RemoteSaveRequest request) { return saver.Dispatch(std::move(request)); });
+    struct DispatcherGuard {
+        ~DispatcherGuard() {
+            ned::editor::SetRemoteSaveDispatcher(nullptr);
+        }
+    } guard;
+
+    const std::filesystem::path file = fixture.fake.dir / "notes.txt";
+    std::ofstream(file, std::ios::binary) << "caf\xC3\xA9\n";
+    const std::string where = "host:" + file.string();
+    fixture.Command("find-file");
+    fixture.Enter(where);
+    REQUIRE(fixture.StatusStartsWith("Opened " + where));
+    ned::text::Buffer& buffer = fixture.activeBuffer.Get();
+
+    // A save the host refused leaves the buffer marked changed there; reverting settles that.
+    std::ofstream(file, std::ios::binary) << "theirs\n";
+    std::filesystem::last_write_time(file, *buffer.RemoteTimestamp() + std::chrono::seconds(5));
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint("mine\n");
+    fixture.Command("save-buffer");
+    REQUIRE(fixture.StatusStartsWith("Couldn't save " + where));
+    REQUIRE(buffer.ExternallyModified());
+
+    fixture.Command("revert-buffer");
+    CHECK(fixture.statusMessage == "Reading " + where + "...");
+    REQUIRE(fixture.StatusStartsWith("Reloaded "));
+    CHECK(fixture.statusMessage == "Reloaded " + where + ". Undo brings back your edits.");
+    CHECK(buffer.Text() == "theirs\n");
+    CHECK_FALSE(buffer.Modified());
+    CHECK_FALSE(buffer.ExternallyModified());
+    CHECK(buffer.RemoteTimestamp() == std::filesystem::last_write_time(file));
+    buffer.Undo();
+    CHECK(buffer.Text() == "caf\xC3\xA9\nmine\n");
+
+    std::ofstream(file, std::ios::binary) << "caf\xC3\xA9\n";
+    fixture.Command("revert-buffer-with-charset");
+    fixture.Enter("latin1");
+    REQUIRE(fixture.StatusStartsWith("Reloaded "));
+    CHECK(fixture.statusMessage == "Reloaded " + where + " as latin1. Undo brings back your edits.");
+    CHECK(buffer.Text() == "caf\xC3\x83\xC2\xA9\n");
+    CHECK(buffer.FileCharset() == ned::text::Charset::Latin1);
+
+    std::filesystem::remove(file);
+    fixture.Command("revert-buffer");
+    REQUIRE(fixture.StatusStartsWith("Couldn't reload " + where + ": no such file"));
+    CHECK(buffer.Text() == "caf\xC3\x83\xC2\xA9\n");
+}
+
+TEST_CASE("revert-buffer tries a remote buffer's failed load again", "[BufferView][Remote][HostAgent]") {
+    Fixture                     fixture;
+    const std::filesystem::path file = fixture.fake.dir / "later.txt";
+    std::ofstream(file, std::ios::binary) << "here now\n";
+    const ned::text::RemoteFile remote{.destination = "host", .path = file};
+
+    ned::text::Buffer& placeholder = fixture.bufferList.AddRemotePlaceholder(remote);
+    placeholder.MarkLoadFailed("Connection refused");
+    fixture.activeBuffer.Set(placeholder);
+
+    fixture.Command("revert-buffer-with-charset");
+    fixture.Enter("latin1");
+    CHECK(fixture.statusMessage == remote.ToString() + " isn't loaded yet; revert-buffer reads it first.");
+
+    fixture.Command("revert-buffer");
+    CHECK_FALSE(placeholder.LoadFailure().has_value());
+    REQUIRE(fixture.StatusStartsWith("Opened " + remote.ToString()));
+    CHECK(placeholder.Text() == "here now\n");
+    CHECK_FALSE(placeholder.IsLoading());
+
+    ned::text::Buffer& unreachable = fixture.bufferList.AddRemotePlaceholder({.destination = "denied", .path = "/etc/hosts"});
+    unreachable.MarkLoadFailed("Connection refused");
+    fixture.activeBuffer.Set(unreachable);
+    fixture.Command("revert-buffer");
+    REQUIRE(fixture.StatusStartsWith("Couldn't open denied:/etc/hosts: "));
+    CHECK(unreachable.IsLoading());
+    REQUIRE(unreachable.LoadFailure().has_value());
+    CHECK_THAT(*unreachable.LoadFailure(), ContainsSubstring("Permission denied"));
+}
+
 TEST_CASE("next-error walks a remote search's results into the host's files", "[BufferView][Remote][HostAgent]") {
     Fixture                     fixture;
     const std::filesystem::path tree = fixture.fake.dir / "walk";

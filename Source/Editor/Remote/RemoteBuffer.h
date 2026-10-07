@@ -54,6 +54,13 @@ struct RemoteLoadOutcome {
 void LoadRemoteBuffer(Hosts& hosts, text::BufferList& buffers, const text::Buffer& placeholder, bool createMissing,
                       LifetimeToken token, std::function<void(text::Buffer& buffer, RemoteLoadOutcome outcome)> done);
 
+// revert-buffer for a loaded remote buffer: reads its file from its host
+// again and takes it as one undoable step (Buffer::RevertFromRemote),
+// decoded as charset when given. done gets why not, if it couldn't, with
+// the buffer untouched; LoadRemoteBuffer's terms otherwise.
+void ReloadRemoteBuffer(Hosts& hosts, text::BufferList& buffers, const text::Buffer& buffer, std::optional<text::Charset> charset,
+                        LifetimeToken token, std::function<void(text::Buffer& buffer, std::optional<std::string> failure)> done);
+
 // Settles a remote save (Buffer::BeginRemoteSave) with the host's answer:
 // saved, at the host's new timestamp, or abandoned with why. A file that
 // changed on the host since the buffer last saw it marks the buffer

@@ -1581,10 +1581,13 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             setModeList_.SelectTop();
             RefreshSetModeStatus();
             return;
+        case editor::InteractiveRequest::RevertBuffer:
+            RevertActiveBuffer(std::nullopt);
+            return;
         case editor::InteractiveRequest::SetBufferCharset:
         case editor::InteractiveRequest::RevertBufferWithCharset:
             charsetPromptReverts_ = request == editor::InteractiveRequest::RevertBufferWithCharset;
-            if (charsetPromptReverts_ && !activeBuffer_.Get().Path()) {
+            if (charsetPromptReverts_ && !activeBuffer_.Get().Path() && !activeBuffer_.Get().Remote()) {
                 statusMessage_ = "Buffer \"" + activeBuffer_.Get().Name() + "\" has no file to reload.";
                 return;
             }
@@ -5182,6 +5185,41 @@ bufferview::FuzzyPrompt BufferView::SetModePrompt() {
                 statusMessage_ = "Mode: " + selected; }};
 }
 
+void BufferView::RevertActiveBuffer(std::optional<text::Charset> charset) {
+    text::Buffer& buffer = activeBuffer_.Get();
+    if (buffer.IsSaving()) {
+        statusMessage_ = "\"" + buffer.Name() + "\" is still saving.";
+        return;
+    }
+    if (buffer.Remote()) {
+        RevertRemoteBuffer(buffer, charset);
+        return;
+    }
+    if (!buffer.Path()) {
+        statusMessage_ = "Buffer \"" + buffer.Name() + "\" has no file to reload.";
+        return;
+    }
+    if (buffer.IsLoading()) {
+        statusMessage_ = "\"" + buffer.Name() + "\" is still loading.";
+        return;
+    }
+    const bool discarded = buffer.Modified();
+    try {
+        if (charset) {
+            buffer.RevertWithCharset(*charset);
+        }
+        else {
+            buffer.Revert();
+        }
+    }
+    catch (const std::exception& e) {
+        ReportError(e.what());
+        return;
+    }
+    statusMessage_ = "Reloaded " + buffer.Name() + (charset ? " as " + std::string(text::CharsetName(*charset)) : "") + "." +
+                     (discarded ? " Undo brings back your edits." : "");
+}
+
 bufferview::FuzzyPrompt BufferView::BufferCharsetPrompt() {
     return {.list          = &bufferCharsetList_,
             .historyKey    = "buffer-charset",
@@ -5206,13 +5244,7 @@ bufferview::FuzzyPrompt BufferView::BufferCharsetPrompt() {
                     statusMessage_ = "Buffer will be saved as " + selected + " next.";
                     return;
                 }
-                try {
-                    buffer.RevertWithCharset(*charset);
-                    statusMessage_ = "Reloaded " + buffer.Name() + " as " + selected + ".";
-                }
-                catch (const std::exception& e) {
-                    ReportError(e.what());
-                } }};
+                RevertActiveBuffer(*charset); }};
 }
 
 bufferview::FuzzyPrompt BufferView::BookmarkJumpPrompt() {

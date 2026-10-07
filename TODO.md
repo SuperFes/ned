@@ -82,8 +82,6 @@ and sync on save; don't build a remote-authoritative buffer.
 - [ ] Remote semantics for `ExternallyModified`/`AutoRevert`/`AutoMerge`/`FileWatch`,
       driven by `watch` events rather than polling. Today a remote buffer only learns its
       file changed when the host refuses a write.
-- [ ] `revert-buffer` (and its charset variants) for a remote buffer, re-reading through
-      `fs/read`; it throws today, as for any buffer without a path.
 - [ ] Remote saves over 48 MiB: `fs/write` carries the content in one request, so a
       bigger file needs a streamed upload. Decoding a read and encoding a save run on the
       main thread, which only matters at that size too.

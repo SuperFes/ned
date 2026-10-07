@@ -57,6 +57,7 @@ enum class InteractiveRequest { None,
                                 ConfirmQuit,
                                 FindFile,
                                 SetMode,
+                                RevertBuffer,
                                 // set-buffer-charset / revert-buffer-with-charset:
                                 // one picker over Text/Charset.h's charsets.
                                 SetBufferCharset,

@@ -4327,6 +4327,12 @@ class BufferView : public Widget {
     // (1-indexed) when given. A file the host doesn't have opens as a new
     // one only with createMissing; otherwise it's reported missing.
     void VisitRemoteFile(const editor::remote::Location& file, std::optional<std::size_t> line = std::nullopt, bool createMissing = true);
+    // revert-buffer and revert-buffer-with-charset: the active buffer's
+    // file read again, as one undoable step, decoded as charset when given.
+    // A remote buffer reads through its host, and one whose load failed
+    // tries that load again.
+    void RevertActiveBuffer(std::optional<text::Charset> charset);
+    void RevertRemoteBuffer(text::Buffer& buffer, std::optional<text::Charset> charset);
     // Hosts already in use or used before, then the ones ssh knows.
     [[nodiscard]] std::vector<std::string> RemoteHostCandidates() const;
     // The host dropdown's candidates for what the prompt holds now.

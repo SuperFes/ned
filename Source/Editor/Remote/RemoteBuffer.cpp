@@ -39,38 +39,68 @@ std::optional<std::string> FinishRemoteLoad(text::Buffer& placeholder, const FsR
     return std::nullopt;
 }
 
+namespace {
+
+    // Connects to buffer's host and reads its file, then hands read to the
+    // still-open buffer; a failed connection reads as a failed read.
+    void ReadRemoteBuffer(Hosts& hosts, text::BufferList& buffers, const text::Buffer& buffer, LifetimeToken token,
+                          std::function<void(text::Buffer& buffer, const FsResult<text::FileContents>& read)> done) {
+        const text::RemoteFile     file = *buffer.Remote();
+        const text::BufferIdentity identity(buffer);
+        hosts.Connect(file.destination, token.Bind([&buffers, file, identity, token, done = std::move(done)](
+                                                       const std::expected<Connection*, std::string>& connection) {
+            text::Buffer* open = buffers.Find(identity);
+            if (open == nullptr) {
+                return;
+            }
+            if (!connection) {
+                done(*open, std::unexpected(FsFailure{.code = host::fs_error::kFailed, .message = connection.error()}));
+                return;
+            }
+            ReadFile(**connection, file.path, MaxRemoteFileBytes(),
+                     token.Bind([&buffers, identity, done](const FsResult<text::FileContents>& read) {
+                         if (text::Buffer* reading = buffers.Find(identity)) {
+                             done(*reading, read);
+                         }
+                     }));
+        }));
+    }
+
+} // namespace
+
 void LoadRemoteBuffer(Hosts& hosts, text::BufferList& buffers, const text::Buffer& placeholder, bool createMissing,
                       LifetimeToken token, std::function<void(text::Buffer& buffer, RemoteLoadOutcome outcome)> done) {
-    const text::RemoteFile     file = *placeholder.Remote();
-    const text::BufferIdentity identity(placeholder);
-    hosts.Connect(file.destination, token.Bind([&buffers, file, identity, createMissing, token, done = std::move(done)](
-                                                   const std::expected<Connection*, std::string>& connection) {
-        text::Buffer* buffer = buffers.Find(identity);
-        if (buffer == nullptr) {
-            return;
-        }
-        if (!connection) {
-            done(*buffer, {.loaded = std::unexpected(connection.error())});
-            return;
-        }
-        ReadFile(**connection, file.path, MaxRemoteFileBytes(),
-                 token.Bind([&buffers, identity, createMissing, done](const FsResult<text::FileContents>& read) {
-                     text::Buffer* loading = buffers.Find(identity);
-                     if (loading == nullptr) {
-                         return;
-                     }
-                     const bool missing = !read && read.error().code == host::fs_error::kNotFound;
-                     if (missing && !createMissing) {
-                         done(*loading, {.loaded = std::unexpected(std::string("no such file")), .missing = true});
-                         return;
-                     }
-                     if (const std::optional<std::string> failure = FinishRemoteLoad(*loading, read)) {
-                         done(*loading, {.loaded = std::unexpected(*failure)});
-                         return;
-                     }
-                     done(*loading, {.loaded = read ? RemoteLoaded::Read : RemoteLoaded::Created});
-                 }));
-    }));
+    ReadRemoteBuffer(hosts, buffers, placeholder, std::move(token),
+                     [createMissing, done = std::move(done)](text::Buffer& loading, const FsResult<text::FileContents>& read) {
+                         if (!read && read.error().code == host::fs_error::kNotFound && !createMissing) {
+                             done(loading, {.loaded = std::unexpected(std::string("no such file")), .missing = true});
+                             return;
+                         }
+                         if (const std::optional<std::string> failure = FinishRemoteLoad(loading, read)) {
+                             done(loading, {.loaded = std::unexpected(*failure)});
+                             return;
+                         }
+                         done(loading, {.loaded = read ? RemoteLoaded::Read : RemoteLoaded::Created});
+                     });
+}
+
+void ReloadRemoteBuffer(Hosts& hosts, text::BufferList& buffers, const text::Buffer& buffer, std::optional<text::Charset> charset,
+                        LifetimeToken token, std::function<void(text::Buffer& buffer, std::optional<std::string> failure)> done) {
+    ReadRemoteBuffer(hosts, buffers, buffer, std::move(token),
+                     [charset, done = std::move(done)](text::Buffer& reloading, const FsResult<text::FileContents>& read) {
+                         if (!read) {
+                             done(reloading, read.error().code == host::fs_error::kNotFound ? "no such file" : read.error().message);
+                             return;
+                         }
+                         try {
+                             reloading.RevertFromRemote(*read, charset);
+                         }
+                         catch (const std::exception& e) {
+                             done(reloading, e.what());
+                             return;
+                         }
+                         done(reloading, std::nullopt);
+                     });
 }
 
 std::optional<std::string> FinishRemoteSave(text::Buffer& buffer, text::SavePlan plan, const FsResult<host::FileStat>& written) {
