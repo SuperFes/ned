@@ -205,6 +205,42 @@ TEST_CASE("Endpoint streams a flood without exceeding the receiver's window", "[
     }
 }
 
+TEST_CASE("A stream granted by hand gets no more than its consumer has released", "[Protocol][Endpoint]") {
+    Peers         peers;
+    constexpr int kChunks = 100;
+    peers.host.Handle("flood", [](Json, Responder responder) {
+        for (int i = 0; i < kChunks; ++i) {
+            responder.Chunk(i);
+        }
+        responder.Result("done");
+    });
+
+    Outcome          outcome;
+    ResponseHandlers handlers = outcome.Handlers();
+    handlers.grantsByHand     = true;
+    const std::uint64_t id    = peers.editor.Request("flood", nullptr, std::move(handlers));
+    peers.Pump();
+    // Nothing released: the first window and no more.
+    REQUIRE(outcome.chunks.size() == kDefaultWindow);
+
+    // Credit goes back in batches of half the window, and only for what
+    // was released.
+    peers.editor.Grant(id, kDefaultWindow / 2 - 1);
+    peers.Pump();
+    REQUIRE(outcome.chunks.size() == kDefaultWindow);
+    peers.editor.Grant(id);
+    peers.Pump();
+    REQUIRE(outcome.chunks.size() == kDefaultWindow + kDefaultWindow / 2);
+
+    while (!outcome.result) {
+        peers.editor.Grant(id, kDefaultWindow);
+        peers.Pump();
+    }
+    REQUIRE(outcome.chunks.size() == kChunks);
+    peers.editor.Grant(id); // finished: nothing to grant
+    REQUIRE(peers.toHost.empty());
+}
+
 TEST_CASE("Endpoint tells a producer when credit clears its backlog", "[Protocol][Endpoint]") {
     Peers                    peers;
     std::optional<Responder> held;
