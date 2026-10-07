@@ -9,7 +9,7 @@ namespace {
 
     struct State {
         std::mutex                                   mutex;
-        std::map<std::filesystem::path, std::string> branches;
+        std::map<Repo, std::string>                  branches;
     };
 
     State& Branches() {
@@ -19,21 +19,21 @@ namespace {
 
 } // namespace
 
-void SetCurrentBranch(const std::filesystem::path& root, std::optional<std::string> branch) {
+void SetCurrentBranch(const Repo& repo, std::optional<std::string> branch) {
     State&                state = Branches();
     const std::lock_guard lock(state.mutex);
     if (branch) {
-        state.branches.insert_or_assign(root, std::move(*branch));
+        state.branches.insert_or_assign(repo, std::move(*branch));
     }
     else {
-        state.branches.erase(root);
+        state.branches.erase(repo);
     }
 }
 
-std::optional<std::string> CurrentBranch(const std::filesystem::path& root) {
+std::optional<std::string> CurrentBranch(const Repo& repo) {
     State&                state = Branches();
     const std::lock_guard lock(state.mutex);
-    const auto            found = state.branches.find(root);
+    const auto            found = state.branches.find(repo);
     if (found == state.branches.end()) {
         return std::nullopt;
     }

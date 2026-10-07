@@ -481,7 +481,7 @@ struct IssueBranchGuard {
     IssueBranchGuard() {
         ned::editor::tracker::ClearRegistry();
         ned::editor::tracker::SetConnection(ned::editor::tracker::Connection{.name = "work", .provider = "jira"});
-        ned::editor::vcs::SetCurrentBranch("/repo", "feature/DEV-450-login");
+        ned::editor::vcs::SetCurrentBranch(ned::editor::vcs::Repo{.destination = std::nullopt, .root = "/repo"}, "feature/DEV-450-login");
     }
     ~IssueBranchGuard() {
         ned::editor::tracker::ClearRegistry();
@@ -532,7 +532,7 @@ TEST_CASE("A branch naming an issue seeds a new commit message with its key", "[
         CHECK(fixture.statusMessage == "Empty commit message -- not committing.");
     }
     SECTION("a branch naming no issue seeds nothing") {
-        ned::editor::vcs::SetCurrentBranch("/repo", "main");
+        ned::editor::vcs::SetCurrentBranch(ned::editor::vcs::Repo{.destination = std::nullopt, .root = "/repo"}, "main");
         view.BeginVcsCommitMessageForTesting();
         ned::text::Buffer* commitBuffer = fixture.bufferList.FindByPath(ned::editor::vcs::CommitMessagePath());
         REQUIRE(commitBuffer != nullptr);

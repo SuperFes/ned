@@ -1523,6 +1523,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     windowManager->SetRemoteHosts(&remoteHosts);
     taskRunner.SetHosts(&remoteHosts);
     testRunner.SetHosts(&remoteHosts);
+    vcsRunner.SetHosts(&remoteHosts);
     windowManager->EnableRemoteSaving(eventLoop);
     windowManager->LoadRemoteBuffers(restoredRemoteBuffers);
 
@@ -1717,7 +1718,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     }
     // For the mode line's issue key.
     if (!ned::editor::tracker::Connections().empty()) {
-        vcsRunner.RefreshCurrentBranch();
+        vcsRunner.RefreshCurrentBranch(ned::editor::vcs::LocalRepo());
     }
     // Deferred: this fires from the dock's Paint, and a fetch spawns a process.
     leftDock->SetOnPanelShown([&eventLoop, &trackerPanelsByDockId](std::size_t id) {
@@ -1954,19 +1955,15 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // own selection (what normally drives a re-fetch) hasn't moved.
     vcsDiffPreview.SetOnHunkStageToggle(
         [&vcsRunner, &vcsDiffPreview, panel = vcsPanel.get()](const std::filesystem::path& path, std::size_t newStart, bool stage) {
-            vcsRunner.RequestHunkApply(
-                path, newStart, stage,
-                [&vcsRunner, &vcsDiffPreview, panel, path, stage] {
+            vcsRunner.RequestHunkApply(ned::editor::vcs::LocalRepo(), path, newStart, stage, [&vcsRunner, &vcsDiffPreview, panel, path, stage] {
                     panel->ForceRefresh();
-                    vcsRunner.RequestFileDiffText(
+                    vcsRunner.RequestFileDiffText(ned::editor::vcs::LocalRepo(), 
                         path, !stage,
                         [&vcsDiffPreview, path, stage](std::string rawDiff) {
                             vcsDiffPreview.SetModel(ned::ui::VcsDiffPreviewModel{
                                                         .path = path, .staged = !stage, .hunks = ned::editor::vcs::ParseDiffHunks(rawDiff)});
                         },
-                        [&vcsDiffPreview](const std::string&) { vcsDiffPreview.SetModel(std::nullopt); });
-                },
-                [](const std::string&) {});
+                        [&vcsDiffPreview](const std::string&) { vcsDiffPreview.SetModel(std::nullopt); }); }, [](const std::string&) {});
         });
     vcsPanel->SetOnSelectionChanged(
         [&overlays, &vcsRunner, &vcsDiffPreview](std::optional<std::filesystem::path> path, bool staged) {
@@ -1975,17 +1972,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
                 vcsDiffPreview.SetModel(std::nullopt);
                 return;
             }
-            vcsRunner.RequestFileDiffText(
-                *path, staged,
-                [&overlays, &vcsDiffPreview, path = *path, staged](std::string rawDiff) {
+            vcsRunner.RequestFileDiffText(ned::editor::vcs::LocalRepo(), *path, staged, [&overlays, &vcsDiffPreview, path = *path, staged](std::string rawDiff) {
                     vcsDiffPreview.SetModel(
                         ned::ui::VcsDiffPreviewModel{path, staged, ned::editor::vcs::ParseDiffHunks(rawDiff)});
-                    overlays.Show(vcsDiffPreview);
-                },
-                [&overlays, &vcsDiffPreview](const std::string&) {
+                    overlays.Show(vcsDiffPreview); }, [&overlays, &vcsDiffPreview](const std::string&) {
                     vcsDiffPreview.SetModel(std::nullopt);
-                    overlays.Hide(vcsDiffPreview);
-                });
+                    overlays.Hide(vcsDiffPreview); });
         });
 
     // The preview is non-focusable and has no toggle of its own, so the only

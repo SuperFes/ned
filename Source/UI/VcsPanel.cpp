@@ -350,39 +350,31 @@ void VcsPanel::RefreshStatus(bool force) {
     // force=true refresh (stage/commit/etc.'s own onSuccess). Leaving it
     // unadvanced on failure makes the very next Paint() retry immediately
     // instead, which is what actually converges in practice.
-    vcsRunner_->RequestStatus(
-        [this](std::vector<editor::vcs::StatusEntry> entries) {
+    vcsRunner_->RequestStatus(editor::vcs::LocalRepo(), [this](std::vector<editor::vcs::StatusEntry> entries) {
             sections_        = editor::vcs::PartitionVcsStatus(entries);
             haveStatus_      = true;
             lastRefreshTime_ = std::chrono::steady_clock::now();
-            RefreshConflictedPaths();
-        },
-        [](const std::string&) {});
-    vcsRunner_->RequestBranchList(
-        [this](std::vector<editor::vcs::BranchEntry> entries) {
+            RefreshConflictedPaths(); }, [](const std::string&) {});
+    vcsRunner_->RequestBranchList(editor::vcs::LocalRepo(), [this](std::vector<editor::vcs::BranchEntry> entries) {
             for (const editor::vcs::BranchEntry& entry : entries) {
                 if (entry.current) {
                     currentBranch_ = entry.name;
                     return;
                 }
-            }
-        },
-        [](const std::string&) {});
+            } }, [](const std::string&) {});
     // Stash support: same throttled cadence, silently keeps stashes_'s last-
     // known contents on error (a provider without stash vocabulary just
     // never shows the section, ParseStashList/PartitionVcsStatus's own
     // "highlighting is only meaningful when it works" precedent).
-    vcsRunner_->RequestStashList([this](std::vector<editor::vcs::StashEntry> entries) { stashes_ = std::move(entries); },
-                                 [](const std::string&) {});
+    vcsRunner_->RequestStashList(editor::vcs::LocalRepo(), [this](std::vector<editor::vcs::StashEntry> entries) { stashes_ = std::move(entries); }, [](const std::string&) {});
     // Ahead/behind summary: silently keeps the last-known value on error
     // (no upstream configured is the common, expected case for a repo with
     // no remote at all) -- same "highlighting is only meaningful when it
     // works" precedent as the rest of this refresh.
-    vcsRunner_->RequestAheadBehind([this](editor::vcs::AheadBehind ab) { aheadBehind_ = ab; }, [](const std::string&) {});
+    vcsRunner_->RequestAheadBehind(editor::vcs::LocalRepo(), [this](editor::vcs::AheadBehind ab) { aheadBehind_ = ab; }, [](const std::string&) {});
     // Cleared on error too: a provider with no sequence vocabulary must not
     // keep showing a rebase that has long since finished.
-    vcsRunner_->RequestSequenceState([this](editor::vcs::SequenceState state) { sequence_ = std::move(state); },
-                                     [this](const std::string&) { sequence_ = {}; });
+    vcsRunner_->RequestSequenceState(editor::vcs::LocalRepo(), [this](editor::vcs::SequenceState state) { sequence_ = std::move(state); }, [this](const std::string&) { sequence_ = {}; });
 }
 
 void VcsPanel::RefreshConflictedPaths() {
@@ -1043,9 +1035,7 @@ void VcsPanel::PushStash() {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    vcsRunner_->RequestStashPush(
-        "", [this] { RefreshStatus(/*force=*/true); },
-        [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
+    vcsRunner_->RequestStashPush(editor::vcs::LocalRepo(), "", [this] { RefreshStatus(/*force=*/true); }, [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
 }
 
 void VcsPanel::PopStash(const std::string& ref) {
@@ -1053,9 +1043,7 @@ void VcsPanel::PopStash(const std::string& ref) {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    vcsRunner_->RequestStashPop(
-        ref, [this] { RefreshStatus(/*force=*/true); },
-        [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
+    vcsRunner_->RequestStashPop(editor::vcs::LocalRepo(), ref, [this] { RefreshStatus(/*force=*/true); }, [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
 }
 
 void VcsPanel::DropStash(const std::string& ref) {
@@ -1063,9 +1051,7 @@ void VcsPanel::DropStash(const std::string& ref) {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    vcsRunner_->RequestStashDrop(
-        ref, [this] { RefreshStatus(/*force=*/true); },
-        [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
+    vcsRunner_->RequestStashDrop(editor::vcs::LocalRepo(), ref, [this] { RefreshStatus(/*force=*/true); }, [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
 }
 
 void VcsPanel::RunRemoteAction(RemoteAction action) {
@@ -1080,13 +1066,13 @@ void VcsPanel::RunRemoteAction(RemoteAction action) {
     auto onError = [this](const std::string& error) { statusMessage_ = "vcs: " + error; };
     switch (action) {
         case RemoteAction::Fetch:
-            vcsRunner_->RequestFetch(onSuccess, onError);
+            vcsRunner_->RequestFetch(editor::vcs::LocalRepo(), onSuccess, onError);
             return;
         case RemoteAction::Pull:
-            vcsRunner_->RequestPull(onSuccess, onError);
+            vcsRunner_->RequestPull(editor::vcs::LocalRepo(), onSuccess, onError);
             return;
         case RemoteAction::Push:
-            vcsRunner_->RequestPush(onSuccess, onError);
+            vcsRunner_->RequestPush(editor::vcs::LocalRepo(), onSuccess, onError);
             return;
     }
 }
@@ -1144,10 +1130,10 @@ void VcsPanel::StagePaths(std::vector<std::filesystem::path> targets, bool stage
             }
         };
         if (stage) {
-            vcsRunner_->RequestStage(path, onDone, onError);
+            vcsRunner_->RequestStage(editor::vcs::LocalRepo(), path, onDone, onError);
         }
         else {
-            vcsRunner_->RequestUnstage(path, onDone, onError);
+            vcsRunner_->RequestUnstage(editor::vcs::LocalRepo(), path, onDone, onError);
         }
     }
 }
@@ -1192,9 +1178,7 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
         pendingRevertConfirm_.reset();
         if (confirmed) {
             if (vcsRunner_) {
-                vcsRunner_->RequestRevert(
-                    target, [this] { RefreshStatus(/*force=*/true); },
-                    [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
+                vcsRunner_->RequestRevert(editor::vcs::LocalRepo(), target, [this] { RefreshStatus(/*force=*/true); }, [this](const std::string& error) { statusMessage_ = "vcs: " + error; });
             }
             else {
                 statusMessage_ = "no vcs runner configured";

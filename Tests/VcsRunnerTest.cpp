@@ -5,22 +5,25 @@
 #include <string>
 
 #include "Editor/Project/Root.h"
+#include "Editor/Vcs/CurrentBranch.h"
 #include "Editor/Vcs/ProviderRegistry.h"
+#include "Editor/Vcs/Repo.h"
 #include "Editor/Vcs/Runner.h"
 #include "Text/Buffer.h"
 #include "UI/EventLoop.h"
 
 using ned::editor::vcs::ActiveProviderFor;
-using ned::editor::vcs::ClearRegistry;
-using ned::editor::vcs::ExtractCommitMessage;
-using ned::editor::vcs::kVcsCommitMessageFilename;
-using ned::editor::vcs::RegisterProvider;
 using ned::editor::vcs::BlameLine;
+using ned::editor::vcs::ClearRegistry;
 using ned::editor::vcs::CommandSpec;
 using ned::editor::vcs::CommitMessagePath;
 using ned::editor::vcs::DiffHunk;
+using ned::editor::vcs::ExtractCommitMessage;
+using ned::editor::vcs::kVcsCommitMessageFilename;
+using ned::editor::vcs::LocalRepo;
 using ned::editor::vcs::LogEntry;
 using ned::editor::vcs::Provider;
+using ned::editor::vcs::RegisterProvider;
 using ned::editor::vcs::Runner;
 using ned::text::Buffer;
 
@@ -164,81 +167,63 @@ TEST_CASE("Runner root-scoped requests report an error when no provider is regis
     Runner          runner(eventLoop);
 
     std::string error;
-    runner.RequestStatus([](std::vector<ned::editor::vcs::StatusEntry>) { FAIL("onComplete should not be called"); },
-                         [&error](std::string message) { error = message; });
+    runner.RequestStatus(LocalRepo(), [](std::vector<ned::editor::vcs::StatusEntry>) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
     error.clear();
-    runner.RequestCommit(
-        "a message", [](std::string) { FAIL("onSuccess should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestCommit(LocalRepo(), "a message", [](std::string) { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
     // VcsPanel amend follow-up.
     error.clear();
-    runner.RequestAmendCommit(
-        "a message", [](std::string) { FAIL("onSuccess should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestAmendCommit(LocalRepo(), "a message", [](std::string) { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
     error.clear();
-    runner.RequestPreviousCommitMessage(
-        [](std::string) { FAIL("onComplete should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestPreviousCommitMessage(LocalRepo(), [](std::string) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
     // VcsPanel commit-variants follow-up.
     error.clear();
-    runner.RequestExtendCommit(
-        [](std::string) { FAIL("onSuccess should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestExtendCommit(LocalRepo(), [](std::string) { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
     // Reword follow-up.
     error.clear();
-    runner.RequestRewordCommit(
-        "a message", [](std::string) { FAIL("onSuccess should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestRewordCommit(LocalRepo(), "a message", [](std::string) { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
     error.clear();
-    runner.RequestBranchList(
-        [](std::vector<ned::editor::vcs::BranchEntry>) { FAIL("onComplete should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestBranchList(LocalRepo(), [](std::vector<ned::editor::vcs::BranchEntry>) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
     error.clear();
-    runner.RequestFullDiff([](std::string) { FAIL("onComplete should not be called"); },
-                           [&error](std::string message) { error = message; });
+    runner.RequestFullDiff(LocalRepo(), [](std::string) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
     // VCS side panel follow-up: revert/stash/push-pull-fetch/ahead-behind.
     error.clear();
-    runner.RequestStashList(
-        [](std::vector<ned::editor::vcs::StashEntry>) { FAIL("onComplete should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestStashList(LocalRepo(), [](std::vector<ned::editor::vcs::StashEntry>) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
     error.clear();
-    runner.RequestStashPush(
-        "a message", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestStashPush(LocalRepo(), "a message", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
     error.clear();
-    runner.RequestPush([] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestPush(LocalRepo(), [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
     error.clear();
-    runner.RequestPull([] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestPull(LocalRepo(), [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
     error.clear();
-    runner.RequestFetch([] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestFetch(LocalRepo(), [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 
     error.clear();
-    runner.RequestAheadBehind([](ned::editor::vcs::AheadBehind) { FAIL("onComplete should not be called"); },
-                              [&error](std::string message) { error = message; });
+    runner.RequestAheadBehind(LocalRepo(), [](ned::editor::vcs::AheadBehind) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE_FALSE(error.empty());
 }
 
@@ -250,125 +235,95 @@ TEST_CASE("Runner surfaces the provider's own 'not supported' answer for unimple
     Runner          runner(eventLoop);
 
     std::string error;
-    runner.RequestStatus([](std::vector<ned::editor::vcs::StatusEntry>) { FAIL("onComplete should not be called"); },
-                         [&error](std::string message) { error = message; });
+    runner.RequestStatus(LocalRepo(), [](std::vector<ned::editor::vcs::StatusEntry>) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "status not supported by this provider");
 
     error.clear();
-    runner.RequestStage(
-        "/tmp/ned-vcs-runner-test-file.txt", [] { FAIL("onSuccess should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestStage(LocalRepo(), "/tmp/ned-vcs-runner-test-file.txt", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "stage not supported by this provider");
 
     error.clear();
-    runner.RequestUnstage(
-        "/tmp/ned-vcs-runner-test-file.txt", [] { FAIL("onSuccess should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestUnstage(LocalRepo(), "/tmp/ned-vcs-runner-test-file.txt", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "unstage not supported by this provider");
 
     error.clear();
-    runner.RequestCommit(
-        "a message", [](std::string) { FAIL("onSuccess should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestCommit(LocalRepo(), "a message", [](std::string) { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "commit not supported by this provider");
 
     // VcsPanel amend follow-up.
     error.clear();
-    runner.RequestAmendCommit(
-        "a message", [](std::string) { FAIL("onSuccess should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestAmendCommit(LocalRepo(), "a message", [](std::string) { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "amend commit not supported by this provider");
 
     error.clear();
-    runner.RequestPreviousCommitMessage(
-        [](std::string) { FAIL("onComplete should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestPreviousCommitMessage(LocalRepo(), [](std::string) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "previous commit message not supported by this provider");
 
     // VcsPanel commit-variants follow-up.
     error.clear();
-    runner.RequestExtendCommit(
-        [](std::string) { FAIL("onSuccess should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestExtendCommit(LocalRepo(), [](std::string) { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "extend commit not supported by this provider");
 
     // Reword follow-up.
     error.clear();
-    runner.RequestRewordCommit(
-        "a message", [](std::string) { FAIL("onSuccess should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestRewordCommit(LocalRepo(), "a message", [](std::string) { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "reword commit not supported by this provider");
 
     error.clear();
-    runner.RequestBranchList(
-        [](std::vector<ned::editor::vcs::BranchEntry>) { FAIL("onComplete should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestBranchList(LocalRepo(), [](std::vector<ned::editor::vcs::BranchEntry>) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "branch listing not supported by this provider");
 
     error.clear();
-    runner.RequestBranchSwitch(
-        "dev", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestBranchSwitch(LocalRepo(), "dev", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "branch switching not supported by this provider");
 
     error.clear();
-    runner.RequestBranchCreate(
-        "dev", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestBranchCreate(LocalRepo(), "dev", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "branch creation not supported by this provider");
 
     error.clear();
-    runner.RequestFullDiff([](std::string) { FAIL("onComplete should not be called"); },
-                           [&error](std::string message) { error = message; });
+    runner.RequestFullDiff(LocalRepo(), [](std::string) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "full diff not supported by this provider");
 
     error.clear();
-    runner.RequestCommitDiff(
-        "abc1234", [](std::string) { FAIL("onComplete should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestCommitDiff(LocalRepo(), "abc1234", [](std::string) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "commit diff not supported by this provider");
 
     // VCS side panel follow-up: revert/stash/push-pull-fetch/ahead-behind.
     error.clear();
-    runner.RequestRevert(
-        "/tmp/ned-vcs-runner-test-file.txt", [] { FAIL("onSuccess should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestRevert(LocalRepo(), "/tmp/ned-vcs-runner-test-file.txt", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "revert not supported by this provider");
 
     error.clear();
-    runner.RequestStashList(
-        [](std::vector<ned::editor::vcs::StashEntry>) { FAIL("onComplete should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestStashList(LocalRepo(), [](std::vector<ned::editor::vcs::StashEntry>) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "stash listing not supported by this provider");
 
     error.clear();
-    runner.RequestStashPush(
-        "", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestStashPush(LocalRepo(), "", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "stash push not supported by this provider");
 
     error.clear();
-    runner.RequestStashPop(
-        "stash@{0}", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestStashPop(LocalRepo(), "stash@{0}", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "stash pop not supported by this provider");
 
     error.clear();
-    runner.RequestStashDrop(
-        "stash@{0}", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestStashDrop(LocalRepo(), "stash@{0}", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "stash drop not supported by this provider");
 
     error.clear();
-    runner.RequestPush([] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestPush(LocalRepo(), [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "push not supported by this provider");
 
     error.clear();
-    runner.RequestPull([] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestPull(LocalRepo(), [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "pull not supported by this provider");
 
     error.clear();
-    runner.RequestFetch([] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestFetch(LocalRepo(), [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "fetch not supported by this provider");
 
     error.clear();
-    runner.RequestAheadBehind([](ned::editor::vcs::AheadBehind) { FAIL("onComplete should not be called"); },
-                              [&error](std::string message) { error = message; });
+    runner.RequestAheadBehind(LocalRepo(), [](ned::editor::vcs::AheadBehind) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "ahead/behind not supported by this provider");
 
     // staged=true (not false): FakeProvider does implement DiffArgv (it
@@ -378,9 +333,7 @@ TEST_CASE("Runner surfaces the provider's own 'not supported' answer for unimple
     // vocabulary-completion-era method FakeProvider doesn't override, same
     // distinction the RequestHunkApply test above already relies on.
     error.clear();
-    runner.RequestFileDiffText(
-        "/tmp/ned-vcs-runner-test-file.txt", /*staged=*/true, [](std::string) { FAIL("onComplete should not be called"); },
-        [&error](std::string message) { error = message; });
+    runner.RequestFileDiffText(LocalRepo(), "/tmp/ned-vcs-runner-test-file.txt", /*staged=*/true, [](std::string) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "staged diff not supported by this provider");
 }
 
@@ -409,21 +362,17 @@ TEST_CASE("Runner refuses a second concurrent status/commit for the same root", 
     Runner          runner(eventLoop);
 
     bool firstErrored = false;
-    runner.RequestStatus([](std::vector<ned::editor::vcs::StatusEntry>) {},
-                         [&firstErrored](std::string) { firstErrored = true; });
+    runner.RequestStatus(LocalRepo(), [](std::vector<ned::editor::vcs::StatusEntry>) {}, [&firstErrored](std::string) { firstErrored = true; });
     REQUIRE_FALSE(firstErrored); // first request spawned successfully (sleep 5, still running)
 
     std::string secondError;
-    runner.RequestStatus(
-        [](std::vector<ned::editor::vcs::StatusEntry>) { FAIL("onComplete should not be called"); },
-        [&secondError](std::string message) { secondError = message; });
+    runner.RequestStatus(LocalRepo(), [](std::vector<ned::editor::vcs::StatusEntry>) { FAIL("onComplete should not be called"); }, [&secondError](std::string message) { secondError = message; });
     REQUIRE_FALSE(secondError.empty());
 
     // A different operation against the same root is NOT blocked -- the
     // guard is per (operation, root), not per root.
     bool commitErrored = false;
-    runner.RequestCommit(
-        "a message", [](std::string) {}, [&commitErrored](std::string) { commitErrored = true; });
+    runner.RequestCommit(LocalRepo(), "a message", [](std::string) {}, [&commitErrored](std::string) { commitErrored = true; });
     REQUIRE_FALSE(commitErrored);
 
     // VcsPanel amend/commit-variants follow-ups: RequestAmendCommit/
@@ -434,21 +383,15 @@ TEST_CASE("Runner refuses a second concurrent status/commit for the same root", 
     // default-throwing) AmendCommitArgv/ExtendCommitArgv would ever be
     // called, so this proves the shared key, not a coincidental error.
     std::string amendError;
-    runner.RequestAmendCommit(
-        "a message", [](std::string) { FAIL("onSuccess should not be called"); },
-        [&amendError](std::string message) { amendError = message; });
+    runner.RequestAmendCommit(LocalRepo(), "a message", [](std::string) { FAIL("onSuccess should not be called"); }, [&amendError](std::string message) { amendError = message; });
     REQUIRE(amendError == "amend commit is already running");
 
     std::string extendError;
-    runner.RequestExtendCommit(
-        [](std::string) { FAIL("onSuccess should not be called"); },
-        [&extendError](std::string message) { extendError = message; });
+    runner.RequestExtendCommit(LocalRepo(), [](std::string) { FAIL("onSuccess should not be called"); }, [&extendError](std::string message) { extendError = message; });
     REQUIRE(extendError == "extend commit is already running");
 
     std::string rewordError;
-    runner.RequestRewordCommit(
-        "a message", [](std::string) { FAIL("onSuccess should not be called"); },
-        [&rewordError](std::string message) { rewordError = message; });
+    runner.RequestRewordCommit(LocalRepo(), "a message", [](std::string) { FAIL("onSuccess should not be called"); }, [&rewordError](std::string message) { rewordError = message; });
     REQUIRE(rewordError == "reword commit is already running");
 }
 
@@ -515,7 +458,7 @@ TEST_CASE("Runner::RequestHunkApply's path-based overload surfaces the same prov
 
     std::string error;
     runner.RequestHunkApply(
-        std::filesystem::path("/tmp/ned-vcs-runner-test-file.txt"), 1, /*stage=*/false,
+        LocalRepo(), std::filesystem::path("/tmp/ned-vcs-runner-test-file.txt"), 1, /*stage=*/false,
         [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "staged diff not supported by this provider");
 }
@@ -592,17 +535,16 @@ TEST_CASE("Runner sequence requests surface a provider without the sequence voca
     Runner             runner(eventLoop);
 
     std::string error;
-    runner.RequestSequenceState([](ned::editor::vcs::SequenceState) { FAIL("onComplete should not be called"); },
-                                [&error](std::string message) { error = message; });
+    runner.RequestSequenceState(LocalRepo(), [](ned::editor::vcs::SequenceState) { FAIL("onComplete should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "sequence state not supported by this provider");
 
-    runner.RequestSequenceContinue("rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestSequenceContinue(LocalRepo(), "rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "sequence continue not supported by this provider");
 
-    runner.RequestSequenceAbort("rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestSequenceAbort(LocalRepo(), "rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "sequence abort not supported by this provider");
 
-    runner.RequestSequenceSkip("rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestSequenceSkip(LocalRepo(), "rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "sequence skip not supported by this provider");
 }
 
@@ -625,15 +567,47 @@ TEST_CASE("Runner continue/abort/skip are mutually exclusive for the same root",
     Runner             runner(eventLoop);
 
     bool continueErrored = false;
-    runner.RequestSequenceContinue("rebase", [] {}, [&continueErrored](std::string) { continueErrored = true; });
+    runner.RequestSequenceContinue(LocalRepo(), "rebase", [] {}, [&continueErrored](std::string) { continueErrored = true; });
     REQUIRE_FALSE(continueErrored);
 
     // The guard fires before the (unoverridden, default-throwing) abort/skip
     // argv builders run, so this proves the shared key.
     std::string error;
-    runner.RequestSequenceAbort("rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestSequenceAbort(LocalRepo(), "rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "abort is already running");
 
-    runner.RequestSequenceSkip("rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
+    runner.RequestSequenceSkip(LocalRepo(), "rebase", [] { FAIL("onSuccess should not be called"); }, [&error](std::string message) { error = message; });
     REQUIRE(error == "skip is already running");
+}
+
+TEST_CASE("A repository on a host runs beside its root there", "[Runner][Vcs]") {
+    const ned::editor::vcs::Repo local{.destination = std::nullopt, .root = "/src/project"};
+    CHECK_FALSE(local.IsRemote());
+    CHECK_FALSE(local.Beside().has_value());
+    CHECK(local.ToString() == "/src/project");
+
+    const ned::editor::vcs::Repo remote{.destination = "user@host", .root = "/src/project"};
+    CHECK(remote.IsRemote());
+    CHECK(remote.Beside() == ned::text::RemoteFile{.destination = "user@host", .path = "/src/project"});
+    CHECK(remote.ToString() == "user@host:/src/project");
+    CHECK(remote != local);
+
+    const std::filesystem::path previous = ned::editor::ProjectRoot();
+    ned::editor::SetProjectRoot("/src/project");
+    CHECK(LocalRepo() == local);
+    ned::editor::SetProjectRoot(previous);
+}
+
+TEST_CASE("A host's current branch is kept apart from the same root's here", "[Runner][Vcs]") {
+    ned::editor::vcs::ClearCurrentBranches();
+    const ned::editor::vcs::Repo local{.destination = std::nullopt, .root = "/src/project"};
+    const ned::editor::vcs::Repo remote{.destination = "host", .root = "/src/project"};
+    ned::editor::vcs::SetCurrentBranch(local, "main");
+    ned::editor::vcs::SetCurrentBranch(remote, "feature");
+    CHECK(ned::editor::vcs::CurrentBranch(local) == "main");
+    CHECK(ned::editor::vcs::CurrentBranch(remote) == "feature");
+    ned::editor::vcs::SetCurrentBranch(remote, std::nullopt);
+    CHECK_FALSE(ned::editor::vcs::CurrentBranch(remote).has_value());
+    CHECK(ned::editor::vcs::CurrentBranch(local) == "main");
+    ned::editor::vcs::ClearCurrentBranches();
 }

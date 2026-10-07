@@ -407,15 +407,12 @@ void ToolRegistry::RegisterBuiltinTools() {
     RegisterTool(
         "git_status", "Get the current git working-tree status (changed/staged/untracked files) for the project.", Json{{"type", "object"}, {"properties", Json::object()}},
         [this](const Json&, const ResultCallback& callback) {
-            vcsRunner_.RequestStatus(
-                [callback](std::vector<vcs::StatusEntry> entries) {
+            vcsRunner_.RequestStatus(vcs::LocalRepo(), [callback](std::vector<vcs::StatusEntry> entries) {
                     Json results = Json::array();
                     for (const vcs::StatusEntry& entry : entries) {
                         results.push_back(Json{{"state", entry.state}, {"path", entry.path}});
                     }
-                    callback(MakeTextToolResult(results.dump()));
-                },
-                [callback](const std::string& error) { callback(MakeTextToolResult("git status failed: " + error, true)); });
+                    callback(MakeTextToolResult(results.dump())); }, [callback](const std::string& error) { callback(MakeTextToolResult("git status failed: " + error, true)); });
         });
 
     RegisterTool(
@@ -428,10 +425,10 @@ void ToolRegistry::RegisterBuiltinTools() {
             auto onComplete = [callback](std::string rawDiff) { callback(MakeTextToolResult(rawDiff.empty() ? "No changes." : rawDiff)); };
             auto onError    = [callback](const std::string& error) { callback(MakeTextToolResult("git diff failed: " + error, true)); };
             if (const auto file = RequireString(args, "file")) {
-                vcsRunner_.RequestFileDiffText(ResolveArgPath(*file), /*staged=*/false, onComplete, onError);
+                vcsRunner_.RequestFileDiffText(vcs::LocalRepo(), ResolveArgPath(*file), /*staged=*/false, onComplete, onError);
             }
             else {
-                vcsRunner_.RequestFullDiff(onComplete, onError);
+                vcsRunner_.RequestFullDiff(vcs::LocalRepo(), onComplete, onError);
             }
         });
 
@@ -536,9 +533,7 @@ void ToolRegistry::RegisterBuiltinTools() {
                 callback(MakeTextToolResult("Missing required argument: file", true));
                 return;
             }
-            vcsRunner_.RequestStage(
-                ResolveArgPath(*file), [callback, file] { callback(MakeTextToolResult("Staged " + *file + ".")); },
-                [callback](const std::string& error) { callback(MakeTextToolResult("git stage failed: " + error, true)); });
+            vcsRunner_.RequestStage(vcs::LocalRepo(), ResolveArgPath(*file), [callback, file] { callback(MakeTextToolResult("Staged " + *file + ".")); }, [callback](const std::string& error) { callback(MakeTextToolResult("git stage failed: " + error, true)); });
         });
 
     RegisterTool(
@@ -554,9 +549,7 @@ void ToolRegistry::RegisterBuiltinTools() {
                 callback(MakeTextToolResult("Missing required argument: file", true));
                 return;
             }
-            vcsRunner_.RequestUnstage(
-                ResolveArgPath(*file), [callback, file] { callback(MakeTextToolResult("Unstaged " + *file + ".")); },
-                [callback](const std::string& error) { callback(MakeTextToolResult("git unstage failed: " + error, true)); });
+            vcsRunner_.RequestUnstage(vcs::LocalRepo(), ResolveArgPath(*file), [callback, file] { callback(MakeTextToolResult("Unstaged " + *file + ".")); }, [callback](const std::string& error) { callback(MakeTextToolResult("git unstage failed: " + error, true)); });
         });
 
     RegisterTool(
@@ -572,23 +565,18 @@ void ToolRegistry::RegisterBuiltinTools() {
                 callback(MakeTextToolResult("Missing required argument: message", true));
                 return;
             }
-            vcsRunner_.RequestCommit(
-                *message, [callback](std::string summary) { callback(MakeTextToolResult(summary.empty() ? "Committed." : summary)); },
-                [callback](const std::string& error) { callback(MakeTextToolResult("git commit failed: " + error, true)); });
+            vcsRunner_.RequestCommit(vcs::LocalRepo(), *message, [callback](std::string summary) { callback(MakeTextToolResult(summary.empty() ? "Committed." : summary)); }, [callback](const std::string& error) { callback(MakeTextToolResult("git commit failed: " + error, true)); });
         });
 
     RegisterTool(
         "git_branch_list", "List every local branch, marking the currently checked-out one.", Json{{"type", "object"}, {"properties", Json::object()}},
         [this](const Json&, const ResultCallback& callback) {
-            vcsRunner_.RequestBranchList(
-                [callback](std::vector<vcs::BranchEntry> branches) {
+            vcsRunner_.RequestBranchList(vcs::LocalRepo(), [callback](std::vector<vcs::BranchEntry> branches) {
                     Json results = Json::array();
                     for (const vcs::BranchEntry& branch : branches) {
                         results.push_back(Json{{"name", branch.name}, {"current", branch.current}});
                     }
-                    callback(MakeTextToolResult(results.dump()));
-                },
-                [callback](const std::string& error) { callback(MakeTextToolResult("git branch list failed: " + error, true)); });
+                    callback(MakeTextToolResult(results.dump())); }, [callback](const std::string& error) { callback(MakeTextToolResult("git branch list failed: " + error, true)); });
         });
 
     RegisterTool(
@@ -604,9 +592,7 @@ void ToolRegistry::RegisterBuiltinTools() {
                 callback(MakeTextToolResult("Missing required argument: name", true));
                 return;
             }
-            vcsRunner_.RequestBranchSwitch(
-                *name, [callback, name] { callback(MakeTextToolResult("Switched to branch " + *name + ".")); },
-                [callback](const std::string& error) { callback(MakeTextToolResult("git branch switch failed: " + error, true)); });
+            vcsRunner_.RequestBranchSwitch(vcs::LocalRepo(), *name, [callback, name] { callback(MakeTextToolResult("Switched to branch " + *name + ".")); }, [callback](const std::string& error) { callback(MakeTextToolResult("git branch switch failed: " + error, true)); });
         });
 
     RegisterTool(

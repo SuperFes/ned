@@ -6,7 +6,6 @@
 #include <utility>
 #include <vector>
 
-#include "Editor/Project/Root.h"
 #include "Editor/Vcs/CurrentBranch.h"
 #include "Registry.h"
 
@@ -153,7 +152,7 @@ bool AnyNumericKeys() {
 }
 
 std::optional<std::string> CurrentIssueKey() {
-    const std::optional<std::string> branch = vcs::CurrentBranch(ProjectRoot());
+    const std::optional<std::string> branch = vcs::CurrentBranch(vcs::LocalRepo());
     if (!branch) {
         return std::nullopt;
     }

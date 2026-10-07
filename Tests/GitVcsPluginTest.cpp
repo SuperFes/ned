@@ -519,8 +519,7 @@ TEST_CASE("bundled git plugin takes a hunk's patch on stdin", "[GitVcsPlugin]") 
     ned::ui::EventLoop         loop;
     ned::editor::vcs::Runner   runner(loop);
     std::optional<std::string> outcome;
-    runner.RequestHunkApply(
-        filePath, 2, /*stage=*/true, [&outcome] { outcome = ""; }, [&outcome](std::string error) { outcome = std::move(error); });
+    runner.RequestHunkApply(ned::editor::vcs::LocalRepo(), filePath, 2, /*stage=*/true, [&outcome] { outcome = ""; }, [&outcome](std::string error) { outcome = std::move(error); });
     REQUIRE(ned::tests::PumpUntil(loop, [&outcome] { return outcome.has_value(); }));
     CHECK(*outcome == "");
 

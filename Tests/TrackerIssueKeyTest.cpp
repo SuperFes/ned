@@ -122,7 +122,7 @@ TEST_CASE("CurrentIssueKey reads the recorded branch against the registry", "[Tr
     StateGuard guard;
     CHECK_FALSE(tracker::CurrentIssueKey());
 
-    ned::editor::vcs::SetCurrentBranch("/repo", "feature/dev-450-login");
+    ned::editor::vcs::SetCurrentBranch(ned::editor::vcs::Repo{.destination = std::nullopt, .root = "/repo"}, "feature/dev-450-login");
     // Nothing is shown until a tracker is configured at all.
     CHECK_FALSE(tracker::CurrentIssueKey());
 
@@ -133,7 +133,7 @@ TEST_CASE("CurrentIssueKey reads the recorded branch against the registry", "[Tr
     tracker::SetPanelIssues("Mine", {Issue{.key = "DEV-1"}});
     CHECK(tracker::CurrentIssueKey() == "DEV-450");
 
-    ned::editor::vcs::SetCurrentBranch("/repo", "42-tooltip");
+    ned::editor::vcs::SetCurrentBranch(ned::editor::vcs::Repo{.destination = std::nullopt, .root = "/repo"}, "42-tooltip");
     CHECK_FALSE(tracker::CurrentIssueKey());
     tracker::RegisterProvider("numeric", std::make_shared<NumericProvider>());
     tracker::SetConnection(Connection{.name = "gh", .provider = "numeric"});
