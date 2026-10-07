@@ -113,6 +113,12 @@ class Runner {
     // done runs on the main thread, and not at all once this Runner is gone.
     void FindRepo(const text::RemoteFile& file, std::function<void(std::expected<Repo, std::string>)> done);
 
+    // The repository buffer's file is in: the project's for a local file,
+    // the one on its host for a remote file. A buffer with no file of its
+    // own (a *vcs* buffer, the commit message) works in the last one found.
+    // done runs before this returns unless the host has to be asked.
+    void RepoFor(const text::Buffer& buffer, std::function<void(std::expected<Repo, std::string>)> done);
+
     // Resolves the active provider for buffer's repository, calls its
     // BlameArgv(path) synchronously, spawns the resulting command, and on
     // exit calls ParseBlame(stdout) synchronously before invoking
@@ -329,7 +335,11 @@ class Runner {
     remote::Hosts*      hosts_ = nullptr;
 
     std::unordered_map<std::string, Run> running_;
-    LifetimeGuard                        lifetime_;
+    // By RemoteFile::ToString.
+    std::unordered_map<std::string, Repo> remoteRepos_;
+    // Unset while the last was this machine's, which follows ProjectRoot().
+    std::optional<Repo> lastRemote_;
+    LifetimeGuard       lifetime_;
 };
 
 } // namespace ned::editor::vcs

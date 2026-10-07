@@ -3217,7 +3217,7 @@ class BufferView : public Widget {
     // request completes: ParseDiffHunks + BuildMultibuffer, differing only in
     // the resulting buffer's name and what to say when rawDiff carries no
     // hunks at all.
-    void BuildDiffHunksMultibuffer(const std::string& rawDiff, const std::filesystem::path& root,
+    void BuildDiffHunksMultibuffer(const std::string& rawDiff, const editor::vcs::Repo& repo,
                                    const std::string& bufferName, const std::string& emptyMessage);
 
     // Diagnostics-multibuffer follow-up: lsp-diagnostics-buffer's entry
@@ -3317,7 +3317,7 @@ class BufferView : public Widget {
     // stage/unstage/commit re-trigger it programmatically. announce=false
     // is the background-refresh variant: no buffer switch, no
     // statusMessage_ (so it can't clobber "Staged foo"'s own report).
-    void BuildVcsStatusBuffer(const std::vector<editor::vcs::StatusEntry>& entries, bool announce);
+    void BuildVcsStatusBuffer(const std::vector<editor::vcs::StatusEntry>& entries, bool announce, const editor::vcs::Repo& repo);
     // Background re-request after a stage/unstage/commit/branch-switch
     // changed what status would report -- a no-op unless the *vcs status*
     // buffer already exists (never conjures one unasked), with errors
@@ -3377,6 +3377,7 @@ class BufferView : public Widget {
     // and just updates the mode, same as the plain-commit path already did
     // before amend existed.
     void BeginVcsCommitMessage(VcsCommitMode mode = VcsCommitMode::Commit);
+    void BeginVcsCommitMessageIn(VcsCommitMode mode, const editor::vcs::Repo& repo);
     // InteractiveRequest::CommitFinish/VcsCommitAbort's entry points --
     // strip the '#'-comment template and fire RequestCommit, or just
     // discard, then either way close the buffer via
@@ -3394,11 +3395,14 @@ class BufferView : public Widget {
     // ones first only under ned/set-vcs-sequence-auto-stage. All three
     // re-probe the state afterwards, since a continue that stops on the next
     // conflicting commit is the normal case, not a failure worth hiding.
-    void ContinueVcsSequence();
+    void ContinueVcsSequence(const editor::vcs::Repo& repo);
     void RunVcsSequenceStep(VcsSequenceStep step);
-    void RunVcsSequenceStep(VcsSequenceStep step, const std::string& kind);
-    void StageThenContinueVcsSequence(std::vector<std::filesystem::path> paths, std::string kind);
-    void ReportVcsSequenceOutcome(std::string outcome);
+    void RunVcsSequenceStep(VcsSequenceStep step, const std::string& kind, const editor::vcs::Repo& repo);
+    void StageThenContinueVcsSequence(const editor::vcs::Repo& repo, std::vector<std::filesystem::path> paths, std::string kind);
+    void ReportVcsSequenceOutcome(std::string outcome, const editor::vcs::Repo& repo);
+    // run gets the active buffer's repository (Runner::RepoFor), or the
+    // status line says why there is none under label.
+    void InVcsRepo(std::string label, std::function<void(const editor::vcs::Repo& repo)> run);
     // Shared by both: closes the commit-message buffer via CloseBufferNow
     // (bypassing RequestCloseBuffer's "unsaved changes?" prompt -- finishing
     // or aborting the commit already IS the user's confirmation) and
@@ -4074,6 +4078,11 @@ class BufferView : public Widget {
     // AbortVcsCommitMessage resets it too, so no stale mode can survive
     // into a later plain commit.
     VcsCommitMode                         pendingCommitMode_       = VcsCommitMode::Commit;
+    // The repository the open commit message commits to, found from the
+    // buffer it was begun in.
+    std::optional<editor::vcs::Repo> pendingCommitRepo_;
+    // The repository the *vcs status* buffer lists.
+    std::optional<editor::vcs::Repo> vcsStatusRepo_;
     // What a plain commit's buffer was seeded with (Tracker/IssueKey.h's
     // CommitSeed): a message that is only this is no message.
     std::string                           pendingCommitSeed_;

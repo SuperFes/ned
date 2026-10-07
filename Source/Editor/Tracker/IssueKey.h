@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 
+#include "Editor/Vcs/Repo.h"
 #include "Provider.h"
 
 namespace ned::editor::tracker {
@@ -42,10 +43,10 @@ void                              SetCommitSeeds(std::string keyTemplate, std::s
 // Whether any connection's provider writes its keys "#42".
 [[nodiscard]] bool AnyNumericKeys();
 
-// The key of the project's current branch (Vcs/CurrentBranch.h) against
-// the registry's connections, or nullopt without either. Cached, so a
-// mode line may ask on every paint.
-[[nodiscard]] std::optional<std::string> CurrentIssueKey();
+// The key of repo's current branch (Vcs/CurrentBranch.h) against the
+// registry's connections, or nullopt without either. Cached, so a mode
+// line may ask on every paint.
+[[nodiscard]] std::optional<std::string> CurrentIssueKey(const vcs::Repo& repo = vcs::LocalRepo());
 
 } // namespace ned::editor::tracker
 

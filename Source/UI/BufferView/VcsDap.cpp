@@ -306,6 +306,16 @@ std::optional<std::filesystem::path> BufferView::VcsResultPath(const text::Buffe
     return std::nullopt;
 }
 
+void BufferView::InVcsRepo(std::string label, std::function<void(const editor::vcs::Repo& repo)> run) {
+    vcsRunner_->RepoFor(activeBuffer_.Get(), lifetime_.Bind([this, label = std::move(label), run = std::move(run)](std::expected<editor::vcs::Repo, std::string> repo) {
+        if (!repo) {
+            statusMessage_ = label + ": " + repo.error();
+            return;
+        }
+        run(*repo);
+    }));
+}
+
 void BufferView::RequestVcsBlameBuffer() {
     if (!vcsRunner_) {
         statusMessage_ = "no vcs runner configured";
@@ -387,7 +397,7 @@ void BufferView::BuildVcsLogBuffer(const std::filesystem::path& path, const std:
 // Always switches activeBuffer_, even for an empty result (an explicit
 // "nothing changed" is more informative than a silent no-op).
 
-void BufferView::BuildDiffHunksMultibuffer(const std::string& rawDiff, const std::filesystem::path& root,
+void BufferView::BuildDiffHunksMultibuffer(const std::string& rawDiff, const editor::vcs::Repo& repo,
                                            const std::string& bufferName, const std::string& emptyMessage) {
     const std::vector<editor::vcs::DiffHunkText> hunks = editor::vcs::ParseDiffHunks(rawDiff);
 
@@ -404,7 +414,7 @@ void BufferView::BuildDiffHunksMultibuffer(const std::string& rawDiff, const std
         // convention).
         const std::size_t sourceLine = hunk.newCount > 0 ? hunk.newStart : 0;
         excerpts.push_back(editor::multibuffer::ExcerptSource{
-            root / hunk.filePath, sourceLine, sourceLine + (hunk.newCount > 0 ? hunk.newCount - 1 : 0),
+            repo.Name(hunk.filePath), sourceLine, sourceLine + (hunk.newCount > 0 ? hunk.newCount - 1 : 0),
             "▸ " + hunk.filePath + "  " + hunk.hunkHeader, // U+25B8 -- ProjectSidebar's own disclosure triangle
             std::move(formattedBody), std::move(tints)});
     }
@@ -429,10 +439,11 @@ void BufferView::RequestVcsFullDiffBuffer() {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    const std::filesystem::path root = editor::ProjectRoot();
-    vcsRunner_->RequestFullDiff(editor::vcs::LocalRepo(),
-                                lifetime_.Bind([this, root](std::string rawDiff) { BuildDiffHunksMultibuffer(rawDiff, root, "*vcs diff*", "Working tree clean."); }),
-                                lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs full diff: " + error; }));
+    InVcsRepo("vcs full diff", [this](const editor::vcs::Repo& repo) {
+        vcsRunner_->RequestFullDiff(repo,
+                                    lifetime_.Bind([this, repo](std::string rawDiff) { BuildDiffHunksMultibuffer(rawDiff, repo, "*vcs diff*", "Working tree clean."); }),
+                                    lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs full diff: " + error; }));
+    });
 }
 
 void BufferView::RequestVcsCommitDiffBuffer(const std::string& commitHash) {
@@ -440,14 +451,14 @@ void BufferView::RequestVcsCommitDiffBuffer(const std::string& commitHash) {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    const std::filesystem::path root = editor::ProjectRoot();
-    vcsRunner_->RequestCommitDiff(editor::vcs::LocalRepo(),
-                                  commitHash,
-                                  lifetime_.Bind([this, root, commitHash](std::string rawDiff) {
-                                      BuildDiffHunksMultibuffer(rawDiff, root, "*vcs commit " + commitHash + "*",
-                                                                "Commit " + commitHash + " touched no files.");
-                                  }),
-                                  lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs commit diff: " + error; }));
+    InVcsRepo("vcs commit diff", [this, commitHash](const editor::vcs::Repo& repo) {
+        vcsRunner_->RequestCommitDiff(repo, commitHash,
+                                      lifetime_.Bind([this, repo, commitHash](std::string rawDiff) {
+                                          BuildDiffHunksMultibuffer(rawDiff, repo, "*vcs commit " + commitHash + "*",
+                                                                    "Commit " + commitHash + " touched no files.");
+                                      }),
+                                      lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs commit diff: " + error; }));
+    });
 }
 
 void BufferView::RequestVcsStatusBuffer() {
@@ -455,18 +466,19 @@ void BufferView::RequestVcsStatusBuffer() {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    vcsRunner_->RequestStatus(editor::vcs::LocalRepo(),
-                              lifetime_.Bind([this](std::vector<editor::vcs::StatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/true); }),
-                              lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs status: " + error; }));
+    InVcsRepo("vcs status", [this](const editor::vcs::Repo& repo) {
+        vcsRunner_->RequestStatus(
+            repo, lifetime_.Bind([this, repo](std::vector<editor::vcs::StatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/true, repo); }),
+            lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs status: " + error; }));
+    });
 }
 
-void BufferView::BuildVcsStatusBuffer(const std::vector<editor::vcs::StatusEntry>& entries, bool announce) {
-    const std::filesystem::path root = editor::ProjectRoot();
-
+void BufferView::BuildVcsStatusBuffer(const std::vector<editor::vcs::StatusEntry>& entries, bool announce, const editor::vcs::Repo& repo) {
     std::string text;
     for (const editor::vcs::StatusEntry& entry : entries) {
-        text += (root / entry.path).string() + ":1: " + entry.state + " " + entry.path + "\n";
+        text += repo.Name(entry.path).string() + ":1: " + entry.state + " " + entry.path + "\n";
     }
+    vcsStatusRepo_ = repo;
 
     text::Buffer& status = RefillSingletonBuffer(bufferList_, kVcsStatusBufferName, text);
     if (announce) {
@@ -483,15 +495,16 @@ void BufferView::RefreshVcsStatusBuffer() {
     if (!vcsRunner_ || !bufferList_.Find(kVcsStatusBufferName)) {
         return;
     }
-    vcsRunner_->RequestStatus(editor::vcs::LocalRepo(),
-                              lifetime_.Bind([this](std::vector<editor::vcs::StatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/false); }));
+    const editor::vcs::Repo repo = vcsStatusRepo_.value_or(editor::vcs::LocalRepo());
+    vcsRunner_->RequestStatus(
+        repo, lifetime_.Bind([this, repo](std::vector<editor::vcs::StatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/false, repo); }));
 }
 
 namespace {
 
     // The seed for the current branch's issue key, "" without one.
-    std::string CurrentCommitSeed() {
-        const std::optional<std::string> key = editor::tracker::CurrentIssueKey();
+    std::string CurrentCommitSeed(const editor::vcs::Repo& repo) {
+        const std::optional<std::string> key = editor::tracker::CurrentIssueKey(repo);
         return key ? editor::tracker::CommitSeed(*key) : std::string();
     }
 
@@ -509,6 +522,13 @@ void BufferView::BeginVcsCommitMessage(VcsCommitMode mode) {
         statusMessage_ = "no vcs runner configured";
         return;
     }
+    InVcsRepo("vcs commit", [this, mode](const editor::vcs::Repo& repo) {
+        pendingCommitRepo_ = repo;
+        BeginVcsCommitMessageIn(mode, repo);
+    });
+}
+
+void BufferView::BeginVcsCommitMessageIn(VcsCommitMode mode, const editor::vcs::Repo& repo) {
     const std::filesystem::path path = editor::vcs::CommitMessagePath();
     // FindByPath, not the OpenOrCreateFile call below, decides whether this
     // is a genuinely fresh commit (seed the template) or the user re-running
@@ -525,7 +545,7 @@ void BufferView::BeginVcsCommitMessage(VcsCommitMode mode) {
     }
     if (mode == VcsCommitMode::Commit) {
         text::Buffer& commitBuffer = bufferList_.OpenOrCreateFile(path);
-        pendingCommitSeed_         = CurrentCommitSeed();
+        pendingCommitSeed_         = CurrentCommitSeed(repo);
         SeedCommitBuffer(commitBuffer, pendingCommitSeed_);
         pendingCommitMode_ = VcsCommitMode::Commit;
         activeBuffer_.Set(commitBuffer);
@@ -538,12 +558,12 @@ void BufferView::BeginVcsCommitMessage(VcsCommitMode mode) {
         if (editor::tracker::Connections().empty()) {
             return;
         }
-        vcsRunner_->RefreshCurrentBranch(editor::vcs::LocalRepo(), lifetime_.Bind([this, path] {
+        vcsRunner_->RefreshCurrentBranch(repo, lifetime_.Bind([this, path, repo] {
             text::Buffer* buffer = bufferList_.FindByPath(path);
             if (buffer == nullptr || buffer->Text() != pendingCommitSeed_ + std::string(editor::vcs::kVcsCommitMessageTemplate)) {
                 return;
             }
-            const std::string seed = CurrentCommitSeed();
+            const std::string seed = CurrentCommitSeed(repo);
             if (seed == pendingCommitSeed_) {
                 return;
             }
@@ -559,7 +579,7 @@ void BufferView::BeginVcsCommitMessage(VcsCommitMode mode) {
     // --amend $EDITOR content has.
     const bool reword = (mode == VcsCommitMode::Reword);
     statusMessage_    = "Fetching previous commit message...";
-    vcsRunner_->RequestPreviousCommitMessage(editor::vcs::LocalRepo(),
+    vcsRunner_->RequestPreviousCommitMessage(repo,
                                              lifetime_.Bind([this, path, mode, reword](std::string message) {
                                                  while (!message.empty() && (message.back() == '\n' || message.back() == '\r')) {
                                                      message.pop_back();
@@ -608,16 +628,17 @@ void BufferView::FinishVcsCommitMessage() {
             // current buffer's markers are stale now.
             RequestDiffForCurrentBuffer();
         });
-        auto onError   = lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs commit: " + error; });
+        auto                    onError   = lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs commit: " + error; });
+        const editor::vcs::Repo repo      = pendingCommitRepo_.value_or(editor::vcs::LocalRepo());
         switch (mode) {
             case VcsCommitMode::Commit:
-                vcsRunner_->RequestCommit(editor::vcs::LocalRepo(), message, onSuccess, onError);
+                vcsRunner_->RequestCommit(repo, message, onSuccess, onError);
                 break;
             case VcsCommitMode::Amend:
-                vcsRunner_->RequestAmendCommit(editor::vcs::LocalRepo(), message, onSuccess, onError);
+                vcsRunner_->RequestAmendCommit(repo, message, onSuccess, onError);
                 break;
             case VcsCommitMode::Reword:
-                vcsRunner_->RequestRewordCommit(editor::vcs::LocalRepo(), message, onSuccess, onError);
+                vcsRunner_->RequestRewordCommit(repo, message, onSuccess, onError);
                 break;
         }
     }
@@ -635,17 +656,19 @@ void BufferView::ExtendCommit() {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    statusMessage_ = "Extending...";
-    vcsRunner_->RequestExtendCommit(editor::vcs::LocalRepo(),
-                                    lifetime_.Bind([this](std::string summary) {
-                                        statusMessage_ = summary.empty() ? "Committed." : summary;
-                                        RefreshVcsStatusBuffer();
-                                        // The comparison point (HEAD for git) just moved, so the
-                                        // current buffer's markers are stale now -- same reasoning
-                                        // FinishVcsCommitMessage's own onSuccess has.
-                                        RequestDiffForCurrentBuffer();
-                                    }),
-                                    lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs extend commit: " + error; }));
+    InVcsRepo("vcs extend commit", [this](const editor::vcs::Repo& repo) {
+        statusMessage_ = "Extending...";
+        vcsRunner_->RequestExtendCommit(repo,
+                                        lifetime_.Bind([this](std::string summary) {
+                                            statusMessage_ = summary.empty() ? "Committed." : summary;
+                                            RefreshVcsStatusBuffer();
+                                            // The comparison point (HEAD for git) just moved, so the
+                                            // current buffer's markers are stale now -- same reasoning
+                                            // FinishVcsCommitMessage's own onSuccess has.
+                                            RequestDiffForCurrentBuffer();
+                                        }),
+                                        lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs extend commit: " + error; }));
+    });
 }
 
 void BufferView::RunVcsSequenceStep(VcsSequenceStep step) {
@@ -653,100 +676,112 @@ void BufferView::RunVcsSequenceStep(VcsSequenceStep step) {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    // The kind comes from a fresh probe rather than anything cached: the
-    // repository may have moved on (a terminal `git rebase --continue`)
-    // since this editor last looked.
-    vcsRunner_->RequestSequenceState(editor::vcs::LocalRepo(),
-                                     lifetime_.Bind([this, step](const editor::vcs::SequenceState& state) {
-                                         if (state.kind.empty()) {
-                                             statusMessage_ = "No rebase, merge or cherry-pick in progress.";
-                                             return;
-                                         }
-                                         if (step == VcsSequenceStep::Continue) {
-                                             ContinueVcsSequence();
-                                             return;
-                                         }
-                                         RunVcsSequenceStep(step, state.kind);
-                                     }),
-                                     lifetime_.Bind([this](std::string error) { statusMessage_ = error; }));
+    InVcsRepo("vcs sequence", [this, step](const editor::vcs::Repo& repo) {
+        // The kind comes from a fresh probe rather than anything cached: the
+        // repository may have moved on (a terminal `git rebase --continue`)
+        // since this editor last looked.
+        vcsRunner_->RequestSequenceState(repo,
+                                         lifetime_.Bind([this, step, repo](const editor::vcs::SequenceState& state) {
+                                             if (state.kind.empty()) {
+                                                 statusMessage_ = "No rebase, merge or cherry-pick in progress.";
+                                                 return;
+                                             }
+                                             if (step == VcsSequenceStep::Continue) {
+                                                 ContinueVcsSequence(repo);
+                                                 return;
+                                             }
+                                             RunVcsSequenceStep(step, state.kind, repo);
+                                         }),
+                                         lifetime_.Bind([this](std::string error) { statusMessage_ = error; }));
+    });
 }
 
-void BufferView::ContinueVcsSequence() {
-    vcsRunner_->RequestStatus(editor::vcs::LocalRepo(),
-                              lifetime_.Bind([this](const std::vector<editor::vcs::StatusEntry>& entries) {
-                                  const std::filesystem::path          root  = editor::ProjectRoot();
-                                  const editor::vcs::SequenceFileProbe probe = {
-                                      .hasUnsavedBuffer =
-                                          [this](const std::filesystem::path& path) {
-                                              const text::Buffer* buffer = bufferList_.FindByPath(path);
-                                              return buffer != nullptr && buffer->Modified();
-                                          },
-                                      .hasConflictMarkers = editor::vcs::FileHasConflictMarkers,
-                                  };
-                                  editor::vcs::SequenceContinuePlan plan =
-                                      editor::vcs::PlanSequenceContinue(entries, root, probe, editor::vcs::SequenceAutoStageEnabled());
-                                  if (!plan.Ready()) {
-                                      statusMessage_ = editor::vcs::SequenceContinueBlockedMessage(plan, root);
-                                      return;
-                                  }
-                                  // Re-probed rather than threaded through: the status round trip
-                                  // is the only thing between the two and it can't change the kind.
-                                  vcsRunner_->RequestSequenceState(editor::vcs::LocalRepo(),
-                                                                   lifetime_.Bind([this, toStage = std::move(plan.toStage)](const editor::vcs::SequenceState& state) mutable {
-                                                                       if (state.kind.empty()) {
-                                                                           statusMessage_ = "No rebase, merge or cherry-pick in progress.";
-                                                                           return;
-                                                                       }
-                                                                       StageThenContinueVcsSequence(std::move(toStage), state.kind);
-                                                                   }),
-                                                                   lifetime_.Bind([this](std::string error) { statusMessage_ = error; }));
-                              }),
-                              lifetime_.Bind([this](std::string error) { statusMessage_ = error; }));
+void BufferView::ContinueVcsSequence(const editor::vcs::Repo& repo) {
+    vcsRunner_->RequestStatus(
+        repo,
+        lifetime_.Bind([this, repo](const std::vector<editor::vcs::StatusEntry>& entries) {
+            // A host's files are only seen through their open buffers, so one
+            // that isn't open counts as still marked: resolving it stays a
+            // deliberate stage, never an automatic one.
+            const editor::vcs::SequenceFileProbe probe = {
+                .hasUnsavedBuffer =
+                    [this, &repo](const std::filesystem::path& path) {
+                        const text::Buffer* buffer = repo.IsRemote() ? bufferList_.FindByRemote(text::RemoteFile{.destination = *repo.destination, .path = path})
+                                                                     : bufferList_.FindByPath(path);
+                        return buffer != nullptr && buffer->Modified();
+                    },
+                .hasConflictMarkers =
+                    [this, &repo](const std::filesystem::path& path) {
+                        if (!repo.IsRemote()) {
+                            return editor::vcs::FileHasConflictMarkers(path);
+                        }
+                        const text::Buffer* buffer = bufferList_.FindByRemote(text::RemoteFile{.destination = *repo.destination, .path = path});
+                        return buffer == nullptr || buffer->HasConflictMarkers();
+                    },
+            };
+            editor::vcs::SequenceContinuePlan plan =
+                editor::vcs::PlanSequenceContinue(entries, repo.root, probe, editor::vcs::SequenceAutoStageEnabled());
+            if (!plan.Ready()) {
+                statusMessage_ = editor::vcs::SequenceContinueBlockedMessage(plan, repo.root);
+                return;
+            }
+            // Re-probed rather than threaded through: the status round trip
+            // is the only thing between the two and it can't change the kind.
+            vcsRunner_->RequestSequenceState(repo,
+                                             lifetime_.Bind([this, repo, toStage = std::move(plan.toStage)](const editor::vcs::SequenceState& state) mutable {
+                                                 if (state.kind.empty()) {
+                                                     statusMessage_ = "No rebase, merge or cherry-pick in progress.";
+                                                     return;
+                                                 }
+                                                 StageThenContinueVcsSequence(repo, std::move(toStage), state.kind);
+                                             }),
+                                             lifetime_.Bind([this](std::string error) { statusMessage_ = error; }));
+        }),
+        lifetime_.Bind([this](std::string error) { statusMessage_ = error; }));
 }
 
-void BufferView::StageThenContinueVcsSequence(std::vector<std::filesystem::path> paths, std::string kind) {
+void BufferView::StageThenContinueVcsSequence(const editor::vcs::Repo& repo, std::vector<std::filesystem::path> paths, std::string kind) {
     if (paths.empty()) {
-        RunVcsSequenceStep(VcsSequenceStep::Continue, kind);
+        RunVcsSequenceStep(VcsSequenceStep::Continue, kind, repo);
         return;
     }
     // One at a time: concurrent `git add`s contend for the same index lock.
     const std::filesystem::path next = paths.back();
     paths.pop_back();
-    vcsRunner_->RequestStage(editor::vcs::LocalRepo(),
-                             next,
-                             lifetime_.Bind([this, paths = std::move(paths), kind = std::move(kind)]() mutable {
-                                 StageThenContinueVcsSequence(std::move(paths), std::move(kind));
+    vcsRunner_->RequestStage(repo, next,
+                             lifetime_.Bind([this, repo, paths = std::move(paths), kind = std::move(kind)]() mutable {
+                                 StageThenContinueVcsSequence(repo, std::move(paths), std::move(kind));
                              }),
                              lifetime_.Bind([this](std::string error) { statusMessage_ = error; }));
 }
 
-void BufferView::RunVcsSequenceStep(VcsSequenceStep step, const std::string& kind) {
+void BufferView::RunVcsSequenceStep(VcsSequenceStep step, const std::string& kind, const editor::vcs::Repo& repo) {
     const char* verb = step == VcsSequenceStep::Continue ? "Continuing" : step == VcsSequenceStep::Skip ? "Skipping"
                                                                                                         : "Aborting";
     statusMessage_   = std::string(verb) + " " + kind + "...";
-    auto onSuccess   = lifetime_.Bind([this, step] {
-        ReportVcsSequenceOutcome(step == VcsSequenceStep::Abort ? "Aborted." : "");
+    auto onSuccess   = lifetime_.Bind([this, step, repo] {
+        ReportVcsSequenceOutcome(step == VcsSequenceStep::Abort ? "Aborted." : "", repo);
     });
-    auto onError     = lifetime_.Bind([this](std::string error) { ReportVcsSequenceOutcome(std::move(error)); });
+    auto onError     = lifetime_.Bind([this, repo](std::string error) { ReportVcsSequenceOutcome(std::move(error), repo); });
     switch (step) {
         case VcsSequenceStep::Continue:
-            vcsRunner_->RequestSequenceContinue(editor::vcs::LocalRepo(), kind, onSuccess, onError);
+            vcsRunner_->RequestSequenceContinue(repo, kind, onSuccess, onError);
             break;
         case VcsSequenceStep::Skip:
-            vcsRunner_->RequestSequenceSkip(editor::vcs::LocalRepo(), kind, onSuccess, onError);
+            vcsRunner_->RequestSequenceSkip(repo, kind, onSuccess, onError);
             break;
         case VcsSequenceStep::Abort:
-            vcsRunner_->RequestSequenceAbort(editor::vcs::LocalRepo(), kind, onSuccess, onError);
+            vcsRunner_->RequestSequenceAbort(repo, kind, onSuccess, onError);
             break;
     }
 }
 
-void BufferView::ReportVcsSequenceOutcome(std::string outcome) {
+void BufferView::ReportVcsSequenceOutcome(std::string outcome, const editor::vcs::Repo& repo) {
     RefreshVcsStatusBuffer();
     RequestDiffForCurrentBuffer();
     // Stopping again on the next conflicting commit exits non-zero, so the
     // re-probe is what says whether the sequence finished or is waiting.
-    vcsRunner_->RequestSequenceState(editor::vcs::LocalRepo(),
+    vcsRunner_->RequestSequenceState(repo,
                                      lifetime_.Bind([this, outcome](const editor::vcs::SequenceState& state) {
                                          if (state.kind.empty()) {
                                              statusMessage_ = outcome.empty() ? "Done." : outcome;
@@ -787,10 +822,7 @@ std::optional<std::filesystem::path> BufferView::ResolveVcsFileTarget() {
         }
         return std::nullopt; // an empty/foreign line in the status buffer
     }
-    if (buffer.Path()) {
-        return *buffer.Path();
-    }
-    return std::nullopt;
+    return VcsResultPath(buffer);
 }
 
 void BufferView::StageOrUnstageHunkAtPoint(bool stage) {
@@ -901,9 +933,10 @@ void BufferView::RequestVcsBranchesBuffer() {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    vcsRunner_->RequestBranchList(editor::vcs::LocalRepo(),
-                                  lifetime_.Bind([this](std::vector<editor::vcs::BranchEntry> entries) { BuildVcsBranchesBuffer(entries); }),
-                                  lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs branches: " + error; }));
+    InVcsRepo("vcs branches", [this](const editor::vcs::Repo& repo) {
+        vcsRunner_->RequestBranchList(repo, lifetime_.Bind([this](std::vector<editor::vcs::BranchEntry> entries) { BuildVcsBranchesBuffer(entries); }),
+                                      lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs branches: " + error; }));
+    });
 }
 
 void BufferView::BuildVcsBranchesBuffer(const std::vector<editor::vcs::BranchEntry>& entries) {
@@ -926,28 +959,30 @@ void BufferView::BeginVcsSwitchBranchPrompt() {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    statusMessage_ = "Fetching branches...";
-    vcsRunner_->RequestBranchList(editor::vcs::LocalRepo(),
-                                  lifetime_.Bind([this](std::vector<editor::vcs::BranchEntry> entries) {
-                                      if (inputMode_ != InputMode::Normal) {
-                                          // Another prompt began while the fetch was in flight --
-                                          // don't hijack it (same in-progress guard RequestCloseBuffer
-                                          // applies to its own confirmation).
-                                          return;
-                                      }
-                                      std::vector<std::string> branchNames;
-                                      for (const editor::vcs::BranchEntry& entry : entries) {
-                                          if (!entry.current) {
-                                              branchNames.push_back(entry.name);
+    InVcsRepo("vcs branch", [this](const editor::vcs::Repo& repo) {
+        statusMessage_ = "Fetching branches...";
+        vcsRunner_->RequestBranchList(repo,
+                                      lifetime_.Bind([this](std::vector<editor::vcs::BranchEntry> entries) {
+                                          if (inputMode_ != InputMode::Normal) {
+                                              // Another prompt began while the fetch was in flight --
+                                              // don't hijack it (same in-progress guard RequestCloseBuffer
+                                              // applies to its own confirmation).
+                                              return;
                                           }
-                                      }
-                                      vcsBranchList_.Reset(std::move(branchNames));
-                                      inputMode_ = InputMode::VcsSwitchBranch;
-                                      prompt_.emplace("Switch to branch: ");
-                                      vcsBranchList_.SelectTop();
-                                      RefreshVcsSwitchBranchStatus();
-                                  }),
-                                  lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs branch: " + error; }));
+                                          std::vector<std::string> branchNames;
+                                          for (const editor::vcs::BranchEntry& entry : entries) {
+                                              if (!entry.current) {
+                                                  branchNames.push_back(entry.name);
+                                              }
+                                          }
+                                          vcsBranchList_.Reset(std::move(branchNames));
+                                          inputMode_ = InputMode::VcsSwitchBranch;
+                                          prompt_.emplace("Switch to branch: ");
+                                          vcsBranchList_.SelectTop();
+                                          RefreshVcsSwitchBranchStatus();
+                                      }),
+                                      lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs branch: " + error; }));
+    });
 }
 
 // VCS side panel follow-up: pulled out of the VcsCreateBranch switch case
@@ -2230,14 +2265,15 @@ bufferview::FuzzyPrompt BufferView::VcsSwitchBranchPrompt() {
                 // supersession y/n rather than a confusing stale-content
                 // overwrite.
                 statusMessage_ = "Switching to " + selected + "...";
-                vcsRunner_->RequestBranchSwitch(editor::vcs::LocalRepo(),
-                                                selected,
-                                                lifetime_.Bind([this, selected] {
-                                                    statusMessage_ = "Switched to " + selected + " (modified buffers not reloaded)";
-                                                    RefreshVcsStatusBuffer();
-                                                    RequestDiffForCurrentBuffer();
-                                                }),
-                                                lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs branch: " + error; })); }};
+                InVcsRepo("vcs branch", [this, selected](const editor::vcs::Repo& repo) {
+                    vcsRunner_->RequestBranchSwitch(repo, selected,
+                                                    lifetime_.Bind([this, selected] {
+                                                        statusMessage_ = "Switched to " + selected + " (modified buffers not reloaded)";
+                                                        RefreshVcsStatusBuffer();
+                                                        RequestDiffForCurrentBuffer();
+                                                    }),
+                                                    lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs branch: " + error; }));
+                }); }};
 }
 
 void BufferView::RefreshVcsSwitchBranchStatus() {

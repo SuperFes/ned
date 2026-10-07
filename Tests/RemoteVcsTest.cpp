@@ -13,8 +13,15 @@
 #include <string>
 #include <vector>
 
+#include "Editor/Commands.h"
+#include "Editor/Dispatcher.h"
+#include "Editor/Keymap.h"
 #include "Editor/Lifetime.h"
+#include "Editor/Mode.h"
 #include "Editor/Process/ChildProcess.h"
+#include "Editor/Project/Root.h"
+#include "Editor/PromptHistory.h"
+#include "Editor/Register.h"
 #include "Editor/Remote/Hosts.h"
 #include "Editor/Vcs/HostRepo.h"
 #include "Editor/Vcs/ProviderRegistry.h"
@@ -25,7 +32,12 @@
 #include "Janet/PluginLoader.h"
 #include "JanetTestSupport.h"
 #include "Text/Buffer.h"
+#include "Text/BufferList.h"
+#include "Text/KillRing.h"
+#include "UI/ActiveBuffer.h"
+#include "UI/BufferView.h"
 #include "UI/EventLoop.h"
+#include "UI/Theme.h"
 
 using Catch::Matchers::ContainsSubstring;
 using ned::tests::PumpUntil;
@@ -225,4 +237,85 @@ TEST_CASE("A remote buffer's repository needs a host to reach", "[Remote][Remote
     runner.RequestStatus(vcs::Repo{.destination = "host", .root = "/src"}, status.OnValue(), status.OnError());
     REQUIRE(status.error.has_value());
     CHECK_THAT(*status.error, ContainsSubstring("no remote host"));
+}
+
+TEST_CASE("A buffer's repository is its file's, or the last one found", "[Remote][RemoteVcs][HostAgent]") {
+    if (!GitAvailable()) {
+        SKIP("git not found on $PATH");
+    }
+    Fixture     fixture;
+    vcs::Runner runner(fixture.loop);
+    runner.SetHosts(&fixture.hosts);
+    const fs::path previousRoot = ned::editor::ProjectRoot();
+    ned::editor::SetProjectRoot("/src/local");
+
+    const auto repoOf = [&](const ned::text::Buffer& buffer) {
+        std::optional<std::expected<vcs::Repo, std::string>> repo;
+        runner.RepoFor(buffer, [&repo](std::expected<vcs::Repo, std::string> found) { repo = std::move(found); });
+        REQUIRE(PumpUntil(fixture.loop, [&repo] { return repo.has_value(); }));
+        REQUIRE(repo->has_value());
+        return **repo;
+    };
+    const vcs::Repo         onHost{.destination = "host", .root = fixture.repo};
+    const ned::text::Buffer remoteBuffer = ned::text::Buffer::NewRemoteFile(ned::text::RemoteFile{.destination = "host", .path = fixture.file});
+    const ned::text::Buffer localBuffer  = ned::text::Buffer::NewFile("/src/local/a.c");
+    const ned::text::Buffer scratch("*vcs status*");
+    const ned::text::Buffer commitMessage = ned::text::Buffer::NewFile(vcs::CommitMessagePath());
+
+    CHECK(repoOf(scratch) == vcs::LocalRepo());
+    CHECK(repoOf(remoteBuffer) == onHost);
+    CHECK(repoOf(scratch) == onHost);
+    CHECK(repoOf(commitMessage) == onHost);
+
+    // Found once, a remote file's repository answers at once.
+    bool answered = false;
+    runner.RepoFor(remoteBuffer, [&answered](std::expected<vcs::Repo, std::string>) { answered = true; });
+    CHECK(answered);
+
+    CHECK(repoOf(localBuffer) == vcs::LocalRepo());
+    CHECK(repoOf(scratch) == vcs::LocalRepo());
+    ned::editor::SetProjectRoot(previousRoot);
+}
+
+TEST_CASE("A commit begun in a remote buffer commits on its host", "[Remote][RemoteVcs][HostAgent]") {
+    if (!GitAvailable()) {
+        SKIP("git not found on $PATH");
+    }
+    Fixture     fixture;
+    vcs::Runner runner(fixture.loop);
+    runner.SetHosts(&fixture.hosts);
+
+    ned::text::BufferList bufferList;
+    ned::text::Buffer&    remoteBuffer = bufferList.AddRemotePlaceholder(ned::text::RemoteFile{.destination = "host", .path = fixture.file});
+    remoteBuffer.FinishLoad(ned::text::Rope("line one\nline TWO\nline three\nline four\nline five\nline six\nline SEVEN\n"));
+    ned::text::KillRing          killRing;
+    ned::editor::RegisterTable   registers;
+    ned::editor::PromptHistory   promptHistory;
+    ned::editor::CommandRegistry registry = [] {
+        ned::editor::CommandRegistry r;
+        ned::editor::RegisterBuiltinCommands(r);
+        return r;
+    }();
+    ned::editor::Keymap     keymap = ned::editor::BuildDefaultGlobalKeymap();
+    ned::editor::Dispatcher dispatcher{registry, ned::editor::KeymapStack({&keymap})};
+    ned::editor::Mode       mode  = ned::editor::FundamentalMode();
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ActiveBuffer   activeBuffer{remoteBuffer};
+    ned::ui::BufferView     view(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher, statusMessage, mode, theme);
+    view.SetVcsRunner(&runner);
+
+    remoteBuffer.SetPoint(remoteBuffer.ByteOffsetForLineAndColumn(1, 0));
+    view.StageHunkAtPointForTesting(true);
+    REQUIRE(PumpUntil(fixture.loop, [&statusMessage] { return statusMessage == "Hunk staged." || statusMessage.contains("vcs"); }));
+    REQUIRE(statusMessage == "Hunk staged.");
+
+    view.BeginVcsCommitMessageForTesting();
+    REQUIRE(activeBuffer.Get().Path() == vcs::CommitMessagePath());
+    activeBuffer.Get().InsertAtPoint("Stage the second line");
+    view.FinishVcsCommitMessageForTesting();
+    REQUIRE(PumpUntil(fixture.loop, [&statusMessage] { return statusMessage != "Committing..."; }));
+    CHECK_THAT(statusMessage, ContainsSubstring("Stage the second line"));
+    CHECK_THAT(Run({"git", "-C", fixture.repo.string(), "log", "-1", "--pretty=%s"}), ContainsSubstring("Stage the second line"));
+    CHECK(fixture.Staged().empty());
 }
