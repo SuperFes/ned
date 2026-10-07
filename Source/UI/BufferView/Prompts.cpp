@@ -3143,7 +3143,7 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             statusMessage_ = "No task runner available.";
         }
         else if (taskPromptAction_ == TaskPromptAction::Run) {
-            if (text::Buffer* buffer = taskRunner_->RunTask(input)) {
+            if (text::Buffer* buffer = taskRunner_->RunTask(input, &activeBuffer_.Get())) {
                 activeBuffer_.Set(*buffer);
                 statusMessage_.clear();
             }

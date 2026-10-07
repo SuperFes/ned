@@ -37,6 +37,9 @@ class TaskProcess {
     TaskProcess(std::vector<std::string> argv, ned::ui::EventLoop& eventLoop, std::function<void(std::string_view chunk)> onOutput,
                 std::function<void(std::optional<int> exitCode)> onExit,
                 process::StderrMode                              stderrMode = process::StderrMode::MergeWithStdout);
+    // One already started, wherever it runs (Remote/Placement.h).
+    TaskProcess(process::ChildProcess child, ned::ui::EventLoop& eventLoop, std::function<void(std::string_view chunk)> onOutput,
+                std::function<void(std::optional<int> exitCode)> onExit);
 
     TaskProcess(const TaskProcess&)            = delete;
     TaskProcess& operator=(const TaskProcess&) = delete;

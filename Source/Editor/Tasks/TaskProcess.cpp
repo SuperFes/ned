@@ -8,6 +8,10 @@ TaskProcess::TaskProcess(std::vector<std::string> argv, ned::ui::EventLoop& even
                          std::function<void(std::optional<int>)> onExit, process::StderrMode stderrMode) : stream_(process::ChildProcess(argv, stderrMode), eventLoop, std::move(onOutput), std::move(onExit)) {
 }
 
+TaskProcess::TaskProcess(process::ChildProcess child, ned::ui::EventLoop& eventLoop, std::function<void(std::string_view)> onOutput,
+                         std::function<void(std::optional<int>)> onExit) : stream_(std::move(child), eventLoop, std::move(onOutput), std::move(onExit)) {
+}
+
 void TaskProcess::Cancel() noexcept {
     stream_.Child().Kill();
 }
