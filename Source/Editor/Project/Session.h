@@ -37,9 +37,30 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
+#include "Text/RemoteFile.h"
+
+namespace ned::text {
+class Buffer;
+class BufferList;
+} // namespace ned::text
+
 namespace ned::editor {
+
+// A file a session reopens: an absolute local path, or a host's file.
+// Stored as one string, which for a local file starts with '/'.
+using SessionFile = std::variant<std::filesystem::path, text::RemoteFile>;
+
+[[nodiscard]] std::string                SessionFileToString(const SessionFile& file);
+[[nodiscard]] std::optional<SessionFile> SessionFileFromString(std::string_view text);
+
+// The file buffer reopens as, if it has one.
+[[nodiscard]] std::optional<SessionFile> SessionFileFor(const text::Buffer& buffer);
+
+// The open buffer holding file, if any.
+[[nodiscard]] text::Buffer* FindSessionFile(text::BufferList& buffers, const SessionFile& file);
 
 // One node of a captured window-split tree, stored flat (a vector, not a
 // pointer tree) so ProjectSessionData keeps ordinary value semantics --
@@ -57,9 +78,9 @@ struct WindowLayoutNode {
                       SplitBelow,
                       SplitRight };
 
-    Kind                                 kind = Kind::Leaf;
-    std::optional<std::filesystem::path> file;          // Leaf only, absolute
-    std::optional<std::size_t>           first, second; // SplitBelow/SplitRight only
+    Kind                       kind = Kind::Leaf;
+    std::optional<SessionFile> file;          // Leaf only
+    std::optional<std::size_t> first, second; // SplitBelow/SplitRight only
     // Split-resize follow-up: `first`'s fractional share of the split
     // (SplitBelow/SplitRight only) -- WindowManager::CaptureWindowLayout's
     // own WindowNode::ratio, persisted so a resized layout survives a
@@ -106,10 +127,10 @@ struct FunctionBreakpointState {
 };
 
 struct ProjectSessionData {
-    std::vector<std::filesystem::path>   openFiles; // absolute, in BufferList order
-    std::optional<std::filesystem::path> activeFile;
-    std::optional<bool>                  sidebarVisible;
-    std::optional<int>                   sidebarWidth;
+    std::vector<SessionFile>   openFiles; // in BufferList order
+    std::optional<SessionFile> activeFile;
+    std::optional<bool>        sidebarVisible;
+    std::optional<int>         sidebarWidth;
     // Normalized path key -> sorted-by-line BreakpointStates, Manager's
     // own store shape (see Manager::AllBreakpoints/RestoreBreakpoints).
     std::map<std::string, std::vector<BreakpointState>> breakpoints;
@@ -132,7 +153,7 @@ struct ProjectSessionData {
     // Empty means "no captured layout" (falls back to the pre-existing
     // single-pane restore) -- WindowManager::CaptureWindowLayout leaves it
     // empty rather than populate a partial tree when some leaf's buffer has
-    // no path (a scratch buffer showing in a pane, say). See
+    // no file (a scratch buffer showing in a pane, say). See
     // WindowLayoutNode's own doc comment for the "root is the last element"
     // convention. focusedPanePath is 0 (first) / 1 (second) at each split
     // node walking down from the root to the leaf that had keyboard focus at

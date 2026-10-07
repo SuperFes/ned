@@ -8,10 +8,13 @@
 #include <mutex>
 #include <stdexcept>
 #include <system_error>
+#include <variant>
 
 #include <nlohmann/json.hpp>
 
 #include "Editor/Session.h"
+#include "Text/Buffer.h"
+#include "Text/BufferList.h"
 
 namespace ned::editor {
 
@@ -61,10 +64,44 @@ namespace {
 
 } // namespace
 
+std::string SessionFileToString(const SessionFile& file) {
+    if (const auto* remote = std::get_if<text::RemoteFile>(&file)) {
+        return remote->ToString();
+    }
+    return std::get<std::filesystem::path>(file).string();
+}
+
+std::optional<SessionFile> SessionFileFromString(std::string_view text) {
+    if (text.starts_with('/')) {
+        return std::filesystem::path(text);
+    }
+    if (std::optional<text::RemoteFile> remote = text::ParseRemoteFile(text)) {
+        return std::move(*remote);
+    }
+    return std::nullopt;
+}
+
+std::optional<SessionFile> SessionFileFor(const text::Buffer& buffer) {
+    if (buffer.Path()) {
+        return std::filesystem::absolute(*buffer.Path());
+    }
+    if (buffer.Remote()) {
+        return *buffer.Remote();
+    }
+    return std::nullopt;
+}
+
+text::Buffer* FindSessionFile(text::BufferList& buffers, const SessionFile& file) {
+    if (const auto* remote = std::get_if<text::RemoteFile>(&file)) {
+        return buffers.FindByRemote(*remote);
+    }
+    return buffers.FindByPath(std::get<std::filesystem::path>(file));
+}
+
 std::string ProjectSessionToJson(const ProjectSessionData& data, const std::filesystem::path& root) {
     Json openFiles = Json::array();
     for (const auto& file : data.openFiles) {
-        openFiles.push_back(file.string());
+        openFiles.push_back(SessionFileToString(file));
     }
 
     Json breakpoints = Json::object();
@@ -107,7 +144,7 @@ std::string ProjectSessionToJson(const ProjectSessionData& data, const std::file
                 break;
         }
         if (node.file) {
-            entry["file"] = node.file->string();
+            entry["file"] = SessionFileToString(*node.file);
         }
         if (node.first) {
             entry["first"] = *node.first;
@@ -144,7 +181,7 @@ std::string ProjectSessionToJson(const ProjectSessionData& data, const std::file
         json["functionBreakpoints"] = std::move(functionBreakpoints);
     }
     if (data.activeFile) {
-        json["activeFile"] = data.activeFile->string();
+        json["activeFile"] = SessionFileToString(*data.activeFile);
     }
     if (data.sidebarVisible) {
         json["sidebarVisible"] = *data.sidebarVisible;
@@ -171,11 +208,13 @@ std::optional<ProjectSessionData> ProjectSessionFromJson(std::string_view json) 
 
         for (const Json& file : parsed.value("openFiles", Json::array())) {
             if (file.is_string()) {
-                data.openFiles.emplace_back(file.get<std::string>());
+                if (std::optional<SessionFile> parsedFile = SessionFileFromString(file.get<std::string>())) {
+                    data.openFiles.push_back(std::move(*parsedFile));
+                }
             }
         }
         if (parsed.contains("activeFile") && parsed["activeFile"].is_string()) {
-            data.activeFile = std::filesystem::path(parsed["activeFile"].get<std::string>());
+            data.activeFile = SessionFileFromString(parsed["activeFile"].get<std::string>());
         }
         if (parsed.contains("sidebarVisible") && parsed["sidebarVisible"].is_boolean()) {
             data.sidebarVisible = parsed["sidebarVisible"].get<bool>();
@@ -260,7 +299,11 @@ std::optional<ProjectSessionData> ProjectSessionFromJson(std::string_view json) 
                         valid = false;
                         break;
                     }
-                    node.file = std::filesystem::path(entry["file"].get<std::string>());
+                    node.file = SessionFileFromString(entry["file"].get<std::string>());
+                    if (!node.file) {
+                        valid = false;
+                        break;
+                    }
                 }
                 else if (kind == "below" || kind == "right") {
                     node.kind = kind == "below" ? WindowLayoutNode::Kind::SplitBelow : WindowLayoutNode::Kind::SplitRight;

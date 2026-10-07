@@ -39,6 +39,40 @@ std::optional<std::string> FinishRemoteLoad(text::Buffer& placeholder, const FsR
     return std::nullopt;
 }
 
+void LoadRemoteBuffer(Hosts& hosts, text::BufferList& buffers, const text::Buffer& placeholder, bool createMissing,
+                      LifetimeToken token, std::function<void(text::Buffer& buffer, RemoteLoadOutcome outcome)> done) {
+    const text::RemoteFile     file = *placeholder.Remote();
+    const text::BufferIdentity identity(placeholder);
+    hosts.Connect(file.destination, token.Bind([&buffers, file, identity, createMissing, token, done = std::move(done)](
+                                                   const std::expected<Connection*, std::string>& connection) {
+        text::Buffer* buffer = buffers.Find(identity);
+        if (buffer == nullptr) {
+            return;
+        }
+        if (!connection) {
+            done(*buffer, {.loaded = std::unexpected(connection.error())});
+            return;
+        }
+        ReadFile(**connection, file.path, MaxRemoteFileBytes(),
+                 token.Bind([&buffers, identity, createMissing, done](const FsResult<text::FileContents>& read) {
+                     text::Buffer* loading = buffers.Find(identity);
+                     if (loading == nullptr) {
+                         return;
+                     }
+                     const bool missing = !read && read.error().code == host::fs_error::kNotFound;
+                     if (missing && !createMissing) {
+                         done(*loading, {.loaded = std::unexpected(std::string("no such file")), .missing = true});
+                         return;
+                     }
+                     if (const std::optional<std::string> failure = FinishRemoteLoad(*loading, read)) {
+                         done(*loading, {.loaded = std::unexpected(*failure)});
+                         return;
+                     }
+                     done(*loading, {.loaded = read ? RemoteLoaded::Read : RemoteLoaded::Created});
+                 }));
+    }));
+}
+
 std::optional<std::string> FinishRemoteSave(text::Buffer& buffer, text::SavePlan plan, const FsResult<host::FileStat>& written) {
     if (written) {
         buffer.FinishRemoteSave(std::move(plan), written->timestamp);

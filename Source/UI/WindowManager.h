@@ -28,6 +28,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -836,7 +837,7 @@ class WindowManager {
     // session-persistence-window-layout follow-up: fills in data.windowLayout
     // (and data.focusedPanePath) by walking root_ -- called from
     // SaveProjectSessionNow alongside the fields above. Leaves both empty,
-    // untouched, if any leaf's buffer has no path (a scratch buffer showing
+    // untouched, if any leaf's buffer has no file (a scratch buffer showing
     // in a pane, say) rather than capture a tree partial restore couldn't
     // fully resolve anyway.
     void CaptureWindowLayout(editor::ProjectSessionData& data);
@@ -888,6 +889,12 @@ class WindowManager {
     // SetRemoteHosts gave, so save-buffer writes a remote buffer to its
     // host. Call after SetRemoteHosts.
     void EnableRemoteSaving(EventLoop& eventLoop);
+
+    // Reads each still-open remote placeholder (BufferList::
+    // AddRemotePlaceholder) from its host, as a session restore leaves
+    // them. One the host no longer has is closed; one that can't be read
+    // stays open with its failure, so the session keeps it.
+    void LoadRemoteBuffers(std::span<const text::BufferIdentity> placeholders);
 
     // True while any save is still writing. The quit path polls this so
     // shutdown waits for a write rather than killing it partway through,
@@ -1181,6 +1188,8 @@ class WindowManager {
     // capped project logs once on the way in and once on the way back out,
     // not every refresh.
     bool projectTreeWatchWasCapped_ = false;
+
+    editor::LifetimeGuard lifetime_; // last, so it expires first
 };
 
 } // namespace ned::ui

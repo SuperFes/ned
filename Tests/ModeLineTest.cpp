@@ -112,6 +112,32 @@ struct FakeServer {
 
 } // namespace
 
+TEST_CASE("ModeLine says why a placeholder didn't load, until it loads", "[ModeLine]") {
+    ned::text::Buffer buffer("main.py");
+    buffer.MarkLoading();
+    buffer.MarkLoadFailed("Connection refused");
+
+    ned::ui::ActiveBuffer activeBuffer(buffer);
+    ned::editor::Mode     mode  = ned::editor::FundamentalMode();
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::ModeLine     modeLine(activeBuffer, mode, theme);
+
+    ned::ui::Screen screen = MakeScreen(60, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 0});
+    modeLine.Paint(canvas);
+    CHECK(RowText(screen, 0, 60).find("main.py   Couldn't load: Connection refused") != std::string::npos);
+    CHECK(RowText(screen, 0, 60).find("Loading...") == std::string::npos);
+
+    // Trying again shows loading again, and a load that lands clears it.
+    buffer.MarkLoading();
+    CHECK_FALSE(buffer.LoadFailure().has_value());
+    buffer.MarkLoadFailed("Connection refused");
+    buffer.FinishLoad(ned::text::Rope("x = 1\n"));
+    CHECK_FALSE(buffer.LoadFailure().has_value());
+    modeLine.Paint(canvas);
+    CHECK(RowText(screen, 0, 60).find("Couldn't load") == std::string::npos);
+}
+
 TEST_CASE("ModeLine shows a live load percentage when the loader published progress", "[ModeLine]") {
     ned::text::Buffer buffer("huge.txt");
     buffer.MarkLoading();

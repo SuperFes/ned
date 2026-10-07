@@ -1737,20 +1737,19 @@ void WindowManager::SaveProjectSessionNow() {
     editor::ProjectSessionData data;
     const text::Buffer*        preview = bufferList_.PreviewBuffer();
     for (const auto& buffer : bufferList_.Buffers()) {
-        if (!buffer->Path() || buffer.get() == preview) {
+        std::optional<editor::SessionFile> file = editor::SessionFileFor(*buffer);
+        if (!file || buffer.get() == preview) {
             continue;
         }
         std::error_code ec;
-        if (scratchDirectory &&
+        if (scratchDirectory && buffer->Path() &&
             std::filesystem::weakly_canonical(buffer->Path()->parent_path(), ec) == *scratchDirectory) {
             continue;
         }
-        data.openFiles.push_back(std::filesystem::absolute(*buffer->Path()));
+        data.openFiles.push_back(std::move(*file));
     }
 
-    if (const auto& activePath = FocusedActiveBuffer().Get().Path()) {
-        data.activeFile = std::filesystem::absolute(*activePath);
-    }
+    data.activeFile = editor::SessionFileFor(FocusedActiveBuffer().Get());
 
     if (leftDock_ != nullptr) {
         // Chrome-redesign follow-up, unified-left-dock follow-up (migration
@@ -1812,16 +1811,16 @@ namespace {
     // index a parent records for its children is already < the parent's own
     // (freshly-appended) index -- see WindowLayoutNode's own doc comment.
     // Returns nullopt (aborting the whole capture) the moment any leaf's
-    // buffer has no path.
+    // buffer has no file.
     std::optional<std::size_t> CaptureLayoutNode(const WindowNode& node, std::vector<editor::WindowLayoutNode>& out) {
         if (node.kind == WindowNode::Kind::Leaf) {
-            const std::optional<std::filesystem::path> path = node.pane->ActiveBufferRef().Get().Path();
-            if (!path) {
+            std::optional<editor::SessionFile> file = editor::SessionFileFor(node.pane->ActiveBufferRef().Get());
+            if (!file) {
                 return std::nullopt;
             }
             editor::WindowLayoutNode entry;
             entry.kind = editor::WindowLayoutNode::Kind::Leaf;
-            entry.file = std::filesystem::absolute(*path);
+            entry.file = std::move(file);
             out.push_back(std::move(entry));
             return out.size() - 1;
         }
@@ -1869,7 +1868,7 @@ namespace {
 void WindowManager::CaptureWindowLayout(editor::ProjectSessionData& data) {
     std::vector<editor::WindowLayoutNode> layout;
     if (!CaptureLayoutNode(*root_, layout)) {
-        return; // some leaf's buffer has no path -- see this method's own header comment
+        return; // some leaf's buffer has no file -- see this method's own header comment
     }
     data.windowLayout = std::move(layout);
 
@@ -1892,7 +1891,7 @@ std::unique_ptr<WindowNode> WindowManager::BuildNodeFromLayout(const std::vector
         if (!entry.file) {
             return nullptr;
         }
-        text::Buffer* buffer = bufferList_.FindByPath(*entry.file);
+        text::Buffer* buffer = editor::FindSessionFile(bufferList_, *entry.file);
         if (buffer == nullptr) {
             return nullptr;
         }
@@ -2211,6 +2210,34 @@ void WindowManager::EnableRemoteSaving(EventLoop& eventLoop) {
     remoteSaver_ = std::make_unique<editor::remote::RemoteSaver>(*remoteHosts_, bufferList_, eventLoop,
                                                                  [this](std::string message) { statusMessage_ = std::move(message); });
     editor::SetRemoteSaveDispatcher([saver = remoteSaver_.get()](editor::RemoteSaveRequest request) { return saver->Dispatch(std::move(request)); });
+}
+
+void WindowManager::LoadRemoteBuffers(std::span<const text::BufferIdentity> placeholders) {
+    if (remoteHosts_ == nullptr) {
+        return;
+    }
+    for (const text::BufferIdentity& identity : placeholders) {
+        text::Buffer* placeholder = bufferList_.Find(identity);
+        if (placeholder == nullptr || !placeholder->Remote()) {
+            continue;
+        }
+        editor::remote::LoadRemoteBuffer(
+            *remoteHosts_, bufferList_, *placeholder, false, lifetime_.Token(),
+            [this](text::Buffer& buffer, const editor::remote::RemoteLoadOutcome& outcome) {
+                if (outcome.loaded) {
+                    return;
+                }
+                const std::string where = buffer.Remote()->ToString();
+                if (outcome.missing) {
+                    NotifyBufferClosing(buffer);
+                    bufferList_.Close(buffer.Name());
+                    statusMessage_ = where + " is gone from its host";
+                    return;
+                }
+                buffer.MarkLoadFailed(outcome.loaded.error());
+                statusMessage_ = "Couldn't open " + where + ": " + outcome.loaded.error();
+            });
+    }
 }
 
 void WindowManager::EnableAsyncFileSaving(EventLoop& eventLoop) {

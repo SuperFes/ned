@@ -587,6 +587,12 @@ class Buffer {
     void                              SetLoadProgress(std::shared_ptr<LoadProgress> progress);
     [[nodiscard]] const LoadProgress* CurrentLoadProgress() const;
 
+    // Why a placeholder's load failed, kept while it waits for one that
+    // works. It stays IsLoading(), so its empty content never saves over
+    // the file. MarkLoading and FinishLoad clear it.
+    void                                            MarkLoadFailed(std::string why);
+    [[nodiscard]] const std::optional<std::string>& LoadFailure() const;
+
     // --- Saving, as a three-step state machine -------------------------
     //
     // SaveToFile below is BeginSave + Text/SavePlan.h's ExecuteSavePlan +
@@ -1578,6 +1584,7 @@ class Buffer {
     std::size_t                                        SavingSnapshotBytes_ = 0;       // see ModifiedAfterPendingSave
     std::shared_ptr<SaveProgress>                      SaveProgress_;                  // see SetSaveProgress
     std::shared_ptr<LoadProgress>                      LoadProgress_;                  // see SetLoadProgress
+    std::optional<std::string>                         LoadFailure_;                   // see MarkLoadFailed
     bool                                               LikelyBinary_         = false;  // see LikelyBinary()'s own doc comment above
     bool                                               BinarySafetyOverride_ = false;  // see BinarySafetyOverride()'s own doc comment above
     // Set by MoveToNextLine/MoveToPreviousLine, cleared by every other

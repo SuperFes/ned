@@ -20,6 +20,7 @@
 #include <system_error>
 #include <thread>
 #include <tuple>
+#include <variant>
 #include <vector>
 
 #include <sys/socket.h>
@@ -960,9 +961,19 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // deferredLargeOpenPath's own comment above for why AsyncLoadThreshold()
     // alone isn't enough once HugeFileThreshold() can be configured lower.
     std::vector<std::filesystem::path> deferredSessionOpenPaths;
+    // Read from their hosts once those exist; until then each holds its
+    // place in the buffer list and the window layout.
+    std::vector<ned::text::BufferIdentity> restoredRemoteBuffers;
     if (restoredSession) {
-        for (const auto& file : restoredSession->openFiles) {
-            std::error_code existsEc;
+        for (const auto& entry : restoredSession->openFiles) {
+            if (const auto* remote = std::get_if<ned::text::RemoteFile>(&entry)) {
+                if (bufferList.FindByRemote(*remote) == nullptr) {
+                    restoredRemoteBuffers.emplace_back(bufferList.AddRemotePlaceholder(*remote));
+                }
+                continue;
+            }
+            const std::filesystem::path& file = std::get<std::filesystem::path>(entry);
+            std::error_code              existsEc;
             if (!std::filesystem::exists(file, existsEc) || bufferList.FindByPath(file) != nullptr) {
                 continue; // gone since last session, or already opened via the CLI
             }
@@ -980,11 +991,11 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
             }
         }
         if (buffer == nullptr && restoredSession->activeFile) {
-            buffer = bufferList.FindByPath(*restoredSession->activeFile);
+            buffer = ned::editor::FindSessionFile(bufferList, *restoredSession->activeFile);
         }
         if (buffer == nullptr) {
             for (const auto& file : restoredSession->openFiles) {
-                if ((buffer = bufferList.FindByPath(file)) != nullptr) {
+                if ((buffer = ned::editor::FindSessionFile(bufferList, file)) != nullptr) {
                     break;
                 }
             }
@@ -1509,6 +1520,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     ned::editor::remote::Hosts remoteHosts(eventLoop);
     windowManager->SetRemoteHosts(&remoteHosts);
     windowManager->EnableRemoteSaving(eventLoop);
+    windowManager->LoadRemoteBuffers(restoredRemoteBuffers);
 
     // session-persistence slice 2: the restored session's breakpoints,
     // applied as soon as the store they live in exists -- long before any
@@ -1815,22 +1827,17 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // own unconditional focus override just above -- a CLI file, sync or
     // deferred, always wins outright.
     if (pathArg == nullptr && restoredSession && !deferredSessionOpenPaths.empty()) {
-        std::optional<std::filesystem::path> focusPath;
-        if (restoredSession->activeFile && bufferList.FindByPath(*restoredSession->activeFile) != nullptr) {
-            focusPath = restoredSession->activeFile;
+        ned::text::Buffer* resolved = restoredSession->activeFile
+                                          ? ned::editor::FindSessionFile(bufferList, *restoredSession->activeFile)
+                                          : nullptr;
+        for (std::size_t i = 0; resolved == nullptr && i < restoredSession->openFiles.size(); ++i) {
+            resolved = ned::editor::FindSessionFile(bufferList, restoredSession->openFiles[i]);
         }
-        if (!focusPath) {
-            for (const auto& file : restoredSession->openFiles) {
-                if (bufferList.FindByPath(file) != nullptr) {
-                    focusPath = file;
-                    break;
-                }
-            }
-        }
-        if (focusPath) {
-            ned::text::Buffer* resolved = bufferList.FindByPath(*focusPath);
+        if (resolved != nullptr) {
             windowManager->FocusedActiveBuffer().Set(*resolved);
-            projectSidebar->RevealPath(*focusPath);
+            if (resolved->Path()) {
+                projectSidebar->RevealPath(*resolved->Path());
+            }
             if (startupScratch != nullptr && !startupScratch->Modified()) {
                 windowManager->NotifyBufferClosing(*startupScratch);
                 bufferList.Close(startupScratch->Name());

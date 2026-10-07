@@ -87,43 +87,17 @@ void BufferView::VisitRemoteFile(const editor::remote::Location& file, std::opti
     text::Buffer& placeholder = bufferList_.AddRemotePlaceholder(file);
     activeBuffer_.Set(placeholder);
     statusMessage_ = "Reading " + file.ToString() + "...";
-
-    // The buffer may be closed before the host answers; then the answer
-    // goes nowhere.
-    const text::BufferIdentity identity(placeholder);
-    const auto                 fail = [this, file](text::Buffer& buffer, const std::string& why) {
-        CloseBufferNow(buffer);
-        ReportError("Couldn't open " + file.ToString() + ": " + why);
-    };
-    remoteHosts_->Connect(file.destination, lifetime_.Bind([this, file, identity, fail, goToLine, createMissing](
-                                                               const std::expected<editor::remote::Connection*, std::string>& connection) {
-        text::Buffer* buffer = bufferList_.Find(identity);
-        if (buffer == nullptr) {
-            return;
-        }
-        if (!connection) {
-            fail(*buffer, connection.error());
-            return;
-        }
-        editor::remote::ReadFile(
-            **connection, file.path, editor::remote::MaxRemoteFileBytes(),
-            lifetime_.Bind([this, file, identity, fail, goToLine, createMissing](const editor::remote::FsResult<text::FileContents>& read) {
-                text::Buffer* loading = bufferList_.Find(identity);
-                if (loading == nullptr) {
-                    return;
-                }
-                if (!read && read.error().code == editor::host::fs_error::kNotFound && !createMissing) {
-                    fail(*loading, "no such file");
-                    return;
-                }
-                if (const std::optional<std::string> failure = editor::remote::FinishRemoteLoad(*loading, read)) {
-                    fail(*loading, *failure);
-                    return;
-                }
-                goToLine(*loading);
-                statusMessage_ = (read ? "Opened " : "(New file) ") + file.ToString();
-            }));
-    }));
+    editor::remote::LoadRemoteBuffer(*remoteHosts_, bufferList_, placeholder, createMissing, lifetime_.Token(),
+                                     [this, file, goToLine](text::Buffer& buffer, const editor::remote::RemoteLoadOutcome& outcome) {
+                                         if (!outcome.loaded) {
+                                             CloseBufferNow(buffer);
+                                             ReportError("Couldn't open " + file.ToString() + ": " + outcome.loaded.error());
+                                             return;
+                                         }
+                                         goToLine(buffer);
+                                         statusMessage_ = (*outcome.loaded == editor::remote::RemoteLoaded::Read ? "Opened " : "(New file) ") +
+                                                          file.ToString();
+                                     });
 }
 
 void BufferView::StartRemoteSearch(const editor::remote::Location& root, const std::string& pattern) {
