@@ -2842,6 +2842,8 @@ class BufferView : public Widget {
     // a valid "create new" action), so there is no HandleXKey of their own --
     // just Up/Down/Tab handling inline in HandlePromptKey.
     [[nodiscard]] std::vector<std::string> GatherPathCompletionCandidates() const;
+    // The candidate Up/Down highlighted, if one is.
+    [[nodiscard]] std::optional<std::string> ChosenPathCompletion() const;
     void                                   RefreshPathCompletionPopup();
 
     // named-projects follow-up: the shared tail of switch-project/
@@ -4329,11 +4331,10 @@ class BufferView : public Widget {
     // not just the "name — root" display text FuzzyFilterAndRank ranks.
     std::vector<editor::ProjectRegistryEntry> switchProjectEntries_;
 
-    // dropdown-path-completion follow-up: shared across FindFile/
-    // OpenProjectPath/FindScratch (see GatherPathCompletionCandidates'/
-    // RefreshPathCompletionPopup's own doc comments) -- one member is enough
-    // since exactly one of these three modes is ever live at a time.
-    std::size_t pathCompletionSelection_ = 0;
+    // The path/host dropdown's highlighted candidate. Unset until Up/Down
+    // picks one, so Enter commits the typed text (a new file's name) unless
+    // a candidate was chosen.
+    std::optional<std::size_t> pathCompletionSelection_;
 
     // named-projects follow-up: the root open-project's path step resolved,
     // held across the transition to its own second (name) prompt --

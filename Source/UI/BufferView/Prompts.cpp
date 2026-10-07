@@ -639,7 +639,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             inputMode_ = InputMode::FindFile;
             prompt_.emplace("Find file: ");
             remoteListingDirectory_.reset();
-            pathCompletionSelection_ = 0;
+            pathCompletionSelection_.reset();
             RefreshPathCompletionPopup();
             return;
         case editor::InteractiveRequest::SwitchToBuffer:
@@ -658,7 +658,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             prompt_.emplace("Connect to host: ");
             remoteHostCandidates_    = RemoteHostCandidates();
             remoteLookupTyped_.reset();
-            pathCompletionSelection_ = 0;
+            pathCompletionSelection_.reset();
             RefreshPathCompletionPopup();
             return;
         case editor::InteractiveRequest::RemoteDisconnect: {
@@ -673,7 +673,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 prompt_->SetText(connected.front());
             }
             remoteHostCandidates_    = connected;
-            pathCompletionSelection_ = 0;
+            pathCompletionSelection_.reset();
             RefreshPathCompletionPopup();
             return;
         }
@@ -686,7 +686,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             remoteHostCandidates_    = RemoteHostCandidates();
             remoteLookupTyped_.reset();
             remoteListingDirectory_.reset();
-            pathCompletionSelection_ = 0;
+            pathCompletionSelection_.reset();
             RefreshPathCompletionPopup();
             return;
         case editor::InteractiveRequest::SearchInResults: {
@@ -753,7 +753,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             remoteHostCandidates_ = RemoteHostCandidates();
             remoteLookupTyped_.reset();
             remoteListingDirectory_.reset();
-            pathCompletionSelection_ = 0;
+            pathCompletionSelection_.reset();
             RefreshPathCompletionPopup();
             return;
         case editor::InteractiveRequest::ToggleDebugPanel:
@@ -1124,7 +1124,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::FindScratch:
             inputMode_ = InputMode::FindScratch;
             prompt_.emplace("Find scratch: ");
-            pathCompletionSelection_ = 0;
+            pathCompletionSelection_.reset();
             RefreshPathCompletionPopup();
             return;
         case editor::InteractiveRequest::RecoverFile: {
@@ -1977,7 +1977,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::OpenProject:
             inputMode_ = InputMode::OpenProjectPath;
             prompt_.emplace("Open project (path): ");
-            pathCompletionSelection_ = 0;
+            pathCompletionSelection_.reset();
             RefreshPathCompletionPopup();
             return;
         // editor-ergonomics follow-up: bookmark-set already checked
@@ -3499,6 +3499,16 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
 
 void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
     if (chord.Special == editor::SpecialKey::Enter) {
+        if (std::optional<std::string> chosen = ChosenPathCompletion()) {
+            // A folder only narrows find-file; it can't be opened as a file.
+            if (inputMode_ == InputMode::FindFile && chosen->ends_with('/')) {
+                prompt_->SetText(*chosen);
+                pathCompletionSelection_.reset();
+                RefreshPathCompletionPopup();
+                return;
+            }
+            prompt_->SetText(*chosen);
+        }
         const std::string input = prompt_->Text();
         if (CommitTextEntryPrompt(input) == bufferview::PromptCommit::Transitioned) {
             return; // handed off to a second prompt, which owns the session now
@@ -3532,14 +3542,19 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         // expand-and-list-in-the-echo-area behavior -- a directory candidate's
         // trailing '/' means the very next refresh re-lists that directory's
         // own contents, giving a descend-by-Tab feel. Enter/Quit are handled
-        // by the generic chains above/below, unchanged -- this mode still
-        // finalizes on literal prompt_->Text(), not the popup selection.
+        // by the generic chains above/below; Enter commits the highlighted
+        // candidate once Up/Down has chosen one, the typed text otherwise.
         if (chord.Special == editor::SpecialKey::Down || chord.Special == editor::SpecialKey::Up) {
             const std::vector<std::string> candidates = GatherPathCompletionCandidates();
             if (!candidates.empty()) {
-                pathCompletionSelection_ = chord.Special == editor::SpecialKey::Down
-                                               ? (pathCompletionSelection_ + 1) % candidates.size()
-                                               : (pathCompletionSelection_ + candidates.size() - 1) % candidates.size();
+                const bool down = chord.Special == editor::SpecialKey::Down;
+                if (!pathCompletionSelection_) {
+                    pathCompletionSelection_ = down ? 0 : candidates.size() - 1;
+                }
+                else {
+                    pathCompletionSelection_ = down ? (*pathCompletionSelection_ + 1) % candidates.size()
+                                                    : (*pathCompletionSelection_ + candidates.size() - 1) % candidates.size();
+                }
             }
             RefreshPathCompletionPopup();
             return;
@@ -3547,8 +3562,8 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
         if (chord.Special == editor::SpecialKey::Tab) {
             const std::vector<std::string> candidates = GatherPathCompletionCandidates();
             if (!candidates.empty()) {
-                prompt_->SetText(candidates[std::min(pathCompletionSelection_, candidates.size() - 1)]);
-                pathCompletionSelection_ = 0;
+                prompt_->SetText(candidates[std::min(pathCompletionSelection_.value_or(0), candidates.size() - 1)]);
+                pathCompletionSelection_.reset();
             }
             RefreshPathCompletionPopup();
             return;
@@ -3568,7 +3583,7 @@ void BufferView::HandlePromptKey(const editor::KeyChord& chord) {
     if (HandlePromptEditingKey(chord) == PromptEditOutcome::TextEdited) {
         promptHistoryIndex_ = kNoHistoryIndex; // editing exits history browsing -- see TryNavigatePromptHistory's own doc comment
         if (PromptCompletionForCurrentMode() == bufferview::PromptCompletion::PathDropdown) {
-            pathCompletionSelection_ = 0;
+            pathCompletionSelection_.reset();
             RefreshPathCompletionPopup();
             return;
         }
@@ -4021,7 +4036,7 @@ void BufferView::StartCreateFileAt(const std::filesystem::path& directory) {
     inputMode_ = InputMode::FindFile;
     prompt_.emplace("Find file: ");
     prompt_->SetText(prefill);
-    pathCompletionSelection_ = 0;
+    pathCompletionSelection_.reset();
     RefreshPathCompletionPopup();
 }
 
@@ -6119,17 +6134,15 @@ void BufferView::ActivateCandidatePopupAt(std::size_t index) {
         case InputMode::FindFile:
         case InputMode::OpenProjectPath:
         case InputMode::FindScratch: {
-            // Tab's own behavior, not Enter's: these three sessions finalize
-            // on literal prompt_->Text(), so a click fills the prompt from
-            // the candidate rather than submitting it -- see
-            // RefreshPathCompletionPopup's own doc comment.
+            // Tab's behavior, not Enter's: a click fills the prompt from the
+            // candidate rather than submitting it.
             const std::vector<std::string> candidates = GatherPathCompletionCandidates();
-            const auto                     resolved   = ResolveFuzzyCandidateRowIndex(index, pathCompletionSelection_, candidates.size());
+            const auto                     resolved   = ResolveFuzzyCandidateRowIndex(index, pathCompletionSelection_.value_or(0), candidates.size());
             if (!resolved) {
                 return;
             }
             prompt_->SetText(candidates[*resolved]);
-            pathCompletionSelection_ = 0;
+            pathCompletionSelection_.reset();
             RefreshPathCompletionPopup();
             return;
         }

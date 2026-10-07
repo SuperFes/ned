@@ -5402,12 +5402,8 @@ TEST_CASE("Tab in find-file completes a unique file path and Enter opens it", "[
 
 TEST_CASE("Tab in find-file with ambiguous matches accepts the highlighted candidate into the prompt",
           "[BufferView]") {
-    // dropdown-path-completion follow-up: Tab now accepts the live popup's
-    // highlighted candidate (alphabetically first on a fresh listing, same
-    // sort text::CompleteFilePath already applies) instead of the old
-    // common-prefix-expand-and-list-in-the-echo-area behavior. Enter still
-    // finalizes literal prompt text either way -- see RefreshPathCompletionPopup's
-    // own doc comment for why (typing a nonexistent path must still work).
+    // With nothing highlighted, Tab takes the first candidate (the same
+    // sort text::CompleteFilePath applies).
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_tab_ambiguous";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
@@ -5443,10 +5439,8 @@ TEST_CASE("Tab in find-file with ambiguous matches accepts the highlighted candi
 }
 
 TEST_CASE("A click on a find-file candidate row fills the prompt like Tab, without submitting", "[BufferView]") {
-    // ListPopup-mouse-support-remainder follow-up: find-file/open-project-path/
-    // find-scratch finalize on literal prompt text (RefreshPathCompletionPopup's
-    // own doc comment), so a click here is Tab's behavior, not Enter's -- it
-    // fills the prompt from whichever row was clicked without opening anything.
+    // A click is Tab's behavior, not Enter's: it fills the prompt from the
+    // clicked row without opening anything.
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_click_ambiguous";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directory(dir);
@@ -5469,13 +5463,129 @@ TEST_CASE("A click on a find-file candidate row fills the prompt like Tab, witho
     view.OnEvent(ned::ui::test::Ctrl('f'));
     TypeText(view, (dir / "ap").string());
 
-    view.ActivateCandidatePopupAt(1); // click apricot.txt -- apple.txt is the highlighted row
+    view.ActivateCandidatePopupAt(1); // click apricot.txt
     REQUIRE(fixture.statusMessage == "Find file: " + (dir / "apricot.txt").string());
     REQUIRE(&activeBuffer.Get() == &scratch); // not opened yet -- click fills, doesn't submit
 
     view.OnEvent(ned::ui::test::Return());
     REQUIRE(&activeBuffer.Get() != &scratch);
     REQUIRE(activeBuffer.Get().Text() == "x");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Find-file highlights nothing until Down, then Enter opens the highlighted candidate", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_enter_chosen";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    std::ofstream(dir / "apple.txt") << "apple";
+    std::ofstream(dir / "apricot.txt") << "apricot";
+
+    Fixture            fixture;
+    ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
+
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+    std::optional<ned::ui::ListPopupModel> popup;
+    CaptureCandidates(view, popup);
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('f'));
+    TypeText(view, (dir / "ap").string());
+    REQUIRE(popup.has_value());
+    REQUIRE_FALSE(popup->selectedIndex.has_value());
+
+    view.OnEvent(ned::ui::test::ArrowDown());
+    view.OnEvent(ned::ui::test::ArrowDown());
+    REQUIRE(popup->selectedIndex == 1u);
+
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(activeBuffer.Get().Text() == "apricot");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Up with nothing highlighted chooses the last candidate", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_up_chooses_last";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    std::ofstream(dir / "apple.txt") << "apple";
+    std::ofstream(dir / "apricot.txt") << "apricot";
+
+    Fixture            fixture;
+    ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
+
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('f'));
+    TypeText(view, (dir / "ap").string());
+    view.OnEvent(ned::ui::test::ArrowUp());
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(activeBuffer.Get().Text() == "apricot");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Enter in find-file with nothing highlighted visits the typed name, even with candidates", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_enter_typed";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    std::ofstream(dir / "apple.txt") << "apple";
+
+    Fixture            fixture;
+    ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
+
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('f'));
+    TypeText(view, (dir / "ap").string());
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(activeBuffer.Get().Path() == dir / "ap");
+    REQUIRE(activeBuffer.Get().Text().empty());
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Enter on a highlighted folder in find-file lists the folder instead of opening it", "[BufferView]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_bufferview_test_enter_folder";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "sub");
+    std::ofstream(dir / "sub" / "inner.txt") << "inner";
+
+    Fixture            fixture;
+    ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
+
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 2});
+    std::optional<ned::ui::ListPopupModel> popup;
+    CaptureCandidates(view, popup);
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('f'));
+    TypeText(view, (dir / "su").string());
+    view.OnEvent(ned::ui::test::ArrowDown());
+    view.OnEvent(ned::ui::test::Return());
+
+    REQUIRE(&activeBuffer.Get() == &scratch);
+    REQUIRE(fixture.statusMessage == "Find file: " + (dir / "sub").string() + "/");
+    REQUIRE(popup.has_value());
+    REQUIRE_FALSE(popup->selectedIndex.has_value());
+
+    view.OnEvent(ned::ui::test::ArrowDown());
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(activeBuffer.Get().Text() == "inner");
 
     std::filesystem::remove_all(dir);
 }
