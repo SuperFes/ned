@@ -205,7 +205,7 @@ Handshake Connect(const ConnectOptions& options, const std::stop_token& stop) {
 Connection::Connection(Handshake handshake, PostQueue& postQueue) : master_(std::move(handshake.master)), hello_(std::move(handshake.hello)), agent_(std::move(handshake.agent)),
                                                                     framed_(std::move(handshake.transport), postQueue, Framed::Options{.logCategory = LogCategory::General, .entityNoun = "agent"}),
                                                                     endpoint_([this](const Json& message) { framed_.SendFrame(protocol::EncodeCbor(message)); }),
-                                                                    serial_(NextSerial()) {
+                                                                    serial_(NextSerial()), postQueue_(postQueue) {
     endpoint_.SetPeerWindow(hello_.window);
     endpoint_.ReserveRequestIds(kHelloId);
     framed_.SetOnFrame([this](const std::string& frame) {
@@ -221,7 +221,21 @@ Connection::Connection(Handshake handshake, PostQueue& postQueue) : master_(std:
     framed_.SetOnDisconnected([this](const std::string& reason) { Disconnect(reason); });
 }
 
-Connection::~Connection() = default;
+Connection::~Connection() {
+    lifetime_.Revoke();
+    if (connected_) {
+        connected_ = false;
+        endpoint_.Close("connection closed");
+    }
+}
+
+PostQueue& Connection::Queue() const noexcept {
+    return postQueue_;
+}
+
+LifetimeToken Connection::Token() const {
+    return lifetime_.Token();
+}
 
 protocol::Endpoint& Connection::Endpoint() noexcept {
     return endpoint_;
