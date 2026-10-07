@@ -366,6 +366,10 @@ class Buffer {
     // genuine conflicts merged in as "<<<<<<<" markers -- 0 is a fully
     // automatic, silent merge.
     [[nodiscard]] std::size_t MergeExternalChanges();
+    // MergeExternalChanges for a remote buffer, from the contents its host
+    // sent; its RemoteTimestamp() advances to theirs. Throws
+    // BinaryFileError if they don't decode, leaving the buffer untouched.
+    [[nodiscard]] std::size_t MergeRemoteChanges(FileContents contents);
 
     // save-buffer's guard against writing unresolved "<<<<<<<" conflict
     // markers to disk (Text/ThreeWayMerge.h's HasConflictMarkers) --
@@ -1304,6 +1308,9 @@ class Buffer {
     void RevertDecoding(std::optional<Charset> charset);
     // Takes fresh's content as one undoable step that matches the file.
     void AdoptReverted(Buffer& fresh);
+    // Three-way merges fresh's content into this buffer's edits; returns
+    // the conflict count.
+    [[nodiscard]] std::size_t MergeFresh(Buffer& fresh);
     void MoveToLine(std::size_t targetLine, std::size_t tabWidth);
 
     // Shared body of InsertAt/AppendWhileReadOnly -- both public entry
