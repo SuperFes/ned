@@ -26,6 +26,7 @@ class Hosts {
     using Connected      = std::function<void(std::expected<Connection*, std::string> connection)>;
     using Dropped        = std::function<void(const std::string& destination, const std::string& reason)>;
     using OptionsFactory = std::function<ConnectOptions(const std::string& destination)>;
+    using Changed        = std::function<void(const std::string& destination)>;
 
     explicit Hosts(PostQueue& postQueue, OptionsFactory options = DefaultOptions, HostLookupOptions lookup = {});
     // Cancels every attempt and closes every connection.
@@ -59,6 +60,9 @@ class Hosts {
     // Runs when a live connection ends without Disconnect: the agent
     // exited, the link dropped, or the agent broke the protocol.
     void SetOnDropped(Dropped handler);
+    // Runs, posted, whenever a destination starts or ends an attempt, or
+    // gains or loses its connection.
+    void SetOnChanged(Changed handler);
 
     // Resolver lookups for a connect prompt's host names.
     [[nodiscard]] HostLookup& Lookup() noexcept;
@@ -71,10 +75,12 @@ class Hosts {
     };
 
     void Finish(const std::string& destination, std::uint64_t id, Connector::Result result);
+    void NoteChanged(const std::string& destination);
 
     PostQueue&                                         postQueue_;
     OptionsFactory                                     options_;
     Dropped                                            onDropped_;
+    Changed                                            onChanged_;
     std::map<std::string, std::unique_ptr<Connection>> connections_;
     std::map<std::string, Attempt>                     attempts_;
     // Cancelled attempts whose workers haven't answered yet, by id.

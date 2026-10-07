@@ -7,6 +7,7 @@
 #include <fstream>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <poll.h>
@@ -322,6 +323,40 @@ TEST_CASE("Hosts report attempts that fail or are cancelled, and connections tha
     REQUIRE(dropped == std::pair<std::string, std::string>{"host", "the link went away"});
     REQUIRE(hosts.Find("host") == nullptr);
     REQUIRE(PumpUntil(queue, [&] { return hosts.Destinations().empty(); }));
+}
+
+TEST_CASE("Hosts say when a destination starts or ends an attempt, or gains or loses its connection", "[Remote][Connection][HostAgent]") {
+    FakeHost  fake;
+    PostQueue queue;
+    Hosts     hosts(queue, [&](const std::string& destination) { return fake.Options(destination); });
+
+    // What each change found: the destination, connecting, connected.
+    std::vector<std::tuple<std::string, bool, bool>> changes;
+    hosts.SetOnChanged([&](const std::string& destination) {
+        changes.emplace_back(destination, hosts.Connecting(destination), hosts.Find(destination) != nullptr);
+    });
+
+    Connection* live = nullptr;
+    hosts.Connect("host", [&](std::expected<Connection*, std::string> connection) { live = connection.value(); });
+    CHECK(changes.empty()); // posted, never from inside Connect
+    REQUIRE(PumpUntil(queue, [&] { return changes.size() == 2; }));
+    CHECK(changes[0] == std::tuple<std::string, bool, bool>{"host", true, false});
+    CHECK(changes[1] == std::tuple<std::string, bool, bool>{"host", false, true});
+
+    REQUIRE(hosts.Disconnect("host"));
+    REQUIRE(PumpUntil(queue, [&] { return changes.size() == 3; }));
+    CHECK(changes[2] == std::tuple<std::string, bool, bool>{"host", false, false});
+
+    hosts.Connect("denied", [](std::expected<Connection*, std::string>) {});
+    REQUIRE(PumpUntil(queue, [&] { return changes.size() == 5; }));
+    CHECK(std::get<0>(changes[4]) == "denied");
+
+    live = nullptr;
+    hosts.Connect("host", [&](std::expected<Connection*, std::string> connection) { live = connection.value(); });
+    REQUIRE(PumpUntil(queue, [&] { return live != nullptr && changes.size() == 7; }));
+    live->Close("the link went away");
+    REQUIRE(PumpUntil(queue, [&] { return changes.size() == 8; }));
+    CHECK(changes[7] == std::tuple<std::string, bool, bool>{"host", false, false});
 }
 
 TEST_CASE("A cancelled attempt never yields its connection, and the next one starts afresh", "[Remote][Connection][HostAgent]") {
