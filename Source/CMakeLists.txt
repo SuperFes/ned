@@ -327,6 +327,7 @@ add_library(ned_lib STATIC
         Editor/Remote/Hosts.cpp
         Editor/Remote/KnownHosts.cpp
         Editor/Remote/PathCompletion.cpp
+        Editor/Remote/Proc.cpp
         Editor/Remote/RemoteBuffer.cpp
         Editor/Remote/Search.cpp
         Editor/Remote/Watch.cpp

@@ -92,7 +92,8 @@ inline constexpr std::string_view      kAgentMissingMarker = "ned-agent-missing-
 class Connection {
   public:
     Connection(Handshake handshake, PostQueue& postQueue);
-    // Closes the agent session, then stops the master.
+    // Fails every pending request with kConnectionClosed, closes the agent
+    // session, then stops the master.
     ~Connection();
 
     Connection(const Connection&)            = delete;
@@ -106,6 +107,11 @@ class Connection {
     // Distinct for every Connection this process makes, so a reconnect is
     // never mistaken for the connection it replaced.
     [[nodiscard]] std::uint64_t Serial() const noexcept;
+    // The queue its frames reach the main thread through, for work another
+    // thread hands this connection.
+    [[nodiscard]] PostQueue& Queue() const noexcept;
+    // Expires with this connection.
+    [[nodiscard]] LifetimeToken Token() const;
 
     // Runs once, on the main thread, when the agent session ends. Every
     // pending request has already failed with kConnectionClosed. The
@@ -126,7 +132,9 @@ class Connection {
     protocol::Endpoint                             endpoint_;
     bool                                           connected_ = true;
     std::uint64_t                                  serial_;
+    PostQueue&                                     postQueue_;
     std::function<void(const std::string& reason)> onDisconnected_;
+    LifetimeGuard                                  lifetime_; // last, so it expires first
 };
 
 // Runs Connect on a worker. done runs once on the main thread with the
