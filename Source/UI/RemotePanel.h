@@ -10,7 +10,8 @@
 // Dotfiles show unless '.' hides them. n, +, R and D make a file or a
 // directory beside the selection, or rename or delete it, through the
 // focused pane's prompts. Its keys are remote-panel-mode's
-// (Editor/PanelMode.h), so init.janet can rebind them.
+// (Editor/PanelMode.h), so init.janet can rebind them. Expanded directories
+// are watched on their hosts (ListedDirectories), and a change relists them.
 //
 
 #ifndef NED_UI_REMOTEPANEL_H
@@ -82,6 +83,11 @@ class RemotePanel {
     // again wherever it's shown, keeping what's expanded under it.
     void Changed(const text::RemoteFile& path);
 
+    // The directories shown expanded, each once, for their hosts to watch.
+    [[nodiscard]] std::vector<text::RemoteFile> ListedDirectories() const;
+    // Whenever ListedDirectories changes.
+    void SetOnListedChanged(std::function<void()> handler);
+
   private:
     struct Node {
         // A home whose path the host hasn't resolved yet has an empty path.
@@ -141,6 +147,8 @@ class RemotePanel {
     std::function<void(std::string)>             onMessage_;
     std::function<void()>                        onCancel_;
     std::function<void(FileAction, const text::RemoteFile&)> onFileAction_;
+    std::function<void()>                                    onListedChanged_;
+    std::vector<text::RemoteFile>                            listed_;
 
     editor::LifetimeGuard lifetime_; // last, so it expires first
 };

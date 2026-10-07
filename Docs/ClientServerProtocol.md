@@ -137,6 +137,13 @@ hello  -> {protocol: {major, minor}, codecs: [str], window: uint}
   (`RemoteSaver`), expecting the mtime it last saw; a file changed on the host is
   refused, and the next save asks before overwriting it. `next-error` and RET on a remote
   search's `host:/path:line:` results open the host's file at that line.
+- `Remote/Watch.h` tells each connected host what to watch: the remote buffers' files and
+  the Remote panel's expanded directories, resent after a reconnect. A buffer whose file
+  an event names is stat'd, and read only if its timestamp moved on from the buffer's,
+  so its own saves stay quiet. Then `Remote/ExternalChanges.h` reverts it when unmodified,
+  merges into its edits otherwise, or, with `ned/set-auto-revert` or
+  `ned/set-auto-merge` off, marks it so the next save asks first. The panel relists a
+  directory whose entries changed.
 - The in-process transport skips `hello`. Both ends are the same build.
 
 ## 5. Transports

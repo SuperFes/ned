@@ -321,6 +321,7 @@ add_library(ned_lib STATIC
         Editor/Tasks/TaskRunner.cpp
         Editor/Remote/Connection.cpp
         Editor/Remote/Deploy.cpp
+        Editor/Remote/ExternalChanges.cpp
         Editor/Remote/Fs.cpp
         Editor/Remote/HostLookup.cpp
         Editor/Remote/Hosts.cpp
