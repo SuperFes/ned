@@ -26,6 +26,11 @@ struct Repo {
     [[nodiscard]] std::optional<text::RemoteFile> Beside() const;
     // The root as the mode line writes a file: destination:/root remotely.
     [[nodiscard]] std::string ToString() const;
+    // root / relative as a results line names it, which visits it on its
+    // host for a remote repository.
+    [[nodiscard]] std::filesystem::path Name(const std::filesystem::path& relative) const;
+    // The path such a name stands for here: the host's own, remotely.
+    [[nodiscard]] std::filesystem::path PathOf(const std::filesystem::path& name) const;
 
     [[nodiscard]] auto operator<=>(const Repo&) const = default;
 };

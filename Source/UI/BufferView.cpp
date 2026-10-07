@@ -1798,12 +1798,15 @@ void BufferView::StageOrUnstageFileAtPoint(bool stage) {
     auto onError   = lifetime_.Bind([this, stage](std::string error) {
         statusMessage_ = std::string("vcs ") + (stage ? "stage" : "unstage") + ": " + error;
     });
-    if (stage) {
-        vcsRunner_->RequestStage(editor::vcs::LocalRepo(), *target, std::move(onSuccess), std::move(onError));
-    }
-    else {
-        vcsRunner_->RequestUnstage(editor::vcs::LocalRepo(), *target, std::move(onSuccess), std::move(onError));
-    }
+    InVcsRepo(std::string("vcs ") + (stage ? "stage" : "unstage"),
+              [this, stage, target = *target, onSuccess = std::move(onSuccess), onError = std::move(onError)](const editor::vcs::Repo& repo) {
+                  if (stage) {
+                      vcsRunner_->RequestStage(repo, repo.PathOf(target), onSuccess, onError);
+                  }
+                  else {
+                      vcsRunner_->RequestUnstage(repo, repo.PathOf(target), onSuccess, onError);
+                  }
+              });
 }
 
 void BufferView::NextErrorForTesting() {
@@ -1819,7 +1822,7 @@ void BufferView::RequestDiagnosticsBufferForTesting() {
 }
 
 void BufferView::DispatchStatusForTesting(std::vector<editor::vcs::StatusEntry> entries) {
-    BuildVcsStatusBuffer(entries, /*announce=*/true);
+    BuildVcsStatusBuffer(entries, /*announce=*/true, editor::vcs::LocalRepo());
 }
 
 void BufferView::DispatchBranchesForTesting(std::vector<editor::vcs::BranchEntry> entries) {

@@ -151,8 +151,8 @@ bool AnyNumericKeys() {
     });
 }
 
-std::optional<std::string> CurrentIssueKey() {
-    const std::optional<std::string> branch = vcs::CurrentBranch(vcs::LocalRepo());
+std::optional<std::string> CurrentIssueKey(const vcs::Repo& repo) {
+    const std::optional<std::string> branch = vcs::CurrentBranch(repo);
     if (!branch) {
         return std::nullopt;
     }

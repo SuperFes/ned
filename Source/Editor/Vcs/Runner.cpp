@@ -79,6 +79,15 @@ namespace {
         return detail;
     }
 
+    bool IsCommitMessage(const std::filesystem::path& path) {
+        try {
+            return path.lexically_normal() == CommitMessagePath().lexically_normal();
+        }
+        catch (const std::filesystem::filesystem_error&) {
+            return false;
+        }
+    }
+
     // Writes content to a uniquely-named temp file via mkstemp, mirroring
     // FormatOnSave.cpp's MakeTempFile (same TOCTOU-avoidance reasoning --
     // see its own comment) plus the actual write. nullopt on any failure,
@@ -169,7 +178,7 @@ void Runner::InBufferRepo(const text::Buffer& buffer, std::function<void(std::st
         onError("no file associated with this buffer");
         return;
     }
-    FindRepo(*buffer.Remote(), [path = buffer.Remote()->path, onError, run = std::move(run)](std::expected<Repo, std::string> repo) {
+    RepoFor(buffer, [path = buffer.Remote()->path, onError, run = std::move(run)](std::expected<Repo, std::string> repo) {
         if (!repo) {
             onError(repo.error());
             return;
@@ -184,6 +193,31 @@ void Runner::FindRepo(const text::RemoteFile& file, std::function<void(std::expe
         return;
     }
     FindRepoOnHost(*hosts_, file, lifetime_.Token(), std::move(done));
+}
+
+void Runner::RepoFor(const text::Buffer& buffer, std::function<void(std::expected<Repo, std::string>)> done) {
+    if (buffer.Path() && !IsCommitMessage(*buffer.Path())) {
+        lastRemote_.reset();
+        done(LocalRepo());
+        return;
+    }
+    if (!buffer.Remote()) {
+        done(lastRemote_ ? *lastRemote_ : LocalRepo());
+        return;
+    }
+    std::string key = buffer.Remote()->ToString();
+    if (const auto found = remoteRepos_.find(key); found != remoteRepos_.end()) {
+        lastRemote_ = found->second;
+        done(found->second);
+        return;
+    }
+    FindRepo(*buffer.Remote(), [this, key = std::move(key), done = std::move(done)](std::expected<Repo, std::string> repo) {
+        if (repo) {
+            remoteRepos_.insert_or_assign(key, *repo);
+            lastRemote_ = *repo;
+        }
+        done(std::move(repo));
+    });
 }
 
 void Runner::RunAndCollect(const Repo& repo, const std::string& key, CommandSpec spec,
