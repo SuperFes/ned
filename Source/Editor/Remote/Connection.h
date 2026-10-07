@@ -14,6 +14,7 @@
 #define NED_EDITOR_REMOTE_CONNECTION_H
 
 #include <chrono>
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <functional>
@@ -102,6 +103,9 @@ class Connection {
     [[nodiscard]] const DeployedAgent&       Agent() const noexcept;
     [[nodiscard]] const std::string&         Destination() const noexcept;
     [[nodiscard]] bool                       Connected() const noexcept;
+    // Distinct for every Connection this process makes, so a reconnect is
+    // never mistaken for the connection it replaced.
+    [[nodiscard]] std::uint64_t Serial() const noexcept;
 
     // Runs once, on the main thread, when the agent session ends. Every
     // pending request has already failed with kConnectionClosed. The
@@ -121,6 +125,7 @@ class Connection {
     Framed                                         framed_;
     protocol::Endpoint                             endpoint_;
     bool                                           connected_ = true;
+    std::uint64_t                                  serial_;
     std::function<void(const std::string& reason)> onDisconnected_;
 };
 

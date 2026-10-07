@@ -343,6 +343,7 @@ add_executable(ned_tests
             RemoteConnectionTest.cpp
             RemoteDeployTest.cpp
             RemoteFsTest.cpp
+            RemoteWatchTest.cpp
             RemoteBufferTest.cpp
             RemoteKnownHostsTest.cpp
             RemoteSshTest.cpp
