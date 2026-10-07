@@ -150,6 +150,7 @@ add_library(ned_lib STATIC
         Editor/StickyScrollSettings.cpp
         Editor/RelativeLineNumberSettings.cpp
         Editor/WhichKeySettings.cpp
+        Editor/PanelMode.cpp
         Editor/KeymapStyle.cpp
         Editor/Org.cpp
         Editor/OrgCapture.cpp
@@ -531,6 +532,7 @@ add_library(ned_lib STATIC
         UI/ScrollArrowButton.cpp
         UI/ProjectSidebar.cpp
         UI/RemotePanel.cpp
+        UI/PanelKeys.cpp
         UI/LeftDock.cpp
         UI/VcsPanel.cpp
         UI/VcsDiffPreview.cpp

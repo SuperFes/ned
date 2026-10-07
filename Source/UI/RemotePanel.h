@@ -9,7 +9,8 @@
 // stay listed while their host is disconnected; expanding one connects.
 // Dotfiles show unless '.' hides them. n, +, R and D make a file or a
 // directory beside the selection, or rename or delete it, through the
-// focused pane's prompts.
+// focused pane's prompts. Its keys are remote-panel-mode's
+// (Editor/PanelMode.h), so init.janet can rebind them.
 //
 
 #ifndef NED_UI_REMOTEPANEL_H
@@ -19,12 +20,14 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Editor/Host/FsCodec.h"
 #include "Editor/Key.h"
 #include "Editor/Lifetime.h"
 #include "Editor/Remote/Hosts.h"
+#include "PanelKeys.h"
 #include "Text/RemoteFile.h"
 #include "Theme.h"
 #include "TreeView.h"
@@ -64,6 +67,8 @@ class RemotePanel {
     void SetOnMessage(std::function<void(std::string)> handler);
     // Escape.
     void SetOnCancel(std::function<void()> handler);
+    // A pending multi-key sequence's next keys, or nullopt to hide them.
+    void SetOnPrefixHint(std::function<void(std::optional<WhichKeyHint>)> handler);
 
     enum class FileAction { NewFile,
                             NewDirectory,
@@ -113,14 +118,16 @@ class RemotePanel {
                 std::optional<std::vector<editor::host::DirEntry>> entries);
     void HandleActivate(std::size_t index);
     void HandleCollapse(std::size_t index);
-    void HandleKey(const editor::KeyChord& chord);
-    void HandleFileAction(char32_t key, std::size_t depth, const Node& node);
+    // One of remote-panel-mode's commands, against the selected row.
+    void Run(std::string_view command);
+    void HandleFileAction(FileAction action, std::size_t depth, const Node& node);
     void Report(std::string message);
     void PushModel();
 
     const Theme&                  theme_;
     editor::remote::Hosts&        hosts_;
     TreeView                      tree_;
+    PanelKeys                     keys_;
     std::vector<text::RemoteFile> roots_;
     std::vector<Node>             tops_;
     std::vector<Row>              rows_;

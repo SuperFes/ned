@@ -1,6 +1,8 @@
 #include "RemotePanel.h"
 
 #include <algorithm>
+#include <optional>
+#include <string_view>
 #include <utility>
 
 #include "Editor/Remote/Fs.h"
@@ -14,7 +16,7 @@ namespace {
 
 } // namespace
 
-RemotePanel::RemotePanel(const Theme& theme, editor::remote::Hosts& hosts) : theme_(theme), hosts_(hosts), tree_(theme) {
+RemotePanel::RemotePanel(const Theme& theme, editor::remote::Hosts& hosts) : theme_(theme), hosts_(hosts), tree_(theme), keys_(editor::RemotePanelMode()) {
     tree_.SetOnSelectionChanged([this](std::size_t index) { selectedIndex_ = index; });
     tree_.SetOnActivate([this](std::size_t index) { HandleActivate(index); });
     tree_.SetOnToggleExpand([this](std::size_t index) {
@@ -23,8 +25,14 @@ RemotePanel::RemotePanel(const Theme& theme, editor::remote::Hosts& hosts) : the
         }
     });
     tree_.SetOnCollapseRequested([this](std::size_t index) { HandleCollapse(index); });
-    tree_.SetOnKey([this](const editor::KeyChord& chord) { HandleKey(chord); });
+    tree_.SetOnKey([this](const editor::KeyChord& chord) {
+        if (const std::optional<std::string> command = keys_.Feed(chord)) {
+            Run(*command);
+        }
+    });
+    keys_.SetOnMessage([this](std::string message) { Report(std::move(message)); });
     tree_.SetOnCancel([this] {
+        keys_.Reset();
         if (onCancel_) {
             onCancel_();
         }
@@ -63,6 +71,10 @@ void RemotePanel::SetOnMessage(std::function<void(std::string)> handler) {
 
 void RemotePanel::SetOnCancel(std::function<void()> handler) {
     onCancel_ = std::move(handler);
+}
+
+void RemotePanel::SetOnPrefixHint(std::function<void(std::optional<WhichKeyHint>)> handler) {
+    keys_.SetOnHint(std::move(handler));
 }
 
 void RemotePanel::SetOnFileAction(std::function<void(FileAction, const text::RemoteFile&)> handler) {
@@ -371,14 +383,14 @@ void RemotePanel::HandleCollapse(std::size_t index) {
     }
 }
 
-void RemotePanel::HandleKey(const editor::KeyChord& chord) {
-    if (chord.Codepoint == U'o') {
+void RemotePanel::Run(std::string_view command) {
+    if (command == "remote-panel-open-root") {
         if (onRequestOpenRoot_) {
             onRequestOpenRoot_();
         }
         return;
     }
-    if (chord.Codepoint == U'.') {
+    if (command == "remote-panel-toggle-dotfiles") {
         showDotfiles_ = !showDotfiles_;
         Refresh();
         Report(showDotfiles_ ? "Showing dotfiles" : "Hiding dotfiles");
@@ -388,19 +400,34 @@ void RemotePanel::HandleKey(const editor::KeyChord& chord) {
     if (node == nullptr) {
         return;
     }
-    if (chord.Codepoint == U'n' || chord.Codepoint == U'+' || chord.Codepoint == U'R' || chord.Codepoint == U'D') {
-        HandleFileAction(chord.Codepoint, rows_[selectedIndex_].depth, *node);
+    if (command == "remote-panel-new-file") {
+        HandleFileAction(FileAction::NewFile, rows_[selectedIndex_].depth, *node);
     }
-    else if (chord.Codepoint == U'g' && node->kind == editor::host::FileKind::Directory) {
-        node->children.reset();
-        node->loading = false;
-        Expand(*node);
+    else if (command == "remote-panel-new-directory") {
+        HandleFileAction(FileAction::NewDirectory, rows_[selectedIndex_].depth, *node);
     }
-    else if (chord.Codepoint == U'd') {
+    else if (command == "remote-panel-rename") {
+        HandleFileAction(FileAction::Rename, rows_[selectedIndex_].depth, *node);
+    }
+    else if (command == "remote-panel-delete") {
+        HandleFileAction(FileAction::Delete, rows_[selectedIndex_].depth, *node);
+    }
+    else if (command == "remote-panel-refresh") {
+        if (node->kind == editor::host::FileKind::Directory) {
+            node->children.reset();
+            node->loading = false;
+            Expand(*node);
+        }
+    }
+    else if (command == "remote-panel-disconnect") {
         const std::string destination = node->location.destination;
         Report(hosts_.Disconnect(destination) ? "Disconnected from " + destination : "Not connected to " + destination);
     }
-    else if (chord.Codepoint == U'x' && rows_[selectedIndex_].depth == 0 && node->root) {
+    else if (command == "remote-panel-remove-root") {
+        if (rows_[selectedIndex_].depth != 0 || !node->root) {
+            Report("Only a root is removed from the panel");
+            return;
+        }
         const text::RemoteFile root = node->location;
         std::erase(roots_, root);
         if (onRootsChanged_) {
@@ -411,7 +438,7 @@ void RemotePanel::HandleKey(const editor::KeyChord& chord) {
     }
 }
 
-void RemotePanel::HandleFileAction(char32_t key, std::size_t depth, const Node& node) {
+void RemotePanel::HandleFileAction(FileAction action, std::size_t depth, const Node& node) {
     if (!onFileAction_) {
         return;
     }
@@ -419,12 +446,13 @@ void RemotePanel::HandleFileAction(char32_t key, std::size_t depth, const Node& 
         Report("Expand " + node.location.destination + " first");
         return;
     }
-    if (key == U'R' || key == U'D') {
+    if (action == FileAction::Rename || action == FileAction::Delete) {
         if (depth == 0) {
-            Report(node.root ? "x removes a root from the panel" : "A host's home isn't renamed or deleted from here");
+            Report(node.root ? "A root is removed from the panel, not renamed or deleted from here"
+                             : "A host's home isn't renamed or deleted from here");
             return;
         }
-        onFileAction_(key == U'R' ? FileAction::Rename : FileAction::Delete, node.location);
+        onFileAction_(action, node.location);
         return;
     }
     const bool       directory = node.kind == editor::host::FileKind::Directory;
@@ -432,7 +460,7 @@ void RemotePanel::HandleFileAction(char32_t key, std::size_t depth, const Node& 
     if (!directory) {
         holder.path = holder.path.parent_path();
     }
-    onFileAction_(key == U'n' ? FileAction::NewFile : FileAction::NewDirectory, holder);
+    onFileAction_(action, holder);
 }
 
 void RemotePanel::PushModel() {

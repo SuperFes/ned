@@ -7,6 +7,7 @@
 #include "Editor/Commands.h"
 #include "Editor/Key.h"
 #include "Editor/Keymap.h"
+#include "Editor/PanelMode.h"
 
 using ned::editor::BuildDefaultGlobalKeymap;
 using ned::editor::CommandContext;
@@ -112,4 +113,26 @@ TEST_CASE("The bindings report collapses a printable-character run into a range"
     // RET is not a plain character and keeps its own row.
     REQUIRE(report.find("RET") != std::string::npos);
     REQUIRE(report.find("newline") != std::string::npos);
+}
+
+TEST_CASE("The bindings report lists each panel mode's live keys and docstrings", "[BindingsReport][PanelMode]") {
+    struct Guard {
+        ~Guard() {
+            ned::editor::ResetPanelKeysForTesting();
+        }
+    } guard;
+    ned::editor::DefinePanelKey("remote-panel-mode", "r", "remote-panel-rename");
+
+    const Keymap      global;
+    const KeymapStack stack({&global}, {"Global"});
+    const std::string report = RenderBindingsReport(stack, ThreeCommands(), "");
+
+    REQUIRE(report.find("Remote panel (remote-panel-mode) -- 10 bindings\n") != std::string::npos);
+    REQUIRE(report.find("  r  remote-panel-rename\n") != std::string::npos);
+    REQUIRE(report.find("  R  remote-panel-rename\n") != std::string::npos);
+    REQUIRE(report.find("Rename or move the selected file or directory on its host.") != std::string::npos);
+    // Panel commands aren't M-x commands, so they never count as unbound ones.
+    const std::size_t unbound = report.find("\nUnbound -- ");
+    REQUIRE(unbound != std::string::npos);
+    REQUIRE(report.find("remote-panel", unbound) == std::string::npos);
 }

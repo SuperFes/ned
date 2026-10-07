@@ -1518,6 +1518,49 @@ for the live keymap stack.
 
 :   Kill forward from point up to and including the next occurrence of a character.
 
+# PANEL MODES
+
+A dock panel's own keys, live while it has focus. They act on the panel's selection rather
+than on a buffer, so they aren't `M-x` commands; rebind them with `ned/define-panel-key`.
+
+## Remote panel (remote-panel-mode)
+
+`remote-panel-open-root` (`o`)
+
+:   Add a host's directory (host:/path, or a host for its home) as a root.
+
+`remote-panel-toggle-dotfiles` (`.`)
+
+:   Show or hide entries whose names start with a dot.
+
+`remote-panel-refresh` (`g`)
+
+:   List the selected directory again.
+
+`remote-panel-disconnect` (`d`)
+
+:   Disconnect from the selected row's host.
+
+`remote-panel-remove-root` (`x`)
+
+:   Remove the selected root from the panel; nothing on the host changes.
+
+`remote-panel-new-file` (`n`)
+
+:   Create a file in the selected directory, or beside the selected file.
+
+`remote-panel-new-directory` (`+`)
+
+:   Create a directory in the selected directory, or beside the selected file.
+
+`remote-panel-rename` (`R`)
+
+:   Rename or move the selected file or directory on its host.
+
+`remote-panel-delete` (`D`)
+
+:   Delete the selected file or directory from its host, after confirming.
+
 # SEE ALSO
 
 **ned**(1), **ned-janet**(7)

@@ -14,6 +14,7 @@
 #include "Editor/Command.h"
 #include "Editor/Commands.h"
 #include "Editor/Keymap.h"
+#include "Editor/PanelMode.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "JanetTestSupport.h"
@@ -93,6 +94,21 @@ std::string Render(const ned::editor::CommandRegistry& registry) {
         }
         out << command->Docstring() << "\n\n";
     }
+
+    out << "## Panel modes\n\n"
+        << "A dock panel's own keys, live while it has focus. They act on the panel's\n"
+        << "selection rather than on a buffer, so they aren't `M-x` commands; rebind them with\n"
+        << "`ned/define-panel-key`.\n\n";
+    for (const ned::editor::PanelMode& mode : ned::editor::PanelModes()) {
+        out << "### " << mode.title << " (`" << mode.name << "`)\n\n"
+            << "| Key | Command | Description |\n"
+            << "|-----|---------|-------------|\n";
+        for (const ned::editor::PanelCommand& command : mode.commands) {
+            out << "| " << (command.keys.empty() ? std::string() : "`" + std::string(command.keys) + "`") << " | `" << command.name
+                << "` | " << command.docstring << " |\n";
+        }
+        out << "\n";
+    }
     return out.str();
 }
 
@@ -120,6 +136,19 @@ std::string RenderCommandsMan(const ned::editor::CommandRegistry& registry) {
         if (binding != bindings.end())
             out << " (`" << binding->second << "`)";
         out << "\n\n:   " << command->Docstring() << "\n\n";
+    }
+
+    out << "# PANEL MODES\n\n"
+           "A dock panel's own keys, live while it has focus. They act on the panel's selection rather\n"
+           "than on a buffer, so they aren't `M-x` commands; rebind them with `ned/define-panel-key`.\n\n";
+    for (const ned::editor::PanelMode& mode : ned::editor::PanelModes()) {
+        out << "## " << mode.title << " (" << mode.name << ")\n\n";
+        for (const ned::editor::PanelCommand& command : mode.commands) {
+            out << "`" << command.name << "`";
+            if (!command.keys.empty())
+                out << " (`" << command.keys << "`)";
+            out << "\n\n:   " << command.docstring << "\n\n";
+        }
     }
 
     out << "# SEE ALSO\n\n**ned**(1), **ned-janet**(7)\n";

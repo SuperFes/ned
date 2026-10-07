@@ -68,6 +68,10 @@ configuration is Janet code, and these are the bindings it calls.
 
 :   Bind a key sequence (e.g. "C-c C-j") to a command name.
 
+`ned/define-panel-key`
+
+:   Bind a key sequence in a dock panel's mini-mode (mode keys command), e.g. (ned/define-panel-key "remote-panel-mode" "r" "remote-panel-rename"). The command must be one of that mode's; an empty command unbinds the keys. describe-bindings lists each panel mode's commands.
+
 `ned/delete-char`
 
 :   Delete the grapheme cluster at point.

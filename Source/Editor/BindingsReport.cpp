@@ -1,11 +1,14 @@
 #include "BindingsReport.h"
 
 #include <algorithm>
+#include <functional>
 #include <set>
 #include <sstream>
+#include <string_view>
 
 #include "Fill.h"
 #include "Key.h"
+#include "PanelMode.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 
@@ -18,6 +21,7 @@ namespace {
     // whose column layout only reads correctly at a fixed width.
     constexpr std::size_t kReportWidth = 78;
     constexpr std::size_t kRowIndent   = 2;
+    constexpr std::string_view kNoSuchCommand = "(no such command -- bound to a name nothing registers)";
 
     std::vector<std::string> SplitWords(const std::string& text) {
         std::vector<std::string> words;
@@ -112,7 +116,8 @@ namespace {
     }
 
     void AppendSection(std::ostringstream& out, const std::string& heading, std::size_t bindingCount,
-                       const std::vector<std::pair<std::string, std::string>>& rows, const CommandRegistry& registry) {
+                       const std::vector<std::pair<std::string, std::string>>& rows,
+                       const std::function<std::string(const std::string&)>&   docstringOf) {
         if (rows.empty()) {
             return;
         }
@@ -121,9 +126,7 @@ namespace {
         const std::size_t keyWidth = KeyColumnWidth(rows);
         for (const auto& [key, command] : rows) {
             out << std::string(kRowIndent, ' ') << key << std::string(keyWidth - key.size(), ' ') << command << "\n";
-            const Command* registered = registry.Find(command);
-            AppendDocstring(out, registered ? registered->Docstring() : "(no such command -- bound to a name nothing registers)",
-                            kRowIndent + keyWidth);
+            AppendDocstring(out, docstringOf(command), kRowIndent + keyWidth);
         }
     }
 
@@ -155,7 +158,28 @@ std::string RenderBindingsReport(const KeymapStack& keymaps, const CommandRegist
         std::sort(rows.begin(), rows.end(), RowLess);
         // The heading counts real bindings, not rows -- a collapsed range
         // is one row standing for many.
-        AppendSection(out, keymaps.LayerName(layer), rows.size(), CollapseCharacterRuns(rows), registry);
+        AppendSection(out, keymaps.LayerName(layer), rows.size(), CollapseCharacterRuns(rows), [&registry](const std::string& command) {
+            const Command* registered = registry.Find(command);
+            return registered ? registered->Docstring() : std::string(kNoSuchCommand);
+        });
+    }
+
+    // A panel's keys only reach it while it has focus, so they never shadow
+    // or are shadowed by the stack above.
+    for (const PanelMode& mode : PanelModes()) {
+        std::vector<Row> rows;
+        for (const Keymap::Binding& binding : PanelKeymap(mode).AllBindings()) {
+            rows.push_back(Row{.key            = FormatKeySequence(binding.sequence),
+                               .commandName    = binding.commandName,
+                               .plainCharacter = IsPlainCharacter(binding.sequence),
+                               .codepoint      = binding.sequence.empty() ? 0 : binding.sequence.front().Codepoint});
+        }
+        std::sort(rows.begin(), rows.end(), RowLess);
+        AppendSection(out, std::string(mode.title) + " (" + std::string(mode.name) + ")", rows.size(), CollapseCharacterRuns(rows),
+                      [&mode](const std::string& command) {
+                          const PanelCommand* found = FindPanelCommand(mode, command);
+                          return found ? std::string(found->docstring) : std::string(kNoSuchCommand);
+                      });
     }
 
     const std::vector<KeymapStack::ShadowedBinding> shadowed = keymaps.ShadowedBindings();

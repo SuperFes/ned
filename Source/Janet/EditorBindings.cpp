@@ -64,6 +64,7 @@
 #include "Editor/Org.h"
 #include "Editor/OrgCapture.h"
 #include "Editor/PageScroll.h"
+#include "Editor/PanelMode.h"
 #include "Editor/PersistentUndo.h"
 #include "Editor/Process/ChildProcess.h"
 #include "Editor/ProcessTimeouts.h"
@@ -205,6 +206,10 @@ namespace {
     void NedDefineKey(std::string keySequence, std::string commandName) {
         editor::ScriptingSession& session = editor::ScriptingSessionScope::Current();
         session.scriptKeymap.Bind(editor::ParseKeySequence(keySequence), commandName);
+    }
+
+    void NedDefinePanelKey(std::string mode, std::string keySequence, std::string commandName) {
+        editor::DefinePanelKey(mode, keySequence, commandName);
     }
 
     // Empty string clears it (save-buffer stops formatting) -- simpler than a
@@ -1833,6 +1838,11 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedMessage>("ned", "message", "Show a status/echo-area message.");
     env.Register<&NedRegisterCommand>("ned", "register-command", "Register a Janet function as a named, bindable command.");
     env.Register<&NedDefineKey>("ned", "define-key", "Bind a key sequence (e.g. \"C-c C-j\") to a command name.");
+    env.Register<&NedDefinePanelKey>("ned", "define-panel-key",
+                                     "Bind a key sequence in a dock panel's mini-mode (mode keys command), e.g. "
+                                     "(ned/define-panel-key \"remote-panel-mode\" \"r\" \"remote-panel-rename\"). "
+                                     "The command must be one of that mode's; an empty command unbinds the keys. "
+                                     "describe-bindings lists each panel mode's commands.");
     env.Register<&NedSetFormatCommand>(
         "ned", "set-format-command",
         "Set the shell command save-buffer pipes buffer content through before writing (empty string clears it).");
