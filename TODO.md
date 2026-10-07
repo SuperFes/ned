@@ -103,9 +103,9 @@ and sync on save; don't build a remote-authoritative buffer.
 - [ ] A first-connection host-key trust prompt, following `Project/Trust.h`'s precedent.
 
 **Project tree and search**
-- [ ] Remote panel file actions: new file, new directory, rename, delete (needs
-      `fs/mkdir`, `fs/rename`, `fs/remove`), and a refresh driven by `watch` rather
-      than `g`.
+- [ ] A Remote panel refresh driven by `watch` rather than `g` and the editor's own
+      file actions. A remote file created by saving a new buffer doesn't show until
+      then.
 - [ ] Send remote buffers' unsaved edits with a remote project search, as `LiveContent`.
       Unsaved text can exceed the 64 MiB frame cap in total, so it needs to go up as a
       stream rather than inside the request. Decide how project-replace, find-references

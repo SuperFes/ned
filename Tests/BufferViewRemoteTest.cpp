@@ -599,3 +599,69 @@ TEST_CASE("next-error walks a remote search's results into the host's files", "[
     REQUIRE(fixture.StatusStartsWith("Couldn't open host:" + (tree / "sub" / "b.txt").string() + ": no such file"));
     CHECK(fixture.bufferList.FindByRemote({.destination = "host", .path = tree / "sub" / "b.txt"}) == nullptr);
 }
+
+TEST_CASE("create-directory, rename-file and delete-file act on a host:/path through its host", "[BufferView][Remote][HostAgent]") {
+    Fixture                     fixture;
+    const std::filesystem::path tree = fixture.fake.dir / "tree";
+    std::filesystem::create_directories(tree / "sub");
+    std::ofstream(tree / "sub" / "c.txt") << "c\n";
+    std::ofstream(tree / "top.txt") << "t\n";
+    const auto at = [](const std::filesystem::path& path) { return "host:" + path.string(); };
+
+    fixture.Command("create-directory");
+    fixture.Enter(at(tree / "made" / "deeper"));
+    REQUIRE(fixture.StatusStartsWith("Created directory " + at(tree / "made" / "deeper")));
+    CHECK(std::filesystem::is_directory(tree / "made" / "deeper"));
+
+    // Open buffers follow a rename: the file itself, and one under a
+    // renamed directory.
+    fixture.Command("find-file");
+    fixture.Enter(at(tree / "sub" / "c.txt"));
+    REQUIRE(fixture.StatusStartsWith("Opened "));
+    ned::text::Buffer& nested = fixture.activeBuffer.Get();
+    fixture.Command("find-file");
+    fixture.Enter(at(tree / "top.txt"));
+    REQUIRE(fixture.StatusStartsWith("Opened "));
+    ned::text::Buffer& top = fixture.activeBuffer.Get();
+
+    fixture.Command("rename-file");
+    fixture.Enter(at(tree / "sub"));
+    fixture.Enter(at(tree / "moved"));
+    REQUIRE(fixture.StatusStartsWith("Renamed to " + at(tree / "moved")));
+    CHECK(std::filesystem::exists(tree / "moved" / "c.txt"));
+    CHECK(nested.Remote()->ToString() == at(tree / "moved" / "c.txt"));
+    CHECK(nested.Name() == "host:c.txt");
+
+    // A bare absolute destination stays on the source's host.
+    fixture.Command("rename-file");
+    fixture.Enter(at(tree / "top.txt"));
+    fixture.Enter((tree / "renamed.py").string());
+    REQUIRE(fixture.StatusStartsWith("Renamed to " + at(tree / "renamed.py")));
+    CHECK(top.Remote()->ToString() == at(tree / "renamed.py"));
+    CHECK(top.Name() == "host:renamed.py");
+    CHECK(ned::editor::CachedModeForBuffer(top).name == ned::editor::ModeForPath(tree / "renamed.py").name);
+
+    fixture.Command("rename-file");
+    fixture.Enter(at(tree / "renamed.py"));
+    fixture.Enter("other:" + (tree / "x.py").string());
+    CHECK_THAT(fixture.statusMessage, ContainsSubstring("to another host"));
+    CHECK(std::filesystem::exists(tree / "renamed.py"));
+
+    fixture.Command("rename-file");
+    fixture.Enter(at(tree / "renamed.py"));
+    fixture.Enter(at(tree / "moved"));
+    REQUIRE(fixture.StatusStartsWith("Couldn't rename " + at(tree / "renamed.py") + ": "));
+    CHECK_THAT(fixture.statusMessage, ContainsSubstring("already exists"));
+
+    fixture.Command("delete-file");
+    fixture.Enter(at(tree / "moved"));
+    REQUIRE(fixture.statusMessage == "Delete \"" + at(tree / "moved") + "\"? (y/n)");
+    fixture.Type("y");
+    REQUIRE(fixture.StatusStartsWith("Deleted " + at(tree / "moved")));
+    CHECK_FALSE(std::filesystem::exists(tree / "moved"));
+
+    fixture.Command("delete-file");
+    fixture.Enter(at(tree / "moved"));
+    fixture.Type("y");
+    REQUIRE(fixture.StatusStartsWith("Couldn't delete " + at(tree / "moved") + ": no such file or directory"));
+}

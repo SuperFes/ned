@@ -65,6 +65,10 @@ void RemotePanel::SetOnCancel(std::function<void()> handler) {
     onCancel_ = std::move(handler);
 }
 
+void RemotePanel::SetOnFileAction(std::function<void(FileAction, const text::RemoteFile&)> handler) {
+    onFileAction_ = std::move(handler);
+}
+
 void RemotePanel::Report(std::string message) {
     if (onMessage_) {
         onMessage_(std::move(message));
@@ -220,6 +224,36 @@ void RemotePanel::Expand(Node& node) {
     PushModel();
 }
 
+void RemotePanel::Changed(const text::RemoteFile& path) {
+    for (Node& top : tops_) {
+        if (top.location.destination != path.destination || top.location.path.empty()) {
+            continue;
+        }
+        // The nearest shown directory above path: a new a/b/c lands in
+        // whichever of its ancestors is listed.
+        const std::string key = TopKey(top);
+        for (std::filesystem::path directory = path.path.parent_path();; directory = directory.parent_path()) {
+            if (Node* node = FindNode(key, directory)) {
+                if (node->children && !node->loading) {
+                    Relist(key, *node);
+                }
+                break;
+            }
+            if (directory == directory.parent_path()) {
+                break;
+            }
+        }
+    }
+    PushModel();
+}
+
+void RemotePanel::Relist(const std::string& topKey, Node& node) {
+    node.loading = true;
+    node.error.clear();
+    node.listing = ++nextListing_;
+    List(topKey, node.location, node.listing);
+}
+
 void RemotePanel::List(const std::string& topKey, const text::RemoteFile& directory, std::uint64_t listing) {
     hosts_.Connect(directory.destination, lifetime_.Bind([this, topKey, directory, listing](const std::expected<editor::remote::Connection*, std::string>& connection) {
         if (!connection) {
@@ -259,6 +293,10 @@ void RemotePanel::Settle(const std::string& topKey, const std::filesystem::path&
     if (node == nullptr || node->listing != listing) {
         return;
     }
+    std::optional<std::pair<std::string, std::filesystem::path>> selected;
+    if (const Node* current = SelectedNode()) {
+        selected.emplace(TopKeyOfRow(selectedIndex_), current->location.path);
+    }
     node->loading = false;
     if (!entries) {
         node->error    = std::move(error);
@@ -275,10 +313,21 @@ void RemotePanel::Settle(const std::string& topKey, const std::filesystem::path&
     children.reserve(entries->size());
     for (editor::host::DirEntry& entry : *entries) {
         text::RemoteFile location{.destination = node->location.destination, .path = node->location.path / entry.name};
-        children.push_back(Node{.location = std::move(location), .name = std::move(entry.name), .kind = entry.kind, .link = entry.link});
+        Node             child{.location = std::move(location), .name = std::move(entry.name), .kind = entry.kind, .link = entry.link};
+        // Listed again: a directory that's still there keeps its own listing.
+        if (node->children) {
+            const auto kept = std::ranges::find_if(*node->children, [&child](const Node& old) { return old.name == child.name && old.kind == child.kind; });
+            if (kept != node->children->end()) {
+                child = std::move(*kept);
+            }
+        }
+        children.push_back(std::move(child));
     }
     node->children = std::move(children);
     PushModel();
+    if (selected) {
+        SelectNearest(selected->first, selected->second);
+    }
 }
 
 void RemotePanel::HandleActivate(std::size_t index) {
@@ -339,7 +388,10 @@ void RemotePanel::HandleKey(const editor::KeyChord& chord) {
     if (node == nullptr) {
         return;
     }
-    if (chord.Codepoint == U'g' && node->kind == editor::host::FileKind::Directory) {
+    if (chord.Codepoint == U'n' || chord.Codepoint == U'+' || chord.Codepoint == U'R' || chord.Codepoint == U'D') {
+        HandleFileAction(chord.Codepoint, rows_[selectedIndex_].depth, *node);
+    }
+    else if (chord.Codepoint == U'g' && node->kind == editor::host::FileKind::Directory) {
         node->children.reset();
         node->loading = false;
         Expand(*node);
@@ -357,6 +409,30 @@ void RemotePanel::HandleKey(const editor::KeyChord& chord) {
         Refresh();
         Report("Removed " + root.ToString() + " from the Remote panel");
     }
+}
+
+void RemotePanel::HandleFileAction(char32_t key, std::size_t depth, const Node& node) {
+    if (!onFileAction_) {
+        return;
+    }
+    if (node.location.path.empty()) {
+        Report("Expand " + node.location.destination + " first");
+        return;
+    }
+    if (key == U'R' || key == U'D') {
+        if (depth == 0) {
+            Report(node.root ? "x removes a root from the panel" : "A host's home isn't renamed or deleted from here");
+            return;
+        }
+        onFileAction_(key == U'R' ? FileAction::Rename : FileAction::Delete, node.location);
+        return;
+    }
+    const bool       directory = node.kind == editor::host::FileKind::Directory;
+    text::RemoteFile holder    = node.location;
+    if (!directory) {
+        holder.path = holder.path.parent_path();
+    }
+    onFileAction_(key == U'n' ? FileAction::NewFile : FileAction::NewDirectory, holder);
 }
 
 void RemotePanel::PushModel() {

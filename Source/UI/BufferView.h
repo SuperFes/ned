@@ -4338,6 +4338,14 @@ class BufferView : public Widget {
     void AppendRemoteMatches(std::uint64_t generation, const std::vector<editor::SearchMatch>& matches);
     void FinishRemoteSearch(std::uint64_t generation, const std::optional<std::string>& failure);
     void CancelRemoteSearch();
+    // create-directory, rename-file and delete-file given host:/path. A
+    // rename stays on its host, and open buffers follow it.
+    void CreateRemoteDirectory(const editor::remote::Location& directory);
+    void RenameRemotePath(const editor::remote::Location& from, const editor::remote::Location& to);
+    void DeleteRemotePath(const editor::remote::Location& target);
+    // then runs once connected to destination; a failure to connect is
+    // reported instead.
+    void WithRemoteHost(const std::string& destination, std::function<void(editor::remote::Connection&)> then);
     // revert-buffer and revert-buffer-with-charset: the active buffer's
     // file read again, as one undoable step, decoded as charset when given.
     // A remote buffer reads through its host, and one whose load failed

@@ -1614,6 +1614,26 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     remotePanel.SetOnMessage([&statusMessage](std::string message) { statusMessage = std::move(message); });
     remotePanel.SetOnOpenFile([wm = windowManager.get()](const ned::text::RemoteFile& file) { wm->RequestVisitRemoteFile(file); });
     remotePanel.SetOnRequestOpenRoot([wm = windowManager.get()] { wm->RequestRemoteOpenRoot(); });
+    remotePanel.SetOnFileAction([wm = windowManager.get(), dock = leftDock.get()](ned::ui::RemotePanel::FileAction action, const ned::text::RemoteFile& target) {
+        // The prompts are the focused pane's.
+        wm->TakeFocus();
+        dock->NoteFocusReturned();
+        const std::filesystem::path typed = target.ToString();
+        switch (action) {
+            case ned::ui::RemotePanel::FileAction::NewFile:
+                wm->StartCreateFileAt(typed);
+                break;
+            case ned::ui::RemotePanel::FileAction::NewDirectory:
+                wm->StartCreateDirectoryAt(typed);
+                break;
+            case ned::ui::RemotePanel::FileAction::Rename:
+                wm->StartRenameFileAt(typed);
+                break;
+            case ned::ui::RemotePanel::FileAction::Delete:
+                wm->StartDeleteFileAt(typed);
+                break;
+        }
+    });
     if (std::optional<std::string> remembered = ned::editor::Variable("remote-panel-roots")) {
         std::vector<ned::text::RemoteFile> roots;
         for (const auto line : std::views::split(*remembered, '\n')) {

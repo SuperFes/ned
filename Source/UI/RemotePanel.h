@@ -7,7 +7,9 @@
 //
 // A connected host with no root of its own shows its login's home. Roots
 // stay listed while their host is disconnected; expanding one connects.
-// Dotfiles show unless '.' hides them.
+// Dotfiles show unless '.' hides them. n, +, R and D make a file or a
+// directory beside the selection, or rename or delete it, through the
+// focused pane's prompts.
 //
 
 #ifndef NED_UI_REMOTEPANEL_H
@@ -63,6 +65,18 @@ class RemotePanel {
     // Escape.
     void SetOnCancel(std::function<void()> handler);
 
+    enum class FileAction { NewFile,
+                            NewDirectory,
+                            Rename,
+                            Delete };
+    // n, +, R, D: the panel has no prompt of its own. A new file or
+    // directory is offered the selected directory, or a file's own.
+    void SetOnFileAction(std::function<void(FileAction action, const text::RemoteFile& target)> handler);
+
+    // The host's tree changed at path: the directory holding it is listed
+    // again wherever it's shown, keeping what's expanded under it.
+    void Changed(const text::RemoteFile& path);
+
   private:
     struct Node {
         // A home whose path the host hasn't resolved yet has an empty path.
@@ -93,12 +107,14 @@ class RemotePanel {
     void SelectNearest(const std::string& topKey, std::filesystem::path path);
 
     void Expand(Node& node);
+    void Relist(const std::string& topKey, Node& node);
     void List(const std::string& topKey, const text::RemoteFile& directory, std::uint64_t listing);
     void Settle(const std::string& topKey, const std::filesystem::path& path, std::uint64_t listing, std::string error,
                 std::optional<std::vector<editor::host::DirEntry>> entries);
     void HandleActivate(std::size_t index);
     void HandleCollapse(std::size_t index);
     void HandleKey(const editor::KeyChord& chord);
+    void HandleFileAction(char32_t key, std::size_t depth, const Node& node);
     void Report(std::string message);
     void PushModel();
 
@@ -117,6 +133,7 @@ class RemotePanel {
     std::function<void()>                        onRootsChanged_;
     std::function<void(std::string)>             onMessage_;
     std::function<void()>                        onCancel_;
+    std::function<void(FileAction, const text::RemoteFile&)> onFileAction_;
 
     editor::LifetimeGuard lifetime_; // last, so it expires first
 };
