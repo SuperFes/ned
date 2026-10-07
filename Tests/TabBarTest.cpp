@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "FileIconsOff.h"
 #include "TestEvents.h"
 #include "Text/BufferList.h"
 #include "UI/ActiveBuffer.h"
@@ -38,6 +39,7 @@ void PlaceRow(ned::ui::TabBar& tabBar, int width) {
 } // namespace
 
 TEST_CASE("TabBar renders each open buffer as a tab, highlighting the active one", "[TabBar]") {
+    const FileIconsOff    noIcons;
     ned::text::BufferList list;
     ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
     list.CreateBuffer("beta");
@@ -62,6 +64,24 @@ TEST_CASE("TabBar renders each open buffer as a tab, highlighting the active one
     REQUIRE(screen.PixelAt(static_cast<int>(betaCol), 0).foreground_color == theme.tabBar.foreground);
 }
 
+TEST_CASE("A tab shows its file's icon before the name", "[TabBar]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    source = list.CreateBuffer("main.c");
+    source.SetPath("main.c");
+
+    ned::ui::ActiveBuffer activeBuffer(source);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    ned::ui::TabBar       tabBar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, theme);
+    PlaceRow(tabBar, 40);
+
+    ned::ui::Screen screen = ned::ui::Screen(40, 1);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 0});
+    tabBar.Paint(canvas);
+
+    CHECK(RowText(screen, 0, 40).starts_with(" \ue61e main.c "));
+    CHECK(screen.PixelAt(1, 0).character == "\ue61e");
+}
+
 TEST_CASE("TabBar shows a modified marker on a tab whose buffer has unsaved changes", "[TabBar]") {
     ned::text::BufferList list;
     ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
@@ -80,6 +100,7 @@ TEST_CASE("TabBar shows a modified marker on a tab whose buffer has unsaved chan
 }
 
 TEST_CASE("A press on a tab switches the active buffer", "[TabBar]") {
+    const FileIconsOff    noIcons;
     ned::text::BufferList list;
     ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
     ned::text::Buffer&    beta  = list.CreateBuffer("beta");
@@ -98,6 +119,7 @@ TEST_CASE("A press on a tab switches the active buffer", "[TabBar]") {
 }
 
 TEST_CASE("A press on a tab requests focus before switching the active buffer", "[TabBar]") {
+    const FileIconsOff noIcons;
     // tabbar-focus-capture follow-up: a switch must claim keyboard focus for
     // the editor side too -- previously a click while a dock panel
     // (ProjectSidebar/VcsPanel) held focus silently retargeted the switch
@@ -138,6 +160,7 @@ TEST_CASE("A press outside any tab is a no-op", "[TabBar]") {
 }
 
 TEST_CASE("The preview buffer's tab renders in italic, others don't", "[TabBar]") {
+    const FileIconsOff    noIcons;
     ned::text::BufferList list;
     ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
     ned::text::Buffer&    beta  = list.CreateBuffer("beta");
@@ -160,6 +183,7 @@ TEST_CASE("The preview buffer's tab renders in italic, others don't", "[TabBar]"
 }
 
 TEST_CASE("A close icon is rendered at the end of each tab", "[TabBar]") {
+    const FileIconsOff    noIcons;
     ned::text::BufferList list;
     ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
 
@@ -177,6 +201,7 @@ TEST_CASE("A close icon is rendered at the end of each tab", "[TabBar]") {
 }
 
 TEST_CASE("Clicking a tab's close icon invokes the registered handler with that buffer", "[TabBar]") {
+    const FileIconsOff    noIcons;
     ned::text::BufferList list;
     ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
     list.CreateBuffer("beta");
@@ -199,6 +224,7 @@ TEST_CASE("Clicking a tab's close icon invokes the registered handler with that 
 }
 
 TEST_CASE("Clicking a close icon requests focus before requesting the close", "[TabBar]") {
+    const FileIconsOff noIcons;
     // tabbar-focus-capture follow-up: WindowManager::RequestCloseBuffer
     // routes through whichever pane currently reports Focused(), so the
     // close request must be preceded by a focus request -- otherwise a
@@ -223,6 +249,7 @@ TEST_CASE("Clicking a close icon requests focus before requesting the close", "[
 }
 
 TEST_CASE("Clicking a close icon with no focus handler registered is still a safe no-op", "[TabBar]") {
+    const FileIconsOff    noIcons;
     ned::text::BufferList list;
     ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
 
@@ -279,6 +306,7 @@ TEST_CASE("An overflow indicator appears only on the edge(s) with scrolled-past 
 }
 
 TEST_CASE("Wheel scrolls the tab bar horizontally when tabs overflow the width, and clamps", "[TabBar]") {
+    const FileIconsOff    noIcons;
     ned::text::BufferList list;
     ned::text::Buffer&    first = list.CreateBuffer("first-buffer-name");
     for (int i = 0; i < 10; ++i) {
@@ -332,6 +360,7 @@ TEST_CASE("Wheel is a no-op when the tabs already fit the viewport", "[TabBar]")
 }
 
 TEST_CASE("Tabs render as distinct blocks separated by buffer-background gaps", "[TabBar]") {
+    const FileIconsOff    noIcons;
     ned::text::BufferList list;
     ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
     list.CreateBuffer("beta");
@@ -361,6 +390,7 @@ TEST_CASE("Tabs render as distinct blocks separated by buffer-background gaps", 
 }
 
 TEST_CASE("The active tab's block takes the accent chrome background while the editor holds focus", "[TabBar]") {
+    const FileIconsOff    noIcons;
     ned::text::BufferList list;
     ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
     list.CreateBuffer("beta");
@@ -428,6 +458,7 @@ TEST_CASE("Stress: hundreds of tabs in a narrow viewport stay memory-safe under 
 }
 
 TEST_CASE("Paint auto-reveals the active tab when the active buffer changes", "[TabBar]") {
+    const FileIconsOff    noIcons;
     ned::text::BufferList list;
     ned::text::Buffer&    first = list.CreateBuffer("first-buffer-name");
     for (int i = 0; i < 10; ++i) {
@@ -565,6 +596,7 @@ TEST_CASE("Dragging a tab past the last tab moves it to the end", "[TabBar]") {
 
 TEST_CASE("A right-press on a tab reports that tab and the click's absolute position, without switching to it",
           "[TabBar]") {
+    const FileIconsOff    noIcons;
     ned::text::BufferList list;
     ned::text::Buffer&    alpha = list.CreateBuffer("alpha");
     ned::text::Buffer&    beta  = list.CreateBuffer("beta");

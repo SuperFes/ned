@@ -335,9 +335,11 @@ inline CandidatePopupWindow ComputeCandidatePopupWindow(std::size_t selected, st
     return CandidatePopupWindow{.start = windowStart, .end = windowEnd};
 }
 
+// `icon`, when set, fills each candidate's left column (a file's glyph).
 inline ListPopupModel BuildFuzzyCandidatePopupModel(const std::string& title, const std::vector<std::string>& ranked,
                                                     std::size_t                                           selected,
-                                                    const std::function<std::string(const std::string&)>& display = nullptr) {
+                                                    const std::function<std::string(const std::string&)>& display = nullptr,
+                                                    const std::function<std::string(const std::string&)>& icon    = nullptr) {
     ListPopupModel model;
     model.title = title;
     if (ranked.empty()) {
@@ -349,16 +351,16 @@ inline ListPopupModel BuildFuzzyCandidatePopupModel(const std::string& title, co
 
     model.rows.reserve(windowEnd - windowStart + 2);
     if (windowStart > 0) {
-        model.rows.push_back({.main = "↑ " + std::to_string(windowStart) + " more above"});
+        model.rows.push_back({.left = icon ? " " : "", .main = "↑ " + std::to_string(windowStart) + " more above"});
     }
     for (std::size_t i = windowStart; i < windowEnd; ++i) {
-        model.rows.push_back({.main = display ? display(ranked[i]) : ranked[i]});
+        model.rows.push_back({.left = icon ? icon(ranked[i]) : std::string(), .main = display ? display(ranked[i]) : ranked[i]});
     }
     model.selectedIndex = (selected - windowStart) + (windowStart > 0 ? 1 : 0);
 
     const std::size_t hiddenBelow = ranked.size() - windowEnd;
     if (hiddenBelow > 0) {
-        model.rows.push_back({.main = "↓ " + std::to_string(hiddenBelow) + " more below"});
+        model.rows.push_back({.left = icon ? " " : "", .main = "↓ " + std::to_string(hiddenBelow) + " more below"});
     }
     return model;
 }

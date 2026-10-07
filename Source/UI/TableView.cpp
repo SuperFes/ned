@@ -42,6 +42,10 @@ namespace {
         DrawText(c, x + drawn, y, "…", brush, x + width, {.textOnly = true});
     }
 
+    std::string DisplayText(const table::Cell& cell) {
+        return cell.icon.empty() ? cell.text : cell.icon + " " + cell.text;
+    }
+
     const table::Cell& CellAt(const table::Row& row, std::size_t column) {
         static const table::Cell kEmpty;
         return column < row.cells.size() ? row.cells[column] : kEmpty;
@@ -63,7 +67,7 @@ void TableView::SetModel(table::Model model) {
     for (const table::Group& group : model_.groups) {
         for (const table::Row& row : group.rows) {
             for (std::size_t i = 0; i < row.cells.size() && i < contentWidths_.size(); ++i) {
-                contentWidths_[i] = std::max(contentWidths_[i], text::StringColumns(row.cells[i].text));
+                contentWidths_[i] = std::max(contentWidths_[i], text::StringColumns(DisplayText(row.cells[i])));
             }
         }
     }
@@ -328,7 +332,7 @@ void TableView::Paint(Canvas c) {
                 brush.foreground = *cell.foreground;
             }
             brush.bold = cell.bold;
-            DrawCellText(c, columnsX + slot.x, y, slot.width, cell.text, model_.columns[slot.column].align, brush);
+            DrawCellText(c, columnsX + slot.x, y, slot.width, DisplayText(cell), model_.columns[slot.column].align, brush);
         }
     }
 }

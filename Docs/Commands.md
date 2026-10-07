@@ -1634,7 +1634,7 @@ Show or hide the left-side debug panel (source, function, data and exception bre
 
 ## `toggle-file-type-icons`
 
-Show or hide the language glyph beside a file's name.
+Show or hide the file and folder glyphs before names.
 
 ## `toggle-indent-guides`
 

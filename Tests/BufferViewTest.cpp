@@ -5306,6 +5306,24 @@ TEST_CASE("switch-to-buffer fuzzy-matches live as you type and Enter selects the
     REQUIRE(&activeBuffer.Get() == &other);
 }
 
+TEST_CASE("switch-to-buffer shows each candidate's file icon in the left column", "[BufferView]") {
+    Fixture            fixture;
+    ned::text::Buffer& scratch = fixture.bufferList.CreateBuffer("scratch");
+    ned::text::Buffer& source  = fixture.bufferList.CreateBuffer("main.c");
+    source.SetPath("main.c");
+
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::BufferView   view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                               fixture.statusMessage, fixture.mode, fixture.theme);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    CaptureCandidates(view, fixture.candidates);
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Character("b"));
+    CHECK(CandidateRowExists(fixture.candidates, "\ue61e", "main.c"));
+    CHECK(CandidateRowExists(fixture.candidates, "\uf016", "scratch"));
+}
+
 TEST_CASE("switch-to-buffer stays live with multiple fuzzy matches and Down/Enter picks the highlighted one",
           "[BufferView]") {
     Fixture            fixture;

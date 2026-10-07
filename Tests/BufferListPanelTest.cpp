@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <unistd.h>
 
+#include "FileIconsOff.h"
 #include "TestEvents.h"
 #include "Text/BufferList.h"
 #include "UI/BufferListPanel.h"
@@ -218,7 +219,28 @@ TEST_CASE("BufferListPanel a left-column click toggles the mark under it without
     REQUIRE(closingNames == std::vector<std::string>{"two"});
 }
 
+TEST_CASE("BufferListPanel shows each buffer's file icon before its name", "[BufferListPanel]") {
+    Fixture            fixture;
+    ned::text::Buffer& source = fixture.bufferList.CreateBuffer("main.c");
+    source.SetPath("main.c");
+
+    ned::ui::BufferListPanel panel(fixture.theme, fixture.bufferList);
+    panel.Show();
+    panel.Popup().SetBox_(ned::ui::Box{.x_min = 0, .x_max = 29, .y_min = 0, .y_max = 5});
+
+    ned::ui::Screen screen(30, 6);
+    panel.Popup().Paint(ned::ui::Canvas(screen, panel.Popup().Box_()));
+    std::string rows;
+    for (int y = 0; y < 6; ++y) {
+        for (int x = 0; x < 30; ++x) {
+            rows += screen.PixelAt(x, y).character;
+        }
+    }
+    CHECK(rows.find("\ue61e main.c") != std::string::npos);
+}
+
 TEST_CASE("BufferListPanel shows marks, name and size in columns", "[BufferListPanel]") {
+    const FileIconsOff noIcons;
     Fixture            fixture;
     ned::text::Buffer& one = fixture.bufferList.CreateBuffer("one");
     one.InsertAtPoint("hello");

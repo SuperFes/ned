@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "Editor/BufferSave.h"
+#include "Editor/FileIcons.h"
 
 namespace ned::ui {
 
@@ -150,7 +151,7 @@ void BufferListPanel::RefreshDisplay() {
             .cells = {table::Cell{.text       = std::move(marks),
                                   .foreground = marked ? std::optional<Color>(theme_.borderAccent.foreground) : std::nullopt,
                                   .bold       = marked},
-                      table::Cell{.text = buffer.Name()},
+                      table::Cell{.text = buffer.Name(), .icon = editor::FileIcon(buffer)},
                       table::Cell{.text       = FormatBufferSize(buffer.Size()),
                                   .sortNumber = static_cast<std::int64_t>(buffer.Size())},
                       table::Cell{.text       = buffer.Path()     ? DisplayPath(*buffer.Path())

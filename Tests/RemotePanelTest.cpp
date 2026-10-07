@@ -19,6 +19,7 @@
 #include "Editor/Remote/Hosts.h"
 #include "EnvOverride.h"
 #include "FakeRemoteHost.h"
+#include "FileIconsOff.h"
 #include "TestEvents.h"
 #include "UI/RemotePanel.h"
 #include "UI/Theme.h"
@@ -135,8 +136,8 @@ TEST_CASE("The Remote panel lists an opened root as it's expanded, and opens its
     std::vector<std::string> rows = fixture.Rows();
     CHECK_THAT(rows[0], ContainsSubstring("▾ ● " + root));
     // Directories first, then files, each sorted.
-    CHECK_THAT(rows[1], ContainsSubstring("▸ sub"));
-    CHECK_THAT(rows[2], ContainsSubstring("a.txt"));
+    CHECK_THAT(rows[1], ContainsSubstring("▸ \uf07b sub"));
+    CHECK_THAT(rows[2], ContainsSubstring("\uf016 a.txt"));
     CHECK_THAT(rows[3], ContainsSubstring("b.txt"));
 
     const auto at = [](const std::filesystem::path& path) { return ned::text::RemoteFile{.destination = "host", .path = path}; };
@@ -149,7 +150,8 @@ TEST_CASE("The Remote panel lists an opened root as it's expanded, and opens its
     CHECK(fixture.panel.ListedDirectories() == std::vector{at(dir), at(dir / "sub")});
     CHECK(fixture.listedChanges == listedChanges + 1);
     rows = fixture.Rows();
-    CHECK_THAT(rows[2], ContainsSubstring("▸ deep"));
+    CHECK_THAT(rows[1], ContainsSubstring("▾ \uf07c sub"));
+    CHECK_THAT(rows[2], ContainsSubstring("▸ \uf07b deep"));
     CHECK_THAT(rows[3], ContainsSubstring("c.txt"));
 
     fixture.Select("c.txt");
@@ -190,6 +192,7 @@ TEST_CASE("The Remote panel lists an opened root as it's expanded, and opens its
 }
 
 TEST_CASE("The Remote panel's file keys name the selected row, and a change relists its directory", "[RemotePanel][Remote][HostAgent]") {
+    const FileIconsOff noIcons;
     using FileAction            = Fixture::FileAction;
     Fixture                     fixture;
     const std::filesystem::path dir = fixture.fake.dir / "proj";

@@ -114,6 +114,33 @@ void PlaceSidebar(ned::ui::ProjectSidebar& sidebar, int width, int height) {
 
 } // namespace
 
+TEST_CASE("ProjectSidebar shows a folder icon on directories and a language icon on files", "[ProjectSidebar]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_icons";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "sub");
+    {
+        std::ofstream(dir / "main.c") << "int main;\n";
+    }
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      buffer = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(buffer);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 4);
+
+    ned::ui::Screen screen = ned::ui::Screen(28, 4);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 27, .y_min = 0, .y_max = 3});
+    sidebar.Paint(canvas);
+
+    CHECK(RowText(screen, 1, 28).find("▸ \uf07b sub/") != std::string::npos);
+    CHECK(RowText(screen, 2, 28).find("\ue61e main.c") != std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("ProjectSidebar renders a collapsed tree by default, with a disclosure triangle on directories",
           "[ProjectSidebar]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_render";

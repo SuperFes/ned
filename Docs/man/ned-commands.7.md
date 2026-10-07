@@ -1272,7 +1272,7 @@ for the live keymap stack.
 
 `toggle-file-type-icons`
 
-:   Show or hide the language glyph beside a file's name.
+:   Show or hide the file and folder glyphs before names.
 
 `toggle-indent-guides`
 

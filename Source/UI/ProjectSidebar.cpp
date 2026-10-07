@@ -13,6 +13,7 @@
 
 #include "Border.h"
 #include "DrawText.h"
+#include "Editor/FileIcons.h"
 #include "Editor/Key.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Tree.h"
@@ -25,16 +26,10 @@ namespace ned::ui {
 
 namespace {
 
-    // Standard Unicode Box Drawing characters (guaranteed single-column
-    // width in any monospace font) for tree-connector lines, `tree`-command
-    // style -- deliberately not Nerd Font icons: those need a specific
-    // patched font and render as boxes/mojibake without it, the same
-    // portability concern already documented for the scroll bar's arrow
-    // glyphs. Per-file-type emoji icons were considered too and rejected
-    // for a second reason on top of that: most terminals render emoji as
-    // double-width, which would break this widget's precise column-by-
-    // column Cell placement. Disclosure triangles are the same BMP
-    // "Geometric Shapes" family ScrollArrowButton's own ▲/▼ already use.
+    // Box Drawing for tree connectors, `tree`-command style: single-column
+    // in any monospace font, which the column-exact Cell placement needs.
+    // Disclosure triangles are the Geometric Shapes ScrollArrowButton's
+    // ▲/▼ use.
     constexpr char32_t kTreeContinue      = U'│';
     constexpr char32_t kTreeBranch        = U'├';
     constexpr char32_t kTreeLast          = U'└';
@@ -112,13 +107,19 @@ namespace {
                            const std::set<std::filesystem::path>& expandedDirs) {
         const editor::ProjectTreeEntry& entry = entries[index];
 
-        std::u32string prefix = TreePrefix(entries, index);
+        const bool     expanded = entry.isDirectory && expandedDirs.contains(entry.path);
+        std::u32string prefix   = TreePrefix(entries, index);
         prefix += U' ';
         if (entry.isDirectory) {
-            prefix += expandedDirs.contains(entry.path) ? kExpandedTriangle : kCollapsedTriangle;
+            prefix += expanded ? kExpandedTriangle : kCollapsedTriangle;
             prefix += U' ';
         }
-        std::string label = Utf8(prefix) + entry.path.filename().string();
+        std::string label = Utf8(prefix);
+        if (const std::string icon = entry.isDirectory ? editor::FolderIcon(expanded) : editor::FileIcon(entry.path);
+            !icon.empty()) {
+            label += icon + " ";
+        }
+        label += entry.path.filename().string();
         if (entry.isDirectory) {
             label += '/';
         }

@@ -35,6 +35,8 @@ namespace {
     std::unordered_map<std::string, std::string> g_filenameOverrides;
     // See CachedModeForBuffer's doc comment in the header.
     text::PerBufferMap<Mode, const text::Buffer*> g_modeCache{&g_mutex};
+    // IconForPath's answers by generic path, flushed with g_modeCache.
+    std::unordered_map<std::string, std::string> g_iconCache;
 
     // set-mode's choice per buffer: outlives cache flushes (a language
     // registration clears g_modeCache), dropped with the buffer.
@@ -157,12 +159,14 @@ namespace {
 void ClearAllModeCaches() {
     const std::lock_guard lock(g_mutex);
     g_modeCache.clear();
+    g_iconCache.clear();
 }
 
 void RegisterMode(const std::string& name, Mode mode) {
     const std::lock_guard lock(g_mutex);
     g_registeredModes.insert_or_assign(name, std::move(mode));
     g_modeCache.clear();
+    g_iconCache.clear();
 }
 
 std::optional<Mode> ModeByName(const std::string& name) {
@@ -182,26 +186,33 @@ void SetModeForExtension(const std::string& extension, const std::string& modeNa
     const std::lock_guard lock(g_mutex);
     g_extensionOverrides.insert_or_assign(StripLeadingDot(extension), modeName);
     g_modeCache.clear(); // see RegisterMode's own comment on why
+    g_iconCache.clear();
 }
 
 void SetModeForFilename(const std::string& filename, const std::string& modeName) {
     const std::lock_guard lock(g_mutex);
     g_filenameOverrides.insert_or_assign(filename, modeName);
     g_modeCache.clear(); // see RegisterMode's own comment on why
+    g_iconCache.clear();
 }
 
-std::optional<Mode> ModeForFileOverride(const std::filesystem::path& path) {
-    std::optional<std::string> modeName;
-    {
+namespace {
+
+    std::optional<std::string> OverrideModeName(const std::filesystem::path& path) {
         const std::lock_guard lock(g_mutex);
         if (const auto it = g_filenameOverrides.find(path.filename().string()); it != g_filenameOverrides.end()) {
-            modeName = it->second;
+            return it->second;
         }
-        else if (const auto extIt = g_extensionOverrides.find(StripLeadingDot(path.extension().string()));
-                 extIt != g_extensionOverrides.end()) {
-            modeName = extIt->second;
+        if (const auto it = g_extensionOverrides.find(StripLeadingDot(path.extension().string())); it != g_extensionOverrides.end()) {
+            return it->second;
         }
+        return std::nullopt;
     }
+
+} // namespace
+
+std::optional<Mode> ModeForFileOverride(const std::filesystem::path& path) {
+    const std::optional<std::string> modeName = OverrideModeName(path);
     if (!modeName) {
         return std::nullopt;
     }
@@ -273,9 +284,47 @@ namespace {
         return std::nullopt;
     }
 
-    // What content-based resolution reads: the first 8 KiB, and the last
-    // 4 KiB after an elision line when the file is longer -- enough for a
-    // sniff and for a modeline at either end. Empty for a file not on disk.
+    // The mode path's name selects, and with `head` (a file's first bytes)
+    // the sharer of its extension; short of an override or a modeline.
+    std::optional<std::string> PathModeName(const std::filesystem::path& path, std::string_view head) {
+        if (std::optional<std::string> registered = RegisteredModeNameForPath(path)) {
+            return registered;
+        }
+        for (const auto& [claim, modeName] : BundledPathClaims()) {
+            if (PathEndsWith(path, claim)) {
+                return modeName;
+            }
+        }
+        const auto& filenames = BundledFilenameTable();
+        if (const auto it = filenames.find(path.filename().string()); it != filenames.end()) {
+            return it->second;
+        }
+        if (std::optional<std::string> shared = SharedExtensionModeName(path, head)) {
+            return shared;
+        }
+        const auto& table = BundledExtensionTable();
+        if (const auto it = table.find(path.extension().string()); it != table.end()) {
+            return it->second;
+        }
+        return std::nullopt;
+    }
+
+    // nullopt when no such mode exists, as ModeByName.
+    std::optional<std::string> IconForModeName(const std::string& modeName) {
+        {
+            const std::lock_guard lock(g_mutex);
+            if (const auto it = g_registeredModes.find(modeName); it != g_registeredModes.end()) {
+                return it->second.icon;
+            }
+        }
+        constexpr std::string_view kSuffix = "-mode";
+        if (!modeName.ends_with(kSuffix)) {
+            return std::nullopt;
+        }
+        const std::optional<LanguageDefinition> definition =
+            FindLanguageDefinition(std::string_view(modeName).substr(0, modeName.size() - kSuffix.size()));
+        return definition ? std::optional(definition->icon) : std::nullopt;
+    }
 
 } // namespace
 
@@ -296,36 +345,58 @@ Mode ModeForPathAndEnds(const std::filesystem::path& path, std::string_view ends
             return std::move(*mode);
         }
     }
-    if (const std::optional<std::string> registered = RegisteredModeNameForPath(path)) {
-        if (auto mode = ModeByName(*registered); mode) {
-            return std::move(*mode);
-        }
-    }
-    for (const auto& [claim, modeName] : BundledPathClaims()) {
-        if (PathEndsWith(path, claim)) {
-            if (auto mode = ModeByName(modeName); mode) {
-                return std::move(*mode);
-            }
-        }
-    }
-    const auto& filenames = BundledFilenameTable();
-    if (const auto it = filenames.find(path.filename().string()); it != filenames.end()) {
-        if (auto mode = ModeByName(it->second); mode) {
-            return std::move(*mode);
-        }
-    }
-    if (const std::optional<std::string> shared = SharedExtensionModeName(path, std::string_view(ends).substr(0, 8192))) {
-        if (auto mode = ModeByName(*shared); mode) {
-            return std::move(*mode);
-        }
-    }
-    const auto& table = BundledExtensionTable();
-    if (const auto it = table.find(path.extension().string()); it != table.end()) {
-        if (auto mode = ModeByName(it->second); mode) {
+    if (const std::optional<std::string> modeName = PathModeName(path, ends.substr(0, 8192))) {
+        if (auto mode = ModeByName(*modeName); mode) {
             return std::move(*mode);
         }
     }
     return FundamentalMode();
+}
+
+std::string IconForPath(const std::filesystem::path& path) {
+    const std::string key = path.generic_string();
+    {
+        const std::lock_guard lock(g_mutex);
+        if (const auto it = g_iconCache.find(key); it != g_iconCache.end()) {
+            return it->second;
+        }
+    }
+    std::optional<std::string> icon;
+    if (const std::optional<std::string> overridden = OverrideModeName(path)) {
+        icon = IconForModeName(*overridden);
+    }
+    if (!icon) {
+        if (const std::optional<std::string> modeName = PathModeName(path, {})) {
+            icon = IconForModeName(*modeName);
+        }
+    }
+    const std::lock_guard lock(g_mutex);
+    return g_iconCache.insert_or_assign(key, icon.value_or(std::string())).first->second;
+}
+
+std::string IconForBuffer(const text::Buffer& buffer) {
+    std::optional<std::string> chosen;
+    {
+        const std::lock_guard lock(g_mutex);
+        if (const auto it = g_modeCache.find(&buffer); it != g_modeCache.end()) {
+            return it->second.icon;
+        }
+        if (const auto it = g_chosenModes.find(&buffer); it != g_chosenModes.end()) {
+            chosen = it->second;
+        }
+    }
+    if (chosen) {
+        if (std::optional<std::string> icon = IconForModeName(*chosen)) {
+            return std::move(*icon);
+        }
+    }
+    if (buffer.Path()) {
+        return IconForPath(*buffer.Path());
+    }
+    if (buffer.Remote()) {
+        return IconForPath(buffer.Remote()->path);
+    }
+    return {};
 }
 
 Mode ModeForBuffer(const text::Buffer& buffer) {

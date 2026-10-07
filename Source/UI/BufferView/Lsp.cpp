@@ -6,6 +6,7 @@
 // definition/peek, symbols, hierarchy, rename, linked editing, and jump history.
 //
 
+#include "Editor/FileIcons.h"
 #include "Editor/Format.h"
 #include "Editor/Tracker/IssueBuffer.h"
 #include "Editor/Tracker/IssueKey.h"
@@ -2556,8 +2557,13 @@ void BufferView::RefreshPathCompletionPopup() {
     const std::function<std::string(const std::string&)> display =
         isPathMode ? std::function<std::string(const std::string&)>(MaskPathCandidateToLastSegment)
                    : std::function<std::string(const std::string&)>{};
+    const std::function<std::string(const std::string&)> icon =
+        isPathMode ? std::function<std::string(const std::string&)>([](const std::string& candidate) {
+            return candidate.ends_with('/') ? editor::FolderIcon(false) : editor::FileIcon(std::filesystem::path(candidate));
+        })
+                   : std::function<std::string(const std::string&)>{};
     onCandidatesChanged_(
-        BuildFuzzyCandidatePopupModel(prompt_->StatusText(), candidates, pathCompletionSelection_, display));
+        BuildFuzzyCandidatePopupModel(prompt_->StatusText(), candidates, pathCompletionSelection_, display, icon));
 }
 
 void BufferView::RequestProjectFindReferences() {
