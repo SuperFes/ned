@@ -1,8 +1,14 @@
 #include "Dispatcher.h"
 
 #include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <csignal>
+#include <deque>
+#include <exception>
 #include <iterator>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
 #include <stop_token>
@@ -12,8 +18,10 @@
 #include "Editor/Host/Codec.h"
 #include "Editor/Host/Fs.h"
 #include "Editor/Host/FsCodec.h"
+#include "Editor/Host/ProcCodec.h"
 #include "Editor/Host/SearchCodec.h"
 #include "Editor/Host/WatchCodec.h"
+#include "Editor/ProcessTimeouts.h"
 
 namespace ned::editor::host {
 
@@ -45,6 +53,81 @@ struct Dispatcher::SearchJob {
     std::optional<std::stop_callback<StopWorker>> forwardStop;
 };
 
+// A child spawned for the editor. Its readers hand each chunk to the main
+// thread and wait to be let go on until the editor's credit has taken it;
+// its writer feeds stdin in the order the editor asked.
+struct Dispatcher::ProcJob {
+    enum class Step { Write,
+                      CloseInput,
+                      Release };
+    struct Item {
+        Step        step = Step::Write;
+        std::string data;
+    };
+
+    ProcJob(Responder responderIn, process::ChildProcess childIn, bool capturesStderr) : responder(std::move(responderIn)), child(std::move(childIn)), stderrDone(!capturesStderr) {
+    }
+
+    ~ProcJob() {
+        {
+            const std::lock_guard lock(mutex);
+            stopping = true;
+        }
+        wake.notify_all();
+        child.CloseConnection();
+        writer       = std::jthread();
+        stdoutReader = std::jthread();
+        stderrReader = std::jthread();
+    }
+
+    void Permit(int fd) {
+        {
+            const std::lock_guard lock(mutex);
+            (fd == 1 ? stdoutMayRead : stderrMayRead) = true;
+        }
+        wake.notify_all();
+    }
+
+    // False once the job is stopping.
+    bool AwaitPermit(int fd) {
+        std::unique_lock lock(mutex);
+        bool&            mayRead = fd == 1 ? stdoutMayRead : stderrMayRead;
+        wake.wait(lock, [&] { return mayRead || stopping; });
+        mayRead = false;
+        return !stopping;
+    }
+
+    void Push(Item item) {
+        {
+            const std::lock_guard lock(mutex);
+            items.push_back(std::move(item));
+        }
+        wake.notify_all();
+    }
+
+    // Main thread only.
+    Responder                                                responder;
+    std::deque<Responder>                                    writeAnswers;
+    std::optional<std::optional<int>>                        exit;
+    bool                                                     stderrDone;
+    bool                                                     released   = false;
+    bool                                                     waiting[3] = {false, false, false}; // by fd: a chunk held for credit
+    std::optional<std::stop_callback<std::function<void()>>> onCancel;
+
+    process::ChildProcess   child;
+    std::mutex              mutex;
+    std::condition_variable wake;
+    bool                    stdoutMayRead = false;
+    bool                    stderrMayRead = false;
+    bool                    stopping      = false;
+    bool                    exited        = false;
+    std::deque<Item>        items;
+
+    std::jthread writer;
+    std::jthread stdoutReader;
+    std::jthread stderrReader;
+};
+
 struct Dispatcher::WorkerJob {
     explicit WorkerJob(Responder responderIn) : responder(std::move(responderIn)) {
     }
@@ -72,11 +155,23 @@ Dispatcher::Dispatcher(protocol::Endpoint& endpoint, PostQueue& postQueue, Ident
     endpoint_.Handle(std::string(kFsRename), lifetime_.Bind([this](Json params, Responder responder) { FsRename(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsRemove), lifetime_.Bind([this](Json params, Responder responder) { FsRemove(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kWatchSet), lifetime_.Bind([this](Json params, Responder responder) { WatchSet(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kProcSpawn), lifetime_.Bind([this](Json params, Responder responder) { ProcSpawn(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kProcWrite), lifetime_.Bind([this](Json params, Responder responder) { ProcWrite(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kProcCloseStdin),
+                     lifetime_.Bind([this](Json params, Responder responder) { ProcCloseStdin(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kProcSignal), lifetime_.Bind([this](Json params, Responder responder) { ProcSignal(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kProcRelease), lifetime_.Bind([this](Json params, Responder responder) { ProcRelease(params, std::move(responder)); }));
 }
 
 Dispatcher::~Dispatcher() {
     lifetime_.Revoke();
     watcher_.reset();
+    // Killed together rather than each given its grace in turn.
+    for (auto& [handle, job] : procs_) {
+        job->onCancel.reset();
+        job->child.Signal(SIGKILL);
+    }
+    procs_.clear();
     searches_.clear();
     workerJobs_.clear();
 }
@@ -98,7 +193,7 @@ void Dispatcher::Hello(const Json& params, Responder responder) {
     response.arch         = identity_.arch;
     response.codec        = ChooseCodec(request.codecs);
     response.window       = protocol::kDefaultWindow;
-    response.capabilities = Capabilities{.fs = 3, .search = 1, .watch = 1};
+    response.capabilities = Capabilities{.fs = 3, .proc = 1, .search = 1, .watch = 1};
     responder.Result(ToJson(response));
     if (onCodec_) {
         onCodec_(response.codec);
@@ -440,6 +535,271 @@ void Dispatcher::ReportWatchEvents(const std::vector<FileEvent>& burst) {
         return;
     }
     endpoint_.Notify(std::string(kWatchEvent), ToJson(report));
+}
+
+namespace {
+
+    // What one output chunk carries at most; a reader gathers what's ready
+    // up to this before handing it on.
+    constexpr std::size_t kProcChunkBytes = 64 * 1024;
+    // How long a released child gets to exit on its stdin's EOF.
+    constexpr std::chrono::milliseconds kReleaseGrace{200};
+
+} // namespace
+
+void Dispatcher::ProcSpawn(const Json& params, Responder responder) {
+    ProcSpawnRequest request;
+    try {
+        request = ProcSpawnRequestFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    if (procs_.contains(request.handle)) {
+        responder.Error(error_code::kInvalidParams, "ned: process handle " + std::to_string(request.handle) + " is in use");
+        return;
+    }
+    std::optional<process::ChildProcess> child;
+    try {
+        child.emplace(request.argv, process::SpawnOptions{.stderrMode = request.stderrMode, .cwd = request.cwd, .env = request.env});
+    }
+    catch (const std::exception& e) {
+        responder.Error(proc_error::kSpawnFailed, e.what());
+        return;
+    }
+
+    const bool    capturesStderr = request.stderrMode == process::StderrMode::Capture;
+    auto          job            = std::make_unique<ProcJob>(std::move(responder), std::move(*child), capturesStderr);
+    ProcJob*      raw            = job.get();
+    const auto    handle         = request.handle;
+    LifetimeToken alive          = lifetime_.Token();
+
+    job->responder.OnDrained(alive.Bind([raw] {
+        for (const int fd : {1, 2}) {
+            if (raw->waiting[fd]) {
+                raw->waiting[fd] = false;
+                raw->Permit(fd);
+            }
+        }
+    }));
+    job->onCancel.emplace(job->responder.StopToken(), std::function<void()>([raw] { raw->child.Signal(SIGKILL); }));
+
+    const auto read = [this, raw, handle, alive](int fd) {
+        while (true) {
+            std::string data = fd == 1 ? raw->child.ReadSome() : raw->child.ReadSomeStderr();
+            if (data.empty()) {
+                break;
+            }
+            while (fd == 1 && data.size() < kProcChunkBytes) {
+                const std::optional<std::string> more = raw->child.ReadSome(std::chrono::milliseconds(0));
+                if (!more || more->empty()) {
+                    break; // nothing ready, or EOF: the next read says which
+                }
+                data += *more;
+            }
+            postQueue_.Post(alive.Bind([this, raw, handle, fd, data = std::move(data)] mutable { OnProcOutput(handle, raw, fd, std::move(data)); }));
+            if (!raw->AwaitPermit(fd)) {
+                return;
+            }
+        }
+        if (fd == 1) {
+            const std::optional<int> exit = raw->child.WaitForExit();
+            postQueue_.Post(alive.Bind([this, raw, handle, exit] { OnProcExited(handle, raw, exit); }));
+        }
+        else {
+            postQueue_.Post(alive.Bind([this, raw, handle] { OnProcStderrDone(handle, raw); }));
+        }
+    };
+    job->stdoutReader = std::jthread([read] { read(1); });
+    if (capturesStderr) {
+        job->stderrReader = std::jthread([read] { read(2); });
+    }
+    job->writer = std::jthread([this, raw, handle, alive] {
+        while (true) {
+            ProcJob::Item item;
+            {
+                std::unique_lock lock(raw->mutex);
+                raw->wake.wait(lock, [raw] { return raw->stopping || !raw->items.empty(); });
+                if (raw->stopping) {
+                    return;
+                }
+                item = std::move(raw->items.front());
+                raw->items.pop_front();
+            }
+            std::string error;
+            switch (item.step) {
+                case ProcJob::Step::Write:
+                    try {
+                        raw->child.WriteAll(item.data, ProtocolWriteStallTimeoutMs());
+                    }
+                    catch (const std::exception& e) {
+                        error = e.what();
+                    }
+                    break;
+                case ProcJob::Step::CloseInput:
+                    raw->child.CloseInput();
+                    break;
+                case ProcJob::Step::Release: {
+                    raw->child.CloseInput();
+                    std::unique_lock lock(raw->mutex);
+                    if (!raw->wake.wait_for(lock, kReleaseGrace, [raw] { return raw->stopping || raw->exited; })) {
+                        lock.unlock();
+                        raw->child.Signal(SIGKILL);
+                    }
+                    continue;
+                }
+            }
+            postQueue_.Post(alive.Bind([this, raw, handle, error = std::move(error)] mutable { OnProcWritten(handle, raw, std::move(error)); }));
+        }
+    });
+    procs_.emplace(handle, std::move(job));
+}
+
+Dispatcher::ProcJob* Dispatcher::FindProc(const Json& params, Responder& responder) {
+    std::uint64_t handle = 0;
+    try {
+        handle = ProcHandleFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return nullptr;
+    }
+    const auto it = procs_.find(handle);
+    if (it == procs_.end()) {
+        responder.Error(proc_error::kNoSuchProcess, "ned: no process " + std::to_string(handle));
+        return nullptr;
+    }
+    return it->second.get();
+}
+
+void Dispatcher::ProcWrite(const Json& params, Responder responder) {
+    ProcWriteRequest request;
+    try {
+        request = ProcWriteRequestFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    ProcJob* job = FindProc(params, responder);
+    if (job == nullptr) {
+        return;
+    }
+    job->writeAnswers.push_back(std::move(responder));
+    job->Push(ProcJob::Item{.step = ProcJob::Step::Write, .data = std::move(request.data)});
+}
+
+void Dispatcher::ProcCloseStdin(const Json& params, Responder responder) {
+    ProcJob* job = FindProc(params, responder);
+    if (job == nullptr) {
+        return;
+    }
+    job->writeAnswers.push_back(std::move(responder));
+    job->Push(ProcJob::Item{.step = ProcJob::Step::CloseInput, .data = {}});
+}
+
+void Dispatcher::ProcSignal(const Json& params, Responder responder) {
+    ProcSignalRequest request;
+    try {
+        request = ProcSignalRequestFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    ProcJob* job = FindProc(params, responder);
+    if (job == nullptr) {
+        return;
+    }
+    job->child.Signal(request.signal);
+    responder.Result(Json::object());
+}
+
+void Dispatcher::ProcRelease(const Json& params, Responder responder) {
+    ProcJob* job = FindProc(params, responder);
+    if (job == nullptr) {
+        return;
+    }
+    // Its output has nowhere to go now: let every held chunk through.
+    job->released = true;
+    for (const int fd : {1, 2}) {
+        if (job->waiting[fd]) {
+            job->waiting[fd] = false;
+            job->Permit(fd);
+        }
+    }
+    job->Push(ProcJob::Item{.step = ProcJob::Step::Release, .data = {}});
+    responder.Result(Json::object());
+}
+
+void Dispatcher::OnProcOutput(std::uint64_t handle, const ProcJob* job, int fd, std::string data) {
+    const auto it = procs_.find(handle);
+    if (it == procs_.end() || it->second.get() != job) {
+        return;
+    }
+    ProcJob& proc = *it->second;
+    if (!proc.released) {
+        proc.responder.Chunk(ToJson(host::ProcOutput{.fd = fd, .data = std::move(data)}));
+    }
+    if (proc.released || proc.responder.Backlog() == 0) {
+        proc.Permit(fd);
+    }
+    else {
+        proc.waiting[fd] = true;
+    }
+}
+
+void Dispatcher::OnProcWritten(std::uint64_t handle, const ProcJob* job, std::string error) {
+    const auto it = procs_.find(handle);
+    if (it == procs_.end() || it->second.get() != job || it->second->writeAnswers.empty()) {
+        return;
+    }
+    Responder answer = std::move(it->second->writeAnswers.front());
+    it->second->writeAnswers.pop_front();
+    if (error.empty()) {
+        answer.Result(Json::object());
+    }
+    else {
+        answer.Error(proc_error::kWriteFailed, error);
+    }
+}
+
+void Dispatcher::OnProcExited(std::uint64_t handle, const ProcJob* job, std::optional<int> exit) {
+    const auto it = procs_.find(handle);
+    if (it == procs_.end() || it->second.get() != job) {
+        return;
+    }
+    it->second->exit = exit;
+    {
+        const std::lock_guard lock(it->second->mutex);
+        it->second->exited = true;
+    }
+    it->second->wake.notify_all();
+    FinishProcIfDone(handle);
+}
+
+void Dispatcher::OnProcStderrDone(std::uint64_t handle, const ProcJob* job) {
+    const auto it = procs_.find(handle);
+    if (it == procs_.end() || it->second.get() != job) {
+        return;
+    }
+    it->second->stderrDone = true;
+    FinishProcIfDone(handle);
+}
+
+void Dispatcher::FinishProcIfDone(std::uint64_t handle) {
+    const auto it  = procs_.find(handle);
+    ProcJob&   job = *it->second;
+    if (!job.exit || !job.stderrDone) {
+        return;
+    }
+    job.onCancel.reset();
+    job.responder.Result(ProcExitToJson(*job.exit));
+    for (Responder& answer : job.writeAnswers) {
+        answer.Error(proc_error::kWriteFailed, "ned: the process has ended");
+    }
+    procs_.erase(it);
 }
 
 } // namespace ned::editor::host

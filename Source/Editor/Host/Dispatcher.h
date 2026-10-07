@@ -15,6 +15,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -42,7 +43,7 @@ class Dispatcher {
     // to its transport. Both references must outlive this object.
     Dispatcher(protocol::Endpoint& endpoint, PostQueue& postQueue, Identity identity,
                std::function<void(std::string_view codec)> onCodec = {});
-    // Stops running searches and the watcher, and waits for them.
+    // Stops running searches, processes and the watcher, and waits for them.
     ~Dispatcher();
 
     Dispatcher(const Dispatcher&)            = delete;
@@ -51,6 +52,7 @@ class Dispatcher {
   private:
     struct SearchJob;
     struct WorkerJob;
+    struct ProcJob;
 
     // work runs on a worker; the answer it returns runs back on this thread.
     using WorkerAnswer = std::function<void(protocol::Responder& responder)>;
@@ -70,6 +72,19 @@ class Dispatcher {
     void FsRename(const nlohmann::json& params, protocol::Responder responder);
     void FsRemove(const nlohmann::json& params, protocol::Responder responder);
     void WatchSet(const nlohmann::json& params, protocol::Responder responder);
+    void ProcSpawn(const nlohmann::json& params, protocol::Responder responder);
+    void ProcWrite(const nlohmann::json& params, protocol::Responder responder);
+    void ProcCloseStdin(const nlohmann::json& params, protocol::Responder responder);
+    void ProcSignal(const nlohmann::json& params, protocol::Responder responder);
+    void ProcRelease(const nlohmann::json& params, protocol::Responder responder);
+    // The job a handle names, answering kNoSuchProcess when there's none.
+    [[nodiscard]] ProcJob* FindProc(const nlohmann::json& params, protocol::Responder& responder);
+    // What a job's threads post back.
+    void OnProcOutput(std::uint64_t handle, const ProcJob* job, int fd, std::string data);
+    void OnProcWritten(std::uint64_t handle, const ProcJob* job, std::string error);
+    void OnProcExited(std::uint64_t handle, const ProcJob* job, std::optional<int> exit);
+    void OnProcStderrDone(std::uint64_t handle, const ProcJob* job);
+    void FinishProcIfDone(std::uint64_t handle);
     // One burst from the watcher, as the editor named the paths; empty when
     // the watcher lost events.
     void ReportWatchEvents(const std::vector<FileEvent>& burst);
@@ -82,6 +97,8 @@ class Dispatcher {
     std::uint64_t                                                 nextJob_ = 0;
     std::unordered_map<std::uint64_t, std::unique_ptr<SearchJob>> searches_;
     std::unordered_map<std::uint64_t, std::unique_ptr<WorkerJob>> workerJobs_;
+    // By the editor's handle.
+    std::unordered_map<std::uint64_t, std::unique_ptr<ProcJob>> procs_;
 
     // watch/set's paths, keyed by the canonical paths the watcher reports.
     std::map<std::filesystem::path, std::vector<std::filesystem::path>> watchedFiles_;
