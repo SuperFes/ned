@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <csignal>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -18,6 +19,7 @@
 #include "Editor/Host/Codec.h"
 #include "Editor/Host/FsCodec.h"
 #include "Editor/Host/Hello.h"
+#include "Editor/Host/ProcCodec.h"
 #include "Editor/Host/SearchCodec.h"
 #include "Editor/Host/WatchCodec.h"
 #include "Editor/PostQueue.h"
@@ -142,6 +144,7 @@ TEST_CASE("ned-agent answers hello with its own build and settles the codec", "[
     REQUIRE(hello.capabilities.search == 1);
     REQUIRE(hello.capabilities.fs == 3);
     REQUIRE(hello.capabilities.watch == 1);
+    REQUIRE(hello.capabilities.proc == 1);
 }
 
 TEST_CASE("ned-agent's project search matches a local search exactly", "[Host][HostAgent]") {
@@ -273,7 +276,7 @@ TEST_CASE("ned-agent rejects bad search params and unknown methods", "[Host][Hos
     const auto badParams = client.Call(std::string(host::kSearchProject), Json{{"root", "/not/bytes"}});
     REQUIRE(badParams.error->code == error_code::kInvalidParams);
 
-    const auto unknown = client.Call("proc/spawn", Json::object());
+    const auto unknown = client.Call("proc/teleport", Json::object());
     REQUIRE(unknown.error->code == error_code::kMethodNotFound);
 }
 
@@ -424,6 +427,115 @@ TEST_CASE("ned-agent reports changes to watched files and directory entries, nam
     CHECK(relative.error->code == error_code::kInvalidParams);
 
     std::filesystem::remove_all(dir);
+}
+
+namespace {
+
+// A proc/spawn in flight: its output so far and, once it ends, its exit.
+struct Spawned {
+    std::string                       out;
+    std::string                       err;
+    std::optional<std::optional<int>> exit;
+    std::optional<RemoteError>        error;
+    std::uint64_t                     id = 0;
+
+    void Start(AgentClient& client, const host::ProcSpawnRequest& request) {
+        id = client.endpoint.Request(std::string(host::kProcSpawn), host::ToJson(request),
+                                     ResponseHandlers{[this](const Json& result) { exit = host::ProcExitFromJson(result); },
+                                                      [this](RemoteError e) { error = std::move(e); },
+                                                      [this](const Json& data) {
+                                                          const host::ProcOutput output = host::ProcOutputFromJson(data);
+                                                          (output.fd == 1 ? out : err) += output.data;
+                                                      }});
+    }
+    [[nodiscard]] bool Done() const {
+        return exit.has_value() || error.has_value();
+    }
+};
+
+host::ProcSpawnRequest Spawn(std::uint64_t handle, std::vector<std::string> argv,
+                             ned::editor::process::StderrMode stderrMode = ned::editor::process::StderrMode::Discard) {
+    return host::ProcSpawnRequest{.handle = handle, .argv = std::move(argv), .cwd = std::nullopt, .env = {}, .stderrMode = stderrMode};
+}
+
+} // namespace
+
+TEST_CASE("ned-agent runs a process, feeding its stdin and streaming its output and exit", "[Host][HostAgent]") {
+    AgentClient client(FrameTransport({AgentBinary(), "--stdio"}, true));
+
+    Spawned cat;
+    cat.Start(client, Spawn(1, {"sh", "-c", "cat; echo oops >&2; exit 4"}, ned::editor::process::StderrMode::Capture));
+    REQUIRE(client.Call(std::string(host::kProcWrite), host::ToJson(host::ProcWriteRequest{.handle = 1, .data = "hello "})).result);
+    REQUIRE(client.Call(std::string(host::kProcWrite), host::ToJson(host::ProcWriteRequest{.handle = 1, .data = "there"})).result);
+    REQUIRE(client.Call(std::string(host::kProcCloseStdin), host::ProcHandleParams(1)).result);
+    REQUIRE(client.PumpUntil([&] { return cat.Done(); }));
+    CHECK(cat.out == "hello there");
+    CHECK(cat.err == "oops\n");
+    CHECK(cat.exit == std::optional<int>(4));
+
+    // Gone once it has ended.
+    const auto late = client.Call(std::string(host::kProcWrite), host::ToJson(host::ProcWriteRequest{.handle = 1, .data = "x"}));
+    REQUIRE(late.error);
+    CHECK(late.error->code == host::proc_error::kNoSuchProcess);
+
+    SECTION("in its directory, with its environment") {
+        const std::filesystem::path dir = std::filesystem::canonical(std::filesystem::temp_directory_path());
+        Spawned                     env;
+        host::ProcSpawnRequest      request = Spawn(2, {"sh", "-c", "pwd; echo \"$NED_PROC_TEST\""});
+        request.cwd                         = dir;
+        request.env                         = {{"NED_PROC_TEST", "yes"}};
+        env.Start(client, request);
+        REQUIRE(client.PumpUntil([&] { return env.Done(); }));
+        CHECK(env.out == dir.string() + "\nyes\n");
+        CHECK(env.exit == std::optional<int>(0));
+    }
+    SECTION("all of a flood, paced by credit") {
+        Spawned flood;
+        flood.Start(client, Spawn(2, {"head", "-c", "4000000", "/dev/zero"}));
+        REQUIRE(client.PumpUntil([&] { return flood.Done(); }));
+        CHECK(flood.out.size() == 4000000);
+        CHECK(flood.exit == std::optional<int>(0));
+    }
+    SECTION("signalled, cancelled or released, it ends") {
+        Spawned trapped;
+        trapped.Start(client, Spawn(2, {"sh", "-c", "trap 'echo term; exit 3' TERM; echo ready; while :; do sleep 0.05; done"}));
+        REQUIRE(client.PumpUntil([&] { return trapped.out == "ready\n"; }));
+        REQUIRE(client.Call(std::string(host::kProcSignal), host::ToJson(host::ProcSignalRequest{.handle = 2, .signal = SIGTERM})).result);
+        REQUIRE(client.PumpUntil([&] { return trapped.Done(); }));
+        CHECK(trapped.out == "ready\nterm\n");
+        CHECK(trapped.exit == std::optional<int>(3));
+
+        Spawned cancelled;
+        cancelled.Start(client, Spawn(3, {"sleep", "100"}));
+        client.endpoint.Cancel(cancelled.id);
+        REQUIRE(client.PumpUntil([&] { return cancelled.Done(); }));
+
+        // Released, a child that ignores its stdin's EOF is killed after
+        // the grace period.
+        Spawned released;
+        released.Start(client, Spawn(4, {"sleep", "100"}));
+        REQUIRE(client.Call(std::string(host::kProcRelease), host::ProcHandleParams(4)).result);
+        REQUIRE(client.PumpUntil([&] { return released.Done(); }));
+        CHECK(released.exit == std::optional<std::optional<int>>(std::optional<int>()));
+    }
+    SECTION("a command that can't start, or a handle in use, is refused") {
+        Spawned missing;
+        missing.Start(client, Spawn(2, {"ned-no-such-command"}));
+        REQUIRE(client.PumpUntil([&] { return missing.Done(); }));
+        REQUIRE(missing.error);
+        CHECK(missing.error->code == host::proc_error::kSpawnFailed);
+
+        Spawned first;
+        Spawned second;
+        first.Start(client, Spawn(3, {"sleep", "100"}));
+        second.Start(client, Spawn(3, {"true"}));
+        REQUIRE(client.PumpUntil([&] { return second.Done(); }));
+        REQUIRE(second.error);
+        CHECK(second.error->code == error_code::kInvalidParams);
+        REQUIRE(client.Call(std::string(host::kProcSignal), host::ToJson(host::ProcSignalRequest{.handle = 3, .signal = SIGKILL})).result);
+        REQUIRE(client.PumpUntil([&] { return first.Done(); }));
+        CHECK(first.exit == std::optional<std::optional<int>>(std::optional<int>()));
+    }
 }
 
 TEST_CASE("RunAgent ends quietly when the editor hangs up and with a reason on a protocol error", "[Host][HostAgent]") {

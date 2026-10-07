@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <csignal>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -11,6 +12,7 @@
 #include "Editor/Host/Codec.h"
 #include "Editor/Host/FsCodec.h"
 #include "Editor/Host/Hello.h"
+#include "Editor/Host/ProcCodec.h"
 #include "Editor/Host/SearchCodec.h"
 #include "Editor/Host/WatchCodec.h"
 #include "Editor/Protocol/Cbor.h"
@@ -180,6 +182,44 @@ TEST_CASE("Watch requests and events round-trip and refuse what they can't name"
     CHECK_THROWS_AS(host::WatchEventsFromJson(Json{{"events", Json::array({Json{{"path", host::Bytes("a")}, {"kind", "created"}}})}, {"overflow", false}}),
                     ProtocolError);
     CHECK_THROWS_AS(host::WatchEventsFromJson(Json{{"events", Json::array()}}), ProtocolError);
+}
+
+TEST_CASE("Proc requests and output round-trip and refuse what they can't carry", "[Host][HostCodec]") {
+    const host::ProcSpawnRequest spawn{.handle     = 7,
+                                       .argv       = {"sh", "-c", "caf\xC3\xA9"},
+                                       .cwd        = "/srv/proj",
+                                       .env        = {{"A", "1"}, {"B", std::nullopt}},
+                                       .stderrMode = ned::editor::process::StderrMode::Capture};
+    CHECK(host::ProcSpawnRequestFromJson(OverTheWire(host::ToJson(spawn))) == spawn);
+    host::ProcSpawnRequest plain = spawn;
+    plain.cwd                    = std::nullopt;
+    plain.env                    = {};
+    CHECK(host::ProcSpawnRequestFromJson(OverTheWire(host::ToJson(plain))) == plain);
+
+    Json noCommand      = host::ToJson(spawn);
+    noCommand["argv"]   = Json::array();
+    Json badName        = host::ToJson(spawn);
+    badName["env"]      = Json{{"A=B", host::Bytes("x")}};
+    Json badStderr      = host::ToJson(spawn);
+    badStderr["stderr"] = "tee";
+    for (const Json& bad : {noCommand, badName, badStderr}) {
+        CHECK_THROWS_AS(host::ProcSpawnRequestFromJson(bad), ProtocolError);
+    }
+
+    const host::ProcOutput output{.fd = 2, .data = std::string("a\0b", 3)};
+    CHECK(host::ProcOutputFromJson(OverTheWire(host::ToJson(output))) == output);
+    CHECK_THROWS_AS(host::ProcOutputFromJson(Json{{"fd", 3}, {"data", host::Bytes("x")}}), ProtocolError);
+
+    CHECK(host::ProcExitFromJson(OverTheWire(host::ProcExitToJson(3))) == std::optional<int>(3));
+    CHECK(host::ProcExitFromJson(OverTheWire(host::ProcExitToJson(std::nullopt))) == std::nullopt);
+    CHECK_THROWS_AS(host::ProcExitFromJson(Json{{"exit", 300}}), ProtocolError);
+
+    const host::ProcWriteRequest write{.handle = 7, .data = "in"};
+    CHECK(host::ProcWriteRequestFromJson(OverTheWire(host::ToJson(write))) == write);
+    const host::ProcSignalRequest signal{.handle = 7, .signal = SIGINT};
+    CHECK(host::ProcSignalRequestFromJson(OverTheWire(host::ToJson(signal))) == signal);
+    CHECK_THROWS_AS(host::ProcSignalRequestFromJson(Json{{"handle", 7}, {"signal", "usr1"}}), ProtocolError);
+    CHECK(host::ProcHandleFromJson(OverTheWire(host::ProcHandleParams(7))) == 7);
 }
 
 TEST_CASE("Path decoding rejects relative paths, NULs and non-bytes", "[Host][HostCodec]") {
