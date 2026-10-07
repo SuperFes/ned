@@ -23,6 +23,8 @@
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Editor/Remote/Hosts.h"
+#include "Editor/Tracker/Registry.h"
+#include "Editor/Vcs/CurrentBranch.h"
 #include "Editor/Vcs/HostRepo.h"
 #include "Editor/Vcs/ProviderRegistry.h"
 #include "Editor/Vcs/Runner.h"
@@ -374,4 +376,52 @@ TEST_CASE("The VCS panel shows the active remote buffer's repository", "[Remote]
     CHECK_FALSE(shows("file.txt"));
     ned::editor::SetProjectRoot(previousRoot);
     (void)scratch;
+}
+
+TEST_CASE("A remote buffer's mode line issue key reads its repository's branch on its host", "[Remote][RemoteVcs][HostAgent]") {
+    if (!GitAvailable()) {
+        SKIP("git not found on $PATH");
+    }
+    Fixture fixture;
+    Run({"git", "-C", fixture.repo.string(), "checkout", "-q", "-b", "feature/DEV-450-login"});
+    ned::editor::tracker::ClearRegistry();
+    ned::editor::tracker::SetConnection(ned::editor::tracker::Connection{.name = "work", .provider = "jira"});
+    vcs::Runner runner(fixture.loop);
+    runner.SetHosts(&fixture.hosts);
+
+    ned::text::BufferList bufferList;
+    ned::text::Buffer&    remoteBuffer = bufferList.AddRemotePlaceholder(ned::text::RemoteFile{.destination = "host", .path = fixture.file});
+    remoteBuffer.FinishLoad(ned::text::Rope("line one\n"));
+    ned::text::KillRing          killRing;
+    ned::editor::RegisterTable   registers;
+    ned::editor::PromptHistory   promptHistory;
+    ned::editor::CommandRegistry registry;
+    ned::editor::Keymap          keymap;
+    ned::editor::Dispatcher      dispatcher{registry, ned::editor::KeymapStack({&keymap})};
+    ned::editor::Mode            mode  = ned::editor::FundamentalMode();
+    ned::ui::Theme               theme = ned::ui::DarkTheme();
+    std::string                  statusMessage;
+    ned::ui::ActiveBuffer        activeBuffer{remoteBuffer};
+    ned::ui::BufferView          view(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher, statusMessage, mode, theme);
+    view.SetVcsRunner(&runner);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+
+    CHECK_FALSE(runner.KnownRepoFor(remoteBuffer));
+    CHECK_FALSE(view.IssueKey()); // not this machine's branch, nor yet the host's
+
+    REQUIRE(PumpUntil(fixture.loop, [&] { return view.IssueKey().has_value(); }));
+    CHECK(view.IssueKey() == "DEV-450");
+    CHECK(runner.KnownRepoFor(remoteBuffer) == vcs::Repo{.destination = "host", .root = fixture.repo});
+
+    // A local buffer reads this machine's branch instead.
+    ned::editor::vcs::SetCurrentBranch(vcs::LocalRepo(), "main");
+    ned::text::Buffer& local = bufferList.CreateBuffer("local.txt");
+    local.SetPath(fixture.fake.dir / "local.txt");
+    activeBuffer.Set(local);
+    CHECK_FALSE(view.IssueKey());
+    activeBuffer.Set(remoteBuffer);
+    CHECK(view.IssueKey() == "DEV-450");
+
+    ned::editor::tracker::ClearRegistry();
+    ned::editor::vcs::ClearCurrentBranches();
 }

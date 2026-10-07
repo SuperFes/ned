@@ -220,6 +220,17 @@ void Runner::RepoFor(const text::Buffer& buffer, std::function<void(std::expecte
     });
 }
 
+std::optional<Repo> Runner::KnownRepoFor(const text::Buffer& buffer) const {
+    if (buffer.Path() && !IsCommitMessage(*buffer.Path())) {
+        return LocalRepo();
+    }
+    if (!buffer.Remote()) {
+        return lastRemote_ ? *lastRemote_ : LocalRepo();
+    }
+    const auto found = remoteRepos_.find(buffer.Remote()->ToString());
+    return found != remoteRepos_.end() ? std::optional(found->second) : std::nullopt;
+}
+
 void Runner::RunAndCollect(const Repo& repo, const std::string& key, CommandSpec spec,
                            std::function<void(std::string, std::optional<int>)> onDone) {
     Run& run     = running_[key];

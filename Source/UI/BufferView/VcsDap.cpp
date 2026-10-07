@@ -9,6 +9,7 @@
 #include "Editor/Tracker/IssueKey.h"
 #include "Editor/Tracker/KeyCompletion.h"
 #include "Editor/Tracker/Registry.h"
+#include "Editor/Vcs/CurrentBranch.h"
 #include "Editor/Vcs/Sequence.h"
 #include "UI/BufferView/Internal.h"
 
@@ -29,6 +30,7 @@ void BufferView::SetOnDapThreadsToggle(std::function<void()> handler) {
 
 void BufferView::SetVcsRunner(editor::vcs::Runner* vcsRunner) {
     vcsRunner_ = vcsRunner;
+    ResolveIssueRepository(); // the first buffer is no switch
 }
 
 void BufferView::DispatchBlameForTesting(std::vector<editor::vcs::BlameLine> lines) {
@@ -498,6 +500,26 @@ void BufferView::RefreshVcsStatusBuffer() {
     const editor::vcs::Repo repo = vcsStatusRepo_.value_or(editor::vcs::LocalRepo());
     vcsRunner_->RequestStatus(
         repo, lifetime_.Bind([this, repo](std::vector<editor::vcs::StatusEntry> entries) { BuildVcsStatusBuffer(entries, /*announce=*/false, repo); }));
+}
+
+std::optional<std::string> BufferView::IssueKey() const {
+    if (!vcsRunner_) {
+        return editor::tracker::CurrentIssueKey();
+    }
+    const std::optional<editor::vcs::Repo> repo = vcsRunner_->KnownRepoFor(activeBuffer_.Get());
+    return repo ? editor::tracker::CurrentIssueKey(*repo) : std::nullopt;
+}
+
+void BufferView::ResolveIssueRepository() {
+    // This machine's branch is read once at startup (main.cpp).
+    if (!vcsRunner_ || !activeBuffer_.Get().Remote() || editor::tracker::Connections().empty()) {
+        return;
+    }
+    vcsRunner_->RepoFor(activeBuffer_.Get(), lifetime_.Bind([this](std::expected<editor::vcs::Repo, std::string> repo) {
+        if (repo && !editor::vcs::CurrentBranch(*repo)) {
+            vcsRunner_->RefreshCurrentBranch(*repo);
+        }
+    }));
 }
 
 namespace {
