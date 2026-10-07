@@ -85,8 +85,9 @@ and sync on save; don't build a remote-authoritative buffer.
 - [ ] Remote saves over 48 MiB: `fs/write` carries the content in one request, so a
       bigger file needs a streamed upload. Decoding a read and encoding a save run on the
       main thread, which only matters at that size too.
-- [ ] `user@host:/path` display everywhere (tab bar, mode line, sidebar, buffer names);
-      the buffer list shows it already. Project-registry roots accept the same syntax.
+- [ ] Project-registry roots accept `user@host:/path`.
+- [ ] Restore point and scroll position for a remote buffer (save-place keys files by
+      local path only).
 - [ ] Confirm local and remote buffers mix in one window layout.
 
 **Connect**

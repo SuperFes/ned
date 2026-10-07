@@ -27,6 +27,14 @@ struct RemoteFile {
 // first ":/" splits them, so a bracketed IPv6 destination parses too.
 [[nodiscard]] std::optional<RemoteFile> ParseRemoteFile(std::string_view text);
 
+// A destination short enough for a tab: no user, and a host name without
+// its domain. An address stays whole.
+[[nodiscard]] std::string ShortDestination(std::string_view destination);
+
+// What a buffer holding file is called: "host:name", so it reads apart
+// from a local file of the same name wherever buffer names show.
+[[nodiscard]] std::string RemoteBufferName(const RemoteFile& file);
+
 } // namespace ned::text
 
 #endif // NED_TEXT_REMOTEFILE_H

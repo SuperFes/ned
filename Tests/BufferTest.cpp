@@ -356,7 +356,7 @@ TEST_CASE("A remote file's contents decode with no local path and nothing local 
     CHECK(remote.Text() == "a\nb\n");
     CHECK(remote.FileCharset() == ned::text::Charset::Utf8Bom);
     CHECK(remote.LineEndingKind() == ned::text::LineEnding::CRLF);
-    CHECK(remote.Name() == "notes.txt");
+    CHECK(remote.Name() == "host:notes.txt");
     CHECK_FALSE(remote.Path().has_value());
     CHECK(remote.Remote() == file);
     CHECK(remote.RemoteTimestamp() == when);
