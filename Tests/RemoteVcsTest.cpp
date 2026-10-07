@@ -10,10 +10,12 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "Editor/Commands.h"
+#include "Editor/ConflictResolution.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
 #include "Editor/Lifetime.h"
@@ -28,6 +30,7 @@
 #include "Editor/Vcs/HostRepo.h"
 #include "Editor/Vcs/ProviderRegistry.h"
 #include "Editor/Vcs/Runner.h"
+#include "Editor/Vcs/Sequence.h"
 #include "FakeRemoteHost.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
@@ -112,6 +115,28 @@ struct Fixture {
         return Run({"git", "-C", repo.string(), "diff", "--cached", "--no-color"});
     }
 };
+
+// Leaves file.txt conflicted by merging a branch that changed its first line
+// against main's change to it; other.txt is committed beside it, clean.
+void MergeConflict(const fs::path& repo) {
+    const auto write = [&](const std::string& first) {
+        std::ofstream(repo / "file.txt") << first << "\nline two\nline three\n";
+    };
+    std::ofstream(repo / "other.txt") << "other\n";
+    write("line one");
+    Run({"git", "-C", repo.string(), "add", "file.txt", "other.txt"});
+    Run({"git", "-C", repo.string(), "commit", "-q", "-m", "base"});
+    Run({"git", "-C", repo.string(), "checkout", "-q", "-b", "other"});
+    write("line one OTHER");
+    Run({"git", "-C", repo.string(), "commit", "-q", "-am", "other"});
+    Run({"git", "-C", repo.string(), "checkout", "-q", "main"});
+    write("line one MAIN");
+    Run({"git", "-C", repo.string(), "commit", "-q", "-am", "main"});
+    ned::editor::process::ChildProcess merge({"git", "-C", repo.string(), "merge", "-q", "other"}, ned::editor::process::StderrMode::MergeWithStdout);
+    while (!merge.ReadSome().empty()) {
+    }
+    REQUIRE(merge.WaitForExit() == std::optional<int>(1));
+}
 
 template <typename T>
 struct Outcome {
@@ -424,4 +449,162 @@ TEST_CASE("A remote buffer's mode line issue key reads its repository's branch o
 
     ned::editor::tracker::ClearRegistry();
     ned::editor::vcs::ClearCurrentBranches();
+}
+
+TEST_CASE("A host's conflicted files are read there, an open buffer's text first", "[Remote][RemoteVcs][HostAgent]") {
+    if (!GitAvailable()) {
+        SKIP("git not found on $PATH");
+    }
+    Fixture fixture;
+    MergeConflict(fixture.repo);
+    vcs::Runner runner(fixture.loop);
+    runner.SetHosts(&fixture.hosts);
+    const vcs::Repo                   host{.destination = "host", .root = fixture.repo};
+    const std::vector<fs::path>       paths = {fixture.file, fixture.repo / "other.txt", fixture.repo / "gone.txt"};
+    std::optional<std::set<fs::path>> marked;
+    const auto                        record = [&marked](std::set<fs::path> found) { marked = std::move(found); };
+
+    runner.RequestMarkedFiles(host, paths, nullptr, record);
+    REQUIRE(PumpUntil(fixture.loop, [&marked] { return marked.has_value(); }));
+    CHECK(*marked == std::set<fs::path>{fixture.file});
+
+    // An open buffer's text outranks the file.
+    marked.reset();
+    runner.RequestMarkedFiles(host, paths, [&](const fs::path& path) { return path == fixture.file ? std::optional(false) : std::nullopt; }, record);
+    REQUIRE(PumpUntil(fixture.loop, [&marked] { return marked.has_value(); }));
+    CHECK(marked->empty());
+
+    // This machine's are read at once.
+    marked.reset();
+    runner.RequestMarkedFiles(vcs::Repo{.destination = std::nullopt, .root = fixture.repo}, paths, nullptr, record);
+    CHECK(marked == std::set<fs::path>{fixture.file});
+
+    // A host that can't be asked leaves every file marked.
+    vcs::Runner unreachable(fixture.loop);
+    marked.reset();
+    unreachable.RequestMarkedFiles(host, paths, nullptr, record);
+    CHECK(marked == std::set<fs::path>(paths.begin(), paths.end()));
+}
+
+TEST_CASE("Continuing a host's merge reads its unopened files there", "[Remote][RemoteVcs][HostAgent]") {
+    if (!GitAvailable()) {
+        SKIP("git not found on $PATH");
+    }
+    Fixture fixture;
+    MergeConflict(fixture.repo);
+    vcs::Runner runner(fixture.loop);
+    runner.SetHosts(&fixture.hosts);
+
+    ned::text::BufferList bufferList;
+    ned::text::Buffer&    other = bufferList.AddRemotePlaceholder(ned::text::RemoteFile{.destination = "host", .path = fixture.repo / "other.txt"});
+    other.FinishLoad(ned::text::Rope("other\n"));
+    ned::text::KillRing          killRing;
+    ned::editor::RegisterTable   registers;
+    ned::editor::PromptHistory   promptHistory;
+    ned::editor::CommandRegistry registry;
+    ned::editor::Keymap          keymap;
+    ned::editor::Dispatcher      dispatcher{registry, ned::editor::KeymapStack({&keymap})};
+    ned::editor::Mode            mode  = ned::editor::FundamentalMode();
+    ned::ui::Theme               theme = ned::ui::DarkTheme();
+    std::string                  statusMessage;
+    ned::ui::ActiveBuffer        activeBuffer{other};
+    ned::ui::BufferView          view(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher, statusMessage, mode, theme);
+    view.SetVcsRunner(&runner);
+
+    view.RunVcsSequenceStepForTesting(ned::ui::BufferView::VcsSequenceStep::Continue);
+    REQUIRE(PumpUntil(fixture.loop, [&statusMessage] { return !statusMessage.empty(); }));
+    CHECK(statusMessage == "Still conflicted: file.txt");
+
+    // Resolved on the host, it is staged and the merge concluded.
+    std::ofstream(fixture.file) << "line one BOTH\nline two\nline three\n";
+    ned::editor::vcs::SetSequenceAutoStage(true);
+    statusMessage.clear();
+    view.RunVcsSequenceStepForTesting(ned::ui::BufferView::VcsSequenceStep::Continue);
+    // --no-optional-locks: a plain status takes the index lock the stage needs.
+    const auto clean     = [&] { return Run({"git", "--no-optional-locks", "-C", fixture.repo.string(), "status", "--porcelain"}).empty(); };
+    const bool concluded = PumpUntil(fixture.loop, clean);
+    ned::editor::vcs::SetSequenceAutoStage(false);
+    CAPTURE(statusMessage);
+    CHECK(concluded);
+    CHECK_THAT(Run({"git", "-C", fixture.repo.string(), "log", "-1", "--pretty=%s"}), ContainsSubstring("Merge branch 'other'"));
+}
+
+TEST_CASE("Opening a host's conflicted file lands on its first hunk", "[Remote][RemoteVcs][HostAgent]") {
+    if (!GitAvailable()) {
+        SKIP("git not found on $PATH");
+    }
+    Fixture fixture;
+    MergeConflict(fixture.repo);
+    vcs::Runner runner(fixture.loop);
+    runner.SetHosts(&fixture.hosts);
+
+    ned::text::BufferList bufferList;
+    ned::text::Buffer&    remoteBuffer = bufferList.AddRemotePlaceholder(ned::text::RemoteFile{.destination = "host", .path = fixture.file});
+    remoteBuffer.FinishLoad(ned::text::Rope(Run({"cat", fixture.file.string()})));
+    ned::text::KillRing          killRing;
+    ned::editor::RegisterTable   registers;
+    ned::editor::PromptHistory   promptHistory;
+    ned::editor::CommandRegistry registry;
+    ned::editor::Keymap          keymap;
+    ned::editor::Dispatcher      dispatcher{registry, ned::editor::KeymapStack({&keymap})};
+    ned::editor::Mode            mode  = ned::editor::FundamentalMode();
+    ned::ui::Theme               theme = ned::ui::DarkTheme();
+    std::string                  statusMessage;
+    ned::ui::ActiveBuffer        activeBuffer{remoteBuffer};
+    ned::ui::BufferView          view(activeBuffer, killRing, registers, promptHistory, bufferList, dispatcher, statusMessage, mode, theme);
+    view.SetVcsRunner(&runner);
+    REQUIRE(remoteBuffer.Point() == 0);
+
+    view.RefreshVcsDiff();
+    REQUIRE(PumpUntil(fixture.loop, [&statusMessage] { return statusMessage.starts_with("merge conflict"); }));
+    CHECK(remoteBuffer.Text().substr(remoteBuffer.Point()).starts_with("<<<<<<<"));
+}
+
+TEST_CASE("The VCS panel marks a host's conflicted file and resolves it in its remote buffer", "[Remote][RemoteVcs][HostAgent]") {
+    if (!GitAvailable()) {
+        SKIP("git not found on $PATH");
+    }
+    Fixture fixture;
+    MergeConflict(fixture.repo);
+    vcs::Runner runner(fixture.loop);
+    runner.SetHosts(&fixture.hosts);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    other = list.AddRemotePlaceholder(ned::text::RemoteFile{.destination = "host", .path = fixture.repo / "other.txt"});
+    other.FinishLoad(ned::text::Rope("other\n"));
+    ned::ui::ActiveBuffer activeBuffer(other);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    panel.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 19});
+    panel.SetVcsRunner(&runner);
+    std::optional<ned::text::RemoteFile> opened;
+    panel.SetOnOpenRemoteFile([&opened](const ned::text::RemoteFile& file) { opened = file; });
+
+    ned::ui::Screen screen(40, 20);
+    const auto      shows = [&](const std::string& text) {
+        panel.Paint(ned::ui::Canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 19}));
+        for (int row = 0; row < 20; ++row) {
+            std::string line;
+            for (int col = 0; col < 40; ++col) {
+                line += screen.PixelAt(col, row).character;
+            }
+            if (line.contains(text)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    REQUIRE(PumpUntil(fixture.loop, [&] { return shows("file.txt ⚠"); }));
+
+    // Not open yet: asked for, and resolved once it has loaded.
+    panel.ResolveAllConflicts(fixture.file, ned::editor::ConflictResolution::TakeOurs);
+    CHECK(opened == ned::text::RemoteFile{.destination = "host", .path = fixture.file});
+    CHECK(statusMessage == "opening \"file.txt\" -- resolve it once loaded");
+
+    ned::text::Buffer& conflicted = list.AddRemotePlaceholder(*opened);
+    conflicted.FinishLoad(ned::text::Rope(Run({"cat", fixture.file.string()})));
+    panel.ResolveAllConflicts(fixture.file, ned::editor::ConflictResolution::TakeOurs);
+    CHECK(&activeBuffer.Get() == &conflicted);
+    CHECK(conflicted.Text() == "line one MAIN\nline two\nline three\n");
 }

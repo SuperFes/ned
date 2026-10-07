@@ -3400,6 +3400,9 @@ class BufferView : public Widget {
     // re-probe the state afterwards, since a continue that stops on the next
     // conflicting commit is the normal case, not a failure worth hiding.
     void ContinueVcsSequence(const editor::vcs::Repo& repo);
+    // Plans the continue once the unmerged files' markers are known.
+    void ContinueVcsSequence(const editor::vcs::Repo& repo, const std::vector<editor::vcs::StatusEntry>& entries,
+                             const std::set<std::filesystem::path>& marked);
     void RunVcsSequenceStep(VcsSequenceStep step);
     void RunVcsSequenceStep(VcsSequenceStep step, const std::string& kind, const editor::vcs::Repo& repo);
     void StageThenContinueVcsSequence(const editor::vcs::Repo& repo, std::vector<std::filesystem::path> paths, std::string kind);

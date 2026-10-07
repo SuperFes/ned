@@ -19,6 +19,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -268,6 +269,16 @@ class Runner {
     // A continue that stops again on the next conflicting commit exits
     // non-zero and lands in onError; callers re-probe the state either way.
     void RequestSequenceState(const Repo& repo, std::function<void(SequenceState)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+
+    // Which of paths -- absolute on repo's machine -- still carry conflict
+    // markers: an open buffer's text where `live` has one, else the file,
+    // read on the host for a remote repository. A missing file has none; one
+    // the host can't be asked about counts as marked, so nothing is staged
+    // as resolved on a dropped connection. done runs on the main thread,
+    // before this returns when no host has to be asked.
+    using LiveMarkers = std::function<std::optional<bool>(const std::filesystem::path& path)>;
+    void RequestMarkedFiles(const Repo& repo, std::vector<std::filesystem::path> paths, LiveMarkers live,
+                            std::function<void(std::set<std::filesystem::path>)> done);
     void RequestSequenceContinue(const Repo& repo, const std::string& kind, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestSequenceAbort(const Repo& repo, const std::string& kind, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});
     void RequestSequenceSkip(const Repo& repo, const std::string& kind, std::function<void()> onSuccess, std::function<void(std::string)> onError = [](const std::string&) {});

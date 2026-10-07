@@ -437,9 +437,17 @@ void VcsPanel::RefreshRepository(const editor::vcs::Repo& repo) {
 }
 
 void VcsPanel::RefreshConflictedPaths() {
-    // The scan reads files from this machine's disk.
     const editor::vcs::Repo repo = Repository();
-    conflictedPaths_             = repo.IsRemote() ? std::set<std::filesystem::path>() : editor::vcs::DetectConflictedFiles(sections_, repo.root);
+    if (!vcsRunner_) {
+        conflictedPaths_ = repo.IsRemote() ? std::set<std::filesystem::path>() : editor::vcs::DetectConflictedFiles(sections_, repo.root);
+        return;
+    }
+    vcsRunner_->RequestMarkedFiles(repo, editor::vcs::UnmergedPaths(sections_, repo.root), editor::vcs::OpenBufferMarkers(bufferList_, repo),
+                                   lifetime_.Bind([this, repo](std::set<std::filesystem::path> marked) {
+                                       if (repo_ == repo) {
+                                           conflictedPaths_ = std::move(marked);
+                                       }
+                                   }));
 }
 
 std::vector<VcsPanel::Row> VcsPanel::BuildRows() const {
@@ -1027,10 +1035,31 @@ std::vector<std::filesystem::path> VcsPanel::MarkedConflictedPaths() const {
     return marked;
 }
 
+text::Buffer* VcsPanel::ConflictedBuffer(const std::filesystem::path& path) {
+    const editor::vcs::Repo repo = Repository();
+    if (!repo.IsRemote()) {
+        return &bufferList_.OpenOrCreateFile(path);
+    }
+    // A host's file is resolved in its buffer, which loads asynchronously.
+    const text::RemoteFile file{.destination = *repo.destination, .path = path};
+    if (text::Buffer* open = bufferList_.FindByRemote(file); open != nullptr && !open->IsLoading()) {
+        return open;
+    }
+    if (onOpenRemoteFile_ && bufferList_.FindByRemote(file) == nullptr) {
+        onOpenRemoteFile_(file);
+    }
+    return nullptr;
+}
+
 void VcsPanel::ResolveAllConflicts(const std::filesystem::path& path, editor::ConflictResolution resolution) {
     const char* side = resolution == editor::ConflictResolution::TakeOurs ? "ours" : "theirs";
     try {
-        text::Buffer& opened = bufferList_.OpenOrCreateFile(path);
+        text::Buffer* const buffer = ConflictedBuffer(path);
+        if (buffer == nullptr) {
+            statusMessage_ = "opening \"" + path.filename().string() + "\" -- resolve it once loaded";
+            return;
+        }
+        text::Buffer& opened = *buffer;
         activeBufferProvider_().Set(opened);
         const std::size_t resolved = editor::ResolveAllConflictHunks(opened, resolution);
         statusMessage_             = resolved == 0
@@ -1062,11 +1091,17 @@ void VcsPanel::ResolveAllConflictsForSelectionOr(const std::filesystem::path& fo
     const char*   side   = resolution == editor::ConflictResolution::TakeOurs ? "ours" : "theirs";
     std::size_t   hunks  = 0;
     std::size_t   files  = 0;
-    std::size_t   failed = 0;
-    text::Buffer* first  = nullptr;
+    std::size_t   failed  = 0;
+    std::size_t   loading = 0;
+    text::Buffer* first   = nullptr;
     for (const std::filesystem::path& path : targets) {
         try {
-            text::Buffer&     opened   = bufferList_.OpenOrCreateFile(path);
+            text::Buffer* const buffer = ConflictedBuffer(path);
+            if (buffer == nullptr) {
+                ++loading;
+                continue;
+            }
+            text::Buffer&     opened   = *buffer;
             const std::size_t resolved = editor::ResolveAllConflictHunks(opened, resolution);
             if (resolved == 0) {
                 continue; // already resolved since the last status refresh
@@ -1099,6 +1134,9 @@ void VcsPanel::ResolveAllConflictsForSelectionOr(const std::filesystem::path& fo
                                       ") -- unsaved";
     if (failed > 0) {
         statusMessage_ += "; " + std::to_string(failed) + " skipped";
+    }
+    if (loading > 0) {
+        statusMessage_ += "; " + std::to_string(loading) + " opening -- resolve once loaded";
     }
 }
 
