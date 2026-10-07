@@ -13,6 +13,7 @@
 #include "Editor/Host/Fs.h"
 #include "Editor/Host/FsCodec.h"
 #include "Editor/Host/SearchCodec.h"
+#include "Editor/Host/WatchCodec.h"
 
 namespace ned::editor::host {
 
@@ -70,10 +71,12 @@ Dispatcher::Dispatcher(protocol::Endpoint& endpoint, PostQueue& postQueue, Ident
     endpoint_.Handle(std::string(kFsMkdir), lifetime_.Bind([this](Json params, Responder responder) { FsMkdir(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsRename), lifetime_.Bind([this](Json params, Responder responder) { FsRename(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsRemove), lifetime_.Bind([this](Json params, Responder responder) { FsRemove(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kWatchSet), lifetime_.Bind([this](Json params, Responder responder) { WatchSet(params, std::move(responder)); }));
 }
 
 Dispatcher::~Dispatcher() {
     lifetime_.Revoke();
+    watcher_.reset();
     searches_.clear();
     workerJobs_.clear();
 }
@@ -95,7 +98,7 @@ void Dispatcher::Hello(const Json& params, Responder responder) {
     response.arch         = identity_.arch;
     response.codec        = ChooseCodec(request.codecs);
     response.window       = protocol::kDefaultWindow;
-    response.capabilities = Capabilities{.fs = 3, .search = 1};
+    response.capabilities = Capabilities{.fs = 3, .search = 1, .watch = 1};
     responder.Result(ToJson(response));
     if (onCodec_) {
         onCodec_(response.codec);
@@ -363,6 +366,80 @@ void Dispatcher::FsRemove(const Json& params, Responder responder) {
             return [code = e.Code(), message = std::string(e.what())](Responder& answer) { answer.Error(code, message); };
         }
     });
+}
+
+void Dispatcher::WatchSet(const Json& params, Responder responder) {
+    WatchSetRequest request;
+    try {
+        request = WatchSetRequestFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    if (!watcher_) {
+        if (request.files.empty() && request.directories.empty()) {
+            responder.Result(Json::object());
+            return;
+        }
+        auto report = lifetime_.Bind([this](const std::vector<FileEvent>& burst) { ReportWatchEvents(burst); });
+        watcher_    = std::make_unique<FileWatcher>(
+            [this, report] {
+                postQueue_.Post([report, burst = std::exchange(watchBurst_, {})] mutable { report(burst); });
+            },
+            nullptr, [this](std::vector<FileEvent> events) { watchBurst_ = std::move(events); });
+        watcher_->SetReportsDirectoryEntries(true);
+    }
+
+    const auto canonical = [](const std::filesystem::path& path) {
+        std::error_code             ec;
+        const std::filesystem::path resolved = std::filesystem::weakly_canonical(path, ec);
+        return ec ? path : resolved;
+    };
+    watchedFiles_.clear();
+    watchedDirectories_.clear();
+    for (const std::filesystem::path& file : request.files) {
+        watchedFiles_[canonical(file)].push_back(file);
+    }
+    // The watcher canonicalizes files itself but takes directories as given.
+    std::vector<std::filesystem::path> directories;
+    for (const std::filesystem::path& directory : request.directories) {
+        auto [it, inserted] = watchedDirectories_.try_emplace(canonical(directory));
+        it->second.push_back(directory);
+        if (inserted) {
+            directories.push_back(it->first);
+        }
+    }
+    watcher_->SetWatchedFiles(request.files, directories);
+    responder.Result(Json::object());
+}
+
+void Dispatcher::ReportWatchEvents(const std::vector<FileEvent>& burst) {
+    if (watchedFiles_.empty() && watchedDirectories_.empty()) {
+        return;
+    }
+    // A file also inside a watched directory is reported once.
+    std::map<std::filesystem::path, FileEvent::Kind> named;
+    for (const FileEvent& event : burst) {
+        if (const auto file = watchedFiles_.find(event.path); file != watchedFiles_.end()) {
+            for (const std::filesystem::path& alias : file->second) {
+                named.emplace(alias, event.kind);
+            }
+        }
+        if (const auto directory = watchedDirectories_.find(event.path.parent_path()); directory != watchedDirectories_.end()) {
+            for (const std::filesystem::path& alias : directory->second) {
+                named.emplace(alias / event.path.filename(), event.kind);
+            }
+        }
+    }
+    WatchEvents report{.events = {}, .overflow = burst.empty()};
+    for (auto& [path, kind] : named) {
+        report.events.push_back(FileEvent{.path = path, .kind = kind});
+    }
+    if (report.events.empty() && !report.overflow) {
+        return;
+    }
+    endpoint_.Notify(std::string(kWatchEvent), ToJson(report));
 }
 
 } // namespace ned::editor::host
