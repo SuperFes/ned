@@ -1,5 +1,6 @@
 #include "Connection.h"
 
+#include <atomic>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -43,6 +44,11 @@ namespace {
             return "the agent exited";
         }
         return errors.substr(first, errors.find('\n', first) - first);
+    }
+
+    std::uint64_t NextSerial() {
+        static std::atomic<std::uint64_t> next{0};
+        return ++next;
     }
 
 } // namespace
@@ -198,7 +204,8 @@ Handshake Connect(const ConnectOptions& options, const std::stop_token& stop) {
 
 Connection::Connection(Handshake handshake, PostQueue& postQueue) : master_(std::move(handshake.master)), hello_(std::move(handshake.hello)), agent_(std::move(handshake.agent)),
                                                                     framed_(std::move(handshake.transport), postQueue, Framed::Options{.logCategory = LogCategory::General, .entityNoun = "agent"}),
-                                                                    endpoint_([this](const Json& message) { framed_.SendFrame(protocol::EncodeCbor(message)); }) {
+                                                                    endpoint_([this](const Json& message) { framed_.SendFrame(protocol::EncodeCbor(message)); }),
+                                                                    serial_(NextSerial()) {
     endpoint_.SetPeerWindow(hello_.window);
     endpoint_.ReserveRequestIds(kHelloId);
     framed_.SetOnFrame([this](const std::string& frame) {
@@ -230,6 +237,10 @@ const DeployedAgent& Connection::Agent() const noexcept {
 
 const std::string& Connection::Destination() const noexcept {
     return master_->Destination();
+}
+
+std::uint64_t Connection::Serial() const noexcept {
+    return serial_;
 }
 
 bool Connection::Connected() const noexcept {

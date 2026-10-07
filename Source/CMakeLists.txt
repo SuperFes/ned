@@ -328,6 +328,7 @@ add_library(ned_lib STATIC
         Editor/Remote/PathCompletion.cpp
         Editor/Remote/RemoteBuffer.cpp
         Editor/Remote/Search.cpp
+        Editor/Remote/Watch.cpp
         Editor/Remote/Ssh.cpp
         Editor/Repl/Config.cpp
         Editor/TestRun/TestOutputParser.cpp
