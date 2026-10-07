@@ -78,7 +78,8 @@
 ## staged-diff is diff's index-vs-HEAD counterpart -- the diff an unstage
 ## selects its hunk from. The patch itself is built by ned (a verbatim
 ## slice of the raw diff output, see Editor/Vcs/DiffPatch.h) and handed
-## over as a file path; --unidiff-zero is required because these are -U0
+## over as a file path, or as "-" on stdin (:patches-on-stdin);
+## --unidiff-zero is required because these are -U0
 ## (zero-context) patches, which `git apply` otherwise rejects outright as
 ## a guard against context-free misapplication.
 
@@ -413,6 +414,8 @@
 
 (ned/vcs-register-provider "git"
   {:detect detect
+   :markers [".git"]
+   :patches-on-stdin true
    :blame-argv blame-argv
    :parse-blame parse-blame
    :log-argv log-argv

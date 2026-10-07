@@ -2957,7 +2957,9 @@ void InstallEditorBindings(Environment& env) {
     env.Register<&NedVcsRegisterProvider>(
         "ned", "vcs-register-provider",
         "Register a VCS-agnostic plugin: (name callbacks), where callbacks is a struct/table keyed by keyword. "
-        ":detect (required) takes a root path and returns true if it's a repository this plugin handles. The "
+        ":detect (required) takes a root path and returns true if it's a repository this plugin handles. "
+        ":markers, an array of names a repository's root holds (\".git\"), is what finds the plugin in a "
+        "repository on a remote host, where :detect can't run. The "
         "*-argv callbacks each return an argv array/tuple of strings for the external command to run; the parse-* "
         "callbacks each take that command's captured stdout and return an array of tables. Optional keys, by "
         "operation: :blame-argv/:parse-blame and :log-argv/:parse-log (entries have :hash :author :date :summary), "
@@ -2965,7 +2967,8 @@ void InstallEditorBindings(Environment& env) {
         "(:state :path per changed file, path relative to the root), :stage-argv/:unstage-argv (take the file's "
         "path; success is exit code 0, no parse half), :staged-diff-argv (the index-vs-comparison-point diff, for "
         "selecting a hunk to unstage), :stage-patch-argv/:unstage-patch-argv (take root and a patch file's path, "
-        "applying it to the staging area forward/reverse), :commit-argv (takes root and the commit message), "
+        "or \"-\" for the patch on stdin when :patches-on-stdin is true, applying it to the staging area "
+        "forward/reverse), :commit-argv (takes root and the commit message), "
         ":branch-list-argv/:parse-branch-list (:name :current per branch), :branch-switch-argv/"
         ":branch-create-argv (take root and the branch name), :sequence-state-argv/:parse-sequence-state (one "
         "table of :kind :step :total for an in-progress rebase/merge/cherry-pick, or nil when none is), and "

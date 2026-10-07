@@ -21,6 +21,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -53,6 +54,8 @@ struct LogEntry {
 // already resolves any other spawned command.
 struct CommandSpec {
     std::vector<std::string> argv;
+    // What it reads on stdin, closed after it.
+    std::optional<std::string> input;
 };
 
 // One changed region, as returned by Provider::ParseDiff -- the same
@@ -139,6 +142,19 @@ class Provider {
     // (e.g. a ".git" directory present). Used by ProviderRegistry to
     // pick which registered provider is active for a given project root.
     [[nodiscard]] virtual bool Detect(const std::filesystem::path& root) const = 0;
+
+    // Names a repository's root holds (".git"). Detect runs here, so these
+    // are what finds this provider in a repository on a host; one without
+    // any is never offered for a remote repository.
+    [[nodiscard]] virtual std::vector<std::string> Markers() const {
+        return {};
+    }
+
+    // Whether the patch argv builders below, given "-" for the patch, read
+    // it from stdin, so a patch reaches a host's repository without a file.
+    [[nodiscard]] virtual bool PatchesOnStdin() const {
+        return false;
+    }
 
     // Blame/log/diff were pure virtual until the vocabulary-completion
     // follow-up made every operation but Detect optional (the Janet

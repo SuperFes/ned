@@ -256,6 +256,29 @@ TEST_CASE("ned/vcs-register-provider rejects a callbacks argument without :detec
     REQUIRE(ned::editor::vcs::ActiveProviderFor("/anything") == nullptr);
 }
 
+TEST_CASE("ned/vcs-register-provider reads a provider's markers and stdin patches", "[JanetVcsProvider]") {
+    RegistryResetGuard guard;
+    Environment&       env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+
+    env.DoString(R"(
+      (ned/vcs-register-provider "marked" {:detect (fn [root] (= root "/marked")) :markers [".fake" "_fake"] :patches-on-stdin true})
+      (ned/vcs-register-provider "plain" {:detect (fn [root] (= root "/plain"))})
+    )");
+    const auto* marked = ned::editor::vcs::ActiveProviderFor("/marked");
+    REQUIRE(marked != nullptr);
+    CHECK(marked->Markers() == std::vector<std::string>{".fake", "_fake"});
+    CHECK(marked->PatchesOnStdin());
+
+    const auto* plain = ned::editor::vcs::ActiveProviderFor("/plain");
+    REQUIRE(plain != nullptr);
+    CHECK(plain->Markers().empty());
+    CHECK_FALSE(plain->PatchesOnStdin());
+
+    REQUIRE_THROWS(env.DoString(R"((ned/vcs-register-provider "bad" {:detect (fn [root] false) :markers ".fake"}))"));
+    REQUIRE_THROWS(env.DoString(R"((ned/vcs-register-provider "worse" {:detect (fn [root] false) :markers [:fake]}))"));
+}
+
 TEST_CASE("ned/vcs-register-provider marshals the sequence vocabulary", "[JanetVcsProvider]") {
     RegistryResetGuard guard;
     Environment&       env = ned_tests::TestEnvironment();

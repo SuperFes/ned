@@ -59,6 +59,10 @@ class JanetVcsProvider : public editor::vcs::Provider {
 
     [[nodiscard]] bool Detect(const std::filesystem::path& root) const override;
 
+    // :markers, an array of names, and :patches-on-stdin, a boolean.
+    [[nodiscard]] std::vector<std::string> Markers() const override;
+    [[nodiscard]] bool                     PatchesOnStdin() const override;
+
     [[nodiscard]] editor::vcs::CommandSpec            BlameArgv(const std::filesystem::path& path) const override;
     [[nodiscard]] std::vector<editor::vcs::BlameLine> ParseBlame(const std::string& stdout_) const override;
 
@@ -160,6 +164,8 @@ class JanetVcsProvider : public editor::vcs::Provider {
     std::string name_;
 
     std::map<std::string, std::string> callbackNames_;
+    std::vector<std::string>           markers_;
+    bool                               patchesOnStdin_ = false;
 };
 
 } // namespace ned::janet

@@ -12,12 +12,16 @@
 #include <unistd.h>
 
 #include "Editor/Process/ChildProcess.h"
+#include "Editor/Project/Root.h"
 #include "Editor/Vcs/DiffPatch.h"
 #include "Editor/Vcs/ProviderRegistry.h"
+#include "Editor/Vcs/Runner.h"
+#include "FakeRemoteHost.h"
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "Janet/PluginLoader.h"
 #include "JanetTestSupport.h"
+#include "UI/EventLoop.h"
 
 using ned::editor::process::ChildProcess;
 using ned::janet::Environment;
@@ -466,6 +470,63 @@ TEST_CASE("bundled git plugin stages and unstages a single hunk end to end", "[G
     statusEntries = provider->ParseStatus(RunToCompletion(provider->StatusArgv(repoRoot).argv));
     REQUIRE(statusEntries.size() == 1);
     REQUIRE(statusEntries[0].state == " M"); // nothing staged anymore, both edits back in the worktree only
+}
+
+TEST_CASE("bundled git plugin takes a hunk's patch on stdin", "[GitVcsPlugin]") {
+    if (!GitAvailable()) {
+        SKIP("git not found on $PATH");
+    }
+
+    RegistryResetGuard guard;
+    Environment&       env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+    LoadBundledPlugins(env);
+
+    const std::filesystem::path repoRoot =
+        std::filesystem::temp_directory_path() / ("ned-git-vcs-stdin-test-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(repoRoot);
+    std::filesystem::create_directories(repoRoot);
+    const std::filesystem::path previousRoot = ned::editor::ProjectRoot();
+    struct Cleanup {
+        std::filesystem::path repo;
+        std::filesystem::path previousRoot;
+        ~Cleanup() {
+            ned::editor::SetProjectRoot(previousRoot);
+            std::filesystem::remove_all(repo);
+        }
+    } cleanup{repoRoot, previousRoot};
+
+    const std::string root = repoRoot.string();
+    RunToCompletion({"git", "-C", root, "init", "-q", "-b", "main"});
+    RunToCompletion({"git", "-C", root, "config", "user.email", "ned-test@example.com"});
+    RunToCompletion({"git", "-C", root, "config", "user.name", "Ned Test"});
+    const std::filesystem::path filePath = repoRoot / "file.txt";
+    {
+        std::ofstream(filePath) << "line one\nline two\nline three\nline four\nline five\nline six\nline seven\n";
+    }
+    RunToCompletion({"git", "-C", root, "add", "file.txt"});
+    RunToCompletion({"git", "-C", root, "commit", "-q", "-m", "initial commit"});
+    {
+        std::ofstream(filePath) << "line one\nline TWO\nline three\nline four\nline five\nline six\nline SEVEN\n";
+    }
+
+    auto* provider = ned::editor::vcs::ActiveProviderFor(repoRoot);
+    REQUIRE(provider != nullptr);
+    CHECK(provider->Markers() == std::vector<std::string>{".git"});
+    REQUIRE(provider->PatchesOnStdin());
+
+    ned::editor::SetProjectRoot(repoRoot);
+    ned::ui::EventLoop         loop;
+    ned::editor::vcs::Runner   runner(loop);
+    std::optional<std::string> outcome;
+    runner.RequestHunkApply(
+        filePath, 2, /*stage=*/true, [&outcome] { outcome = ""; }, [&outcome](std::string error) { outcome = std::move(error); });
+    REQUIRE(ned::tests::PumpUntil(loop, [&outcome] { return outcome.has_value(); }));
+    CHECK(*outcome == "");
+
+    const std::string cachedDiff = RunToCompletion(provider->StagedDiffArgv(filePath).argv);
+    CHECK(cachedDiff.find("+line TWO") != std::string::npos);
+    CHECK(cachedDiff.find("SEVEN") == std::string::npos);
 }
 
 TEST_CASE("bundled git plugin unstages the right hunk when unstaged edits shift lines above it", "[GitVcsPlugin]") {
