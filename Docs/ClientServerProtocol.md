@@ -234,6 +234,14 @@ first if need be, in the project root `fs/project-root` finds there unless the c
 names a directory. A task re-run from its output buffer runs where it last ran. The clipboard, desktop helpers, URL opening, the LSP
 broker and ssh itself are always local.
 
+**A remote buffer's repository.** VCS commands for a remote buffer run on its host, in
+the repository `fs/project-root` walks up to (always walking for a VCS marker, whatever
+the project-root setting, since it is the repository that matters). A provider's
+`Detect` runs here, so the provider comes from the markers it names instead (`:markers`
+for a Janet one), looked for with `fs/stat` in registration order and cached per
+repository; one without markers is never used for a remote repository. A hunk's patch
+reaches the host as `-` on stdin when the provider takes it there (`:patches-on-stdin`).
+
 **Main-thread waits.** A remote process can't be waited on from the main thread, which
 is what moves its bytes. A call site that blocks there on a child (the formatter's
 `std::system`, the toolchain probes) becomes asynchronous, or moves to a worker, before

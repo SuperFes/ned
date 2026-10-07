@@ -3169,6 +3169,10 @@ class BufferView : public Widget {
     // reasoning on why the transition is what's gated, not the verdict alone.
     void ApplyConflictVerdict(text::Buffer* buffer, bufferview::GutterModel::VcsConflictVerdict verdict);
 
+    // The file a VCS results buffer names for buffer: its path, or
+    // host:/path for a remote one; nullopt with no file.
+    [[nodiscard]] static std::optional<std::filesystem::path> VcsResultPath(const text::Buffer& buffer);
+
     // Parallel to BuildResultsBuffer, just a different per-line text shape:
     // "<path>:<1-indexed line>: <hash> <author> <date> | <source line
     // text>" -- deliberately kept byte-compatible with VisitSearchResult's

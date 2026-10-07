@@ -295,20 +295,31 @@ void BufferView::VisitVcsResult() {
     VisitResultUnderPoint();
 }
 
+std::optional<std::filesystem::path> BufferView::VcsResultPath(const text::Buffer& buffer) {
+    if (buffer.Path()) {
+        return *buffer.Path();
+    }
+    // host:/path, which a results line visits on its host.
+    if (buffer.Remote()) {
+        return std::filesystem::path(buffer.Remote()->ToString());
+    }
+    return std::nullopt;
+}
+
 void BufferView::RequestVcsBlameBuffer() {
     if (!vcsRunner_) {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    text::Buffer* buffer = &activeBuffer_.Get();
-    if (!buffer->Path()) {
+    text::Buffer*                              buffer = &activeBuffer_.Get();
+    const std::optional<std::filesystem::path> path   = VcsResultPath(*buffer);
+    if (!path) {
         statusMessage_ = "no file associated with this buffer";
         return;
     }
-    const std::filesystem::path path = *buffer->Path();
     vcsRunner_->RequestBlame(
         *buffer,
-        lifetime_.Bind([this, bufferId = text::BufferIdentity(*buffer), path](std::vector<editor::vcs::BlameLine> lines) {
+        lifetime_.Bind([this, bufferId = text::BufferIdentity(*buffer), path = *path](std::vector<editor::vcs::BlameLine> lines) {
             if (bufferId.Is(activeBuffer_.Get())) {
                 // Populates the gutter for the still-active source buffer
                 // before BuildVcsBlameBuffer switches activeBuffer_ away
@@ -325,14 +336,14 @@ void BufferView::RequestVcsLogBuffer() {
         statusMessage_ = "no vcs runner configured";
         return;
     }
-    text::Buffer& buffer = activeBuffer_.Get();
-    if (!buffer.Path()) {
+    text::Buffer&                              buffer = activeBuffer_.Get();
+    const std::optional<std::filesystem::path> path   = VcsResultPath(buffer);
+    if (!path) {
         statusMessage_ = "no file associated with this buffer";
         return;
     }
-    const std::filesystem::path path = *buffer.Path();
     vcsRunner_->RequestLog(
-        buffer, lifetime_.Bind([this, path](std::vector<editor::vcs::LogEntry> entries) { BuildVcsLogBuffer(path, entries); }),
+        buffer, lifetime_.Bind([this, path = *path](std::vector<editor::vcs::LogEntry> entries) { BuildVcsLogBuffer(path, entries); }),
         lifetime_.Bind([this](std::string error) { statusMessage_ = "vcs log: " + error; }));
 }
 
@@ -788,7 +799,7 @@ void BufferView::StageOrUnstageHunkAtPoint(bool stage) {
         return;
     }
     text::Buffer& buffer = activeBuffer_.Get();
-    if (!buffer.Path()) {
+    if (!VcsResultPath(buffer)) {
         statusMessage_ = "no file associated with this buffer";
         return;
     }
@@ -818,7 +829,7 @@ void BufferView::RevertHunkAtPoint() {
         return;
     }
     text::Buffer& buffer = activeBuffer_.Get();
-    if (!buffer.Path()) {
+    if (!VcsResultPath(buffer)) {
         statusMessage_ = "no file associated with this buffer";
         return;
     }
