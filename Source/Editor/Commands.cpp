@@ -5484,6 +5484,7 @@ Keymap BuildDefaultGlobalKeymap() {
     // pair.
     keymap.Bind(ParseKeySequence("C-c V"), "toggle-vcs-panel");
     keymap.Bind(ParseKeySequence("C-c v p"), "focus-vcs-panel");
+    keymap.Bind(ParseKeySequence("C-c R"), "toggle-remote-panel"); // the shifted twin, as C-c V
     // Merge Conflict Resolution Mode: a new "C-c x" prefix (confirmed free --
     // no existing bare "C-c x" or "C-c x <anything>" binding), a sibling of
     // "C-c v" rather than nested under it -- "C-c v x" is already

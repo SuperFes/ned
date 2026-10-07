@@ -32,6 +32,7 @@
 #include "Text/KillRing.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferView.h"
+#include "UI/LeftDock.h"
 #include "UI/ListPopup.h"
 #include "UI/RemotePanel.h"
 #include "UI/Theme.h"
@@ -278,6 +279,27 @@ TEST_CASE("remote-open-root adds a host's directory to the Remote panel, complet
     fixture.view.SetRemotePanel(nullptr);
     fixture.Command("remote-open-root");
     CHECK(fixture.statusMessage == "No Remote panel.");
+}
+
+TEST_CASE("C-c R switches the dock to the Remote panel, then collapses it on a second press", "[BufferView][Remote]") {
+    Fixture              fixture;
+    ned::ui::RemotePanel panel(fixture.theme, fixture.hosts);
+    ned::ui::TreeView    files(fixture.theme);
+    ned::ui::LeftDock    dock(fixture.theme);
+    const std::size_t    filesId  = dock.AddPanel(U'F', "Files", files);
+    const std::size_t    remoteId = dock.AddPanel(U'R', "Remote", panel.Tree());
+    fixture.view.SetRemotePanel(&panel);
+    fixture.view.SetLeftDock(&dock);
+    REQUIRE(dock.ActivePanel() == filesId);
+
+    fixture.view.OnEvent(test::Ctrl('c'));
+    fixture.view.OnEvent(test::Character("R"));
+    REQUIRE_FALSE(dock.Collapsed());
+    REQUIRE(dock.ActivePanel() == remoteId);
+
+    fixture.view.OnEvent(test::Ctrl('c'));
+    fixture.view.OnEvent(test::Character("R"));
+    REQUIRE(dock.Collapsed());
 }
 
 TEST_CASE("The host prompts add names the resolver knows under the search domains", "[BufferView][Remote]") {
