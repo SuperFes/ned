@@ -20,6 +20,9 @@
 //             result {}
 //   fs/remove params {path}, a directory with everything in it
 //             result {}
+//   fs/project-root params {path, detect: bool}, a file or directory
+//             result {path}, Project/Root.h's DetectProjectRoot of it, the
+//             VCS walk only with detect
 //
 //   stat      {kind: "missing" | "file" | "directory" | "other",
 //              size: uint, mode: uint, mtime: int | null}
@@ -54,6 +57,7 @@ inline constexpr std::string_view kFsRealpath = "fs/realpath";
 inline constexpr std::string_view kFsMkdir    = "fs/mkdir";
 inline constexpr std::string_view kFsRename   = "fs/rename";
 inline constexpr std::string_view kFsRemove   = "fs/remove";
+inline constexpr std::string_view kFsProjectRoot = "fs/project-root";
 
 inline constexpr std::size_t kFsChunkBytes   = 256 * 1024;
 inline constexpr std::size_t kFsReaddirChunk = 1024;
@@ -101,6 +105,13 @@ struct FsRenameRequest {
     [[nodiscard]] bool operator==(const FsRenameRequest&) const = default;
 };
 
+struct FsProjectRootRequest {
+    std::filesystem::path path;
+    bool                  detect = true;
+
+    [[nodiscard]] bool operator==(const FsProjectRootRequest&) const = default;
+};
+
 // The decoders throw protocol::ProtocolError on a malformed field.
 [[nodiscard]] nlohmann::json        PathParams(const std::filesystem::path& path);
 [[nodiscard]] std::filesystem::path PathParamsFromJson(const nlohmann::json& json);
@@ -113,6 +124,9 @@ struct FsRenameRequest {
 
 [[nodiscard]] nlohmann::json  ToJson(const FsRenameRequest& request);
 [[nodiscard]] FsRenameRequest FsRenameRequestFromJson(const nlohmann::json& json);
+
+[[nodiscard]] nlohmann::json       ToJson(const FsProjectRootRequest& request);
+[[nodiscard]] FsProjectRootRequest FsProjectRootRequestFromJson(const nlohmann::json& json);
 
 [[nodiscard]] nlohmann::json        DirEntriesToJson(std::span<const DirEntry> entries);
 [[nodiscard]] std::vector<DirEntry> DirEntriesFromJson(const nlohmann::json& json);

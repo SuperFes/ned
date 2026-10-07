@@ -106,6 +106,14 @@ FsRenameRequest FsRenameRequestFromJson(const Json& json) {
     return FsRenameRequest{.from = RequirePath(json, "from"), .to = RequirePath(json, "to")};
 }
 
+Json ToJson(const FsProjectRootRequest& request) {
+    return Json{{"path", PathToJson(request.path)}, {"detect", request.detect}};
+}
+
+FsProjectRootRequest FsProjectRootRequestFromJson(const Json& json) {
+    return FsProjectRootRequest{.path = RequirePath(json, "path"), .detect = RequireBool(json, "detect")};
+}
+
 Json DirEntriesToJson(std::span<const DirEntry> entries) {
     Json json = Json::array();
     for (const DirEntry& entry : entries) {

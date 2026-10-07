@@ -137,6 +137,29 @@ TEST_CASE("A connected host's directories are listed and its paths resolved", "[
     CHECK(gone.value->error().code == host::fs_error::kNotFound);
 }
 
+TEST_CASE("A connected host finds a path's project root", "[Remote][RemoteFs][HostAgent]") {
+    const ned::tests::FakeRemoteHost fake;
+    PostQueue                        queue;
+    remote::Connection               connection(remote::Connect(fake.Options()), queue);
+    const fs::path                   project = fake.dir / "project";
+    fs::create_directories(project / ".git");
+    fs::create_directories(project / "src");
+    std::ofstream(project / "src" / "a.c");
+
+    const auto root = [&](const fs::path& path, bool detect) {
+        Answer<fs::path> found;
+        remote::FindProjectRoot(connection, host::FsProjectRootRequest{.path = path, .detect = detect}, found.Done());
+        REQUIRE(PumpUntil(queue, [&] { return found.value.has_value(); }));
+        REQUIRE(found.value->has_value());
+        return **found.value;
+    };
+    const fs::path canonical = fs::canonical(project);
+    CHECK(root(project / "src" / "a.c", true) == canonical);
+    CHECK(root(project / "src" / "new.c", true) == canonical);
+    CHECK(root(project / "src" / "a.c", false) == canonical / "src");
+    CHECK(root(project / "src", true) == canonical / "src");
+}
+
 TEST_CASE("A connected host's paths are made, renamed and removed", "[Remote][RemoteFs][HostAgent]") {
     const ned::tests::FakeRemoteHost fake;
     PostQueue                        queue;

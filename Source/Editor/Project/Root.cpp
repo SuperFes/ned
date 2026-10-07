@@ -65,6 +65,10 @@ bool AutoDetectProjectRoot() {
 }
 
 std::filesystem::path DetectProjectRoot(const std::filesystem::path& openedPath) {
+    return DetectProjectRoot(openedPath, AutoDetectProjectRoot());
+}
+
+std::filesystem::path DetectProjectRoot(const std::filesystem::path& openedPath, bool walkForVcs) {
     // weakly_canonical, not plain absolute: absolute() only prepends the cwd
     // and leaves any "." / ".." components in place, so opening "../README.md"
     // left the detected root's own parent_path() literally ending in "..",
@@ -100,7 +104,7 @@ std::filesystem::path DetectProjectRoot(const std::filesystem::path& openedPath)
 
     const std::filesystem::path containing = start.parent_path();
 
-    if (!AutoDetectProjectRoot()) {
+    if (!walkForVcs) {
         return containing;
     }
 
