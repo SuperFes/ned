@@ -8,7 +8,7 @@ command with none is reachable from `M-x` and Janet alone. Major-mode and
 `init.janet` bindings are not listed here -- run `describe-bindings` (`C-c ?`)
 for the live keymap stack, this page's own layer included.
 
-373 commands.
+376 commands.
 
 ## `acp-close-session`
 
@@ -607,6 +607,10 @@ Move keyboard focus into the debug panel (Up/Down to move, Left/Right to collaps
 Key: `C-c p`
 
 Move keyboard focus into the project sidebar tree (Up/Down or C-p/C-n to move, Enter to open/toggle, Left/Right to collapse/expand, Escape or C-g to return to the editor).
+
+## `focus-remote-panel`
+
+Move keyboard focus into the Remote panel, showing it if hidden.
 
 ## `focus-vcs-panel`
 
@@ -1348,6 +1352,10 @@ Connect to a host over ssh, installing ned's agent there if it isn't already.
 
 Close the connection to a host.
 
+## `remote-open-root`
+
+Add a host's directory (host:/path, or a host for its home) to the Remote panel.
+
 ## `remote-project-search`
 
 Search all files under host:/path for a regex pattern on that host, in a new results buffer.
@@ -1663,6 +1671,10 @@ Show or hide the left-side project tree.
 ## `toggle-read-only`
 
 Toggle whether the current buffer accepts edits.
+
+## `toggle-remote-panel`
+
+Show or hide the Remote panel: connected hosts and the remote roots you opened.
 
 ## `toggle-tab-glyphs`
 

@@ -2,7 +2,7 @@
 // Editor-remembered variables -- small key/value facts the *editor* decides
 // to persist across runs, in $XDG_STATE_HOME/ned/variables.json. Currently:
 // sidebar width and visibility, which left-dock panel was showing, whether
-// the minimap is on.
+// the minimap is on, the Remote panel's roots.
 //
 // State, not config, on purpose: $XDG_CONFIG_HOME (init.janet) is what the
 // user writes, $XDG_STATE_HOME is what the editor writes -- the same line

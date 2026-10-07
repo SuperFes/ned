@@ -731,6 +731,30 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 leftDock_->ActivateOrToggle(vcsPanel_);
             }
             return;
+        case editor::InteractiveRequest::ToggleRemotePanel:
+            if (leftDock_ != nullptr && remotePanel_ != nullptr) {
+                leftDock_->ActivateOrToggle(&remotePanel_->Tree());
+            }
+            return;
+        case editor::InteractiveRequest::FocusRemotePanel:
+            if (leftDock_ != nullptr && remotePanel_ != nullptr) {
+                leftDock_->PrepareForKeyboardFocus(&remotePanel_->Tree());
+                remotePanel_->Tree().TakeFocus();
+            }
+            return;
+        case editor::InteractiveRequest::RemoteOpenRoot:
+            if (remotePanel_ == nullptr) {
+                statusMessage_ = "No Remote panel.";
+                return;
+            }
+            inputMode_ = InputMode::RemoteOpenRoot;
+            prompt_.emplace("Open remote root (host:/path, or a host for its home): ");
+            remoteHostCandidates_ = RemoteHostCandidates();
+            remoteLookupTyped_.reset();
+            remoteListingDirectory_.reset();
+            pathCompletionSelection_ = 0;
+            RefreshPathCompletionPopup();
+            return;
         case editor::InteractiveRequest::ToggleDebugPanel:
             // Same shape as ToggleVcsPanel above, mirrored onto the third
             // dock panel.
@@ -2701,6 +2725,8 @@ std::string_view BufferView::HistoryKeyForInputMode(InputMode mode) {
             return "remote-search-root";
         case InputMode::RemoteSearchPattern:
             return "project-search";
+        case InputMode::RemoteOpenRoot:
+            return "remote-open-root";
         default:
             return "prompt"; // unreachable from HandlePromptKey's own dispatch guard; a safe shared fallback regardless
     }
@@ -2843,6 +2869,8 @@ std::optional<bufferview::TextEntryPrompt> BufferView::TextEntryPromptFor(InputM
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::PathDropdown, "Remote search"};
         case InputMode::RemoteSearchPattern:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Remote search"};
+        case InputMode::RemoteOpenRoot:
+            return bufferview::TextEntryPrompt{bufferview::PromptCompletion::PathDropdown, "Open remote root"};
         case InputMode::SearchInResults:
             return bufferview::TextEntryPrompt{bufferview::PromptCompletion::None, "Search in results"};
         case InputMode::ReplName:
@@ -2963,6 +2991,15 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             return bufferview::PromptCommit::Transitioned;
         }
         statusMessage_ = "Expected host:/path, not \"" + input + "\"";
+    }
+    else if (inputMode_ == InputMode::RemoteOpenRoot) {
+        if (remotePanel_ != nullptr && !input.empty()) {
+            remotePanel_->OpenRoot(input);
+            if (leftDock_ != nullptr) {
+                leftDock_->PrepareForKeyboardFocus(&remotePanel_->Tree());
+                remotePanel_->Tree().TakeFocus();
+            }
+        }
     }
     else if (inputMode_ == InputMode::RemoteSearchPattern) {
         try {

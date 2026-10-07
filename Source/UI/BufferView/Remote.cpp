@@ -35,6 +35,14 @@ void BufferView::SetRemoteHosts(editor::remote::Hosts* remoteHosts) {
     remoteHosts_ = remoteHosts;
 }
 
+void BufferView::SetRemotePanel(RemotePanel* panel) {
+    remotePanel_ = panel;
+}
+
+void BufferView::BeginRemoteOpenRoot() {
+    StartInteractiveSession(editor::InteractiveRequest::RemoteOpenRoot);
+}
+
 void BufferView::ConnectToHost(const std::string& destination) {
     if (remoteHosts_ == nullptr) {
         statusMessage_ = "No remote hosts.";
@@ -271,7 +279,7 @@ std::optional<std::string> BufferView::TypedRemoteHost() const {
         return prompt_->Text();
     }
     // Past the host, RemotePathCompletions takes over.
-    if (inputMode_ == InputMode::RemoteSearchRoot && prompt_->Text().find(":/") == std::string::npos) {
+    if ((inputMode_ == InputMode::RemoteSearchRoot || inputMode_ == InputMode::RemoteOpenRoot) && prompt_->Text().find(":/") == std::string::npos) {
         return prompt_->Text().substr(0, prompt_->Text().find(':'));
     }
     return std::nullopt;
@@ -322,7 +330,7 @@ void BufferView::RequestRemoteHostLookup() {
 }
 
 std::optional<editor::remote::RemotePathPrefix> BufferView::TypedRemotePath() const {
-    if (inputMode_ != InputMode::FindFile && inputMode_ != InputMode::RemoteSearchRoot) {
+    if (inputMode_ != InputMode::FindFile && inputMode_ != InputMode::RemoteSearchRoot && inputMode_ != InputMode::RemoteOpenRoot) {
         return std::nullopt;
     }
     return editor::remote::SplitRemotePathPrefix(prompt_->Text());
@@ -333,7 +341,7 @@ std::vector<std::string> BufferView::RemotePathCompletions() const {
     if (!typed || typed->directory != remoteListingDirectory_ || !remoteListingEntries_) {
         return {};
     }
-    return editor::remote::CompleteRemotePath(*typed, *remoteListingEntries_, inputMode_ == InputMode::RemoteSearchRoot);
+    return editor::remote::CompleteRemotePath(*typed, *remoteListingEntries_, inputMode_ != InputMode::FindFile);
 }
 
 void BufferView::RequestRemoteListing() {

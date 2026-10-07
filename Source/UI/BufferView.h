@@ -91,6 +91,7 @@
 #include "MemoryImageView.h"
 #include "Minimap.h"
 #include "ProjectSidebar.h"
+#include "RemotePanel.h"
 #include "ScrollArrowButton.h"
 #include "ScrollBar.h"
 #include "Text/Buffer.h"
@@ -270,6 +271,12 @@ class BufferView : public Widget {
     // receives events), so nothing here coordinates between them. nullptr
     // (the default) is a safe no-op, the usual convention.
     void SetDebugPanel(DebugPanel* panel);
+
+    // The Remote panel, for toggle-remote-panel, focus-remote-panel and
+    // remote-open-root. nullptr (the default) is a safe no-op.
+    void SetRemotePanel(RemotePanel* panel);
+    // The Remote panel's 'o': remote-open-root's prompt on this pane.
+    void BeginRemoteOpenRoot();
 
     // copilot-key follow-up: run an already-decoded chord through this
     // pane's full key path (InputMode switch, keymap, the lot). Public
@@ -502,6 +509,12 @@ class BufferView : public Widget {
     // public (DAP client slice 1) so WindowManager's stopped-event callback
     // can jump the focused pane to wherever the debuggee stopped.
     void JumpToPathLine(const std::filesystem::path& path, std::size_t line);
+
+    // Opens a host's file: the buffer already holding it, or a loading one
+    // filled once the host answers, connecting first when needed; at line
+    // (1-indexed) when given. A file the host doesn't have opens as a new
+    // one only with createMissing; otherwise it's reported missing.
+    void VisitRemoteFile(const editor::remote::Location& file, std::optional<std::size_t> line = std::nullopt, bool createMissing = true);
 
     // vcs-show-blame's entry point (see StartInteractiveSession's
     // VcsShowBlame case) -- kicks off an async Runner::RequestBlame for
@@ -1287,6 +1300,7 @@ class BufferView : public Widget {
                            // prompts' two-step shape.
                            RemoteSearchRoot,
                            RemoteSearchPattern,
+                           RemoteOpenRoot,
                            PointToRegister,
                            JumpToRegister,
                            CopyToRegister,
@@ -4039,6 +4053,7 @@ class BufferView : public Widget {
     LeftDock*                             leftDock_        = nullptr;         // see SetLeftDock
     VcsPanel*                             vcsPanel_        = nullptr;         // see SetVcsPanel
     DebugPanel*                           debugPanel_      = nullptr;         // see SetDebugPanel
+    RemotePanel*                          remotePanel_     = nullptr;         // see SetRemotePanel
     std::function<bool()>                 splitResizeQuery_;                  // see SetSplitResizeQuery
     Minimap*                              minimap_                 = nullptr; // see SetMinimap
     Widget*                               minimapScrollColumn_     = nullptr; // see SetMinimap
@@ -4323,11 +4338,6 @@ class BufferView : public Widget {
     void AppendRemoteMatches(std::uint64_t generation, const std::vector<editor::SearchMatch>& matches);
     void FinishRemoteSearch(std::uint64_t generation, const std::optional<std::string>& failure);
     void CancelRemoteSearch();
-    // Opens a host's file: the buffer already holding it, or a loading one
-    // filled once the host answers, connecting first when needed; at line
-    // (1-indexed) when given. A file the host doesn't have opens as a new
-    // one only with createMissing; otherwise it's reported missing.
-    void VisitRemoteFile(const editor::remote::Location& file, std::optional<std::size_t> line = std::nullopt, bool createMissing = true);
     // revert-buffer and revert-buffer-with-charset: the active buffer's
     // file read again, as one undoable step, decoded as charset when given.
     // A remote buffer reads through its host, and one whose load failed

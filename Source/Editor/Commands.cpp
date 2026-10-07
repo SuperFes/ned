@@ -2845,6 +2845,12 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       [](CommandContext& context) {
                           context.interactiveRequest = InteractiveRequest::FocusDebugPanel;
                       });
+    registry.Register("toggle-remote-panel", "Show or hide the Remote panel: connected hosts and the remote roots you opened.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::ToggleRemotePanel; });
+    registry.Register("focus-remote-panel", "Move keyboard focus into the Remote panel, showing it if hidden.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::FocusRemotePanel; });
+    registry.Register("remote-open-root", "Add a host's directory (host:/path, or a host for its home) to the Remote panel.",
+                      [](CommandContext& context) { context.interactiveRequest = InteractiveRequest::RemoteOpenRoot; });
 
     registry.Register("tracker-panel",
                       "Pick an issue-tracker panel by name and move keyboard focus into it (Enter opens an issue's "
