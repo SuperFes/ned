@@ -165,6 +165,15 @@ TEST_CASE("Rename requests round-trip and need both absolute paths", "[Host][Hos
     CHECK_THROWS_AS(host::FsRenameRequestFromJson(Json{{"from", host::Bytes("/a")}, {"to", host::Bytes("b")}}), ProtocolError);
 }
 
+TEST_CASE("Project root requests round-trip and need an absolute path", "[Host][HostCodec]") {
+    for (const bool detect : {true, false}) {
+        const host::FsProjectRootRequest request{.path = "/a/caf\xC3\xA9", .detect = detect};
+        CHECK(host::FsProjectRootRequestFromJson(OverTheWire(host::ToJson(request))) == request);
+    }
+    CHECK_THROWS_AS(host::FsProjectRootRequestFromJson(Json{{"path", host::Bytes("/a")}}), ProtocolError);
+    CHECK_THROWS_AS(host::FsProjectRootRequestFromJson(Json{{"path", host::Bytes("a")}, {"detect", true}}), ProtocolError);
+}
+
 TEST_CASE("Watch requests and events round-trip and refuse what they can't name", "[Host][HostCodec]") {
     using Kind = ned::editor::FileEvent::Kind;
     const host::WatchSetRequest request{.files = {"/a/caf\xC3\xA9", "/b"}, .directories = {"/c/d"}};

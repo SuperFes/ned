@@ -22,6 +22,7 @@
 #include "Editor/Host/SearchCodec.h"
 #include "Editor/Host/WatchCodec.h"
 #include "Editor/ProcessTimeouts.h"
+#include "Editor/Project/Root.h"
 
 namespace ned::editor::host {
 
@@ -154,6 +155,8 @@ Dispatcher::Dispatcher(protocol::Endpoint& endpoint, PostQueue& postQueue, Ident
     endpoint_.Handle(std::string(kFsMkdir), lifetime_.Bind([this](Json params, Responder responder) { FsMkdir(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsRename), lifetime_.Bind([this](Json params, Responder responder) { FsRename(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsRemove), lifetime_.Bind([this](Json params, Responder responder) { FsRemove(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kFsProjectRoot),
+                     lifetime_.Bind([this](Json params, Responder responder) { FsProjectRoot(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kWatchSet), lifetime_.Bind([this](Json params, Responder responder) { WatchSet(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kProcSpawn), lifetime_.Bind([this](Json params, Responder responder) { ProcSpawn(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kProcWrite), lifetime_.Bind([this](Json params, Responder responder) { ProcWrite(params, std::move(responder)); }));
@@ -193,7 +196,7 @@ void Dispatcher::Hello(const Json& params, Responder responder) {
     response.arch         = identity_.arch;
     response.codec        = ChooseCodec(request.codecs);
     response.window       = protocol::kDefaultWindow;
-    response.capabilities = Capabilities{.fs = 3, .proc = 1, .search = 1, .watch = 1};
+    response.capabilities = Capabilities{.fs = 4, .proc = 1, .search = 1, .watch = 1};
     responder.Result(ToJson(response));
     if (onCodec_) {
         onCodec_(response.codec);
@@ -401,6 +404,18 @@ void Dispatcher::FsRealpath(const Json& params, Responder responder) {
     catch (const FsError& e) {
         responder.Error(e.Code(), e.what());
     }
+}
+
+void Dispatcher::FsProjectRoot(const Json& params, Responder responder) {
+    FsProjectRootRequest request;
+    try {
+        request = FsProjectRootRequestFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    responder.Result(Json{{"path", PathToJson(DetectProjectRoot(request.path, request.detect))}});
 }
 
 void Dispatcher::FsMkdir(const Json& params, Responder responder) {

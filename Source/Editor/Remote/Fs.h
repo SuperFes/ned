@@ -56,6 +56,9 @@ std::uint64_t ListDirectory(Connection& connection, const std::filesystem::path&
 // path resolved on the host: made absolute against the agent's working
 // directory, the login's home, with its symlinks followed.
 std::uint64_t ResolvePath(Connection& connection, const std::filesystem::path& path, std::function<void(FsResult<std::filesystem::path>)> done);
+// The project root a file or directory on the host belongs to, as
+// Project/Root.h detects one locally.
+std::uint64_t FindProjectRoot(Connection& connection, host::FsProjectRootRequest request, std::function<void(FsResult<std::filesystem::path>)> done);
 
 // Project/FileOps.h's operations on the host: a directory with its missing
 // parents, a rename that won't overwrite, a recursive remove.

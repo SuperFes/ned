@@ -47,6 +47,9 @@ void               SetAutoDetectProjectRoot(bool enabled);
 // relative; a nonexistent openedPath (e.g. `ned newfile.txt`) is treated as
 // a file (its containing directory is used), not a directory.
 [[nodiscard]] std::filesystem::path DetectProjectRoot(const std::filesystem::path& openedPath);
+// The same, walking for a VCS marker only when walkForVcs: what a host
+// detects for the editor, whose setting it doesn't share.
+[[nodiscard]] std::filesystem::path DetectProjectRoot(const std::filesystem::path& openedPath, bool walkForVcs);
 
 } // namespace ned::editor
 

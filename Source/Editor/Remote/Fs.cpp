@@ -41,6 +41,21 @@ namespace {
                                           {}};
     }
 
+    // A {path} answer.
+    protocol::ResponseHandlers PathHandlers(std::function<void(FsResult<std::filesystem::path>)> done) {
+        auto shared = std::make_shared<std::function<void(FsResult<std::filesystem::path>)>>(std::move(done));
+        return protocol::ResponseHandlers{[shared](const Json& result) {
+                                              try {
+                                                  (*shared)(host::RequirePath(result, "path"));
+                                              }
+                                              catch (const protocol::ProtocolError& e) {
+                                                  (*shared)(std::unexpected(Malformed(e.what())));
+                                              }
+                                          },
+                                          [shared](const protocol::RemoteError& error) { (*shared)(std::unexpected(FromRemote(error))); },
+                                          {}};
+    }
+
     // An answer with nothing in it but success.
     protocol::ResponseHandlers DoneHandlers(std::function<void(FsResult<void>)> done) {
         auto shared = std::make_shared<std::function<void(FsResult<void>)>>(std::move(done));
@@ -164,20 +179,13 @@ std::uint64_t ListDirectory(Connection& connection, const std::filesystem::path&
 }
 
 std::uint64_t ResolvePath(Connection& connection, const std::filesystem::path& path, std::function<void(FsResult<std::filesystem::path>)> done) {
-    auto shared = std::make_shared<std::function<void(FsResult<std::filesystem::path>)>>(std::move(done));
-    return connection.Endpoint().Request(
-        std::string(host::kFsRealpath), Json{{"path", host::PathToJson(path)}},
-        protocol::ResponseHandlers{[shared](const Json& result) {
-                                       try {
-                                           (*shared)(host::RequirePath(result, "path"));
-                                       }
-                                       catch (const protocol::ProtocolError& e) {
-                                           (*shared)(std::unexpected(Malformed(e.what())));
-                                       }
-                                   },
-                                   [shared](const protocol::RemoteError& error) { (*shared)(std::unexpected(FromRemote(error))); },
-                                   {}},
-        ProtocolRequestTimeoutMs());
+    return connection.Endpoint().Request(std::string(host::kFsRealpath), Json{{"path", host::PathToJson(path)}}, PathHandlers(std::move(done)),
+                                         ProtocolRequestTimeoutMs());
+}
+
+std::uint64_t FindProjectRoot(Connection& connection, host::FsProjectRootRequest request, std::function<void(FsResult<std::filesystem::path>)> done) {
+    return connection.Endpoint().Request(std::string(host::kFsProjectRoot), host::ToJson(request), PathHandlers(std::move(done)),
+                                         ProtocolRequestTimeoutMs());
 }
 
 std::uint64_t MakeDirectory(Connection& connection, const std::filesystem::path& path, std::function<void(FsResult<host::FileStat>)> done) {

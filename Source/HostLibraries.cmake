@@ -18,6 +18,7 @@ add_library(ned_core STATIC
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Process/StreamedChild.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/ProcessTimeouts.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Project/FileOps.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/Editor/Project/Root.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Project/SearchEngine.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Protocol/Cbor.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Protocol/Endpoint.cpp

@@ -64,6 +64,7 @@ class Dispatcher {
     void SendPending(SearchJob& job);
     void FinishSearch(std::uint64_t job, const std::string& error);
     void FsStat(const nlohmann::json& params, protocol::Responder responder);
+    void FsProjectRoot(const nlohmann::json& params, protocol::Responder responder);
     void FsRead(const nlohmann::json& params, protocol::Responder responder);
     void FsWrite(const nlohmann::json& params, protocol::Responder responder);
     void FsReaddir(const nlohmann::json& params, protocol::Responder responder);

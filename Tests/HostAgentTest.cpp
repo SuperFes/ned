@@ -142,7 +142,7 @@ TEST_CASE("ned-agent answers hello with its own build and settles the codec", "[
     REQUIRE(hello.arch == host::BuildArch());
     REQUIRE(hello.codec == "zstd");
     REQUIRE(hello.capabilities.search == 1);
-    REQUIRE(hello.capabilities.fs == 3);
+    REQUIRE(hello.capabilities.fs == 4);
     REQUIRE(hello.capabilities.watch == 1);
     REQUIRE(hello.capabilities.proc == 1);
 }
