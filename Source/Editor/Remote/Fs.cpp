@@ -1,9 +1,12 @@
 #include "Fs.h"
 
+#include <algorithm>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <utility>
 
+#include "Editor/Host/Codec.h"
 #include "Editor/ProcessTimeouts.h"
 
 namespace ned::editor::remote {
@@ -106,6 +109,67 @@ std::uint64_t WriteFile(Connection& connection, host::FsWriteRequest request, st
     }
     const std::chrono::milliseconds limit = WriteIdleLimit(request.data.size());
     return connection.Endpoint().Request(std::string(host::kFsWrite), host::ToJson(request), StatHandlers(std::move(done)), limit);
+}
+
+std::uint64_t ListDirectory(Connection& connection, const std::filesystem::path& path, std::size_t maxEntries,
+                            std::function<void(FsResult<std::vector<host::DirEntry>>)> done) {
+    struct State {
+        std::uint64_t               id = 0;
+        std::vector<host::DirEntry> entries;
+        std::optional<FsFailure>    rejected;
+    };
+    auto                state    = std::make_shared<State>();
+    auto                finish   = std::make_shared<std::function<void(FsResult<std::vector<host::DirEntry>>)>>(std::move(done));
+    protocol::Endpoint& endpoint = connection.Endpoint();
+    state->id                    = endpoint.Request(
+        std::string(host::kFsReaddir), host::PathParams(path),
+        protocol::ResponseHandlers{
+            [state, finish](const Json&) {
+                if (state->rejected) {
+                    (*finish)(std::unexpected(*state->rejected));
+                    return;
+                }
+                (*finish)(std::move(state->entries));
+            },
+            [state, finish](const protocol::RemoteError& error) { (*finish)(std::unexpected(state->rejected ? *state->rejected : FromRemote(error))); },
+            [state, &endpoint, maxEntries, path](const Json& data) {
+                if (state->rejected) {
+                    return;
+                }
+                try {
+                    std::vector<host::DirEntry> chunk = host::DirEntriesFromJson(data);
+                    if (state->entries.size() + chunk.size() <= maxEntries) {
+                        std::ranges::move(chunk, std::back_inserter(state->entries));
+                        return;
+                    }
+                    state->rejected = FsFailure{.code    = host::fs_error::kFailed,
+                                                .message = path.string() + " holds more than " + std::to_string(maxEntries) + " entries"};
+                }
+                catch (const protocol::ProtocolError& e) {
+                    state->rejected = Malformed(e.what());
+                }
+                state->entries.clear();
+                endpoint.Cancel(state->id);
+            }},
+        ProtocolRequestTimeoutMs());
+    return state->id;
+}
+
+std::uint64_t ResolvePath(Connection& connection, const std::filesystem::path& path, std::function<void(FsResult<std::filesystem::path>)> done) {
+    auto shared = std::make_shared<std::function<void(FsResult<std::filesystem::path>)>>(std::move(done));
+    return connection.Endpoint().Request(
+        std::string(host::kFsRealpath), Json{{"path", host::PathToJson(path)}},
+        protocol::ResponseHandlers{[shared](const Json& result) {
+                                       try {
+                                           (*shared)(host::RequirePath(result, "path"));
+                                       }
+                                       catch (const protocol::ProtocolError& e) {
+                                           (*shared)(std::unexpected(Malformed(e.what())));
+                                       }
+                                   },
+                                   [shared](const protocol::RemoteError& error) { (*shared)(std::unexpected(FromRemote(error))); },
+                                   {}},
+        ProtocolRequestTimeoutMs());
 }
 
 } // namespace ned::editor::remote
