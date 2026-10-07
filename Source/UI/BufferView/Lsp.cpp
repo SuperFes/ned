@@ -2531,19 +2531,18 @@ std::vector<std::string> BufferView::GatherPathCompletionCandidates() const {
 }
 
 // dropdown-path-completion follow-up: FindFile/OpenProjectPath/FindScratch's
-// own live dropdown -- unlike the selection-based Handle<Mode>Key sessions
-// (switch-project/switch-to-buffer/vcs-switch-branch/acp-agent-name), Enter
-// still finalizes on literal prompt_->Text() in HandlePromptKey, unchanged,
-// since typing a path/name with no match is a valid "create new" action
-// here (a new file, a new scratch pad, a new project root). This popup is a
-// visual + Tab-to-accept aid only, called on session start and on every
-// keystroke/Up/Down (see HandlePromptKey's own call sites).
+// own live dropdown. Nothing is highlighted until Up/Down chooses a
+// candidate, so Enter on typed text with no match still creates (a new
+// file, a new scratch pad, a new project root); once one is chosen, Enter
+// commits it. Refreshed on session start and on every keystroke/Up/Down.
 
 void BufferView::RefreshPathCompletionPopup() {
     RequestRemoteHostLookup();
     RequestRemoteListing();
     const std::vector<std::string> candidates = GatherPathCompletionCandidates();
-    pathCompletionSelection_                  = candidates.empty() ? 0 : std::min(pathCompletionSelection_, candidates.size() - 1);
+    if (pathCompletionSelection_) {
+        pathCompletionSelection_ = candidates.empty() ? std::nullopt : std::optional(std::min(*pathCompletionSelection_, candidates.size() - 1));
+    }
 
     statusMessage_ = prompt_->StatusText();
     if (!onCandidatesChanged_) {
@@ -2562,8 +2561,23 @@ void BufferView::RefreshPathCompletionPopup() {
             return candidate.ends_with('/') ? editor::FolderIcon(false) : editor::FileIcon(std::filesystem::path(candidate));
         })
                    : std::function<editor::Glyph(const std::string&)>{};
-    onCandidatesChanged_(BuildFuzzyCandidatePopupModel(prompt_->StatusText(), candidates, pathCompletionSelection_, display, icon,
-                                                       theme_.background));
+    ListPopupModel model = BuildFuzzyCandidatePopupModel(prompt_->StatusText(), candidates, pathCompletionSelection_.value_or(0), display, icon,
+                                                         theme_.background);
+    if (!pathCompletionSelection_) {
+        model.selectedIndex.reset();
+    }
+    onCandidatesChanged_(std::move(model));
+}
+
+std::optional<std::string> BufferView::ChosenPathCompletion() const {
+    if (!pathCompletionSelection_ || PromptCompletionForCurrentMode() != bufferview::PromptCompletion::PathDropdown) {
+        return std::nullopt;
+    }
+    const std::vector<std::string> candidates = GatherPathCompletionCandidates();
+    if (*pathCompletionSelection_ >= candidates.size()) {
+        return std::nullopt;
+    }
+    return candidates[*pathCompletionSelection_];
 }
 
 void BufferView::RequestProjectFindReferences() {
