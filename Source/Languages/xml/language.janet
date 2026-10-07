@@ -1,6 +1,7 @@
 # No :line-comment -- XML only has block comments (<!-- -->).
 
 {:name "xml"
+ :icon "" # nf-seti-xml
  :extensions [".xml" ".xsd" ".xsl" ".xslt" ".svg"]
  :injection-aliases ["svg" "xsl" "plist"]
  :block-comment ["<!--" "-->"]

@@ -2,6 +2,7 @@
 # tsx dialect's parser knows the node types they name (tsx/indents.janet).
 
 {:name "tsx"
+ :icon "" # nf-seti-react
  :extensions [".tsx"]
  :line-comment "//"
  :queries-from "typescript"

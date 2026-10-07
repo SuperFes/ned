@@ -1,4 +1,5 @@
 {:name "properties"
+ :icon "" # nf-seti-config
  :extensions [".properties"]
  :line-comment "#"
  :not-applicable {:indents    "line-oriented records; nothing nests"

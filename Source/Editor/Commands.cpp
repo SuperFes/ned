@@ -39,6 +39,7 @@
 #include "FormatRewrite.h"
 #include "FormatSpacing.h"
 #include "FormatWrap.h"
+#include "IconSettings.h"
 #include "Indent.h"
 #include "IndentStyle.h"
 #include "InlineDebugValues.h"
@@ -3530,6 +3531,16 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                           SetTabGlyphsEnabled(enabled);
                           if (context.message) {
                               *context.message = enabled ? "Tab glyphs on." : "Tab glyphs off.";
+                          }
+                      });
+
+    registry.Register("toggle-file-type-icons",
+                      "Show or hide the language glyph beside a file's name.",
+                      [](CommandContext& context) {
+                          const bool enabled = !FileTypeIconsEnabled();
+                          SetFileTypeIconsEnabled(enabled);
+                          if (context.message) {
+                              *context.message = enabled ? "File type icons on." : "File type icons off.";
                           }
                       });
 

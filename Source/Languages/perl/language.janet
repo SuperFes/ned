@@ -1,4 +1,5 @@
 {:name "perl"
+ :icon "" # nf-seti-perl
  :extensions [".pl" ".pm" ".t" ".pod"]
  :injection-aliases ["pl"]
  :line-comment "#"

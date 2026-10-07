@@ -5,6 +5,7 @@
 
 #include "JanetData.h"
 #include "SyntaxTheme.h"
+#include "Text/Utf8.h"
 
 namespace ned::editor {
 
@@ -143,6 +144,12 @@ LanguageDefinition ParseLanguageDefinition(std::string_view directoryName, std::
         }
         else if (key == "content-pattern") {
             definition.contentPattern = ExpectString(directoryName, value, ":content-pattern");
+        }
+        else if (key == "icon") {
+            definition.icon = ExpectString(directoryName, value, ":icon");
+            if (definition.icon.empty() || text::NextCodepointBoundary(definition.icon, 0) != definition.icon.size()) {
+                Fail(directoryName, value.line, ":icon is one glyph");
+            }
         }
         else if (key == "line-comment") {
             definition.lineCommentPrefix = ExpectString(directoryName, value, ":line-comment");

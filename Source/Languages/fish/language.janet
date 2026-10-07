@@ -1,4 +1,5 @@
 {:name "fish"
+ :icon "" # nf-fa-fish
  :extensions [".fish"]
  :line-comment "#"
  :line-continuation "\\"

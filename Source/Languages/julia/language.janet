@@ -1,4 +1,5 @@
 {:name "julia"
+ :icon "" # nf-seti-julia
  :extensions [".jl"]
  :injection-aliases ["jl"]
  :line-comment "#"

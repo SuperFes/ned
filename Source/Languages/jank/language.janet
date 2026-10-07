@@ -2,6 +2,7 @@
 # and queries under a distinct name, so the mode line reads (jank-mode).
 
 {:name "jank"
+ :icon "" # nf-dev-clojure
  :grammar "clojure"
  :extensions [".jank"]
  :line-comment ";"

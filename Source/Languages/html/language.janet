@@ -1,6 +1,7 @@
 # No :line-comment -- HTML only has block comments (<!-- -->).
 
 {:name "html"
+ :icon "" # nf-seti-html
  :extensions [".html" ".htm"]
  :injection-aliases ["xhtml" "htm"]
  :block-comment ["<!--" "-->"]

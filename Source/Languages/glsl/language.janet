@@ -1,4 +1,5 @@
 {:name "glsl"
+ :icon "" # nf-dev-opengl
  :extensions [".glsl" ".vert" ".frag" ".geom" ".comp" ".tesc" ".tese"]
  :injection-aliases ["frag" "vert"]
  :line-comment "//"

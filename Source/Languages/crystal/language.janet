@@ -1,4 +1,5 @@
 {:name "crystal"
+ :icon "" # nf-seti-crystal
  :extensions [".cr"]
  :injection-aliases ["cr"]
  :line-comment "#"

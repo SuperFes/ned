@@ -5,6 +5,7 @@
 # Source/Editor/Languages/Scanners/PklScanner.cpp), corpus 662 files.
 
 {:name "pkl"
+ :icon "" # nf-seti-config
  :extensions [".pkl" ".pcf"]
  :line-comment "//"
  :signature-template "function __ned_sig({}) = 0"

@@ -1,4 +1,5 @@
 {:name "go"
+ :icon "" # nf-seti-go
  :extensions [".go"]
  :injection-aliases ["golang"]
  :line-comment "//"

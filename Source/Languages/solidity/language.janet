@@ -1,4 +1,5 @@
 {:name "solidity"
+ :icon "" # nf-dev-solidity
  :extensions [".sol"]
  :injection-aliases ["sol"]
  :line-comment "//"

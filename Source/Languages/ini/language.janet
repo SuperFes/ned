@@ -1,4 +1,5 @@
 {:name "ini"
+ :icon "" # nf-seti-config
  :extensions [".ini"]
  :injection-aliases ["cfg" "conf"]
  :line-comment ";"

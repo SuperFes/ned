@@ -38,6 +38,7 @@
 #include "Editor/FormatRules.h"
 #include "Editor/HighlightSettings.h"
 #include "Editor/HugeStructuralWindow.h"
+#include "Editor/IconSettings.h"
 #include "Editor/ImportFixupSettings.h"
 #include "Editor/IndentDetect.h"
 #include "Editor/IndentRuleOverride.h"
@@ -435,6 +436,10 @@ namespace {
 
     void NedSetTabGlyphsEnabled(bool enabled) {
         editor::SetTabGlyphsEnabled(enabled);
+    }
+
+    void NedSetFileTypeIconsEnabled(bool enabled) {
+        editor::SetFileTypeIconsEnabled(enabled);
     }
 
     void NedSetAutoDetectProjectRoot(bool enabled) {
@@ -2169,6 +2174,10 @@ void InstallEditorBindings(Environment& env) {
         "Enable/disable a glyph at the first cell of every expanded real tab byte, distinguishing it from the "
         "space cells the rest of its expansion still renders as. Default false, same opt-in reasoning as "
         "set-trailing-whitespace-highlight-enabled.");
+    env.Register<&NedSetFileTypeIconsEnabled>(
+        "ned", "set-file-type-icons-enabled",
+        "Enable/disable showing a file's type as its language's Nerd Font glyph (a language.janet's :icon) "
+        "beside its name in the mode line. Default true.");
     env.Register<&NedSetAutoDetectProjectRoot>(
         "ned", "set-auto-detect-project-root",
         "Enable/disable walking upward from an opened file for a VCS marker directory to find the project root "
@@ -2526,7 +2535,8 @@ void InstallEditorBindings(Environment& env) {
         "Register a language from a directory holding its language.janet -- the exact layout ned's own bundled "
         "languages use (Source/Languages/`<name>`/), so everything a definition can say works: extensions and "
         "filenames (claimed automatically, no separate set-mode-for-extension call needed; a filename holding a / "
-        "claims by its trailing path components, e.g. .ssh/config), comment syntax, "
+        "claims by its trailing path components, e.g. .ssh/config), an :icon (one Nerd Font glyph naming the "
+        "language in the mode line), comment syntax, "
         "keymap, query files discovered beside it as `<kind>`.janet with an upstream/ subdirectory checked first, "
         "escapes, LSP root markers, import resolution, injection aliases, snippets, and :color-literals "
         "(a tuple of :short-hex and/or :named, widening which colour-literal spellings earn a swatch beyond the "

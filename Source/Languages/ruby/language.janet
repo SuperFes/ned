@@ -1,4 +1,5 @@
 {:name "ruby"
+ :icon "" # nf-seti-ruby
  :extensions [".rb" ".rake" ".gemspec"]
  :injection-aliases ["rb"]
  :filenames ["Rakefile" "Gemfile" "Guardfile"]

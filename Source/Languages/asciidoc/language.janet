@@ -1,6 +1,7 @@
 # Prose wraps. Inline markup is the asciidoc-inline grammar, injected into
 # every paragraph the way markdown-inline is.
 {:name "asciidoc"
+ :icon "" # nf-oct-book
  :extensions [".adoc" ".asciidoc" ".asc"]
  :injection-aliases ["adoc"]
  :line-comment "//"

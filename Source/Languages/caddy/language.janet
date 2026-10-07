@@ -7,6 +7,7 @@
 # spellings upstream declares are claimed too.
 
 {:name "caddy"
+ :icon "" # nf-cod-server
  :extensions [".caddyfile" ".Caddyfile"]
  :injection-aliases ["caddyfile"]
  :filenames ["Caddyfile" "caddyfile"]

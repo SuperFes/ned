@@ -1,4 +1,5 @@
 {:name "rescript"
+ :icon "" # nf-seti-rescript
  :extensions [".res" ".resi"]
  :injection-aliases ["res"]
  :line-comment "//"

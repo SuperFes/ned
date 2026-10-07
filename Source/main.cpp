@@ -1113,13 +1113,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // header comment. VcsPanel joins as the second panel further below,
     // once it's constructed.
     auto leftDock = std::make_shared<ned::ui::LeftDock>(theme);
-    // nerd-font-glyph follow-up: a Nerd Font glyph (folder, U+F07B) for
-    // the rail, a deliberate exception to the plain-Unicode-only
-    // convention this codebase otherwise sticks to elsewhere (see
-    // ProjectSidebar.cpp's own header comment on why -- needs a patched
-    // font, renders as tofu/boxes without one). The rail is a small,
-    // easily reverted spot to opt into that tradeoff; nothing else in
-    // this codebase follows suit.
+    // Rail glyphs are Nerd Font: folder (U+F07B).
     leftDock->AddPanel(U'', "Files", *projectSidebar);
     windowManager->SetLeftDock(leftDock.get());
 
@@ -1217,8 +1211,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
 
     windowManager->SetVcsPanel(vcsPanel.get());
 
-    // nerd-font-glyph follow-up: git-branch glyph (U+F418) -- see the
-    // Files panel's own comment just above.
+    // git-branch (U+F418).
     leftDock->AddPanel(U'', "VCS", *vcsPanel);
 
     // unified-left-dock follow-up: chained with LeftDock::NoteFocusReturned,
@@ -1567,8 +1560,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // registration order, so it sits below Files and VCS.
     ned::ui::DebugPanel debugPanel(theme, dapManager);
     windowManager->SetDebugPanel(&debugPanel);
-    // nerd-font-glyph follow-up: bug glyph (U+F188), the same deliberate
-    // exception the Files and VCS glyphs above are.
+    // bug (U+F188).
     // The dock draws the bordered, titled content region around its active
     // panel (ProjectSidebar and VcsPanel own no frame either) -- a TreeView
     // defaults to drawing its own, which would be a second border inside it.
@@ -1608,7 +1600,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     ned::ui::RemotePanel remotePanel(theme, remoteHosts);
     windowManager->SetRemotePanel(&remotePanel);
     remotePanel.Tree().SetDrawBorder(false);
-    // nerd-font-glyph follow-up: server glyph (U+F233).
+    // server (U+F233).
     leftDock->AddPanel(U'\uF233', "Remote", remotePanel.Tree());
     remotePanel.SetOnCancel([wm = windowManager.get(), dock = leftDock.get()] {
         wm->TakeFocus();

@@ -1,4 +1,5 @@
 {:name "haskell"
+ :icon "" # nf-seti-haskell
  :extensions [".hs" ".hs-boot"]
  :injection-aliases ["hs"]
  :preserve-indent true

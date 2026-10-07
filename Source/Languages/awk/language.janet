@@ -4,6 +4,7 @@
 # files.
 
 {:name "awk"
+ :icon "" # nf-dev-awk
  :extensions [".awk" ".gawk" ".mawk"]
  :injection-aliases ["gawk"]
  :line-comment "#"

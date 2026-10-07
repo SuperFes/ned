@@ -3,6 +3,7 @@
 #include "DrawText.h"
 #include "ProgressBar.h"
 
+#include "Editor/IconSettings.h"
 #include "Paint.h"
 #include "ThemePaints.h"
 
@@ -308,8 +309,17 @@ void ModeLine::Paint(Canvas c) {
         }
     }
 
-    const std::string text = buffer.IsLoading() ? "  " + buffer.Name() + loadingText
-                                                : "  " + modifiedMarker + buffer.Name() + "   L" + std::to_string(line + 1) +
+    // nf-cod-remote, then the host a remote buffer lives on.
+    std::string origin = "  ";
+    if (const std::optional<text::RemoteFile>& remote = buffer.Remote()) {
+        origin += "\ueb3a " + remote->destination + "  ";
+    }
+    if (editor::FileTypeIconsEnabled() && !mode_.icon.empty()) {
+        origin += mode_.icon + " ";
+    }
+
+    const std::string text = buffer.IsLoading() ? origin + buffer.Name() + loadingText
+                                                : origin + modifiedMarker + buffer.Name() + "   L" + std::to_string(line + 1) +
                                                       ":C" + std::to_string(col + 1) + "  (" + mode_.name + ")" + embeddedLanguageSuffix +
                                                       issueKeySuffix + indentStyleSuffix + lineEndingSuffix + savingSuffix;
 

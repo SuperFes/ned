@@ -1,4 +1,5 @@
 {:name "lua"
+ :icon "" # nf-seti-lua
  :extensions [".lua"]
  :line-comment "--"
 

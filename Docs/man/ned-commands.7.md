@@ -1270,6 +1270,10 @@ for the live keymap stack.
 
 :   Show or hide the left-side debug panel (source, function, data and exception breakpoints).
 
+`toggle-file-type-icons`
+
+:   Show or hide the language glyph beside a file's name.
+
 `toggle-indent-guides`
 
 :   Show or hide vertical indentation guide glyphs within each line's own leading whitespace.

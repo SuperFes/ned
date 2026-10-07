@@ -1,4 +1,5 @@
 {:name "rust"
+ :icon "" # nf-seti-rust
  :extensions [".rs"]
  :injection-aliases ["rs"]
  :line-comment "//"

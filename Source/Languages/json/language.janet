@@ -3,6 +3,7 @@
 # inserting something that would make the file invalid JSON.
 
 {:name "json"
+ :icon "" # nf-seti-json
  :extensions [".json"]
  :injection-aliases ["jsonc"]
  # The outline stops two levels down; breadcrumbs follow every level.

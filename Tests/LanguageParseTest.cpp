@@ -51,6 +51,7 @@ TEST_CASE("A definition parses every field, and rejects what it does not know", 
  :grammar "clojure"
  :extensions [".demo"]
  :filenames ["Demofile"]
+ :icon ""
  :line-comment ";"
  :auto-pairs :lisp
  :wrap-lines true
@@ -70,6 +71,7 @@ TEST_CASE("A definition parses every field, and rejects what it does not know", 
     REQUIRE(definition.grammar == "clojure");
     REQUIRE(definition.extensions == std::vector<std::string>{".demo"});
     REQUIRE(definition.filenames == std::vector<std::string>{"Demofile"});
+    REQUIRE(definition.icon == "\ue768");
     REQUIRE(definition.lineCommentPrefix == ";");
     REQUIRE(definition.autoPairs == ned::editor::AutoPairSet::Lisp);
     REQUIRE(definition.wrapLines);
@@ -93,6 +95,8 @@ TEST_CASE("A definition parses every field, and rejects what it does not know", 
     REQUIRE_THROWS_AS(ParseLanguageDefinition("demo", "{:unknown-key true}"), std::runtime_error);
     REQUIRE_THROWS_AS(ParseLanguageDefinition("demo", "{:extensions [\"demo\"]}"), std::runtime_error); // no dot
     REQUIRE_THROWS_AS(ParseLanguageDefinition("demo", "{:auto-pairs :vim}"), std::runtime_error);
+    REQUIRE_THROWS_AS(ParseLanguageDefinition("demo", "{:icon \"nf-dev-clojure\"}"), std::runtime_error); // one glyph
+    REQUIRE_THROWS_AS(ParseLanguageDefinition("demo", "{:icon \"\"}"), std::runtime_error);
     REQUIRE_THROWS_AS(ParseLanguageDefinition("demo", "{:queries {:folds \"x\"}}"), std::runtime_error);
     REQUIRE_THROWS_AS(ParseLanguageDefinition("demo", "{:capture-classes {\"x\" :not-a-class}}"), std::runtime_error);
     REQUIRE_THROWS_AS(ParseLanguageDefinition("demo", "[\"not\" \"a\" \"struct\"]"), std::runtime_error);

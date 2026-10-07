@@ -16,6 +16,7 @@
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/FormatOnSave.h"
+#include "Editor/IconSettings.h"
 #include "Editor/IndentStyle.h"
 #include "Editor/LanguageDefinition.h"
 #include "Editor/LineEndingPolicy.h"
@@ -1169,6 +1170,25 @@ TEST_CASE("toggle-tab-glyphs/toggle-indent-guides/toggle-trailing-whitespace-hig
     registry.Invoke("toggle-trailing-whitespace-highlight", context);
     REQUIRE_FALSE(TrailingWhitespaceHighlightEnabled());
     REQUIRE(message == "Trailing whitespace highlight off.");
+}
+
+TEST_CASE("toggle-file-type-icons flips the icon setting, on by default", "[Commands]") {
+    REQUIRE(FileTypeIconsEnabled());
+    CommandRegistry registry;
+    RegisterBuiltinCommands(registry);
+
+    ned::text::Buffer     buffer("scratch", ned::text::Rope("hello"));
+    ned::text::KillRing   killRing;
+    ned::text::BufferList bufferList;
+    std::string           message;
+    CommandContext        context{buffer, killRing, bufferList, KeyChord{}, &message};
+
+    registry.Invoke("toggle-file-type-icons", context);
+    REQUIRE_FALSE(FileTypeIconsEnabled());
+    REQUIRE(message == "File type icons off.");
+    registry.Invoke("toggle-file-type-icons", context);
+    REQUIRE(FileTypeIconsEnabled());
+    REQUIRE(message == "File type icons on.");
 }
 
 TEST_CASE("toggle-binary-safeguards is a no-op message for a buffer that was never detected as binary",

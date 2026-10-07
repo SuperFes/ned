@@ -1,4 +1,5 @@
 {:name "make"
+ :icon "" # nf-seti-makefile
  :extensions [".mk" ".mak"]
  :injection-aliases ["makefile" "mk"]
  :filenames ["Makefile" "makefile" "GNUmakefile"]

@@ -2,6 +2,7 @@
 # forms Verilog never has: `fn`/`struct` declarations, a bare `module name`
 # line. libmagic cannot tell the two apart.
 {:name "v"
+ :icon "" # nf-custom-v_lang
  :extensions [".vsh" ".vv"]
  :injection-aliases ["vlang"]
  :shared-extensions [".v"]

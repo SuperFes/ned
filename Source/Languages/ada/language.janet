@@ -1,4 +1,5 @@
 {:name "ada"
+ :icon "" # nf-custom-ada
  :extensions [".ads" ".adb" ".ada"]
  :injection-aliases ["adb" "ads"]
  :line-comment "--"

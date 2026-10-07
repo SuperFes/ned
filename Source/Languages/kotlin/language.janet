@@ -2,6 +2,7 @@
 # grammar and the same mode, no separate dialect.
 
 {:name "kotlin"
+ :icon "" # nf-seti-kotlin
  :extensions [".kt" ".kts"]
  :injection-aliases ["kt" "kts"]
  :line-comment "//"

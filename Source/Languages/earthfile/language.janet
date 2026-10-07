@@ -1,4 +1,5 @@
 {:name "earthfile"
+ :icon "" # nf-fa-earth_americas
  :extensions [".earth"]
  :filenames ["Earthfile"]
  :line-comment "#"

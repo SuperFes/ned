@@ -1,6 +1,7 @@
 # Single-file components: the script and style blocks are injections into
 # their declared languages.
 {:name "vue"
+ :icon "" # nf-seti-vue
  :extensions [".vue"]
  :lsp-root-markers ["package.json"]
  :block-comment ["<!--" "-->"]

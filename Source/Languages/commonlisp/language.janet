@@ -1,4 +1,5 @@
 {:name "commonlisp"
+ :icon "" # nf-custom-common_lisp
  :extensions [".lisp" ".cl" ".asd" ".lsp"]
  :injection-aliases ["lisp" "common-lisp"]
  :line-comment ";"

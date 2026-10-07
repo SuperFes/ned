@@ -1,4 +1,5 @@
 {:name "gitattributes"
+ :icon "" # nf-dev-git
  :filenames [".gitattributes"]
  :line-comment "#"
  :not-applicable {:indents    "line-oriented records; nothing nests"

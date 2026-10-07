@@ -8,6 +8,7 @@
 # unambiguous basenames are claimed, the same call nginx's definition makes.
 
 {:name "apacheconf"
+ :icon "" # nf-dev-apache
  :filenames [".htaccess" "httpd.conf" "apache2.conf" "httpd-vhosts.conf" "httpd-ssl.conf"]
  :injection-aliases ["apache"]
  :line-comment "#"

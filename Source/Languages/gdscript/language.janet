@@ -1,4 +1,5 @@
 {:name "gdscript"
+ :icon "" # nf-seti-godot
  :extensions [".gd"]
  :injection-aliases ["gd"]
  :line-comment "#"

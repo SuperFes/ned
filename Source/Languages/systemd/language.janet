@@ -10,6 +10,7 @@
 # ships one.
 
 {:name "systemd"
+ :icon "" # nf-fa-gears
  :extensions [".service" ".socket" ".timer" ".target" ".mount" ".automount" ".swap" ".path" ".device" ".scope" ".slice"
               ".network" ".netdev" ".link" ".nspawn" ".dnssd"]
  :injection-aliases ["service"]

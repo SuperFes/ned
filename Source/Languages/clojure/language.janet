@@ -3,6 +3,7 @@
 # with no extra syntax of its own.
 
 {:name "clojure"
+ :icon "" # nf-dev-clojure
  :extensions [".clj" ".cljs" ".cljc" ".edn" ".bb"]
  :line-comment ";"
  :signature-template "(defn __ned_sig [{}])"

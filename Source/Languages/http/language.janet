@@ -1,6 +1,7 @@
 # The .http / .rest request-file format (rest.nvim, VS Code REST Client,
 # JetBrains HTTP client).
 {:name "http"
+ :icon "" # nf-cod-globe
  :extensions [".http" ".rest"]
  :line-comment "#"
  :not-applicable {:indents           "requests are flat; bodies indent as their own language"

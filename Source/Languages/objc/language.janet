@@ -1,6 +1,7 @@
 # .h stays C's unless the header says otherwise: libmagic's verdict, then
 # the Objective-C-only directives.
 {:name "objc"
+ :icon "" # nf-dev-objectivec
  :extensions [".m"]
  :injection-aliases ["objective-c" "objectivec"]
  :shared-extensions [".h"]

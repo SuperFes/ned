@@ -1,4 +1,5 @@
 {:name "latex"
+ :icon "" # nf-seti-tex
  :extensions [".tex" ".sty" ".cls" ".ltx" ".dtx" ".ins"]
  :injection-aliases ["tex"]
  :line-comment "%"
