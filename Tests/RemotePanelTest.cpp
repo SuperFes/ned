@@ -175,6 +175,39 @@ TEST_CASE("The Remote panel lists an opened root as it's expanded, and opens its
     CHECK_THAT(fixture.Rows()[0], ContainsSubstring("o opens host:/path"));
 }
 
+TEST_CASE("The Remote panel hides and shows dotfiles with '.'", "[RemotePanel][Remote][HostAgent]") {
+    Fixture                     fixture;
+    const std::filesystem::path dir = fixture.fake.dir / "proj";
+    std::filesystem::create_directories(dir / ".cache");
+    std::filesystem::create_directories(dir / "only");
+    std::ofstream(dir / "only" / ".x") << "x\n";
+    std::ofstream(dir / ".rc") << "r\n";
+    std::ofstream(dir / "a.txt") << "a\n";
+
+    fixture.panel.OpenRoot("host:" + dir.string());
+    REQUIRE(fixture.RowsSettle(5));
+    fixture.Select("only");
+    fixture.panel.Tree().OnEvent(test::Return());
+    REQUIRE(fixture.RowsSettle(6));
+    CHECK_THAT(fixture.AllRows(), ContainsSubstring(".cache") && ContainsSubstring(".rc") && ContainsSubstring(".x"));
+
+    // Hiding them leaves the selection on its nearest shown ancestor, and a
+    // directory holding only dotfiles has nothing to expand.
+    fixture.Select(".x");
+    fixture.panel.Tree().OnEvent(test::Character("."));
+    CHECK(fixture.message == "Hiding dotfiles");
+    const std::vector<std::string> rows = fixture.Rows();
+    REQUIRE(rows.size() == 3);
+    CHECK_THAT(rows[1], ContainsSubstring("only"));
+    CHECK(rows[1].find("▾") == std::string::npos);
+    CHECK_THAT(rows[2], ContainsSubstring("a.txt"));
+    CHECK(fixture.panel.Tree().SelectedRow() == 1u);
+
+    fixture.panel.Tree().OnEvent(test::Character("."));
+    CHECK(fixture.message == "Showing dotfiles");
+    CHECK(fixture.Rows().size() == 6);
+}
+
 TEST_CASE("The Remote panel shows a connected host's home and says why a directory won't list", "[RemotePanel][Remote][HostAgent]") {
     Fixture fixture;
     bool    connected = false;

@@ -141,14 +141,28 @@ void RemotePanel::Refresh() {
     PushModel();
 
     if (selected) {
+        SelectNearest(selected->first, selected->second);
+    }
+}
+
+void RemotePanel::SelectNearest(const std::string& topKey, std::filesystem::path path) {
+    while (true) {
         for (std::size_t i = 0; i < rows_.size(); ++i) {
-            if (rows_[i].node->location.path == selected->second && TopKeyOfRow(i) == selected->first) {
+            if (rows_[i].node->location.path == path && TopKeyOfRow(i) == topKey) {
                 selectedIndex_ = i;
                 PushModel();
-                break;
+                return;
             }
         }
+        if (path == path.parent_path()) {
+            return;
+        }
+        path = path.parent_path();
     }
+}
+
+bool RemotePanel::Shown(const Node& node) const {
+    return showDotfiles_ || !node.name.starts_with('.');
 }
 
 void RemotePanel::OpenRoot(const std::string& typed) {
@@ -315,6 +329,12 @@ void RemotePanel::HandleKey(const editor::KeyChord& chord) {
         }
         return;
     }
+    if (chord.Codepoint == U'.') {
+        showDotfiles_ = !showDotfiles_;
+        Refresh();
+        Report(showDotfiles_ ? "Showing dotfiles" : "Hiding dotfiles");
+        return;
+    }
     Node* node = SelectedNode();
     if (node == nullptr) {
         return;
@@ -345,7 +365,9 @@ void RemotePanel::PushModel() {
         rows_.push_back(Row{.node = &node, .depth = depth});
         if (node.expanded && node.children) {
             for (Node& child : *node.children) {
-                flatten(child, depth + 1);
+                if (Shown(child)) {
+                    flatten(child, depth + 1);
+                }
             }
         }
     };
@@ -364,7 +386,7 @@ void RemotePanel::PushModel() {
                         .labelForeground = std::nullopt,
                         .right           = node.error,
                         .rightForeground = theme_.indentGuideForeground,
-                        .hasChildren     = directory && (!node.children || !node.children->empty()),
+                        .hasChildren     = directory && (!node.children || std::ranges::any_of(*node.children, [this](const Node& child) { return Shown(child); })),
                         .expanded        = node.expanded,
                         .loading         = node.loading};
         if (row.depth == 0) {

@@ -42,8 +42,11 @@ struct ProjectTreeEntry {
 // opened file's whole containing directory -- see ProjectRoot.h) that
 // unconditional walk could mean the entire $HOME tree, repeated every
 // kTreeCacheThrottle window.
+//
+// includeDotDirectories lists dot-directories too, still minus gitignored ones.
 [[nodiscard]] std::vector<ProjectTreeEntry> BuildProjectTree(
-    const std::filesystem::path& root, const std::function<bool(const std::filesystem::path&)>& shouldExpand = nullptr);
+    const std::filesystem::path& root, const std::function<bool(const std::filesystem::path&)>& shouldExpand = nullptr,
+    bool includeDotDirectories = false);
 
 } // namespace ned::editor
 

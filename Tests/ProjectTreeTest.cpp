@@ -78,6 +78,28 @@ TEST_CASE("BuildProjectTree skips dot-directories entirely", "[ProjectTree]") {
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("BuildProjectTree lists dot-directories when asked, still minus gitignored ones", "[ProjectTree]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_tree_test_dotdir_shown";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / ".github");
+    std::filesystem::create_directories(dir / ".cache");
+    {
+        std::ofstream(dir / ".github" / "ci.yml") << "x";
+    }
+    {
+        std::ofstream(dir / ".gitignore") << ".cache/\n";
+    }
+
+    const std::vector<ProjectTreeEntry> entries = BuildProjectTree(dir, nullptr, /*includeDotDirectories=*/true);
+
+    REQUIRE(entries.size() == 3);
+    CHECK(entries[0].path.filename() == ".github");
+    CHECK(entries[1].path.filename() == "ci.yml");
+    CHECK(entries[2].path.filename() == ".gitignore");
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST_CASE("BuildProjectTree returns absolute paths regardless of how root was given", "[ProjectTree]") {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_tree_test_absolute";
     std::filesystem::remove_all(dir);

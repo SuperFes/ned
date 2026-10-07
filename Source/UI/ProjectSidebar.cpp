@@ -303,7 +303,7 @@ const std::vector<editor::ProjectTreeEntry>& ProjectSidebar::CachedTree() {
     const auto                  now  = std::chrono::steady_clock::now();
     if (!treeCacheValid_ || root != treeCacheRoot_ || (now - treeCacheTime_) >= kTreeCacheThrottle) {
         treeCache_ = editor::BuildProjectTree(
-            root, [this](const std::filesystem::path& dir) { return expandedDirs_.contains(dir); });
+            root, [this](const std::filesystem::path& dir) { return expandedDirs_.contains(dir); }, showDotDirectories_);
         treeCacheRoot_  = root;
         treeCacheTime_  = now;
         treeCacheValid_ = true;
@@ -801,6 +801,22 @@ bool ProjectSidebar::HandleKeyEvent(const Event& event) {
         if (entry.isDirectory && expandedDirs_.contains(entry.path)) {
             ToggleDirectory(entry.path);
         }
+        return true;
+    }
+    if (!chord->Control && !chord->Meta && chord->Codepoint == U'.') {
+        showDotDirectories_ = !showDotDirectories_;
+        InvalidateTree();
+        // Keep the selection on its entry, or else on its nearest listed ancestor.
+        const std::vector<editor::ProjectTreeEntry> after = VisibleEntries(CachedTree());
+        for (std::filesystem::path path = entry.path; !after.empty(); path = path.parent_path()) {
+            const auto it = std::ranges::find(after, path, &editor::ProjectTreeEntry::path);
+            if (it != after.end() || path == path.parent_path()) {
+                selectedIndex_ = it != after.end() ? static_cast<int>(it - after.begin()) : 0;
+                break;
+            }
+        }
+        EnsureSelectionVisible();
+        statusMessage_ = showDotDirectories_ ? "Showing dot-directories" : "Hiding dot-directories";
         return true;
     }
     if (cancel) {

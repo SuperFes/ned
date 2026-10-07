@@ -101,8 +101,9 @@ class ProjectSidebar : public Widget {
     // sidebar-keyboard-focus follow-up: focus-project-sidebar (C-c p) hands
     // this widget the keyboard via Widget::TakeFocus; while Focused(), key
     // events drive a selection cursor (Up/Down or C-p/C-n, Enter to
-    // open/toggle, Left/Right to collapse/expand a directory, Escape/C-g to
-    // return focus) and the frame paints in the accent brush -- the same
+    // open/toggle, Left/Right to collapse/expand a directory, '.' to show or
+    // hide dot-directories, Escape/C-g to return focus) and the frame paints
+    // in the accent brush -- the same
     // "this has your attention" signal a resize drag already gives.
     [[nodiscard]] bool Focusable() const override {
         return true;
@@ -240,6 +241,9 @@ class ProjectSidebar : public Widget {
     // in this set (which is every directory, initially) renders collapsed:
     // listed itself, but its own children filtered out of the visible list.
     std::set<std::filesystem::path> expandedDirs_;
+
+    // '.' lists dot-directories (.git, .github, ...) as well.
+    bool showDotDirectories_ = false;
 
     // project-sidebar-drag-drop follow-up: see DraggingFilePath's own doc comment.
     std::optional<std::filesystem::path> dragPath_;
