@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "Editor/PanelMode.h"
 #include "Editor/PostQueue.h"
 #include "Editor/Remote/Hosts.h"
 #include "EnvOverride.h"
@@ -214,7 +215,25 @@ TEST_CASE("The Remote panel's file keys name the selected row, and a change reli
     fixture.Select("host:" + dir.string());
     fixture.panel.Tree().OnEvent(test::Character("D"));
     CHECK(fixture.actions.empty());
-    CHECK(fixture.message == "x removes a root from the panel");
+    CHECK(fixture.message == "A root is removed from the panel, not renamed or deleted from here");
+
+    // The keys are remote-panel-mode's, so init.janet's rebinding reaches them.
+    {
+        struct Guard {
+            ~Guard() {
+                ned::editor::ResetPanelKeysForTesting();
+            }
+        } guard;
+        ned::editor::DefinePanelKey("remote-panel-mode", "r", "remote-panel-rename");
+        ned::editor::DefinePanelKey("remote-panel-mode", "R", "");
+        fixture.Select("c.txt");
+        fixture.panel.Tree().OnEvent(test::Character("R"));
+        CHECK(fixture.actions.empty());
+        CHECK(fixture.message == "R is undefined in Remote panel");
+        fixture.panel.Tree().OnEvent(test::Character("r"));
+        CHECK(fixture.actions == std::vector<std::pair<FileAction, ned::text::RemoteFile>>{{FileAction::Rename, at(dir / "sub" / "c.txt")}});
+    }
+    fixture.actions.clear();
 
     // A new file under sub relists it; deep stays expanded and the
     // selection stays on c.txt.

@@ -1607,7 +1607,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     remotePanel.Tree().SetDrawBorder(false);
     // nerd-font-glyph follow-up: server glyph (U+F233).
     leftDock->AddPanel(U'\uF233', "Remote", remotePanel.Tree());
-    remotePanel.Tree().SetOnCancel([wm = windowManager.get(), dock = leftDock.get()] {
+    remotePanel.SetOnCancel([wm = windowManager.get(), dock = leftDock.get()] {
         wm->TakeFocus();
         dock->NoteFocusReturned();
     });
@@ -2644,7 +2644,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         const int width  = std::min(50, size.width);
         return Box{.x_min = 0, .x_max = std::max(0, width - 1), .y_min = std::max(0, yMax - height + 1), .y_max = yMax};
     });
-    windowManager->SetOnPrefixHintChanged([&overlays, panel = &whichKeyPopup](std::optional<ned::ui::WhichKeyHint> hint) {
+    const auto showPrefixHint = [&overlays, panel = &whichKeyPopup](std::optional<ned::ui::WhichKeyHint> hint) {
         if (hint) {
             ned::ui::ListPopupModel model;
             model.title = hint->prefixLabel;
@@ -2658,7 +2658,9 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         else {
             overlays.Hide(*panel);
         }
-    });
+    };
+    windowManager->SetOnPrefixHintChanged(showPrefixHint);
+    remotePanel.SetOnPrefixHint(showPrefixHint);
 
     // generic-popup follow-up (Phase 3): the shared candidate popup behind
     // M-x/project-find-file/find-recent-file/bookmark-jump/select-theme/LSP

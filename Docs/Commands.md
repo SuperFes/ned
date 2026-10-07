@@ -1960,3 +1960,23 @@ Key: `M-z`
 
 Kill forward from point up to and including the next occurrence of a character.
 
+## Panel modes
+
+A dock panel's own keys, live while it has focus. They act on the panel's
+selection rather than on a buffer, so they aren't `M-x` commands; rebind them with
+`ned/define-panel-key`.
+
+### Remote panel (`remote-panel-mode`)
+
+| Key | Command | Description |
+|-----|---------|-------------|
+| `o` | `remote-panel-open-root` | Add a host's directory (host:/path, or a host for its home) as a root. |
+| `.` | `remote-panel-toggle-dotfiles` | Show or hide entries whose names start with a dot. |
+| `g` | `remote-panel-refresh` | List the selected directory again. |
+| `d` | `remote-panel-disconnect` | Disconnect from the selected row's host. |
+| `x` | `remote-panel-remove-root` | Remove the selected root from the panel; nothing on the host changes. |
+| `n` | `remote-panel-new-file` | Create a file in the selected directory, or beside the selected file. |
+| `+` | `remote-panel-new-directory` | Create a directory in the selected directory, or beside the selected file. |
+| `R` | `remote-panel-rename` | Rename or move the selected file or directory on its host. |
+| `D` | `remote-panel-delete` | Delete the selected file or directory from its host, after confirming. |
+

@@ -35,6 +35,8 @@ against.
 
 - ✅ **Emacs-style default keymap**, fully rebindable from Janet, with
   `describe-bindings`.
+- ✅ **Panel modes**: the Remote panel's keys are commands in `remote-panel-mode`,
+  rebound with `ned/define-panel-key` and listed by `describe-bindings`.
 - ✅ **Vim emulation** (opt-in): surround, marks, jumplist, magic regex, window
   commands, and `:` commands with completion.
 - ✅ **Modern keymap** in the VS Code/JetBrains style.

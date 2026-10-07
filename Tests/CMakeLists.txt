@@ -90,6 +90,7 @@ add_executable(ned_tests
             SearchEverywherePreviewTest.cpp
             KeymapTest.cpp
             BindingsReportTest.cpp
+            PanelModeTest.cpp
             DispatcherTest.cpp
             CommandsTest.cpp
             JanetTestSupport.cpp
