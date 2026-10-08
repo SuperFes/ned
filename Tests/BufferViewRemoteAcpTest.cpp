@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <fstream>
 #include <iterator>
 #include <optional>
@@ -14,6 +15,7 @@
 #include <vector>
 
 #include "Editor/Acp/Manager.h"
+#include "Editor/Acp/TurnReview.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
 #include "Editor/Keymap.h"
@@ -183,5 +185,78 @@ TEST_CASE("A host's ACP agent's write merges into a buffer with changes of its o
     REQUIRE(Turn(fixture, WriteScript(fixture.File(), "int x;\nint w;\n")));
     CHECK(file.Text() == "int x;\nint w;\nint z;\n");
     CHECK(file.Modified());
+    fixture.acpManager.StopSession();
+}
+
+namespace {
+
+// The agent says it's editing the file, then edits it itself.
+std::string OwnEditScript(const text::RemoteFile& file, const std::string& content) {
+    const Json toolCall{{"sessionUpdate", "tool_call"},
+                        {"toolCallId", "t1"},
+                        {"title", "Edit a.c"},
+                        {"kind", "edit"},
+                        {"status", "in_progress"},
+                        {"locations", Json::array({Json{{"path", file.path.string()}}})}};
+    return Json::array({Json{{"method", "session/update"}, {"notify", true}, {"params", {{"sessionId", "s1"}, {"update", toolCall}}}},
+                        Json{{"write", file.path.string()}, {"text", content}}})
+        .dump();
+}
+
+bool Reviewable(const Fixture& fixture) {
+    const auto& transcript = fixture.acpManager.Transcript();
+    return std::any_of(transcript.begin(), transcript.end(), [](const acp::Manager::TranscriptEntry& entry) { return entry.status == "review"; });
+}
+
+} // namespace
+
+TEST_CASE("A host's ACP agent's own edit to an open file is reviewed and rewound", "[BufferView][Remote][Acp][HostAgent]") {
+    Fixture fixture;
+    REQUIRE(fixture.OpenFile());
+    text::Buffer& file = fixture.activeBuffer.Get();
+    REQUIRE(Start(fixture));
+
+    REQUIRE(Turn(fixture, OwnEditScript(fixture.File(), "int x;\nint w;\n")));
+    // Settled at the turn's end, whether or not the host's watch got there first.
+    REQUIRE(PumpUntil(fixture.loop, [&] { return Reviewable(fixture); }));
+    CHECK(file.Text() == "int x;\nint w;\n");
+    const acp::Manager::Checkpoint& turn = fixture.acpManager.CheckpointAt(0);
+    REQUIRE(turn.files.size() == 1);
+    CHECK(turn.files[0].file == text::FileRef(fixture.File()));
+    CHECK(turn.files[0].before.text == "int x;\nint y;\n");
+    REQUIRE(turn.files[0].after.has_value());
+    CHECK(turn.files[0].after->text == "int x;\nint w;\n");
+
+    const acp::Manager::RewindOutcome outcome = fixture.acpManager.RewindTo(0);
+    CHECK(outcome.revertedFiles == std::vector<std::string>{fixture.File().ToString()});
+    // Back in the buffer, for the user to save.
+    CHECK(file.Text() == "int x;\nint y;\n");
+    CHECK(file.Modified());
+    fixture.acpManager.StopSession();
+}
+
+TEST_CASE("A host's ACP turn review names its files against the host's root and visits them there", "[BufferView][Remote][Acp][HostAgent]") {
+    Fixture fixture;
+    REQUIRE(fixture.OpenFile());
+    text::Buffer& file = fixture.activeBuffer.Get();
+    REQUIRE(Start(fixture));
+    REQUIRE(Turn(fixture, OwnEditScript(fixture.File(), "int x;\nint w;\n")));
+    REQUIRE(PumpUntil(fixture.loop, [&] { return Reviewable(fixture); }));
+
+    fixture.view.OpenAcpTurnReview("edit", fixture.acpManager.CheckpointAt(0).files);
+    text::Buffer& review = fixture.activeBuffer.Get();
+    REQUIRE(review.Name() == acp::kReviewBufferName);
+    CHECK_THAT(review.Text(), ContainsSubstring("▸ src/a.c:2"));
+
+    fixture.view.HandleAcpReviewRequest(ned::editor::InteractiveRequest::AcpReviewUndoHunk);
+    CHECK(file.Text() == "int x;\nint y;\n");
+
+    // Undoing rebuilt the review buffer.
+    text::Buffer& rebuilt = fixture.activeBuffer.Get();
+    REQUIRE(rebuilt.Name() == acp::kReviewBufferName);
+    rebuilt.SetPoint(rebuilt.Text().find("- int y;"));
+    fixture.view.OnEvent(test::Return());
+    REQUIRE(PumpUntil(fixture.loop, [&] { return fixture.Showing(); }));
+    CHECK(&fixture.activeBuffer.Get() == &file);
     fixture.acpManager.StopSession();
 }

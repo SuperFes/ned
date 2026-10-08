@@ -24,8 +24,9 @@ inline constexpr const char* kRemoteAcpAgent = "remote-acp-test";
 // Logs its working directory, then every message it is sent, one JSON
 // object a line. A prompt whose text is a JSON array is a script: each
 // {method, params} is sent to the client in turn, as a notification when
-// it has "notify", else as a request whose answer is waited for. Every
-// prompt then ends with the reply "done".
+// it has "notify", else as a request whose answer is waited for, and each
+// {write, text} writes that file itself, as an agent's own edit tool does.
+// Every prompt then ends with the reply "done".
 inline constexpr const char* kRemoteAcpAgentScript = R"(import json, os, sys
 log = open(sys.argv[1], "a")
 log.write(json.dumps({"cwd": os.getcwd()}) + "\n")
@@ -46,6 +47,10 @@ def update(session, body):
     send({"method": "session/update", "params": {"sessionId": session, "update": body}})
 def run(session, step):
     global asked
+    if "write" in step:
+        with open(step["write"], "w") as out:
+            out.write(step["text"])
+        return
     if step.get("notify"):
         send({"method": step["method"], "params": step["params"]})
         return

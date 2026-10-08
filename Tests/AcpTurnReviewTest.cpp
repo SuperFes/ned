@@ -36,7 +36,7 @@ using ned::editor::acp::TurnFile;
 namespace {
 
 TurnFile Changed(std::string before, std::string after) {
-    return TurnFile{.path   = "/p/f.txt",
+    return TurnFile{.file   = std::filesystem::path("/p/f.txt"),
                     .before = FileState{.exists = true, .text = std::move(before)},
                     .after  = FileState{.exists = true, .text = std::move(after)}};
 }
@@ -101,14 +101,14 @@ TEST_CASE("RevertHunk refuses a change that was edited again since", "[AcpReview
 }
 
 TEST_CASE("A created file is one hunk whose undo deletes it, and a deleted one comes back", "[AcpReview]") {
-    const TurnFile created{.path = "/p/new.txt", .before = FileState{}, .after = Text("x\ny\n")};
+    const TurnFile created{.file = std::filesystem::path("/p/new.txt"), .before = FileState{}, .after = Text("x\ny\n")};
     const auto     made = ned::editor::acp::TurnHunks(created, 0);
     REQUIRE(made.size() == 1);
     REQUIRE(made[0].created);
     REQUIRE_FALSE(ned::editor::acp::RevertHunk(Text("x\ny\nmine\n"), made[0]));
     REQUIRE(ned::editor::acp::RevertHunk(Text("x\ny\n"), made[0]) == FileState{});
 
-    const TurnFile deleted{.path = "/p/old.txt", .before = Text("gone\n"), .after = FileState{}};
+    const TurnFile deleted{.file = std::filesystem::path("/p/old.txt"), .before = Text("gone\n"), .after = FileState{}};
     const auto     removed = ned::editor::acp::TurnHunks(deleted, 0);
     REQUIRE(removed[0].deleted);
     REQUIRE(ned::editor::acp::RevertHunk(FileState{}, removed[0]) == Text("gone\n"));
@@ -119,7 +119,7 @@ TEST_CASE("ReviewExcerpts heads each hunk with its file, line, size and state", 
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-acp-review-excerpts.txt";
     WriteWhole(path, "a\nB\nc\n");
     TurnFile file   = Changed("a\nb\nc\n", "a\nB\nc\n");
-    file.path       = path;
+    file.file       = path;
     auto session    = ned::editor::acp::MakeReviewSession("fix b", path.parent_path(), {file});
     session.kept[0] = true;
 
@@ -141,7 +141,7 @@ TEST_CASE("UndoHunk writes the file and brings an unmodified open buffer along",
     WriteWhole(path, "a\nB\nc\n");
     ned::text::Buffer& buffer = bufferList.OpenOrCreateFile(path);
     TurnFile           file   = Changed("a\nb\nc\n", "a\nB\nc\n");
-    file.path                 = path;
+    file.file                 = path;
     auto session              = ned::editor::acp::MakeReviewSession("fix b", path.parent_path(), {file});
 
     REQUIRE(ned::editor::acp::UndoHunk(bufferList, session, 0) == "Undid a change in ned-acp-review-undo.txt.");
@@ -161,7 +161,7 @@ TEST_CASE("UndoFile edits a buffer with unsaved changes in place and leaves it u
     buffer.SetPoint(0);
     buffer.InsertAtPoint("mine\n");
     TurnFile file = Changed("one\ntwo\n" + middle + "ten\n", "one\nTWO\n" + middle + "TEN\n");
-    file.path     = path;
+    file.file     = path;
     auto session  = ned::editor::acp::MakeReviewSession("caps", path.parent_path(), {file});
     REQUIRE(session.hunks.size() == 2);
 
@@ -220,7 +220,7 @@ TEST_CASE("The *acp review* buffer shows a turn's hunks and undoes, keeps and cl
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned-acp-review-view.txt";
     WriteWhole(path, "a\nB\nc\n");
     TurnFile file = Changed("a\nb\nc\n", "a\nB\nc\n");
-    file.path     = path;
+    file.file     = path;
     fixture.view.OpenAcpTurnReview("fix b", {file});
 
     ned::text::Buffer& review = fixture.activeBuffer.Get();
