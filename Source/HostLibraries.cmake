@@ -15,6 +15,7 @@ add_library(ned_core STATIC
         ${CMAKE_CURRENT_LIST_DIR}/Editor/GitIgnore.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/PostQueue.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Process/ChildProcess.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/Editor/Process/Pty.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Process/StreamedChild.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/ProcessTimeouts.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Project/FileOps.cpp

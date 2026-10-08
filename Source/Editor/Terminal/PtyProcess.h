@@ -5,15 +5,9 @@
 // live in Process/StreamedChild.h, shared with Tasks/TaskProcess. What
 // differs here:
 //
-// - Spawn is forkpty + execve, not ChildProcess's posix_spawn + pipes: a
-//   terminal application needs a controlling tty and session leadership,
-//   which posix_spawn cannot establish. The resulting master fd pair
-//   (dup(master), master) is then adopted via ChildProcess's raw-fd
-//   constructor, which provides WriteAll and the close-fds-then-grace-then-
-//   SIGKILL destructor unchanged -- closing the master is what delivers the
-//   shell its SIGHUP.
-// - Resize (TIOCSWINSZ on the master) exists at all -- the kernel delivers
-//   the foreground process group its SIGWINCH from that ioctl.
+// - It runs on a pty (Process/Pty.h), with TERM pinned to what Emulator
+//   understands.
+// - Resize exists at all.
 //
 
 #ifndef NED_EDITOR_TERMINAL_PTYPROCESS_H

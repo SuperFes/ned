@@ -399,6 +399,8 @@ add_executable(ned_tests
             TrackerGithubPluginTest.cpp
             TrackerJiraPluginTest.cpp
             ChildProcessTest.cpp
+            PtyTest.cpp
+            PtyProcessTest.cpp
             StreamedChildTest.cpp
             TaskConfigTest.cpp
             TaskProcessTest.cpp
@@ -455,17 +457,13 @@ add_executable(ned_tests
     )
 
 if (NED_TEST_TERMINAL_INTEGRATION)
-    # PtyProcessTest.cpp forkpty's real shells/processes (sh, sleep, ...) --
-    # excluded from the default test run since a real controlling-tty/session
-    # forkpty isn't guaranteed to behave under every sandbox/CI environment.
     # ProjectSwitchIntegrationTest.cpp calls the real ActivateProjectRoot
     # against an existing directory, which has no test seam over
     # TerminalTabLauncher's real terminal detection -- on a real interactive
     # session (e.g. Konsole with its D-Bus gate enabled) this genuinely opens
     # a new terminal tab pointed at "/tmp" on every run.
-    # Configure with -DNED_TEST_TERMINAL_INTEGRATION=ON to include both.
+    # Configure with -DNED_TEST_TERMINAL_INTEGRATION=ON to include it.
     target_sources(ned_tests PRIVATE
-            PtyProcessTest.cpp
             ProjectSwitchIntegrationTest.cpp)
 endif()
 

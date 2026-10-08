@@ -55,6 +55,12 @@ struct SpawnOptions {
     std::vector<std::pair<std::string, std::optional<std::string>>> env;
 };
 
+// A pseudo-terminal's size, clamped to at least one cell each way.
+struct TerminalSize {
+    int rows = 24;
+    int cols = 80;
+};
+
 // The owning half of a child that isn't this process's own -- one run on a
 // remote host, whose bytes a relay carries to the descriptors ChildProcess
 // was given. Its exit arrives asynchronously, so nothing here waits for it.
@@ -77,10 +83,14 @@ class ProcessControl {
 
 // Resolves a command name against $PATH (or validates it directly if it
 // contains a '/', execvp's own convention), returning the runnable path or
-// std::nullopt. Shared by ChildProcess's own spawn and by
-// Terminal/PtyProcess, whose post-forkpty execve needs the resolution done
-// before forking (a $PATH walk isn't async-signal-safe).
+// std::nullopt. Shared by ChildProcess's own spawn and by SpawnOnPty
+// (Pty.h), whose post-forkpty execve needs the resolution done before
+// forking (a $PATH walk isn't async-signal-safe).
 [[nodiscard]] std::optional<std::string> ResolveExecutable(const std::string& name);
+
+// The editor's environment with env applied as SpawnOptions::env describes,
+// as NAME=value entries.
+[[nodiscard]] std::vector<std::string> EnvironmentWith(const std::vector<std::pair<std::string, std::optional<std::string>>>& env);
 
 // Threading: reads, waits, WriteAll, Kill and CloseConnection may run on
 // different threads at once. Construction, moves and destruction may not --
@@ -239,6 +249,10 @@ class ChildProcess {
     // on /dev/null, so it can't be reused under a concurrent WriteAll, and
     // a later WriteAll throws. A pty has no EOF to send this way.
     void CloseInput() noexcept;
+
+    // Tells a child on a pty (Pty.h) its terminal's new size, which raises
+    // SIGWINCH in its foreground process group. A no-op for any other child.
+    void ResizeTerminal(TerminalSize size) const noexcept;
 
   private:
     // The wake eventfd and, given a pid, its pidfd; on failure releases

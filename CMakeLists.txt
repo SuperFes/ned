@@ -22,7 +22,7 @@ configure_file(
 
 option(NED_BUILD_TESTS "Build the ned_tests target" ON)
 option(NED_ENABLE_SANITIZERS "Build with AddressSanitizer/UndefinedBehaviorSanitizer" OFF)
-option(NED_TEST_TERMINAL_INTEGRATION "Include PtyProcessTest.cpp, which forkpty's real shells/processes, in ned_tests" OFF)
+option(NED_TEST_TERMINAL_INTEGRATION "Include ProjectSwitchIntegrationTest.cpp, which opens real terminal tabs, in ned_tests" OFF)
 option(NED_AGENT_ONLY "Build only a static ned-agent, its dependencies from pinned sources (see CMake/StaticAgent.cmake)" OFF)
 
 if (NED_AGENT_ONLY)
