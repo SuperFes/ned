@@ -594,7 +594,7 @@ configuration is Janet code, and these are the bindings it calls.
 
 `ned/set-log-category-visible`
 
-:   Show/hide one category ("general"/"janet"/"lsp"/"dap"/"acp"/"vcs"/"task"/"tracker"/"subprocess") in the *Messages* buffer -- "lsp" defaults hidden, everything else visible.
+:   Show/hide one category ("general"/"janet"/"lsp"/"dap"/"acp"/"vcs"/"task"/"tracker"/"subprocess"/"remote") in the *Messages* buffer -- "lsp" defaults hidden, everything else visible.
 
 `ned/set-log-max-entries`
 

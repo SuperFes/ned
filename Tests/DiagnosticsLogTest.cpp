@@ -102,7 +102,7 @@ std::filesystem::path LogsDir(const LogSandbox& sandbox) {
 
 TEST_CASE("LogCategoryFromString/ToString round-trips every category", "[DiagnosticsLog]") {
     for (const LogCategory category : {LogCategory::General, LogCategory::Janet, LogCategory::Lsp, LogCategory::Dap, LogCategory::Acp,
-                                       LogCategory::Vcs, LogCategory::Task, LogCategory::Tracker, LogCategory::Subprocess}) {
+                                       LogCategory::Vcs, LogCategory::Task, LogCategory::Tracker, LogCategory::Subprocess, LogCategory::Remote}) {
         const std::string name = std::string(LogCategoryToString(category));
         REQUIRE(LogCategoryFromString(name) == category);
     }
@@ -120,6 +120,7 @@ TEST_CASE("Lsp defaults hidden, every other category defaults visible", "[Diagno
     REQUIRE(LogCategoryVisible(LogCategory::Task));
     REQUIRE(LogCategoryVisible(LogCategory::Tracker));
     REQUIRE(LogCategoryVisible(LogCategory::Subprocess));
+    REQUIRE(LogCategoryVisible(LogCategory::Remote));
 }
 
 TEST_CASE("SetLogCategoryVisible on one category leaves every other category unchanged", "[DiagnosticsLog]") {

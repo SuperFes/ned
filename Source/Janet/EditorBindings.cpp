@@ -2063,7 +2063,7 @@ void InstallEditorBindings(Environment& env) {
         "Enter always runs the line as typed.");
     env.Register<&NedSetLogCategoryVisible>(
         "ned", "set-log-category-visible",
-        "Show/hide one category (\"general\"/\"janet\"/\"lsp\"/\"dap\"/\"acp\"/\"vcs\"/\"task\"/\"tracker\"/\"subprocess\") in the "
+        "Show/hide one category (\"general\"/\"janet\"/\"lsp\"/\"dap\"/\"acp\"/\"vcs\"/\"task\"/\"tracker\"/\"subprocess\"/\"remote\") in the "
         "*Messages* buffer -- \"lsp\" defaults hidden, everything else visible.");
     env.Register<&NedSetLogMaxEntries>(
         "ned", "set-log-max-entries",

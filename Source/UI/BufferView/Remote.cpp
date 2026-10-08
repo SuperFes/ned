@@ -75,7 +75,7 @@ void BufferView::ConnectToHost(const std::string& destination) {
     remoteHosts_->Connect(destination, lifetime_.Bind([this, destination, started = std::chrono::steady_clock::now()](
                                                           const std::expected<editor::remote::Connection*, std::string>& connection) {
         if (!connection) {
-            ReportError("Couldn't connect to " + destination + ": " + connection.error());
+            statusMessage_ = "Couldn't connect to " + destination + ": " + connection.error();
             return;
         }
         statusMessage_ = "Connected to " + destination + " in " + Seconds(std::chrono::steady_clock::now() - started) +
@@ -102,7 +102,7 @@ void BufferView::WithRemoteHost(const std::string& destination, std::function<vo
     remoteHosts_->Connect(destination, lifetime_.Bind([this, destination, then = std::move(then)](
                                                           const std::expected<editor::remote::Connection*, std::string>& connection) {
         if (!connection) {
-            ReportError("Couldn't connect to " + destination + ": " + connection.error());
+            statusMessage_ = "Couldn't connect to " + destination + ": " + connection.error();
             return;
         }
         then(**connection);
@@ -291,7 +291,7 @@ void BufferView::StartRemoteSearch(const editor::remote::Location& root, const s
         }
         if (!connection) {
             remoteSearch_.reset();
-            ReportError("Couldn't connect to " + destination + ": " + connection.error());
+            statusMessage_ = "Couldn't connect to " + destination + ": " + connection.error();
             return;
         }
         SendRemoteSearch(generation, **connection);
