@@ -6,25 +6,24 @@
 
 namespace ned::editor::terminal {
 
-namespace {
-
-    process::ChildProcess SpawnShell(const std::vector<std::string>& argv, int rows, int cols, const std::vector<std::pair<std::string, std::string>>& env) {
-        process::SpawnOptions options;
-        for (const auto& [name, value] : env) {
-            if (name != "TERM") {
-                options.env.emplace_back(name, value);
-            }
-        }
-        // What Emulator understands, whatever the editor itself runs under.
-        options.env.emplace_back("TERM", "xterm-256color");
-        return process::SpawnOnPty(argv, process::TerminalSize{.rows = rows, .cols = cols}, options);
-    }
-
-} // namespace
-
 PtyProcess::PtyProcess(std::vector<std::string> argv, int rows, int cols, ned::ui::EventLoop& eventLoop,
                        std::function<void(std::string_view)> onOutput, std::function<void(std::optional<int>)> onExit,
-                       const std::vector<std::pair<std::string, std::string>>& env) : stream_(SpawnShell(argv, rows, cols, env), eventLoop, std::move(onOutput), std::move(onExit)) {
+                       const std::vector<std::pair<std::string, std::string>>& env) : stream_(process::SpawnOnPty(argv, process::TerminalSize{.rows = rows, .cols = cols}, process::SpawnOptions{.env = ShellEnvironment(env)}), eventLoop, std::move(onOutput), std::move(onExit)) {
+}
+
+PtyProcess::PtyProcess(process::ChildProcess child, editor::PostQueue& postQueue, std::function<void(std::string_view)> onOutput, std::function<void(std::optional<int>)> onExit) : stream_(std::move(child), postQueue, std::move(onOutput), std::move(onExit)) {
+}
+
+std::vector<std::pair<std::string, std::optional<std::string>>> PtyProcess::ShellEnvironment(const std::vector<std::pair<std::string, std::string>>& env) {
+    std::vector<std::pair<std::string, std::optional<std::string>>> shellEnv;
+    for (const auto& [name, value] : env) {
+        if (name != "TERM") {
+            shellEnv.emplace_back(name, value);
+        }
+    }
+    // What Emulator understands, whatever the editor itself runs under.
+    shellEnv.emplace_back("TERM", "xterm-256color");
+    return shellEnv;
 }
 
 void PtyProcess::Write(std::string_view data) {

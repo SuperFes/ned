@@ -25,12 +25,14 @@
 // than refocusing it (see main.cpp's toggle lambda for why that
 // non-VS-Code semantic is deliberate).
 //
-// Lifecycle: the shell spawns on first EnsureStarted(), survives hide/show
-// untouched, and is torn down with this widget after EventLoop::Run returns
+// Lifecycle: the shell spawns on first EnsureStarted() -- beside a remote
+// file, on its host in the project root found there, once connected (see
+// SetPlacement) -- survives hide/show untouched, and is torn down with this widget after EventLoop::Run returns
 // (the same owner-destroys-after-Run ordering every TaskProcess/Client
 // owner relies on). A shell that exits leaves the panel in an "exited"
 // state -- output kept visible, `[process exited]` appended, Enter respawns
-// -- rather than closing the drawer out from under the user. The dead
+// -- rather than closing the drawer out from under the user. A shell that
+// can't start ends up the same way, with why in place of its output. The dead
 // PtyProcess is deliberately kept allocated until the respawn: destroying it
 // inside its own onExit callback would tear down the std::function currently
 // being executed.
@@ -81,9 +83,12 @@
 #include <vector>
 
 #include "Editor/Key.h"
+#include "Editor/Lifetime.h"
 #include "Editor/LineListSearch.h"
+#include "Editor/Remote/Placement.h"
 #include "Editor/Terminal/Emulator.h"
 #include "Editor/Terminal/PtyProcess.h"
+#include "Text/RemoteFile.h"
 #include "Theme.h"
 #include "Widget.h"
 
@@ -116,14 +121,18 @@ class TerminalPanel : public Widget {
     // lambda the toggle-terminal command drives. Unset is a safe no-op.
     void SetOnToggleRequest(std::function<void()> onToggle);
 
+    // Where the next spawn runs: beside on its host (a login shell there for
+    // the default argv), or here when unset. hosts may be null.
+    void SetPlacement(editor::remote::Hosts* hosts, std::optional<text::RemoteFile> beside);
+
     // Variables set on top of ned's environment for the next spawn.
     void SetEnvironment(std::vector<std::pair<std::string, std::string>> env);
     // Fires when the process exits, with its exit status (nullopt when it
     // was killed by a signal).
     void SetOnExit(std::function<void(std::optional<int> exitCode)> onExit);
 
-    // Spawns the shell if none is running yet (or the previous one exited).
-    // Safe to call repeatedly; a live shell is never disturbed.
+    // Spawns the shell if none is running or starting yet (or the previous
+    // one exited). Safe to call repeatedly; a live shell is never disturbed.
     void EnsureStarted();
 
     [[nodiscard]] bool ShellRunning() const;
@@ -203,7 +212,9 @@ class TerminalPanel : public Widget {
     [[nodiscard]] int ContentRows() const;
     [[nodiscard]] int ContentCols() const;
 
+    void Started(editor::remote::Spawned spawned, editor::process::TerminalSize requested);
     void HandleExit(std::optional<int> exitCode);
+    void Ended(std::string_view note, std::optional<int> exitCode);
     void ForwardPendingOutput();
     void ScrollBy(int deltaLines);
 
@@ -235,11 +246,16 @@ class TerminalPanel : public Widget {
     std::vector<std::string> argv_;  // see constructor doc comment
     std::string              label_; // see constructor doc comment
     std::vector<std::pair<std::string, std::string>> env_;
+    editor::remote::Hosts*                           hosts_ = nullptr;
+    std::optional<text::RemoteFile>                  beside_;
     std::function<void(std::optional<int> exitCode)> onExit_;
 
     editor::terminal::Emulator                    emulator_;
     std::unique_ptr<editor::terminal::PtyProcess> pty_;
-    bool                                          exited_ = false;
+    bool                                          exited_   = false;
+    bool                                          starting_ = false;
+    // Revoked by CloseSession, so a start still connecting never lands.
+    editor::LifetimeGuard start_;
 
     EventLoop*                            eventLoop_ = nullptr; // see SetEventLoop
     std::function<void()>                 onToggleRequest_;

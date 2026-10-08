@@ -26,6 +26,7 @@
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "UI/EventLoop.h"
+#include "UI/TerminalPanel.h"
 
 using Catch::Matchers::ContainsSubstring;
 using ned::tests::PumpUntil;
@@ -148,6 +149,53 @@ TEST_CASE("A remote buffer's process runs on its host, in its project root", "[R
         REQUIRE(after.Finish(fixture.loop));
         CHECK_FALSE(orphan.spawned.has_value());
     }
+}
+
+TEST_CASE("A terminal beside a remote buffer runs a login shell on its host, in its project root", "[Remote][RemotePlacement][TerminalPanel][HostAgent]") {
+    Fixture        fixture;
+    const fs::path shell = fixture.fake.dir / "shell";
+    std::ofstream(shell) << "#!/bin/sh\nprintf 'args:%s\\n' \"$*\"; pwd; printf '%s\\n' \"$TERM\"; read go; stty size\n";
+    fs::permissions(shell, fs::perms::owner_all);
+    const ned::ui::Theme              theme = ned::ui::DarkTheme();
+    ned::ui::TerminalPanel            panel(theme);
+    std::optional<std::optional<int>> exit;
+    constexpr int                     kWidth = 200;
+    panel.SetBox_(ned::ui::Box{.x_min = 0, .x_max = kWidth - 1, .y_min = 0, .y_max = 5});
+    panel.SetEventLoop(&fixture.loop);
+    panel.SetEnvironment({{"SHELL", shell.string()}});
+    panel.SetPlacement(&fixture.hosts, ned::text::RemoteFile{.destination = "host", .path = fixture.project / "src" / "a.c"});
+    panel.SetOnExit([&](std::optional<int> code) { exit = code; });
+    auto rows = [&] {
+        ned::ui::Screen screen{kWidth, 8};
+        panel.Paint(ned::ui::Canvas(screen, panel.Box_()));
+        std::vector<std::string> painted;
+        for (int y = 0; y < 8; ++y) {
+            std::string row;
+            for (int x = 0; x < kWidth; ++x) {
+                row += screen.PixelAt(x, y).character;
+            }
+            painted.push_back(row.substr(0, row.find_last_not_of(' ') + 1));
+        }
+        return painted;
+    };
+
+    panel.EnsureStarted();
+    CHECK_FALSE(panel.ShellRunning());
+    // Resized while it connects: the shell still gets the panel's size.
+    panel.SetBox_(ned::ui::Box{.x_min = 0, .x_max = kWidth - 1, .y_min = 0, .y_max = 7});
+    // Typed once it waits for it, since the pty echoes what's typed at once.
+    REQUIRE(PumpUntil(fixture.loop, [&] { return rows()[2] == "xterm-256color"; }));
+    CHECK(panel.ShellRunning());
+    panel.SendText("go\r");
+    REQUIRE(PumpUntil(fixture.loop, [&] { return exit.has_value(); }));
+    CHECK(*exit == 0);
+    CHECK(panel.TitleText() == "Terminal@host (exited)");
+
+    const std::vector<std::string> painted = rows();
+    CHECK(painted[0] == "args:-l");
+    CHECK(painted[1] == fixture.project.string());
+    CHECK(painted[3] == "go");
+    CHECK(painted[4] == "8 200");
 }
 
 TEST_CASE("A task started from a remote buffer runs on its host, and again from its output", "[Remote][RemotePlacement][Tasks][HostAgent]") {
