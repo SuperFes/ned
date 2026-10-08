@@ -68,6 +68,7 @@ void TerminalPanel::SetOnToggleRequest(std::function<void()> onToggle) {
 void TerminalPanel::SetPlacement(editor::remote::Hosts* hosts, std::optional<text::RemoteFile> beside) {
     hosts_  = hosts;
     beside_ = std::move(beside);
+    placed_ = true;
 }
 
 void TerminalPanel::EnsureStarted() {

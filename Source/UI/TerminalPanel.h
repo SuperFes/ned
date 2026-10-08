@@ -124,6 +124,13 @@ class TerminalPanel : public Widget {
     // Where the next spawn runs: beside on its host (a login shell there for
     // the default argv), or here when unset. hosts may be null.
     void SetPlacement(editor::remote::Hosts* hosts, std::optional<text::RemoteFile> beside);
+    // Whether SetPlacement has been called, and where it put the shell.
+    [[nodiscard]] bool Placed() const {
+        return placed_;
+    }
+    [[nodiscard]] const std::optional<text::RemoteFile>& Beside() const {
+        return beside_;
+    }
 
     // Variables set on top of ned's environment for the next spawn.
     void SetEnvironment(std::vector<std::pair<std::string, std::string>> env);
@@ -248,6 +255,7 @@ class TerminalPanel : public Widget {
     std::vector<std::pair<std::string, std::string>> env_;
     editor::remote::Hosts*                           hosts_ = nullptr;
     std::optional<text::RemoteFile>                  beside_;
+    bool                                             placed_ = false;
     std::function<void(std::optional<int> exitCode)> onExit_;
 
     editor::terminal::Emulator                    emulator_;
