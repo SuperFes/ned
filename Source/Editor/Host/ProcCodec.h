@@ -3,15 +3,19 @@
 //
 //   proc/spawn       params {handle: uint, argv: [bytes], cwd: path | null,
 //                            env: {name: bytes | null},
-//                            stderr: "discard" | "merge" | "capture"}
+//                            stderr: "discard" | "merge" | "capture",
+//                            pty: {rows: uint, cols: uint} | null}
+//                    On a pty, stderr is "merge": the terminal is both.
 //                    chunk  {fd: 1 | 2, data: bytes}
 //                    result {exit: int | null}, null when a signal ended it
 //   proc/write       params {handle, data: bytes}, answered {} once written
 //   proc/close-stdin params {handle}, after every write before it; {}
 //   proc/signal      params {handle, signal: "kill" | "term" | "int" | "hup"}; {}
+//   proc/resize      params {handle, rows, cols}; {}. Its pty's new size; a
+//                    no-op for a child not on one.
 //   proc/release     params {handle}; {}. The editor is done with it: stdin
-//                    closes, and the child is killed if it outstays a grace
-//                    period.
+//                    closes, or a pty hangs up, and the child is killed if
+//                    it outstays a grace period.
 //
 // The editor numbers handles, one per spawn on a connection, so it can write
 // before the spawn has answered anything. Cancelling a spawn kills the
@@ -39,7 +43,12 @@ inline constexpr std::string_view kProcSpawn      = "proc/spawn";
 inline constexpr std::string_view kProcWrite      = "proc/write";
 inline constexpr std::string_view kProcCloseStdin = "proc/close-stdin";
 inline constexpr std::string_view kProcSignal     = "proc/signal";
+inline constexpr std::string_view kProcResize     = "proc/resize";
 inline constexpr std::string_view kProcRelease    = "proc/release";
+
+// The proc capability this agent offers, and the first with pty and resize.
+inline constexpr std::uint64_t kProcVersion    = 2;
+inline constexpr std::uint64_t kProcPtyVersion = 2;
 
 // Error codes a proc request answers with, past the protocol's own.
 namespace proc_error {
@@ -55,6 +64,7 @@ struct ProcSpawnRequest {
     // Sorted by name; nullopt removes the variable.
     std::vector<std::pair<std::string, std::optional<std::string>>> env;
     process::StderrMode                                             stderrMode = process::StderrMode::Discard;
+    std::optional<process::TerminalSize>                            pty;
 
     [[nodiscard]] bool operator==(const ProcSpawnRequest&) const = default;
 };
@@ -80,6 +90,13 @@ struct ProcSignalRequest {
     [[nodiscard]] bool operator==(const ProcSignalRequest&) const = default;
 };
 
+struct ProcResizeRequest {
+    std::uint64_t         handle = 0;
+    process::TerminalSize size;
+
+    [[nodiscard]] bool operator==(const ProcResizeRequest&) const = default;
+};
+
 // The decoders throw protocol::ProtocolError on a malformed field, and the
 // signal encoder on a signal the wire has no name for.
 [[nodiscard]] nlohmann::json   ToJson(const ProcSpawnRequest& request);
@@ -96,6 +113,9 @@ struct ProcSignalRequest {
 
 [[nodiscard]] nlohmann::json    ToJson(const ProcSignalRequest& request);
 [[nodiscard]] ProcSignalRequest ProcSignalRequestFromJson(const nlohmann::json& json);
+
+[[nodiscard]] nlohmann::json    ToJson(const ProcResizeRequest& request);
+[[nodiscard]] ProcResizeRequest ProcResizeRequestFromJson(const nlohmann::json& json);
 
 // {handle}: close-stdin and release.
 [[nodiscard]] nlohmann::json ProcHandleParams(std::uint64_t handle);

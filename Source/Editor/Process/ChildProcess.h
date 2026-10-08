@@ -59,6 +59,8 @@ struct SpawnOptions {
 struct TerminalSize {
     int rows = 24;
     int cols = 80;
+
+    [[nodiscard]] bool operator==(const TerminalSize&) const = default;
 };
 
 // The owning half of a child that isn't this process's own -- one run on a

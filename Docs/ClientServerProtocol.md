@@ -262,13 +262,20 @@ synchronously.
 
 ```
 proc/spawn   params {handle: uint, argv: [bytes], cwd: path | null,
-                     env: {name: bytes | null}, stderr: "discard" | "merge" | "capture"}
+                     env: {name: bytes | null}, stderr: "discard" | "merge" | "capture",
+                     pty: {rows: uint, cols: uint} | null}
              chunk  {fd: 1 | 2, data: bytes}
              result {exit: int | null}       null: killed by a signal
 proc/write   params {handle, data: bytes}    answered once written
 proc/close-stdin params {handle}             after every write before it
 proc/signal  params {handle, signal: "kill" | "term" | "int" | "hup"}
+proc/resize  params {handle, rows, cols}     a pty's new size
+proc/release params {handle}                 stdin closes, or a pty hangs up
 ```
+
+A child on a pty (`Process/Pty.h`) has the terminal for stdout and stderr both, so its
+`stderr` is `"merge"`; the editor sets `TERM` in `env`, since the emulator is its own.
+An agent offers `pty` and `resize` from `proc` capability 2.
 
 The editor numbers `handle`, so it can write before the spawn answers anything.
 Cancelling `proc/spawn` kills the process group, as a dropped connection does. Output

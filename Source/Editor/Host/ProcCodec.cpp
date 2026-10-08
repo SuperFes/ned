@@ -45,6 +45,21 @@ namespace {
         return it->second;
     }
 
+    Json SizeToJson(process::TerminalSize size) {
+        return Json{{"rows", size.rows}, {"cols", size.cols}};
+    }
+
+    process::TerminalSize SizeFromJson(const Json& json) {
+        const auto dimension = [&json](const char* key) {
+            const std::uint64_t value = RequireUnsigned(json, key);
+            if (value < 1 || value > 0xffff) {
+                throw protocol::ProtocolError(std::string("ned: a terminal ") + key + " of " + std::to_string(value));
+            }
+            return static_cast<int>(value);
+        };
+        return process::TerminalSize{.rows = dimension("rows"), .cols = dimension("cols")};
+    }
+
 } // namespace
 
 Json ToJson(const ProcSpawnRequest& request) {
@@ -60,7 +75,8 @@ Json ToJson(const ProcSpawnRequest& request) {
                 {"argv", std::move(argv)},
                 {"cwd", request.cwd ? PathToJson(*request.cwd) : Json(nullptr)},
                 {"env", std::move(env)},
-                {"stderr", NameOf(kStderrNames, request.stderrMode)}};
+                {"stderr", NameOf(kStderrNames, request.stderrMode)},
+                {"pty", request.pty ? SizeToJson(*request.pty) : Json(nullptr)}};
 }
 
 ProcSpawnRequest ProcSpawnRequestFromJson(const Json& json) {
@@ -86,6 +102,13 @@ ProcSpawnRequest ProcSpawnRequestFromJson(const Json& json) {
     }
     std::ranges::sort(request.env);
     request.stderrMode = Named(kStderrNames, RequireString(json, "stderr"), "stderr mode");
+    // Absent from a proc 1 editor's spawns.
+    if (json.contains("pty") && !json.at("pty").is_null()) {
+        request.pty = SizeFromJson(RequireObject(json, "pty"));
+        if (request.stderrMode != process::StderrMode::MergeWithStdout) {
+            throw protocol::ProtocolError("ned: a pty's stderr is its stdout");
+        }
+    }
     return request;
 }
 
@@ -133,6 +156,16 @@ Json ToJson(const ProcSignalRequest& request) {
 
 ProcSignalRequest ProcSignalRequestFromJson(const Json& json) {
     return ProcSignalRequest{.handle = RequireUnsigned(json, "handle"), .signal = Named(kSignalNames, RequireString(json, "signal"), "signal")};
+}
+
+Json ToJson(const ProcResizeRequest& request) {
+    Json json      = SizeToJson(request.size);
+    json["handle"] = request.handle;
+    return json;
+}
+
+ProcResizeRequest ProcResizeRequestFromJson(const Json& json) {
+    return ProcResizeRequest{.handle = RequireUnsigned(json, "handle"), .size = SizeFromJson(json)};
 }
 
 Json ProcHandleParams(std::uint64_t handle) {

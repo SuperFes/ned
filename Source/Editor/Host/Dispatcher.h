@@ -77,6 +77,7 @@ class Dispatcher {
     void ProcWrite(const nlohmann::json& params, protocol::Responder responder);
     void ProcCloseStdin(const nlohmann::json& params, protocol::Responder responder);
     void ProcSignal(const nlohmann::json& params, protocol::Responder responder);
+    void ProcResize(const nlohmann::json& params, protocol::Responder responder);
     void ProcRelease(const nlohmann::json& params, protocol::Responder responder);
     // The job a handle names, answering kNoSuchProcess when there's none.
     [[nodiscard]] ProcJob* FindProc(const nlohmann::json& params, protocol::Responder& responder);
