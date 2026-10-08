@@ -6,6 +6,8 @@
 #include <optional>
 #include <utility>
 
+#include "Editor/DiagnosticsLog.h"
+
 namespace ned::editor::remote {
 
 Hosts::Hosts(PostQueue& postQueue, OptionsFactory options, HostLookupOptions lookup) : postQueue_(postQueue), options_(std::move(options)), lookup_(postQueue, std::move(lookup)) {
@@ -104,6 +106,7 @@ void Hosts::Finish(const std::string& destination, std::uint64_t id, Connector::
     NoteChanged(destination);
 
     if (!result) {
+        LogMessage(LogCategory::Remote, LogSeverity::Error, "Couldn't connect to " + destination + ": " + result.error());
         for (Connected& waiter : attempt.mapped().waiters) {
             waiter(std::unexpected(result.error()));
         }
@@ -111,6 +114,7 @@ void Hosts::Finish(const std::string& destination, std::uint64_t id, Connector::
     }
     Connection* connection = result->get();
     connection->SetOnDisconnected([this, destination, connection](const std::string& reason) {
+        LogMessage(LogCategory::Remote, LogSeverity::Error, "Lost the connection to " + destination + ": " + reason);
         postQueue_.Post(lifetime_.Bind([this, destination, connection] {
             if (const auto live = connections_.find(destination); live != connections_.end() && live->second.get() == connection) {
                 connections_.erase(live);

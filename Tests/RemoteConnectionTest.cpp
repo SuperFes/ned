@@ -15,6 +15,7 @@
 #include <poll.h>
 #include <unistd.h>
 
+#include "Editor/DiagnosticsLog.h"
 #include "Editor/Host/Hello.h"
 #include "Editor/Host/SearchCodec.h"
 #include "Editor/PostQueue.h"
@@ -327,6 +328,49 @@ TEST_CASE("Hosts report attempts that fail or are cancelled, and connections tha
     REQUIRE(dropped == std::pair<std::string, std::string>{"host", "the link went away"});
     REQUIRE(hosts.Find("host") == nullptr);
     REQUIRE(PumpUntil(queue, [&] { return hosts.Destinations().empty(); }));
+}
+
+TEST_CASE("Hosts log attempts that fail and connections that drop, but not cancellations", "[Remote][Connection][HostAgent]") {
+    FakeHost                      fake;
+    ned::tests::ScopedEnvOverride state{"XDG_STATE_HOME", (fake.dir / "state").c_str()};
+    ned::editor::ResetDiagnosticsLogForTesting();
+    PostQueue  queue;
+    Hosts      hosts(queue, [&](const std::string& destination) { return fake.Options(destination); });
+    const auto logged = [] {
+        std::vector<std::string> messages;
+        for (const ned::editor::LogEntry& entry : ned::editor::LogEntries()) {
+            if (entry.category == ned::editor::LogCategory::Remote && entry.severity == ned::editor::LogSeverity::Error) {
+                messages.push_back(entry.message);
+            }
+        }
+        return messages;
+    };
+
+    std::optional<std::expected<Connection*, std::string>> denied;
+    hosts.Connect("denied", [&](std::expected<Connection*, std::string> connection) { denied = connection; });
+    REQUIRE(PumpUntil(queue, [&] { return denied.has_value(); }));
+    REQUIRE_FALSE(denied->has_value());
+    REQUIRE(logged() == std::vector<std::string>{"Couldn't connect to denied: " + denied->error()});
+
+    hosts.Connect("silent", [](std::expected<Connection*, std::string>) {});
+    REQUIRE(hosts.Disconnect("silent"));
+    CHECK(logged().size() == 1);
+
+    Connection* live = nullptr;
+    hosts.Connect("host", [&](std::expected<Connection*, std::string> connection) { live = connection.value(); });
+    REQUIRE(PumpUntil(queue, [&] { return live != nullptr; }));
+    live->Close("the link went away");
+    REQUIRE(logged().size() == 2);
+    CHECK(logged()[1] == "Lost the connection to host: the link went away");
+
+    REQUIRE(PumpUntil(queue, [&] { return hosts.Destinations().empty(); }));
+
+    live = nullptr;
+    hosts.Connect("host", [&](std::expected<Connection*, std::string> connection) { live = connection.value(); });
+    REQUIRE(PumpUntil(queue, [&] { return live != nullptr; }));
+    REQUIRE(hosts.Disconnect("host"));
+    CHECK(logged().size() == 2);
+    ned::editor::ResetDiagnosticsLogForTesting();
 }
 
 TEST_CASE("Hosts ask ssh's login questions on the main thread and withdraw them with the attempt", "[Remote][Connection][HostAgent]") {

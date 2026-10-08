@@ -45,10 +45,11 @@ enum class LogCategory { General,
                          Vcs,
                          Task,
                          Tracker,
-                         Subprocess };
+                         Subprocess,
+                         Remote };
 
 // Keep in step with the last LogCategory enumerator.
-inline constexpr std::size_t kLogCategoryCount = static_cast<std::size_t>(LogCategory::Subprocess) + 1;
+inline constexpr std::size_t kLogCategoryCount = static_cast<std::size_t>(LogCategory::Remote) + 1;
 
 enum class LogSeverity { Info,
                          Warning,

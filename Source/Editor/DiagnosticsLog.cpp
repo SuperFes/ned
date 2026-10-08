@@ -52,6 +52,7 @@ namespace {
             case LogCategory::Task:
             case LogCategory::Tracker:
             case LogCategory::Subprocess:
+            case LogCategory::Remote:
                 return true;
         }
         return true;
@@ -284,6 +285,8 @@ std::optional<LogCategory> LogCategoryFromString(std::string_view name) {
         return LogCategory::Tracker;
     if (name == "subprocess")
         return LogCategory::Subprocess;
+    if (name == "remote")
+        return LogCategory::Remote;
     return std::nullopt;
 }
 
@@ -307,6 +310,8 @@ std::string_view LogCategoryToString(LogCategory category) {
             return "tracker";
         case LogCategory::Subprocess:
             return "subprocess";
+        case LogCategory::Remote:
+            return "remote";
     }
     return "general"; // unreachable -- silences a "not all enumerators handled" warning on some compilers
 }
