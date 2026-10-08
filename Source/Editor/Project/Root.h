@@ -18,6 +18,9 @@
 #define NED_EDITOR_PROJECT_ROOT_H
 
 #include <filesystem>
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace ned::editor {
 
@@ -50,6 +53,12 @@ void               SetAutoDetectProjectRoot(bool enabled);
 // The same, walking for a VCS marker only when walkForVcs: what a host
 // detects for the editor, whose setting it doesn't share.
 [[nodiscard]] std::filesystem::path DetectProjectRoot(const std::filesystem::path& openedPath, bool walkForVcs);
+
+// The nearest directory holding file, or above it, with an entry named by
+// one of markers, or for a "*.ext" marker any file with that extension: a
+// language's own project root (package.json, Cargo.toml, *.csproj).
+[[nodiscard]] std::optional<std::filesystem::path> FindMarkerRoot(const std::filesystem::path&    file,
+                                                                  const std::vector<std::string>& markers);
 
 } // namespace ned::editor
 

@@ -7,6 +7,7 @@
 
 using ned::editor::AutoDetectProjectRoot;
 using ned::editor::DetectProjectRoot;
+using ned::editor::FindMarkerRoot;
 using ned::editor::ProjectRoot;
 using ned::editor::SetAutoDetectProjectRoot;
 using ned::editor::SetProjectRoot;
@@ -217,6 +218,23 @@ TEST_CASE("DetectProjectRoot absolutizes a bare nonexistent relative filename", 
     REQUIRE(!detected.empty());
     REQUIRE(detected.is_absolute());
     REQUIRE(detected == std::filesystem::canonical(dir));
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("FindMarkerRoot finds the nearest directory holding a marker, by name or by extension", "[ProjectRoot]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_root_test_markers";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "pkg" / "src");
+    std::filesystem::create_directories(dir / "app" / "src");
+    std::ofstream(dir / "Cargo.toml") << "";
+    std::ofstream(dir / "pkg" / "Cargo.toml") << "";
+    std::ofstream(dir / "app" / "App.csproj") << "";
+
+    CHECK(FindMarkerRoot(dir / "pkg" / "src" / "lib.rs", {"Cargo.toml"}) == dir / "pkg");
+    CHECK(FindMarkerRoot(dir / "app" / "src" / "Main.cs", {"*.csproj"}) == dir / "app");
+    CHECK(FindMarkerRoot(dir / "app" / "src" / "Main.cs", {"go.mod"}) == std::nullopt);
+    CHECK(FindMarkerRoot(dir / "pkg" / "src" / "lib.rs", {}) == std::nullopt);
 
     std::filesystem::remove_all(dir);
 }

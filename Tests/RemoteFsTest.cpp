@@ -160,6 +160,30 @@ TEST_CASE("A connected host finds a path's project root", "[Remote][RemoteFs][Ho
     CHECK(root(project / "src", true) == canonical / "src");
 }
 
+TEST_CASE("A connected host finds a language's root by its markers before the repository's", "[Remote][RemoteFs][HostAgent]") {
+    const ned::tests::FakeRemoteHost fake;
+    PostQueue                        queue;
+    remote::Connection               connection(remote::Connect(fake.Options()), queue);
+    const fs::path                   project = fake.dir / "markers";
+    fs::create_directories(project / ".git");
+    fs::create_directories(project / "pkg" / "src");
+    std::ofstream(project / "pkg" / "Cargo.toml");
+
+    const auto root = [&](bool detect, std::vector<std::string> markers) {
+        Answer<fs::path> found;
+        remote::FindProjectRoot(connection,
+                                host::FsProjectRootRequest{.path = project / "pkg" / "src" / "lib.rs", .detect = detect, .markers = std::move(markers)},
+                                found.Done());
+        REQUIRE(PumpUntil(queue, [&] { return found.value.has_value(); }));
+        REQUIRE(found.value->has_value());
+        return **found.value;
+    };
+    const fs::path canonical = fs::canonical(project);
+    CHECK(root(true, {"Cargo.toml"}) == canonical / "pkg");
+    CHECK(root(true, {"go.mod"}) == canonical);
+    CHECK(root(false, {"Cargo.toml"}) == canonical / "pkg" / "src");
+}
+
 TEST_CASE("A connected host's paths are made, renamed and removed", "[Remote][RemoteFs][HostAgent]") {
     const ned::tests::FakeRemoteHost fake;
     PostQueue                        queue;

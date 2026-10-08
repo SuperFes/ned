@@ -42,6 +42,24 @@ namespace {
         return false;
     }
 
+    // A .NET project's marker is named after the project, so "*.csproj"
+    // matches any file with that extension.
+    bool MarkerExistsInDirectory(const std::filesystem::path& dir, const std::string& marker) {
+        if (marker.size() > 2 && marker[0] == '*' && marker[1] == '.') {
+            const std::string wantedExtension = marker.substr(1);
+            std::error_code   iterEc;
+            for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(dir, iterEc)) {
+                std::error_code entryEc;
+                if (entry.is_regular_file(entryEc) && !entryEc && entry.path().extension() == wantedExtension) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        std::error_code existsEc;
+        return std::filesystem::exists(dir / marker, existsEc);
+    }
+
 } // namespace
 
 void SetProjectRoot(std::filesystem::path root) {
@@ -118,6 +136,22 @@ std::filesystem::path DetectProjectRoot(const std::filesystem::path& openedPath,
     }
 
     return containing;
+}
+
+std::optional<std::filesystem::path> FindMarkerRoot(const std::filesystem::path& file, const std::vector<std::string>& markers) {
+    if (markers.empty()) {
+        return std::nullopt;
+    }
+    for (std::filesystem::path dir = file.parent_path();; dir = dir.parent_path()) {
+        for (const std::string& marker : markers) {
+            if (MarkerExistsInDirectory(dir, marker)) {
+                return dir;
+            }
+        }
+        if (dir == dir.parent_path()) {
+            return std::nullopt;
+        }
+    }
 }
 
 } // namespace ned::editor
