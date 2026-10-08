@@ -15188,6 +15188,57 @@ TEST_CASE("C-x C-s formats via the language server before saving when lsp-format
     std::filesystem::remove(path);
 }
 
+TEST_CASE("The overwrite confirmation's save formats via the language server too", "[BufferView]") {
+    const LspFormatOnSaveGuard  guard;
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "ned_bufferview_lsp_format_confirmed_save_test.txt";
+    {
+        std::ofstream(path) << "int x=1;";
+    }
+
+    Fixture            fixture;
+    ned::text::Buffer& buffer = fixture.bufferList.OpenOrCreateFile(path);
+    fixture.activeBuffer.Set(buffer);
+    {
+        std::ofstream(path) << "theirs";
+    }
+    std::filesystem::last_write_time(path, std::filesystem::last_write_time(path) + std::chrono::seconds(5));
+
+    ned::ui::EventLoop        eventLoop;
+    ned::editor::lsp::Manager manager(fixture.bufferList, eventLoop);
+    ned::editor::lsp::Client* client = nullptr;
+    FakeLspServer             server = FakeLspServer::Create(manager, "fundamental", eventLoop, client);
+
+    ned::ui::BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    ned::ui::Screen screenBuf = ned::ui::Screen(40, 3);
+    ned::ui::Canvas canvas(screenBuf, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 2});
+    view.Paint(canvas);
+    DrainAllPendingFrames(server.serverStdinRead);
+
+    view.OnEvent(ned::ui::test::Ctrl('x'));
+    view.OnEvent(ned::ui::test::Ctrl('s'));
+    REQUIRE(fixture.statusMessage.ends_with("save anyway? (y/n)"));
+    view.OnEvent(ned::ui::test::Character("y"));
+    REQUIRE(fixture.statusMessage == "Formatting...");
+
+    const std::string raw = ReadRawLspFrame(server.serverStdinRead);
+    client->DispatchFrame(ned::editor::lsp::Json{
+        {"jsonrpc", "2.0"},
+        {"id", LspRequestIdFromFrame(raw)},
+        {"result", ned::editor::lsp::Json::array(
+                       {{{"range", {{"start", {{"line", 0}, {"character", 5}}}, {"end", {{"line", 0}, {"character", 6}}}}}, {"newText", " = "}}})},
+    }
+                              .dump());
+    REQUIRE(fixture.statusMessage.starts_with("Wrote"));
+    {
+        std::ifstream     in(path);
+        const std::string onDisk((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        REQUIRE(onDisk == "int x = 1;\n");
+    }
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("C-x C-s prefers an external format command over lsp-format-on-save when both are configured",
           "[BufferView]") {
     const LspFormatOnSaveGuard guard;

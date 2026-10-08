@@ -2244,8 +2244,14 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                lsp::Manager::Status::Running;
     };
 
+    // A remote buffer's format command runs on its host (FormatRun.h).
+    const auto shouldDeferToRemoteFormat = [](const CommandContext& context) {
+        const std::optional<std::string> command = FormatCommand();
+        return command && !command->empty() && context.buffer.Remote() && !context.buffer.BinarySafeguardsActive();
+    };
+
     registry.Register("save-buffer", "Save the current buffer to its associated file.",
-                      [saveBufferBody, shouldDeferToLspFormat](CommandContext& context) {
+                      [saveBufferBody, shouldDeferToLspFormat, shouldDeferToRemoteFormat](CommandContext& context) {
                           // progressive-huge-file-load follow-up: checked first -- Buffer::
                           // SaveToFile itself already refuses a still-loading buffer, but
                           // that content is still growing/incomplete, so there's no point
@@ -2273,6 +2279,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               context.interactiveRequest = InteractiveRequest::ConfirmSaveWithConflicts;
                               return;
                           }
+                          if (shouldDeferToRemoteFormat(context)) {
+                              context.deferSaveForRemoteFormat = false;
+                              return;
+                          }
                           if (shouldDeferToLspFormat(context)) {
                               context.deferSaveForLspFormat = false; // force=false: the guards above already ran
                               return;
@@ -2281,12 +2291,16 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                       });
 
     registry.Register("save-buffer-force", "Save the current buffer even if its file changed on disk.",
-                      [saveBufferBody, shouldDeferToLspFormat](CommandContext& context) {
+                      [saveBufferBody, shouldDeferToLspFormat, shouldDeferToRemoteFormat](CommandContext& context) {
                           // See save-buffer's own comment on this guard.
                           if (context.buffer.IsLoading()) {
                               if (context.message) {
                                   *context.message = "Cannot save \"" + context.buffer.Name() + "\" -- still loading in the background";
                               }
+                              return;
+                          }
+                          if (shouldDeferToRemoteFormat(context)) {
+                              context.deferSaveForRemoteFormat = true;
                               return;
                           }
                           if (shouldDeferToLspFormat(context)) {
@@ -2321,7 +2335,7 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
     registry.Register("format-buffer",
                       "Format the whole buffer: your configured external formatter if one's set, falling back to "
                       "ned's own per-language reindent and hygiene cleanup.",
-                      [](CommandContext& context) {
+                      [shouldDeferToRemoteFormat](CommandContext& context) {
                           // progressive-huge-file-load follow-up: same reasoning as
                           // save-buffer's own guard -- checked first since the whole-buffer
                           // Text()+DeleteRange+InsertAt below fully materializes the buffer,
@@ -2350,6 +2364,10 @@ void RegisterBuiltinCommands(CommandRegistry& registry) {
                               return;
                           }
 
+                          if (shouldDeferToRemoteFormat(context)) {
+                              context.deferFormatToRemote = true;
+                              return;
+                          }
                           std::optional<std::string> formatted;
                           if (FormatCommand()) {
                               formatted = RunFormatCommand(context.buffer.Text());

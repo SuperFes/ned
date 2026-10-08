@@ -6,6 +6,10 @@
 #include <string>
 #include <vector>
 
+#include "Editor/BufferSave.h"
+#include "Editor/DiagnosticsLog.h"
+#include "Editor/Format.h"
+#include "Editor/FormatOnSave.h"
 #include "Editor/Host/SearchCodec.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/NextError.h"
@@ -29,6 +33,19 @@ namespace {
 
     std::string CountMatches(std::size_t count) {
         return std::to_string(count) + (count == 1 ? " match" : " matches");
+    }
+
+    // A whole-buffer replace, as the local format command's, but one undo
+    // step. False when the text is already that.
+    bool ReplaceWithFormatted(text::Buffer& buffer, const std::string& formatted) {
+        if (buffer.Text() == formatted) {
+            return false;
+        }
+        buffer.BeginUndoGroup();
+        buffer.DeleteRange(0, buffer.Size());
+        buffer.InsertAt(0, formatted);
+        buffer.EndUndoGroup();
+        return true;
     }
 
 } // namespace
@@ -471,6 +488,98 @@ void BufferView::CancelRemoteSearch() {
         }
     }
     remoteSearch_.reset();
+}
+
+bool BufferView::StartRemoteFormat(const text::Buffer& buffer, editor::FormatRun::Done done) {
+    const std::optional<std::string> command = editor::FormatCommand();
+    if (remoteHosts_ == nullptr || !command) {
+        return false;
+    }
+    if (!remoteFormat_) {
+        remoteFormat_ = std::make_unique<editor::FormatRun>(remoteHosts_->Queue());
+    }
+    remoteFormat_->Start(remoteHosts_, buffer.Remote(), *command, buffer.Text(), std::move(done));
+    return true;
+}
+
+void BufferView::RequestRemoteFormatThenSaveBuffer(bool force) {
+    text::Buffer&              buffer     = activeBuffer_.Get();
+    const bool                 closeAfter = std::exchange(closeWindowAfterDeferredSave_, false);
+    const text::BufferIdentity bufferId(buffer);
+    const std::size_t          generation = buffer.ContentGeneration();
+    statusMessage_                        = "Formatting " + buffer.Name() + "...";
+    const bool started                    = StartRemoteFormat(buffer, [this, bufferId, generation, force, closeAfter](std::expected<std::string, std::string> formatted) {
+        // Saved even when no longer shown: the user asked for it.
+        text::Buffer* live = LiveBuffer(bufferId);
+        if (live == nullptr) {
+            return;
+        }
+        std::string note;
+        if (!formatted) {
+            note = " (the format command failed: " + formatted.error() + ")";
+        }
+        else if (live->ContentGeneration() != generation) {
+            note = " (not formatted: it changed while the format command ran)";
+        }
+        else {
+            ReplaceWithFormatted(*live, *formatted);
+        }
+        SaveAfterRemoteFormat(*live, force, closeAfter, note);
+    });
+    if (!started) {
+        SaveAfterRemoteFormat(buffer, force, closeAfter, " (the format command failed: no remote hosts)");
+    }
+}
+
+void BufferView::SaveAfterRemoteFormat(text::Buffer& buffer, bool force, bool closeAfter, const std::string& note) {
+    if (!note.empty()) {
+        // The save's own outcome replaces the status line soon after.
+        editor::LogMessage(editor::LogCategory::General, editor::LogSeverity::Warning, "saving " + buffer.Name() + note);
+    }
+    bool wrote = false;
+    try {
+        editor::WriteBufferToDisk(buffer, editor::SaveDispatch::Automatic, force);
+        statusMessage_ = (buffer.IsSaving() ? "Saving " + buffer.Name() + "..." : "Wrote " + buffer.Name()) + note;
+        wrote          = true;
+    }
+    catch (const std::exception& e) {
+        statusMessage_ = e.what();
+    }
+    if (wrote && closeAfter) {
+        CloseVimWindow(false); // may destroy *this* -- nothing after
+        return;
+    }
+    RequestDiffForCurrentBuffer();
+    viewport_.ScrollToShowPoint();
+}
+
+void BufferView::RequestRemoteFormatBuffer() {
+    text::Buffer&              buffer = activeBuffer_.Get();
+    const text::BufferIdentity bufferId(buffer);
+    const std::size_t          generation = buffer.ContentGeneration();
+    const auto                 finish     = [this, bufferId, generation](std::expected<std::string, std::string> formatted) {
+        if (!bufferId.Is(activeBuffer_.Get())) {
+            return; // the user moved on
+        }
+        text::Buffer& buffer = activeBuffer_.Get();
+        if (buffer.ContentGeneration() != generation) {
+            statusMessage_ = buffer.Name() + " changed while the format command ran -- not formatted.";
+            return;
+        }
+        if (formatted) {
+            statusMessage_ = ReplaceWithFormatted(buffer, *formatted) ? "Formatted " + buffer.Name() : buffer.Name() + " is already formatted.";
+            viewport_.ScrollToShowPoint();
+            return;
+        }
+        // format-buffer always does something, as it does locally.
+        const bool changed = editor::ApplyNativeFormat(buffer, &mode_);
+        statusMessage_     = "The format command failed: " + formatted.error() + (changed ? " -- formatted " + buffer.Name() + " natively." : ".");
+        viewport_.ScrollToShowPoint();
+    };
+    statusMessage_ = "Formatting " + buffer.Name() + "...";
+    if (!StartRemoteFormat(buffer, finish)) {
+        finish(std::unexpected(std::string("no remote hosts")));
+    }
 }
 
 } // namespace ned::ui

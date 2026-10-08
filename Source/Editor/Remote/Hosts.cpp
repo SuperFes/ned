@@ -196,4 +196,8 @@ HostLookup& Hosts::Lookup() noexcept {
     return lookup_;
 }
 
+PostQueue& Hosts::Queue() const noexcept {
+    return postQueue_;
+}
+
 } // namespace ned::editor::remote

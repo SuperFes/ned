@@ -27,7 +27,8 @@ namespace remote {
 
 class FormatRun {
   public:
-    // The formatted text, or why there is none.
+    // The formatted text, or why there is none, worded to follow "the
+    // format command failed: ".
     using Done = std::function<void(std::expected<std::string, std::string> formatted)>;
 
     // postQueue must outlive this object.

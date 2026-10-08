@@ -346,14 +346,14 @@ bool BufferView::HandleVimKey(const editor::KeyChord& chord) {
         // failure, leaves the window open.
         text::Buffer&          buffer      = activeBuffer_.Get();
         editor::CommandContext saveContext = MakeContext();
-        closeWindowAfterLspSave_           = closing;
+        closeWindowAfterDeferredSave_      = closing;
         RunCommandAndHandleOutcome(saveContext, [&] {
             dispatcher_.Registry().Invoke("save-buffer", saveContext);
             return true;
         });
-        const bool deferredToLsp = closing && !closeWindowAfterLspSave_;
-        closeWindowAfterLspSave_ = false;
-        if (closing && (deferredToLsp || (buffer.Modified() && !buffer.IsSaving()))) {
+        const bool deferred           = closing && !closeWindowAfterDeferredSave_;
+        closeWindowAfterDeferredSave_ = false;
+        if (closing && (deferred || (buffer.Modified() && !buffer.IsSaving()))) {
             return true;
         }
     }
@@ -3796,6 +3796,15 @@ void BufferView::ForceSaveBuffer() {
     }
     catch (const std::exception& e) {
         ReportError(e.what());
+        return;
+    }
+    // Invoked directly rather than through RunCommandAndHandleOutcome, so a
+    // save that waits on formatting is started here.
+    if (context.deferSaveForRemoteFormat) {
+        RequestRemoteFormatThenSaveBuffer(true);
+    }
+    else if (context.deferSaveForLspFormat) {
+        RequestLspFormatThenSaveBuffer();
     }
 }
 
