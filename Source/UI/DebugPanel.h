@@ -64,7 +64,7 @@ class DebugPanel {
     // Fired on Enter over a breakpoint that names a file -- the caller opens
     // it and moves point, the same contract ProjectSidebar's own open
     // callback has. line is 1-based.
-    void SetOnVisitLocation(std::function<void(const std::filesystem::path&, std::size_t line)> handler);
+    void SetOnVisitLocation(std::function<void(const text::FileRef&, std::size_t line)> handler);
 
     // Fired when a key needs text entry (a condition, a function name, a
     // new variable value): this widget has no minibuffer of its own, the
@@ -183,7 +183,7 @@ class DebugPanel {
     // invalidated by the same event.
     std::uint64_t generation_ = 0;
 
-    std::function<void(const std::filesystem::path&, std::size_t)>                  onVisitLocation_;
+    std::function<void(const text::FileRef&, std::size_t)>                          onVisitLocation_;
     std::function<void(std::string, std::string, std::function<void(std::string)>)> onTextEntryRequest_;
     std::function<void(std::string)>                                                onMessage_;
     std::function<void()>                                                           onCancel_;

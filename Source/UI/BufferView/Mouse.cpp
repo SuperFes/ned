@@ -344,12 +344,13 @@ bool BufferView::HandleDapGutterClick(Point at) {
         return false;
     }
     text::Buffer& buffer = activeBuffer_.Get();
-    if (!buffer.Path() || dapManager_ == nullptr) {
+    const std::optional<text::FileRef> file   = buffer.File();
+    if (!file || dapManager_ == nullptr) {
         return true; // inside the column with nothing to toggle -- swallow, don't place point
     }
     const std::size_t line   = viewport_.LineForRow(at.y).line + 1; // 1-based, DAP's own convention
-    const bool        nowSet = dapManager_->ToggleBreakpoint(*buffer.Path(), line);
-    statusMessage_           = (nowSet ? "Breakpoint set at " : "Breakpoint removed at ") + buffer.Path()->filename().string() +
+    const bool        nowSet = dapManager_->ToggleBreakpoint(*file, line);
+    statusMessage_           = (nowSet ? "Breakpoint set at " : "Breakpoint removed at ") + text::PathOf(*file).filename().string() +
                                ":" + std::to_string(line);
     return true;
 }

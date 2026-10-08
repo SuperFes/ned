@@ -83,7 +83,7 @@ TreeView& DebugPanel::Tree() {
     return tree_;
 }
 
-void DebugPanel::SetOnVisitLocation(std::function<void(const std::filesystem::path&, std::size_t)> handler) {
+void DebugPanel::SetOnVisitLocation(std::function<void(const text::FileRef&, std::size_t)> handler) {
     onVisitLocation_ = std::move(handler);
 }
 
@@ -597,8 +597,10 @@ void DebugPanel::PushModel() {
                 break;
             }
             case Row::Kind::SourceFile: {
-                const std::filesystem::path path(row.key);
-                out.label       = path.filename().string();
+                const text::FileRef          file   = editor::dap::Manager::FileForKey(row.key);
+                const std::filesystem::path& path   = text::PathOf(file);
+                const auto*                  remote = std::get_if<text::RemoteFile>(&file);
+                out.label                           = remote ? text::RemoteBufferName(*remote) : path.filename().string();
                 out.depth       = 1;
                 out.hasChildren = true;
                 out.expanded    = !collapsedFiles_.contains(row.key);
@@ -907,7 +909,7 @@ void DebugPanel::HandleActivate(std::size_t index) {
             // follows (Breakpoint::actualLine).
             const std::size_t line = (it != breakpoints.end() && it->actualLine != 0) ? it->actualLine : row.line;
             if (onVisitLocation_) {
-                onVisitLocation_(std::filesystem::path(row.key), line);
+                onVisitLocation_(editor::dap::Manager::FileForKey(row.key), line);
             }
             return;
         }
@@ -962,7 +964,7 @@ void DebugPanel::ToggleEnabledAt(std::size_t index) {
                 return;
             }
             const bool nowEnabled = !it->enabled;
-            dapManager_.SetBreakpointEnabled(std::filesystem::path(row.key), row.line, nowEnabled);
+            dapManager_.SetBreakpointEnabled(editor::dap::Manager::FileForKey(row.key), row.line, nowEnabled);
             Report(nowEnabled ? "Breakpoint enabled." : "Breakpoint disabled.");
             return;
         }
@@ -1014,7 +1016,7 @@ void DebugPanel::RemoveAt(std::size_t index) {
     const Row row = rows_[index];
     switch (row.kind) {
         case Row::Kind::SourceBreakpoint:
-            dapManager_.RemoveBreakpoint(std::filesystem::path(row.key), row.line);
+            dapManager_.RemoveBreakpoint(editor::dap::Manager::FileForKey(row.key), row.line);
             Report("Breakpoint removed.");
             return;
         case Row::Kind::FunctionBreakpoint:
@@ -1036,7 +1038,7 @@ void DebugPanel::RemoveAt(std::size_t index) {
             // "I am done with this file" gesture the per-line loop is the
             // wrong tool for.
             for (const auto& breakpoint : dapManager_.BreakpointsForKey(row.key)) {
-                dapManager_.RemoveBreakpoint(std::filesystem::path(row.key), breakpoint.line);
+                dapManager_.RemoveBreakpoint(editor::dap::Manager::FileForKey(row.key), breakpoint.line);
             }
             Report("File's breakpoints removed.");
             return;
@@ -1063,8 +1065,8 @@ void DebugPanel::EditAt(std::size_t index) {
             const auto it          = std::find_if(breakpoints.begin(), breakpoints.end(),
                                                   [&row](const auto& bp) { return bp.line == row.line; });
             Prompt("Condition (empty to clear)", it != breakpoints.end() ? it->condition : std::string(),
-                   [this, path = std::filesystem::path(row.key), line = row.line](std::string condition) {
-                       Report(dapManager_.SetBreakpointCondition(path, line, std::move(condition)));
+                   [this, file = editor::dap::Manager::FileForKey(row.key), line = row.line](std::string condition) {
+                       Report(dapManager_.SetBreakpointCondition(file, line, std::move(condition)));
                    });
             return;
         }
@@ -1159,8 +1161,8 @@ void DebugPanel::SetHitConditionAt(std::size_t index) {
     const auto breakpoints = dapManager_.BreakpointsForKey(row.key);
     const auto it          = std::find_if(breakpoints.begin(), breakpoints.end(), [&row](const auto& bp) { return bp.line == row.line; });
     Prompt("Hit condition (empty to clear)", it != breakpoints.end() ? it->hitCondition : std::string(),
-           [this, path = std::filesystem::path(row.key), line = row.line](std::string hitCondition) {
-               Report(dapManager_.SetBreakpointHitCondition(path, line, std::move(hitCondition)));
+           [this, file = editor::dap::Manager::FileForKey(row.key), line = row.line](std::string hitCondition) {
+               Report(dapManager_.SetBreakpointHitCondition(file, line, std::move(hitCondition)));
            });
 }
 
@@ -1173,8 +1175,8 @@ void DebugPanel::SetLogMessageAt(std::size_t index) {
     const auto breakpoints = dapManager_.BreakpointsForKey(row.key);
     const auto it          = std::find_if(breakpoints.begin(), breakpoints.end(), [&row](const auto& bp) { return bp.line == row.line; });
     Prompt("Log message (empty to clear)", it != breakpoints.end() ? it->logMessage : std::string(),
-           [this, path = std::filesystem::path(row.key), line = row.line](std::string logMessage) {
-               Report(dapManager_.SetBreakpointLogMessage(path, line, std::move(logMessage)));
+           [this, file = editor::dap::Manager::FileForKey(row.key), line = row.line](std::string logMessage) {
+               Report(dapManager_.SetBreakpointLogMessage(file, line, std::move(logMessage)));
            });
 }
 

@@ -323,6 +323,40 @@ TEST_CASE("A reload re-anchors a breakpoint to its stored line rather than dropp
     REQUIRE(buffer.LiveAnchorCount() == 1); // re-anchored, not abandoned
 }
 
+TEST_CASE("A host's file keys apart from the same path here and round-trips", "[Dap]") {
+    const ned::text::RemoteFile remote{.destination = "box", .path = "/src/a.c"};
+    REQUIRE(Manager::NormalizePathKey(remote) == "box:/src/a.c");
+    REQUIRE(Manager::FileForKey("box:/src/a.c") == ned::text::FileRef(remote));
+    // A local key is absolute, so a ":/" inside it never reads as a host.
+    REQUIRE(Manager::FileForKey("/home/a:/b.c") == ned::text::FileRef(std::filesystem::path("/home/a:/b.c")));
+
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(eventLoop);
+    REQUIRE(manager.ToggleBreakpoint(remote, 4));
+    REQUIRE(manager.BreakpointsForFile(remote) == std::vector<std::size_t>{4});
+    REQUIRE(manager.BreakpointsForFile(std::filesystem::path("/src/a.c")).empty());
+    REQUIRE(manager.AllBreakpoints().contains("box:/src/a.c"));
+}
+
+TEST_CASE("A host's buffer anchors its breakpoints once its content has arrived", "[Dap]") {
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(eventLoop);
+
+    const ned::text::RemoteFile remote{.destination = "box", .path = "/src/a.c"};
+    ned::text::Buffer           buffer = ned::text::Buffer::NewRemoteFile(remote);
+    REQUIRE(manager.ToggleBreakpoint(remote, 3));
+
+    buffer.MarkLoading();
+    manager.TrackBuffer(buffer);
+    REQUIRE(buffer.LiveAnchorCount() == 0);
+
+    buffer.FinishLoad(ned::text::Rope("one\ntwo\nthree\n"));
+    manager.TrackBuffer(buffer);
+    buffer.InsertAt(0, "zero\n");
+    manager.TrackBuffer(buffer);
+    REQUIRE(manager.BreakpointsForFile(remote) == std::vector<std::size_t>{4});
+}
+
 TEST_CASE("StartOrContinue refuses to start without a launch configuration", "[Dap]") {
     ned::ui::EventLoop eventLoop;
     Manager         manager(eventLoop);
@@ -390,6 +424,39 @@ TEST_CASE("Toggling a breakpoint mid-session pushes setBreakpoints immediately",
     REQUIRE(cleared["command"] == "setBreakpoints");
     REQUIRE(cleared["arguments"]["breakpoints"] == Json::array());
     SetLaunchConfig("dap-manager-test-live-toggle", "");
+}
+
+TEST_CASE("A local session is told only about breakpoints in files here", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+
+    const ned::text::RemoteFile remote{.destination = "box", .path = "/src/a.c"};
+    const std::filesystem::path path = std::filesystem::current_path() / "dap-test-here.c";
+    fixture.manager.ToggleBreakpoint(remote, 3);
+    fixture.manager.ToggleBreakpoint(path, 7);
+
+    fixture.StartRunningSession("dap-manager-test-machine");
+    fixture.client->DispatchFrame(EventFrame("initialized"));
+    const Json setBreakpoints = fixture.reader.Next();
+    REQUIRE(setBreakpoints["command"] == "setBreakpoints");
+    REQUIRE(setBreakpoints["arguments"]["source"]["path"].get<std::string>().ends_with("dap-test-here.c"));
+    REQUIRE(fixture.reader.Next()["command"] == "setFunctionBreakpoints");
+    REQUIRE(fixture.reader.Next()["command"] == "setExceptionBreakpoints");
+    REQUIRE(fixture.reader.Next()["command"] == "configurationDone");
+
+    // A host's file toggled mid-session isn't sent either: the next request
+    // out is the local one.
+    fixture.manager.ToggleBreakpoint(remote, 5);
+    fixture.manager.ToggleBreakpoint(path, 9);
+    const Json next = fixture.reader.Next();
+    REQUIRE(next["arguments"]["source"]["path"].get<std::string>().ends_with("dap-test-here.c"));
+
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "pause"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true, Json{{"stackFrames", Json::array()}}));
+    REQUIRE(fixture.manager.RunToCursor(remote, 2) == "That file isn't on the machine being debugged.");
+    REQUIRE(fixture.manager.BreakpointsForFile(remote) == std::vector<std::size_t>{3, 5});
+    SetLaunchConfig("dap-manager-test-machine", "");
 }
 
 TEST_CASE("A stopped event fetches the top stack frame and reports its source location", "[Dap]") {

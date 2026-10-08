@@ -468,8 +468,8 @@ TEST_CASE("DebugPanel Enter on a breakpoint reports the file and line to visit",
 
     std::filesystem::path visitedPath;
     std::size_t           visitedLine = 0;
-    fixture.panel.SetOnVisitLocation([&](const std::filesystem::path& p, std::size_t line) {
-        visitedPath = p;
+    fixture.panel.SetOnVisitLocation([&](const ned::text::FileRef& f, std::size_t line) {
+        visitedPath = ned::text::PathOf(f);
         visitedLine = line;
     });
 
@@ -477,6 +477,24 @@ TEST_CASE("DebugPanel Enter on a breakpoint reports the file and line to visit",
     REQUIRE(fixture.panel.Tree().OnEvent(ned::ui::test::Return()));
     REQUIRE(visitedPath == std::filesystem::path(Manager::NormalizePathKey(path)));
     REQUIRE(visitedLine == 21);
+}
+
+TEST_CASE("DebugPanel lists a host's file by host and visits it there", "[DebugPanel]") {
+    Fixture                     fixture;
+    const ned::text::RemoteFile remote{.destination = "box.example.org", .path = "/src/debug-panel-host.c"};
+    fixture.manager.ToggleBreakpoint(remote, 6);
+
+    std::optional<ned::text::FileRef> visited;
+    fixture.panel.SetOnVisitLocation([&](const ned::text::FileRef& f, std::size_t) { visited = f; });
+
+    fixture.Select("box:debug-panel-host.c");
+    REQUIRE(fixture.panel.Tree().OnEvent(ned::ui::test::ArrowDown()));
+    REQUIRE(fixture.panel.Tree().OnEvent(ned::ui::test::Return()));
+    REQUIRE(visited == ned::text::FileRef(remote));
+
+    fixture.Select("6");
+    REQUIRE(fixture.panel.Tree().OnEvent(ned::ui::test::Character("d")));
+    REQUIRE(fixture.manager.AllBreakpoints().empty());
 }
 
 TEST_CASE("DebugPanel 'c' sets a condition on the selected breakpoint through a prompt", "[DebugPanel]") {
@@ -647,8 +665,8 @@ TEST_CASE("DebugPanel selecting a frame re-scopes the variables to it", "[DebugP
 
     std::filesystem::path visitedPath;
     std::size_t           visitedLine = 0;
-    fixture.panel.SetOnVisitLocation([&](const std::filesystem::path& p, std::size_t line) {
-        visitedPath = p;
+    fixture.panel.SetOnVisitLocation([&](const ned::text::FileRef& f, std::size_t line) {
+        visitedPath = ned::text::PathOf(f);
         visitedLine = line;
     });
 
@@ -748,7 +766,7 @@ TEST_CASE("DebugPanel lists loaded sources and modules when the adapter implemen
     REQUIRE(rows.find("No symbols.") != std::string::npos); // why a breakpoint in there wouldn't bind
 
     std::filesystem::path visited;
-    fixture.panel.SetOnVisitLocation([&](const std::filesystem::path& p, std::size_t) { visited = p; });
+    fixture.panel.SetOnVisitLocation([&](const ned::text::FileRef& f, std::size_t) { visited = ned::text::PathOf(f); });
     fixture.Select("parse.c   ");
     REQUIRE(fixture.panel.Tree().OnEvent(ned::ui::test::Return()));
     REQUIRE(visited == std::filesystem::path("/tmp/src/parse.c"));

@@ -515,6 +515,9 @@ class BufferView : public Widget {
     // public (DAP client slice 1) so WindowManager's stopped-event callback
     // can jump the focused pane to wherever the debuggee stopped.
     void JumpToPathLine(const std::filesystem::path& path, std::size_t line);
+    // JumpToPathLine for a file here, VisitRemoteFile for one on a host,
+    // which is reported missing rather than created.
+    void JumpToFileLine(const text::FileRef& file, std::size_t line);
 
     // Opens a host's file: the buffer already holding it, or a loading one
     // filled once the host answers, connecting first when needed; at line
@@ -4144,7 +4147,7 @@ class BufferView : public Widget {
     // changes. Mutable for the same const-query reasons every other
     // Ensure*Cache here is.
     mutable const text::Buffer*                  dapPathKeyBuffer_ = nullptr;
-    mutable std::optional<std::filesystem::path> dapPathKeyRawPath_;
+    mutable std::optional<text::FileRef>         dapPathKeyRawPath_;
     mutable std::string                          dapPathKey_;
 
     // PaintInlineDebugValues' resolved annotations, and the stamps that say
@@ -4205,8 +4208,8 @@ class BufferView : public Widget {
     // is DapBreakpointCondition/DapBreakpointLogMessage. DAP round 3:
     // DapBreakpointHitCondition joins the same two modes/same struct.
     struct PendingDapBreakpointTarget {
-        std::filesystem::path path;
-        std::size_t           line = 0;
+        text::FileRef file;
+        std::size_t   line = 0;
     };
     std::optional<PendingDapBreakpointTarget> pendingDapBreakpointTarget_;
 

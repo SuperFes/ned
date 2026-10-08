@@ -51,6 +51,7 @@
 #include "Editor/ProcessTimeouts.h"
 #include "Text/Buffer.h"
 #include "Text/PerBufferMap.h"
+#include "Text/RemoteFile.h"
 #include "UI/EventLoop.h"
 
 #include "Client.h"
@@ -82,7 +83,7 @@ class Manager {
     // immediately via setBreakpoints when a session is active. path is
     // normalized (weakly_canonical) so the same file toggled via different
     // spellings lands in one entry.
-    bool ToggleBreakpoint(const std::filesystem::path& path, std::size_t line);
+    bool ToggleBreakpoint(const text::FileRef& file, std::size_t line);
 
     // Slice 4: one breakpoint's full state. condition/logMessage empty
     // means "none" -- a logMessage present means the breakpoint never
@@ -152,10 +153,10 @@ class Manager {
     // adapter's own initialize response said it doesn't support the
     // feature -- informational only, the field is still sent regardless
     // (most adapters honor fields they didn't advertise).
-    std::string SetBreakpointCondition(const std::filesystem::path& path, std::size_t line, std::string condition);
-    std::string SetBreakpointLogMessage(const std::filesystem::path& path, std::size_t line, std::string logMessage);
+    std::string SetBreakpointCondition(const text::FileRef& file, std::size_t line, std::string condition);
+    std::string SetBreakpointLogMessage(const text::FileRef& file, std::size_t line, std::string logMessage);
     // DAP round 3: SetBreakpointCondition's exact sibling for hitCondition.
-    std::string SetBreakpointHitCondition(const std::filesystem::path& path, std::size_t line, std::string hitCondition);
+    std::string SetBreakpointHitCondition(const text::FileRef& file, std::size_t line, std::string hitCondition);
 
     // debug-panel: the breakpoint store's remaining edit operations, needed
     // by a listing that shows every breakpoint at once rather than only the
@@ -168,8 +169,8 @@ class Manager {
     // (Breakpoint::line), not the adapter's snapped actualLine -- the same
     // rule the condition/logMessage/hitCondition setters follow. Both are
     // no-ops, returning false, for a line holding no breakpoint.
-    bool SetBreakpointEnabled(const std::filesystem::path& path, std::size_t line, bool enabled);
-    bool RemoveBreakpoint(const std::filesystem::path& path, std::size_t line);
+    bool SetBreakpointEnabled(const text::FileRef& file, std::size_t line, bool enabled);
+    bool RemoveBreakpoint(const text::FileRef& file, std::size_t line);
     // Drops every source breakpoint in every file, pushing an empty list
     // per file that had any -- a live adapter ends up with none, rather
     // than with whatever it was last told.
@@ -182,12 +183,12 @@ class Manager {
     // the two are indistinguishable on the wire and treating them alike
     // would refuse every breakpoint against an adapter that simply doesn't
     // implement this.
-    void RequestBreakpointLocations(const std::filesystem::path& path, std::size_t line, std::size_t endLine,
+    void RequestBreakpointLocations(const text::FileRef& file, std::size_t line, std::size_t endLine,
                                     std::function<void(std::vector<std::size_t>)> callback);
 
     // Sorted breakpoint lines for path (normalized the same way) — empty if
     // none. Backs slice 2's gutter markers; public now for tests.
-    [[nodiscard]] std::vector<std::size_t> BreakpointsForFile(const std::filesystem::path& path) const;
+    [[nodiscard]] std::vector<std::size_t> BreakpointsForFile(const text::FileRef& file) const;
 
     // DAP round 3: function breakpoints -- a separate store from the
     // line-keyed one above, DAP's own `setFunctionBreakpoints` request.
@@ -400,7 +401,7 @@ class Manager {
     // untouched -- nothing temporary to clean up. Stopped-only, same gating
     // as StepOver/Into/Out: a debuggee that isn't paused has nothing
     // meaningful to run *to* yet.
-    std::string RunToCursor(const std::filesystem::path& path, std::size_t line);
+    std::string RunToCursor(const text::FileRef& file, std::size_t line);
 
     // Debugging wishlist: jump-to-line (gf's Shift+Click "skip to line") --
     // moves the stopped thread's execution point directly to path:line
@@ -415,7 +416,7 @@ class Manager {
     // `stopped` event (reason "goto") flowing through HandleStoppedEvent.
     // callback(success, message) once the whole exchange lands (or fails at
     // either step) -- message is a short, user-facing status either way.
-    void JumpToLine(const std::filesystem::path& path, std::size_t line, std::function<void(bool, std::string)> callback);
+    void JumpToLine(const text::FileRef& file, std::size_t line, std::function<void(bool, std::string)> callback);
 
     // Slice 2, for BufferView's gutter marker + execution-line highlight:
     // where the debuggee is currently stopped, as an already-normalized
@@ -439,7 +440,10 @@ class Manager {
     // Public (slice 2) so BufferView can normalize the active buffer's own
     // path once (cached per buffer) and compare keys against
     // CurrentStopKeyAndLine/BreakpointLinesForKey.
-    [[nodiscard]] static std::string NormalizePathKey(const std::filesystem::path& path);
+    // A host's file keys as destination:/path, which no local key (always
+    // absolute) can be.
+    [[nodiscard]] static std::string   NormalizePathKey(const text::FileRef& file);
+    [[nodiscard]] static text::FileRef FileForKey(const std::string& key);
 
     // dap-anchored-breakpoints follow-up: offers a live buffer as the authority on
     // where this file's breakpoints actually are. A breakpoint is stored as a line
@@ -810,6 +814,11 @@ class Manager {
     // `launch` (LaunchConfig) or `attach` (AttachConfig).
     void SendLaunchOrAttach();
     void SendBreakpointsForFile(const std::string& pathKey);
+    // Whether the file is on the machine the adapter runs on, the only
+    // files whose breakpoints it is told about.
+    [[nodiscard]] bool OnSessionMachine(const text::FileRef& file) const;
+    // The path the adapter knows the file by, on its own machine.
+    [[nodiscard]] static std::string WirePath(const text::FileRef& file);
     // DAP round 3: setFunctionBreakpoints/setExceptionBreakpoints --
     // SendBreakpointsForFile's siblings for the two non-line-keyed stores.
     void SendFunctionBreakpoints();
@@ -878,6 +887,8 @@ class Manager {
 
     std::unique_ptr<Client> client_;
     std::string                language_;
+    // The adapter's host; unset when it runs here.
+    std::optional<std::string> sessionHost_;
     SessionState               state_           = SessionState::Inactive;
     int                        stoppedThreadId_ = 0;
     // Where the debuggee is stopped (slice 2) -- see CurrentStopKeyAndLine.

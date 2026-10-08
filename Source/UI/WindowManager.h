@@ -702,7 +702,7 @@ class WindowManager {
     // chord that opens a prompt moves keyboard focus to it.
     bool DispatchGlobalChord(const editor::KeyChord& chord);
 
-    void RequestVisitLocation(const std::filesystem::path& path, std::size_t line);
+    void RequestVisitLocation(const text::FileRef& file, std::size_t line);
     // The Remote panel's Enter on a file and 'o': the file opened, or
     // remote-open-root's prompt started, in the focused pane (the first
     // leaf while the panel holds focus). The prompt takes focus to type in.
