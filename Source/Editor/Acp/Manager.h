@@ -51,7 +51,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Editor/Lifetime.h"
 #include "Editor/ProcessTimeouts.h"
+#include "Text/RemoteFile.h"
 #include "UI/EventLoop.h"
 
 #include "Client.h"
@@ -66,6 +68,10 @@ class BufferList;
 namespace ned::editor::mcp {
 class BridgeServer;
 } // namespace ned::editor::mcp
+
+namespace ned::editor::remote {
+class Hosts;
+} // namespace ned::editor::remote
 
 namespace ned::editor::acp {
 
@@ -212,7 +218,14 @@ class Manager {
     // "session ready" line land in the returned buffer, not in a return
     // value, since nothing here is synchronously known yet when this
     // returns.
-    text::Buffer* StartSession(const std::string& agentName);
+    //
+    // With `beside`, the agent runs on that file's host, in the project
+    // root found there, and every session on the connection works there.
+    text::Buffer* StartSession(const std::string& agentName, const std::optional<text::RemoteFile>& beside = std::nullopt);
+
+    // The file the running (or starting) agent was started beside; nullopt
+    // for one running here.
+    [[nodiscard]] const std::optional<text::RemoteFile>& AgentBeside() const;
 
     // Session settings the agent advertises: its modes (session/new's
     // `modes`) and config options (`configOptions` -- mode, model, effort,
@@ -660,6 +673,9 @@ class Manager {
     // instead of sending an empty mcpServers list.
     void SetMcpBridgeServer(mcp::BridgeServer* server);
 
+    // What runs an agent on a host; null leaves only local agents possible.
+    void SetRemoteHosts(remote::Hosts* hosts);
+
     // Public primarily for tests -- mirrors Manager::SetClientForTesting
     // exactly: registers an already-constructed Client (typically
     // pipe-backed, no real subprocess) as the session's client without
@@ -714,6 +730,11 @@ class Manager {
     };
 
     void          WireClient(Client& client);
+    void          StartSessionOnHost(const text::RemoteFile& beside, const std::vector<std::string>& argv);
+    void          SendInitialize();
+    // The directory sessions are created in: the project root, on the
+    // agent's host for one running there.
+    [[nodiscard]] std::filesystem::path SessionRoot() const;
     void          HandleSessionUpdate(const Json& params);
     void          EndSession(std::string reason);
     void          AppendToOutputBuffer(std::string_view text);
@@ -826,6 +847,12 @@ class Manager {
     // reflowing (and therefore visibly reshuffling) the trailing few lines
     // of the panel every single chunk.
     ned::ui::DeadlineTimer agentTextRepaintDebounce_;
+
+    remote::Hosts*                       hosts_ = nullptr;
+    std::optional<text::RemoteFile>      agentBeside_;
+    std::optional<std::filesystem::path> agentRoot_; // set once a host's agent has started
+    // Drops an agent that arrives after its session has ended.
+    LifetimeGuard spawnLifetime_;
 };
 
 } // namespace ned::editor::acp

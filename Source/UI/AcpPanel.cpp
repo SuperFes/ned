@@ -115,6 +115,15 @@ namespace {
         return text::StringColumns(text);
     }
 
+    // "agent@host" for one running on a host, as a terminal tab names it.
+    std::string AgentLabel(const editor::acp::Manager* manager) {
+        if (!manager || manager->AgentName().empty()) {
+            return "ACP agent";
+        }
+        const auto& beside = manager->AgentBeside();
+        return beside ? manager->AgentName() + "@" + beside->destination : manager->AgentName();
+    }
+
     std::string StateLabel(const editor::acp::Manager* manager) {
         if (!manager) {
             return "inactive";
@@ -159,7 +168,7 @@ void AcpPanel::SetDockHosted(bool dockHosted) {
 }
 
 std::string AcpPanel::TitleText() const {
-    const std::string agentName = acpManager_ && !acpManager_->AgentName().empty() ? acpManager_->AgentName() : std::string("ACP agent");
+    const std::string agentName = AgentLabel(acpManager_);
     std::string       title     = (attention_ ? "● " : "") + agentName;
     if (acpManager_ && !acpManager_->SessionTitle().empty()) {
         // Bounded: this is also the dock's tab label.
@@ -193,7 +202,7 @@ void AcpPanel::StartLogin(const editor::acp::Manager::AuthMethod& method) {
         ShowNotice("Can't run this agent's login here");
         return;
     }
-    onTerminalLogin_(std::move(*argv), method.env, method.name, [this](bool succeeded) {
+    onTerminalLogin_(std::move(*argv), method.env, method.name, acpManager_->AgentBeside(), [this](bool succeeded) {
         acpManager_->FinishLogin(succeeded);
         if (succeeded && onRefocusRequest_) {
             onRefocusRequest_();
@@ -1616,7 +1625,7 @@ void AcpPanel::PaintCollapsedStrip(Canvas& canvas, int width, int height) const 
             stripBrush.ApplyTo(cell);
         }
     }
-    const std::string agentName = acpManager_ && !acpManager_->AgentName().empty() ? acpManager_->AgentName() : std::string("ACP agent");
+    const std::string agentName = AgentLabel(acpManager_);
     const std::string title =
         agentName + " [" + StateLabel(acpManager_) + "] (minimized)";
     DrawBorderTitle(canvas, title, stripBrush);

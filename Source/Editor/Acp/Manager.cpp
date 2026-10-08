@@ -17,6 +17,7 @@
 #include "Editor/Mcp/BridgeSetting.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Settings.h"
+#include "Editor/Remote/Placement.h"
 #include "Editor/WrapOverrides.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -320,9 +321,20 @@ Json Manager::McpServers() {
 }
 
 Json Manager::SessionParams(Session& session) {
-    const std::filesystem::path root = editor::ProjectRoot();
-    Json                        params{{"cwd", root.string()}, {"mcpServers", McpServers()}};
-    const auto                  configured = LoadProjectSettings(root).acpAdditionalDirectories;
+    const std::filesystem::path root = SessionRoot();
+    if (agentBeside_) {
+        // Neither reaches a host: the bridge is a socket here, and the
+        // directories are this machine's.
+        if (mcpBridgeServer_ && mcp::McpBridgeEnabled()) {
+            PushSessionEvent(session, "ned's MCP tools aren't offered to an agent on " + agentBeside_->destination);
+        }
+        if (!LoadProjectSettings(editor::ProjectRoot()).acpAdditionalDirectories.empty()) {
+            PushSessionEvent(session, "acpAdditionalDirectories not sent to an agent on " + agentBeside_->destination);
+        }
+        return Json{{"cwd", root.string()}, {"mcpServers", Json::array()}};
+    }
+    Json       params{{"cwd", root.string()}, {"mcpServers", McpServers()}};
+    const auto configured = LoadProjectSettings(root).acpAdditionalDirectories;
     if (configured.empty()) {
         return params;
     }
@@ -377,7 +389,7 @@ void Manager::ListSessions(std::function<void(std::vector<SessionSummary> sessio
     // Each pending response owns the fetcher; the fetcher only refers back
     // weakly, so a response the client drops (the session ended) frees it.
     *fetch = [this, sessions, weakFetch = std::weak_ptr(fetch), done = std::move(done)](std::optional<std::string> cursor, int page) {
-        Json params{{"cwd", editor::ProjectRoot().string()}};
+        Json params{{"cwd", SessionRoot().string()}};
         if (cursor) {
             params["cursor"] = *cursor;
         }
@@ -1172,7 +1184,7 @@ void Manager::PushOrReplacePlan(Session& s, const Json& update) {
     PushTranscriptEntry(s, TranscriptEntry{.kind = TranscriptEntry::Kind::Plan, .planSteps = std::move(steps)});
 }
 
-text::Buffer* Manager::StartSession(const std::string& agentName) {
+text::Buffer* Manager::StartSession(const std::string& agentName, const std::optional<text::RemoteFile>& beside) {
     text::Buffer& buffer = OutputBuffer(agentName);
 
     if (state_ != SessionState::Inactive) {
@@ -1194,6 +1206,11 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
             PushSessionEvent(*current_, message);
             return &buffer;
         }
+        if (beside) {
+            agentName_ = agentName;
+            StartSessionOnHost(*beside, *argv);
+            return &buffer;
+        }
         try {
             client_ = std::make_unique<Client>(*argv, eventLoop_);
         }
@@ -1207,8 +1224,44 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
     }
     // else: a client injected via SetClientForTesting -- run the same handshake against it.
 
-    agentName_                    = agentName;
-    state_                        = SessionState::Starting;
+    agentName_ = agentName;
+    state_     = SessionState::Starting;
+    SendInitialize();
+    return &buffer;
+}
+
+void Manager::StartSessionOnHost(const text::RemoteFile& beside, const std::vector<std::string>& argv) {
+    agentBeside_ = beside;
+    state_       = SessionState::Starting;
+    // No cwd: the agent starts in the project root found on the host.
+    remote::SpawnBeside(hosts_, beside, remote::RemoteSpawn{.argv = argv, .stderrMode = process::StderrMode::Capture}, spawnLifetime_.Token(),
+                        [this, beside, label = std::filesystem::path(argv.front()).filename().string()](remote::Spawned spawned) {
+                            if (!spawned) {
+                                EndSession("Failed to start ACP agent: " + spawned.error());
+                                return;
+                            }
+                            agentRoot_ = spawned->cwd ? *spawned->cwd : beside.path.parent_path();
+                            client_    = std::make_unique<Client>(protocol::LineTransport(std::move(spawned->child), label), eventLoop_);
+                            SendInitialize();
+                        });
+}
+
+std::filesystem::path Manager::SessionRoot() const {
+    if (agentBeside_) {
+        return agentRoot_.value_or(agentBeside_->path.parent_path());
+    }
+    return editor::ProjectRoot();
+}
+
+const std::optional<text::RemoteFile>& Manager::AgentBeside() const {
+    return agentBeside_;
+}
+
+void Manager::SetRemoteHosts(remote::Hosts* hosts) {
+    hosts_ = hosts;
+}
+
+void Manager::SendInitialize() {
     agentSupportsEmbeddedContext_ = false; // re-negotiated below; see PromptAttachment's doc comment
     agentSupportsImages_          = false;
     WireClient(*client_);
@@ -1310,8 +1363,6 @@ text::Buffer* Manager::StartSession(const std::string& agentName) {
 
             CreateSession();
         });
-
-    return &buffer;
 }
 
 void Manager::CreateSession() {
@@ -2367,6 +2418,9 @@ void Manager::EndSession(std::string reason) {
     // itself (alive_, see Client.h's header comment), so plain immediate
     // destruction is safe regardless of timing.
     client_.reset();
+    agentBeside_.reset();
+    agentRoot_.reset();
+    spawnLifetime_.Revoke();
     AppendToOutputBuffer("\n[" + reason + "]\n");
     for (const auto& session : sessions_) {
         PushSessionEvent(*session, reason);
