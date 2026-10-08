@@ -66,6 +66,10 @@ class AcpPanel : public Widget {
     // (and "@buffer" resolves to nothing at send time) without one.
     void SetActiveBufferProvider(std::function<ActiveBuffer&()> provider);
 
+    // The open buffers, which stand in for a host agent's project listing
+    // in "@" completion. Unset offers it none. Must outlive this AcpPanel.
+    void SetBufferList(const text::BufferList* bufferList);
+
     // Prose-check-the-composer follow-up: connect-after-construction, unset
     // is a safe no-op -- this class's usual convention. Wires
     // ProseChecker/kProseLanguageKey's existing diagnostics-only connection
@@ -375,8 +379,12 @@ class AcpPanel : public Widget {
     [[nodiscard]] std::vector<editor::acp::Manager::PromptAttachment> ResolveMentionAttachments(std::string& text) const;
     // Every "@path" word in `text` naming an existing file (relative to the
     // project root, or absolute) as a resource_link attachment. The text is
-    // left as typed: the agent sees the mention and gets the link.
-    static void AppendFileMentionLinks(const std::string& text, std::vector<editor::acp::Manager::PromptAttachment>& attachments);
+    // left as typed: the agent sees the mention and gets the link. For an
+    // agent on a host, only a file of its open here counts, since the host's
+    // disk can't be checked from here.
+    void AppendFileMentionLinks(const std::string& text, std::vector<editor::acp::Manager::PromptAttachment>& attachments) const;
+    // The files open here from `destination`, relative to `root`.
+    [[nodiscard]] std::vector<std::string> OpenHostFiles(const std::string& destination, const std::filesystem::path& root) const;
 
     // Prose-check-the-composer follow-up: called once per Paint() (there's
     // no per-keystroke edit hook the way RefreshMentionState has -- Paint()
@@ -397,6 +405,7 @@ class AcpPanel : public Widget {
     // ACP context auto-attach follow-up -- see SetActiveBufferProvider's
     // own doc comment.
     std::function<ActiveBuffer&()> activeBufferProvider_;
+    const text::BufferList*        bufferList_ = nullptr;
 
     // Prose-check-the-composer follow-up -- see SetLspManager/
     // RequestProseCheckIfNeeded's own doc comments. composerProseDiagnostics_
