@@ -16,6 +16,10 @@ void TaskProcess::Cancel() noexcept {
     stream_.Child().Kill();
 }
 
+void TaskProcess::Feed(std::string input, std::chrono::milliseconds timeout) {
+    stream_.Feed(std::move(input), timeout);
+}
+
 void TaskProcess::DispatchOutput(std::string_view chunk) {
     stream_.DispatchOutput(chunk);
 }

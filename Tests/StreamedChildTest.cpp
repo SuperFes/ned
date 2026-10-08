@@ -64,3 +64,49 @@ TEST_CASE("StreamedChild reports a killed child's exit as a signal", "[Process]"
     REQUIRE(DrainUntil(eventLoop, [&] { return exited; }));
     CHECK_FALSE(exitCode.has_value());
 }
+
+TEST_CASE("StreamedChild feeds input while it reads output", "[Process]") {
+    ned::ui::EventLoop eventLoop;
+    std::string        input(4 * 1024 * 1024, 'x');
+    for (std::size_t i = 0; i < input.size(); i += 4096) {
+        input[i] = static_cast<char>('a' + i / 4096 % 26);
+    }
+    std::string        output;
+    std::optional<int> exitCode;
+    bool               exited = false;
+
+    // cat writes as it reads, so writing everything before reading any of
+    // it would fill both pipes and stall.
+    StreamedChild child(ChildProcess({"cat"}), eventLoop, [&](std::string_view chunk) { output += chunk; }, [&](std::optional<int> code) {
+        exited   = true;
+        exitCode = code; });
+    child.Feed(input, std::chrono::seconds(5));
+
+    REQUIRE(DrainUntil(eventLoop, [&] { return exited; }));
+    CHECK(output == input);
+    CHECK(exitCode == 0);
+}
+
+TEST_CASE("StreamedChild kills a child that stops taking its input", "[Process]") {
+    ned::ui::EventLoop eventLoop;
+    std::optional<int> exitCode = 0;
+    bool               exited   = false;
+
+    StreamedChild child(ChildProcess({"sleep", "30"}), eventLoop, [](std::string_view) {}, [&](std::optional<int> code) {
+        exited   = true;
+        exitCode = code; });
+    child.Feed(std::string(4 * 1024 * 1024, 'x'), std::chrono::milliseconds(100));
+
+    REQUIRE(DrainUntil(eventLoop, [&] { return exited; }));
+    CHECK_FALSE(exitCode.has_value());
+}
+
+TEST_CASE("StreamedChild's teardown ends a Feed still writing", "[Process]") {
+    ned::ui::EventLoop eventLoop;
+    const auto         started = std::chrono::steady_clock::now();
+    {
+        StreamedChild child(ChildProcess({"sleep", "30"}), eventLoop, [](std::string_view) {}, [](std::optional<int>) {});
+        child.Feed(std::string(4 * 1024 * 1024, 'x'), std::chrono::seconds(30));
+    }
+    CHECK(std::chrono::steady_clock::now() - started < std::chrono::seconds(10));
+}

@@ -12,6 +12,7 @@
 #ifndef NED_EDITOR_TASKS_TASKPROCESS_H
 #define NED_EDITOR_TASKS_TASKPROCESS_H
 
+#include <chrono>
 #include <functional>
 #include <optional>
 #include <string>
@@ -50,6 +51,9 @@ class TaskProcess {
     // onExit(exitCode), so callers don't need to distinguish how they
     // learned the process ended.
     void Cancel() noexcept;
+
+    // StreamedChild::Feed.
+    void Feed(std::string input, std::chrono::milliseconds timeout);
 
     // Public primarily for tests -- mirrors Client::DispatchFrame's own
     // "public primarily for tests" precedent (see that method's doc comment
