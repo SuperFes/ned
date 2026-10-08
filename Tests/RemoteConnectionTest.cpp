@@ -2,9 +2,11 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -32,6 +34,8 @@ using ned::editor::PostQueue;
 using ned::editor::protocol::FrameTransport;
 using ned::editor::protocol::RemoteError;
 using ned::editor::protocol::ResponseHandlers;
+using ned::editor::remote::AskpassAnswer;
+using ned::editor::remote::AskpassQuestion;
 using ned::editor::remote::ConnectError;
 using ned::editor::remote::Connection;
 using ned::editor::remote::ConnectOptions;
@@ -323,6 +327,46 @@ TEST_CASE("Hosts report attempts that fail or are cancelled, and connections tha
     REQUIRE(dropped == std::pair<std::string, std::string>{"host", "the link went away"});
     REQUIRE(hosts.Find("host") == nullptr);
     REQUIRE(PumpUntil(queue, [&] { return hosts.Destinations().empty(); }));
+}
+
+TEST_CASE("Hosts ask ssh's login questions on the main thread and withdraw them with the attempt", "[Remote][Connection][HostAgent]") {
+    FakeHost  fake;
+    PostQueue queue;
+    Hosts     hosts(queue, [&](const std::string& destination) {
+        ConnectOptions options     = fake.Options(destination);
+        options.ssh.askpassProgram = NED_FAKE_ASKPASS;
+        return options;
+    });
+
+    std::vector<std::pair<std::uint64_t, AskpassQuestion>> asked;
+    std::vector<std::uint64_t>                             withdrawn;
+    std::function<void(AskpassAnswer)>                     answer;
+    hosts.SetAskpass(
+        [&](std::uint64_t id, const AskpassQuestion& question, std::function<void(AskpassAnswer)> reply) {
+            asked.emplace_back(id, question);
+            answer = std::move(reply);
+        },
+        [&](std::uint64_t id) { withdrawn.push_back(id); });
+
+    Connection* live = nullptr;
+    hosts.Connect("password", [&](std::expected<Connection*, std::string> connection) { live = connection.value(); });
+    REQUIRE(PumpUntil(queue, [&] { return !asked.empty(); }));
+    REQUIRE(asked[0].second.destination == "password");
+    REQUIRE(asked[0].second.prompt == "fake@password's password: ");
+    answer(std::string("hunter2"));
+    // A second answer to the same question is ignored.
+    answer(std::string("ignored"));
+    REQUIRE(PumpUntil(queue, [&] { return live != nullptr; }));
+    REQUIRE(asked.size() == 1);
+    REQUIRE(withdrawn.empty());
+
+    std::optional<std::expected<Connection*, std::string>> cancelled;
+    hosts.Connect("unknown-host", [&](std::expected<Connection*, std::string> connection) { cancelled = connection; });
+    REQUIRE(PumpUntil(queue, [&] { return asked.size() == 2; }));
+    REQUIRE(hosts.Disconnect("unknown-host"));
+    REQUIRE(cancelled.has_value());
+    REQUIRE(PumpUntil(queue, [&] { return withdrawn == std::vector<std::uint64_t>{asked[1].first}; }));
+    REQUIRE(asked[1].first != asked[0].first);
 }
 
 TEST_CASE("Hosts say when a destination starts or ends an attempt, or gains or loses its connection", "[Remote][Connection][HostAgent]") {

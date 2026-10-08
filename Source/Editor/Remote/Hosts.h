@@ -6,6 +6,7 @@
 #ifndef NED_EDITOR_REMOTE_HOSTS_H
 #define NED_EDITOR_REMOTE_HOSTS_H
 
+#include <atomic>
 #include <cstdint>
 #include <expected>
 #include <functional>
@@ -16,6 +17,7 @@
 
 #include "Editor/Lifetime.h"
 #include "Editor/PostQueue.h"
+#include "Editor/Remote/Askpass.h"
 #include "Editor/Remote/Connection.h"
 #include "Editor/Remote/HostLookup.h"
 
@@ -27,6 +29,10 @@ class Hosts {
     using Dropped        = std::function<void(const std::string& destination, const std::string& reason)>;
     using OptionsFactory = std::function<ConnectOptions(const std::string& destination)>;
     using Changed        = std::function<void(const std::string& destination)>;
+    // Asks the user one of ssh's login questions (Askpass.h). answer may run
+    // later, at most once; once a question is withdrawn it does nothing.
+    using Ask      = std::function<void(std::uint64_t id, const AskpassQuestion& question, std::function<void(AskpassAnswer)> answer)>;
+    using Withdraw = std::function<void(std::uint64_t id)>;
 
     explicit Hosts(PostQueue& postQueue, OptionsFactory options = DefaultOptions, HostLookupOptions lookup = {});
     // Cancels every attempt and closes every connection.
@@ -64,6 +70,10 @@ class Hosts {
     // gains or loses its connection.
     void SetOnChanged(Changed handler);
 
+    // Who answers ssh's login questions, on the main thread. Attempts that
+    // start without one log in in BatchMode.
+    void SetAskpass(Ask ask, Withdraw withdraw);
+
     // Resolver lookups for a connect prompt's host names.
     [[nodiscard]] HostLookup& Lookup() noexcept;
 
@@ -75,12 +85,17 @@ class Hosts {
     };
 
     void Finish(const std::string& destination, std::uint64_t id, Connector::Result result);
+    // An attempt's askpass handler: hands each question to ask_ and waits.
+    [[nodiscard]] AskpassHandler MainThreadAskpass();
     void NoteChanged(const std::string& destination);
 
     PostQueue&                                         postQueue_;
     OptionsFactory                                     options_;
     Dropped                                            onDropped_;
     Changed                                            onChanged_;
+    Ask                                                ask_;
+    Withdraw                                           withdraw_;
+    std::atomic<std::uint64_t>                         nextQuestionId_ = 0;
     std::map<std::string, std::unique_ptr<Connection>> connections_;
     std::map<std::string, Attempt>                     attempts_;
     // Cancelled attempts whose workers haven't answered yet, by id.
