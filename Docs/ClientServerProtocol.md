@@ -256,6 +256,17 @@ a remote buffer's opens on its host, in the project root found there, as a login
 tab's label names the host, and one that can't start shows why in place of its output.
 Reveal in Terminal is local only: it takes the first terminal here.
 
+**Language servers.** A remote buffer's language server runs on its host, with the same
+command as a local one, outside the broker. It starts in the root its language's markers
+name there, found by `fs/project-root`, and only on a host already connected: syncing a
+buffer never opens a connection. It is sent no `processId`, since it can't see this
+process. Its URIs are host paths, so what it names comes back as a file on that host
+(`Text/RemoteFile.h`'s `FileRef`): a jump opens it there, references list `host:/path`
+lines, and an edit opens the host's files it touches before changing them. A server-sent
+`workspace/applyEdit` edits only those already open, and file creates, renames and
+deletes on a host are refused. Local file operations and watched-file changes reach only
+local servers.
+
 **Main-thread waits.** A remote process can't be waited on from the main thread, which
 is what moves its bytes. A call site that blocks there on a child (the toolchain probes)
 becomes asynchronous, or moves to a worker, before it can run remotely. One that hands a
