@@ -250,11 +250,18 @@ Repository-wide commands and the VCS panel work in the active buffer's repositor
 (`Vcs/Runner.h`'s `RepoFor`); one with no file of its own, a `*vcs*` buffer or the
 commit message, works in the last one found.
 
+**Terminals.** A terminal tab opens beside the buffer focused when it is first shown, so
+a remote buffer's opens on its host, in the project root found there, as a login shell
+(`$SHELL -l`, through `/bin/sh` to find it). A restart reconnects to the same host. The
+tab's label names the host, and one that can't start shows why in place of its output.
+Reveal in Terminal is local only: it takes the first terminal here.
+
 **Main-thread waits.** A remote process can't be waited on from the main thread, which
 is what moves its bytes. A call site that blocks there on a child (the toolchain probes)
 becomes asynchronous, or moves to a worker, before it can run remotely. One that hands a
 child a local temp file's path passes the content on stdin instead, written from a thread
-of its own (`StreamedChild::Feed`), since that input moves through the main thread too.
+of its own (`StreamedChild::Feed`), since that input moves through the main thread too. A
+terminal's typing is queued the same way (`StreamedChild::Send`).
 The format command runs this way for a remote buffer (`Editor/FormatRun.h`):
 save-buffer and format-buffer hand the run to BufferView, which applies the output only
 if the buffer hasn't changed since, and then saves. A local buffer's still runs

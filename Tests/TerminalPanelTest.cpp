@@ -619,3 +619,15 @@ TEST_CASE("TerminalPanel that can't start its shell shows why and can be restart
         CHECK(exits == std::vector<std::optional<int>>{127});
     }
 }
+
+TEST_CASE("TerminalPanel reports where it was placed", "[TerminalPanel]") {
+    Theme         theme = ned::ui::DarkTheme();
+    TerminalPanel panel(theme);
+    CHECK_FALSE(panel.Placed());
+    panel.SetPlacement(nullptr, std::nullopt);
+    CHECK(panel.Placed());
+    CHECK_FALSE(panel.Beside().has_value());
+    panel.SetPlacement(nullptr, ned::text::RemoteFile{.destination = "box", .path = "/a"});
+    REQUIRE(panel.Beside().has_value());
+    CHECK(panel.Beside()->destination == "box");
+}

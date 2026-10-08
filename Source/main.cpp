@@ -2188,7 +2188,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // no-op ever since the tabbed-bottom-dock migration, since a
     // TerminalPanel is no longer registered as its own OverlayHost overlay
     // at all -- see this follow-up's own notes on those two fixed sites).
-    auto showTerminalTab = [&overlays, &panelDock](const TerminalTab& tab) {
+    // A tab not yet placed starts beside the focused buffer: on its host,
+    // for a remote one.
+    auto showTerminalTab = [&overlays, &panelDock, &remoteHosts, wm = windowManager.get()](const TerminalTab& tab) {
+        if (!tab.panel->Placed()) {
+            tab.panel->SetPlacement(&remoteHosts, wm->FocusedActiveBuffer().Get().Remote());
+        }
         tab.panel->EnsureStarted();
         overlays.Show(panelDock);
         panelDock.SwitchTo(tab.tabId); // SwitchTo itself takes focus for the panel
@@ -2203,8 +2208,14 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // TerminalPanel's visibility -- calling overlays.Show/IsVisible
     // directly on a TerminalPanel hasn't done anything since that
     // migration, since it's no longer registered as its own overlay).
-    auto revealPathInTerminal = [&terminalTabs, &addTerminalTab, &showTerminalTab](const std::filesystem::path& dir) {
-        TerminalTab& tab = terminalTabs.empty() ? addTerminalTab() : terminalTabs.front();
+    // dir is local, so this takes the first terminal here.
+    auto revealPathInTerminal = [&terminalTabs, &addTerminalTab, &showTerminalTab, &remoteHosts](const std::filesystem::path& dir) {
+        const auto   local = std::find_if(terminalTabs.begin(), terminalTabs.end(),
+                                          [](const TerminalTab& tab) { return !tab.panel->Placed() || !tab.panel->Beside(); });
+        TerminalTab& tab   = local == terminalTabs.end() ? addTerminalTab() : *local;
+        if (!tab.panel->Placed()) {
+            tab.panel->SetPlacement(&remoteHosts, std::nullopt);
+        }
         showTerminalTab(tab);
         tab.panel->SendText("cd " + ned::editor::ShellQuoteSingle(dir) + "\n");
     };
