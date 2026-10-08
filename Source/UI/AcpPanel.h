@@ -119,9 +119,10 @@ class AcpPanel : public Widget {
     void ReleasePixelPlanes();
 
     // Runs an agent's login command in a terminal: `argv` with `env` set,
-    // under `label`; `done` is told whether it exited 0.
+    // under `label`, on `beside`'s host when the agent runs there; `done` is
+    // told whether it exited 0.
     using TerminalLoginFn = std::function<void(std::vector<std::string> argv, std::vector<std::pair<std::string, std::string>> env,
-                                               std::string label, std::function<void(bool succeeded)> done)>;
+                                               std::string label, std::optional<text::RemoteFile> beside, std::function<void(bool succeeded)> done)>;
     void SetOnTerminalLogin(TerminalLoginFn onTerminalLogin);
 
     // Where copied text goes: a copy-button click or the copy picker.

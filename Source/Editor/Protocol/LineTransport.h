@@ -58,6 +58,10 @@ class LineTransport {
     // -1 (the default) means "no process to manage."
     LineTransport(int readFd, int writeFd, pid_t pid = -1);
 
+    // An already-spawned agent, such as one relayed from a host
+    // (Remote/Proc.h). processLabel names it on its stderr lines.
+    LineTransport(process::ChildProcess child, std::string processLabel);
+
     ~LineTransport() = default; // ChildProcess's own destructor does the real work
 
     LineTransport(LineTransport&&)                 = default;

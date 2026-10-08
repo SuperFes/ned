@@ -347,7 +347,9 @@ add_executable(ned_tests
             LspRemoteTest.cpp
             BufferViewRemoteLspTest.cpp
             DapRemoteTest.cpp
+            AcpRemoteTest.cpp
             BufferViewRemoteDapTest.cpp
+            BufferViewRemoteAcpTest.cpp
             FormatRunTest.cpp
             RemoteVcsTest.cpp
         RemoteProcTest.cpp

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 
 #include <unistd.h>
 
@@ -85,6 +86,9 @@ LineTransport::LineTransport(const std::vector<std::string>& argv, bool captureS
 }
 
 LineTransport::LineTransport(int readFd, int writeFd, pid_t pid) : child_(readFd, writeFd, pid) {
+}
+
+LineTransport::LineTransport(process::ChildProcess child, std::string processLabel) : child_(std::move(child)), processLabel_(std::move(processLabel)) {
 }
 
 void LineTransport::WriteFrame(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout) const {

@@ -1761,6 +1761,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     ned::editor::mcp::ToolRegistry    mcpToolRegistry(bufferList, lspManager, vcsRunner, testRunner, dapManager);
     ned::editor::mcp::BridgeServer mcpBridgeServer(mcpToolRegistry, eventLoop);
     acpManager.SetMcpBridgeServer(&mcpBridgeServer);
+    acpManager.SetRemoteHosts(&remoteHosts);
 
     // BufferView's completion-debounce/status-message-idle-timeout
     // DeadlineTimers and ScrollArrowButton's press-and-hold repeat both need
@@ -2329,7 +2330,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
                     // (renamed/removed from init.janet since).
                     if (acpManager.State() == ned::editor::acp::Manager::SessionState::Inactive && lastAcpAgent &&
                         ned::editor::acp::AgentCommand(*lastAcpAgent)) {
-                        acpManager.StartSession(*lastAcpAgent);
+                        acpManager.StartSession(*lastAcpAgent, wm->FocusedActiveBuffer().Get().Remote());
                     }
                 }
                 else {
@@ -2380,21 +2381,21 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
             }
             panel->SetCollapsed(false);
         });
-        auto toggleAcpPanel = [&overlays, panel = &acpPanel, &acpManager,
-            lastAcpAgent = restoredSession ? restoredSession->lastAcpAgent : std::nullopt] {
-                if (!overlays.IsVisible(*panel)) {
-                    overlays.Show(*panel);
-                    panel->SetCollapsed(false);
-                    panel->TakeFocus();
-                    if (acpManager.State() == ned::editor::acp::Manager::SessionState::Inactive && lastAcpAgent &&
-                        ned::editor::acp::AgentCommand(*lastAcpAgent)) {
-                        acpManager.StartSession(*lastAcpAgent);
-                    }
+        auto toggleAcpPanel = [&overlays, panel = &acpPanel, &acpManager, wm = windowManager.get(),
+                               lastAcpAgent = restoredSession ? restoredSession->lastAcpAgent : std::nullopt] {
+            if (!overlays.IsVisible(*panel)) {
+                overlays.Show(*panel);
+                panel->SetCollapsed(false);
+                panel->TakeFocus();
+                if (acpManager.State() == ned::editor::acp::Manager::SessionState::Inactive && lastAcpAgent &&
+                    ned::editor::acp::AgentCommand(*lastAcpAgent)) {
+                    acpManager.StartSession(*lastAcpAgent, wm->FocusedActiveBuffer().Get().Remote());
                 }
-                else {
-                    overlays.Hide(*panel);
-                }
-            };
+            }
+            else {
+                overlays.Hide(*panel);
+            }
+        };
         windowManager->SetOnAcpPanelToggle(toggleAcpPanel);
         acpPanel.SetOnToggleRequest(toggleAcpPanel);
         acpPanel.SetOnRefocusRequest([&overlays, panel = &acpPanel] {
@@ -2489,15 +2490,18 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // An ACP agent's login, in a terminal tab of its own. A new login
     // replaces a previous one's tab; a successful one closes its tab (the
     // panel itself is released later -- this runs inside its exit callback).
-    acpPanel.SetOnTerminalLogin([&overlays, &panelDock, &acpLoginPanel, &acpLoginTab, &theme, &eventLoop](
+    acpPanel.SetOnTerminalLogin([&overlays, &panelDock, &acpLoginPanel, &acpLoginTab, &theme, &eventLoop, &remoteHosts](
                                     std::vector<std::string> argv, std::vector<std::pair<std::string, std::string>> env, std::string label,
-                                    std::function<void(bool)> done) {
+                                    std::optional<ned::text::RemoteFile> beside, std::function<void(bool)> done) {
         if (acpLoginTab) {
             panelDock.RemovePanel(*acpLoginTab);
         }
         acpLoginPanel = std::make_shared<ned::ui::TerminalPanel>(theme, std::move(argv), label);
         acpLoginPanel->SetEventLoop(&eventLoop);
         acpLoginPanel->SetEnvironment(std::move(env));
+        if (beside) {
+            acpLoginPanel->SetPlacement(&remoteHosts, std::move(beside));
+        }
         acpLoginPanel->SetOnExit([&panelDock, &acpLoginPanel, &acpLoginTab, &eventLoop, done = std::move(done)](std::optional<int> exitCode) {
             const bool succeeded = exitCode == 0;
             if (succeeded && acpLoginTab) {

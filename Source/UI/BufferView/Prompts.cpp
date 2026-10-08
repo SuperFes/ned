@@ -5359,7 +5359,7 @@ bufferview::FuzzyPrompt BufferView::AcpAgentNamePrompt() {
                 if (!acpManager_) {
                     statusMessage_ = "No ACP manager available.";
                 }
-                else if (text::Buffer* buffer = acpManager_->StartSession(selected)) {
+                else if (text::Buffer* buffer = acpManager_->StartSession(selected, activeBuffer_.Get().Remote())) {
                     activeBuffer_.Set(*buffer);
                     statusMessage_.clear();
                 } }};

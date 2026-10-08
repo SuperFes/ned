@@ -1915,12 +1915,14 @@ TEST_CASE("AcpPanel's login picker runs a terminal login and carries on once it 
     std::vector<std::pair<std::string, std::string>> loginEnv;
     std::string                                      loginLabel;
     std::function<void(bool)>                        loginDone;
+    std::optional<ned::text::RemoteFile>             loginBeside{ned::text::RemoteFile{}};
     fixture.panel.SetOnTerminalLogin([&](std::vector<std::string> argv, std::vector<std::pair<std::string, std::string>> env, std::string label,
-                                         std::function<void(bool)> done) {
-        loginArgv  = std::move(argv);
-        loginEnv   = std::move(env);
-        loginLabel = std::move(label);
-        loginDone  = std::move(done);
+                                         std::optional<ned::text::RemoteFile> beside, std::function<void(bool)> done) {
+        loginArgv   = std::move(argv);
+        loginEnv    = std::move(env);
+        loginLabel  = std::move(label);
+        loginBeside = std::move(beside);
+        loginDone   = std::move(done);
     });
 
     fixture.manager.StartSession("login-agent");
@@ -1943,6 +1945,7 @@ TEST_CASE("AcpPanel's login picker runs a terminal login and carries on once it 
     REQUIRE(fixture.panel.OnEvent(ned::ui::test::Return()));
     REQUIRE(loginArgv == std::vector<std::string>{"agent-bin", "--cli", "auth", "login"});
     REQUIRE(loginEnv == std::vector<std::pair<std::string, std::string>>{{"X", "1"}});
+    CHECK_FALSE(loginBeside.has_value());
     REQUIRE(loginLabel == "Anthropic Console");
 
     loginDone(true);
