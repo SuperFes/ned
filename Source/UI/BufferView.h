@@ -2614,7 +2614,15 @@ class BufferView : public Widget {
     // affected buffer is left modified-but-unsaved like any other in-editor
     // edit -- no auto-save-across-files behavior, matching this codebase's
     // existing "saves are always user-initiated" convention.
+    //
+    // A host's file is edited only in a buffer already holding it, and
+    // creating, renaming or deleting one is refused.
     bool ApplyResolvedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, std::string description);
+
+    // Whether every host's file edit touches is open here. If not, opens
+    // them and runs then once all have loaded, or reports the one that
+    // couldn't be.
+    bool EnsureRemoteFilesOpen(const editor::lsp::Manager::ResolvedRename& edit, std::function<void()> then);
 
     // project-undo follow-up: applies one WorkspaceTextEdit list per buffer
     // (via the file-local ApplyWorkspaceTextEdits helper, one undo group

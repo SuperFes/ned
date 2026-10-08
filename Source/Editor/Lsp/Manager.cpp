@@ -82,12 +82,17 @@ namespace {
         return text::FileUriToPath(uri);
     }
 
-    // A path a connection's server named: on its host for a remote one.
-    text::FileRef DocumentFile(const std::string& connectionKey, const std::filesystem::path& path) {
-        if (std::optional<std::string> host = ConnectionHost(connectionKey)) {
-            return text::RemoteFile{.destination = std::move(*host), .path = path.lexically_normal()};
+    // A path a server on host (nullopt: here) named.
+    text::FileRef DocumentFileOn(const std::optional<std::string>& host, const std::filesystem::path& path) {
+        if (host) {
+            return text::RemoteFile{.destination = *host, .path = path.lexically_normal()};
         }
         return path;
+    }
+
+    // A path a connection's server named: on its host for a remote one.
+    text::FileRef DocumentFile(const std::string& connectionKey, const std::filesystem::path& path) {
+        return DocumentFileOn(ConnectionHost(connectionKey), path);
     }
 
     // project-settings-lsp-init-options follow-up. Resolves a dotted "section"
@@ -717,7 +722,7 @@ void Manager::WireNotificationHandlers(Client& client, const std::string& server
     // comment. Per spec, "params.edit" is required and the response is
     // always {applied: bool, failureReason?: string} -- never an error
     // response, even on failure.
-    client.SetRequestHandler("workspace/applyEdit", [this](const Json& params) -> Json {
+    client.SetRequestHandler("workspace/applyEdit", [this, connectionKey](const Json& params) -> Json {
         const auto editIt = params.find("edit");
         if (editIt == params.end()) {
             return Json{{"applied", false}, {"failureReason", "missing \"edit\""}};
@@ -732,11 +737,11 @@ void Manager::WireNotificationHandlers(Client& client, const std::string& server
             if (!path) {
                 return Json{{"applied", false}, {"failureReason", "unresolvable uri"}};
             }
-            resolved.edits.push_back(ResolvedRenameEdit{.path = *path, .edits = edit.edits});
+            resolved.edits.push_back(ResolvedRenameEdit{.file = DocumentFile(connectionKey, *path), .edits = edit.edits});
         }
         if (!parsed.documentChangeOps.empty()) {
             const std::optional<std::vector<ResolvedDocumentChangeOp>> resolvedOps =
-                ResolveDocumentChangeOps(parsed.documentChangeOps);
+                ResolveDocumentChangeOps(parsed.documentChangeOps, ConnectionHost(connectionKey));
             if (!resolvedOps) {
                 return Json{{"applied", false}, {"failureReason", "unresolvable uri"}};
             }
@@ -4537,11 +4542,11 @@ void Manager::RequestRename(text::Buffer& buffer, std::size_t byteOffset, const 
                                     callback(std::nullopt);
                                     return;
                                 }
-                                resolved.edits.push_back(ResolvedRenameEdit{.path = *path, .edits = edit.edits});
+                                resolved.edits.push_back(ResolvedRenameEdit{.file = DocumentFile(language, *path), .edits = edit.edits});
                             }
                             if (!parsed.documentChangeOps.empty()) {
                                 const std::optional<std::vector<ResolvedDocumentChangeOp>> resolvedOps =
-                                    ResolveDocumentChangeOps(parsed.documentChangeOps);
+                                    ResolveDocumentChangeOps(parsed.documentChangeOps, ConnectionHost(language));
                                 if (!resolvedOps) {
                                     callback(std::nullopt); // see ResolvedDocumentChangeOp's own doc comment -- same refuse-wholesale contract
                                     return;
@@ -4567,7 +4572,8 @@ void Manager::SendWillFileOperation(const std::string& method, FileOperationGlob
     std::vector<std::pair<std::string, Client*>> targets;
     for (const auto& [serverKey, client] : clients_) {
         const auto capsIt = fileOperationFilters_.find(serverKey);
-        if (capsIt == fileOperationFilters_.end() || (capsIt->second.*globs).empty()) {
+        // A host's server has no business with files here.
+        if (ConnectionHost(serverKey) || capsIt == fileOperationFilters_.end() || (capsIt->second.*globs).empty()) {
             continue;
         }
         const bool matchesAny = std::any_of(matchPaths.begin(), matchPaths.end(), [&](const std::filesystem::path& path) {
@@ -4616,12 +4622,12 @@ void Manager::SendWillFileOperation(const std::string& method, FileOperationGlob
                             ok = false;
                             break;
                         }
-                        edits.push_back(ResolvedRenameEdit{.path = *path, .edits = edit.edits});
+                        edits.push_back(ResolvedRenameEdit{.file = DocumentFile(serverKey, *path), .edits = edit.edits});
                     }
                     std::vector<ResolvedDocumentChangeOp> ops;
                     if (ok && !parsed.documentChangeOps.empty()) {
                         const std::optional<std::vector<ResolvedDocumentChangeOp>> resolvedOps =
-                            ResolveDocumentChangeOps(parsed.documentChangeOps);
+                            ResolveDocumentChangeOps(parsed.documentChangeOps, ConnectionHost(serverKey));
                         if (!resolvedOps) {
                             ok = false;
                         }
@@ -4658,7 +4664,8 @@ void Manager::SendDidFileOperation(const std::string& method, FileOperationGlobL
     const Json params = {{"files", std::move(fileList)}};
     for (const auto& [serverKey, client] : clients_) {
         const auto capsIt = fileOperationFilters_.find(serverKey);
-        if (capsIt == fileOperationFilters_.end() || (capsIt->second.*globs).empty()) {
+        // A host's server has no business with files here.
+        if (ConnectionHost(serverKey) || capsIt == fileOperationFilters_.end() || (capsIt->second.*globs).empty()) {
             continue;
         }
         const bool matchesAny = std::any_of(matchPaths.begin(), matchPaths.end(), [&](const std::filesystem::path& path) {
@@ -4749,7 +4756,7 @@ const std::vector<DynamicRegistration>& Manager::DynamicRegistrationsFor(const s
 
 bool Manager::HasWatchedFileRegistrations() const {
     return std::any_of(dynamicRegistrations_.begin(), dynamicRegistrations_.end(), [](const auto& entry) {
-        return std::any_of(entry.second.begin(), entry.second.end(), [](const DynamicRegistration& registration) {
+        return !ConnectionHost(entry.first) && std::any_of(entry.second.begin(), entry.second.end(), [](const DynamicRegistration& registration) {
             return registration.method == "workspace/didChangeWatchedFiles" && !registration.watchers.empty();
         });
     });
@@ -4854,7 +4861,8 @@ void Manager::NotifyWatchedFilesChanged(const std::vector<WatchedFileChange>& ch
     }
     for (const auto& [connectionKey, client] : clients_) {
         const auto registrationsIt = dynamicRegistrations_.find(connectionKey);
-        if (registrationsIt == dynamicRegistrations_.end()) {
+        // These are this machine's files; a host's server watches its own.
+        if (ConnectionHost(connectionKey) || registrationsIt == dynamicRegistrations_.end()) {
             continue;
         }
         Json events = Json::array();
@@ -4917,7 +4925,7 @@ void Manager::MaybeSendDidSave(text::Buffer& buffer, BufferSyncState& state, con
     client->SendNotification("textDocument/didSave", std::move(params));
 }
 
-std::optional<std::vector<Manager::ResolvedRenameEdit>> Manager::ResolveCodeActionEdits(const CodeAction& action) {
+std::optional<std::vector<Manager::ResolvedRenameEdit>> Manager::ResolveCodeActionEdits(const CodeAction& action, const std::optional<std::string>& host) {
     if (action.touchesUnsupportedForm || !action.hasEdit) {
         return std::nullopt;
     }
@@ -4928,13 +4936,13 @@ std::optional<std::vector<Manager::ResolvedRenameEdit>> Manager::ResolveCodeActi
         if (!path) {
             return std::nullopt; // see ResolvedRenameEdit's own doc comment -- refused wholesale, not partially
         }
-        resolved.push_back(ResolvedRenameEdit{.path = *path, .edits = edit.edits});
+        resolved.push_back(ResolvedRenameEdit{.file = DocumentFileOn(host, *path), .edits = edit.edits});
     }
     return resolved;
 }
 
 std::optional<std::vector<Manager::ResolvedDocumentChangeOp>>
-Manager::ResolveDocumentChangeOps(const std::vector<DocumentChangeOp>& ops) {
+Manager::ResolveDocumentChangeOps(const std::vector<DocumentChangeOp>& ops, const std::optional<std::string>& host) {
     std::vector<ResolvedDocumentChangeOp> resolved;
     resolved.reserve(ops.size());
     for (const DocumentChangeOp& op : ops) {
@@ -4944,7 +4952,7 @@ Manager::ResolveDocumentChangeOps(const std::vector<DocumentChangeOp>& ops) {
         }
         ResolvedDocumentChangeOp resolvedOp{
             .kind              = op.kind,
-            .path              = *path,
+            .file              = DocumentFileOn(host, *path),
             .edits             = op.edits,
             .overwrite         = op.overwrite,
             .ignoreIfExists    = op.ignoreIfExists,
@@ -4955,27 +4963,27 @@ Manager::ResolveDocumentChangeOps(const std::vector<DocumentChangeOp>& ops) {
             if (!oldPath) {
                 return std::nullopt;
             }
-            resolvedOp.oldPath = *oldPath;
+            resolvedOp.oldFile = DocumentFileOn(host, *oldPath);
         }
         resolved.push_back(std::move(resolvedOp));
     }
     return resolved;
 }
 
-std::optional<Manager::ResolvedRename> Manager::ResolveCodeActionWorkspaceEdit(const CodeAction& action) {
+std::optional<Manager::ResolvedRename> Manager::ResolveCodeActionWorkspaceEdit(const CodeAction& action, const std::optional<std::string>& host) {
     ResolvedRename resolved;
     if (!action.hasEdit) {
         return resolved;
     }
     if (!action.edits.empty()) {
-        std::optional<std::vector<ResolvedRenameEdit>> edits = ResolveCodeActionEdits(action);
+        std::optional<std::vector<ResolvedRenameEdit>> edits = ResolveCodeActionEdits(action, host);
         if (!edits) {
             return std::nullopt;
         }
         resolved.edits = std::move(*edits);
     }
     if (!action.documentChangeOps.empty()) {
-        std::optional<std::vector<ResolvedDocumentChangeOp>> ops = ResolveDocumentChangeOps(action.documentChangeOps);
+        std::optional<std::vector<ResolvedDocumentChangeOp>> ops = ResolveDocumentChangeOps(action.documentChangeOps, host);
         if (!ops) {
             return std::nullopt;
         }

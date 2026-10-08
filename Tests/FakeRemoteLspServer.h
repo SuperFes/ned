@@ -27,7 +27,9 @@ inline constexpr const char* kRemoteLspLanguage = "remote-lsp-test";
 // object a line. Reports a diagnostic on each document opened, and answers
 // initialize, hover, definition (b.c, line 1, column 4), references
 // (there and a.c, line 0, column 4), a workspace symbol y (at the
-// definition) and switchSourceHeader (b.c).
+// definition), switchSourceHeader (b.c) and rename (x in a.c and y in b.c,
+// or creating c.c when the new name is "moved"). Anything else it is asked
+// gets null.
 inline constexpr const char* kRemoteLspServer = R"(import json, os, sys
 log = open(sys.argv[1], "a")
 log.write(json.dumps({"cwd": os.getcwd()}) + "\n")
@@ -63,6 +65,17 @@ while True:
         reply = {"id": message["id"], "result": [{"name": "y", "kind": 13, "location": at("b.c", 1)}]}
     elif method == "textDocument/switchSourceHeader":
         reply = {"id": message["id"], "result": here + "b.c"}
+    elif method == "textDocument/prepareRename":
+        reply = {"id": message["id"], "result": {"defaultBehavior": True}}
+    elif method == "textDocument/rename" and message["params"]["newName"] == "moved":
+        reply = {"id": message["id"], "result": {"documentChanges": [{"kind": "create", "uri": here + "c.c"}]}}
+    elif method == "textDocument/rename":
+        name = message["params"]["newName"]
+        reply = {"id": message["id"], "result": {"changes": {
+            here + "a.c": [{"range": at("a.c", 0)["range"], "newText": name}],
+            here + "b.c": [{"range": at("b.c", 1)["range"], "newText": name}]}}}
+    elif "id" in message and method:
+        reply = {"id": message["id"], "result": None}
     elif method == "textDocument/didOpen":
         uri = message["params"]["textDocument"]["uri"]
         reply = {"method": "textDocument/publishDiagnostics", "params": {"uri": uri, "diagnostics": [

@@ -485,20 +485,20 @@ class Manager {
     // couldn't resolve must not be silently treated as "resolved, zero
     // edits" by the caller.
     struct ResolvedRenameEdit {
-        std::filesystem::path          path;
+        text::FileRef                  file; // on the server's host for a remote one
         std::vector<WorkspaceTextEdit> edits;
     };
 
     // edit-application-gaps follow-up. DocumentChangeOp (Content.h) with
     // its uri/oldUri resolved to real filesystem paths -- the same "resolve
     // once, refuse wholesale on any failure" contract ResolvedRenameEdit
-    // already establishes. path is the EditFile/CreateFile/DeleteFile target,
-    // or RenameFile's destination (newUri); oldPath is set for RenameFile
-    // only.
+    // already establishes. file is the EditFile/CreateFile/DeleteFile target,
+    // or RenameFile's destination (newUri); oldFile is set for RenameFile
+    // only. Both are on the server's host for a remote one.
     struct ResolvedDocumentChangeOp {
         DocumentChangeOp::Kind         kind = DocumentChangeOp::Kind::EditFile;
-        std::filesystem::path          path;
-        std::filesystem::path          oldPath; // RenameFile only
+        text::FileRef                  file;
+        text::FileRef                  oldFile; // RenameFile only
         std::vector<WorkspaceTextEdit> edits;   // EditFile only
         bool                           overwrite         = false;
         bool                           ignoreIfExists    = false;
@@ -524,7 +524,10 @@ class Manager {
     // resolve-every-file-or-none contract (BufferView::ApplyCodeAction needs
     // every touched file genuinely applicable before applying any of them,
     // never a partial fix across only some of them).
-    [[nodiscard]] static std::optional<std::vector<ResolvedRenameEdit>> ResolveCodeActionEdits(const CodeAction& action);
+    //
+    // host is where the action's server runs, nullopt for here.
+    [[nodiscard]] static std::optional<std::vector<ResolvedRenameEdit>> ResolveCodeActionEdits(const CodeAction&                 action,
+                                                                                               const std::optional<std::string>& host);
 
     // edit-application-gaps follow-up: resolves a parsed documentChangeOps
     // list's own uri/oldUri fields to real filesystem paths -- same
@@ -535,12 +538,13 @@ class Manager {
     // a parsed documentChangeOps list the identical way. Returns nullopt if
     // ops is empty or any one uri/oldUri fails to resolve.
     [[nodiscard]] static std::optional<std::vector<ResolvedDocumentChangeOp>>
-    ResolveDocumentChangeOps(const std::vector<DocumentChangeOp>& ops);
+    ResolveDocumentChangeOps(const std::vector<DocumentChangeOp>& ops, const std::optional<std::string>& host);
 
     // Both of a code action's edit forms, resolved together into the shape
     // every apply path takes. hasEdit is false for an action carrying only a
     // command; nullopt if any touched file fails to resolve.
-    [[nodiscard]] static std::optional<ResolvedRename> ResolveCodeActionWorkspaceEdit(const CodeAction& action);
+    [[nodiscard]] static std::optional<ResolvedRename> ResolveCodeActionWorkspaceEdit(const CodeAction&                 action,
+                                                                                      const std::optional<std::string>& host);
 
     // prepareRename follow-up. Sent before lsp-rename opens its "New name:"
     // prompt, so the prompt can be prefilled with the symbol's own current
@@ -727,7 +731,7 @@ class Manager {
     // assertable from a test.
     [[nodiscard]] const std::vector<DynamicRegistration>& DynamicRegistrationsFor(const std::string& connectionKey) const;
 
-    // Whether any connection's server has registered file watchers at all.
+    // Whether any local connection's server has registered file watchers.
     // What the file-watching side asks before paying for per-entry events
     // (Editor/FileWatch.h's SetReportsDirectoryEntries) -- with no
     // registration anywhere, nothing would consume them.
