@@ -21,6 +21,7 @@
 #include "Editor/Host/ProcCodec.h"
 #include "Editor/Host/SearchCodec.h"
 #include "Editor/Host/WatchCodec.h"
+#include "Editor/Process/Pty.h"
 #include "Editor/ProcessTimeouts.h"
 #include "Editor/Project/Root.h"
 
@@ -66,7 +67,8 @@ struct Dispatcher::ProcJob {
         std::string data;
     };
 
-    ProcJob(Responder responderIn, process::ChildProcess childIn, bool capturesStderr) : responder(std::move(responderIn)), child(std::move(childIn)), stderrDone(!capturesStderr) {
+    ProcJob(Responder responderIn, process::ChildProcess childIn, bool capturesStderr, bool onPtyIn) :
+        responder(std::move(responderIn)), stderrDone(!capturesStderr), child(std::move(childIn)), onPty(onPtyIn) {
     }
 
     ~ProcJob() {
@@ -116,6 +118,7 @@ struct Dispatcher::ProcJob {
     std::optional<std::stop_callback<std::function<void()>>> onCancel;
 
     process::ChildProcess   child;
+    const bool              onPty;
     std::mutex              mutex;
     std::condition_variable wake;
     bool                    stdoutMayRead = false;
@@ -163,6 +166,7 @@ Dispatcher::Dispatcher(protocol::Endpoint& endpoint, PostQueue& postQueue, Ident
     endpoint_.Handle(std::string(kProcCloseStdin),
                      lifetime_.Bind([this](Json params, Responder responder) { ProcCloseStdin(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kProcSignal), lifetime_.Bind([this](Json params, Responder responder) { ProcSignal(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kProcResize), lifetime_.Bind([this](Json params, Responder responder) { ProcResize(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kProcRelease), lifetime_.Bind([this](Json params, Responder responder) { ProcRelease(params, std::move(responder)); }));
 }
 
@@ -196,7 +200,7 @@ void Dispatcher::Hello(const Json& params, Responder responder) {
     response.arch         = identity_.arch;
     response.codec        = ChooseCodec(request.codecs);
     response.window       = protocol::kDefaultWindow;
-    response.capabilities = Capabilities{.fs = 4, .proc = 1, .search = 1, .watch = 1};
+    response.capabilities = Capabilities{.fs = 4, .proc = kProcVersion, .search = 1, .watch = 1};
     responder.Result(ToJson(response));
     if (onCodec_) {
         onCodec_(response.codec);
@@ -577,7 +581,13 @@ void Dispatcher::ProcSpawn(const Json& params, Responder responder) {
     }
     std::optional<process::ChildProcess> child;
     try {
-        child.emplace(request.argv, process::SpawnOptions{.stderrMode = request.stderrMode, .cwd = request.cwd, .env = request.env});
+        const process::SpawnOptions options{.stderrMode = request.stderrMode, .cwd = request.cwd, .env = request.env};
+        if (request.pty) {
+            child.emplace(process::SpawnOnPty(request.argv, *request.pty, options));
+        }
+        else {
+            child.emplace(request.argv, options);
+        }
     }
     catch (const std::exception& e) {
         responder.Error(proc_error::kSpawnFailed, e.what());
@@ -585,7 +595,7 @@ void Dispatcher::ProcSpawn(const Json& params, Responder responder) {
     }
 
     const bool    capturesStderr = request.stderrMode == process::StderrMode::Capture;
-    auto          job            = std::make_unique<ProcJob>(std::move(responder), std::move(*child), capturesStderr);
+    auto          job            = std::make_unique<ProcJob>(std::move(responder), std::move(*child), capturesStderr, request.pty.has_value());
     ProcJob*      raw            = job.get();
     const auto    handle         = request.handle;
     LifetimeToken alive          = lifetime_.Token();
@@ -656,7 +666,12 @@ void Dispatcher::ProcSpawn(const Json& params, Responder responder) {
                     raw->child.CloseInput();
                     break;
                 case ProcJob::Step::Release: {
-                    raw->child.CloseInput();
+                    if (raw->onPty) {
+                        raw->child.Signal(SIGHUP);
+                    }
+                    else {
+                        raw->child.CloseInput();
+                    }
                     std::unique_lock lock(raw->mutex);
                     if (!raw->wake.wait_for(lock, kReleaseGrace, [raw] { return raw->stopping || raw->exited; })) {
                         lock.unlock();
@@ -728,6 +743,23 @@ void Dispatcher::ProcSignal(const Json& params, Responder responder) {
         return;
     }
     job->child.Signal(request.signal);
+    responder.Result(Json::object());
+}
+
+void Dispatcher::ProcResize(const Json& params, Responder responder) {
+    ProcResizeRequest request;
+    try {
+        request = ProcResizeRequestFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    ProcJob* job = FindProc(params, responder);
+    if (job == nullptr) {
+        return;
+    }
+    job->child.ResizeTerminal(request.size);
     responder.Result(Json::object());
 }
 

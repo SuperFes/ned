@@ -204,6 +204,13 @@ TEST_CASE("Proc requests and output round-trip and refuse what they can't carry"
     plain.cwd                    = std::nullopt;
     plain.env                    = {};
     CHECK(host::ProcSpawnRequestFromJson(OverTheWire(host::ToJson(plain))) == plain);
+    host::ProcSpawnRequest onPty = plain;
+    onPty.stderrMode             = ned::editor::process::StderrMode::MergeWithStdout;
+    onPty.pty                    = ned::editor::process::TerminalSize{.rows = 30, .cols = 100};
+    CHECK(host::ProcSpawnRequestFromJson(OverTheWire(host::ToJson(onPty))) == onPty);
+    Json beforePtys = host::ToJson(plain);
+    beforePtys.erase("pty");
+    CHECK(host::ProcSpawnRequestFromJson(beforePtys) == plain);
 
     Json noCommand      = host::ToJson(spawn);
     noCommand["argv"]   = Json::array();
@@ -211,7 +218,11 @@ TEST_CASE("Proc requests and output round-trip and refuse what they can't carry"
     badName["env"]      = Json{{"A=B", host::Bytes("x")}};
     Json badStderr      = host::ToJson(spawn);
     badStderr["stderr"] = "tee";
-    for (const Json& bad : {noCommand, badName, badStderr}) {
+    Json ptyStderr          = host::ToJson(onPty);
+    ptyStderr["stderr"]     = "capture";
+    Json emptyPty           = host::ToJson(onPty);
+    emptyPty["pty"]["rows"] = 0;
+    for (const Json& bad : {noCommand, badName, badStderr, ptyStderr, emptyPty}) {
         CHECK_THROWS_AS(host::ProcSpawnRequestFromJson(bad), ProtocolError);
     }
 
@@ -229,6 +240,9 @@ TEST_CASE("Proc requests and output round-trip and refuse what they can't carry"
     CHECK(host::ProcSignalRequestFromJson(OverTheWire(host::ToJson(signal))) == signal);
     CHECK_THROWS_AS(host::ProcSignalRequestFromJson(Json{{"handle", 7}, {"signal", "usr1"}}), ProtocolError);
     CHECK(host::ProcHandleFromJson(OverTheWire(host::ProcHandleParams(7))) == 7);
+    const host::ProcResizeRequest resize{.handle = 7, .size = {.rows = 1, .cols = 0xffff}};
+    CHECK(host::ProcResizeRequestFromJson(OverTheWire(host::ToJson(resize))) == resize);
+    CHECK_THROWS_AS(host::ProcResizeRequestFromJson(Json{{"handle", 7}, {"rows", 24}, {"cols", 0x10000}}), ProtocolError);
 }
 
 TEST_CASE("Path decoding rejects relative paths, NULs and non-bytes", "[Host][HostCodec]") {

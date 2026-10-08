@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -31,6 +32,7 @@
 #include "Editor/Remote/Ssh.h"
 #include "EnvOverride.h"
 
+using Catch::Matchers::ContainsSubstring;
 using ned::editor::LiveContent;
 using ned::editor::PostQueue;
 using ned::editor::SearchMatch;
@@ -144,7 +146,7 @@ TEST_CASE("ned-agent answers hello with its own build and settles the codec", "[
     REQUIRE(hello.capabilities.search == 1);
     REQUIRE(hello.capabilities.fs == 4);
     REQUIRE(hello.capabilities.watch == 1);
-    REQUIRE(hello.capabilities.proc == 1);
+    REQUIRE(hello.capabilities.proc == host::kProcVersion);
 }
 
 TEST_CASE("ned-agent's project search matches a local search exactly", "[Host][HostAgent]") {
@@ -517,6 +519,33 @@ TEST_CASE("ned-agent runs a process, feeding its stdin and streaming its output 
         REQUIRE(client.Call(std::string(host::kProcRelease), host::ProcHandleParams(4)).result);
         REQUIRE(client.PumpUntil([&] { return released.Done(); }));
         CHECK(released.exit == std::optional<std::optional<int>>(std::optional<int>()));
+    }
+    SECTION("on a pty, which it can resize and which hangs up when released") {
+        Spawned                shell;
+        host::ProcSpawnRequest request = Spawn(2, {"sh", "-c", "tty; stty size; echo \"$TERM\"; stty -echo; echo ready; read line; stty size"},
+                                               ned::editor::process::StderrMode::MergeWithStdout);
+        request.env                    = {{"TERM", "xterm-256color"}};
+        request.pty                    = ned::editor::process::TerminalSize{.rows = 30, .cols = 100};
+        shell.Start(client, request);
+        REQUIRE(client.PumpUntil([&] { return shell.out.find("ready") != std::string::npos || shell.Done(); }));
+        CHECK_THAT(shell.out, ContainsSubstring("/dev/pts/"));
+        CHECK_THAT(shell.out, ContainsSubstring("30 100\r\nxterm-256color\r\n"));
+        const host::ProcResizeRequest resize{.handle = 2, .size = {.rows = 40, .cols = 120}};
+        REQUIRE(client.Call(std::string(host::kProcResize), host::ToJson(resize)).result == Json::object());
+        REQUIRE(client.Call(std::string(host::kProcWrite), host::ToJson(host::ProcWriteRequest{.handle = 2, .data = "\n"})).result);
+        REQUIRE(client.PumpUntil([&] { return shell.Done(); }));
+        CHECK_THAT(shell.out, ContainsSubstring("ready\r\n40 120\r\n"));
+        CHECK(shell.exit == std::optional<int>(0));
+
+        // A shell ignores its stdin's EOF; the hang-up ends it.
+        Spawned waiting;
+        request.handle = 3;
+        request.argv   = {"sh", "-c", "trap 'echo hup; exit 5' HUP; echo ready; while :; do sleep 0.05; done"};
+        waiting.Start(client, request);
+        REQUIRE(client.PumpUntil([&] { return waiting.out.find("ready") != std::string::npos || waiting.Done(); }));
+        REQUIRE(client.Call(std::string(host::kProcRelease), host::ProcHandleParams(3)).result);
+        REQUIRE(client.PumpUntil([&] { return waiting.Done(); }));
+        CHECK(waiting.exit == std::optional<std::optional<int>>(5));
     }
     SECTION("a command that can't start, or a handle in use, is refused") {
         Spawned missing;
