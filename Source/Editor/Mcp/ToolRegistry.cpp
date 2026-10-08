@@ -391,7 +391,7 @@ void ToolRegistry::RegisterBuiltinTools() {
                     Json results = Json::array();
                     for (const lsp::Manager::ResolvedLocation& location : locations) {
                         results.push_back(Json{
-                            {"file", location.path.string()},
+                            {"file", text::ToString(location.file)},
                             {"line", location.position.line + 1},
                             {"column", location.position.character + 1},
                         });

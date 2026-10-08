@@ -521,6 +521,9 @@ class BufferView : public Widget {
     // (1-indexed) when given. A file the host doesn't have opens as a new
     // one only with createMissing; otherwise it's reported missing.
     void VisitRemoteFile(const editor::remote::Location& file, std::optional<std::size_t> line = std::nullopt, bool createMissing = true);
+    // The same, running arrive on the buffer once it holds the file's
+    // content.
+    void VisitRemoteFile(const editor::remote::Location& file, std::function<void(text::Buffer& buffer)> arrive, bool createMissing);
 
     // vcs-show-blame's entry point (see StartInteractiveSession's
     // VcsShowBlame case) -- kicks off an async Runner::RequestBlame for
@@ -2166,6 +2169,9 @@ class BufferView : public Widget {
     // and moves point to location.position, resolved against the newly-
     // opened buffer's own content.
     void JumpToDefinition(const editor::lsp::Manager::ResolvedLocation& location);
+    // A remote server's references, as results lines naming host:/path;
+    // their text comes from buffers already open here.
+    void ShowRemoteReferences(const std::string& word, const std::vector<editor::lsp::Manager::ResolvedLocation>& locations);
 
     // peek-definition follow-up: JetBrains/VSCode-style "look without leaving" --
     // requests Manager::RequestDefinition the same way RequestDefinitionAtPoint

@@ -40,6 +40,8 @@
 #include <utility>
 #include <vector>
 
+#include "Text/RemoteFile.h"
+
 namespace ned::text {
 class Buffer;
 class BufferList;
@@ -186,9 +188,10 @@ void ClearRegistryForTesting();
 // degrades to an empty body rather than aborting the whole multibuffer, the
 // same posture ExtractHunkPatch/ParseDiffHunks already take toward
 // malformed input elsewhere in this subsystem. startLine/endLine are
-// 1-indexed and inclusive.
-[[nodiscard]] std::string ReadExcerptText(text::BufferList& bufferList, const std::filesystem::path& path,
-                                          std::size_t startLine, std::size_t endLine);
+// 1-indexed and inclusive. A host's file is read only from its open
+// buffer: its own copy is a round trip away.
+[[nodiscard]] std::string ReadExcerptText(text::BufferList& bufferList, const text::FileRef& file, std::size_t startLine,
+                                          std::size_t endLine);
 
 // Builds a fresh, read-only Buffer named name from excerpts -- always
 // creates a new buffer, mirroring BuildVcsBlameBuffer/BuildVcsLogBuffer

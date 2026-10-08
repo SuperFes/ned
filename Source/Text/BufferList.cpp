@@ -331,6 +331,11 @@ Buffer* BufferList::FindByRemote(const RemoteFile& file) {
     return nullptr;
 }
 
+Buffer* BufferList::FindFile(const FileRef& file) {
+    const RemoteFile* remote = std::get_if<RemoteFile>(&file);
+    return remote != nullptr ? FindByRemote(*remote) : FindByPath(std::get<std::filesystem::path>(file));
+}
+
 Buffer& BufferList::AddRemotePlaceholder(const RemoteFile& file) {
     Buffer placeholder = Buffer::NewRemoteFile(file);
     placeholder.Rename(UniqueName(placeholder.Name()));

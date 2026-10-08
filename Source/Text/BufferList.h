@@ -85,6 +85,8 @@ class BufferList {
     // The open buffer holding a remote file; host paths are compared as
     // given, never resolved against this machine's disk.
     [[nodiscard]] Buffer* FindByRemote(const RemoteFile& file);
+    // FindByPath or FindByRemote, as file is.
+    [[nodiscard]] Buffer* FindFile(const FileRef& file);
     // An empty, loading buffer for a remote file, to be filled by
     // Buffer::FinishLoad once the host's bytes arrive. Nothing here touches
     // the local disk, and no open hook runs: those read a local path.

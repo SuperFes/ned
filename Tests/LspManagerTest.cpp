@@ -2106,7 +2106,7 @@ TEST_CASE("Manager::RequestDefinition resolves a Location-array response's uris 
 
     REQUIRE(invoked);
     REQUIRE(got.size() == 1);
-    REQUIRE(got[0].path == definitionPath);
+    REQUIRE(got[0].file == ned::text::FileRef(definitionPath));
     REQUIRE(got[0].position.line == 3);
     REQUIRE(got[0].position.character == 7);
 }
@@ -2169,7 +2169,7 @@ TEST_CASE("Manager::RequestDeclaration sends textDocument/declaration and resolv
 
     REQUIRE(invoked);
     REQUIRE(got.size() == 1);
-    REQUIRE(got[0].path == targetPath);
+    REQUIRE(got[0].file == ned::text::FileRef(targetPath));
 }
 
 TEST_CASE("Manager::RequestTypeDefinition sends textDocument/typeDefinition", "[Lsp]") {
@@ -2253,7 +2253,7 @@ TEST_CASE("Manager::RequestReferences sends textDocument/references with include
 
     REQUIRE(invoked);
     REQUIRE(got.size() == 1);
-    REQUIRE(got[0].path == targetPath);
+    REQUIRE(got[0].file == ned::text::FileRef(targetPath));
     REQUIRE(got[0].position.line == 2);
 }
 
@@ -5645,7 +5645,7 @@ TEST_CASE("Manager::RequestDefinition with an explicit serverKey routes to that 
 
     REQUIRE(invoked);
     REQUIRE(got.size() == 1);
-    REQUIRE(got[0].path == definitionPath);
+    REQUIRE(got[0].file == ned::text::FileRef(definitionPath));
 }
 
 // LSP-deliberate-cuts follow-up: BackgroundSyncEnabled is process-wide

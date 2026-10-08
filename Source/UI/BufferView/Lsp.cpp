@@ -1502,7 +1502,7 @@ void BufferView::RefreshDefinitionSelectStatus() {
             status += "  ";
         }
         const bool selected = (i == definitionSelection_);
-        status += (selected ? "[" : "") + std::to_string(i + 1) + ") " + pendingDefinitions_[i].path.filename().string() +
+        status += (selected ? "[" : "") + std::to_string(i + 1) + ") " + text::PathOf(pendingDefinitions_[i].file).filename().string() +
                   ":" + std::to_string(pendingDefinitions_[i].position.line + 1) + (selected ? "]" : "");
     }
     statusMessage_ = status;
@@ -1519,8 +1519,21 @@ void BufferView::HandleDefinitionSelectKey(const editor::KeyChord& chord) {
 }
 
 void BufferView::JumpToDefinition(const editor::lsp::Manager::ResolvedLocation& location) {
+    if (const auto* remote = std::get_if<text::RemoteFile>(&location.file)) {
+        PushJumpMark();
+        VisitRemoteFile(
+            *remote,
+            [this, position = location.position](text::Buffer& opened) {
+                opened.SetPoint(editor::lsp::PositionToByte(opened.Content(), position));
+                if (&activeBuffer_.Get() == &opened) {
+                    viewport_.ScrollToShowPoint();
+                }
+            },
+            /*createMissing=*/false);
+        return;
+    }
     try {
-        text::Buffer& opened = bufferList_.OpenOrCreateFile(location.path);
+        text::Buffer& opened = bufferList_.OpenOrCreateFile(std::get<std::filesystem::path>(location.file));
         PushJumpMark(); // before mutating point/activeBuffer_ -- see JumpMark's own doc comment
         activeBuffer_.Set(opened);
         opened.SetPoint(editor::lsp::PositionToByte(opened.Content(), location.position));
@@ -1530,6 +1543,26 @@ void BufferView::JumpToDefinition(const editor::lsp::Manager::ResolvedLocation& 
     catch (const std::exception& e) {
         ReportError(e.what());
     }
+}
+
+void BufferView::ShowRemoteReferences(const std::string& word, const std::vector<editor::lsp::Manager::ResolvedLocation>& locations) {
+    std::string lines;
+    for (const editor::lsp::Manager::ResolvedLocation& location : locations) {
+        const std::size_t lineNumber = location.position.line + 1;
+        std::string       lineText   = editor::multibuffer::ReadExcerptText(bufferList_, location.file, lineNumber, lineNumber);
+        if (!lineText.empty() && lineText.back() == '\n') {
+            lineText.pop_back();
+        }
+        lines += text::ToString(location.file) + ":" + std::to_string(lineNumber) + ": " + lineText + "\n";
+    }
+    const std::string name    = "*references: " + word + "*";
+    text::Buffer&     results = bufferList_.CreateBuffer(name);
+    results.InsertAtPoint(lines);
+    results.SetPoint(0);
+    results.SetReadOnly(true);
+    editor::SetLastResultsBuffer(results.Name());
+    activeBuffer_.Set(results);
+    statusMessage_ = std::to_string(locations.size()) + " reference" + (locations.size() == 1 ? "" : "s") + " to \"" + word + "\"";
 }
 
 void BufferView::RequestPeekDefinitionAtPoint() {
@@ -1568,10 +1601,10 @@ void BufferView::RefreshPeekDefinitionStatus() {
     const std::size_t                                targetLine = location.position.line + 1; // LSP lines are 0-indexed
     const std::size_t                                startLine  = targetLine > kPeekContextLinesBefore ? targetLine - kPeekContextLinesBefore : 1;
     const std::size_t                                endLine    = targetLine + kPeekContextLinesAfter;
-    const std::string                                excerpt    = editor::multibuffer::ReadExcerptText(bufferList_, location.path, startLine, endLine);
+    const std::string                                excerpt    = editor::multibuffer::ReadExcerptText(bufferList_, location.file, startLine, endLine);
 
     ListPopupModel model;
-    model.title = location.path.filename().string() + ":" + std::to_string(targetLine);
+    model.title = text::PathOf(location.file).filename().string() + ":" + std::to_string(targetLine);
     if (pendingPeekDefinitions_.size() > 1) {
         model.title += "  [" + std::to_string(peekDefinitionSelection_ + 1) + "/" +
                        std::to_string(pendingPeekDefinitions_.size()) + "]";
@@ -1847,7 +1880,7 @@ void BufferView::HierarchyActivate(std::size_t index) {
         return;
     }
     const editor::lsp::Manager::ResolvedHierarchyItem& resolved = hierarchySession_->tree.At(index).data;
-    const editor::lsp::Manager::ResolvedLocation       location{.path = resolved.path, .position = resolved.item.position};
+    const editor::lsp::Manager::ResolvedLocation       location{.file = resolved.path, .position = resolved.item.position};
     EndHierarchySession();
     JumpToDefinition(location);
 }
@@ -1997,7 +2030,7 @@ void BufferView::HandleDocumentSymbolKey(const editor::KeyChord& chord) {
         }
         const std::size_t                            index  = static_cast<std::size_t>(it - documentSymbolLabels_.begin());
         const editor::lsp::Manager::SymbolResult& symbol = documentSymbolCandidates_[index];
-        JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.path = symbol.path, .position = symbol.position});
+        JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.file = symbol.path, .position = symbol.position});
         return;
     }
     if (IsQuit(chord)) {
@@ -2078,7 +2111,7 @@ void BufferView::HandleWorkspaceSymbolKey(const editor::KeyChord& chord) {
         const editor::lsp::Manager::SymbolResult symbol =
             pendingWorkspaceSymbols_[std::min(workspaceSymbolSelection_, pendingWorkspaceSymbols_.size() - 1)];
         EndInteractiveSession();
-        JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.path = symbol.path, .position = symbol.position});
+        JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.file = symbol.path, .position = symbol.position});
         return;
     }
     if (IsQuit(chord)) {
@@ -2625,6 +2658,10 @@ void BufferView::RequestProjectFindReferences() {
                     statusMessage_ = "No references to \"" + word + "\" found.";
                     return;
                 }
+                if (std::holds_alternative<text::RemoteFile>(locations.front().file)) {
+                    ShowRemoteReferences(word, locations);
+                    return;
+                }
 
                 const std::filesystem::path root = editor::ProjectRoot();
                 // Multibuffer-gaps follow-up: every excerpt past the cap
@@ -2642,17 +2679,18 @@ void BufferView::RequestProjectFindReferences() {
                 // Live buffer content first, one read per *file* otherwise -- see its own doc comment.
                 FileLineReader lineReader(bufferList_);
                 for (std::size_t i = 0; i < keptCount; ++i) {
+                    const std::filesystem::path&                  path       = std::get<std::filesystem::path>(locations[i].file);
                     const editor::lsp::Manager::ResolvedLocation& location   = locations[i];
                     const std::size_t           lineNumber = location.position.line + 1; // LSP is 0-indexed, excerpts/SearchMatch are 1-indexed
                     std::error_code             ec;
-                    const std::filesystem::path relative    = std::filesystem::relative(location.path, root, ec);
-                    const std::string           displayPath = (!ec && !relative.empty()) ? relative.string() : location.path.string();
-                    const std::string                             hugeMarker  = LooksHugeSource(bufferList_, location.path) ? "  [huge]" : "";
+                    const std::filesystem::path                   relative    = std::filesystem::relative(path, root, ec);
+                    const std::string                             displayPath = (!ec && !relative.empty()) ? relative.string() : path.string();
+                    const std::string                             hugeMarker  = LooksHugeSource(bufferList_, path) ? "  [huge]" : "";
                     excerpts.push_back(editor::multibuffer::ExcerptSource{
-                        location.path, lineNumber, lineNumber,
+                        path, lineNumber, lineNumber,
                         // same disclosure-triangle convention as the text-search path below
                         "▸ " + displayPath + ":" + std::to_string(lineNumber) + hugeMarker,
-                        lineReader.Line(location.path, lineNumber),
+                        lineReader.Line(path, lineNumber),
                         {},
                         /*editable=*/true});
                 }

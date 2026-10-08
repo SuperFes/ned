@@ -12,6 +12,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 
 namespace ned::text {
 
@@ -22,6 +23,15 @@ struct RemoteFile {
     [[nodiscard]] std::string ToString() const;
     [[nodiscard]] bool        operator==(const RemoteFile&) const = default;
 };
+
+// A file here, by its path, or one on a host.
+using FileRef = std::variant<std::filesystem::path, RemoteFile>;
+
+// Its path on whichever machine holds it: for naming it, not opening it.
+[[nodiscard]] const std::filesystem::path& PathOf(const FileRef& file);
+
+// The path, or destination:/path.
+[[nodiscard]] std::string ToString(const FileRef& file);
 
 // nullopt unless text is a destination, ':', then an absolute path. The
 // first ":/" splits them, so a bracketed IPv6 destination parses too.

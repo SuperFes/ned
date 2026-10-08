@@ -394,8 +394,8 @@ class Manager {
     // than surfaced as a partial/malformed result -- matches
     // ExtractDefinitionLocations' own "skip a malformed entry" convention.
     struct ResolvedLocation {
-        std::filesystem::path path;
-        Position           position;
+        text::FileRef file; // on the server's host for a remote one
+        Position      position;
     };
     using DefinitionCallback = std::function<void(std::vector<ResolvedLocation> locations)>;
     // Sent for lsp-goto-definition. Same "resolve purely from bufferState_"

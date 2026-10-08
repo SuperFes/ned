@@ -8,6 +8,16 @@ std::string RemoteFile::ToString() const {
     return destination + ":" + path.string();
 }
 
+const std::filesystem::path& PathOf(const FileRef& file) {
+    const RemoteFile* remote = std::get_if<RemoteFile>(&file);
+    return remote != nullptr ? remote->path : std::get<std::filesystem::path>(file);
+}
+
+std::string ToString(const FileRef& file) {
+    const RemoteFile* remote = std::get_if<RemoteFile>(&file);
+    return remote != nullptr ? remote->ToString() : std::get<std::filesystem::path>(file).string();
+}
+
 std::optional<RemoteFile> ParseRemoteFile(std::string_view text) {
     const std::size_t split = text.find(":/");
     if (split == std::string_view::npos || split == 0) {
