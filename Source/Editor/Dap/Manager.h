@@ -48,6 +48,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Editor/Lifetime.h"
 #include "Editor/ProcessTimeouts.h"
 #include "Text/Buffer.h"
 #include "Text/PerBufferMap.h"
@@ -55,6 +56,10 @@
 #include "UI/EventLoop.h"
 
 #include "Client.h"
+
+namespace ned::editor::remote {
+class Hosts;
+} // namespace ned::editor::remote
 
 namespace ned::editor::dap {
 
@@ -327,14 +332,16 @@ class Manager {
     // F5. No session: starts one for language (adapter + launch config both
     // required, see Config.h). Stopped: sends `continue` for the stopped
     // thread. Starting/Running: reports that, changes nothing.
-    std::string StartOrContinue(const std::string& language);
+    // beside is the file of a remote buffer it was asked from; the adapter
+    // then runs on that file's host.
+    std::string StartOrContinue(const std::string& language, const std::optional<text::RemoteFile>& beside = std::nullopt);
 
     // DAP round 3: attach instead of launch -- requires an attach
     // configuration (ned/set-dap-attach) rather than a launch one, and
     // (unlike StartOrContinue) is start-only: no continue/resume semantics,
     // since "attach" isn't a thing you resume into. Inactive-only; any
     // other state reports "Debug session already running." unchanged.
-    std::string Attach(const std::string& language);
+    std::string Attach(const std::string& language, const std::optional<text::RemoteFile>& beside = std::nullopt);
 
     // Requests a pause of the running debuggee (the adapter answers with a
     // `stopped` event, which flows through SetOnStopped like any other).
@@ -803,13 +810,21 @@ class Manager {
     // via DispatchFrame.
     Client& SetClientForTesting(std::unique_ptr<Client> client);
 
+    // What runs a remote buffer's adapter on its host; null leaves only
+    // local sessions possible.
+    void SetRemoteHosts(remote::Hosts* hosts);
+
   private:
     // DAP round 3: the shared body of StartOrContinue's "no session yet"
     // branch and Attach -- spawns/reuses client_, sends `initialize`,
     // parses capabilities, and on success sends `launch` or `attach`
     // (SendLaunchOrAttach, per attach) once the response lands. Returns the
     // same short status string both public entry points hand back.
-    std::string BeginSession(const std::string& language, bool attach);
+    std::string BeginSession(const std::string& language, bool attach, const std::optional<text::RemoteFile>& beside);
+    // Starts the adapter on beside's host; the handshake follows once it runs.
+    std::string BeginSessionOnHost(const std::string& language, const text::RemoteFile& beside, const std::vector<std::string>& argv);
+    // initialize, then launch or attach, against client_.
+    void SendInitialize();
     // Renamed from the original slice-1 SendLaunch: reads isAttach_ to send
     // `launch` (LaunchConfig) or `attach` (AttachConfig).
     void SendLaunchOrAttach();
@@ -1024,6 +1039,11 @@ class Manager {
     std::function<void(std::string)>        onStatusMessage_;       // debug-panel; see SetOnStatusMessage
     std::function<void(SessionState)>       onSessionStateChanged_; // debug-panel; see SetOnSessionStateChanged
     std::function<void(std::string)>        onSessionEnded_;
+
+    remote::Hosts* hosts_ = nullptr;
+    // Revoked as each session ends, so an adapter that comes up on a host
+    // after its session was stopped is dropped.
+    LifetimeGuard spawnLifetime_;
 };
 
 } // namespace ned::editor::dap
