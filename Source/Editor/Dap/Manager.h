@@ -509,8 +509,8 @@ class Manager {
     struct StackFrame {
         int                                  id = 0; // the adapter's own frame id, fed back to RequestScopes
         std::string                          name;
-        std::optional<std::filesystem::path> path;
-        std::size_t                          line = 0; // 1-based, valid only when path is set
+        std::optional<text::FileRef>         file;     // on the session's host for a remote one
+        std::size_t                          line = 0; // 1-based, valid only when file is set
         // DAP round 5 (disassembly): the frame's own instruction pointer, as
         // an opaque adapter-owned address string -- empty when the adapter
         // didn't send one (older adapters, or a frame with no real machine
@@ -564,8 +564,8 @@ class Manager {
         std::string                          address;          // adapter's own opaque address string
         std::string                          instructionBytes; // may be empty -- adapter-optional
         std::string                          instruction;
-        std::optional<std::filesystem::path> path;
-        std::size_t                          line = 0; // 1-based, valid only when path is set
+        std::optional<text::FileRef>         file;
+        std::size_t                          line = 0; // 1-based, valid only when file is set
     };
     // Sends DAP's `disassemble` request against memoryReference (typically a
     // StackFrame's own instructionPointerReference). instructionOffset may
@@ -691,7 +691,7 @@ class Manager {
 
     struct LoadedSource {
         std::string                          name;
-        std::optional<std::filesystem::path> path; // absent for a source with no file (generated, in-memory)
+        std::optional<text::FileRef>         file; // absent for a source with no file (generated, in-memory)
     };
     void RequestLoadedSources(std::function<void(std::vector<LoadedSource>)> callback);
 
@@ -777,14 +777,14 @@ class Manager {
     void SetVariable(int variablesReference, const std::string& name, const std::string& value,
                      std::function<void(SetVariableResult)> callback);
 
-    // Where the debuggee stopped. path/line are set when the adapter's own
+    // Where the debuggee stopped. file/line are set when the adapter's own
     // top stack frame had a real source location (fetched via a stackTrace
     // request on every stop), and unset otherwise (e.g. stopped inside
     // sourceless library code).
     struct StoppedInfo {
-        std::string                          reason; // "breakpoint", "step", "pause", ...
-        std::optional<std::filesystem::path> path;
-        std::size_t                          line = 0; // 1-based, valid only when path is set
+        std::string                  reason;   // "breakpoint", "step", "pause", ...
+        std::optional<text::FileRef> file;     // on the session's host for a remote one
+        std::size_t                  line = 0; // 1-based, valid only when file is set
     };
     // debug-panel: every transition of State(), fired after the new state
     // is in place. SetOnStopped above is about ONE transition and carries

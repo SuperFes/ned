@@ -28,6 +28,14 @@ namespace {
 
     constexpr const char* kOtherMachine = "That file isn't on the machine being debugged.";
 
+    // A path the adapter reported, on the machine it runs on.
+    text::FileRef AdapterFile(const std::optional<std::string>& host, const std::string& path) {
+        if (host) {
+            return text::RemoteFile{.destination = *host, .path = std::filesystem::path(path).lexically_normal()};
+        }
+        return std::filesystem::path(path);
+    }
+
     // DAP round 5: readMemory's response `data` field is base64. No shared
     // base64 helper exists in this codebase -- Clipboard.cpp keeps its own
     // file-local Base64Encode, not exported -- so this is this file's own
@@ -1281,11 +1289,11 @@ void Manager::HandleStoppedEvent(const Json& body) {
                                  if (frame.contains("source") && frame["source"].contains("path") &&
                                      frame["source"]["path"].is_string() && frame.contains("line") &&
                                      frame["line"].is_number_integer()) {
-                                     info.path = std::filesystem::path(frame["source"]["path"].get<std::string>());
+                                     info.file = AdapterFile(sessionHost_, frame["source"]["path"].get<std::string>());
                                      info.line = static_cast<std::size_t>(std::max(frame["line"].get<int>(), 1));
                                      // Normalized once here, not per frame in Paint() -- see
                                      // CurrentStopKeyAndLine's own doc comment.
-                                     currentStop_ = std::make_pair(NormalizePathKey(*info.path), info.line);
+                                     currentStop_ = std::make_pair(NormalizePathKey(*info.file), info.line);
                                  }
                              }
                              RefreshWatchHistory(); // stoppedFrameId_ is set by now, same scoping Evaluate itself uses
@@ -1663,16 +1671,16 @@ void Manager::RequestLoadedSources(std::function<void(std::vector<LoadedSource>)
         return;
     }
     client_->SendRequest("loadedSources", Json::object(),
-                         [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+                         [callback = std::move(callback), host = sessionHost_](bool success, const Json& body, const std::string&) {
                              std::vector<LoadedSource> sources;
                              if (success && body.contains("sources") && body["sources"].is_array()) {
                                  for (const Json& sourceJson : body["sources"]) {
                                      LoadedSource source;
                                      source.name = sourceJson.value("name", "");
                                      if (sourceJson.contains("path") && sourceJson["path"].is_string()) {
-                                         source.path = std::filesystem::path(sourceJson["path"].get<std::string>());
+                                         source.file = AdapterFile(host, sourceJson["path"].get<std::string>());
                                          if (source.name.empty()) {
-                                             source.name = source.path->filename().string();
+                                             source.name = text::PathOf(*source.file).filename().string();
                                          }
                                      }
                                      if (source.name.empty()) {
@@ -1692,7 +1700,7 @@ void Manager::RequestStackTrace(std::function<void(std::vector<StackFrame>)> cal
     }
     client_->SendRequest("stackTrace",
                          Json{{"threadId", threadId != 0 ? threadId : CurrentThreadId()}, {"startFrame", 0}, {"levels", 20}},
-                         [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+                         [callback = std::move(callback), host = sessionHost_](bool success, const Json& body, const std::string&) {
                              std::vector<StackFrame> frames;
                              if (success && body.contains("stackFrames") && body["stackFrames"].is_array()) {
                                  for (const Json& frameJson : body["stackFrames"]) {
@@ -1702,7 +1710,7 @@ void Manager::RequestStackTrace(std::function<void(std::vector<StackFrame>)> cal
                                      if (frameJson.contains("source") && frameJson["source"].contains("path") &&
                                          frameJson["source"]["path"].is_string() && frameJson.contains("line") &&
                                          frameJson["line"].is_number_integer()) {
-                                         frame.path = std::filesystem::path(frameJson["source"]["path"].get<std::string>());
+                                         frame.file = AdapterFile(host, frameJson["source"]["path"].get<std::string>());
                                          frame.line = static_cast<std::size_t>(std::max(frameJson["line"].get<int>(), 1));
                                      }
                                      if (frameJson.contains("instructionPointerReference") &&
@@ -1779,7 +1787,7 @@ void Manager::RequestDisassembly(const std::string& memoryReference, long instru
                              {"instructionCount", instructionCount},
                              {"resolveSymbols", true},
                          },
-                         [callback = std::move(callback)](bool success, const Json& body, const std::string&) {
+                         [callback = std::move(callback), host = sessionHost_](bool success, const Json& body, const std::string&) {
                              std::vector<DisassembledInstruction> instructions;
                              if (success && body.contains("instructions") && body["instructions"].is_array()) {
                                  for (const Json& instructionJson : body["instructions"]) {
@@ -1790,7 +1798,7 @@ void Manager::RequestDisassembly(const std::string& memoryReference, long instru
                                      if (instructionJson.contains("location") && instructionJson["location"].contains("path") &&
                                          instructionJson["location"]["path"].is_string() && instructionJson.contains("line") &&
                                          instructionJson["line"].is_number_integer()) {
-                                         instruction.path = std::filesystem::path(instructionJson["location"]["path"].get<std::string>());
+                                         instruction.file = AdapterFile(host, instructionJson["location"]["path"].get<std::string>());
                                          instruction.line = static_cast<std::size_t>(std::max(instructionJson["line"].get<int>(), 1));
                                      }
                                      instructions.push_back(std::move(instruction));

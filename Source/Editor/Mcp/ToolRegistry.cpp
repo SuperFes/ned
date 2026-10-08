@@ -1193,8 +1193,8 @@ void ToolRegistry::RegisterBuiltinTools() {
                 Json results = Json::array();
                 for (const dap::Manager::StackFrame& frame : frames) {
                     Json entry = Json{{"frameId", frame.id}, {"name", frame.name}};
-                    if (frame.path) {
-                        entry["file"] = frame.path->string();
+                    if (frame.file) {
+                        entry["file"] = text::ToString(*frame.file);
                         entry["line"] = frame.line;
                     }
                     results.push_back(std::move(entry));
