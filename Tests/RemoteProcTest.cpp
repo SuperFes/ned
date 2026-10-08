@@ -85,6 +85,18 @@ TEST_CASE("A host's process reads and writes like a local child", "[Remote][Remo
         CHECK(flood.output.size() == 20000000);
         CHECK(flood.exit == std::optional<std::optional<int>>(0));
     }
+    SECTION("input bigger than any socket buffer goes in while output comes out") {
+        std::string input(4 * 1024 * 1024, 'x');
+        for (std::size_t i = 0; i < input.size(); i += 4096) {
+            input[i] = static_cast<char>('a' + i / 4096 % 26);
+        }
+        Streamed echo;
+        echo.Start(remote::SpawnOnHost(*fixture.connection, Spawn({"cat"})), fixture.queue);
+        echo.child->Feed(input, std::chrono::seconds(5));
+        REQUIRE(PumpUntil(fixture.queue, [&] { return echo.exit.has_value(); }));
+        CHECK(echo.output == input);
+        CHECK(echo.exit == std::optional<std::optional<int>>(0));
+    }
     SECTION("Kill ends it without waiting on the host") {
         Streamed sleeper;
         sleeper.Start(remote::SpawnOnHost(*fixture.connection, Spawn({"sleep", "100"})), fixture.queue);

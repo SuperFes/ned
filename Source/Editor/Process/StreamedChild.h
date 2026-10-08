@@ -7,17 +7,19 @@
 // only. How the child was spawned (pipes, a pty) is the caller's business:
 // it hands over an already-running ChildProcess.
 //
-// Teardown hangs up the child, which wakes the blocked read, and joins the
-// reader before the ChildProcess is destroyed; a stop_token alone cannot
-// interrupt a read(). Callbacks still queued when this is destroyed are
-// dropped.
+// Teardown hangs up the child, which wakes the blocked read (and a Feed's
+// blocked write), and joins both threads before the ChildProcess is
+// destroyed; a stop_token alone cannot interrupt a read(). Callbacks still
+// queued when this is destroyed are dropped.
 //
 
 #ifndef NED_EDITOR_PROCESS_STREAMEDCHILD_H
 #define NED_EDITOR_PROCESS_STREAMEDCHILD_H
 
+#include <chrono>
 #include <functional>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <thread>
 
@@ -46,6 +48,14 @@ class StreamedChild {
     [[nodiscard]] ChildProcess&       Child() noexcept;
     [[nodiscard]] const ChildProcess& Child() const noexcept;
 
+    // Writes input to the child's stdin from a thread of its own, then
+    // closes it, so output is read while input still goes in: a remote
+    // child's stdin moves through the main thread, and any child can stop
+    // reading until its output is. A write waiting past timeout kills the
+    // child, as does any other write failure, so a consumer never mistakes
+    // output from part of its input for the whole. Once per child.
+    void Feed(std::string input, std::chrono::milliseconds timeout);
+
     // What the reader's posted callbacks call. Public so tests can drive the
     // dispatch without draining a PostQueue.
     void DispatchOutput(std::string_view chunk);
@@ -56,6 +66,7 @@ class StreamedChild {
 
     LifetimeGuard lifetime_;
     std::jthread  readThread_;
+    std::jthread  writeThread_;
     ChildProcess  child_;
     OutputHandler onOutput_;
     ExitHandler   onExit_;

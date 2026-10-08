@@ -1,9 +1,9 @@
 #include "StreamedChild.h"
 
+#include <csignal>
 #include <exception>
 #include <string>
 #include <utility>
-
 
 namespace ned::editor::process {
 
@@ -14,7 +14,13 @@ StreamedChild::StreamedChild(ChildProcess child, PostQueue& postQueue, OutputHan
 }
 
 StreamedChild::~StreamedChild() {
+    if (writeThread_.joinable()) {
+        writeThread_.request_stop();
+    }
     child_.CloseConnection();
+    if (writeThread_.joinable()) {
+        writeThread_.join();
+    }
     if (readThread_.joinable()) {
         readThread_.join();
     }
@@ -26,6 +32,20 @@ ChildProcess& StreamedChild::Child() noexcept {
 
 const ChildProcess& StreamedChild::Child() const noexcept {
     return child_;
+}
+
+void StreamedChild::Feed(std::string input, std::chrono::milliseconds timeout) {
+    writeThread_ = std::jthread([this, input = std::move(input), timeout](const std::stop_token& stopping) {
+        try {
+            child_.WriteAll(input, timeout);
+        }
+        catch (const std::exception&) {
+            if (!stopping.stop_requested()) {
+                child_.Signal(SIGKILL);
+            }
+        }
+        child_.CloseInput();
+    });
 }
 
 void StreamedChild::DispatchOutput(std::string_view chunk) {

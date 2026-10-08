@@ -321,16 +321,6 @@ void Runner::Started(const std::string& key, remote::Spawned spawned, std::optio
         failed(spawned.error());
         return;
     }
-    try {
-        if (input) {
-            spawned->child.WriteAll(*input, SubprocessWriteTimeoutMs());
-            spawned->child.CloseInput();
-        }
-    }
-    catch (const std::exception& e) {
-        failed(e.what());
-        return;
-    }
     auto output = std::make_shared<std::string>();
     Run& run    = running_[key];
     run.starting.reset();
@@ -343,6 +333,9 @@ void Runner::Started(const std::string& key, remote::Spawned spawned, std::optio
             onDone(std::move(collected), exitCode);
             running_.erase(key);
         });
+    if (input) {
+        run.process->Feed(std::move(*input), SubprocessWriteTimeoutMs());
+    }
 }
 
 void Runner::RequestBlame(const text::Buffer& buffer, std::function<void(std::vector<BlameLine>)> onComplete,
