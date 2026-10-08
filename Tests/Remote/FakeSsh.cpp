@@ -12,17 +12,24 @@
 // to "silent" never finishes logging in; a session on "chatty" prints to
 // stdout ahead of its command, as a login script can.
 //
+// Without BatchMode=yes, a master asks through $SSH_ASKPASS as ssh does:
+// "password" takes "hunter2" within three tries, "unknown-host" asks to
+// trust its key, and "touch" shows a notice it withdraws by killing the
+// askpass program once its key is "touched".
+//
 // With $NED_FAKE_SSH_LOG set, each session appends its command line there.
 //
 
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <string>
 #include <string_view>
 
 #include <csignal>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 namespace {
@@ -94,10 +101,99 @@ int RunMaster() {
     }
 }
 
+pid_t SpawnAskpass(const std::string& prompt, const char* hint, int& output) {
+    const char* askpass = std::getenv("SSH_ASKPASS");
+    int         pipeFds[2];
+    if (askpass == nullptr || ::pipe(pipeFds) != 0) {
+        return -1;
+    }
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        ::dup2(pipeFds[1], STDOUT_FILENO);
+        ::close(pipeFds[0]);
+        ::close(pipeFds[1]);
+        if (hint != nullptr) {
+            ::setenv("SSH_ASKPASS_PROMPT", hint, 1);
+        }
+        ::execl(askpass, askpass, prompt.c_str(), static_cast<char*>(nullptr));
+        ::_exit(127);
+    }
+    ::close(pipeFds[1]);
+    output = pipeFds[0];
+    return pid;
+}
+
+// The answer, without its newline, or nullopt when the askpass program
+// cancelled.
+std::optional<std::string> Ask(const std::string& prompt) {
+    int         output = -1;
+    const pid_t pid    = SpawnAskpass(prompt, nullptr, output);
+    if (pid < 0) {
+        return std::nullopt;
+    }
+    std::string answer;
+    char        buffer[256];
+    for (ssize_t length = 0; (length = ::read(output, buffer, sizeof buffer)) > 0;) {
+        answer.append(buffer, static_cast<std::size_t>(length));
+    }
+    ::close(output);
+    int status = 0;
+    ::waitpid(pid, &status, 0);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        return std::nullopt;
+    }
+    if (answer.ends_with('\n')) {
+        answer.pop_back();
+    }
+    return answer;
+}
+
+// How a master that may ask logs in: true to go on, false having failed.
+bool LogIn(std::string_view destination) {
+    if (destination == "password") {
+        for (int tries = 0; tries < 3; ++tries) {
+            const std::optional<std::string> answer = Ask("fake@password's password: ");
+            if (!answer) {
+                break;
+            }
+            if (*answer == "hunter2") {
+                return true;
+            }
+            std::fprintf(stderr, "Permission denied, please try again.\n");
+        }
+        std::fprintf(stderr, "fake@password: Permission denied (password).\n");
+        return false;
+    }
+    if (destination == "unknown-host") {
+        const std::optional<std::string> answer = Ask("The authenticity of host 'unknown-host (127.0.0.1)' can't be established.\n"
+                                                      "ED25519 key fingerprint is SHA256:fake.\n"
+                                                      "Are you sure you want to continue connecting (yes/no/[fingerprint])? ");
+        if (answer == "yes") {
+            std::fprintf(stderr, "Warning: Permanently added 'unknown-host' (ED25519) to the list of known hosts.\n");
+            return true;
+        }
+        std::fprintf(stderr, "Host key verification failed.\n");
+        return false;
+    }
+    if (destination == "touch") {
+        int         output = -1;
+        const pid_t pid    = SpawnAskpass("Confirm user presence for key ED25519-SK SHA256:fake", "none", output);
+        ::usleep(200 * 1000);
+        if (pid > 0) {
+            ::kill(pid, SIGTERM);
+            ::waitpid(pid, nullptr, 0);
+            ::close(output);
+        }
+        return true;
+    }
+    return true;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     bool        master = false;
+    bool        batch  = false;
     std::string control;
     int         i = 1;
     for (; i < argc; ++i) {
@@ -116,6 +212,9 @@ int main(int argc, char** argv) {
             }
             else if (arg == "-O") {
                 control = value;
+            }
+            else if (value == "BatchMode=yes") {
+                batch = true;
             }
         }
         else if (arg == "-M") {
@@ -139,6 +238,12 @@ int main(int argc, char** argv) {
             while (true) {
                 ::pause();
             }
+        }
+        if (batch && (destination == "password" || destination == "unknown-host")) {
+            return Fail(destination == "password" ? "fake@password: Permission denied (password)." : "Host key verification failed.");
+        }
+        if (!batch && !LogIn(destination)) {
+            return 255;
         }
         return RunMaster();
     }

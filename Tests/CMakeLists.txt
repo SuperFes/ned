@@ -349,6 +349,7 @@ add_executable(ned_tests
             RemoteWatchTest.cpp
             RemoteBufferTest.cpp
             RemoteKnownHostsTest.cpp
+            RemoteAskpassTest.cpp
             RemoteSshTest.cpp
             AcpClientTest.cpp
             AcpConfigTest.cpp
@@ -504,6 +505,13 @@ add_executable(ned_fake_ssh Remote/FakeSsh.cpp)
 set_target_properties(ned_fake_ssh PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
 add_dependencies(ned_tests ned_fake_ssh)
 target_compile_definitions(ned_tests PRIVATE NED_FAKE_SSH="$<TARGET_FILE:ned_fake_ssh>")
+
+# Stands in for ned as SSH_ASKPASS in the Remote tests.
+add_executable(ned_fake_askpass Remote/FakeAskpass.cpp ${CMAKE_SOURCE_DIR}/Source/Editor/Remote/Askpass.cpp)
+set_target_properties(ned_fake_askpass PROPERTIES CXX_STANDARD 23 CXX_STANDARD_REQUIRED ON CXX_EXTENSIONS OFF)
+target_include_directories(ned_fake_askpass PRIVATE ${CMAKE_SOURCE_DIR}/Source)
+add_dependencies(ned_tests ned_fake_askpass)
+target_compile_definitions(ned_tests PRIVATE NED_FAKE_ASKPASS="$<TARGET_FILE:ned_fake_askpass>")
 
 # SKIP_REGULAR_EXPRESSION: Catch2's SKIP() (e.g. ModeOverridesTest.cpp's
 # real-system-queries tests, which SKIP rather than fail when a machine has

@@ -2,9 +2,11 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -18,6 +20,9 @@
 #include "EnvOverride.h"
 
 using ned::editor::process::ChildProcess;
+using ned::editor::remote::AskpassAnswer;
+using ned::editor::remote::AskpassKind;
+using ned::editor::remote::AskpassQuestion;
 using ned::editor::remote::NewControlPath;
 using ned::editor::remote::QuoteRemoteWord;
 using ned::editor::remote::RemoteCommandLine;
@@ -34,6 +39,24 @@ namespace {
 SshOptions FakeSsh() {
     return SshOptions{.program = NED_FAKE_SSH};
 }
+
+// Answers each question in turn from a script, recording what was asked.
+struct Answerer {
+    std::vector<AskpassAnswer>   script;
+    std::mutex                   mutex;
+    std::vector<AskpassQuestion> asked;
+
+    SshOptions Options() {
+        SshOptions options     = FakeSsh();
+        options.askpassProgram = NED_FAKE_ASKPASS;
+        options.askpass        = [this](const AskpassQuestion& question, const std::stop_token&) -> AskpassAnswer {
+            const std::scoped_lock lock(mutex);
+            asked.push_back(question);
+            return asked.size() <= script.size() ? script[asked.size() - 1] : std::nullopt;
+        };
+        return options;
+    }
+};
 
 // A fresh, short directory: control sockets must fit sun_path.
 std::filesystem::path FreshDir() {
@@ -257,5 +280,128 @@ TEST_CASE("A one-shot session that stalls or is cancelled is killed", "[Remote][
     });
     REQUIRE_THROWS_WITH(RunSession(master, std::vector<std::string>{"sleep", "30"}, {}, std::chrono::seconds(30), stop.get_token()), "cancelled on host");
     REQUIRE(std::chrono::steady_clock::now() - started < std::chrono::seconds(10));
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Only a master with an askpass handler leaves BatchMode off", "[Remote][Ssh][Askpass]") {
+    SshOptions options = FakeSsh();
+    REQUIRE(HasOption(remote::SshMasterArgv("host", "/run/1-0", options), "-o", "BatchMode=yes"));
+
+    options.askpass = [](const AskpassQuestion&, const std::stop_token&) -> AskpassAnswer { return std::nullopt; };
+    REQUIRE(HasOption(remote::SshMasterArgv("host", "/run/1-0", options), "-o", "BatchMode=no"));
+    REQUIRE(HasOption(SshSessionArgv("host", "/run/1-0", options, std::vector<std::string>{"true"}), "-o", "BatchMode=yes"));
+    REQUIRE(HasOption(remote::SshExitArgv("host", "/run/1-0", options), "-o", "BatchMode=yes"));
+}
+
+TEST_CASE("Without an askpass handler a login that would ask fails", "[Remote][Ssh][Askpass]") {
+    const std::filesystem::path dir = FreshDir();
+    SshMaster                   master("password", FakeSsh(), dir / "m");
+    REQUIRE(StartError(master) == "fake@password: Permission denied (password).");
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A password login asks through the handler until it's right", "[Remote][Ssh][Askpass]") {
+    const std::filesystem::path dir = FreshDir();
+    {
+        Answerer  answerer{.script = {std::string("nope"), std::string("hunter2")}};
+        SshMaster master("password", answerer.Options(), dir / "m");
+        master.Start();
+        REQUIRE(std::filesystem::is_socket(dir / "m"));
+        REQUIRE(answerer.asked.size() == 2);
+        REQUIRE(answerer.asked[0].destination == "password");
+        REQUIRE(answerer.asked[0].prompt == "fake@password's password: ");
+        REQUIRE(answerer.asked[0].kind == AskpassKind::Secret);
+        REQUIRE(answerer.asked[0].detail.empty());
+        // The retry carries why the first answer was refused.
+        REQUIRE(answerer.asked[1].detail == "Permission denied, please try again.");
+        REQUIRE(Run(master.SessionArgv(std::vector<std::string>{"true"})).exitCode == 0);
+    }
+    // The askpass socket goes with the login.
+    REQUIRE(std::filesystem::is_empty(dir));
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A cancelled password question fails the login with ssh's message", "[Remote][Ssh][Askpass]") {
+    const std::filesystem::path dir = FreshDir();
+    Answerer                    answerer{.script = {std::nullopt}};
+    SshMaster                   master("password", answerer.Options(), dir / "m");
+    REQUIRE(StartError(master) == "fake@password: Permission denied (password).");
+    REQUIRE(answerer.asked.size() == 1);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("An unknown host key is trusted or refused through the handler", "[Remote][Ssh][Askpass]") {
+    const std::filesystem::path dir = FreshDir();
+
+    Answerer  trusting{.script = {std::string("yes")}};
+    SshMaster trusted("unknown-host", trusting.Options(), dir / "m");
+    trusted.Start();
+    REQUIRE(trusting.asked.size() == 1);
+    REQUIRE(trusting.asked[0].kind == AskpassKind::Text);
+    REQUIRE(trusting.asked[0].prompt.find("SHA256:fake") != std::string::npos);
+    trusted.Stop();
+
+    Answerer  refusing{.script = {std::string("no")}};
+    SshMaster refused("unknown-host", refusing.Options(), dir / "n");
+    REQUIRE(StartError(refused) == "Host key verification failed.");
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("A notice is withdrawn once ssh is done with it", "[Remote][Ssh][Askpass]") {
+    const std::filesystem::path dir = FreshDir();
+    std::optional<AskpassKind>  shown;
+    bool                        withdrawn = false;
+    SshOptions                  options   = FakeSsh();
+    options.askpassProgram                = NED_FAKE_ASKPASS;
+    options.askpass                       = [&](const AskpassQuestion& question, const std::stop_token& stop) -> AskpassAnswer {
+        shown = question.kind;
+        while (!stop.stop_requested()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        withdrawn = true;
+        return std::nullopt;
+    };
+    SshMaster master("touch", options, dir / "m");
+    master.Start();
+    REQUIRE(shown == AskpassKind::Notice);
+    REQUIRE(withdrawn);
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Stopping a login withdraws its open question", "[Remote][Ssh][Askpass]") {
+    const std::filesystem::path dir       = FreshDir();
+    std::atomic<bool>           withdrawn = false;
+    SshOptions                  options   = FakeSsh();
+    options.askpassProgram                = NED_FAKE_ASKPASS;
+    options.askpass                       = [&](const AskpassQuestion&, const std::stop_token& stop) -> AskpassAnswer {
+        while (!stop.stop_requested()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        withdrawn = true;
+        return std::string("hunter2");
+    };
+    SshMaster        master("password", options, dir / "m");
+    std::stop_source stop;
+    std::jthread     canceller([&stop] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        stop.request_stop();
+    });
+    REQUIRE(StartError(master, stop.get_token()) == "ssh to password cancelled");
+    REQUIRE(withdrawn);
+    REQUIRE(std::filesystem::is_empty(dir));
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("Time spent answering doesn't count against the login timeout", "[Remote][Ssh][Askpass]") {
+    const std::filesystem::path dir     = FreshDir();
+    SshOptions                  options = FakeSsh();
+    options.askpassProgram              = NED_FAKE_ASKPASS;
+    options.startTimeout                = std::chrono::milliseconds(300);
+    options.askpass                     = [](const AskpassQuestion&, const std::stop_token&) -> AskpassAnswer {
+        std::this_thread::sleep_for(std::chrono::milliseconds(600));
+        return std::string("hunter2");
+    };
+    SshMaster master("password", options, dir / "m");
+    REQUIRE(StartError(master).empty());
     std::filesystem::remove_all(dir);
 }

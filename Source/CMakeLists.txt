@@ -321,6 +321,7 @@ add_library(ned_lib STATIC
         Editor/Tasks/TaskConfig.cpp
         Editor/Tasks/TaskProcess.cpp
         Editor/Tasks/TaskRunner.cpp
+        Editor/Remote/Askpass.cpp
         Editor/Remote/Connection.cpp
         Editor/Remote/Deploy.cpp
         Editor/Remote/ExternalChanges.cpp
