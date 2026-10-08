@@ -4,6 +4,7 @@
 #include <memory>
 #include <utility>
 
+#include "Editor/Process/Pty.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Remote/Fs.h"
 #include "Editor/Remote/Hosts.h"
@@ -36,8 +37,8 @@ void SpawnBeside(Hosts* hosts, const std::optional<text::RemoteFile>& beside, Re
     if (!beside) {
         Spawned spawned = std::unexpected(std::string());
         try {
-            spawned = Placed{.child = process::ChildProcess(spawn.argv, process::SpawnOptions{.stderrMode = spawn.stderrMode, .cwd = spawn.cwd, .env = spawn.env}),
-                             .cwd   = spawn.cwd};
+            const process::SpawnOptions options{.stderrMode = spawn.stderrMode, .cwd = spawn.cwd, .env = spawn.env};
+            spawned = Placed{.child = spawn.pty ? process::SpawnOnPty(spawn.argv, *spawn.pty, options) : process::ChildProcess(spawn.argv, options), .cwd = spawn.cwd};
         }
         catch (const std::exception& e) {
             spawned = std::unexpected(std::string(e.what()));

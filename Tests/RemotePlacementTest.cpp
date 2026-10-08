@@ -98,6 +98,24 @@ TEST_CASE("A local buffer's process starts here, at once", "[Remote][RemotePlace
     CHECK_THAT(nowhere.spawned->error(), ContainsSubstring("no remote host"));
 }
 
+TEST_CASE("A buffer's process on a pty runs beside it, here or on its host", "[Remote][RemotePlacement][HostAgent]") {
+    Fixture                    fixture;
+    ned::editor::LifetimeGuard guard;
+    remote::RemoteSpawn        spawn{.argv = {"sh", "-c", "pwd; stty size"}, .cwd = std::nullopt, .env = {}, .stderrMode = process::StderrMode::Discard, .pty = process::TerminalSize{.rows = 12, .cols = 34}};
+
+    Run local;
+    spawn.cwd = fixture.project;
+    remote::SpawnBeside(nullptr, std::nullopt, spawn, guard.Token(), local.Done());
+    REQUIRE(local.Finish(fixture.loop));
+    CHECK(local.output == fixture.project.string() + "\r\n12 34\r\n");
+
+    Run onHost;
+    spawn.cwd = std::nullopt;
+    remote::SpawnBeside(&fixture.hosts, ned::text::RemoteFile{.destination = "host", .path = fixture.project / "src" / "a.c"}, spawn, guard.Token(), onHost.Done());
+    REQUIRE(onHost.Finish(fixture.loop));
+    CHECK(onHost.output == fixture.project.string() + "\r\n12 34\r\n");
+}
+
 TEST_CASE("A remote buffer's process runs on its host, in its project root", "[Remote][RemotePlacement][HostAgent]") {
     Fixture                     fixture;
     ned::editor::LifetimeGuard  guard;

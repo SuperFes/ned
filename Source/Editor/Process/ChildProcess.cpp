@@ -331,7 +331,11 @@ void ChildProcess::CloseInput() noexcept {
 }
 
 void ChildProcess::ResizeTerminal(TerminalSize size) const noexcept {
-    if (control_ || writeFd_ < 0) {
+    if (control_) {
+        control_->ResizeTerminal(size);
+        return;
+    }
+    if (writeFd_ < 0) {
         return;
     }
     winsize windowSize{};
