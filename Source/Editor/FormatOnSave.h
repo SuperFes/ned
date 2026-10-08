@@ -13,20 +13,26 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace ned::editor {
 
 void                                     SetFormatCommand(std::optional<std::string> command);
 [[nodiscard]] std::optional<std::string> FormatCommand();
 
-// Runs the configured format command (if any) over text via a temp-file
-// pair and a shell invocation (the command reads unformatted text on stdin,
-// writes the formatted result to stdout -- the same convention clang-format,
-// black, prettier, etc. all already follow standalone). Returns nullopt if
-// no command is configured, a temp file couldn't be created, the command
-// exits non-zero, or its output is empty -- callers are expected to fall
-// back to saving the original, unformatted content in every nullopt case
-// rather than risk data loss over a broken formatter.
+// The command as a process runs it, here or on a remote buffer's host.
+[[nodiscard]] std::vector<std::string> FormatCommandArgv(const std::string& command);
+
+// What a run of the command formats a buffer to: its stdout, unless it
+// exited non-zero or printed nothing. Callers save the original content in
+// every nullopt case rather than risk data loss over a broken formatter.
+[[nodiscard]] std::optional<std::string> AcceptFormatOutput(std::string output, std::optional<int> exitCode);
+
+// Runs the configured format command over text, here: the command reads
+// unformatted text on stdin and writes the result to stdout, as
+// clang-format, black, prettier, etc. already do standalone. nullopt when
+// no command is configured, it can't start, or AcceptFormatOutput refuses
+// what it printed.
 [[nodiscard]] std::optional<std::string> RunFormatCommand(std::string_view text);
 
 } // namespace ned::editor
