@@ -1941,6 +1941,13 @@ void Manager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     }
 }
 
+text::Buffer* Manager::FindDocumentBuffer(const std::string& connectionKey, const std::filesystem::path& path) {
+    if (std::optional<std::string> host = ConnectionHost(connectionKey)) {
+        return bufferList_.FindByRemote(text::RemoteFile{.destination = std::move(*host), .path = path});
+    }
+    return bufferList_.FindByPath(path);
+}
+
 void Manager::HandlePublishDiagnostics(const Json& params, const std::string& language, const std::string& connectionKey) {
     if (!params.contains("uri")) {
         return;
@@ -1963,7 +1970,7 @@ void Manager::HandlePublishDiagnostics(const Json& params, const std::string& la
         return;
     }
 
-    text::Buffer* buffer = bufferList_.FindByPath(*path);
+    text::Buffer* buffer = FindDocumentBuffer(connectionKey, *path);
     if (!buffer) {
         // project-wide-diagnostics follow-up: no buffer to hang these on,
         // which used to end the story right here. A server that checks the
@@ -1976,7 +1983,9 @@ void Manager::HandlePublishDiagnostics(const Json& params, const std::string& la
         // about a document it was handed, so a path with no buffer is a
         // stale publish for one that just closed, not news about the
         // project.
-        if (language != kProseLanguageKey) {
+        //
+        // The problem list names local files, so a host's are left out.
+        if (language != kProseLanguageKey && !ConnectionHost(connectionKey)) {
             RecordProjectDiagnostics(*path, params, language, connectionKey);
         }
         return;
@@ -1985,7 +1994,9 @@ void Manager::HandlePublishDiagnostics(const Json& params, const std::string& la
     // A resident buffer's own diagnostics supersede anything recorded while
     // it was closed -- clear the file out rather than letting the same
     // finding be reported from two places at once.
-    DropProjectDiagnostics(*path);
+    if (!ConnectionHost(connectionKey)) {
+        DropProjectDiagnostics(*path);
+    }
 
     // prose-diagnostic-callout follow-up: language is the same per-server
     // key HandlePublishDiagnostics is registered under (see the
@@ -2314,7 +2325,7 @@ void Manager::RequestPullDiagnostics(text::Buffer& buffer, const std::string& se
                 return; // an "unchanged" report, or nothing parseable -- leave the existing slice alone
             }
             const std::optional<std::filesystem::path> path   = UriToPath(uri);
-            text::Buffer* const                        buffer = path ? bufferList_.FindByPath(*path) : nullptr;
+            text::Buffer* const                        buffer = path ? FindDocumentBuffer(connectionKey, *path) : nullptr;
             if (!buffer) {
                 return; // buffer closed since this was requested
             }

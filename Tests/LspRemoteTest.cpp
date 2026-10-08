@@ -16,8 +16,8 @@
 #include "FakeRemoteHost.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
-#include "Text/FileContents.h"
 #include "Text/FileUri.h"
+#include "Text/Rope.h"
 #include "UI/EventLoop.h"
 
 namespace fs     = std::filesystem;
@@ -32,7 +32,8 @@ namespace {
 constexpr const char* kLanguage = "remote-lsp-test";
 
 // Logs its working directory, then every message it is sent, one JSON
-// object a line, and answers initialize.
+// object a line. Answers initialize and hover, and reports a diagnostic on
+// each document opened.
 constexpr const char* kServer = R"(import json, os, sys
 log = open(sys.argv[1], "a")
 log.write(json.dumps({"cwd": os.getcwd()}) + "\n")
@@ -52,8 +53,17 @@ while True:
     message = json.loads(inp.read(length))
     log.write(json.dumps(message) + "\n")
     log.flush()
-    if message.get("method") == "initialize":
-        body = json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": {"capabilities": {"textDocumentSync": 1}}}).encode()
+    method, reply = message.get("method"), None
+    if method == "initialize":
+        reply = {"id": message["id"], "result": {"capabilities": {"textDocumentSync": 1, "hoverProvider": True}}}
+    elif method == "textDocument/hover":
+        reply = {"id": message["id"], "result": {"contents": "hover from " + os.uname().nodename}}
+    elif method == "textDocument/didOpen":
+        uri = message["params"]["textDocument"]["uri"]
+        reply = {"method": "textDocument/publishDiagnostics", "params": {"uri": uri, "diagnostics": [
+            {"range": {"start": {"line": 0, "character": 4}, "end": {"line": 0, "character": 5}}, "severity": 1, "message": "seen on the host"}]}}
+    if reply:
+        body = json.dumps(dict(jsonrpc="2.0", **reply)).encode()
         out.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
         out.flush()
 )";
@@ -84,6 +94,17 @@ struct Fixture {
     Fixture(const Fixture&)            = delete;
     Fixture& operator=(const Fixture&) = delete;
 
+    [[nodiscard]] text::Buffer& Open(text::BufferList& bufferList) const {
+        text::Buffer& buffer = bufferList.AddRemotePlaceholder({.destination = "host", .path = file});
+        buffer.FinishLoad(text::Rope("int x;\n"));
+        return buffer;
+    }
+    bool Connect() {
+        bool connected = false;
+        hosts.Connect("host", [&](std::expected<remote::Connection*, std::string> connection) { connected = connection.has_value(); });
+        return PumpUntil(loop, [&] { return connected; });
+    }
+
     [[nodiscard]] std::vector<Json> Messages() const {
         std::vector<Json> messages;
         std::ifstream     in(log);
@@ -106,14 +127,12 @@ struct Fixture {
 
 TEST_CASE("A remote buffer's language server runs on its host, in its language's root there", "[Lsp][LspRemote][HostAgent]") {
     Fixture f;
-    bool    connected = false;
-    f.hosts.Connect("host", [&](std::expected<remote::Connection*, std::string> connection) { connected = connection.has_value(); });
-    REQUIRE(PumpUntil(f.loop, [&] { return connected; }));
+    REQUIRE(f.Connect());
 
     text::BufferList bufferList;
     lsp::Manager     manager(bufferList, f.loop);
     manager.SetRemoteHosts(&f.hosts);
-    text::Buffer buffer = text::Buffer::FromRemoteContents({.destination = "host", .path = f.file}, text::FileContents{.bytes = "int x;\n", .timestamp = std::nullopt});
+    text::Buffer& buffer = f.Open(bufferList);
 
     REQUIRE(PumpUntil(f.loop, [&] {
         manager.SyncBuffer(buffer, kLanguage);
@@ -137,7 +156,7 @@ TEST_CASE("A remote buffer's language server waits for its host; nothing connect
     text::BufferList bufferList;
     lsp::Manager     manager(bufferList, f.loop);
     manager.SetRemoteHosts(&f.hosts);
-    text::Buffer buffer = text::Buffer::FromRemoteContents({.destination = "host", .path = f.file}, text::FileContents{.bytes = "int x;\n", .timestamp = std::nullopt});
+    text::Buffer& buffer = f.Open(bufferList);
 
     CHECK_FALSE(PumpUntil(
         f.loop,
@@ -147,4 +166,29 @@ TEST_CASE("A remote buffer's language server waits for its host; nothing connect
         },
         std::chrono::milliseconds(300)));
     CHECK_FALSE(fs::exists(f.log));
+}
+
+TEST_CASE("A remote server's diagnostics and answers reach the buffer it means", "[Lsp][LspRemote][HostAgent]") {
+    Fixture f;
+    REQUIRE(f.Connect());
+
+    text::BufferList bufferList;
+    lsp::Manager     manager(bufferList, f.loop);
+    manager.SetRemoteHosts(&f.hosts);
+    text::Buffer& buffer = f.Open(bufferList);
+
+    REQUIRE(PumpUntil(f.loop, [&] {
+        manager.SyncBuffer(buffer, kLanguage);
+        return !buffer.Diagnostics().empty();
+    }));
+    REQUIRE(buffer.Diagnostics().size() == 1);
+    CHECK(buffer.Diagnostics().front().message == "seen on the host");
+    CHECK(buffer.Diagnostics().front().startByte == 4);
+    CHECK(manager.ProjectDiagnostics().empty());
+
+    std::optional<std::optional<std::string>> hover;
+    manager.RequestHover(buffer, 4, [&](std::optional<std::string> text) { hover = std::move(text); });
+    REQUIRE(PumpUntil(f.loop, [&] { return hover.has_value(); }));
+    REQUIRE(hover->has_value());
+    CHECK(hover->value().starts_with("hover from "));
 }

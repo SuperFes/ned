@@ -1923,6 +1923,10 @@ class Manager {
     enum class RefreshKind { SemanticTokens, CodeLens, InlayHints, Diagnostics };
     void RefreshServerResults(const std::string& connectionKey, RefreshKind kind);
 
+    // The open buffer a connection's server means by path: one on the
+    // connection's host for a remote server.
+    [[nodiscard]] text::Buffer* FindDocumentBuffer(const std::string& connectionKey, const std::filesystem::path& path);
+
     void HandlePublishDiagnostics(const nlohmann::json& params, const std::string& language,
                                   const std::string& connectionKey);
 
