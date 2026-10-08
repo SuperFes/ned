@@ -2041,6 +2041,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // the composer, via the same prose-checker connection ProseChecker.h
     // already wires up generically.
     acpPanel.SetLspManager(&lspManager);
+    acpPanel.SetBufferList(&bufferList);
     acpPanel.SetOnComposeRequest([wm = windowManager.get()](std::string seed, ned::editor::acp::ComposeCallbacks callbacks) {
         wm->RequestAcpCompose(std::move(seed), std::move(callbacks));
     });

@@ -275,6 +275,19 @@ its own machine, by their paths there, and what it reports (where it stopped, fr
 loaded sources, disassembly) comes back as files on that host. Run-to-cursor and
 jump-to-line refuse a file on another machine.
 
+**Agents (ACP).** An agent started while a remote buffer is focused (the agent prompt,
+or the panel reconnecting) runs on that buffer's host, with the same command as a local
+one, in the project root found there; every conversation on that connection works there.
+Its `fs/read_text_file` reads an open buffer's live text, else the host's file, and
+`fs/write_text_file` writes the host's file, which an open buffer then takes up. The paths
+it names are that host's: following it and its tool locations open the files there, and a
+conversation keeps its host after the agent has gone. A turn's review and rewind cover the
+host's files that were open here, with the "after" read from the host as the turn ends,
+and a rewind edits the open buffer, leaving it to be saved. It is offered none of ned's
+MCP tools, since the bridge is a local socket, and no additional directories. In the
+composer, `@buffer` names a host file by its path there for an agent on that host, and
+`@` completion offers the host's files open here.
+
 **Main-thread waits.** A remote process can't be waited on from the main thread, which
 is what moves its bytes. A call site that blocks there on a child (the toolchain probes)
 becomes asynchronous, or moves to a worker, before it can run remotely. One that hands a

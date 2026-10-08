@@ -20,6 +20,7 @@
 #include "Editor/SyntaxTheme.h"
 #include "KeyTranslation.h"
 #include "Text/Base64.h"
+#include "Text/BufferList.h"
 #include "Text/DisplayWidth.h"
 #include "Text/FileUri.h"
 #include "Text/Utf8.h"
@@ -153,6 +154,10 @@ void AcpPanel::SetAcpManager(editor::acp::Manager* acpManager) {
 
 void AcpPanel::SetActiveBufferProvider(std::function<ActiveBuffer&()> provider) {
     activeBufferProvider_ = std::move(provider);
+}
+
+void AcpPanel::SetBufferList(const text::BufferList* bufferList) {
+    bufferList_ = bufferList;
 }
 
 void AcpPanel::SetLspManager(editor::lsp::Manager* lspManager) {
@@ -1344,12 +1349,37 @@ void AcpPanel::RefreshMentionCandidates() {
     if (activeBufferProvider_ && activeBufferProvider_().Get().HasMark()) {
         mentionCandidates_.push_back("selection");
     }
+    if (const std::optional<text::RemoteFile>& beside = acpManager_->AgentBeside()) {
+        for (std::string& path : OpenHostFiles(beside->destination, acpManager_->TranscriptRoot())) {
+            mentionCandidates_.push_back(std::move(path));
+        }
+        return;
+    }
     const std::filesystem::path root = editor::ProjectRoot();
     for (const editor::ProjectTreeEntry& entry : editor::BuildProjectTree(root)) {
         if (!entry.isDirectory) {
             mentionCandidates_.push_back(std::filesystem::relative(entry.path, root).generic_string());
         }
     }
+}
+
+std::vector<std::string> AcpPanel::OpenHostFiles(const std::string& destination, const std::filesystem::path& root) const {
+    std::vector<std::string> files;
+    if (!bufferList_) {
+        return files;
+    }
+    for (const auto& buffer : bufferList_->Buffers()) {
+        const std::optional<text::RemoteFile>& remote = buffer->Remote();
+        if (!remote || remote->destination != destination) {
+            continue;
+        }
+        const std::filesystem::path relative = remote->path.lexically_relative(root);
+        if (!relative.empty() && *relative.begin() != "..") {
+            files.push_back(relative.generic_string());
+        }
+    }
+    std::sort(files.begin(), files.end());
+    return files;
 }
 
 bool AcpPanel::MoveComposerVertically(int direction) {
@@ -1490,6 +1520,28 @@ namespace {
 
 } // namespace
 
+namespace {
+
+    std::string AttachmentName(const text::Buffer& buffer) {
+        const std::optional<text::FileRef> file = buffer.File();
+        return file ? text::PathOf(*file).filename().string() : buffer.Name();
+    }
+
+    // An agent reads a file:// uri as a path on its own machine, so a file
+    // on any other is named as a buffer instead.
+    std::string AttachmentUri(const text::Buffer& buffer, const std::optional<text::RemoteFile>& agentBeside) {
+        const std::optional<text::RemoteFile>& remote = buffer.Remote();
+        if (remote && agentBeside && remote->destination == agentBeside->destination) {
+            return text::PathToFileUri(remote->path);
+        }
+        if (buffer.Path() && !agentBeside) {
+            return text::PathToFileUri(*buffer.Path());
+        }
+        return "ned-buffer://" + buffer.Name();
+    }
+
+} // namespace
+
 std::vector<editor::acp::Manager::PromptAttachment> AcpPanel::ResolveMentionAttachments(std::string& text) const {
     std::vector<editor::acp::Manager::PromptAttachment> attachments;
     AppendFileMentionLinks(text, attachments);
@@ -1504,8 +1556,8 @@ std::vector<editor::acp::Manager::PromptAttachment> AcpPanel::ResolveMentionAtta
 
     if (const std::optional<std::size_t> pos = FindMentionToken(text, "@buffer")) {
         text::Buffer&     buffer  = activeBufferProvider_().Get();
-        const std::string name    = buffer.Path() ? buffer.Path()->filename().string() : buffer.Name();
-        const std::string uri     = buffer.Path() ? text::PathToFileUri(*buffer.Path()) : "ned-buffer://" + buffer.Name();
+        const std::string name    = AttachmentName(buffer);
+        const std::string uri     = AttachmentUri(buffer, acpManager_ ? acpManager_->AgentBeside() : std::nullopt);
         std::string       content = buffer.Text();
         if (content.size() > kMaxAttachmentBytes) {
             const std::size_t totalBytes = content.size();
@@ -1523,9 +1575,8 @@ std::vector<editor::acp::Manager::PromptAttachment> AcpPanel::ResolveMentionAtta
             const std::string selection = buffer.Content().Substring(start, end - start);
             const std::size_t startLine = buffer.Content().ByteOffsetToLine(start) + 1;
             const std::size_t endLine   = buffer.Content().ByteOffsetToLine(end) + 1;
-            const std::string fileLabel = buffer.Path() ? buffer.Path()->filename().string() : buffer.Name();
-            const std::string name      = fileLabel + "#L" + std::to_string(startLine) + "-" + std::to_string(endLine);
-            const std::string uri       = buffer.Path() ? text::PathToFileUri(*buffer.Path()) : "ned-buffer://" + buffer.Name();
+            const std::string name      = AttachmentName(buffer) + "#L" + std::to_string(startLine) + "-" + std::to_string(endLine);
+            const std::string uri       = AttachmentUri(buffer, acpManager_ ? acpManager_->AgentBeside() : std::nullopt);
             attachments.push_back({.uri = uri, .name = name, .mimeType = "", .text = selection});
             text.replace(*pos, std::string_view("@selection").size(), "[attached: " + name + "]");
         }
@@ -1535,8 +1586,9 @@ std::vector<editor::acp::Manager::PromptAttachment> AcpPanel::ResolveMentionAtta
     return attachments;
 }
 
-void AcpPanel::AppendFileMentionLinks(const std::string& text, std::vector<editor::acp::Manager::PromptAttachment>& attachments) {
-    const std::filesystem::path root = editor::ProjectRoot();
+void AcpPanel::AppendFileMentionLinks(const std::string& text, std::vector<editor::acp::Manager::PromptAttachment>& attachments) const {
+    const std::optional<text::RemoteFile> beside = acpManager_ ? acpManager_->AgentBeside() : std::nullopt;
+    const std::filesystem::path           root   = beside ? acpManager_->TranscriptRoot() : editor::ProjectRoot();
     std::vector<std::string>    seen;
     std::size_t                 pos = 0;
     while ((pos = text.find('@', pos)) != std::string::npos) {
@@ -1553,7 +1605,9 @@ void AcpPanel::AppendFileMentionLinks(const std::string& text, std::vector<edito
         }
         std::error_code             ec;
         const std::filesystem::path path = std::filesystem::path(mention).is_absolute() ? std::filesystem::path(mention) : root / mention;
-        if (!std::filesystem::is_regular_file(path, ec)) {
+        const bool                  file = beside ? bufferList_ && bufferList_->FindFile(text::RemoteFile{.destination = beside->destination, .path = path.lexically_normal()})
+                                                  : std::filesystem::is_regular_file(path, ec);
+        if (!file) {
             continue; // not a file -- an @-handle or plain text, left alone
         }
         seen.push_back(mention);

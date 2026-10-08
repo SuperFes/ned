@@ -74,9 +74,6 @@ and sync on save; don't build a remote-authoritative buffer.
       against them through `NED_TEST_AGENT`: x86_64 natively, aarch64 under
       `qemu-aarch64`.
 - [ ] Prune `<build>-<arch>` agent directories no editor has used in a while.
-- [ ] The rest of the `proc` seam, per the design doc's staging step 4: ACP. Tasks, the
-      test runner, VCS, the format command, terminal tabs, language servers and debug
-      adapters already run on a remote buffer's host.
 - [ ] Reveal in Terminal for a Remote-panel row: a terminal on that host, in that
       directory.
 
@@ -99,6 +96,16 @@ and sync on save; don't build a remote-authoritative buffer.
 **Debug adapters on a host**
 - [ ] Launch and attach configurations for a host: one per language today, sent
       unchanged, so a remote session needs paths that exist on the host.
+
+**ACP agents on a host**
+- [ ] ned's MCP tools for an agent on a host: the bridge is a local socket, so
+      `ned-agent` would relay the agent's MCP stdio back over the connection.
+- [ ] `acpAdditionalDirectories` for an agent on a host; they're this machine's today
+      and aren't sent.
+- [ ] Turn review and rewind of a host file the agent changed while it wasn't open
+      here: its "before" would have to be taken on the host, ahead of the edit.
+- [ ] `@` completion for a host agent offers only the host's files open here, and an
+      `@path` links only those; it needs a project listing from the host.
 
 **Client/server protocol**, ordered by the design doc's staging section.
 - [ ] `ned --protocol-dump`: decode a captured byte stream to readable JSON.

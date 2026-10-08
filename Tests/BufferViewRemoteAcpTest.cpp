@@ -11,6 +11,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -29,6 +30,7 @@
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
+#include "UI/AcpPanel.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferView.h"
 #include "UI/EventLoop.h"
@@ -258,5 +260,43 @@ TEST_CASE("A host's ACP turn review names its files against the host's root and 
     fixture.view.OnEvent(test::Return());
     REQUIRE(PumpUntil(fixture.loop, [&] { return fixture.Showing(); }));
     CHECK(&fixture.activeBuffer.Get() == &file);
+    fixture.acpManager.StopSession();
+}
+
+TEST_CASE("The ACP composer names a host agent's files by their paths there", "[BufferView][Remote][Acp][AcpPanel][HostAgent]") {
+    Fixture fixture;
+    REQUIRE(fixture.OpenFile());
+    REQUIRE(Start(fixture));
+    ned::ui::AcpPanel panel{fixture.theme};
+    panel.SetAcpManager(&fixture.acpManager);
+    panel.SetBufferList(&fixture.bufferList);
+    panel.SetActiveBufferProvider([&fixture]() -> ned::ui::ActiveBuffer& { return fixture.activeBuffer; });
+    panel.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 79, .y_min = 0, .y_max = 30});
+    const auto type = [&panel](std::string_view text) {
+        for (const char c : text) {
+            panel.OnEvent(test::Character(std::string(1, c)));
+        }
+    };
+
+    // Completion offers the host's open file; nothing on the host's disk can be listed.
+    type("@src/a");
+    panel.OnEvent(test::Return());
+    type(" @src/gone.c @buffer");
+    panel.OnEvent(test::Return());
+    panel.OnEvent(test::Return());
+    REQUIRE(PumpUntil(fixture.loop, [&] { return fixture.agent.Requests("session/prompt").size() == 1; }));
+
+    const Json        prompt = fixture.agent.Requests("session/prompt").front()["params"]["prompt"];
+    std::vector<Json> links;
+    std::vector<Json> resources;
+    for (const Json& block : prompt) {
+        (block["type"] == "resource_link" ? links : resources).push_back(block);
+    }
+    REQUIRE(links.size() == 1);
+    CHECK(links[0]["uri"] == "file://" + fixture.agent.file.string());
+    CHECK(links[0]["name"] == "src/a.c");
+    const auto resource = std::find_if(resources.begin(), resources.end(), [](const Json& block) { return block["type"] == "resource"; });
+    REQUIRE(resource != resources.end());
+    CHECK((*resource)["resource"]["uri"] == "file://" + fixture.agent.file.string());
     fixture.acpManager.StopSession();
 }
