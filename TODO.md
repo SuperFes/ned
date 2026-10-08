@@ -74,9 +74,9 @@ and sync on save; don't build a remote-authoritative buffer.
       against them through `NED_TEST_AGENT`: x86_64 natively, aarch64 under
       `qemu-aarch64`.
 - [ ] Prune `<build>-<arch>` agent directories no editor has used in a while.
-- [ ] The rest of the `proc` seam, per the design doc's staging step 4: the formatter,
-      terminal tabs over a pty, then LSP, DAP and ACP. Tasks, the test runner and VCS
-      already run on a remote buffer's host.
+- [ ] The rest of the `proc` seam, per the design doc's staging step 4: terminal tabs
+      over a pty, then LSP, DAP and ACP. Tasks, the test runner, VCS and the format
+      command already run on a remote buffer's host.
 
 **Client/server protocol**, ordered by the design doc's staging section.
 - [ ] `ned --protocol-dump`: decode a captured byte stream to readable JSON.
