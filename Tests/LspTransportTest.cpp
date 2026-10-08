@@ -313,3 +313,17 @@ TEST_CASE("Transport::WriteFrame keeps concurrent frames from interleaving", "[L
     REQUIRE(large == kLargeCount);
     REQUIRE(small == kSmallCount);
 }
+
+TEST_CASE("Transport frames over a child it is handed, with that child's stderr and the given label", "[Lsp]") {
+    Transport transport(ned::editor::process::ChildProcess({"sh", "-c", "echo oops >&2; exec stdbuf -o0 /bin/cat"}, ned::editor::process::StderrMode::Capture),
+                        "fake-server");
+
+    transport.WriteFrame("over a handed child");
+    const auto echoed = transport.ReadFrame();
+
+    REQUIRE(echoed.has_value());
+    REQUIRE(*echoed == "over a handed child");
+    REQUIRE(transport.ProcessLabel() == "fake-server");
+    REQUIRE(transport.StderrFd() >= 0);
+    REQUIRE(transport.ReadStderr() == "oops\n");
+}

@@ -78,6 +78,10 @@ class Transport {
     // Not noexcept: allocates this Transport's write mutex (see WriteFrame).
     Transport(int readFd, int writeFd, pid_t pid = -1);
 
+    // An already-spawned server, such as one relayed from a host
+    // (Remote/Proc.h). processLabel names it on its stderr lines.
+    Transport(process::ChildProcess child, std::string processLabel);
+
     ~Transport() = default; // ChildProcess's own destructor does the real work
 
     Transport(Transport&&)                 = default;

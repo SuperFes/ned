@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstring>
 #include <stdexcept>
+#include <utility>
 
 #include <unistd.h>
 
@@ -108,6 +109,9 @@ Transport::Transport(const std::vector<std::string>& argv, bool captureStderr) :
 }
 
 Transport::Transport(int readFd, int writeFd, pid_t pid) : child_(readFd, writeFd, pid) {
+}
+
+Transport::Transport(process::ChildProcess child, std::string processLabel) : child_(std::move(child)), processLabel_(std::move(processLabel)) {
 }
 
 void Transport::WriteFrame(std::string_view jsonPayload, std::chrono::milliseconds stallTimeout) const {

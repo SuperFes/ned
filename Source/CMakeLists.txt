@@ -301,6 +301,7 @@ add_library(ned_lib STATIC
         Editor/Acp/TurnReview.cpp
         Editor/Lsp/Transport.cpp
         Editor/Lsp/Client.cpp
+        Editor/Lsp/ConnectionKey.cpp
         Editor/Lsp/ServerConfig.cpp
         Editor/Lsp/RootResolver.cpp
         Editor/Lsp/ProseChecker.cpp

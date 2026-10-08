@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include "BrokerConnect.h"
+#include "ConnectionKey.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/ColorSwatchSettings.h"
 #include "Editor/DiagnosticsLog.h"
@@ -807,10 +808,7 @@ void Manager::WireNotificationHandlers(Client& client, const std::string& server
 }
 
 std::string Manager::ConnectionKey(const std::filesystem::path& root, const std::string& serverKey) const {
-    if (root == editor::ProjectRoot()) {
-        return serverKey;
-    }
-    return root.string() + '\x1f' + serverKey;
+    return MakeConnectionKey(std::nullopt, root, editor::ProjectRoot(), serverKey);
 }
 
 std::string Manager::ConnectionKeyForBuffer(const text::Buffer& buffer, const std::string& serverKey) const {
@@ -825,10 +823,9 @@ std::string Manager::ResolvedConnectionKey(const std::filesystem::path& root, co
 }
 
 std::vector<std::string> Manager::ConnectionKeysForServer(const std::string& serverKey) const {
-    const std::string        suffix = '\x1f' + serverKey;
     std::vector<std::string> keys;
     for (const auto& [key, client] : clients_) {
-        if (key == serverKey || (key.size() > suffix.size() && key.compare(key.size() - suffix.size(), suffix.size(), suffix) == 0)) {
+        if (!ConnectionHost(key) && ConnectionServer(key) == serverKey) {
             keys.push_back(key);
         }
     }
