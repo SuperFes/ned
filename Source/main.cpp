@@ -92,6 +92,7 @@
 #include "Editor/RecencyGlow.h"
 #include "Editor/RecentFiles.h"
 #include "Editor/Register.h"
+#include "Editor/Remote/Askpass.h"
 #include "Editor/Remote/Hosts.h"
 #include "Editor/Repl/Config.h"
 #include "Editor/RustfmtConfig.h"
@@ -3769,6 +3770,13 @@ auto main(int argc, char** argv) -> int {
     // caught std::runtime_error -- ordinary, already-handled error paths,
     // not a new failure mode to plumb through.
     std::signal(SIGPIPE, SIG_IGN);
+
+    // ssh runs this binary as an SshMaster's SSH_ASKPASS (Remote/Askpass.h),
+    // with the question as the only argument, which the CLI can't parse.
+    if (const char* socket = std::getenv(ned::editor::remote::kAskpassSocketVariable); socket != nullptr && argc == 2) {
+        const char* hint = std::getenv("SSH_ASKPASS_PROMPT");
+        return ned::editor::remote::RunAskpassRelay(socket, argv[1], hint != nullptr ? hint : "", STDOUT_FILENO);
+    }
 
     // Every option -- and the description, hence the empty one here --
     // lives in Editor/CliOptions.cpp, not in main.cpp, which isn't linked

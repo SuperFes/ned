@@ -5,8 +5,10 @@
 #include <atomic>
 #include <cerrno>
 #include <charconv>
+#include <future>
 #include <string_view>
 #include <system_error>
+#include <thread>
 
 #include <poll.h>
 #include <signal.h>
@@ -45,12 +47,12 @@ namespace {
 
     // Options every role shares. ClearAllForwardings keeps the master from
     // binding the forwards a user's config sets up for interactive logins.
-    std::vector<std::string> CommonArgv(const std::filesystem::path& controlPath, const SshOptions& options) {
+    std::vector<std::string> CommonArgv(const std::filesystem::path& controlPath, const SshOptions& options, bool batch = true) {
         return {options.program,
                 "-S",
                 ControlPathArgument(controlPath),
                 "-o",
-                "BatchMode=yes",
+                batch ? "BatchMode=yes" : "BatchMode=no",
                 "-o",
                 "RemoteCommand=none",
                 "-o",
@@ -96,6 +98,62 @@ namespace {
         }
     }
 
+    constexpr std::string_view kAskpassSuffix = ".askpass";
+    // How long a relay that has connected gets to finish asking.
+    constexpr std::chrono::milliseconds kAskpassRequestWait{2000};
+
+    std::filesystem::path AskpassPath(const std::filesystem::path& controlPath) {
+        std::filesystem::path path = controlPath;
+        path += kAskpassSuffix;
+        return path;
+    }
+
+    std::string OwnExecutable() {
+        std::error_code             ec;
+        const std::filesystem::path path = std::filesystem::read_symlink("/proc/self/exe", ec);
+        if (ec) {
+            throw SshError("cannot find the editor's own executable to answer ssh: " + ec.message());
+        }
+        return path.string();
+    }
+
+    // A question the handler is answering on its own thread, so the login
+    // keeps draining ssh's stderr and noticing ssh give up meanwhile.
+    // Destroying it withdraws the question and waits for the handler.
+    struct PendingQuestion {
+        PendingQuestion(AskpassRequest request, AskpassQuestion question, const AskpassHandler& handler) : request(std::move(request)) {
+            std::promise<AskpassAnswer> promise;
+            answer = promise.get_future();
+            asking = std::jthread([handler, question = std::move(question), promise = std::move(promise)](const std::stop_token& withdrawn) mutable {
+                try {
+                    promise.set_value(handler(question, withdrawn));
+                }
+                catch (...) {
+                    promise.set_exception(std::current_exception());
+                }
+            });
+        }
+
+        [[nodiscard]] bool Answered() const {
+            return answer.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+        }
+
+        void Reply() {
+            AskpassAnswer reply;
+            try {
+                reply = answer.get();
+            }
+            catch (const std::exception&) {
+                // A handler that fails cancels the question.
+            }
+            request.Reply(reply);
+        }
+
+        AskpassRequest             request;
+        std::future<AskpassAnswer> answer;
+        std::jthread               asking;
+    };
+
     std::string LoginFailure(const std::string& destination, std::string_view stderrText, std::optional<int> exitCode) {
         if (std::string message = Trimmed(stderrText); !message.empty()) {
             return message;
@@ -134,7 +192,7 @@ std::string RemoteCommandLine(std::span<const std::string> argv) {
 }
 
 std::vector<std::string> SshMasterArgv(const std::string& destination, const std::filesystem::path& controlPath, const SshOptions& options) {
-    std::vector<std::string> argv = CommonArgv(controlPath, options);
+    std::vector<std::string> argv = CommonArgv(controlPath, options, !options.askpass);
     // ControlPersist=no keeps the master in the foreground, owned by us,
     // even under a user config that persists masters.
     argv.insert(argv.end(), {"-M", "-N", "-n", "-o", "ControlPersist=no", "--", destination});
@@ -170,8 +228,16 @@ std::size_t SweepOrphanedMasters(const SshOptions& options) {
     std::error_code                    ec;
     std::vector<std::filesystem::path> orphaned;
     for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
-        const std::optional<pid_t> owner = ControlPathOwner(entry.path().filename().string());
-        if (owner && entry.is_socket(ec) && ::kill(*owner, 0) != 0 && errno == ESRCH) {
+        std::string_view           name    = entry.path().filename().native();
+        const bool                 askpass = name.ends_with(kAskpassSuffix);
+        const std::optional<pid_t> owner   = ControlPathOwner(askpass ? name.substr(0, name.size() - kAskpassSuffix.size()) : name);
+        if (!owner || !entry.is_socket(ec) || ::kill(*owner, 0) == 0 || errno != ESRCH) {
+            continue;
+        }
+        if (askpass) {
+            std::filesystem::remove(entry.path(), ec);
+        }
+        else {
             orphaned.push_back(entry.path());
         }
     }
@@ -203,14 +269,27 @@ void SshMaster::Start(const std::stop_token& stop) {
     std::error_code ec;
     // Only a dead process with a recycled pid could have left one here.
     std::filesystem::remove(controlPath_, ec);
+    std::optional<AskpassListener> askpass;
+    process::SpawnOptions          spawn{.stderrMode = process::StderrMode::Capture, .cwd = std::nullopt, .env = {}};
     try {
-        master_.emplace(SshMasterArgv(destination_, controlPath_, options_), process::StderrMode::Capture);
+        if (options_.askpass) {
+            askpass.emplace(AskpassPath(controlPath_));
+            spawn.env = {{"SSH_ASKPASS", options_.askpassProgram.empty() ? OwnExecutable() : options_.askpassProgram},
+                         {"SSH_ASKPASS_REQUIRE", "force"},
+                         {kAskpassSocketVariable, askpass->Path().string()}};
+        }
+        master_.emplace(SshMasterArgv(destination_, controlPath_, options_), spawn);
+    }
+    catch (const SshError&) {
+        throw;
     }
     catch (const std::runtime_error& error) {
         throw SshError("cannot run " + options_.program + ": " + error.what());
     }
 
-    const auto abandon = [this] {
+    std::optional<PendingQuestion> pending;
+    const auto                     abandon = [this, &pending] {
+        pending.reset();
         master_->Kill();
         master_.reset();
         std::error_code ignored;
@@ -219,22 +298,46 @@ void SshMaster::Start(const std::stop_token& stop) {
 
     // The master binds its control socket only after login succeeds.
     std::string stderrText;
-    const auto  deadline = std::chrono::steady_clock::now() + options_.startTimeout;
+    std::size_t reported = 0; // how much of stderrText earlier questions carried
+    auto        deadline = std::chrono::steady_clock::now() + options_.startTimeout;
     while (!std::filesystem::is_socket(controlPath_, ec)) {
         if (stop.stop_requested()) {
             abandon();
             throw SshError("ssh to " + destination_ + " cancelled");
         }
-        if (std::chrono::steady_clock::now() >= deadline) {
+        if (!pending && std::chrono::steady_clock::now() >= deadline) {
             abandon();
             throw SshError("ssh to " + destination_ + " didn't log in within " + std::to_string(options_.startTimeout.count()) + " ms");
         }
-        pollfd readable{.fd = master_->StderrFd(), .events = POLLIN, .revents = 0};
-        if (::poll(&readable, 1, kLoginPollMs) <= 0) {
+        std::array<pollfd, 3> fds{pollfd{.fd = master_->StderrFd(), .events = POLLIN, .revents = 0},
+                                  pollfd{.fd = askpass && !pending ? askpass->Fd() : -1, .events = POLLIN, .revents = 0},
+                                  pollfd{.fd = pending ? pending->request.Fd() : -1, .events = POLLIN, .revents = 0}};
+        (void)::poll(fds.data(), fds.size(), kLoginPollMs);
+
+        if (pending && (fds[2].revents != 0 || pending->Answered())) {
+            // A relay that hung up was killed by ssh, done waiting on it.
+            if (fds[2].revents == 0) {
+                pending->Reply();
+            }
+            pending.reset();
+            deadline = std::chrono::steady_clock::now() + options_.startTimeout;
+        }
+        if (fds[1].revents != 0) {
+            if (std::optional<AskpassRequest> request = askpass->Accept(kAskpassRequestWait)) {
+                AskpassQuestion question{.destination = destination_,
+                                         .prompt      = request->Prompt(),
+                                         .kind        = ClassifyAskpass(request->Hint(), request->Prompt()),
+                                         .detail      = Trimmed(std::string_view(stderrText).substr(reported))};
+                reported = stderrText.size();
+                pending.emplace(std::move(*request), std::move(question), options_.askpass);
+            }
+        }
+        if (fds[0].revents == 0) {
             continue;
         }
         const std::string chunk = master_->ReadSomeStderr();
         if (chunk.empty()) {
+            pending.reset();
             const std::optional<int> exitCode = master_->WaitForExit();
             master_.reset();
             std::filesystem::remove(controlPath_, ec);

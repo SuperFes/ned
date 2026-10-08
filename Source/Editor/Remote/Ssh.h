@@ -8,7 +8,8 @@
 // known_hosts all apply. Every invocation overrides what would break a
 // non-interactive pipe: RemoteCommand=none and RequestTTY=no (a config that
 // launches a shell otherwise refuses a command), and BatchMode=yes, since a
-// password or host-key prompt has no terminal to appear on.
+// password or host-key prompt has no terminal to appear on. Only a master
+// given an askpass handler asks them, through it (Askpass.h).
 //
 
 #ifndef NED_EDITOR_REMOTE_SSH_H
@@ -25,6 +26,7 @@
 #include <vector>
 
 #include "Editor/Process/ChildProcess.h"
+#include "Editor/Remote/Askpass.h"
 
 namespace ned::editor::remote {
 
@@ -37,6 +39,11 @@ struct SshOptions {
     // Keepalives, so a dropped link fails after interval * countMax.
     std::chrono::seconds aliveInterval{15};
     int                  aliveCountMax = 3;
+    // Answers the master's login questions. Unset, the login runs in
+    // BatchMode and fails wherever ssh would ask.
+    AskpassHandler askpass;
+    // What ssh runs as SSH_ASKPASS; this executable when empty.
+    std::string askpassProgram;
 };
 
 class SshError : public std::runtime_error {
@@ -85,6 +92,8 @@ class SshMaster {
     // Throws SshError carrying ssh's own message when the master exits
     // (a refused key, an unknown host key, an unreachable host), on
     // timeout, or once stop is requested; the master is gone either way.
+    // The timeout restarts after each question the askpass handler
+    // answers, so time spent answering never counts against it.
     void Start(const std::stop_token& stop = {});
 
     // Asks the master to exit (which ends every session through it), then
