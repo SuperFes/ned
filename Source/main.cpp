@@ -2050,17 +2050,21 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     acpManager.SetOnAttention([&acpPanel](ned::editor::acp::Manager::Attention attention, std::chrono::steady_clock::duration elapsed) {
         acpPanel.NoteAttention(attention, elapsed);
     });
-    acpPanel.SetOnOpenLocation([wm = windowManager.get()](const std::filesystem::path& path, std::size_t line) {
-        wm->RequestVisitLocation(path, line);
-    });
+    acpPanel.SetOnOpenLocation([wm = windowManager.get()](const ned::text::FileRef& file, std::size_t line) { wm->RequestVisitLocation(file, line); });
     // Following only moves the editor while the panel has focus -- never a
     // buffer someone is typing in.
-    acpManager.SetOnToolLocation([wm = windowManager.get(), &acpPanel](const ned::editor::acp::Manager::ToolLocation& location) {
-        std::error_code error;
-        if (!ned::editor::acp::GetAcpFollowAgent() || !acpPanel.Focused() || !std::filesystem::is_regular_file(location.path, error)) {
+    acpManager.SetOnToolLocation([wm = windowManager.get(), &acpPanel, &acpManager](const ned::editor::acp::Manager::ToolLocation& location) {
+        if (!ned::editor::acp::GetAcpFollowAgent() || !acpPanel.Focused()) {
             return;
         }
-        wm->RequestVisitLocation(location.path, location.line ? *location.line + 1 : 1);
+        // A host's file can't be checked from here; visiting one that isn't
+        // there says so.
+        const ned::text::FileRef file = acpManager.FileFor(location.path);
+        std::error_code          error;
+        if (const auto* local = std::get_if<std::filesystem::path>(&file); local && !std::filesystem::is_regular_file(*local, error)) {
+            return;
+        }
+        wm->RequestVisitLocation(file, location.line ? *location.line + 1 : 1);
     });
     // goto_location honours the same rule as following.
     mcpToolRegistry.SetEditorHooks({

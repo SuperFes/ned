@@ -333,6 +333,8 @@ Json Manager::McpServers() {
 
 Json Manager::SessionParams(Session& session) {
     const std::filesystem::path root = SessionRoot();
+    session.host                     = agentBeside_ ? agentBeside_->destination : std::string();
+    session.root                     = root;
     if (agentBeside_) {
         // Neither reaches a host: the bridge is a socket here, and the
         // directories are this machine's.
@@ -1262,6 +1264,17 @@ std::filesystem::path Manager::SessionRoot() const {
         return agentRoot_.value_or(agentBeside_->path.parent_path());
     }
     return editor::ProjectRoot();
+}
+
+text::FileRef Manager::FileFor(const std::string& path) const {
+    if (current_->host.empty()) {
+        return std::filesystem::path(path);
+    }
+    return text::RemoteFile{.destination = current_->host, .path = path};
+}
+
+std::filesystem::path Manager::TranscriptRoot() const {
+    return current_->root.empty() ? editor::ProjectRoot() : current_->root;
 }
 
 const std::optional<text::RemoteFile>& Manager::AgentBeside() const {
