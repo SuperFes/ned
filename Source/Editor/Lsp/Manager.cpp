@@ -19,6 +19,10 @@
 #include "Editor/Link.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Settings.h"
+#include "Editor/Remote/Connection.h"
+#include "Editor/Remote/Fs.h"
+#include "Editor/Remote/Hosts.h"
+#include "Editor/Remote/Placement.h"
 #include "Editor/TabWidth.h"
 #include "Position.h"
 #include "ProseChecker.h"
@@ -65,6 +69,11 @@ namespace {
         std::error_code             ec;
         const std::filesystem::path absolute = std::filesystem::absolute(path, ec);
         return text::PathToFileUri((ec ? path : absolute).lexically_normal());
+    }
+
+    // A remote buffer's URI names its path on its host, where its server runs.
+    std::string DocumentUri(const text::Buffer& buffer) {
+        return buffer.Remote() ? text::PathToFileUri(buffer.Remote()->path) : PathToUri(*buffer.Path());
     }
 
     // Servers do percent-encode: clangd reports libstdc++ headers as
@@ -427,7 +436,7 @@ namespace {
 
 } // namespace
 
-Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json& initializationOptions) {
+Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json& initializationOptions, bool local) {
     // codeActionLiteralSupport is load-bearing, not boilerplate: per the LSP
     // spec a server may only return edit-carrying CodeAction literals to a
     // client that advertises it, and must fall back to bare Command objects
@@ -459,7 +468,7 @@ Json BuildInitializeParams(const std::filesystem::path& projectRoot, const Json&
     // array, for an empty root: an empty array means "no folders open,"
     // which is a different claim than "this client doesn't have one."
     Json params = Json{
-        {"processId", static_cast<std::int64_t>(::getpid())},
+        {"processId", local ? Json(static_cast<std::int64_t>(::getpid())) : Json(nullptr)},
         {"rootUri", projectRoot.empty() ? Json(nullptr) : Json(PathToUri(projectRoot))},
         {"workspaceFolders", projectRoot.empty() ? Json(nullptr) : Json::array({WorkspaceFolderEntry(projectRoot)})},
         {"capabilities",
@@ -807,34 +816,34 @@ void Manager::WireNotificationHandlers(Client& client, const std::string& server
     });
 }
 
-std::string Manager::ConnectionKey(const std::filesystem::path& root, const std::string& serverKey) const {
-    return MakeConnectionKey(std::nullopt, root, editor::ProjectRoot(), serverKey);
+std::string Manager::ConnectionKey(const ServerRoot& root, const std::string& serverKey) const {
+    return MakeConnectionKey(root, editor::ProjectRoot(), serverKey);
 }
 
 std::string Manager::ConnectionKeyForBuffer(const text::Buffer& buffer, const std::string& serverKey) const {
     const auto it = bufferResolvedRoot_.find(const_cast<text::Buffer*>(&buffer));
-    return ResolvedConnectionKey(it != bufferResolvedRoot_.end() ? it->second : editor::ProjectRoot(), serverKey);
+    return ResolvedConnectionKey(it != bufferResolvedRoot_.end() ? it->second : ServerRoot{.path = editor::ProjectRoot()}, serverKey);
 }
 
-std::string Manager::ResolvedConnectionKey(const std::filesystem::path& root, const std::string& serverKey) const {
+std::string Manager::ResolvedConnectionKey(const ServerRoot& root, const std::string& serverKey) const {
     const std::string key = ConnectionKey(root, serverKey);
     const auto        it  = joinedConnection_.find(key);
     return it != joinedConnection_.end() ? it->second : key;
 }
 
-std::vector<std::string> Manager::ConnectionKeysForServer(const std::string& serverKey) const {
+std::vector<std::string> Manager::ConnectionKeysForServer(const std::string& serverKey, const std::optional<std::string>& host) const {
     std::vector<std::string> keys;
     for (const auto& [key, client] : clients_) {
-        if (!ConnectionHost(key) && ConnectionServer(key) == serverKey) {
+        if (ConnectionHost(key) == host && ConnectionServer(key) == serverKey) {
             keys.push_back(key);
         }
     }
     return keys;
 }
 
-std::optional<std::string> Manager::TryJoinWorkspaceFolder(const std::string& serverKey, const std::filesystem::path& root) {
+std::optional<std::string> Manager::TryJoinWorkspaceFolder(const std::string& serverKey, const ServerRoot& root) {
     std::string joinable;
-    for (const std::string& candidate : ConnectionKeysForServer(serverKey)) {
+    for (const std::string& candidate : ConnectionKeysForServer(serverKey, root.host)) {
         if (handshakePending_.contains(candidate)) {
             return std::nullopt; // see this method's own doc comment -- wait, don't race
         }
@@ -854,8 +863,8 @@ std::optional<std::string> Manager::TryJoinWorkspaceFolder(const std::string& se
     }
     client->SendNotification(
         "workspace/didChangeWorkspaceFolders",
-        {{"event", {{"added", Json::array({WorkspaceFolderEntry(root)})}, {"removed", Json::array()}}}});
-    connectionFolders_[joinable].push_back(root);
+        {{"event", {{"added", Json::array({WorkspaceFolderEntry(root.path)})}, {"removed", Json::array()}}}});
+    connectionFolders_[joinable].push_back(root.path);
     joinedConnection_[ConnectionKey(root, serverKey)] = joinable;
     return joinable;
 }
@@ -868,7 +877,41 @@ std::filesystem::path Manager::ResolveCachedRoot(const std::filesystem::path& bu
     return resolvedRootCache_.emplace(cacheKey, ResolveLspRoot(bufferPath, language)).first->second;
 }
 
-Client* Manager::ClientForLanguage(const std::string& serverKey, const std::filesystem::path& root) {
+std::optional<ServerRoot> Manager::ResolveRemoteRoot(const text::Buffer& buffer, const std::string& language) {
+    const text::RemoteFile& file = *buffer.Remote();
+    const std::string       key  = file.destination + '\x1e' + file.path.parent_path().string() + '\x1f' + language;
+    if (const auto it = remoteRootCache_.find(key); it != remoteRootCache_.end()) {
+        return ServerRoot{.host = file.destination, .path = it->second};
+    }
+    if (remoteRootPending_.contains(key)) {
+        return std::nullopt;
+    }
+    if (const auto failed = remoteRootFailedAt_.find(key);
+        failed != remoteRootFailedAt_.end() && std::chrono::steady_clock::now() - failed->second < kRespawnCooldown) {
+        return std::nullopt;
+    }
+    remote::Connection* connection = hosts_ != nullptr ? hosts_->Find(file.destination) : nullptr;
+    if (connection == nullptr || !connection->Connected()) {
+        return std::nullopt; // see ClientForLanguage: never connects by itself
+    }
+    remoteRootPending_.insert(key);
+    remote::FindProjectRoot(
+        *connection,
+        host::FsProjectRootRequest{.path = file.path, .detect = editor::AutoDetectProjectRoot(), .markers = RootMarkers(language)},
+        lifetime_.Bind([this, key, file, language](remote::FsResult<std::filesystem::path> root) {
+            remoteRootPending_.erase(key);
+            if (!root) {
+                remoteRootFailedAt_[key] = std::chrono::steady_clock::now();
+                LogError(language, "no root for " + file.ToString() + ": " + root.error().message);
+                return;
+            }
+            remoteRootFailedAt_.erase(key);
+            remoteRootCache_[key] = std::move(*root);
+        }));
+    return std::nullopt;
+}
+
+Client* Manager::ClientForLanguage(const std::string& serverKey, const ServerRoot& root) {
     // lsp-workspace-folders follow-up: resolved, not raw -- a root that
     // previously joined another process's folder set must keep landing on
     // that same client rather than spawning its own on the next sync.
@@ -894,7 +937,7 @@ Client* Manager::ClientForLanguage(const std::string& serverKey, const std::file
     // newly-opened sibling root from it. Only ever reachable in a genuine
     // multi-root session -- in the single-root case the exact-key lookup at
     // the top of this function already returned.
-    if (WorkspaceFoldersEnabled() && !ConnectionKeysForServer(serverKey).empty()) {
+    if (WorkspaceFoldersEnabled() && !ConnectionKeysForServer(serverKey, root.host).empty()) {
         if (const std::optional<std::string> joined = TryJoinWorkspaceFolder(serverKey, root)) {
             return ExistingClientForLanguage(*joined);
         }
@@ -904,7 +947,7 @@ Client* Manager::ClientForLanguage(const std::string& serverKey, const std::file
         // the one case that must not fall through to a spawn -- a pending
         // handshake, whose answer is what decides between joining and
         // spawning. Retried on the next SyncBuffer, at most a frame away.
-        for (const std::string& candidate : ConnectionKeysForServer(serverKey)) {
+        for (const std::string& candidate : ConnectionKeysForServer(serverKey, root.host)) {
             if (handshakePending_.contains(candidate)) {
                 return nullptr;
             }
@@ -952,6 +995,16 @@ Client* Manager::ClientForLanguage(const std::string& serverKey, const std::file
         }
     }
 
+    if (root.host) {
+        // Never connects by itself: a dropped host comes back when the user
+        // reaches for it, not on every frame.
+        const remote::Connection* connection = hosts_ != nullptr ? hosts_->Find(*root.host) : nullptr;
+        if (connection != nullptr && connection->Connected() && !remoteSpawnPending_.contains(connectionKey)) {
+            SpawnRemoteClient(serverKey, connectionKey, root, *command);
+        }
+        return nullptr;
+    }
+
     // lsp-broker follow-up. Try attaching to an already-running LSP broker
     // daemon before spawning our own subprocess -- see BrokerConnect.h's
     // own header comment for exactly why this is always safe to attempt
@@ -964,7 +1017,7 @@ Client* Manager::ClientForLanguage(const std::string& serverKey, const std::file
     // what actually exercises the broker's own pre-existing (root,
     // language) keying -- see BrokerConnect.h.
     std::unique_ptr<Client> client =
-        TryConnectToBroker(root, serverKey, *command, eventLoop_, brokerSocketPathOverrideForTesting_);
+        TryConnectToBroker(root.path, serverKey, *command, eventLoop_, brokerSocketPathOverrideForTesting_);
     // graceful-lsp-shutdown follow-up: stamped here, the one place this
     // distinction is actually made -- see brokerBackedLanguages_'s own doc
     // comment in Manager.h.
@@ -986,11 +1039,35 @@ Client* Manager::ClientForLanguage(const std::string& serverKey, const std::file
             return nullptr;
         }
     }
+    return AdoptClient(std::move(client), serverKey, connectionKey, root, brokerBacked);
+}
+
+void Manager::SpawnRemoteClient(const std::string& serverKey, const std::string& connectionKey, const ServerRoot& root,
+                                const std::vector<std::string>& command) {
+    remoteSpawnPending_.insert(connectionKey);
+    remote::SpawnBeside(hosts_, text::RemoteFile{.destination = *root.host, .path = root.path},
+                        remote::RemoteSpawn{.argv = command, .cwd = root.path, .stderrMode = process::StderrMode::Capture}, lifetime_.Token(),
+                        [this, serverKey, connectionKey, root, command](remote::Spawned spawned) {
+                            remoteSpawnPending_.erase(connectionKey);
+                            if (!spawned) {
+                                failedCommands_[connectionKey]     = command;
+                                spawnFailureDetail_[connectionKey] = spawned.error();
+                                LogError(serverKey, spawned.error());
+                                return;
+                            }
+                            Transport transport(std::move(spawned->child), std::filesystem::path(command.front()).filename().string());
+                            AdoptClient(std::make_unique<Client>(std::move(transport), eventLoop_, /*startHandshakeComplete=*/false), serverKey,
+                                        connectionKey, root, /*brokerBacked=*/false);
+                        });
+}
+
+Client* Manager::AdoptClient(std::unique_ptr<Client> client, const std::string& serverKey, const std::string& connectionKey,
+                             const ServerRoot& root, bool brokerBacked) {
     // LSP multi-root follow-up: root, not unconditionally editor::ProjectRoot()
     // -- a subpackage with its own <root>/.ned/settings.json gets its own
     // settings, same as it would opening that subdirectory as its own
-    // top-level project.
-    const editor::ProjectSettings projectSettings = editor::LoadProjectSettings(root);
+    // top-level project. A host's .ned/settings.json isn't read yet.
+    const editor::ProjectSettings projectSettings = root.host ? editor::ProjectSettings{} : editor::LoadProjectSettings(root.path);
     WireNotificationHandlers(*client, serverKey, connectionKey, projectSettings.lspWorkspaceConfiguration);
 
     Client* rawClient = client.get();
@@ -1001,7 +1078,7 @@ Client* Manager::ClientForLanguage(const std::string& serverKey, const std::file
     // model some servers expect instead -- see ProjectSettings.h's own doc
     // comment on lspWorkspaceConfiguration for why both exist side by side.
     rawClient->SendRequest(
-        "initialize", BuildInitializeParams(root, editor::InitializationOptionsForLanguage(projectSettings, serverKey)),
+        "initialize", BuildInitializeParams(root.path, editor::InitializationOptionsForLanguage(projectSettings, serverKey), !root.host),
         [this, rawClient, serverKey, connectionKey, workspaceConfiguration = projectSettings.lspWorkspaceConfiguration](
             std::optional<Json> result, std::optional<Json> error) {
             // hang-on-timed-out-initialize follow-up: ExpireStaleRequests
@@ -1066,7 +1143,7 @@ Client* Manager::ClientForLanguage(const std::string& serverKey, const std::file
     // lsp-workspace-folders follow-up: this connection's own initialize-time
     // folder, and the gate that keeps a second root from racing ahead of the
     // handshake that decides whether it can join here.
-    connectionFolders_[connectionKey] = {root};
+    connectionFolders_[connectionKey] = {root.path};
     handshakePending_.insert(connectionKey);
     if (brokerBacked) {
         brokerBackedLanguages_.insert(connectionKey);
@@ -1084,8 +1161,11 @@ Client* Manager::ClientForLanguage(const std::string& serverKey, const std::file
 }
 
 void Manager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
-    if (!buffer.Path()) {
+    if (!buffer.Path() && !buffer.Remote()) {
         return; // a scratch buffer has no URI to tell a server about
+    }
+    if (buffer.Remote() && buffer.IsLoading()) {
+        return; // its content is still on its way from the host
     }
 
     primaryServerKey_[&buffer] = language; // see PrimarySyncState's own doc comment
@@ -1106,8 +1186,19 @@ void Manager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
     // LSP multi-root follow-up: resolved once per buffer, reused for both
     // syncs below and (if SyncEmbeddedDocuments follows) every embedded key
     // too -- see this method's own doc comment.
-    const std::filesystem::path root = ResolveCachedRoot(*buffer.Path(), language);
-    bufferResolvedRoot_[&buffer]     = root;
+    if (buffer.Remote()) {
+        const std::optional<ServerRoot> root = ResolveRemoteRoot(buffer, language);
+        if (!root) {
+            return;
+        }
+        bufferResolvedRoot_[&buffer] = *root;
+        // The prose checker and file-creation reports read the buffer's file
+        // on this machine's disk.
+        SyncToServer(buffer, language, language, *root);
+        return;
+    }
+    const ServerRoot root{.path = ResolveCachedRoot(*buffer.Path(), language)};
+    bufferResolvedRoot_[&buffer] = root;
 
     // file-operation-create-delete follow-up: per buffer, not per
     // connection -- didCreateFiles goes to every server whose filter
@@ -1131,13 +1222,13 @@ void Manager::CheckComposerProseText(const std::string& text, ComposerProseCallb
             composerProseBuffer_ = std::make_unique<text::Buffer>(std::move(created));
         }
         composerProseBuffer_->ReplaceContentForLoad(text::Rope(text));
-        SyncToServer(*composerProseBuffer_, std::string(kProseLanguageKey), "plaintext", editor::ProjectRoot());
+        SyncToServer(*composerProseBuffer_, std::string(kProseLanguageKey), "plaintext", ServerRoot{.path = editor::ProjectRoot()});
     });
 }
 
 void Manager::SyncEmbeddedDocuments(text::Buffer& buffer, const std::vector<EmbeddedDocumentSync>& documents) {
-    if (!buffer.Path()) {
-        return; // a scratch buffer has no URI to tell a server about
+    if (!buffer.Path() && !(buffer.Remote() && bufferResolvedRoot_.contains(&buffer))) {
+        return; // a scratch buffer has no URI to tell a server about, and a remote one waits for its root
     }
 
     // LSP multi-root follow-up: an embedded document shares its host
@@ -1147,8 +1238,7 @@ void Manager::SyncEmbeddedDocuments(text::Buffer& buffer, const std::vector<Embe
     // within a frame (BufferView::Paint()); the editor::ProjectRoot()
     // fallback below should never actually trigger in practice, but keeps
     // this method total regardless of call order.
-    const std::filesystem::path root =
-        bufferResolvedRoot_.contains(&buffer) ? bufferResolvedRoot_[&buffer] : editor::ProjectRoot();
+    const ServerRoot root = bufferResolvedRoot_.contains(&buffer) ? bufferResolvedRoot_[&buffer] : ServerRoot{.path = editor::ProjectRoot()};
 
     std::unordered_set<std::string> desiredKeys;
     for (const EmbeddedDocumentSync& document : documents) {
@@ -1218,7 +1308,7 @@ bool Manager::HasOpenedDocument(const text::Buffer& buffer) const {
 }
 
 void Manager::SyncToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId,
-                              const std::filesystem::path& root) {
+                           const ServerRoot& root) {
     // progressive-huge-file-load follow-up: checked here, ahead of the
     // buffer.Text() argument below, rather than relying solely on
     // SyncTextToServer's own (still-kept, still-needed-by-
@@ -1312,7 +1402,7 @@ void Manager::SyncToServer(text::Buffer& buffer, const std::string& serverKey, c
 }
 
 void Manager::SyncTextToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId,
-                                  const std::string& documentText, const std::filesystem::path& root) {
+                               const std::string& documentText, const ServerRoot& root) {
     Client* client = ClientForLanguage(serverKey, root);
     if (!client) {
         return; // nothing configured/running for this server
@@ -1336,11 +1426,11 @@ void Manager::SyncTextToServer(text::Buffer& buffer, const std::string& serverKe
         // file that doesn't exist on disk yet just means an unsaved new
         // buffer -- there's no on-disk content to be binary, and that must
         // not be conflated with an actually-binary file.
-        if (serverKey == kProseLanguageKey && std::filesystem::exists(*buffer.Path()) && text::LooksBinary(*buffer.Path())) {
+        if (serverKey == kProseLanguageKey && buffer.Path() && std::filesystem::exists(*buffer.Path()) && text::LooksBinary(*buffer.Path())) {
             return;
         }
         state.connectionKey = ResolvedConnectionKey(root, serverKey); // lsp-workspace-folders follow-up: canonical, not raw
-        state.uri           = PathToUri(*buffer.Path());
+        state.uri           = DocumentUri(buffer);
         state.version       = 1;
         client->SendNotification("textDocument/didOpen", {
                                                              {"textDocument",

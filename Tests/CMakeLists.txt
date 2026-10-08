@@ -344,6 +344,7 @@ add_executable(ned_tests
             RemoteDeployTest.cpp
             RemoteFsTest.cpp
             RemotePlacementTest.cpp
+            LspRemoteTest.cpp
             FormatRunTest.cpp
             RemoteVcsTest.cpp
         RemoteProcTest.cpp

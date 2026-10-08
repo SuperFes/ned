@@ -3128,6 +3128,11 @@ TEST_CASE("BuildInitializeParams advertises workspaceFolders and sends the root 
     REQUIRE(params["workspaceFolders"][0]["uri"] == params["rootUri"]); // same root, both spellings
 }
 
+TEST_CASE("BuildInitializeParams sends no processId to a server on a host", "[Lsp]") {
+    CHECK(ned::editor::lsp::BuildInitializeParams("/srv/app")["processId"].is_number_integer());
+    CHECK(ned::editor::lsp::BuildInitializeParams("/srv/app", Json::object(), /*local=*/false)["processId"].is_null());
+}
+
 TEST_CASE("BuildInitializeParams sends a null workspaceFolders for an empty root", "[Lsp]") {
     // "no folders open" (an empty array) is a different claim than "this
     // client has no root," which is what an empty path means here.
