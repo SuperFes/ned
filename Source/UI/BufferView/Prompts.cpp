@@ -4853,17 +4853,17 @@ void BufferView::CommitSearchEverywhereCandidate(const editor::SearchEverywhereC
                             return; // buffer switched while the resolve was in flight
                         }
                         if (resolved) {
-                            JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.path = resolved->path, .position = resolved->position});
+                            JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.file = resolved->path, .position = resolved->position});
                         }
                         else {
                             JumpToDefinition(editor::lsp::Manager::ResolvedLocation{
-                                .path = fallback.path, .position = {.line = fallback.line, .character = fallback.character}});
+                                .file = fallback.path, .position = {.line = fallback.line, .character = fallback.character}});
                         }
                     }));
             }
             else if (candidate.remoteLocation) {
                 JumpToDefinition(editor::lsp::Manager::ResolvedLocation{
-                    .path     = candidate.remoteLocation->path,
+                    .file     = candidate.remoteLocation->path,
                     .position = {.line = candidate.remoteLocation->line, .character = candidate.remoteLocation->character}});
             }
             else {
@@ -4901,7 +4901,7 @@ void BufferView::CommitSearchEverywhereCandidate(const editor::SearchEverywhereC
         case editor::SearchEverywhereKind::TextMatch:
             if (candidate.remoteLocation) {
                 JumpToDefinition(editor::lsp::Manager::ResolvedLocation{
-                    .path     = candidate.remoteLocation->path,
+                    .file     = candidate.remoteLocation->path,
                     .position = {.line = candidate.remoteLocation->line, .character = candidate.remoteLocation->character}});
             }
             else {

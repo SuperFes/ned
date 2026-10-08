@@ -139,8 +139,7 @@ namespace {
 
 } // namespace
 
-std::string ReadExcerptText(text::BufferList& bufferList, const std::filesystem::path& path, std::size_t startLine,
-                            std::size_t endLine) {
+std::string ReadExcerptText(text::BufferList& bufferList, const text::FileRef& file, std::size_t startLine, std::size_t endLine) {
     // Prefers a live, already-open Buffer's own content (unsaved edits show
     // up) via the bounded ITextStorage overload above; falls back to a raw
     // file read plus the linear-scan overload only when the file isn't
@@ -150,11 +149,15 @@ std::string ReadExcerptText(text::BufferList& bufferList, const std::filesystem:
     // (project-find-references can span dozens of files). Degrades to ""
     // on any read failure, the same posture as everywhere else in this
     // subsystem.
-    if (text::Buffer* open = bufferList.FindByPath(path)) {
+    if (text::Buffer* open = bufferList.FindFile(file)) {
         const auto range = LineRangeToByteRange(open->Content(), startLine, endLine);
         return range ? open->Content().Substring(range->first, range->second - range->first) : std::string();
     }
-    std::ifstream input(path, std::ios::binary);
+    const auto* path = std::get_if<std::filesystem::path>(&file);
+    if (path == nullptr) {
+        return {};
+    }
+    std::ifstream input(*path, std::ios::binary);
     if (!input) {
         return {};
     }

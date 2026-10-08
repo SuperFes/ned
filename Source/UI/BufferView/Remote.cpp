@@ -176,17 +176,23 @@ void BufferView::DeleteRemotePath(const editor::remote::Location& target) {
 }
 
 void BufferView::VisitRemoteFile(const editor::remote::Location& file, std::optional<std::size_t> line, bool createMissing) {
-    const auto goToLine = [this, line](text::Buffer& buffer) {
-        if (line) {
-            buffer.SetPoint(buffer.ByteOffsetForLineAndColumn(*line - 1, 0));
-            if (&activeBuffer_.Get() == &buffer) {
-                viewport_.ScrollToShowPoint();
+    VisitRemoteFile(
+        file,
+        [this, line](text::Buffer& buffer) {
+            if (line) {
+                buffer.SetPoint(buffer.ByteOffsetForLineAndColumn(*line - 1, 0));
+                if (&activeBuffer_.Get() == &buffer) {
+                    viewport_.ScrollToShowPoint();
+                }
             }
-        }
-    };
+        },
+        createMissing);
+}
+
+void BufferView::VisitRemoteFile(const editor::remote::Location& file, std::function<void(text::Buffer& buffer)> arrive, bool createMissing) {
     if (text::Buffer* open = bufferList_.FindByRemote(file)) {
         activeBuffer_.Set(*open);
-        goToLine(*open);
+        arrive(*open);
         return;
     }
     if (remoteHosts_ == nullptr) {
@@ -197,13 +203,13 @@ void BufferView::VisitRemoteFile(const editor::remote::Location& file, std::opti
     activeBuffer_.Set(placeholder);
     statusMessage_ = "Reading " + file.ToString() + "...";
     editor::remote::LoadRemoteBuffer(*remoteHosts_, bufferList_, placeholder, createMissing, lifetime_.Token(),
-                                     [this, file, goToLine](text::Buffer& buffer, const editor::remote::RemoteLoadOutcome& outcome) {
+                                     [this, file, arrive = std::move(arrive)](text::Buffer& buffer, const editor::remote::RemoteLoadOutcome& outcome) {
                                          if (!outcome.loaded) {
                                              CloseBufferNow(buffer);
                                              ReportError("Couldn't open " + file.ToString() + ": " + outcome.loaded.error());
                                              return;
                                          }
-                                         goToLine(buffer);
+                                         arrive(buffer);
                                          statusMessage_ = (*outcome.loaded == editor::remote::RemoteLoaded::Read ? "Opened " : "(New file) ") +
                                                           file.ToString();
                                      });

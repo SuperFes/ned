@@ -82,6 +82,14 @@ namespace {
         return text::FileUriToPath(uri);
     }
 
+    // A path a connection's server named: on its host for a remote one.
+    text::FileRef DocumentFile(const std::string& connectionKey, const std::filesystem::path& path) {
+        if (std::optional<std::string> host = ConnectionHost(connectionKey)) {
+            return text::RemoteFile{.destination = std::move(*host), .path = path.lexically_normal()};
+        }
+        return path;
+    }
+
     // project-settings-lsp-init-options follow-up. Resolves a dotted "section"
     // path (e.g. "phpactor", "intelephense.environment" -- exactly the shape a
     // real workspace/configuration request item's own "section" field takes) into
@@ -1942,10 +1950,7 @@ void Manager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
 }
 
 text::Buffer* Manager::FindDocumentBuffer(const std::string& connectionKey, const std::filesystem::path& path) {
-    if (std::optional<std::string> host = ConnectionHost(connectionKey)) {
-        return bufferList_.FindByRemote(text::RemoteFile{.destination = std::move(*host), .path = path});
-    }
-    return bufferList_.FindByPath(path);
+    return bufferList_.FindFile(DocumentFile(connectionKey, path));
 }
 
 void Manager::HandlePublishDiagnostics(const Json& params, const std::string& language, const std::string& connectionKey) {
@@ -4290,7 +4295,7 @@ void Manager::SendLocationRequest(const std::string& method, text::Buffer& buffe
                             std::vector<ResolvedLocation> resolved;
                             for (const DefinitionLocation& location : ExtractDefinitionLocations(*result)) {
                                 if (const std::optional<std::filesystem::path> path = UriToPath(location.uri)) {
-                                    resolved.push_back(ResolvedLocation{.path = *path, .position = location.position});
+                                    resolved.push_back(ResolvedLocation{.file = DocumentFile(language, *path), .position = location.position});
                                 }
                                 // an unresolvable uri is dropped -- see ResolvedLocation's own doc comment
                             }
