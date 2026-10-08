@@ -26,6 +26,7 @@
 #include "UI/Widget.h"
 
 using Catch::Matchers::ContainsSubstring;
+using Catch::Matchers::StartsWith;
 using ned::tests::PumpUntil;
 namespace test = ned::ui::test;
 
@@ -312,9 +313,21 @@ TEST_CASE("The Remote panel shows a connected host's home and says why a directo
     fixture.panel.OpenRoot("host:" + (fixture.fake.dir / "missing").string());
     REQUIRE(PumpUntil(fixture.queue, [&] { return fixture.AllRows().find("no such directory") != std::string::npos; }));
     CHECK_THAT(fixture.Rows()[0], ContainsSubstring("▸"));
+    CHECK(fixture.message == "host: no such directory: " + (fixture.fake.dir / "missing").string());
 
     // A bare host opens its login's home as a root.
     fixture.panel.OpenRoot("host");
     REQUIRE(PumpUntil(fixture.queue, [&] { return fixture.panel.Roots().size() == 2; }));
     CHECK(fixture.panel.Roots()[1] == ned::text::RemoteFile{.destination = "host", .path = std::filesystem::current_path()});
+}
+
+TEST_CASE("The Remote panel says why a root's host won't connect", "[RemotePanel][Remote][HostAgent]") {
+    Fixture fixture;
+    fixture.panel.OpenRoot("denied:/srv");
+    REQUIRE(PumpUntil(fixture.queue, [&] { return !fixture.message.empty(); }));
+    CHECK_THAT(fixture.message, StartsWith("Couldn't connect to denied: "));
+    CHECK(fixture.message.size() > std::string("Couldn't connect to denied: ").size());
+    REQUIRE(fixture.Rows().size() == 1);
+    CHECK_THAT(fixture.Rows()[0], ContainsSubstring("denied:/srv"));
+    CHECK_THAT(fixture.Rows()[0], ContainsSubstring("failed"));
 }

@@ -271,17 +271,18 @@ void RemotePanel::Relist(const std::string& topKey, Node& node) {
 void RemotePanel::List(const std::string& topKey, const text::RemoteFile& directory, std::uint64_t listing) {
     hosts_.Connect(directory.destination, lifetime_.Bind([this, topKey, directory, listing](const std::expected<editor::remote::Connection*, std::string>& connection) {
         if (!connection) {
-            Settle(topKey, directory.path, listing, connection.error(), std::nullopt);
+            // ssh's own message rarely fits the row.
+            Settle(topKey, directory.path, listing, "failed", "Couldn't connect to " + directory.destination + ": " + connection.error(), std::nullopt);
             return;
         }
         if (directory.path.empty()) {
-            editor::remote::ResolvePath(**connection, ".", lifetime_.Bind([this, topKey, listing](editor::remote::FsResult<std::filesystem::path> home) {
+            editor::remote::ResolvePath(**connection, ".", lifetime_.Bind([this, topKey, listing, destination = directory.destination](editor::remote::FsResult<std::filesystem::path> home) {
                 Node* top = FindTop(topKey);
                 if (top == nullptr || top->listing != listing) {
                     return;
                 }
                 if (!home) {
-                    Settle(topKey, {}, listing, home.error().message, std::nullopt);
+                    Settle(topKey, {}, listing, home.error().message, "Couldn't find " + destination + "'s home: " + home.error().message, std::nullopt);
                     return;
                 }
                 top->location.path = *home;
@@ -291,17 +292,18 @@ void RemotePanel::List(const std::string& topKey, const text::RemoteFile& direct
         }
         editor::remote::ListDirectory(
             **connection, directory.path, kMaxListedEntries,
-            lifetime_.Bind([this, topKey, path = directory.path, listing](editor::remote::FsResult<std::vector<editor::host::DirEntry>> listed) {
+            lifetime_.Bind([this, topKey, directory, listing](editor::remote::FsResult<std::vector<editor::host::DirEntry>> listed) {
                 if (!listed) {
-                    Settle(topKey, path, listing, listed.error().message, std::nullopt);
+                    Settle(topKey, directory.path, listing, listed.error().message, directory.destination + ": " + listed.error().message,
+                           std::nullopt);
                     return;
                 }
-                Settle(topKey, path, listing, {}, std::move(*listed));
+                Settle(topKey, directory.path, listing, {}, {}, std::move(*listed));
             }));
     }));
 }
 
-void RemotePanel::Settle(const std::string& topKey, const std::filesystem::path& path, std::uint64_t listing, std::string error,
+void RemotePanel::Settle(const std::string& topKey, const std::filesystem::path& path, std::uint64_t listing, std::string error, std::string message,
                          std::optional<std::vector<editor::host::DirEntry>> entries) {
     Node* node = FindNode(topKey, path);
     if (node == nullptr || node->listing != listing) {
@@ -316,6 +318,7 @@ void RemotePanel::Settle(const std::string& topKey, const std::filesystem::path&
         node->error    = std::move(error);
         node->expanded = false;
         PushModel();
+        Report(std::move(message));
         return;
     }
     std::ranges::sort(*entries, [](const editor::host::DirEntry& a, const editor::host::DirEntry& b) {
