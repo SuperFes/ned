@@ -74,11 +74,27 @@ and sync on save; don't build a remote-authoritative buffer.
       against them through `NED_TEST_AGENT`: x86_64 natively, aarch64 under
       `qemu-aarch64`.
 - [ ] Prune `<build>-<arch>` agent directories no editor has used in a while.
-- [ ] The rest of the `proc` seam, per the design doc's staging step 4: LSP, then DAP
-      and ACP. Tasks, the test runner, VCS, the format command and terminal tabs already
-      run on a remote buffer's host.
+- [ ] The rest of the `proc` seam, per the design doc's staging step 4: DAP, then ACP.
+      Tasks, the test runner, VCS, the format command, terminal tabs and language
+      servers already run on a remote buffer's host.
 - [ ] Reveal in Terminal for a Remote-panel row: a terminal on that host, in that
       directory.
+
+**Language servers on a host**
+- [ ] A host server's edit that creates, renames or deletes a file is refused; run it
+      through `fs` (`mkdir`, `rename`, `remove`, a write for a create).
+- [ ] `workspace/applyEdit` from a host's server only edits files already open here,
+      since its answer can't wait for a load; it answers "not applied" otherwise.
+- [ ] Watched-file notifications for a host's server, from the host's `watch`. Local
+      changes no longer reach it.
+- [ ] The problem list (project diagnostics) leaves out a host's unopened files: its
+      entries are local paths.
+- [ ] A host's `.ned/settings.json` (initialization options, workspace configuration).
+- [ ] The prose checker on remote buffers.
+- [ ] A server command missing on the host exits 127 and counts as a crash rather than
+      a spawn failure, so it is retried until the crash-loop guard gives up.
+- [ ] `project-find-references` with no server running searches the local project root
+      for a remote buffer.
 
 **Client/server protocol**, ordered by the design doc's staging section.
 - [ ] `ned --protocol-dump`: decode a captured byte stream to readable JSON.
