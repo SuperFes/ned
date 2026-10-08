@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <vector>
@@ -112,4 +114,38 @@ TEST_CASE("An ACP agent on a host fails at once when there are no hosts", "[Acp]
     CHECK(manager.State() == acp::Manager::SessionState::Inactive);
     CHECK(ended.starts_with("Failed to start ACP agent: no remote host"));
     CHECK_FALSE(manager.AgentBeside().has_value());
+}
+
+TEST_CASE("A host's ACP agent reads its files from the host", "[Acp][AcpRemote][HostAgent]") {
+    Fixture f;
+    REQUIRE(f.Start());
+    const Json script = Json::array({Json{{"method", "fs/read_text_file"}, {"params", {{"sessionId", "s1"}, {"path", f.agent.file.string()}}}},
+                                     Json{{"method", "fs/read_text_file"}, {"params", {{"sessionId", "s1"}, {"path", (f.agent.project / "gone.c").string()}}}}});
+    CHECK(f.manager.SendPrompt(script.dump()) == "Sent.");
+    REQUIRE(PumpUntil(f.loop, [&] { return !f.manager.PromptInFlight() && f.Said("done"); }));
+
+    const std::vector<Json> answers = f.agent.Answers();
+    REQUIRE(answers.size() == 2);
+    CHECK(answers[0]["result"]["content"] == "int x;\nint y;\n");
+    CHECK(answers[1].contains("error"));
+    f.manager.StopSession();
+}
+
+TEST_CASE("A host's ACP agent writes its files on the host", "[Acp][AcpRemote][HostAgent]") {
+    Fixture        f;
+    const fs::path created = f.agent.project / "src" / "b.c";
+    REQUIRE(f.Start());
+    const Json script = Json::array({Json{{"method", "fs/write_text_file"}, {"params", {{"sessionId", "s1"}, {"path", created.string()}, {"content", "int b;\n"}}}}});
+    CHECK(f.manager.SendPrompt(script.dump()) == "Sent.");
+    REQUIRE(PumpUntil(f.loop, [&] { return !f.manager.PromptInFlight() && f.Said("done"); }));
+
+    const std::vector<Json> answers = f.agent.Answers();
+    REQUIRE(answers.size() == 1);
+    CHECK(answers[0]["result"] == Json::object());
+    std::ifstream in(created);
+    CHECK(std::string(std::istreambuf_iterator<char>(in), {}) == "int b;\n");
+    // Not open here, so nothing to undo it with.
+    REQUIRE(f.manager.CheckpointCount() == 1);
+    CHECK(f.manager.CheckpointAt(0).untrackedFiles == std::vector<text::FileRef>{text::RemoteFile{.destination = "host", .path = created}});
+    f.manager.StopSession();
 }

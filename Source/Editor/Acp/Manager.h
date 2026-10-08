@@ -70,6 +70,7 @@ class BridgeServer;
 } // namespace ned::editor::mcp
 
 namespace ned::editor::remote {
+class Connection;
 class Hosts;
 } // namespace ned::editor::remote
 
@@ -509,7 +510,7 @@ class Manager {
     // via Buffer::CurrentUndoSequence()/TryJumpToUndoSequence() -- the same
     // primitives ProjectUndoManager itself is built on.
     struct CheckpointFileRecord {
-        std::filesystem::path path;
+        text::FileRef         file;
         std::size_t           beforeSequence = 0;
         std::size_t           afterSequence  = 0;
     };
@@ -518,7 +519,7 @@ class Manager {
         std::string                           promptPreview;       // single-line, length-capped prompt text
         std::chrono::system_clock::time_point timestamp;
         std::vector<CheckpointFileRecord>     fileRecords;    // buffers open in ned during this turn -- fully rewindable
-        std::vector<std::filesystem::path>    untrackedPaths; // written by the agent but never open in ned -- only a
+        std::vector<text::FileRef>            untrackedFiles; // written by the agent but never open in ned -- only a
                                                               // Backup.h version (if any) can recover these
         // Every file the turn's edit tool calls named (or fs/write_text_file
         // wrote), before and after -- how rewind and the turn review reach
@@ -732,6 +733,11 @@ class Manager {
     void          WireClient(Client& client);
     void          StartSessionOnHost(const text::RemoteFile& beside, const std::vector<std::string>& argv);
     void          SendInitialize();
+    // fs/read_text_file and fs/write_text_file for an agent on a host: its
+    // paths are the host's, so the files are read and written there.
+    void                              ReadHostFile(const Json& params, RespondFn respond);
+    void                              WriteHostFile(const Json& params, RespondFn respond);
+    [[nodiscard]] remote::Connection* AgentConnection() const;
     // The directory sessions are created in: the project root, on the
     // agent's host for one running there.
     [[nodiscard]] std::filesystem::path SessionRoot() const;
@@ -769,7 +775,7 @@ class Manager {
     // pending (a tool call arriving outside an in-flight SendPrompt
     // shouldn't happen, but this stays defensive rather than assuming it
     // can't).
-    void RecordCheckpointFileEdit(Session& session, text::Buffer& buffer, const std::filesystem::path& path, std::size_t beforeSequence);
+    void RecordCheckpointFileEdit(Session& session, text::Buffer& buffer, const text::FileRef& file, std::size_t beforeSequence);
     // Moves the pending checkpoint (if any) onto checkpoints -- called once
     // a turn's own session/prompt response arrives (success, error, or a
     // session tearing down mid-turn), never mid-turn.
@@ -851,8 +857,9 @@ class Manager {
     remote::Hosts*                       hosts_ = nullptr;
     std::optional<text::RemoteFile>      agentBeside_;
     std::optional<std::filesystem::path> agentRoot_; // set once a host's agent has started
-    // Drops an agent that arrives after its session has ended.
-    LifetimeGuard spawnLifetime_;
+    // Revoked with the agent's connection: drops an agent that arrives after
+    // its session has ended, and a host's answer for a request it made.
+    LifetimeGuard agentLifetime_;
 };
 
 } // namespace ned::editor::acp
