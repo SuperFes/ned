@@ -120,7 +120,8 @@ class RemotePanel {
     void Expand(Node& node);
     void Relist(const std::string& topKey, Node& node);
     void List(const std::string& topKey, const text::RemoteFile& directory, std::uint64_t listing);
-    void Settle(const std::string& topKey, const std::filesystem::path& path, std::uint64_t listing, std::string error,
+    // A failed listing shows error on its row and reports message.
+    void Settle(const std::string& topKey, const std::filesystem::path& path, std::uint64_t listing, std::string error, std::string message,
                 std::optional<std::vector<editor::host::DirEntry>> entries);
     void HandleActivate(std::size_t index);
     void HandleCollapse(std::size_t index);
