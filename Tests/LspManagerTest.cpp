@@ -1901,24 +1901,24 @@ TEST_CASE("Manager::ResolveCodeActionEdits resolves a URI per touched file", "[L
         },
     };
 
-    const auto resolved = Manager::ResolveCodeActionEdits(action);
+    const auto resolved = Manager::ResolveCodeActionEdits(action, std::nullopt);
     REQUIRE(resolved.has_value());
     REQUIRE(resolved->size() == 2);
-    REQUIRE((*resolved)[0].path == std::filesystem::path("/a.c"));
+    REQUIRE((*resolved)[0].file == ned::text::FileRef(std::filesystem::path("/a.c")));
     REQUIRE((*resolved)[0].edits.size() == 1);
     REQUIRE((*resolved)[0].edits[0].newText == "x");
-    REQUIRE((*resolved)[1].path == std::filesystem::path("/b.c"));
+    REQUIRE((*resolved)[1].file == ned::text::FileRef(std::filesystem::path("/b.c")));
 }
 
 TEST_CASE("Manager::ResolveCodeActionEdits returns nullopt for touchesUnsupportedForm or a missing edit", "[Lsp]") {
     CodeAction unsupported;
     unsupported.hasEdit                = true;
     unsupported.touchesUnsupportedForm = true;
-    REQUIRE_FALSE(Manager::ResolveCodeActionEdits(unsupported).has_value());
+    REQUIRE_FALSE(Manager::ResolveCodeActionEdits(unsupported, std::nullopt).has_value());
 
     CodeAction noEdit;
     noEdit.hasEdit = false;
-    REQUIRE_FALSE(Manager::ResolveCodeActionEdits(noEdit).has_value());
+    REQUIRE_FALSE(Manager::ResolveCodeActionEdits(noEdit, std::nullopt).has_value());
 }
 
 TEST_CASE("Manager::ResolveCodeActionEdits refuses wholesale when one URI doesn't resolve", "[Lsp]") {
@@ -1929,7 +1929,7 @@ TEST_CASE("Manager::ResolveCodeActionEdits refuses wholesale when one URI doesn'
         ned::editor::lsp::RenameEdit{.uri = "not-a-file-uri", .edits = {ned::editor::lsp::WorkspaceTextEdit{.newText = "y"}}},
     };
 
-    REQUIRE_FALSE(Manager::ResolveCodeActionEdits(action).has_value());
+    REQUIRE_FALSE(Manager::ResolveCodeActionEdits(action, std::nullopt).has_value());
 }
 
 TEST_CASE("Manager::ResolveCodeAction resolves to nullopt when the buffer was never synced", "[Lsp]") {
@@ -3461,7 +3461,7 @@ TEST_CASE("Manager routes workspace/applyEdit through the wired handler, resolve
     REQUIRE(gotLabel == "Rename symbol");
     REQUIRE(gotEdit->hasEdit);
     REQUIRE(gotEdit->edits.size() == 1);
-    REQUIRE(gotEdit->edits[0].path == std::filesystem::path("/a.c"));
+    REQUIRE(gotEdit->edits[0].file == ned::text::FileRef(std::filesystem::path("/a.c")));
     REQUIRE(gotEdit->edits[0].edits[0].newText == "x");
 }
 
@@ -3497,14 +3497,14 @@ TEST_CASE("Manager::ResolveDocumentChangeOps resolves a create/rename/delete/edi
         DocumentChangeOp{.kind = DocumentChangeOp::Kind::DeleteFile, .uri = "file:///gone.c", .ignoreIfNotExists = true},
     };
 
-    const auto resolved = Manager::ResolveDocumentChangeOps(ops);
+    const auto resolved = Manager::ResolveDocumentChangeOps(ops, std::nullopt);
     REQUIRE(resolved.has_value());
     REQUIRE(resolved->size() == 4);
-    CHECK((*resolved)[0].path == std::filesystem::path("/new.c"));
+    CHECK((*resolved)[0].file == ned::text::FileRef(std::filesystem::path("/new.c")));
     CHECK((*resolved)[0].overwrite);
     CHECK((*resolved)[1].edits.size() == 1);
-    CHECK((*resolved)[2].oldPath == std::filesystem::path("/old.c"));
-    CHECK((*resolved)[2].path == std::filesystem::path("/renamed.c"));
+    CHECK((*resolved)[2].oldFile == ned::text::FileRef(std::filesystem::path("/old.c")));
+    CHECK((*resolved)[2].file == ned::text::FileRef(std::filesystem::path("/renamed.c")));
     CHECK((*resolved)[3].ignoreIfNotExists);
 }
 
@@ -3514,7 +3514,7 @@ TEST_CASE("Manager::ResolveDocumentChangeOps refuses wholesale when a rename's o
     const std::vector<DocumentChangeOp> ops = {
         DocumentChangeOp{.kind = DocumentChangeOp::Kind::RenameFile, .uri = "file:///renamed.c", .oldUri = "not-a-file-uri"},
     };
-    REQUIRE_FALSE(Manager::ResolveDocumentChangeOps(ops).has_value());
+    REQUIRE_FALSE(Manager::ResolveDocumentChangeOps(ops, std::nullopt).has_value());
 }
 
 // prose-checking follow-up: the prose-checker connection is just another
@@ -6928,7 +6928,7 @@ TEST_CASE("Manager::RequestWillDeleteFiles sends bare uris and resolves the serv
     REQUIRE(got.has_value());
     REQUIRE(got->hasEdit);
     REQUIRE(got->edits.size() == 1);
-    CHECK(got->edits[0].path == std::filesystem::path("/tmp/importer.ts"));
+    CHECK(got->edits[0].file == ned::text::FileRef(std::filesystem::path("/tmp/importer.ts")));
 }
 
 TEST_CASE("Manager::RequestWillDeleteFiles resolves inline when no server declared a willDelete filter", "[Lsp]") {

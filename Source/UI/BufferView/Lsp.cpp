@@ -8,6 +8,7 @@
 
 #include "Editor/FileIcons.h"
 #include "Editor/Format.h"
+#include "Editor/Remote/RemoteBuffer.h"
 #include "Editor/Tracker/IssueBuffer.h"
 #include "Editor/Tracker/IssueKey.h"
 #include "Editor/Tracker/KeyCompletion.h"
@@ -1392,9 +1393,13 @@ void BufferView::ApplyCodeAction(const editor::lsp::CodeAction& action) {
     // own edits -- a real refactor.extract/rewrite shape, not just a rename)
     // resolves and applies through the same ApplyResolvedWorkspaceEdit path.
     if (action.hasEdit && (!action.edits.empty() || !action.documentChangeOps.empty())) {
-        const std::optional<editor::lsp::Manager::ResolvedRename> resolved = editor::lsp::Manager::ResolveCodeActionWorkspaceEdit(action);
+        const std::optional<std::string>                          host     = activeBuffer_.Get().Remote() ? std::optional(activeBuffer_.Get().Remote()->destination) : std::nullopt;
+        const std::optional<editor::lsp::Manager::ResolvedRename> resolved = editor::lsp::Manager::ResolveCodeActionWorkspaceEdit(action, host);
         if (!resolved) {
             statusMessage_ = "\"" + action.title + "\" names a file this editor can't resolve -- not applied.";
+            return;
+        }
+        if (!EnsureRemoteFilesOpen(*resolved, [this, action] { ApplyCodeAction(action); })) {
             return;
         }
         if (!ApplyResolvedWorkspaceEdit(*resolved, "Applied \"" + action.title + "\".")) {
@@ -2342,6 +2347,9 @@ void BufferView::RequestRenameAtPoint(const std::string& newName) {
 }
 
 void BufferView::ApplyRename(const editor::lsp::Manager::ResolvedRename& result) {
+    if (!EnsureRemoteFilesOpen(result, [this, result] { ApplyRename(result); })) {
+        return;
+    }
     std::string declineNote;
     if (TryReviewRename(result, declineNote)) {
         return;
@@ -2353,11 +2361,16 @@ void BufferView::ApplyRename(const editor::lsp::Manager::ResolvedRename& result)
     // still named after the old symbol, which is the only one this could be
     // about.
     std::vector<std::filesystem::path> touched;
+    const auto                         touch = [&touched](const text::FileRef& file) {
+        if (const auto* path = std::get_if<std::filesystem::path>(&file)) {
+            touched.push_back(*path);
+        }
+    };
     for (const editor::lsp::Manager::ResolvedRenameEdit& edit : result.edits) {
-        touched.push_back(edit.path);
+        touch(edit.file);
     }
     for (const editor::lsp::Manager::ResolvedDocumentChangeOp& op : result.documentChangeOps) {
-        touched.push_back(op.path);
+        touch(op.file);
     }
     ArmClassFileRenameOffer(std::move(touched), renameOldName_, renameNewName_);
 
@@ -2392,11 +2405,24 @@ bool BufferView::TryReviewRename(const editor::lsp::Manager::ResolvedRename& res
     // for documentChanges, since without resource ops there is nothing for
     // a later edit to depend on.
     std::vector<std::pair<std::filesystem::path, const std::vector<editor::lsp::WorkspaceTextEdit>*>> perFile;
+    const auto                                                                                        add = [&perFile](const text::FileRef& file, const std::vector<editor::lsp::WorkspaceTextEdit>& edits) {
+        const auto* path = std::get_if<std::filesystem::path>(&file);
+        if (path != nullptr) {
+            perFile.emplace_back(*path, &edits);
+        }
+        return path != nullptr;
+    };
     for (const editor::lsp::Manager::ResolvedRenameEdit& edit : result.edits) {
-        perFile.emplace_back(edit.path, &edit.edits);
+        if (!add(edit.file, edit.edits)) {
+            declineNote = ", not reviewed: its files are on a host";
+            return false;
+        }
     }
     for (const editor::lsp::Manager::ResolvedDocumentChangeOp& op : result.documentChangeOps) {
-        perFile.emplace_back(op.path, &op.edits);
+        if (!add(op.file, op.edits)) {
+            declineNote = ", not reviewed: its files are on a host";
+            return false;
+        }
     }
 
     std::vector<editor::rename::FileRenameHits> files;
@@ -2464,13 +2490,23 @@ bool BufferView::ApplyResolvedWorkspaceEdit(const editor::lsp::Manager::Resolved
     try {
         // Resolve (find-or-open) every "changes"-form buffer FIRST, same
         // all-or-nothing-open guarantee this method has always had.
+        // A host's file only in the buffer holding it: opening one is a
+        // round trip, which EnsureRemoteFilesOpen makes beforehand.
+        const auto bufferFor = [this](const text::FileRef& file) -> text::Buffer& {
+            if (const auto* remote = std::get_if<text::RemoteFile>(&file)) {
+                text::Buffer* open = bufferList_.FindByRemote(*remote);
+                if (open == nullptr || open->IsLoading()) {
+                    throw std::runtime_error(remote->ToString() + " isn't open here");
+                }
+                return *open;
+            }
+            const std::filesystem::path& path = std::get<std::filesystem::path>(file);
+            text::Buffer*                open = bufferList_.FindByPath(path);
+            return open != nullptr ? *open : bufferList_.OpenFile(path);
+        };
         perBufferEdits.reserve(edit.edits.size() + edit.documentChangeOps.size());
         for (const editor::lsp::Manager::ResolvedRenameEdit& renameEdit : edit.edits) {
-            text::Buffer* buffer = bufferList_.FindByPath(renameEdit.path);
-            if (!buffer) {
-                buffer = &bufferList_.OpenFile(renameEdit.path);
-            }
-            perBufferEdits.emplace_back(buffer, renameEdit.edits);
+            perBufferEdits.emplace_back(&bufferFor(renameEdit.file), renameEdit.edits);
         }
 
         // documentChangeOps apply strictly in order -- a resource op's
@@ -2478,16 +2514,26 @@ bool BufferView::ApplyResolvedWorkspaceEdit(const editor::lsp::Manager::Resolved
         // targets the file it just created/renamed.
         using Kind = editor::lsp::DocumentChangeOp::Kind;
         for (const editor::lsp::Manager::ResolvedDocumentChangeOp& op : edit.documentChangeOps) {
+            if (op.kind == Kind::EditFile) {
+                perBufferEdits.emplace_back(&bufferFor(op.file), op.edits);
+                continue;
+            }
+            const auto* opPath  = std::get_if<std::filesystem::path>(&op.file);
+            const auto* oldPath = std::get_if<std::filesystem::path>(&op.oldFile);
+            if (opPath == nullptr || (op.kind == Kind::RenameFile && oldPath == nullptr)) {
+                throw std::runtime_error("creating, renaming or deleting a host's file isn't supported: " + text::ToString(op.file));
+            }
+            const std::filesystem::path& path = *opPath;
             switch (op.kind) {
                 case Kind::CreateFile: {
-                    const bool exists = std::filesystem::exists(op.path);
+                    const bool exists = std::filesystem::exists(path);
                     if (exists && op.ignoreIfExists) {
                         break;
                     }
                     if (exists && !op.overwrite) {
-                        throw std::runtime_error("create: " + op.path.string() + " already exists");
+                        throw std::runtime_error("create: " + path.string() + " already exists");
                     }
-                    text::Buffer& buffer = bufferList_.OpenOrCreateFile(op.path);
+                    text::Buffer& buffer = bufferList_.OpenOrCreateFile(path);
                     if (exists && op.overwrite) {
                         buffer.BeginUndoGroup();
                         buffer.DeleteRange(0, buffer.Content().ByteLength());
@@ -2497,44 +2543,38 @@ bool BufferView::ApplyResolvedWorkspaceEdit(const editor::lsp::Manager::Resolved
                     break;
                 }
                 case Kind::DeleteFile: {
-                    if (!std::filesystem::exists(op.path)) {
+                    if (!std::filesystem::exists(path)) {
                         if (op.ignoreIfNotExists) {
                             break;
                         }
-                        throw std::runtime_error("delete: " + op.path.string() + " does not exist");
+                        throw std::runtime_error("delete: " + path.string() + " does not exist");
                     }
-                    editor::DeleteProjectPath(op.path);
+                    editor::DeleteProjectPath(path);
                     touchedFilesystem = true;
                     break;
                 }
                 case Kind::RenameFile: {
-                    const bool targetExists = std::filesystem::exists(op.path);
+                    const bool targetExists = std::filesystem::exists(path);
                     if (targetExists && !op.overwrite && !op.ignoreIfExists) {
-                        throw std::runtime_error("rename: " + op.path.string() + " already exists");
+                        throw std::runtime_error("rename: " + path.string() + " already exists");
                     }
                     if (targetExists && op.ignoreIfExists && !op.overwrite) {
                         break; // target already there, told to leave it alone
                     }
                     if (targetExists && op.overwrite) {
-                        editor::DeleteProjectPath(op.path); // RenameProjectPath refuses onto an existing target
+                        editor::DeleteProjectPath(path); // RenameProjectPath refuses onto an existing target
                     }
-                    editor::RenameProjectPath(op.oldPath, op.path);
-                    if (text::Buffer* buffer = bufferList_.FindByPath(op.oldPath)) {
-                        buffer->SetPath(op.path);
-                        buffer->Rename(op.path.filename().string());
+                    editor::RenameProjectPath(*oldPath, path);
+                    if (text::Buffer* buffer = bufferList_.FindByPath(*oldPath)) {
+                        buffer->SetPath(path);
+                        buffer->Rename(path.filename().string());
                         editor::ClearModeCacheFor(*buffer);
                     }
                     touchedFilesystem = true;
                     break;
                 }
-                case Kind::EditFile: {
-                    text::Buffer* buffer = bufferList_.FindByPath(op.path);
-                    if (!buffer) {
-                        buffer = &bufferList_.OpenFile(op.path);
-                    }
-                    perBufferEdits.emplace_back(buffer, op.edits);
-                    break;
-                }
+                case Kind::EditFile:
+                    break; // collected above
             }
         }
     }
@@ -2548,6 +2588,53 @@ bool BufferView::ApplyResolvedWorkspaceEdit(const editor::lsp::Manager::Resolved
         projectSidebar_->InvalidateTree();
     }
     return true;
+}
+
+bool BufferView::EnsureRemoteFilesOpen(const editor::lsp::Manager::ResolvedRename& edit, std::function<void()> then) {
+    std::vector<text::RemoteFile> missing;
+    const auto                    note = [&](const text::FileRef& file) {
+        const auto* remote = std::get_if<text::RemoteFile>(&file);
+        if (remote != nullptr && bufferList_.FindByRemote(*remote) == nullptr && std::ranges::find(missing, *remote) == missing.end()) {
+            missing.push_back(*remote);
+        }
+    };
+    for (const editor::lsp::Manager::ResolvedRenameEdit& renameEdit : edit.edits) {
+        note(renameEdit.file);
+    }
+    for (const editor::lsp::Manager::ResolvedDocumentChangeOp& op : edit.documentChangeOps) {
+        if (op.kind == editor::lsp::DocumentChangeOp::Kind::EditFile) {
+            note(op.file);
+        }
+    }
+    if (missing.empty() || remoteHosts_ == nullptr) {
+        return true; // ApplyResolvedWorkspaceEdit reports what can't be edited
+    }
+
+    struct Loading {
+        std::size_t           outstanding = 0;
+        bool                  failed      = false;
+        std::function<void()> then;
+    };
+    const auto loading = std::make_shared<Loading>(Loading{.outstanding = missing.size(), .failed = false, .then = std::move(then)});
+    statusMessage_     = "Reading " + std::to_string(missing.size()) + (missing.size() == 1 ? " file" : " files") + " from " +
+                         missing.front().destination + "...";
+    for (const text::RemoteFile& file : missing) {
+        text::Buffer& placeholder = bufferList_.AddRemotePlaceholder(file);
+        editor::remote::LoadRemoteBuffer(*remoteHosts_, bufferList_, placeholder, /*createMissing=*/false, lifetime_.Token(),
+                                         [this, file, loading](text::Buffer& buffer, const editor::remote::RemoteLoadOutcome& outcome) {
+                                             if (!outcome.loaded) {
+                                                 CloseBufferNow(buffer);
+                                                 if (!loading->failed) {
+                                                     loading->failed = true;
+                                                     ReportError("Couldn't open " + file.ToString() + ": " + outcome.loaded.error());
+                                                 }
+                                             }
+                                             if (--loading->outstanding == 0 && !loading->failed) {
+                                                 loading->then();
+                                             }
+                                         });
+    }
+    return false;
 }
 
 std::vector<std::string> BufferView::GatherPathCompletionCandidates() const {

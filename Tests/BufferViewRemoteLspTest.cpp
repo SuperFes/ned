@@ -125,3 +125,44 @@ TEST_CASE("project-find-references on a remote buffer lists the host's reference
     REQUIRE(PumpUntil(fixture.loop, [&] { return fixture.Showing(fixture.server.other); }));
     CHECK(fixture.activeBuffer.Get().Point() == std::string("// b\n").size());
 }
+
+TEST_CASE("lsp-rename on a remote buffer edits the host's files, opening the ones that aren't", "[BufferView][Remote][Lsp][HostAgent]") {
+    Fixture fixture;
+    REQUIRE(fixture.OpenFile());
+    text::Buffer& file = fixture.activeBuffer.Get();
+    file.SetPoint(4);
+
+    fixture.Command("lsp-rename");
+    REQUIRE(PumpUntil(fixture.loop, [&] { return fixture.statusMessage.starts_with("New name: "); }));
+    for (const char c : std::string("z")) {
+        fixture.view.OnEvent(test::Character(std::string(1, c)));
+    }
+    fixture.view.OnEvent(test::Return());
+
+    text::Buffer* other = nullptr;
+    REQUIRE(PumpUntil(fixture.loop, [&] {
+        other = fixture.bufferList.FindByRemote({.destination = "host", .path = fixture.server.other});
+        return other != nullptr && !other->IsLoading() && other->Text() == "// b\nint z;\n";
+    }));
+    CHECK(file.Text() == "int z;\n");
+    CHECK(other->Modified());
+    CHECK(&fixture.activeBuffer.Get() == &file);
+    CHECK_THAT(fixture.statusMessage, Catch::Matchers::StartsWith("Renamed"));
+}
+
+TEST_CASE("lsp-rename refuses to create a file on a remote buffer's host", "[BufferView][Remote][Lsp][HostAgent]") {
+    Fixture fixture;
+    REQUIRE(fixture.OpenFile());
+    fixture.activeBuffer.Get().SetPoint(4);
+
+    fixture.Command("lsp-rename");
+    REQUIRE(PumpUntil(fixture.loop, [&] { return fixture.statusMessage.starts_with("New name: "); }));
+    for (const char c : std::string("moved")) {
+        fixture.view.OnEvent(test::Character(std::string(1, c)));
+    }
+    fixture.view.OnEvent(test::Return());
+
+    REQUIRE(PumpUntil(fixture.loop, [&] { return fixture.statusMessage.find("isn't supported") != std::string::npos; }));
+    CHECK(fixture.activeBuffer.Get().Text() == "int x;\n");
+    CHECK_FALSE(std::filesystem::exists(fixture.server.pkg / "src" / "c.c"));
+}

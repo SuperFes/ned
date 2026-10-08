@@ -203,13 +203,19 @@ Json ToolRegistry::ApplyAndSave(const lsp::Manager::ResolvedRename& edit, const 
         return Json{{"error", "\"" + label + "\" was not applied: a file it names couldn't be opened, created, moved or deleted."}};
     }
 
+    // Saved here only: a host's file is saved through its host, by the user.
     std::vector<std::filesystem::path> touched;
+    const auto                         touch = [&touched](const text::FileRef& file) {
+        if (const auto* path = std::get_if<std::filesystem::path>(&file)) {
+            touched.push_back(*path);
+        }
+    };
     for (const lsp::Manager::ResolvedRenameEdit& fileEdit : edit.edits) {
-        touched.push_back(fileEdit.path);
+        touch(fileEdit.file);
     }
     for (const lsp::Manager::ResolvedDocumentChangeOp& op : edit.documentChangeOps) {
         if (op.kind != lsp::DocumentChangeOp::Kind::DeleteFile) {
-            touched.push_back(op.path);
+            touch(op.file);
         }
     }
     std::sort(touched.begin(), touched.end());
@@ -258,7 +264,9 @@ void ToolRegistry::ApplyCodeAction(const std::string& file, const text::Buffer* 
 
     Json outcome = Json::object();
     if (action.hasEdit) {
-        const std::optional<lsp::Manager::ResolvedRename> edit = lsp::Manager::ResolveCodeActionWorkspaceEdit(action);
+        const std::optional<std::string> host =
+            buffer != nullptr && buffer->Remote() ? std::optional(buffer->Remote()->destination) : std::nullopt;
+        const std::optional<lsp::Manager::ResolvedRename> edit = lsp::Manager::ResolveCodeActionWorkspaceEdit(action, host);
         if (!edit) {
             callback(MakeTextToolResult("\"" + action.title + "\" names a file ned can't resolve -- not applied.", true));
             return;
@@ -813,10 +821,10 @@ void ToolRegistry::RegisterBuiltinTools() {
                 }
                 Json files = Json::array();
                 for (const lsp::Manager::ResolvedRenameEdit& edit : result->edits) {
-                    files.push_back(Json{{"file", edit.path.string()}, {"editCount", edit.edits.size()}});
+                    files.push_back(Json{{"file", text::ToString(edit.file)}, {"editCount", edit.edits.size()}});
                 }
                 for (const lsp::Manager::ResolvedDocumentChangeOp& op : result->documentChangeOps) {
-                    files.push_back(Json{{"file", op.path.string()}, {"editCount", op.edits.size()}});
+                    files.push_back(Json{{"file", text::ToString(op.file)}, {"editCount", op.edits.size()}});
                 }
                 callback(MakeTextToolResult(Json{{"preview", true}, {"filesTouched", files}}.dump()));
             });

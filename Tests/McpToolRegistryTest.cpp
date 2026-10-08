@@ -101,7 +101,7 @@ ned::editor::mcp::EditorHooks ApplyingHooks(BufferList& bufferList, std::vector<
     return {.applyWorkspaceEdit = [&bufferList, &labels](const ResolvedRename& edit, const std::string& label) {
         labels.push_back(label);
         for (const auto& fileEdit : edit.edits) {
-            ned::editor::lsp::ApplyWorkspaceTextEdits(bufferList.OpenOrCreateFile(fileEdit.path), fileEdit.edits);
+            ned::editor::lsp::ApplyWorkspaceTextEdits(bufferList.OpenOrCreateFile(std::get<std::filesystem::path>(fileEdit.file)), fileEdit.edits);
         }
         return true;
     }};
