@@ -668,7 +668,17 @@ void WindowManager::SetLspManager(editor::lsp::Manager* lspManager) {
             // asking to show a file that isn't there has misjudged
             // something, and creating it on its behalf would be worse than
             // saying no.
-            if (pane == nullptr || !std::filesystem::exists(request.path)) {
+            if (pane == nullptr) {
+                return false;
+            }
+            if (const auto* remote = std::get_if<text::RemoteFile>(&request.file)) {
+                // The host says whether it's there; a missing one is reported, not made.
+                pane->Buffer().VisitRemoteFile(*remote, request.position ? std::optional(request.position->line + 1) : std::nullopt,
+                                               /*createMissing=*/false);
+                return true;
+            }
+            const std::filesystem::path& path = std::get<std::filesystem::path>(request.file);
+            if (!std::filesystem::exists(path)) {
                 return false;
             }
             // takeFocus is not honored: every pane ned could show this in is
@@ -676,7 +686,7 @@ void WindowManager::SetLspManager(editor::lsp::Manager* lspManager) {
             // focusing" to implement. The selection's start line is, via
             // the same jump every other path+position caller makes; its
             // character column is dropped with it.
-            pane->Buffer().JumpToPathLine(request.path, request.position ? request.position->line + 1 : 1);
+            pane->Buffer().JumpToPathLine(path, request.position ? request.position->line + 1 : 1);
             return true;
         });
     }

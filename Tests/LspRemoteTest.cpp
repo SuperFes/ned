@@ -140,3 +140,26 @@ TEST_CASE("A remote server's locations name files on its host", "[Lsp][LspRemote
     CHECK(locations->front().position.line == 1);
     CHECK(locations->front().position.character == 4);
 }
+
+TEST_CASE("A remote server's symbols and counterparts name files on its host", "[Lsp][LspRemote][HostAgent]") {
+    Fixture f;
+    REQUIRE(f.Connect());
+
+    text::BufferList bufferList;
+    lsp::Manager     manager(bufferList, f.loop);
+    manager.SetRemoteHosts(&f.hosts);
+    text::Buffer& buffer = f.Open(bufferList);
+    REQUIRE(f.Opened(manager, buffer));
+    const text::FileRef other = text::RemoteFile{.destination = "host", .path = f.server.other};
+
+    std::optional<std::vector<lsp::Manager::SymbolResult>> symbols;
+    manager.RequestWorkspaceSymbols(buffer, "y", [&](std::vector<lsp::Manager::SymbolResult> found) { symbols = std::move(found); });
+    REQUIRE(PumpUntil(f.loop, [&] { return symbols.has_value(); }));
+    REQUIRE(symbols->size() == 1);
+    CHECK(symbols->front().file == other);
+
+    std::optional<std::optional<text::FileRef>> counterpart;
+    manager.RequestSwitchSourceHeader(buffer, [&](std::optional<text::FileRef> found) { counterpart = std::move(found); });
+    REQUIRE(PumpUntil(f.loop, [&] { return counterpart.has_value(); }));
+    CHECK(*counterpart == std::optional(other));
+}

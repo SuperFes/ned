@@ -505,9 +505,14 @@ void BufferView::OpenLinkAtPoint() {
 }
 
 void BufferView::OpenResolvedDocumentLink(const editor::lsp::Manager::ResolvedDocumentLink& link) {
-    if (!link.path.empty()) {
-        std::error_code ec;
-        if (!std::filesystem::exists(link.path, ec)) {
+    if (const auto* remote = link.file ? std::get_if<text::RemoteFile>(&*link.file) : nullptr) {
+        VisitRemoteFile(*remote, std::nullopt, /*createMissing=*/false);
+        return;
+    }
+    if (link.file) {
+        const std::filesystem::path& path = std::get<std::filesystem::path>(*link.file);
+        std::error_code              ec;
+        if (!std::filesystem::exists(path, ec)) {
             OpenLinkAtPointWithoutLsp(); // see this method's own doc comment
             return;
         }
@@ -515,7 +520,7 @@ void BufferView::OpenResolvedDocumentLink(const editor::lsp::Manager::ResolvedDo
             // Deliberately no PushJumpMark here: OpenDetectedLink's own
             // file tier doesn't push one either, and which tier answered a
             // given open-link-at-point shouldn't be observable.
-            text::Buffer& opened = bufferList_.OpenOrCreateFile(link.path);
+            text::Buffer& opened = bufferList_.OpenOrCreateFile(path);
             activeBuffer_.Set(opened);
             statusMessage_.clear();
         }

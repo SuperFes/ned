@@ -21,6 +21,8 @@
 #include <string_view>
 #include <vector>
 
+#include "Text/RemoteFile.h"
+
 namespace ned::editor {
 
 enum class SearchEverywhereKind {
@@ -55,9 +57,9 @@ enum class SearchEverywhereKind {
 // FuzzyMatch.h/LocalScopes.h; BufferView converts to/from
 // editor::lsp::Manager::ResolvedLocation at the one call site that needs it.
 struct SearchEverywhereLocation {
-    std::filesystem::path path;
-    std::size_t           line;      // 0-indexed, LSP convention
-    std::size_t           character; // 0-indexed
+    text::FileRef file;
+    std::size_t   line;      // 0-indexed, LSP convention
+    std::size_t   character; // 0-indexed
 };
 
 struct SearchEverywhereCandidate {

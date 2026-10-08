@@ -596,6 +596,18 @@ inline std::string MaskPathCandidateToLastSegment(const std::string& candidate) 
 // includePath is only true for workspace/symbol results, which span
 // multiple files and need one to disambiguate; a document-symbol result
 // is always the current buffer, so a repeated path would be noise.
+// A local file relative to the project root when it's inside it; a host's
+// as destination:/path.
+inline std::string ProjectRelativeName(const text::FileRef& file) {
+    const auto* path = std::get_if<std::filesystem::path>(&file);
+    if (path == nullptr) {
+        return text::ToString(file);
+    }
+    std::error_code             ec;
+    const std::filesystem::path relative = std::filesystem::relative(*path, editor::ProjectRoot(), ec);
+    return (!ec && !relative.empty()) ? relative.string() : path->string();
+}
+
 inline std::string BuildSymbolLabel(const editor::lsp::Manager::SymbolResult& symbol, bool includePath) {
     std::string label(editor::lsp::SymbolKindLabel(symbol.kind));
     label += " ";
@@ -604,9 +616,7 @@ inline std::string BuildSymbolLabel(const editor::lsp::Manager::SymbolResult& sy
         label += "  in " + symbol.containerName;
     }
     if (includePath) {
-        std::error_code             ec;
-        const std::filesystem::path relative = std::filesystem::relative(symbol.path, editor::ProjectRoot(), ec);
-        label += "  — " + ((!ec && !relative.empty()) ? relative.string() : symbol.path.string());
+        label += "  — " + ProjectRelativeName(symbol.file);
     }
     label += ":" + std::to_string(symbol.position.line + 1); // LSP is 0-indexed, displayed 1-indexed like every other line reference here
     return label;
@@ -664,10 +674,8 @@ inline std::string BuildHierarchyRowLabel(const editor::lsp::Manager::ResolvedHi
     // what FuzzyFilterAndRank matches against, so typing "class" there
     // genuinely narrows the list -- a tree is navigated, not filtered, so
     // the word costs width and buys nothing.
-    std::string                 label(resolved.item.name);
-    std::error_code             ec;
-    const std::filesystem::path relative = std::filesystem::relative(resolved.path, editor::ProjectRoot(), ec);
-    label += "  — " + ((!ec && !relative.empty()) ? relative.string() : resolved.path.string());
+    std::string label(resolved.item.name);
+    label += "  — " + ProjectRelativeName(resolved.file);
     label += ":" + std::to_string(resolved.item.position.line + 1);
     return label;
 }
