@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <string>
+
 #include "Editor/FormatOnSave.h"
 
 using ned::editor::FormatCommand;
@@ -75,4 +77,34 @@ TEST_CASE("An empty command string is treated the same as unset", "[FormatOnSave
     SetFormatCommand(std::string(""));
 
     REQUIRE_FALSE(RunFormatCommand("hello").has_value());
+}
+
+TEST_CASE("RunFormatCommand takes input bigger than a pipe from a command that prints as it reads", "[FormatOnSave]") {
+    const FormatCommandGuard guard;
+    SetFormatCommand(std::string("cat"));
+    std::string input;
+    for (int line = 0; input.size() < 4 * 1024 * 1024; ++line) {
+        input += "line " + std::to_string(line) + "\n";
+    }
+    REQUIRE(RunFormatCommand(input) == input);
+}
+
+TEST_CASE("RunFormatCommand runs the command through the shell", "[FormatOnSave]") {
+    const FormatCommandGuard guard;
+    SetFormatCommand(std::string("tr a-z A-Z | sed 's/^/> /'"));
+    REQUIRE(RunFormatCommand("one\ntwo\n") == "> ONE\n> TWO\n");
+}
+
+TEST_CASE("RunFormatCommand refuses output from a command that stops reading its input", "[FormatOnSave]") {
+    const FormatCommandGuard guard;
+    // Exits 0 having printed something, but saw only the start of the text.
+    SetFormatCommand(std::string("head -c 10"));
+    REQUIRE_FALSE(RunFormatCommand(std::string(4 * 1024 * 1024, 'x')).has_value());
+}
+
+TEST_CASE("AcceptFormatOutput takes only a clean exit's non-empty output", "[FormatOnSave]") {
+    REQUIRE(ned::editor::AcceptFormatOutput("text", 0) == "text");
+    REQUIRE_FALSE(ned::editor::AcceptFormatOutput("", 0).has_value());
+    REQUIRE_FALSE(ned::editor::AcceptFormatOutput("text", 1).has_value());
+    REQUIRE_FALSE(ned::editor::AcceptFormatOutput("text", std::nullopt).has_value());
 }

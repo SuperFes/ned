@@ -91,10 +91,10 @@ namespace {
         }
     }
 
-    // Writes content to a uniquely-named temp file via mkstemp, mirroring
-    // FormatOnSave.cpp's MakeTempFile (same TOCTOU-avoidance reasoning --
-    // see its own comment) plus the actual write. nullopt on any failure,
-    // with the partial file removed rather than left behind.
+    // Writes content to a uniquely-named temp file via mkstemp, so no
+    // other process can take the name between choosing and opening it.
+    // nullopt on any failure, with the partial file removed rather than
+    // left behind.
     std::optional<std::filesystem::path> WritePatchFile(const std::string& content) {
         const std::string templatePath = (std::filesystem::temp_directory_path() / "ned-vcs-patch-XXXXXX").string();
         std::vector<char> nameBuffer(templatePath.begin(), templatePath.end());
