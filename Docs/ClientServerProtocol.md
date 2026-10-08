@@ -267,6 +267,14 @@ lines, and an edit opens the host's files it touches before changing them. A ser
 deletes on a host are refused. Local file operations and watched-file changes reach only
 local servers.
 
+**Debug adapters.** Starting or attaching from a remote buffer runs its language's adapter
+on that buffer's host, in the project root found there, connecting first if need be.
+The launch or attach configuration goes as configured, so its paths must make sense on the
+host. Breakpoints key a host's file as `host:/path`; a session is told only about those on
+its own machine, by their paths there, and what it reports (where it stopped, frames,
+loaded sources, disassembly) comes back as files on that host. Run-to-cursor and
+jump-to-line refuse a file on another machine.
+
 **Main-thread waits.** A remote process can't be waited on from the main thread, which
 is what moves its bytes. A call site that blocks there on a child (the toolchain probes)
 becomes asynchronous, or moves to a worker, before it can run remotely. One that hands a

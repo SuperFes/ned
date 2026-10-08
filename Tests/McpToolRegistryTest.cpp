@@ -551,6 +551,29 @@ TEST_CASE("dap_list_breakpoints reports none set, then a round trip through dap_
     REQUIRE(invoked);
 }
 
+TEST_CASE("dap_set_breakpoint and dap_remove_breakpoint take a host's file as host:/path", "[Mcp][Dap]") {
+    Fixture                     fixture;
+    const ned::text::RemoteFile remote{.destination = "box", .path = "/src/a.c"};
+
+    bool invoked = false;
+    fixture.registry.CallTool("dap_set_breakpoint", ned::editor::mcp::Json{{"file", "box:/src/a.c"}, {"line", 4}},
+                              [&](ned::editor::mcp::Json result) {
+                                  invoked = true;
+                                  REQUIRE_FALSE(IsError(result));
+                              });
+    REQUIRE(invoked);
+    REQUIRE(fixture.dapManager.BreakpointsForFile(remote) == std::vector<std::size_t>{4});
+
+    invoked = false;
+    fixture.registry.CallTool("dap_remove_breakpoint", ned::editor::mcp::Json{{"file", "box:/src/a.c"}, {"line", 4}},
+                              [&](ned::editor::mcp::Json result) {
+                                  invoked = true;
+                                  REQUIRE(ResultText(result).find("Removed") != std::string::npos);
+                              });
+    REQUIRE(invoked);
+    REQUIRE(fixture.dapManager.BreakpointsForFile(remote).empty());
+}
+
 TEST_CASE("dap_remove_breakpoint reports an error when there's nothing to remove", "[Mcp][Dap]") {
     Fixture fixture;
     bool    invoked = false;
