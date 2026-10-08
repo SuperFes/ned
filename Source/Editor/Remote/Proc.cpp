@@ -329,6 +329,15 @@ namespace {
             });
         }
 
+        void ResizeTerminal(process::TerminalSize size) noexcept override {
+            relay_->OnMain([relay = relay_, size] {
+                if (!relay->finished) {
+                    relay->connection->Endpoint().Request(std::string(host::kProcResize), host::ToJson(host::ProcResizeRequest{.handle = relay->handle, .size = size}),
+                                                          protocol::ResponseHandlers{}, ProtocolRequestTimeoutMs());
+                }
+            });
+        }
+
       private:
         std::shared_ptr<Relay> relay_;
         std::jthread           thread_;
@@ -350,6 +359,12 @@ process::ChildProcess SpawnOnHost(Connection& connection, RemoteSpawn spawn) {
     }
     if (connection.Hello().capabilities.proc < 1) {
         throw std::runtime_error("ned: the agent on " + connection.Destination() + " can't run processes");
+    }
+    if (spawn.pty) {
+        if (connection.Hello().capabilities.proc < host::kProcPtyVersion) {
+            throw std::runtime_error("ned: the agent on " + connection.Destination() + " can't run terminals");
+        }
+        spawn.stderrMode = process::StderrMode::MergeWithStdout;
     }
 
     const bool         capturesStderr = spawn.stderrMode == process::StderrMode::Capture;
@@ -394,7 +409,8 @@ process::ChildProcess SpawnOnHost(Connection& connection, RemoteSpawn spawn) {
                                          .argv       = std::move(spawn.argv),
                                          .cwd        = std::move(spawn.cwd),
                                          .env        = std::move(spawn.env),
-                                         .stderrMode = spawn.stderrMode};
+                                         .stderrMode = spawn.stderrMode,
+                                         .pty        = spawn.pty};
     const std::string            command = request.argv.empty() ? std::string() : request.argv.front();
     relay->request                       = connection.Endpoint().Request(
         std::string(host::kProcSpawn), host::ToJson(request),

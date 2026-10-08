@@ -31,6 +31,8 @@ struct RemoteSpawn {
     std::optional<std::filesystem::path>                            cwd; // the host's; its login's home when unset
     std::vector<std::pair<std::string, std::optional<std::string>>> env;
     process::StderrMode                                             stderrMode = process::StderrMode::Discard;
+    // Runs it on a pty of this size, whose stderr is its stdout.
+    std::optional<process::TerminalSize> pty;
 };
 
 // The exit status of a command the host couldn't start, as a shell reports
@@ -38,7 +40,7 @@ struct RemoteSpawn {
 inline constexpr int kRemoteSpawnFailed = 127;
 
 // Main thread only. Throws std::runtime_error when the connection has
-// closed or its agent can't run processes.
+// closed or its agent can't run processes, or terminals for a pty.
 [[nodiscard]] process::ChildProcess SpawnOnHost(Connection& connection, RemoteSpawn spawn);
 
 } // namespace ned::editor::remote

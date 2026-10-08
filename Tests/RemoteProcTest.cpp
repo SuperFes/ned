@@ -121,6 +121,33 @@ TEST_CASE("A host's process reads and writes like a local child", "[Remote][Remo
     }
 }
 
+TEST_CASE("A host's process on a pty has its terminal, resized from here", "[Remote][RemoteProc][HostAgent]") {
+    Fixture             fixture;
+    remote::RemoteSpawn spawn = Spawn({"sh", "-c", "tty; stty size; stty -echo; echo ready; read line; stty size"}, process::StderrMode::Capture);
+    spawn.pty                 = process::TerminalSize{.rows = 30, .cols = 100};
+    Streamed shell;
+    shell.Start(remote::SpawnOnHost(*fixture.connection, std::move(spawn)), fixture.queue);
+    REQUIRE(PumpUntil(fixture.queue, [&] { return shell.output.find("ready") != std::string::npos || shell.exit.has_value(); }));
+    CHECK_THAT(shell.output, ContainsSubstring("/dev/pts/"));
+    CHECK_THAT(shell.output, ContainsSubstring("30 100\r\n"));
+    shell.child->Child().ResizeTerminal({.rows = 40, .cols = 120});
+    shell.child->Child().WriteAll("\n", std::chrono::seconds(5));
+    REQUIRE(PumpUntil(fixture.queue, [&] { return shell.exit.has_value(); }));
+    CHECK_THAT(shell.output, ContainsSubstring("ready\r\n40 120\r\n"));
+    CHECK(shell.exit == std::optional<std::optional<int>>(0));
+
+    SECTION("dropped, it hangs up") {
+        remote::RemoteSpawn waiting = Spawn({"sh", "-c", "trap 'echo hup > hung-up; exit' HUP; echo ready; while :; do sleep 0.05; done"});
+        waiting.cwd                 = std::filesystem::canonical(fixture.fake.dir);
+        waiting.pty                 = process::TerminalSize{};
+        Streamed held;
+        held.Start(remote::SpawnOnHost(*fixture.connection, std::move(waiting)), fixture.queue);
+        REQUIRE(PumpUntil(fixture.queue, [&] { return held.output.find("ready") != std::string::npos; }));
+        held.child.reset();
+        REQUIRE(PumpUntil(fixture.queue, [&] { return std::filesystem::exists(fixture.fake.dir / "hung-up"); }));
+    }
+}
+
 TEST_CASE("A host's process that can't start says why, and one whose host goes ends", "[Remote][RemoteProc][HostAgent]") {
     Fixture  fixture;
     Streamed missing;

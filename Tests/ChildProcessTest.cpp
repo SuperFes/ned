@@ -42,6 +42,7 @@ struct FakeControl final : ProcessControl {
         int                exitFd = ::eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
         std::optional<int> exitCode;
         std::vector<int>   signals;
+        std::vector<ned::editor::process::TerminalSize> sizes;
         bool               released = false;
         ~State() {
             ::close(exitFd);
@@ -65,6 +66,9 @@ struct FakeControl final : ProcessControl {
     }
     void Release() noexcept override {
         state_->released = true;
+    }
+    void ResizeTerminal(ned::editor::process::TerminalSize size) noexcept override {
+        state_->sizes.push_back(size);
     }
 
     std::shared_ptr<State> state_;
@@ -519,6 +523,8 @@ TEST_CASE("A ChildProcess backed by a ProcessControl signals through it and wait
         child.Kill();
         child.Signal(SIGINT);
         CHECK(state->signals == std::vector<int>{SIGKILL, SIGINT});
+        child.ResizeTerminal({.rows = 5, .cols = 6});
+        CHECK(state->sizes == std::vector<ned::editor::process::TerminalSize>{{.rows = 5, .cols = 6}});
 
         std::jthread exits([&state] {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));

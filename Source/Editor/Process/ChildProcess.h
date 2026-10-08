@@ -78,9 +78,12 @@ class ProcessControl {
     [[nodiscard]] virtual std::optional<int> ExitCode() const noexcept = 0;
     // To the child's whole process group.
     virtual void Signal(int signal) noexcept = 0;
-    // The owner is done with the child: it gets EOF on stdin and, should it
-    // outstay a grace period, SIGKILL. Returns at once.
+    // The owner is done with the child: it gets EOF on stdin, or a pty's
+    // hang-up, and, should it outstay a grace period, SIGKILL. Returns at
+    // once.
     virtual void Release() noexcept = 0;
+    // A child on a pty: its terminal's new size.
+    virtual void ResizeTerminal(TerminalSize size) noexcept = 0;
 };
 
 // Resolves a command name against $PATH (or validates it directly if it
@@ -253,7 +256,8 @@ class ChildProcess {
     void CloseInput() noexcept;
 
     // Tells a child on a pty (Pty.h) its terminal's new size, which raises
-    // SIGWINCH in its foreground process group. A no-op for any other child.
+    // SIGWINCH in its foreground process group; a control's child is told
+    // through it. A no-op for any other child.
     void ResizeTerminal(TerminalSize size) const noexcept;
 
   private:
