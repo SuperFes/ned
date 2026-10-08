@@ -50,6 +50,7 @@
 #include "Editor/Dispatcher.h"
 #include "Editor/EmbeddedDocuments.h"
 #include "Editor/ExpandableTree.h"
+#include "Editor/FormatRun.h"
 #include "Editor/ImportFixup.h"
 #include "Editor/IncrementalSearch.h"
 #include "Editor/InlineDebugValues.h"
@@ -1695,9 +1696,10 @@ class BufferView : public Widget {
     // isn't the last window -- nothing after it.
     void QuitFromVim(bool forced);
     void CloseVimWindow(bool forced);
-    // A :wq/ZZ whose save went to RequestLspFormatThenSaveBuffer: that request
-    // takes the flag and closes the window once the write lands.
-    bool closeWindowAfterLspSave_ = false;
+    // A :wq/ZZ whose save waits on formatting (RequestLspFormatThenSaveBuffer,
+    // RequestRemoteFormatThenSaveBuffer): that request takes the flag and
+    // closes the window once the write lands.
+    bool closeWindowAfterDeferredSave_ = false;
     // KeymapStyle::Modern follow-up: called instead of DispatchChordNormally
     // from the same Normal-mode tail, when editor::GetKeymapStyle() ==
     // KeymapStyle::Modern and dispatcher_ isn't mid some other layer's
@@ -5173,6 +5175,17 @@ class BufferView : public Widget {
     // other out.
     void                    RequestLspFormatBuffer();
     bufferview::RequestSlot lspFormatBufferRequest_;
+
+    // A remote buffer's format command, run on its host: what
+    // CommandContext::deferSaveForRemoteFormat and deferFormatToRemote hand
+    // over. Output that arrives after the buffer changed is dropped, since
+    // replacing the whole text would lose the edits.
+    void RequestRemoteFormatThenSaveBuffer(bool force);
+    void RequestRemoteFormatBuffer();
+    // False, with done not run, when there is nowhere to run it.
+    bool                               StartRemoteFormat(const text::Buffer& buffer, editor::FormatRun::Done done);
+    void                               SaveAfterRemoteFormat(text::Buffer& buffer, bool force, bool closeAfter, const std::string& note);
+    std::unique_ptr<editor::FormatRun> remoteFormat_;
 
     // completion-trigger-characters follow-up: triggerCharacter is the
     // server-declared character whose keystroke armed the debounce that

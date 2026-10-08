@@ -52,7 +52,7 @@ void FormatRun::Started(std::expected<process::ChildProcess, std::string> child,
             // Posted, so done may start another run, which destroys the
             // child whose handler this is.
             postQueue_.Post(run_.Bind([this, formatted = std::move(formatted), done]() mutable {
-                Finish(formatted ? std::expected<std::string, std::string>(std::move(*formatted)) : std::unexpected(std::string("format command failed")), done);
+                Finish(formatted ? std::expected<std::string, std::string>(std::move(*formatted)) : std::unexpected(std::string("it failed or printed nothing")), done);
             }));
         });
     process_->Feed(std::move(text), SubprocessWriteTimeoutMs());

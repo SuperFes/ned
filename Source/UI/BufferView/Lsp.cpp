@@ -1291,7 +1291,7 @@ void BufferView::RequestLspFormatThenSaveBuffer() {
     text::Buffer&       buffer     = activeBuffer_.Get();
     const text::BufferIdentity bufferId(buffer);
     const std::size_t   generation = lspFormatOnSaveRequest_.Begin();
-    const bool          closeAfter = std::exchange(closeWindowAfterLspSave_, false);
+    const bool                 closeAfter = std::exchange(closeWindowAfterDeferredSave_, false);
     statusMessage_                 = "Formatting...";
     lspManager_->RequestFormatting(
         buffer,

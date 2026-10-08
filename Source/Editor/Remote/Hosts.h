@@ -76,6 +76,8 @@ class Hosts {
 
     // Resolver lookups for a connect prompt's host names.
     [[nodiscard]] HostLookup& Lookup() noexcept;
+    // The main thread's queue, which every connection answers through.
+    [[nodiscard]] PostQueue& Queue() const noexcept;
 
   private:
     struct Attempt {

@@ -1138,6 +1138,13 @@ struct CommandContext {
     // whether SAVING auto-triggers a format, not whether this explicit,
     // user-invoked command may use LSP when available.
     bool deferFormatToLsp = false;
+    // Set by save-buffer/save-buffer-force instead of saving a remote buffer
+    // that has a format command: the command runs on its host, which can't
+    // be waited on here, so BufferView formats and then saves once it
+    // answers. The value is force.
+    std::optional<bool> deferSaveForRemoteFormat;
+    // format-buffer's own, without the save.
+    bool deferFormatToRemote = false;
     // Emacs-keymap-round-2 follow-up (kill-append): set by the zap-to-char
     // command to whether the kill it's about to request (on the character
     // keystroke that follows, once InteractiveRequest::ZapToChar's session

@@ -17,6 +17,7 @@
 #include "Editor/BufferSave.h"
 #include "Editor/Commands.h"
 #include "Editor/Dispatcher.h"
+#include "Editor/FormatOnSave.h"
 #include "Editor/Keymap.h"
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
@@ -481,6 +482,109 @@ TEST_CASE("save-buffer writes a remote buffer to its host, and asks before overw
     CHECK(read() == "one\r\ntwo\r\nthree\r\n");
     CHECK_FALSE(buffer.ExternallyModified());
     CHECK_FALSE(buffer.Modified());
+}
+
+TEST_CASE("save-buffer runs a remote buffer's format command on its host, then saves", "[BufferView][Remote][HostAgent]") {
+    Fixture                          fixture;
+    ned::editor::remote::RemoteSaver saver(fixture.hosts, fixture.bufferList, fixture.queue, [&](std::string message) { fixture.statusMessage = std::move(message); });
+    ned::editor::SetRemoteSaveDispatcher([&saver](ned::editor::RemoteSaveRequest request) { return saver.Dispatch(std::move(request)); });
+    struct Guard {
+        ~Guard() {
+            ned::editor::SetRemoteSaveDispatcher(nullptr);
+            ned::editor::SetFormatCommand(std::nullopt);
+        }
+    } guard;
+
+    const std::filesystem::path project = fixture.fake.dir / "project";
+    std::filesystem::create_directories(project / ".git");
+    const std::filesystem::path file = project / "notes.txt";
+    std::ofstream(file, std::ios::binary) << "one\n";
+    const std::string where = "host:" + file.string();
+    const auto        read  = [&file] {
+        std::ifstream in(file, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+
+    fixture.Command("find-file");
+    fixture.Enter(where);
+    REQUIRE(fixture.StatusStartsWith("Opened " + where));
+    ned::text::Buffer& buffer = fixture.activeBuffer.Get();
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint("two\n");
+
+    // Only on the host is there a .git beside it to find.
+    ned::editor::SetFormatCommand(std::string("test -d .git && tr a-z A-Z"));
+    fixture.Command("save-buffer");
+    CHECK(fixture.statusMessage == "Formatting host:notes.txt...");
+    REQUIRE(fixture.StatusStartsWith("Wrote " + where));
+    CHECK(read() == "ONE\nTWO\n");
+    CHECK(buffer.Text() == "ONE\nTWO\n");
+    CHECK_FALSE(buffer.Modified());
+
+    SECTION("one undo takes the format back") {
+        fixture.view.OnEvent(test::Ctrl('/'));
+        CHECK(buffer.Text() == "one\ntwo\n");
+    }
+    SECTION("an edit while it runs keeps the edit and skips the format") {
+        ned::editor::SetFormatCommand(std::string("sleep 0.5; tr A-Z a-z"));
+        buffer.InsertAtPoint("three\n");
+        fixture.Command("save-buffer");
+        buffer.InsertAtPoint("four\n");
+        REQUIRE(fixture.StatusStartsWith("Wrote " + where));
+        CHECK(read() == "ONE\nTWO\nthree\nfour\n");
+        CHECK(buffer.Text() == "ONE\nTWO\nthree\nfour\n");
+    }
+    SECTION("a failing command still saves") {
+        ned::editor::SetFormatCommand(std::string("exit 3"));
+        buffer.InsertAtPoint("three\n");
+        fixture.Command("save-buffer");
+        REQUIRE(fixture.StatusStartsWith("Wrote " + where));
+        CHECK(read() == "ONE\nTWO\nthree\n");
+    }
+    SECTION("the overwrite confirmation's save formats too") {
+        std::ofstream(file, std::ios::binary) << "theirs\n";
+        std::filesystem::last_write_time(file, *buffer.RemoteTimestamp() + std::chrono::seconds(5));
+        buffer.InsertAtPoint("three\n");
+        fixture.Command("save-buffer");
+        REQUIRE(fixture.StatusStartsWith("Couldn't save " + where + ": "));
+        fixture.Command("save-buffer");
+        REQUIRE(fixture.statusMessage == "host:notes.txt changed on its host since it was read; save anyway? (y/n)");
+        fixture.view.OnEvent(test::Character('y'));
+        REQUIRE(fixture.StatusStartsWith("Wrote " + where));
+        CHECK(read() == "ONE\nTWO\nTHREE\n");
+    }
+}
+
+TEST_CASE("format-buffer runs a remote buffer's format command on its host", "[BufferView][Remote][HostAgent]") {
+    Fixture fixture;
+    struct Guard {
+        ~Guard() {
+            ned::editor::SetFormatCommand(std::nullopt);
+        }
+    } guard;
+    const std::filesystem::path file = fixture.fake.dir / "notes.txt";
+    std::ofstream(file, std::ios::binary) << "one  \n";
+
+    fixture.Command("find-file");
+    fixture.Enter("host:" + file.string());
+    REQUIRE(fixture.StatusStartsWith("Opened host:"));
+    ned::text::Buffer& buffer = fixture.activeBuffer.Get();
+
+    ned::editor::SetFormatCommand(std::string("tr a-z A-Z"));
+    fixture.Command("format-buffer");
+    CHECK(fixture.statusMessage == "Formatting host:notes.txt...");
+    REQUIRE(fixture.StatusStartsWith("Formatted host:notes.txt"));
+    CHECK(buffer.Text() == "ONE  \n");
+    CHECK(buffer.Modified());
+
+    fixture.Command("format-buffer");
+    REQUIRE(fixture.StatusStartsWith("host:notes.txt is already formatted."));
+
+    // As locally, a failing command falls back to ned's own formatting.
+    ned::editor::SetFormatCommand(std::string("exit 1"));
+    fixture.Command("format-buffer");
+    REQUIRE(fixture.StatusStartsWith("The format command failed: it failed or printed nothing -- formatted host:notes.txt natively."));
+    CHECK(buffer.Text() == "ONE\n");
 }
 
 TEST_CASE("revert-buffer reads a remote buffer from its host again, as one undoable step", "[BufferView][Remote][HostAgent]") {

@@ -1161,6 +1161,14 @@ bool BufferView::RunCommandAndHandleOutcome(editor::CommandContext& context, con
         RequestLspFormatBuffer();
         return ran;
     }
+    if (context.deferSaveForRemoteFormat) {
+        RequestRemoteFormatThenSaveBuffer(*context.deferSaveForRemoteFormat);
+        return ran;
+    }
+    if (context.deferFormatToRemote) {
+        RequestRemoteFormatBuffer();
+        return ran;
+    }
 
     // structural-selection-expansion follow-up: any dispatched command other
     // than expand-selection/shrink-selection themselves invalidates the
