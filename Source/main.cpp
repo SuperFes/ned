@@ -1573,8 +1573,8 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         dock->NoteFocusReturned();
     });
     debugPanel.SetOnMessage([&statusMessage](std::string message) { statusMessage = std::move(message); });
-    debugPanel.SetOnVisitLocation([wm = windowManager.get()](const std::filesystem::path& path, std::size_t line) {
-        wm->RequestVisitLocation(path, line);
+    debugPanel.SetOnVisitLocation([wm = windowManager.get()](const ned::text::FileRef& file, std::size_t line) {
+        wm->RequestVisitLocation(file, line);
     });
     debugPanel.SetOnTextEntryRequest(
         [wm = windowManager.get()](std::string label, std::string initialText, std::function<void(std::string)> onAccept) {

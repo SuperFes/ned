@@ -542,6 +542,16 @@ const std::optional<RemoteFile>& Buffer::Remote() const {
     return Remote_;
 }
 
+std::optional<FileRef> Buffer::File() const {
+    if (Remote_) {
+        return *Remote_;
+    }
+    if (Path_) {
+        return *Path_;
+    }
+    return std::nullopt;
+}
+
 const std::optional<std::filesystem::file_time_type>& Buffer::RemoteTimestamp() const {
     return RemoteTimestamp_;
 }

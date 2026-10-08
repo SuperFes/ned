@@ -25,6 +25,8 @@ namespace {
     // no downsampling in the common case.
     constexpr std::size_t kMaxWatchHistoryPoints = 40;
 
+    constexpr const char* kOtherMachine = "That file isn't on the machine being debugged.";
+
     // DAP round 5: readMemory's response `data` field is base64. No shared
     // base64 helper exists in this codebase -- Clipboard.cpp keeps its own
     // file-local Base64Encode, not exported -- so this is this file's own
@@ -78,8 +80,12 @@ Manager::SessionState Manager::State() const {
     return state_;
 }
 
-std::string Manager::NormalizePathKey(const std::filesystem::path& path) {
-    std::error_code ec;
+std::string Manager::NormalizePathKey(const text::FileRef& file) {
+    if (const auto* remote = std::get_if<text::RemoteFile>(&file)) {
+        return remote->ToString();
+    }
+    const std::filesystem::path& path = std::get<std::filesystem::path>(file);
+    std::error_code              ec;
     // weakly_canonical (same choice HandleRenameFileKey already made): a
     // breakpoint can be toggled in a buffer whose file the debugger will
     // later report via a symlink-free absolute path — both spellings must
@@ -91,8 +97,26 @@ std::string Manager::NormalizePathKey(const std::filesystem::path& path) {
     return std::filesystem::absolute(path).string();
 }
 
-bool Manager::ToggleBreakpoint(const std::filesystem::path& path, std::size_t line) {
-    const std::string        key         = NormalizePathKey(path);
+text::FileRef Manager::FileForKey(const std::string& key) {
+    if (!key.starts_with('/')) {
+        if (std::optional<text::RemoteFile> remote = text::ParseRemoteFile(key)) {
+            return *std::move(remote);
+        }
+    }
+    return std::filesystem::path(key);
+}
+
+std::string Manager::WirePath(const text::FileRef& file) {
+    return text::PathOf(FileForKey(NormalizePathKey(file))).string();
+}
+
+bool Manager::OnSessionMachine(const text::FileRef& file) const {
+    const auto* remote = std::get_if<text::RemoteFile>(&file);
+    return remote ? sessionHost_ == remote->destination : !sessionHost_;
+}
+
+bool Manager::ToggleBreakpoint(const text::FileRef& file, std::size_t line) {
+    const std::string        key         = NormalizePathKey(file);
     std::vector<Breakpoint>& breakpoints = breakpoints_[key];
     const auto               it          = std::find_if(breakpoints.begin(), breakpoints.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     bool                     nowSet;
@@ -129,15 +153,15 @@ bool Manager::ToggleBreakpoint(const std::filesystem::path& path, std::size_t li
     return nowSet;
 }
 
-bool Manager::SetBreakpointEnabled(const std::filesystem::path& path, std::size_t line, bool enabled) {
-    const std::string key  = NormalizePathKey(path);
-    const auto        file = breakpoints_.find(key);
-    if (file == breakpoints_.end()) {
+bool Manager::SetBreakpointEnabled(const text::FileRef& file, std::size_t line, bool enabled) {
+    const std::string key   = NormalizePathKey(file);
+    const auto        entry = breakpoints_.find(key);
+    if (entry == breakpoints_.end()) {
         return false;
     }
-    const auto it = std::find_if(file->second.begin(), file->second.end(), [line](const Breakpoint& bp) { return bp.line == line; });
-    if (it == file->second.end() || it->enabled == enabled) {
-        return it != file->second.end();
+    const auto it = std::find_if(entry->second.begin(), entry->second.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    if (it == entry->second.end() || it->enabled == enabled) {
+        return it != entry->second.end();
     }
     it->enabled = enabled;
     // A disabled breakpoint keeps whatever the adapter last said about it,
@@ -154,20 +178,20 @@ bool Manager::SetBreakpointEnabled(const std::filesystem::path& path, std::size_
     return true;
 }
 
-bool Manager::RemoveBreakpoint(const std::filesystem::path& path, std::size_t line) {
-    const std::string key  = NormalizePathKey(path);
-    const auto        file = breakpoints_.find(key);
-    if (file == breakpoints_.end()) {
+bool Manager::RemoveBreakpoint(const text::FileRef& file, std::size_t line) {
+    const std::string key   = NormalizePathKey(file);
+    const auto        entry = breakpoints_.find(key);
+    if (entry == breakpoints_.end()) {
         return false;
     }
-    const auto it = std::find_if(file->second.begin(), file->second.end(), [line](const Breakpoint& bp) { return bp.line == line; });
-    if (it == file->second.end()) {
+    const auto it = std::find_if(entry->second.begin(), entry->second.end(), [line](const Breakpoint& bp) { return bp.line == line; });
+    if (it == entry->second.end()) {
         return false;
     }
-    file->second.erase(it);
+    entry->second.erase(it);
     // Same "push the now-empty list before erasing the map entry" ordering
     // ToggleBreakpoint's own removal path documents.
-    const bool nowEmpty = file->second.empty();
+    const bool nowEmpty = entry->second.empty();
     if (client_ && state_ != SessionState::Inactive) {
         SendBreakpointsForFile(key);
     }
@@ -197,8 +221,8 @@ void Manager::ClearSourceBreakpoints() {
     NotifyBreakpointsChanged();
 }
 
-std::string Manager::SetBreakpointCondition(const std::filesystem::path& path, std::size_t line, std::string condition) {
-    const std::string        key   = NormalizePathKey(path);
+std::string Manager::SetBreakpointCondition(const text::FileRef& file, std::size_t line, std::string condition) {
+    const std::string        key   = NormalizePathKey(file);
     std::vector<Breakpoint>& lines = breakpoints_[key];
     auto                     it    = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     if (it == lines.end()) {
@@ -211,7 +235,7 @@ std::string Manager::SetBreakpointCondition(const std::filesystem::path& path, s
         SendBreakpointsForFile(key);
     }
     NotifyBreakpointsChanged();
-    std::string status = (condition.empty() ? "Condition cleared at " : "Condition set at ") + path.filename().string() + ":" +
+    std::string status = (condition.empty() ? "Condition cleared at " : "Condition set at ") + text::PathOf(file).filename().string() + ":" +
                          std::to_string(line);
     if (!condition.empty() && client_ && state_ != SessionState::Inactive && !capabilities_.conditionalBreakpoints) {
         status += " (adapter did not advertise conditional-breakpoint support -- may be ignored)";
@@ -219,8 +243,8 @@ std::string Manager::SetBreakpointCondition(const std::filesystem::path& path, s
     return status;
 }
 
-std::string Manager::SetBreakpointLogMessage(const std::filesystem::path& path, std::size_t line, std::string logMessage) {
-    const std::string        key   = NormalizePathKey(path);
+std::string Manager::SetBreakpointLogMessage(const text::FileRef& file, std::size_t line, std::string logMessage) {
+    const std::string        key   = NormalizePathKey(file);
     std::vector<Breakpoint>& lines = breakpoints_[key];
     auto                     it    = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     if (it == lines.end()) {
@@ -233,7 +257,7 @@ std::string Manager::SetBreakpointLogMessage(const std::filesystem::path& path, 
         SendBreakpointsForFile(key);
     }
     NotifyBreakpointsChanged();
-    std::string status = (logMessage.empty() ? "Log message cleared at " : "Log message set at ") + path.filename().string() + ":" +
+    std::string status = (logMessage.empty() ? "Log message cleared at " : "Log message set at ") + text::PathOf(file).filename().string() + ":" +
                          std::to_string(line);
     if (!logMessage.empty() && client_ && state_ != SessionState::Inactive && !capabilities_.logPoints) {
         status += " (adapter did not advertise logpoint support -- may be ignored)";
@@ -241,8 +265,8 @@ std::string Manager::SetBreakpointLogMessage(const std::filesystem::path& path, 
     return status;
 }
 
-std::string Manager::SetBreakpointHitCondition(const std::filesystem::path& path, std::size_t line, std::string hitCondition) {
-    const std::string        key   = NormalizePathKey(path);
+std::string Manager::SetBreakpointHitCondition(const text::FileRef& file, std::size_t line, std::string hitCondition) {
+    const std::string        key   = NormalizePathKey(file);
     std::vector<Breakpoint>& lines = breakpoints_[key];
     auto                     it    = std::find_if(lines.begin(), lines.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     if (it == lines.end()) {
@@ -256,7 +280,7 @@ std::string Manager::SetBreakpointHitCondition(const std::filesystem::path& path
     }
     NotifyBreakpointsChanged();
     std::string status = (hitCondition.empty() ? "Hit condition cleared at " : "Hit condition set at ") +
-                         path.filename().string() + ":" + std::to_string(line);
+                         text::PathOf(file).filename().string() + ":" + std::to_string(line);
     if (!hitCondition.empty() && client_ && state_ != SessionState::Inactive && !capabilities_.hitConditionalBreakpoints) {
         status += " (adapter did not advertise hit-conditional-breakpoint support -- may be ignored)";
     }
@@ -371,7 +395,7 @@ void Manager::SnapBreakpointToValidLine(const std::string& pathKey, std::size_t 
     // statement this line belongs to actually start", and an answer dozens
     // of lines away would be a different statement, not a correction.
     constexpr std::size_t kSnapWindow = 8;
-    RequestBreakpointLocations(std::filesystem::path(pathKey), line, line + kSnapWindow,
+    RequestBreakpointLocations(FileForKey(pathKey), line, line + kSnapWindow,
                                [this, pathKey, line](std::vector<std::size_t> valid) {
                                    if (valid.empty() || std::find(valid.begin(), valid.end(), line) != valid.end()) {
                                        return; // no opinion, or the line was already fine
@@ -635,8 +659,8 @@ const std::vector<Manager::DataBreakpoint>& Manager::DataBreakpoints() const {
     return dataBreakpoints_;
 }
 
-std::vector<std::size_t> Manager::BreakpointsForFile(const std::filesystem::path& path) const {
-    const auto               it = breakpoints_.find(NormalizePathKey(path));
+std::vector<std::size_t> Manager::BreakpointsForFile(const text::FileRef& file) const {
+    const auto               it = breakpoints_.find(NormalizePathKey(file));
     std::vector<std::size_t> lines;
     if (it != breakpoints_.end()) {
         for (const Breakpoint& bp : it->second) {
@@ -725,10 +749,13 @@ void Manager::RestoreBreakpoints(std::map<std::string, std::vector<PersistedBrea
 // ---------------------------------------------------------------------------------
 
 void Manager::TrackBuffer(text::Buffer& buffer) {
-    if (!buffer.Path()) {
-        return; // nothing to key breakpoints by
+    const std::optional<text::FileRef> file = buffer.File();
+    // A host's file still on its way would anchor every breakpoint to its
+    // empty placeholder's first line.
+    if (!file || (buffer.Remote() && buffer.IsLoading())) {
+        return;
     }
-    const std::string key      = NormalizePathKey(*buffer.Path());
+    const std::string key      = NormalizePathKey(*file);
     const auto        existing = trackedSources_.find(&buffer);
     if (existing == trackedSources_.end() && !breakpoints_.contains(key)) {
         return; // nothing to anchor and nothing held: don't grow the map per painted buffer
@@ -1123,6 +1150,10 @@ void Manager::SendDataBreakpoints() {
 }
 
 void Manager::SendBreakpointsForFile(const std::string& pathKey) {
+    const text::FileRef file = FileForKey(pathKey);
+    if (!OnSessionMachine(file)) {
+        return;
+    }
     Json                       breakpointsJson = Json::array();
     std::vector<std::uint64_t> sentIds;
     if (const auto it = breakpoints_.find(pathKey); it != breakpoints_.end()) {
@@ -1146,7 +1177,7 @@ void Manager::SendBreakpointsForFile(const std::string& pathKey) {
     }
     client_->SendRequest("setBreakpoints",
                          Json{
-                             {"source", Json{{"path", pathKey}}},
+                             {"source", Json{{"path", text::PathOf(file).string()}}},
                              {"breakpoints", std::move(breakpointsJson)},
                          },
                          [this, pathKey, sentIds = std::move(sentIds)](bool success, const Json& body, const std::string&) {
@@ -1418,16 +1449,19 @@ std::string Manager::StepBack() {
     return status;
 }
 
-std::string Manager::RunToCursor(const std::filesystem::path& path, std::size_t line) {
+std::string Manager::RunToCursor(const text::FileRef& file, std::size_t line) {
     if (state_ != SessionState::Stopped) {
         return "Not stopped (nothing to run to cursor from).";
     }
-    const std::string key        = NormalizePathKey(path);
+    if (!OnSessionMachine(file)) {
+        return kOtherMachine;
+    }
+    const std::string key        = NormalizePathKey(file);
     const auto        it         = breakpoints_.find(key);
     const bool        alreadySet = it != breakpoints_.end() &&
                                    std::any_of(it->second.begin(), it->second.end(), [line](const Breakpoint& bp) { return bp.line == line; });
     if (!alreadySet) {
-        ToggleBreakpoint(path, line); // pushes setBreakpoints immediately (state_ != Inactive)
+        ToggleBreakpoint(file, line); // pushes setBreakpoints immediately (state_ != Inactive)
         const auto created = breakpoints_.find(key);
         if (created != breakpoints_.end()) {
             const auto bp = std::find_if(created->second.begin(), created->second.end(),
@@ -1472,14 +1506,18 @@ void Manager::ClearPendingRunToCursor(bool pushToAdapter) {
     }
 }
 
-void Manager::JumpToLine(const std::filesystem::path& path, std::size_t line, std::function<void(bool, std::string)> callback) {
+void Manager::JumpToLine(const text::FileRef& file, std::size_t line, std::function<void(bool, std::string)> callback) {
     if (state_ != SessionState::Stopped) {
         callback(false, "Not stopped (nothing to jump from).");
         return;
     }
+    if (!OnSessionMachine(file)) {
+        callback(false, kOtherMachine);
+        return;
+    }
     const int threadId = CurrentThreadId();
     client_->SendRequest(
-        "gotoTargets", Json{{"source", Json{{"path", path.string()}}}, {"line", line}},
+        "gotoTargets", Json{{"source", Json{{"path", WirePath(file)}}}, {"line", line}},
         [this, threadId, callback](bool success, const Json& body, const std::string& message) {
             if (!success) {
                 std::string status = "gotoTargets failed: " + message;
@@ -1863,16 +1901,16 @@ void Manager::SelectThread(int threadId, std::function<void(bool)> callback) {
                          });
 }
 
-void Manager::RequestBreakpointLocations(const std::filesystem::path& path, std::size_t line, std::size_t endLine,
+void Manager::RequestBreakpointLocations(const text::FileRef& file, std::size_t line, std::size_t endLine,
                                          std::function<void(std::vector<std::size_t>)> callback) {
     if (!client_ || state_ == SessionState::Inactive || state_ == SessionState::Starting ||
-        !capabilities_.breakpointLocations) {
+        !capabilities_.breakpointLocations || !OnSessionMachine(file)) {
         callback({});
         return;
     }
     client_->SendRequest("breakpointLocations",
                          Json{
-                             {"source", Json{{"path", NormalizePathKey(path)}}},
+                             {"source", Json{{"path", WirePath(file)}}},
                              {"line", line},
                              {"endLine", std::max(endLine, line)},
                          },

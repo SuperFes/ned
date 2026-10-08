@@ -1203,7 +1203,7 @@ bool WindowManager::DispatchGlobalChord(const editor::KeyChord& chord) {
     return false;
 }
 
-void WindowManager::RequestVisitLocation(const std::filesystem::path& path, std::size_t line) {
+void WindowManager::RequestVisitLocation(const text::FileRef& file, std::size_t line) {
     // The focused pane is the debug panel's own TreeView while it drives
     // this, so fall back to the first leaf exactly as the stop handler does
     // -- there is always an editor pane to open into, just not a focused one.
@@ -1212,7 +1212,7 @@ void WindowManager::RequestVisitLocation(const std::filesystem::path& path, std:
         pane = Leaves().front();
     }
     if (pane != nullptr) {
-        pane->Buffer().JumpToPathLine(path, line);
+        pane->Buffer().JumpToFileLine(file, line);
     }
 }
 

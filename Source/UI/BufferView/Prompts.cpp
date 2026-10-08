@@ -1302,14 +1302,15 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 statusMessage_ = "No debugger available.";
                 return;
             }
-            text::Buffer& buffer = activeBuffer_.Get();
-            if (!buffer.Path()) {
+            text::Buffer&                      buffer = activeBuffer_.Get();
+            const std::optional<text::FileRef> file   = buffer.File();
+            if (!file) {
                 statusMessage_ = "Buffer has no file to set a breakpoint in.";
                 return;
             }
             const std::size_t line   = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1; // 1-based, DAP's own convention
-            const bool        nowSet = dapManager_->ToggleBreakpoint(*buffer.Path(), line);
-            statusMessage_           = (nowSet ? "Breakpoint set at " : "Breakpoint removed at ") + buffer.Path()->filename().string() +
+            const bool        nowSet = dapManager_->ToggleBreakpoint(*file, line);
+            statusMessage_           = (nowSet ? "Breakpoint set at " : "Breakpoint removed at ") + text::PathOf(*file).filename().string() +
                                        ":" + std::to_string(line);
             return;
         }
@@ -1392,13 +1393,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 statusMessage_ = "No debugger available.";
                 return;
             }
-            text::Buffer& buffer = activeBuffer_.Get();
-            if (!buffer.Path()) {
+            text::Buffer&                      buffer = activeBuffer_.Get();
+            const std::optional<text::FileRef> file   = buffer.File();
+            if (!file) {
                 statusMessage_ = "Buffer has no file to run to.";
                 return;
             }
             const std::size_t line = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1; // 1-based, DAP's own convention
-            statusMessage_         = dapManager_->RunToCursor(*buffer.Path(), line);
+            statusMessage_         = dapManager_->RunToCursor(*file, line);
             return;
         }
         // Debugging wishlist: jump-to-line -- same path/line resolution as
@@ -1411,14 +1413,15 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 statusMessage_ = "No debugger available.";
                 return;
             }
-            text::Buffer& buffer = activeBuffer_.Get();
-            if (!buffer.Path()) {
+            text::Buffer&                      buffer = activeBuffer_.Get();
+            const std::optional<text::FileRef> file   = buffer.File();
+            if (!file) {
                 statusMessage_ = "Buffer has no file to jump within.";
                 return;
             }
             const std::size_t line = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1;
             statusMessage_         = "Jumping to line...";
-            dapManager_->JumpToLine(*buffer.Path(), line, lifetime_.Bind([this](bool, std::string message) { statusMessage_ = std::move(message); }));
+            dapManager_->JumpToLine(*file, line, lifetime_.Bind([this](bool, std::string message) { statusMessage_ = std::move(message); }));
             return;
         }
         case editor::InteractiveRequest::DapToggleHexFormat:
@@ -1504,13 +1507,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
                 statusMessage_ = "No debugger available.";
                 return;
             }
-            text::Buffer& buffer = activeBuffer_.Get();
-            if (!buffer.Path()) {
+            text::Buffer&                      buffer = activeBuffer_.Get();
+            const std::optional<text::FileRef> file   = buffer.File();
+            if (!file) {
                 statusMessage_ = "Buffer has no file to set a breakpoint in.";
                 return;
             }
             const std::size_t line      = buffer.Content().ByteOffsetToLine(buffer.Point()) + 1;
-            pendingDapBreakpointTarget_ = PendingDapBreakpointTarget{.path = *buffer.Path(), .line = line};
+            pendingDapBreakpointTarget_ = PendingDapBreakpointTarget{.file = *file, .line = line};
             switch (request) {
                 case editor::InteractiveRequest::DapSetBreakpointCondition:
                     inputMode_ = InputMode::DapBreakpointCondition;
@@ -3211,13 +3215,13 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             statusMessage_ = "No debugger available.";
         }
         else if (inputMode_ == InputMode::DapBreakpointCondition) {
-            statusMessage_ = dapManager_->SetBreakpointCondition(pendingDapBreakpointTarget_->path, pendingDapBreakpointTarget_->line, input);
+            statusMessage_ = dapManager_->SetBreakpointCondition(pendingDapBreakpointTarget_->file, pendingDapBreakpointTarget_->line, input);
         }
         else if (inputMode_ == InputMode::DapBreakpointLogMessage) {
-            statusMessage_ = dapManager_->SetBreakpointLogMessage(pendingDapBreakpointTarget_->path, pendingDapBreakpointTarget_->line, input);
+            statusMessage_ = dapManager_->SetBreakpointLogMessage(pendingDapBreakpointTarget_->file, pendingDapBreakpointTarget_->line, input);
         }
         else {
-            statusMessage_ = dapManager_->SetBreakpointHitCondition(pendingDapBreakpointTarget_->path, pendingDapBreakpointTarget_->line, input);
+            statusMessage_ = dapManager_->SetBreakpointHitCondition(pendingDapBreakpointTarget_->file, pendingDapBreakpointTarget_->line, input);
         }
         pendingDapBreakpointTarget_.reset();
     }

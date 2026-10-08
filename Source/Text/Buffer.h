@@ -208,6 +208,8 @@ class Buffer {
 
     // Where a remote buffer's file lives; nullopt for every other buffer.
     [[nodiscard]] const std::optional<RemoteFile>& Remote() const;
+    // Its file here or on a host; nullopt for a buffer with neither.
+    [[nodiscard]] std::optional<FileRef> File() const;
     // The host's timestamp from the last read or write, for a write to
     // check the file is still as it was then; nullopt when the host had no
     // such file. Setting it clears NoteRemoteChanged.

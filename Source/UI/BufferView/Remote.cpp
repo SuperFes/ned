@@ -189,6 +189,14 @@ void BufferView::VisitRemoteFile(const editor::remote::Location& file, std::opti
         createMissing);
 }
 
+void BufferView::JumpToFileLine(const text::FileRef& file, std::size_t line) {
+    if (const auto* remote = std::get_if<text::RemoteFile>(&file)) {
+        VisitRemoteFile(*remote, line, /*createMissing=*/false);
+        return;
+    }
+    JumpToPathLine(std::get<std::filesystem::path>(file), line);
+}
+
 void BufferView::VisitRemoteFile(const editor::remote::Location& file, std::function<void(text::Buffer& buffer)> arrive, bool createMissing) {
     if (text::Buffer* open = bufferList_.FindByRemote(file)) {
         activeBuffer_.Set(*open);

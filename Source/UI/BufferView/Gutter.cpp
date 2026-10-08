@@ -155,12 +155,13 @@ bool BufferView::DapGutterActive() const {
 
 void BufferView::EnsureDapPathKey() const {
     const text::Buffer& buffer = activeBuffer_.Get();
-    if (dapPathKeyBuffer_ == &buffer && dapPathKeyRawPath_ == buffer.Path()) {
+    std::optional<text::FileRef> file   = buffer.File();
+    if (dapPathKeyBuffer_ == &buffer && dapPathKeyRawPath_ == file) {
         return;
     }
     dapPathKeyBuffer_  = &buffer;
-    dapPathKeyRawPath_ = buffer.Path();
-    dapPathKey_        = buffer.Path() ? editor::dap::Manager::NormalizePathKey(*buffer.Path()) : std::string();
+    dapPathKey_        = file ? editor::dap::Manager::NormalizePathKey(*file) : std::string();
+    dapPathKeyRawPath_ = std::move(file);
 }
 
 } // namespace ned::ui
