@@ -93,16 +93,12 @@ and sync on save; don't build a remote-authoritative buffer.
 - [ ] Confirm local and remote buffers mix in one window layout.
 
 **Connect**
-- [ ] Password and keyboard-interactive logins. `Remote/Ssh.h` runs with
-      `BatchMode=yes`, so only key and agent auth work; an `SSH_ASKPASS` helper that
-      answers through a ned prompt would lift that.
 - [ ] Parse `~/.ssh/config` directly (`Host`/`HostName`/`User`/`Port`/`IdentityFile`/
       `ProxyJump`, wildcards) to fill in defaults.
 - [ ] The remote prompts complete hosts (`Remote/KnownHosts.h`, `Remote/HostLookup.h`)
       and the path after them. Still to come: the project name ahead of the host.
 - [ ] A destination with a port. `host:/path` can't carry one, so known_hosts entries
       on a port other than 22 aren't offered.
-- [ ] A first-connection host-key trust prompt, following `Project/Trust.h`'s precedent.
 
 **Project tree and search**
 - [ ] A file moved on its host isn't followed by the buffer holding it, as
