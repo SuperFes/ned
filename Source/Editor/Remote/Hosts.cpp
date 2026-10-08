@@ -1,5 +1,9 @@
 #include "Hosts.h"
 
+#include <condition_variable>
+#include <memory>
+#include <mutex>
+#include <optional>
 #include <utility>
 
 namespace ned::editor::remote {
@@ -30,10 +34,60 @@ void Hosts::Connect(const std::string& destination, Connected done) {
     Attempt& attempt = attempts_[destination];
     attempt.id       = ++nextAttemptId_;
     attempt.waiters.push_back(std::move(done));
-    attempt.connector = std::make_unique<Connector>(options_(destination), postQueue_, [this, destination, id = attempt.id](Connector::Result result) {
+    ConnectOptions options = options_(destination);
+    if (ask_ && !options.ssh.askpass) {
+        options.ssh.askpass = MainThreadAskpass();
+    }
+    attempt.connector = std::make_unique<Connector>(std::move(options), postQueue_, [this, destination, id = attempt.id](Connector::Result result) {
         Finish(destination, id, std::move(result));
     });
     NoteChanged(destination);
+}
+
+AskpassHandler Hosts::MainThreadAskpass() {
+    // Hosts outlives the handler: destroying it cancels every attempt,
+    // which withdraws the question and joins the worker waiting on it.
+    return [this, token = lifetime_.Token()](const AskpassQuestion& question, const std::stop_token& withdrawn) -> AskpassAnswer {
+        struct Slot {
+            std::mutex                   mutex;
+            std::condition_variable_any  ready;
+            std::optional<AskpassAnswer> answer;
+        };
+        const auto          slot   = std::make_shared<Slot>();
+        const std::uint64_t id     = ++nextQuestionId_;
+        auto                answer = [slot](AskpassAnswer given) {
+            {
+                const std::scoped_lock lock(slot->mutex);
+                if (!slot->answer) {
+                    slot->answer = std::move(given);
+                }
+            }
+            slot->ready.notify_all();
+        };
+        postQueue_.Post(token.Bind([this, id, question, answer] {
+            if (ask_) {
+                ask_(id, question, answer);
+            }
+            else {
+                answer(std::nullopt);
+            }
+        }));
+        std::unique_lock lock(slot->mutex);
+        if (slot->ready.wait(lock, withdrawn, [&slot] { return slot->answer.has_value(); })) {
+            return std::move(*slot->answer);
+        }
+        postQueue_.Post(token.Bind([this, id] {
+            if (withdraw_) {
+                withdraw_(id);
+            }
+        }));
+        return std::nullopt;
+    };
+}
+
+void Hosts::SetAskpass(Ask ask, Withdraw withdraw) {
+    ask_      = std::move(ask);
+    withdraw_ = std::move(withdraw);
 }
 
 void Hosts::Finish(const std::string& destination, std::uint64_t id, Connector::Result result) {
