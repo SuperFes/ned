@@ -2300,7 +2300,7 @@ TEST_CASE("Manager::RequestDocumentSymbols sends textDocument/documentSymbol and
     REQUIRE(got.size() == 1);
     REQUIRE(got[0].name == "Widget");
     REQUIRE(got[0].kind == 23);
-    REQUIRE(got[0].path == path);
+    REQUIRE(got[0].file == ned::text::FileRef(path));
     REQUIRE(got[0].position.character == 7);
 }
 
@@ -2348,7 +2348,7 @@ TEST_CASE("Manager::RequestWorkspaceSymbols sends workspace/symbol with the quer
     REQUIRE(got.size() == 1);
     REQUIRE(got[0].name == "Widget");
     REQUIRE(got[0].containerName == "ui");
-    REQUIRE(got[0].path == resultPath);
+    REQUIRE(got[0].file == ned::text::FileRef(resultPath));
     REQUIRE(got[0].position.line == 4);
     REQUIRE(got[0].raw.is_null()); // this WorkspaceSymbol sent its own range -- nothing to resolve later
 }
@@ -2425,7 +2425,7 @@ TEST_CASE("Manager::ResolveWorkspaceSymbol round-trips the symbol's own raw JSON
 
     REQUIRE(invoked);
     REQUIRE(got.has_value());
-    CHECK(got->path == "/widget.cpp");
+    CHECK(got->file == ned::text::FileRef(std::filesystem::path("/widget.cpp")));
     CHECK(got->position.line == 9);
     CHECK(got->position.character == 2);
 }
@@ -2504,7 +2504,7 @@ TEST_CASE("Manager::RequestPrepareCallHierarchy sends textDocument/prepareCallHi
     REQUIRE(invoked);
     REQUIRE(got.size() == 1);
     REQUIRE(got[0].item.name == "call_site");
-    REQUIRE(got[0].path == path);
+    REQUIRE(got[0].file == ned::text::FileRef(path));
     REQUIRE(got[0].item.raw == itemJson); // full item kept verbatim, not just name/kind/position
 }
 
@@ -2560,7 +2560,7 @@ TEST_CASE("Manager::RequestIncomingCalls sends item.raw verbatim as \"item\" and
     REQUIRE(invoked);
     REQUIRE(got.size() == 1);
     REQUIRE(got[0].item.item.name == "caller");
-    REQUIRE(got[0].item.path == callerPath);
+    REQUIRE(got[0].item.file == ned::text::FileRef(callerPath));
     REQUIRE(got[0].callSites.size() == 1);
     REQUIRE(got[0].callSites[0].line == 5);
 }
@@ -2608,7 +2608,7 @@ TEST_CASE("Manager::RequestSupertypes sends typeHierarchy/supertypes with item.r
     REQUIRE(invoked);
     REQUIRE(got.size() == 1);
     REQUIRE(got[0].item.name == "Base");
-    REQUIRE(got[0].path == path);
+    REQUIRE(got[0].file == ned::text::FileRef(path));
 }
 
 TEST_CASE("Manager::RequestPrepareCallHierarchy resolves an empty vector when the buffer was never synced", "[Lsp]") {
@@ -2840,8 +2840,8 @@ TEST_CASE("Manager::RequestSwitchSourceHeader sends a bare TextDocumentIdentifie
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
     bool                                 invoked = false;
-    std::optional<std::filesystem::path> got;
-    manager.RequestSwitchSourceHeader(buffer, [&](std::optional<std::filesystem::path> path) {
+    std::optional<ned::text::FileRef>    got;
+    manager.RequestSwitchSourceHeader(buffer, [&](std::optional<ned::text::FileRef> path) {
         invoked = true;
         got     = path;
     });
@@ -2862,7 +2862,7 @@ TEST_CASE("Manager::RequestSwitchSourceHeader sends a bare TextDocumentIdentifie
 
     REQUIRE(invoked);
     REQUIRE(got.has_value());
-    REQUIRE(*got == headerPath);
+    REQUIRE(*got == ned::text::FileRef(headerPath));
 }
 
 TEST_CASE("Manager::RequestSwitchSourceHeader resolves to nullopt on a null result (no counterpart)", "[Lsp]") {
@@ -2878,8 +2878,8 @@ TEST_CASE("Manager::RequestSwitchSourceHeader resolves to nullopt on a null resu
     (void)ReadRawFrame(server.serverStdinRead); // drain didOpen
 
     bool                                 invoked = false;
-    std::optional<std::filesystem::path> got;
-    manager.RequestSwitchSourceHeader(buffer, [&](std::optional<std::filesystem::path> path) {
+    std::optional<ned::text::FileRef>    got;
+    manager.RequestSwitchSourceHeader(buffer, [&](std::optional<ned::text::FileRef> path) {
         invoked = true;
         got     = path;
     });
@@ -2903,8 +2903,8 @@ TEST_CASE("Manager::RequestSwitchSourceHeader resolves to nullopt when the buffe
     Buffer&            buffer = bufferList.CreateBuffer("scratch");
 
     bool                                 invoked = false;
-    std::optional<std::filesystem::path> got;
-    manager.RequestSwitchSourceHeader(buffer, [&](std::optional<std::filesystem::path> path) {
+    std::optional<ned::text::FileRef>    got;
+    manager.RequestSwitchSourceHeader(buffer, [&](std::optional<ned::text::FileRef> path) {
         invoked = true;
         got     = path;
     });
@@ -5797,7 +5797,7 @@ TEST_CASE("Manager::RequestDocumentLinks resolves a file:// target to a path and
 
     REQUIRE(invoked);
     REQUIRE(got.size() == 1);
-    REQUIRE(got[0].path == target);
+    REQUIRE(got[0].file == ned::text::FileRef(target));
     REQUIRE(got[0].url.empty());
     REQUIRE_FALSE(got[0].needsResolve);
     REQUIRE(got[0].startByte == 9); // "#include " is 9 bytes
@@ -5831,7 +5831,7 @@ TEST_CASE("Manager::RequestDocumentLinks keeps a non-file target as a url, not a
     client->DispatchFrame(response.dump());
 
     REQUIRE(got.size() == 1);
-    REQUIRE(got[0].path.empty());
+    REQUIRE(!got[0].file);
     REQUIRE(got[0].url == "https://example.com");
 }
 
@@ -5863,7 +5863,7 @@ TEST_CASE("Manager::RequestDocumentLinks marks a target-less link needsResolve a
 
     REQUIRE(got.size() == 1);
     REQUIRE(got[0].needsResolve);
-    REQUIRE(got[0].path.empty());
+    REQUIRE(!got[0].file);
     REQUIRE(got[0].url.empty());
 
     // The second hop: documentLink/resolve takes the original item back
@@ -5890,7 +5890,7 @@ TEST_CASE("Manager::RequestDocumentLinks marks a target-less link needsResolve a
 
     REQUIRE(resolved.has_value());
     REQUIRE_FALSE(resolved->needsResolve);
-    REQUIRE(resolved->path == target);
+    REQUIRE(resolved->file == ned::text::FileRef(target));
     REQUIRE(resolved->startByte == 9); // the original range stands
     REQUIRE(resolved->endByte == 16);
 }
@@ -5975,7 +5975,7 @@ TEST_CASE("Manager percent-decodes a URI target before resolving it to a path", 
     client->DispatchFrame(response.dump());
 
     REQUIRE(got.size() == 1);
-    REQUIRE(got[0].path == std::filesystem::path("/usr/include/g++-v16/a b/algorithm"));
+    REQUIRE(got[0].file == ned::text::FileRef(std::filesystem::path("/usr/include/g++-v16/a b/algorithm")));
 }
 
 TEST_CASE("Manager leaves a stray percent sign in a URI alone", "[Lsp]") {
@@ -6005,7 +6005,7 @@ TEST_CASE("Manager leaves a stray percent sign in a URI alone", "[Lsp]") {
     client->DispatchFrame(response.dump());
 
     REQUIRE(got.size() == 1);
-    REQUIRE(got[0].path == std::filesystem::path("/tmp/100%-done/x.h"));
+    REQUIRE(got[0].file == ned::text::FileRef(std::filesystem::path("/tmp/100%-done/x.h")));
 }
 
 // ---------------------------------------------------------------------------
@@ -6849,7 +6849,7 @@ TEST_CASE("Manager routes window/showDocument's file uri through the handler", "
     const std::string raw = ReadRawFrame(server.serverStdinRead);
     REQUIRE(Json::parse(raw.substr(raw.find("\r\n\r\n") + 4))["result"]["success"] == true);
     REQUIRE(shown.has_value());
-    CHECK(shown->path == std::filesystem::path("/project/src/main.rs"));
+    CHECK(shown->file == ned::text::FileRef(std::filesystem::path("/project/src/main.rs")));
     CHECK_FALSE(shown->takeFocus);
     REQUIRE(shown->position.has_value());
     CHECK(shown->position->line == 11);

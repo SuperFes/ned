@@ -1880,7 +1880,7 @@ void BufferView::HierarchyActivate(std::size_t index) {
         return;
     }
     const editor::lsp::Manager::ResolvedHierarchyItem& resolved = hierarchySession_->tree.At(index).data;
-    const editor::lsp::Manager::ResolvedLocation       location{.file = resolved.path, .position = resolved.item.position};
+    const editor::lsp::Manager::ResolvedLocation       location{.file = resolved.file, .position = resolved.item.position};
     EndHierarchySession();
     JumpToDefinition(location);
 }
@@ -2030,7 +2030,7 @@ void BufferView::HandleDocumentSymbolKey(const editor::KeyChord& chord) {
         }
         const std::size_t                            index  = static_cast<std::size_t>(it - documentSymbolLabels_.begin());
         const editor::lsp::Manager::SymbolResult& symbol = documentSymbolCandidates_[index];
-        JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.file = symbol.path, .position = symbol.position});
+        JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.file = symbol.file, .position = symbol.position});
         return;
     }
     if (IsQuit(chord)) {
@@ -2111,7 +2111,7 @@ void BufferView::HandleWorkspaceSymbolKey(const editor::KeyChord& chord) {
         const editor::lsp::Manager::SymbolResult symbol =
             pendingWorkspaceSymbols_[std::min(workspaceSymbolSelection_, pendingWorkspaceSymbols_.size() - 1)];
         EndInteractiveSession();
-        JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.file = symbol.path, .position = symbol.position});
+        JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.file = symbol.file, .position = symbol.position});
         return;
     }
     if (IsQuit(chord)) {
@@ -2168,12 +2168,16 @@ void BufferView::SwitchHeaderSource() {
     const std::size_t   generation = switchHeaderSourceRequest_.Begin();
     statusMessage_                 = "Switching header/source...";
     lspManager_->RequestSwitchSourceHeader(
-        buffer, lifetime_.Bind([this, bufferId, generation, path](std::optional<std::filesystem::path> counterpart) {
+        buffer, lifetime_.Bind([this, bufferId, generation, path](std::optional<text::FileRef> counterpart) {
             if (switchHeaderSourceRequest_.IsStale(generation) || !bufferId.Is(activeBuffer_.Get())) {
                 return; // superseded/buffer switched since the request was sent
             }
+            if (const auto* remote = counterpart ? std::get_if<text::RemoteFile>(&*counterpart) : nullptr) {
+                VisitRemoteFile(*remote, std::nullopt, /*createMissing=*/false);
+                return;
+            }
             if (counterpart) {
-                OpenHeaderSourceCounterpart(*counterpart);
+                OpenHeaderSourceCounterpart(std::get<std::filesystem::path>(*counterpart));
                 return;
             }
             OpenHeaderSourceCounterpartOrReport(path);

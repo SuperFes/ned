@@ -814,7 +814,7 @@ void Manager::WireNotificationHandlers(Client& client, const std::string& server
         HandleWindowShowMessage(serverKey, params);
         return Json(nullptr);
     });
-    client.SetRequestHandler("window/showDocument", [this](const Json& params) { return HandleShowDocument(params); });
+    client.SetRequestHandler("window/showDocument", [this, connectionKey](const Json& params) { return HandleShowDocument(connectionKey, params); });
     client.SetNotificationHandler("$/progress",
                                   [this, connectionKey](const Json& params) { HandleProgress(connectionKey, params); });
     client.SetOnDisconnected([this, serverKey, connectionKey](std::string reason) {
@@ -3806,14 +3806,14 @@ namespace {
     // file:// URI but doesn't parse (UriToPath returning nullopt) is left
     // with neither field set rather than passed to OpenUrl as a URL, which
     // it isn't.
-    void ApplyDocumentLinkTarget(Manager::ResolvedDocumentLink& out, const DocumentLink& link) {
+    void ApplyDocumentLinkTarget(Manager::ResolvedDocumentLink& out, const DocumentLink& link, const std::string& connectionKey) {
         out.needsResolve = !link.hasTarget;
         if (!link.hasTarget) {
             return;
         }
         if (link.target.starts_with("file://")) {
             if (const std::optional<std::filesystem::path> path = UriToPath(link.target)) {
-                out.path = *path;
+                out.file = DocumentFile(connectionKey, *path);
             }
             return;
         }
@@ -3870,7 +3870,7 @@ void Manager::RequestDocumentLinks(text::Buffer& buffer, DocumentLinkCallback ca
                                     .endByte   = PositionToByte(content, link.end),
                                     .raw       = link.raw,
                                 };
-                                ApplyDocumentLinkTarget(entry, link);
+                                ApplyDocumentLinkTarget(entry, link, connectionKey);
                                 resolved.push_back(std::move(entry));
                             }
                             std::sort(resolved.begin(), resolved.end(),
@@ -3894,10 +3894,11 @@ void Manager::ResolveDocumentLink(text::Buffer& buffer, const ResolvedDocumentLi
         return;
     }
 
-    const std::size_t startByte = link.startByte;
-    const std::size_t endByte   = link.endByte;
+    const std::size_t startByte     = link.startByte;
+    const std::size_t endByte       = link.endByte;
+    const std::string connectionKey = state->connectionKey;
     client->SendRequest("documentLink/resolve", link.raw,
-                        [callback = std::move(callback), startByte, endByte](std::optional<Json> result, std::optional<Json> error) {
+                        [callback = std::move(callback), startByte, endByte, connectionKey](std::optional<Json> result, std::optional<Json> error) {
                             if (error || !result) {
                                 callback(std::nullopt);
                                 return;
@@ -3908,7 +3909,7 @@ void Manager::ResolveDocumentLink(text::Buffer& buffer, const ResolvedDocumentLi
                                 .endByte   = endByte,
                                 .raw       = parsed.raw,
                             };
-                            ApplyDocumentLinkTarget(entry, parsed);
+                            ApplyDocumentLinkTarget(entry, parsed, connectionKey);
                             callback(std::move(entry));
                         });
 }
@@ -4454,7 +4455,8 @@ void Manager::RequestSwitchSourceHeader(text::Buffer& buffer, SwitchHeaderCallba
                                 callback(std::nullopt);
                                 return;
                             }
-                            callback(UriToPath(result->get<std::string>()));
+                            const std::optional<std::filesystem::path> path = UriToPath(result->get<std::string>());
+                            callback(path ? std::optional<text::FileRef>(DocumentFile(language, *path)) : std::nullopt);
                         });
 }
 
@@ -4818,7 +4820,7 @@ void Manager::HandleWindowShowMessage(const std::string& serverKey, const Json& 
     }
 }
 
-Json Manager::HandleShowDocument(const Json& params) {
+Json Manager::HandleShowDocument(const std::string& connectionKey, const Json& params) {
     const auto uriIt = params.find("uri");
     if (uriIt == params.end() || !uriIt->is_string()) {
         return Json{{"success", false}};
@@ -4835,7 +4837,7 @@ Json Manager::HandleShowDocument(const Json& params) {
     if (!showDocumentHandler_) {
         return Json{{"success", false}};
     }
-    ShowDocumentRequest request{.path = *path, .takeFocus = params.value("takeFocus", true)};
+    ShowDocumentRequest request{.file = DocumentFile(connectionKey, *path), .takeFocus = params.value("takeFocus", true)};
     if (const auto selectionIt = params.find("selection"); selectionIt != params.end() && selectionIt->is_object()) {
         const auto startIt = selectionIt->find("start");
         if (startIt != selectionIt->end() && startIt->is_object()) {
@@ -5131,7 +5133,7 @@ void Manager::RequestDocumentSymbols(text::Buffer& buffer, SymbolCallback callba
                                     resolved.push_back(SymbolResult{.name          = entry.name,
                                                                     .containerName = entry.containerName,
                                                                     .kind          = entry.kind,
-                                                                    .path          = *path,
+                                                                    .file          = DocumentFile(language, *path),
                                                                     .position      = entry.position,
                                                                     .raw           = entry.raw}); // always null here -- a DocumentSymbol never omits range
                                 }
@@ -5172,7 +5174,7 @@ void Manager::RequestWorkspaceSymbols(text::Buffer& buffer, const std::string& q
                                     resolved.push_back(SymbolResult{.name          = entry.name,
                                                                     .containerName = entry.containerName,
                                                                     .kind          = entry.kind,
-                                                                    .path          = *path,
+                                                                    .file          = DocumentFile(language, *path),
                                                                     .position      = entry.position,
                                                                     .raw           = entry.raw}); // non-null iff hasRange was false -- see ResolveWorkspaceSymbol
                                 }
@@ -5226,7 +5228,7 @@ void Manager::ResolveWorkspaceSymbol(text::Buffer& buffer, const SymbolResult& s
                             callback(SymbolResult{.name          = entry.name,
                                                   .containerName = entry.containerName,
                                                   .kind          = entry.kind,
-                                                  .path          = *path,
+                                                  .file          = DocumentFile(language, *path),
                                                   .position      = entry.position});
                         });
 }
@@ -5238,12 +5240,12 @@ namespace {
     // RequestIncomingCalls/RequestOutgoingCalls/RequestSupertypes/
     // RequestSubtypes' own -- SymbolResult's own "drop, don't keep with a
     // nonsense path" convention.
-    std::vector<Manager::ResolvedHierarchyItem> ResolveHierarchyItems(std::vector<HierarchyItem> items) {
+    std::vector<Manager::ResolvedHierarchyItem> ResolveHierarchyItems(std::vector<HierarchyItem> items, const std::string& connectionKey) {
         std::vector<Manager::ResolvedHierarchyItem> resolved;
         resolved.reserve(items.size());
         for (HierarchyItem& item : items) {
             if (const std::optional<std::filesystem::path> path = UriToPath(item.uri)) {
-                resolved.push_back(Manager::ResolvedHierarchyItem{.item = std::move(item), .path = *path});
+                resolved.push_back(Manager::ResolvedHierarchyItem{.item = std::move(item), .file = DocumentFile(connectionKey, *path)});
             }
         }
         return resolved;
@@ -5281,7 +5283,7 @@ void Manager::SendHierarchyPrepareRequest(const std::string& method, text::Buffe
                                 callback({});
                                 return;
                             }
-                            callback(ResolveHierarchyItems(ExtractHierarchyItems(*result)));
+                            callback(ResolveHierarchyItems(ExtractHierarchyItems(*result), language));
                         });
 }
 
@@ -5325,7 +5327,7 @@ void Manager::RequestIncomingCalls(text::Buffer& buffer, const HierarchyItem& it
                             for (HierarchyCall& call : ExtractIncomingCalls(*result)) {
                                 if (const std::optional<std::filesystem::path> path = UriToPath(call.item.uri)) {
                                     resolved.push_back(ResolvedHierarchyCall{
-                                        .item      = ResolvedHierarchyItem{.item = std::move(call.item), .path = *path},
+                                        .item      = ResolvedHierarchyItem{.item = std::move(call.item), .file = DocumentFile(language, *path)},
                                         .callSites = std::move(call.callSites)});
                                 }
                             }
@@ -5363,7 +5365,7 @@ void Manager::RequestOutgoingCalls(text::Buffer& buffer, const HierarchyItem& it
                             for (HierarchyCall& call : ExtractOutgoingCalls(*result)) {
                                 if (const std::optional<std::filesystem::path> path = UriToPath(call.item.uri)) {
                                     resolved.push_back(ResolvedHierarchyCall{
-                                        .item      = ResolvedHierarchyItem{.item = std::move(call.item), .path = *path},
+                                        .item      = ResolvedHierarchyItem{.item = std::move(call.item), .file = DocumentFile(language, *path)},
                                         .callSites = std::move(call.callSites)});
                                 }
                             }
@@ -5397,7 +5399,7 @@ void Manager::SendTypeHierarchyStepRequest(const std::string& method, text::Buff
                                 callback({});
                                 return;
                             }
-                            callback(ResolveHierarchyItems(ExtractHierarchyItems(*result)));
+                            callback(ResolveHierarchyItems(ExtractHierarchyItems(*result), language));
                         });
 }
 

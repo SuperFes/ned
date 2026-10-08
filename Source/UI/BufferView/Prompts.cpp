@@ -4853,17 +4853,17 @@ void BufferView::CommitSearchEverywhereCandidate(const editor::SearchEverywhereC
                             return; // buffer switched while the resolve was in flight
                         }
                         if (resolved) {
-                            JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.file = resolved->path, .position = resolved->position});
+                            JumpToDefinition(editor::lsp::Manager::ResolvedLocation{.file = resolved->file, .position = resolved->position});
                         }
                         else {
                             JumpToDefinition(editor::lsp::Manager::ResolvedLocation{
-                                .file = fallback.path, .position = {.line = fallback.line, .character = fallback.character}});
+                                .file = fallback.file, .position = {.line = fallback.line, .character = fallback.character}});
                         }
                     }));
             }
             else if (candidate.remoteLocation) {
                 JumpToDefinition(editor::lsp::Manager::ResolvedLocation{
-                    .file     = candidate.remoteLocation->path,
+                    .file     = candidate.remoteLocation->file,
                     .position = {.line = candidate.remoteLocation->line, .character = candidate.remoteLocation->character}});
             }
             else {
@@ -4901,7 +4901,7 @@ void BufferView::CommitSearchEverywhereCandidate(const editor::SearchEverywhereC
         case editor::SearchEverywhereKind::TextMatch:
             if (candidate.remoteLocation) {
                 JumpToDefinition(editor::lsp::Manager::ResolvedLocation{
-                    .file     = candidate.remoteLocation->path,
+                    .file     = candidate.remoteLocation->file,
                     .position = {.line = candidate.remoteLocation->line, .character = candidate.remoteLocation->character}});
             }
             else {
@@ -4978,8 +4978,14 @@ namespace {
 
 } // namespace
 
-std::vector<std::string> BufferView::ReadPreviewWindow(const std::filesystem::path& path, std::size_t line) {
-    const auto key    = std::pair{path, line};
+std::vector<std::string> BufferView::ReadPreviewWindow(const text::FileRef& file, std::size_t line) {
+    if (const auto* remote = std::get_if<text::RemoteFile>(&file)) {
+        // A host's copy is a round trip away, so only an open buffer previews.
+        const text::Buffer* open = bufferList_.FindByRemote(*remote);
+        return open ? PreviewWindowFromBuffer(open->Content(), line) : std::vector<std::string>{};
+    }
+    const std::filesystem::path& path   = std::get<std::filesystem::path>(file);
+    const auto                   key    = std::pair{path, line};
     const auto cached = searchEverywherePreviewCache_.find(key);
     if (cached != searchEverywherePreviewCache_.end()) {
         return cached->second;
@@ -5028,7 +5034,7 @@ std::vector<std::string> BufferView::SearchEverywherePreviewFor(const editor::Se
                 target                            = std::min(line, editor::kSearchEverywherePreviewLinesBefore);
             }
             else if (candidate.remoteLocation) {
-                window = ReadPreviewWindow(candidate.remoteLocation->path, candidate.remoteLocation->line);
+                window = ReadPreviewWindow(candidate.remoteLocation->file, candidate.remoteLocation->line);
                 target = std::min(candidate.remoteLocation->line, editor::kSearchEverywherePreviewLinesBefore);
             }
             break;
@@ -5106,9 +5112,9 @@ void BufferView::RequestSearchEverywhereWorkspaceSymbols() {
                 searchEverywhereCandidates_.push_back(
                     {.kind   = editor::SearchEverywhereKind::Symbol,
                      .label  = symbol.name,
-                     .detail = symbol.containerName.empty() ? symbol.path.filename().string() : symbol.containerName,
+                     .detail = symbol.containerName.empty() ? text::PathOf(symbol.file).filename().string() : symbol.containerName,
                      .remoteLocation =
-                         editor::SearchEverywhereLocation{symbol.path, symbol.position.line, symbol.position.character},
+                         editor::SearchEverywhereLocation{symbol.file, symbol.position.line, symbol.position.character},
                      .remoteSymbolResolveToken = resolveToken});
             }
             RefreshSearchEverywhereStatus();

@@ -471,7 +471,7 @@ class Manager {
     // or an error), never a distinction the caller needs: BufferView::
     // SwitchHeaderSource falls back to Editor/HeaderSource.h's filesystem
     // heuristic uniformly on nullopt.
-    using SwitchHeaderCallback = std::function<void(std::optional<std::filesystem::path> path)>;
+    using SwitchHeaderCallback = std::function<void(std::optional<text::FileRef> file)>;
     void RequestSwitchSourceHeader(text::Buffer& buffer, SwitchHeaderCallback callback);
 
     // rename follow-up. One URI's worth of edits, uri already resolved to a
@@ -710,7 +710,7 @@ class Manager {
     // means show the document without stealing the user's place; both are
     // advisory, and a handler that can only open the file may ignore them.
     struct ShowDocumentRequest {
-        std::filesystem::path   path;
+        text::FileRef           file; // on the server's host for a remote one
         std::optional<Position> position;
         bool                    takeFocus = true;
     };
@@ -775,8 +775,8 @@ class Manager {
         std::string           name;
         std::string           containerName;
         int                   kind = 0;
-        std::filesystem::path path;
-        Position           position;
+        text::FileRef         file; // on the server's host for a remote one
+        Position              position;
         // workspaceSymbol-resolve follow-up: SymbolEntry::raw's exact
         // carry-through -- null unless this came from a WorkspaceSymbol
         // whose location omitted a range (position above is then a
@@ -832,8 +832,8 @@ class Manager {
     // own "one bad entry, minor degrade" precedent, not
     // SendLocationRequest's stricter rename-only "refuse the whole batch."
     struct ResolvedHierarchyItem {
-        HierarchyItem         item;
-        std::filesystem::path path;
+        HierarchyItem item;
+        text::FileRef file; // on the server's host for a remote one
     };
     using HierarchyItemsCallback = std::function<void(std::vector<ResolvedHierarchyItem> items)>;
 
@@ -1492,17 +1492,17 @@ class Manager {
     // documentLink follow-up. One server-reported link, already resolved to
     // byte offsets (ResolvedCodeLens' own layering) and, for a file:// URI,
     // to a real filesystem path (ResolvedLocation's own uri<->path boundary).
-    // Exactly one of path/url is ever set for a link the caller can act on:
-    // a file:// target resolves into path, anything else (http(s):, and any
+    // Exactly one of file/url is ever set for a link the caller can act on:
+    // a file:// target resolves into file, anything else (http(s):, and any
     // scheme this editor has no opener for) is left verbatim in url for
     // Editor/Link.h's OpenUrl to judge. needsResolve is a link the server
     // sent with no target at all, expecting a documentLink/resolve round
     // trip -- raw is that request's whole body, kept for exactly that.
     struct ResolvedDocumentLink {
-        std::size_t           startByte = 0;
-        std::size_t           endByte   = 0;
-        std::filesystem::path path;
-        std::string           url;
+        std::size_t                  startByte = 0;
+        std::size_t                  endByte   = 0;
+        std::optional<text::FileRef> file; // on the server's host for a remote one
+        std::string                  url;
         bool                  needsResolve = false;
         Json                  raw;
     };
@@ -2035,7 +2035,7 @@ class Manager {
 
     // window-messages follow-up: answers window/showDocument -- {success:
     // bool}, per spec, never an error response.
-    [[nodiscard]] Json HandleShowDocument(const Json& params);
+    [[nodiscard]] Json HandleShowDocument(const std::string& connectionKey, const Json& params);
 
     // did-save follow-up: sends textDocument/didSave for one already-opened
     // (buffer, connection) pair when the buffer has been saved since this

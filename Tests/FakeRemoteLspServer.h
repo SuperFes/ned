@@ -25,8 +25,9 @@ inline constexpr const char* kRemoteLspLanguage = "remote-lsp-test";
 
 // Logs its working directory, then every message it is sent, one JSON
 // object a line. Reports a diagnostic on each document opened, and answers
-// initialize, hover, definition (b.c, line 1, column 4) and references
-// (there and a.c, line 0, column 4).
+// initialize, hover, definition (b.c, line 1, column 4), references
+// (there and a.c, line 0, column 4), a workspace symbol y (at the
+// definition) and switchSourceHeader (b.c).
 inline constexpr const char* kRemoteLspServer = R"(import json, os, sys
 log = open(sys.argv[1], "a")
 log.write(json.dumps({"cwd": os.getcwd()}) + "\n")
@@ -58,6 +59,10 @@ while True:
         reply = {"id": message["id"], "result": [at("b.c", 1)]}
     elif method == "textDocument/references":
         reply = {"id": message["id"], "result": [at("a.c", 0), at("b.c", 1)]}
+    elif method == "workspace/symbol":
+        reply = {"id": message["id"], "result": [{"name": "y", "kind": 13, "location": at("b.c", 1)}]}
+    elif method == "textDocument/switchSourceHeader":
+        reply = {"id": message["id"], "result": here + "b.c"}
     elif method == "textDocument/didOpen":
         uri = message["params"]["textDocument"]["uri"]
         reply = {"method": "textDocument/publishDiagnostics", "params": {"uri": uri, "diagnostics": [

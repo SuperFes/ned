@@ -681,7 +681,7 @@ void ToolRegistry::RegisterBuiltinTools() {
                         {"name", symbol.name},
                         {"containerName", symbol.containerName},
                         {"kind", symbol.kind},
-                        {"file", symbol.path.string()},
+                        {"file", text::ToString(symbol.file)},
                         {"line", symbol.position.line + 1},
                         {"column", symbol.position.character + 1},
                     });

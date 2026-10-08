@@ -2789,7 +2789,7 @@ class BufferView : public Widget {
     // a file is streamed only as far as the window's last line.
     [[nodiscard]] std::vector<std::string>
                                            SearchEverywherePreviewFor(const editor::SearchEverywhereCandidate& candidate);
-    [[nodiscard]] std::vector<std::string> ReadPreviewWindow(const std::filesystem::path& path, std::size_t line);
+    [[nodiscard]] std::vector<std::string> ReadPreviewWindow(const text::FileRef& file, std::size_t line);
 
     void HandleExecuteCommandKey(const editor::KeyChord& chord);
 
