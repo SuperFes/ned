@@ -854,7 +854,7 @@ TEST_CASE("Manager::RewindTo restores a file never open in ned from its turn sna
     RunTurnWithFileWrite(fixture, "rewrite an unopened file", tempPath, "agent version", 5);
     REQUIRE(fixture.manager.CheckpointCount() == 1);
     REQUIRE(fixture.manager.CheckpointAt(0).fileRecords.empty());
-    REQUIRE(fixture.manager.CheckpointAt(0).untrackedPaths == std::vector<std::filesystem::path>{tempPath});
+    REQUIRE(fixture.manager.CheckpointAt(0).untrackedFiles == std::vector<ned::text::FileRef>{tempPath});
 
     const Manager::RewindOutcome outcome = fixture.manager.RewindTo(0);
     REQUIRE(outcome.untrackedFiles.empty());

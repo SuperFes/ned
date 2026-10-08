@@ -17,7 +17,10 @@
 #include "Editor/Mcp/BridgeSetting.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Settings.h"
+#include "Editor/Remote/Fs.h"
+#include "Editor/Remote/Hosts.h"
 #include "Editor/Remote/Placement.h"
+#include "Editor/Remote/RemoteBuffer.h"
 #include "Editor/WrapOverrides.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -150,6 +153,14 @@ namespace {
             result += '\n';
         }
         return result;
+    }
+
+    // fs/read_text_file's answer: content, narrowed as asked.
+    Json ReadResult(const Json& params, std::string content) {
+        if (params.contains("line") && params["line"].is_number_integer()) {
+            content = SliceLines(content, params["line"].get<int>(), params.contains("limit") && params["limit"].is_number_integer() ? params["limit"].get<int>() : -1);
+        }
+        return Json{{"content", std::move(content)}};
     }
 
     // Enough of a tool's output to read in the panel without holding a
@@ -1234,7 +1245,7 @@ void Manager::StartSessionOnHost(const text::RemoteFile& beside, const std::vect
     agentBeside_ = beside;
     state_       = SessionState::Starting;
     // No cwd: the agent starts in the project root found on the host.
-    remote::SpawnBeside(hosts_, beside, remote::RemoteSpawn{.argv = argv, .stderrMode = process::StderrMode::Capture}, spawnLifetime_.Token(),
+    remote::SpawnBeside(hosts_, beside, remote::RemoteSpawn{.argv = argv, .stderrMode = process::StderrMode::Capture}, agentLifetime_.Token(),
                         [this, beside, label = std::filesystem::path(argv.front()).filename().string()](remote::Spawned spawned) {
                             if (!spawned) {
                                 EndSession("Failed to start ACP agent: " + spawned.error());
@@ -1788,7 +1799,7 @@ bool Manager::PromptInFlight() const {
     return s.promptInFlight;
 }
 
-void Manager::RecordCheckpointFileEdit(Session& s, text::Buffer& buffer, const std::filesystem::path& path, std::size_t beforeSequence) {
+void Manager::RecordCheckpointFileEdit(Session& s, text::Buffer& buffer, const text::FileRef& file, std::size_t beforeSequence) {
     if (!s.pendingCheckpoint) {
         return;
     }
@@ -1797,20 +1808,20 @@ void Manager::RecordCheckpointFileEdit(Session& s, text::Buffer& buffer, const s
     // beforeSequence must stay the sequence from *before this turn's first*
     // write to it, not this write's own.
     for (CheckpointFileRecord& record : s.pendingCheckpoint->fileRecords) {
-        if (record.path == path) {
+        if (record.file == file) {
             record.afterSequence = buffer.CurrentUndoSequence();
             return;
         }
     }
     s.pendingCheckpoint->fileRecords.push_back(CheckpointFileRecord{
-        .path           = path,
+        .file           = file,
         .beforeSequence = beforeSequence,
         .afterSequence  = buffer.CurrentUndoSequence(),
     });
 }
 
 void Manager::SnapshotBeforeEdit(Session& s, const std::string& path) {
-    if (!s.pendingCheckpoint || path.empty()) {
+    if (!s.pendingCheckpoint || path.empty() || agentBeside_) {
         return;
     }
     std::filesystem::path resolved(path);
@@ -1890,31 +1901,31 @@ Manager::RewindOutcome Manager::RewindTo(std::size_t index) {
     // divergence check, just applied repeatedly instead of once.
     for (std::size_t i = s.checkpoints.size(); i-- > index;) {
         for (const CheckpointFileRecord& record : s.checkpoints[i].fileRecords) {
-            text::Buffer* buffer = bufferList_.FindByPath(record.path);
+            text::Buffer* buffer = bufferList_.FindFile(record.file);
             if (!buffer) {
-                outcome.untrackedFiles.push_back(record.path.string());
+                outcome.untrackedFiles.push_back(text::ToString(record.file));
                 continue;
             }
             if (buffer->CurrentUndoSequence() != record.afterSequence) {
-                outcome.divergedFiles.push_back(record.path.string());
+                outcome.divergedFiles.push_back(text::ToString(record.file));
                 continue;
             }
             if (buffer->TryJumpToUndoSequence(record.beforeSequence)) {
-                outcome.revertedFiles.push_back(record.path.string());
+                outcome.revertedFiles.push_back(text::ToString(record.file));
             }
         }
-        for (const std::filesystem::path& path : s.checkpoints[i].untrackedPaths) {
+        for (const text::FileRef& untracked : s.checkpoints[i].untrackedFiles) {
             const bool snapshotted = std::any_of(s.checkpoints[i].files.begin(), s.checkpoints[i].files.end(),
-                                                 [&](const TurnFile& file) { return file.path == path; });
+                                                 [&](const TurnFile& file) { return text::FileRef(file.path) == untracked; });
             if (!snapshotted) {
-                outcome.untrackedFiles.push_back(path.string());
+                outcome.untrackedFiles.push_back(text::ToString(untracked));
             }
         }
         // Files the agent changed itself: restored from the turn's snapshot
         // when they still read as the turn left them.
         for (const TurnFile& file : s.checkpoints[i].files) {
             const bool undoTracked = std::any_of(s.checkpoints[i].fileRecords.begin(), s.checkpoints[i].fileRecords.end(),
-                                                 [&](const CheckpointFileRecord& record) { return record.path == file.path; });
+                                                 [&](const CheckpointFileRecord& record) { return record.file == text::FileRef(file.path); });
             if (undoTracked) {
                 continue;
             }
@@ -1963,10 +1974,97 @@ void Manager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     }
 }
 
+remote::Connection* Manager::AgentConnection() const {
+    remote::Connection* connection = hosts_ && agentBeside_ ? hosts_->Find(agentBeside_->destination) : nullptr;
+    return connection && connection->Connected() ? connection : nullptr;
+}
+
+void Manager::ReadHostFile(const Json& params, RespondFn respond) {
+    const text::RemoteFile file{.destination = agentBeside_->destination, .path = StringField(params, "path", std::string())};
+    if (file.path.empty()) {
+        respond(std::nullopt, Json{{"code", 1}, {"message", "missing path"}});
+        return;
+    }
+    if (text::Buffer* buffer = bufferList_.FindByRemote(file); buffer && !buffer->IsLoading()) {
+        respond(ReadResult(params, buffer->Text()), std::nullopt);
+        return;
+    }
+    remote::Connection* connection = AgentConnection();
+    if (!connection) {
+        respond(std::nullopt, Json{{"code", 1}, {"message", "not connected to " + file.destination}});
+        return;
+    }
+    remote::ReadFile(*connection, file.path, remote::MaxRemoteFileBytes(),
+                     agentLifetime_.Token().Bind([params, file, respond](const remote::FsResult<text::FileContents>& read) {
+                         if (!read) {
+                             respond(std::nullopt, Json{{"code", 1}, {"message", "cannot read " + file.path.string() + ": " + read.error().message}});
+                             return;
+                         }
+                         respond(ReadResult(params, read->bytes), std::nullopt);
+                     }));
+}
+
+void Manager::WriteHostFile(const Json& params, RespondFn respond) {
+    const text::RemoteFile file{.destination = agentBeside_->destination, .path = StringField(params, "path", std::string())};
+    std::string            content = StringField(params, "content", std::string());
+    if (file.path.empty()) {
+        respond(std::nullopt, Json{{"code", 1}, {"message", "missing path"}});
+        return;
+    }
+    remote::Connection* connection = AgentConnection();
+    if (!connection) {
+        respond(std::nullopt, Json{{"code", 1}, {"message", "not connected to " + file.destination}});
+        return;
+    }
+    const Session*                     found = SessionFor(params);
+    const std::optional<std::uint64_t> key   = found ? std::optional(found->key) : std::nullopt;
+    remote::WriteFile(*connection, host::FsWriteRequest{.path = file.path, .data = content, .expect = std::nullopt},
+                      agentLifetime_.Token().Bind([this, file, content, key, respond](const remote::FsResult<host::FileStat>& written) {
+                          if (!written) {
+                              respond(std::nullopt, Json{{"code", 1}, {"message", "cannot write " + file.path.string() + ": " + written.error().message}});
+                              return;
+                          }
+                          // The open buffer takes the agent's text as the file's, as the
+                          // watch would once it noticed.
+                          text::Buffer* buffer = bufferList_.FindByRemote(file);
+                          if (buffer && (buffer->IsLoading() || buffer->IsSaving())) {
+                              buffer = nullptr;
+                          }
+                          const std::size_t beforeSequence = buffer ? buffer->CurrentUndoSequence() : 0;
+                          if (buffer) {
+                              try {
+                                  if (buffer->Modified()) {
+                                      (void)buffer->MergeRemoteChanges(text::FileContents{.bytes = content, .timestamp = written->timestamp});
+                                  }
+                                  else {
+                                      buffer->RevertFromRemote(text::FileContents{.bytes = content, .timestamp = written->timestamp});
+                                  }
+                              }
+                              catch (const std::exception&) {
+                                  buffer->NoteRemoteChanged();
+                              }
+                          }
+                          Session* s = key ? SessionByKey(*key) : nullptr;
+                          if (s && s->pendingCheckpoint) {
+                              if (buffer) {
+                                  RecordCheckpointFileEdit(*s, *buffer, file, beforeSequence);
+                              }
+                              else {
+                                  s->pendingCheckpoint->untrackedFiles.emplace_back(file);
+                              }
+                          }
+                          respond(Json::object(), std::nullopt);
+                      }));
+}
+
 void Manager::WireClient(Client& client) {
     client.SetNotificationHandler("session/update", [this](const Json& params) { HandleSessionUpdate(params); });
 
     client.SetRequestHandler("fs/read_text_file", [this](const Json& params, RespondFn respond) {
+        if (agentBeside_) {
+            ReadHostFile(params, std::move(respond));
+            return;
+        }
         const std::string pathStr = StringField(params, "path", std::string());
         std::string       content;
         if (text::Buffer* buffer = bufferList_.FindByPath(pathStr)) {
@@ -1982,13 +2080,14 @@ void Manager::WireClient(Client& client) {
             contentStream << input.rdbuf();
             content = contentStream.str();
         }
-        if (params.contains("line") && params["line"].is_number_integer()) {
-            content = SliceLines(content, params["line"].get<int>(), params.contains("limit") && params["limit"].is_number_integer() ? params["limit"].get<int>() : -1);
-        }
-        respond(Json{{"content", content}}, std::nullopt);
+        respond(ReadResult(params, std::move(content)), std::nullopt);
     });
 
     client.SetRequestHandler("fs/write_text_file", [this](const Json& params, RespondFn respond) {
+        if (agentBeside_) {
+            WriteHostFile(params, std::move(respond));
+            return;
+        }
         const std::string pathStr = StringField(params, "path", std::string());
         const std::string content = StringField(params, "content", std::string());
         if (pathStr.empty()) {
@@ -2042,10 +2141,10 @@ void Manager::WireClient(Client& client) {
         }
         if (s.pendingCheckpoint) {
             if (buffer && beforeSequence) {
-                RecordCheckpointFileEdit(s, *buffer, pathStr, *beforeSequence);
+                RecordCheckpointFileEdit(s, *buffer, std::filesystem::path(pathStr), *beforeSequence);
             }
             else if (!buffer) {
-                s.pendingCheckpoint->untrackedPaths.emplace_back(pathStr);
+                s.pendingCheckpoint->untrackedFiles.emplace_back(std::filesystem::path(pathStr));
             }
         }
         respond(Json::object(), std::nullopt);
@@ -2420,7 +2519,7 @@ void Manager::EndSession(std::string reason) {
     client_.reset();
     agentBeside_.reset();
     agentRoot_.reset();
-    spawnLifetime_.Revoke();
+    agentLifetime_.Revoke();
     AppendToOutputBuffer("\n[" + reason + "]\n");
     for (const auto& session : sessions_) {
         PushSessionEvent(*session, reason);

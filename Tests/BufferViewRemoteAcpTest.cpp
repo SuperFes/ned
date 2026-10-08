@@ -6,6 +6,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <utility>
@@ -113,5 +115,73 @@ TEST_CASE("acp-start-session on a remote buffer runs the agent on its host", "[B
     CHECK_THAT(fixture.activeBuffer.Get().Name(), ContainsSubstring("*acp: "));
     REQUIRE(PumpUntil(fixture.loop, [&] { return fixture.acpManager.State() == acp::Manager::SessionState::Active; }));
     CHECK(fixture.agent.Requests("session/new").front()["params"]["cwd"] == fixture.agent.project.string());
+    fixture.acpManager.StopSession();
+}
+
+namespace {
+
+std::string WriteScript(const text::RemoteFile& file, const std::string& content) {
+    return Json::array({Json{{"method", "fs/write_text_file"}, {"params", {{"sessionId", "s1"}, {"path", file.path.string()}, {"content", content}}}}}).dump();
+}
+
+bool Start(Fixture& fixture) {
+    fixture.acpManager.StartSession(ned::tests::kRemoteAcpAgent, fixture.File());
+    return PumpUntil(fixture.loop, [&] { return fixture.acpManager.State() == acp::Manager::SessionState::Active; });
+}
+
+bool Turn(Fixture& fixture, const std::string& prompt) {
+    const std::size_t turns = fixture.acpManager.CheckpointCount();
+    return fixture.acpManager.SendPrompt(prompt) == "Sent." &&
+           PumpUntil(fixture.loop, [&] { return !fixture.acpManager.PromptInFlight() && fixture.acpManager.CheckpointCount() > turns; });
+}
+
+} // namespace
+
+TEST_CASE("A host's ACP agent reads an open buffer's own text", "[BufferView][Remote][Acp][HostAgent]") {
+    Fixture fixture;
+    REQUIRE(fixture.OpenFile());
+    text::Buffer& file = fixture.activeBuffer.Get();
+    file.SetPoint(file.Text().size());
+    file.InsertAtPoint("int z;\n");
+    REQUIRE(Start(fixture));
+
+    REQUIRE(Turn(fixture, Json::array({Json{{"method", "fs/read_text_file"}, {"params", {{"sessionId", "s1"}, {"path", fixture.agent.file.string()}}}}}).dump()));
+    const std::vector<Json> answers = fixture.agent.Answers();
+    REQUIRE(answers.size() == 1);
+    CHECK(answers[0]["result"]["content"] == "int x;\nint y;\nint z;\n");
+    fixture.acpManager.StopSession();
+}
+
+TEST_CASE("A host's ACP agent's write reaches the open buffer, and rewinds", "[BufferView][Remote][Acp][HostAgent]") {
+    Fixture fixture;
+    REQUIRE(fixture.OpenFile());
+    text::Buffer& file = fixture.activeBuffer.Get();
+    REQUIRE(Start(fixture));
+
+    REQUIRE(Turn(fixture, WriteScript(fixture.File(), "int x;\nint w;\n")));
+    std::ifstream in(fixture.agent.file);
+    CHECK(std::string(std::istreambuf_iterator<char>(in), {}) == "int x;\nint w;\n");
+    CHECK(file.Text() == "int x;\nint w;\n");
+    CHECK_FALSE(file.Modified());
+    REQUIRE(fixture.acpManager.CheckpointAt(0).fileRecords.size() == 1);
+    CHECK(fixture.acpManager.CheckpointAt(0).fileRecords[0].file == text::FileRef(fixture.File()));
+
+    const acp::Manager::RewindOutcome outcome = fixture.acpManager.RewindTo(0);
+    CHECK(outcome.revertedFiles == std::vector<std::string>{fixture.File().ToString()});
+    CHECK(file.Text() == "int x;\nint y;\n");
+    fixture.acpManager.StopSession();
+}
+
+TEST_CASE("A host's ACP agent's write merges into a buffer with changes of its own", "[BufferView][Remote][Acp][HostAgent]") {
+    Fixture fixture;
+    REQUIRE(fixture.OpenFile());
+    text::Buffer& file = fixture.activeBuffer.Get();
+    file.SetPoint(file.Text().size());
+    file.InsertAtPoint("int z;\n");
+    REQUIRE(Start(fixture));
+
+    REQUIRE(Turn(fixture, WriteScript(fixture.File(), "int x;\nint w;\n")));
+    CHECK(file.Text() == "int x;\nint w;\nint z;\n");
+    CHECK(file.Modified());
     fixture.acpManager.StopSession();
 }
