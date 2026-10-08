@@ -39,6 +39,13 @@ class PtyProcess {
                std::function<void(std::string_view chunk)> onOutput, std::function<void(std::optional<int> exitCode)> onExit,
                const std::vector<std::pair<std::string, std::string>>& env = {});
 
+    // Streams a child already running on a pty, here or on a host.
+    PtyProcess(process::ChildProcess child, editor::PostQueue& postQueue, std::function<void(std::string_view chunk)> onOutput,
+               std::function<void(std::optional<int> exitCode)> onExit);
+
+    // env as a spawn takes it, with TERM pinned to what Emulator understands.
+    [[nodiscard]] static std::vector<std::pair<std::string, std::optional<std::string>>> ShellEnvironment(const std::vector<std::pair<std::string, std::string>>& env);
+
     PtyProcess(const PtyProcess&)            = delete;
     PtyProcess& operator=(const PtyProcess&) = delete;
 

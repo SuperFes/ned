@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Editor/Clipboard.h"
+#include "Editor/Remote/Proc.h"
 #include "Editor/Terminal/Config.h"
 #include "KeyTranslation.h"
 #include "Text/DisplayWidth.h"
@@ -23,6 +24,11 @@ namespace {
         // user-configured command in this codebase crosses.
         const char* shell = std::getenv("SHELL");
         return {(shell != nullptr && *shell != '\0') ? shell : "/bin/sh"};
+    }
+
+    // The host login's own shell, as a login shell, as ssh would start it.
+    std::vector<std::string> RemoteShellArgv() {
+        return {"/bin/sh", "-c", "exec \"${SHELL:-/bin/sh}\" -l"};
     }
 
     // Longest application-set title the dock's tab strip is asked to carry
@@ -59,8 +65,13 @@ void TerminalPanel::SetOnToggleRequest(std::function<void()> onToggle) {
     onToggleRequest_ = std::move(onToggle);
 }
 
+void TerminalPanel::SetPlacement(editor::remote::Hosts* hosts, std::optional<text::RemoteFile> beside) {
+    hosts_  = hosts;
+    beside_ = std::move(beside);
+}
+
 void TerminalPanel::EnsureStarted() {
-    if (ShellRunning() || eventLoop_ == nullptr) {
+    if (ShellRunning() || starting_ || eventLoop_ == nullptr) {
         return;
     }
     // A dead PtyProcess parked here since HandleExit is only now safe to
@@ -72,10 +83,41 @@ void TerminalPanel::EnsureStarted() {
         emulator_ = editor::terminal::Emulator(ContentRows(), ContentCols());
         exited_   = false;
     }
+    if (beside_) {
+        Feed("Connecting to " + beside_->destination + "\u2026\r\n");
+    }
+    std::vector<std::string> argv = argv_;
+    if (argv.empty()) {
+        argv = beside_ ? RemoteShellArgv() : ShellArgv();
+    }
+    const editor::process::TerminalSize size{.rows = ContentRows(), .cols = ContentCols()};
+    starting_ = true;
+    editor::remote::SpawnBeside(hosts_, beside_,
+                                editor::remote::RemoteSpawn{.argv       = std::move(argv),
+                                                            .cwd        = std::nullopt,
+                                                            .env        = editor::terminal::PtyProcess::ShellEnvironment(env_),
+                                                            .stderrMode = editor::process::StderrMode::MergeWithStdout,
+                                                            .pty        = size},
+                                start_.Token(), [this, size](editor::remote::Spawned spawned) { Started(std::move(spawned), size); });
+}
+
+void TerminalPanel::Started(editor::remote::Spawned spawned, editor::process::TerminalSize requested) {
+    starting_ = false;
+    if (!spawned) {
+        Ended("\r\n[couldn't start: " + spawned.error() + "]\r\n", editor::remote::kRemoteSpawnFailed);
+        return;
+    }
+    if (beside_) {
+        emulator_ = editor::terminal::Emulator(ContentRows(), ContentCols());
+    }
     pty_ = std::make_unique<editor::terminal::PtyProcess>(
-        argv_.empty() ? ShellArgv() : argv_, ContentRows(), ContentCols(), *eventLoop_,
-        [this](std::string_view chunk) { Feed(chunk); }, [this](std::optional<int> exitCode) { HandleExit(exitCode); }, env_);
+        std::move(spawned->child), *eventLoop_, [this](std::string_view chunk) { Feed(chunk); },
+        [this](std::optional<int> exitCode) { HandleExit(exitCode); });
     writeSink_ = [this](std::string_view data) { pty_->Write(data); };
+    // The panel may have been resized while it connected.
+    if (const editor::process::TerminalSize size{.rows = ContentRows(), .cols = ContentCols()}; size != requested) {
+        pty_->Resize(size.rows, size.cols);
+    }
 }
 
 bool TerminalPanel::ShellRunning() const {
@@ -126,8 +168,12 @@ void TerminalPanel::HandleExit(std::optional<int> exitCode) {
     // dead PtyProcess's own Post-marshaled onExit callback -- destroying it
     // would tear down the std::function currently executing. It stays
     // parked until EnsureStarted.
+    Ended("\r\n[process exited]\r\n", exitCode);
+}
+
+void TerminalPanel::Ended(std::string_view note, std::optional<int> exitCode) {
     writeSink_ = nullptr;
-    Feed("\r\n[process exited]\r\n");
+    Feed(note);
     exited_ = true;
     if (onExit_) {
         onExit_(exitCode);
@@ -165,7 +211,8 @@ std::string TerminalPanel::TitleText() const {
     // the tab the way every terminal emulator does; the static label is the
     // fallback, and stays what Label() reports for uniquification.
     const bool  useAppTitle = !emulator_.Title().empty() && editor::terminal::TerminalApplicationTitlesEnabled();
-    std::string title       = useAppTitle ? TruncateToColumns(emulator_.Title(), kMaxTitleColumns) : label_;
+    std::string title       = useAppTitle ? TruncateToColumns(emulator_.Title(), kMaxTitleColumns) : beside_ ? label_ + "@" + beside_->destination
+                                                                                                             : label_;
     if (exited_) {
         title += " (exited)";
     }
@@ -355,9 +402,11 @@ void TerminalPanel::CloseSession() {
     // Safe context to destroy the pty: this is only ever reached from
     // OnEvent (a click), never from inside one of the pty's own callbacks
     // (the HandleExit constraint doesn't apply).
+    start_.Revoke();
     pty_.reset();
     writeSink_        = nullptr;
     exited_           = false;
+    starting_         = false;
     scrollbackOffset_ = 0;
     emulator_         = editor::terminal::Emulator(ContentRows(), ContentCols());
 }

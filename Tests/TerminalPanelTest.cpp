@@ -29,6 +29,7 @@
 #include "Editor/Clipboard.h"
 #include "Editor/Terminal/Config.h"
 #include "TestEvents.h"
+#include "UI/EventLoop.h"
 #include "UI/TerminalPanel.h"
 #include "UI/Widget.h"
 
@@ -576,4 +577,45 @@ TEST_CASE("TerminalPanel reports its process's exit code", "[TerminalPanel]") {
     f.panel.HandleExitForTesting(3);
     f.panel.HandleExitForTesting();
     REQUIRE(exits == std::vector<std::optional<int>>{0, 3, std::nullopt});
+}
+
+TEST_CASE("TerminalPanel that can't start its shell shows why and can be restarted", "[TerminalPanel]") {
+    ned::ui::EventLoop              eventLoop;
+    Theme                           theme = ned::ui::DarkTheme();
+    constexpr int                   kTall = 8; // room for the reason under the connecting line
+    Screen                          screen{kWidth, kTall};
+    std::vector<std::optional<int>> exits;
+
+    SECTION("here") {
+        TerminalPanel panel(theme, {"ned-definitely-not-a-real-binary-xyz"}, "Missing");
+        panel.SetBox_(Box{.x_min = 0, .x_max = kWidth - 1, .y_min = 0, .y_max = kTall - 1});
+        panel.SetEventLoop(&eventLoop);
+        panel.SetOnExit([&](std::optional<int> code) { exits.push_back(code); });
+        panel.EnsureStarted();
+        CHECK_FALSE(panel.ShellRunning());
+        CHECK(panel.TitleText() == "Missing (exited)");
+        CHECK(exits == std::vector<std::optional<int>>{127});
+        panel.EnsureStarted();
+        CHECK(exits.size() == 2);
+    }
+
+    SECTION("beside a remote file with no host to run it") {
+        TerminalPanel panel(theme);
+        panel.SetBox_(Box{.x_min = 0, .x_max = kWidth - 1, .y_min = 0, .y_max = kTall - 1});
+        panel.SetEventLoop(&eventLoop);
+        panel.SetPlacement(nullptr, ned::text::RemoteFile{.destination = "box", .path = "/src/a.c"});
+        panel.SetOnExit([&](std::optional<int> code) { exits.push_back(code); });
+        panel.EnsureStarted();
+        panel.Paint(Canvas(screen, panel.Box_()));
+        std::string text;
+        for (int y = 0; y < kTall; ++y) {
+            for (int x = 0; x < kWidth; ++x) {
+                text += screen.PixelAt(x, y).character;
+            }
+        }
+        CHECK(text.find("Connecting to box") != std::string::npos);
+        CHECK(text.find("[couldn't start: no remote host") != std::string::npos);
+        CHECK(panel.TitleText() == "Terminal@box (exited)");
+        CHECK(exits == std::vector<std::optional<int>>{127});
+    }
 }
