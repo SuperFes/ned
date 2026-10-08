@@ -48,6 +48,20 @@ void StreamedChild::Feed(std::string input, std::chrono::milliseconds timeout) {
     });
 }
 
+void StreamedChild::Send(std::string input) {
+    {
+        const std::scoped_lock lock(sendMutex_);
+        if (sendFailed_) {
+            return;
+        }
+        sending_ += input;
+    }
+    if (!writeThread_.joinable()) {
+        StartSendLoop();
+    }
+    sendReady_.notify_one();
+}
+
 void StreamedChild::DispatchOutput(std::string_view chunk) {
     if (onOutput_) {
         onOutput_(chunk);
@@ -80,6 +94,31 @@ void StreamedChild::StartReadLoop(PostQueue& postQueue) {
         }
         const std::optional<int> exitCode = child_.WaitForExit();
         postQueue.Post(alive.Bind([this, exitCode] { DispatchExit(exitCode); }));
+    });
+}
+
+void StreamedChild::StartSendLoop() {
+    writeThread_ = std::jthread([this](const std::stop_token& stopping) {
+        while (true) {
+            std::string input;
+            {
+                std::unique_lock lock(sendMutex_);
+                if (!sendReady_.wait(lock, stopping, [this] { return !sending_.empty(); })) {
+                    return;
+                }
+                input.swap(sending_);
+            }
+            try {
+                // A negative timeout waits until written or torn down.
+                child_.WriteAll(input, std::chrono::milliseconds(-1));
+            }
+            catch (const std::exception&) {
+                const std::scoped_lock lock(sendMutex_);
+                sendFailed_ = true;
+                sending_.clear();
+                return;
+            }
+        }
     });
 }
 

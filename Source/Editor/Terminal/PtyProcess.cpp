@@ -27,8 +27,8 @@ PtyProcess::PtyProcess(std::vector<std::string> argv, int rows, int cols, ned::u
                        const std::vector<std::pair<std::string, std::string>>& env) : stream_(SpawnShell(argv, rows, cols, env), eventLoop, std::move(onOutput), std::move(onExit)) {
 }
 
-void PtyProcess::Write(std::string_view data, std::chrono::milliseconds timeout) const {
-    stream_.Child().WriteAll(data, timeout);
+void PtyProcess::Write(std::string_view data) {
+    stream_.Send(std::string(data));
 }
 
 void PtyProcess::Resize(int rows, int cols) const noexcept {
