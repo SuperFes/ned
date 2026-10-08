@@ -24,6 +24,7 @@
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/PerBufferMap.h"
+#include "Text/RemoteFile.h"
 
 namespace ned::editor::mcp {
 
@@ -103,6 +104,16 @@ namespace {
         std::error_code       ec;
         std::filesystem::path canonical = std::filesystem::weakly_canonical(path, ec);
         return ec ? path : canonical;
+    }
+
+    // ResolveArgPath, or a host's file when written host:/path.
+    text::FileRef ResolveArgFile(const std::string& file) {
+        if (!file.starts_with('/')) {
+            if (std::optional<text::RemoteFile> remote = text::ParseRemoteFile(file)) {
+                return *std::move(remote);
+            }
+        }
+        return ResolveArgPath(file);
     }
 
     // Every handler below needs an already-open Buffer -- LSP requests only
@@ -1080,7 +1091,7 @@ void ToolRegistry::RegisterBuiltinTools() {
         Json{
             {"type", "object"},
             {"properties",
-             {{"file", {{"type", "string"}, {"description", "Path to the file, absolute or relative to the project root."}}},
+             {{"file", {{"type", "string"}, {"description", "Path to the file, absolute or relative to the project root, or host:/path for one on a remote host."}}},
               {"line", {{"type", "integer"}, {"description", "1-indexed line number."}}},
               {"condition", {{"type", "string"}, {"description", "Optional: only stop when this expression is truthy."}}},
               {"hitCondition",
@@ -1096,7 +1107,7 @@ void ToolRegistry::RegisterBuiltinTools() {
                 callback(MakeTextToolResult("Missing required argument(s): file, line", true));
                 return;
             }
-            const std::filesystem::path    path          = ResolveArgPath(*file);
+            const text::FileRef            path          = ResolveArgFile(*file);
             const auto                     lineNum       = static_cast<std::size_t>(*line);
             const std::vector<std::size_t> existingLines = dapManager_.BreakpointsForFile(path);
             const bool                     alreadySet    = std::find(existingLines.begin(), existingLines.end(), lineNum) != existingLines.end();
@@ -1121,7 +1132,7 @@ void ToolRegistry::RegisterBuiltinTools() {
         Json{
             {"type", "object"},
             {"properties",
-             {{"file", {{"type", "string"}, {"description", "Path to the file, absolute or relative to the project root."}}},
+             {{"file", {{"type", "string"}, {"description", "Path to the file, absolute or relative to the project root, or host:/path for one on a remote host."}}},
               {"line", {{"type", "integer"}, {"description", "1-indexed line number."}}}}},
             {"required", Json::array({"file", "line"})},
         },
@@ -1132,7 +1143,7 @@ void ToolRegistry::RegisterBuiltinTools() {
                 callback(MakeTextToolResult("Missing required argument(s): file, line", true));
                 return;
             }
-            const std::filesystem::path    path          = ResolveArgPath(*file);
+            const text::FileRef            path          = ResolveArgFile(*file);
             const auto                     lineNum       = static_cast<std::size_t>(*line);
             const std::vector<std::size_t> existingLines = dapManager_.BreakpointsForFile(path);
             if (std::find(existingLines.begin(), existingLines.end(), lineNum) == existingLines.end()) {
