@@ -7,8 +7,8 @@
 // only. How the child was spawned (pipes, a pty) is the caller's business:
 // it hands over an already-running ChildProcess.
 //
-// Teardown hangs up the child, which wakes the blocked read (and a Feed's
-// blocked write), and joins both threads before the ChildProcess is
+// Teardown hangs up the child, which wakes the blocked read (and a blocked
+// write), and joins both threads before the ChildProcess is
 // destroyed; a stop_token alone cannot interrupt a read(). Callbacks still
 // queued when this is destroyed are dropped.
 //
@@ -17,7 +17,9 @@
 #define NED_EDITOR_PROCESS_STREAMEDCHILD_H
 
 #include <chrono>
+#include <condition_variable>
 #include <functional>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -56,6 +58,12 @@ class StreamedChild {
     // output from part of its input for the whole. Once per child.
     void Feed(std::string input, std::chrono::milliseconds timeout);
 
+    // Queues input for a child whose stdin stays open (a terminal), written
+    // in order from a thread of its own however long the child takes to
+    // read it, so the main thread never waits on it. After a write fails,
+    // this and anything still queued is dropped. Not on a child given Feed.
+    void Send(std::string input);
+
     // What the reader's posted callbacks call. Public so tests can drive the
     // dispatch without draining a PostQueue.
     void DispatchOutput(std::string_view chunk);
@@ -63,13 +71,18 @@ class StreamedChild {
 
   private:
     void StartReadLoop(PostQueue& postQueue);
+    void StartSendLoop();
 
-    LifetimeGuard lifetime_;
-    std::jthread  readThread_;
-    std::jthread  writeThread_;
-    ChildProcess  child_;
-    OutputHandler onOutput_;
-    ExitHandler   onExit_;
+    LifetimeGuard               lifetime_;
+    std::mutex                  sendMutex_;
+    std::condition_variable_any sendReady_;
+    std::string                 sending_;
+    bool                        sendFailed_ = false;
+    std::jthread                readThread_;
+    std::jthread                writeThread_;
+    ChildProcess                child_;
+    OutputHandler               onOutput_;
+    ExitHandler                 onExit_;
 };
 
 } // namespace ned::editor::process

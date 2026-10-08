@@ -110,3 +110,31 @@ TEST_CASE("StreamedChild's teardown ends a Feed still writing", "[Process]") {
     }
     CHECK(std::chrono::steady_clock::now() - started < std::chrono::seconds(10));
 }
+
+TEST_CASE("StreamedChild sends queued input in order while it reads output", "[Process]") {
+    ned::ui::EventLoop eventLoop;
+    std::string        output;
+    std::string        sent;
+
+    StreamedChild child(ChildProcess({"cat"}), eventLoop, [&](std::string_view chunk) { output += chunk; }, [](std::optional<int>) {});
+    for (int i = 0; i < 64; ++i) {
+        const std::string piece(64 * 1024, static_cast<char>('a' + i % 26));
+        sent += piece;
+        child.Send(piece);
+    }
+
+    REQUIRE(DrainUntil(eventLoop, [&] { return output.size() >= sent.size(); }));
+    CHECK(output == sent);
+}
+
+TEST_CASE("StreamedChild's Send never waits on a child not reading, and teardown ends it", "[Process]") {
+    ned::ui::EventLoop eventLoop;
+    const auto         started = std::chrono::steady_clock::now();
+    {
+        StreamedChild child(ChildProcess({"sleep", "30"}), eventLoop, [](std::string_view) {}, [](std::optional<int>) {});
+        child.Send(std::string(4 * 1024 * 1024, 'x'));
+        child.Send("more");
+        CHECK(std::chrono::steady_clock::now() - started < std::chrono::seconds(2));
+    }
+    CHECK(std::chrono::steady_clock::now() - started < std::chrono::seconds(10));
+}
