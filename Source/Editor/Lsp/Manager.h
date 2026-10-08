@@ -1603,10 +1603,8 @@ class Manager {
     // indistinguishable from a natively-owned one everywhere downstream.
     [[nodiscard]] std::string ResolvedConnectionKey(const std::filesystem::path& root, const std::string& serverKey) const;
 
-    // lsp-workspace-folders follow-up: every live connection key currently
-    // serving serverKey, whatever root each resolved to -- i.e. clients_
-    // keys that are either exactly serverKey (the ProjectRoot()-scoped
-    // connection) or end in '\x1f' + serverKey.
+    // lsp-workspace-folders follow-up: every live local connection key
+    // serving serverKey, whatever root each resolved to (ConnectionKey.h).
     [[nodiscard]] std::vector<std::string> ConnectionKeysForServer(const std::string& serverKey) const;
 
     // lsp-workspace-folders follow-up: the join half of ClientForLanguage.

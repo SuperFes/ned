@@ -370,6 +370,7 @@ add_executable(ned_tests
             LspClientTest.cpp
             LspServerConfigTest.cpp
             LspRootResolverTest.cpp
+            LspConnectionKeyTest.cpp
             ProseCheckerTest.cpp
             ProseCheckerTestGuard.cpp
             LspPositionTest.cpp
