@@ -174,6 +174,14 @@ TEST_CASE("Project root requests round-trip and need an absolute path", "[Host][
     CHECK_THROWS_AS(host::FsProjectRootRequestFromJson(Json{{"path", host::Bytes("a")}, {"detect", true}}), ProtocolError);
 }
 
+TEST_CASE("Project root requests carry a language's markers, which must be strings", "[Host][HostCodec]") {
+    const host::FsProjectRootRequest request{.path = "/a/b.rs", .detect = true, .markers = {"Cargo.toml", "*.csproj"}};
+    CHECK(host::FsProjectRootRequestFromJson(OverTheWire(host::ToJson(request))) == request);
+    CHECK_FALSE(host::ToJson(host::FsProjectRootRequest{.path = "/a"}).contains("markers"));
+    CHECK_THROWS_AS(host::FsProjectRootRequestFromJson(Json{{"path", host::Bytes("/a")}, {"detect", true}, {"markers", Json::array({1})}}),
+                    ProtocolError);
+}
+
 TEST_CASE("Watch requests and events round-trip and refuse what they can't name", "[Host][HostCodec]") {
     using Kind = ned::editor::FileEvent::Kind;
     const host::WatchSetRequest request{.files = {"/a/caf\xC3\xA9", "/b"}, .directories = {"/c/d"}};

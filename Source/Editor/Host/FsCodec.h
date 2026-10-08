@@ -108,6 +108,9 @@ struct FsRenameRequest {
 struct FsProjectRootRequest {
     std::filesystem::path path;
     bool                  detect = true;
+    // A language's own markers, looked for first when detecting
+    // (Project/Root.h's FindMarkerRoot).
+    std::vector<std::string> markers;
 
     [[nodiscard]] bool operator==(const FsProjectRootRequest&) const = default;
 };

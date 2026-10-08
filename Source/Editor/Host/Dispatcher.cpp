@@ -200,7 +200,7 @@ void Dispatcher::Hello(const Json& params, Responder responder) {
     response.arch         = identity_.arch;
     response.codec        = ChooseCodec(request.codecs);
     response.window       = protocol::kDefaultWindow;
-    response.capabilities = Capabilities{.fs = 4, .proc = kProcVersion, .search = 1, .watch = 1};
+    response.capabilities = Capabilities{.fs = 5, .proc = kProcVersion, .search = 1, .watch = 1};
     responder.Result(ToJson(response));
     if (onCodec_) {
         onCodec_(response.codec);
@@ -419,7 +419,14 @@ void Dispatcher::FsProjectRoot(const Json& params, Responder responder) {
         responder.Error(error_code::kInvalidParams, e.what());
         return;
     }
-    responder.Result(Json{{"path", PathToJson(DetectProjectRoot(request.path, request.detect))}});
+    std::optional<std::filesystem::path> root;
+    if (request.detect) {
+        // Canonical, as DetectProjectRoot's answer is.
+        std::error_code       ec;
+        std::filesystem::path start = std::filesystem::weakly_canonical(request.path, ec);
+        root                        = FindMarkerRoot(ec ? request.path : start, request.markers);
+    }
+    responder.Result(Json{{"path", PathToJson(root ? *root : DetectProjectRoot(request.path, request.detect))}});
 }
 
 void Dispatcher::FsMkdir(const Json& params, Responder responder) {

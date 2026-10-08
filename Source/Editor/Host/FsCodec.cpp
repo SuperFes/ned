@@ -107,11 +107,24 @@ FsRenameRequest FsRenameRequestFromJson(const Json& json) {
 }
 
 Json ToJson(const FsProjectRootRequest& request) {
-    return Json{{"path", PathToJson(request.path)}, {"detect", request.detect}};
+    Json json{{"path", PathToJson(request.path)}, {"detect", request.detect}};
+    if (!request.markers.empty()) {
+        json["markers"] = request.markers;
+    }
+    return json;
 }
 
 FsProjectRootRequest FsProjectRootRequestFromJson(const Json& json) {
-    return FsProjectRootRequest{.path = RequirePath(json, "path"), .detect = RequireBool(json, "detect")};
+    FsProjectRootRequest request{.path = RequirePath(json, "path"), .detect = RequireBool(json, "detect")};
+    if (json.contains("markers")) {
+        for (const Json& marker : RequireArray(json, "markers")) {
+            if (!marker.is_string()) {
+                throw protocol::ProtocolError("ned: 'markers' must hold strings");
+            }
+            request.markers.push_back(marker.get<std::string>());
+        }
+    }
+    return request;
 }
 
 Json DirEntriesToJson(std::span<const DirEntry> entries) {
