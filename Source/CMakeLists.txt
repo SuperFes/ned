@@ -167,6 +167,7 @@ add_library(ned_lib STATIC
         Editor/TrimOnSave.cpp
         Editor/LineEndingPolicy.cpp
         Editor/FormatOnSave.cpp
+        Editor/FormatRun.cpp
         Editor/FormatBuiltinStyle.cpp
         Editor/PrettierConfig.cpp
         Editor/RustfmtConfig.cpp
