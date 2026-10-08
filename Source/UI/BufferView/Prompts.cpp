@@ -10,6 +10,7 @@
 
 #include <cctype>
 #include <fstream>
+#include <ranges>
 #include <thread>
 
 #include <re2/re2.h>
@@ -2446,6 +2447,10 @@ void BufferView::EndSnippetSession() {
 
 void BufferView::EndInteractiveSession() {
     inputMode_ = InputMode::Normal;
+    // A Notice isn't a prompt, so no other session ends it.
+    if (sshQuestion_ && sshQuestion_->kind != editor::remote::AskpassKind::Notice) {
+        sshQuestion_.reset();
+    }
     // generic-popup follow-up (Phase 3): unconditional -- hides whichever
     // candidate popup this session may have been driving, a safe no-op if
     // it wasn't (same tolerance SetOnPrefixHintChanged's own nullopt case
@@ -4022,6 +4027,108 @@ void BufferView::HandleConfirmTrustProjectInitKey(const editor::KeyChord& chord)
     if (onDecision) {
         onDecision(path, *decision);
     }
+}
+
+namespace {
+
+    // ssh's text runs over several lines; the echo area has one.
+    std::string SshQuestionLabel(const editor::remote::AskpassQuestion& question) {
+        std::string label;
+        for (const std::string_view text : {std::string_view(question.detail), std::string_view(question.prompt)}) {
+            for (const auto part : std::views::split(text, '\n')) {
+                std::string_view line(part.begin(), part.end());
+                while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back()))) {
+                    line.remove_suffix(1);
+                }
+                while (!line.empty() && std::isspace(static_cast<unsigned char>(line.front()))) {
+                    line.remove_prefix(1);
+                }
+                if (!line.empty()) {
+                    label += label.empty() ? "" : " ";
+                    label += line;
+                }
+            }
+        }
+        // A keyboard-interactive "Verification code:" doesn't say for which host.
+        if (label.find(question.destination) == std::string::npos) {
+            label.insert(0, question.destination + ": ");
+        }
+        return label;
+    }
+
+} // namespace
+
+bool BufferView::AskSshQuestion(std::uint64_t id, const editor::remote::AskpassQuestion& question, editor::remote::AskpassReply& reply) {
+    using editor::remote::AskpassKind;
+    if (inputMode_ != InputMode::Normal || sshQuestion_) {
+        return false;
+    }
+    std::string label = SshQuestionLabel(question);
+    sshQuestion_.emplace(SshQuestionSession{.id = id, .kind = question.kind, .shown = {}, .reply = std::move(reply)});
+    if (question.kind == AskpassKind::Notice) {
+        statusMessage_ = sshQuestion_->shown = label;
+        return true;
+    }
+    inputMode_ = InputMode::SshQuestion;
+    if (question.kind == AskpassKind::Confirm) {
+        statusMessage_ = label + " (y/n)";
+        return true;
+    }
+    prompt_.emplace(label + " ");
+    prompt_->SetMasked(question.kind == AskpassKind::Secret);
+    statusMessage_ = prompt_->StatusText();
+    return true;
+}
+
+void BufferView::WithdrawSshQuestion(std::uint64_t id) {
+    if (!sshQuestion_ || sshQuestion_->id != id) {
+        return;
+    }
+    sshQuestion_->reply.Drop();
+    const bool  notice = sshQuestion_->kind == editor::remote::AskpassKind::Notice;
+    std::string shown  = std::move(sshQuestion_->shown);
+    sshQuestion_.reset();
+    if (!notice) {
+        EndInteractiveSession();
+        statusMessage_.clear();
+    }
+    else if (statusMessage_ == shown) {
+        statusMessage_.clear();
+    }
+}
+
+bool BufferView::ShowsSshQuestion() const {
+    return sshQuestion_.has_value();
+}
+
+void BufferView::HandleSshQuestionKey(const editor::KeyChord& chord) {
+    using editor::remote::AskpassKind;
+    editor::remote::AskpassAnswer answer;
+    if (sshQuestion_->kind == AskpassKind::Confirm) {
+        if (chord.Codepoint == U'y' || chord.Codepoint == U'Y') {
+            answer = "yes";
+        }
+        else if (chord.Codepoint != U'n' && chord.Codepoint != U'N' && !IsQuit(chord)) {
+            return;
+        }
+    }
+    else if (chord.Special == editor::SpecialKey::Enter) {
+        answer = prompt_->Text();
+        // ssh's host-key question takes only the whole word.
+        if (sshQuestion_->kind == AskpassKind::Text && (answer == "y" || answer == "n")) {
+            answer = *answer == "y" ? "yes" : "no";
+        }
+    }
+    else if (!IsQuit(chord)) {
+        (void)HandlePromptEditingKey(chord);
+        statusMessage_ = prompt_->StatusText();
+        return;
+    }
+    SshQuestionSession session = std::move(*sshQuestion_);
+    sshQuestion_.reset();
+    EndInteractiveSession();
+    statusMessage_ = answer ? std::string() : std::string("Cancelled ssh's question.");
+    session.reply.Send(std::move(answer));
 }
 
 void BufferView::StartCreateFileAt(const std::filesystem::path& directory) {

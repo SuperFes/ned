@@ -464,6 +464,10 @@ bool BufferView::HandleChord(const editor::KeyChord& chord) {
             ClampPointToNarrowing();
             return true;
 
+        case InputMode::SshQuestion:
+            HandleSshQuestionKey(chord);
+            return true;
+
         case InputMode::FindFile:
         case InputMode::OpenProjectPath:
         case InputMode::FindScratch:

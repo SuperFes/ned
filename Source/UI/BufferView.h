@@ -70,6 +70,7 @@
 #include "Editor/PromptHistory.h"
 #include "Editor/QueryReplace.h"
 #include "Editor/Register.h"
+#include "Editor/Remote/Askpass.h"
 #include "Editor/Remote/Location.h"
 #include "Editor/Remote/PathCompletion.h"
 #include "Editor/RenameReview.h"
@@ -781,6 +782,15 @@ class BufferView : public Widget {
     void RequestTrustProjectInit(const std::filesystem::path&                                                   initPath,
                                  std::function<void(const std::filesystem::path&, editor::ProjectInitDecision)> onDecision);
 
+    // One of ssh's login questions (Remote/Askpass.h). A Notice only shows
+    // in the echo area; the rest open a prompt, a Secret typed unseen and
+    // never kept in history. Refused, leaving reply untouched, while another
+    // prompt is open.
+    bool AskSshQuestion(std::uint64_t id, const editor::remote::AskpassQuestion& question, editor::remote::AskpassReply& reply);
+    // Closes the question unanswered if this view is showing it.
+    void               WithdrawSshQuestion(std::uint64_t id);
+    [[nodiscard]] bool ShowsSshQuestion() const;
+
     // Window-splitting follow-up: called with the same InteractiveRequest
     // whenever StartInteractiveSession sees one of the five structural
     // window-management values (SplitBelow/SplitRight/DeleteWindow/
@@ -1305,6 +1315,7 @@ class BufferView : public Widget {
                            RemoteSearchRoot,
                            RemoteSearchPattern,
                            RemoteOpenRoot,
+                           SshQuestion,
                            PointToRegister,
                            JumpToRegister,
                            CopyToRegister,
@@ -1825,6 +1836,7 @@ class BufferView : public Widget {
     void               HandleConfirmRenameTypeToMatchFileKey(const editor::KeyChord& chord);
     void               HandleConfirmOpenBinaryKey(const editor::KeyChord& chord);        // see pendingBinaryOpenPath_
     void               HandleConfirmTrustProjectInitKey(const editor::KeyChord& chord);  // see pendingTrustInitPath_
+    void               HandleSshQuestionKey(const editor::KeyChord& chord);
     // Shared by HandlePromptKey's FindFile branch and the public
     // RequestOpenBinaryFile -- enters ConfirmOpenBinary and sets
     // pendingBinaryOpenPath_/statusMessage_.
@@ -4299,6 +4311,16 @@ class BufferView : public Widget {
     // convention as pendingBinaryOpenPath_ just above.
     std::filesystem::path                                                          pendingTrustInitPath_;
     std::function<void(const std::filesystem::path&, editor::ProjectInitDecision)> onTrustDecision_;
+
+    // The ssh question this view shows (AskSshQuestion). Its reply cancels
+    // the question if the session ends any other way than an answer.
+    struct SshQuestionSession {
+        std::uint64_t                id = 0;
+        editor::remote::AskpassKind  kind{};
+        std::string                  shown; // the echo-area text a Notice set
+        editor::remote::AskpassReply reply;
+    };
+    std::optional<SshQuestionSession> sshQuestion_;
 
     // Emacs-keymap-round-2 follow-up: the kill-append decision zap-to-char's
     // own invocation made (from context.lastCommand, which the character

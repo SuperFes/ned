@@ -30,6 +30,16 @@ namespace {
         return (uch >= 'a' && uch <= 'z') || (uch >= 'A' && uch <= 'Z') || (uch >= '0' && uch <= '9') || uch == '_';
     }
 
+    std::string Masked(std::string_view text) {
+        std::string masked;
+        for (const char ch : text) {
+            if ((static_cast<unsigned char>(ch) & 0xC0) != 0x80) {
+                masked += "\u2022";
+            }
+        }
+        return masked;
+    }
+
 } // namespace
 
 MinibufferPrompt::MinibufferPrompt(std::string label) : label_(std::move(label)) {
@@ -116,8 +126,12 @@ const std::string& MinibufferPrompt::Text() const {
     return text_;
 }
 
+void MinibufferPrompt::SetMasked(bool masked) {
+    masked_ = masked;
+}
+
 std::string MinibufferPrompt::StatusText() const {
-    return label_ + text_;
+    return label_ + (masked_ ? Masked(text_) : text_);
 }
 
 std::size_t MinibufferPrompt::CursorByteOffset() const {
@@ -125,7 +139,8 @@ std::size_t MinibufferPrompt::CursorByteOffset() const {
 }
 
 int MinibufferPrompt::CursorDisplayColumn() const {
-    return DisplayColumns(label_) + DisplayColumns(std::string_view(text_).substr(0, cursor_));
+    const std::string_view typed = std::string_view(text_).substr(0, cursor_);
+    return DisplayColumns(label_) + (masked_ ? DisplayColumns(Masked(typed)) : DisplayColumns(typed));
 }
 
 } // namespace ned::editor

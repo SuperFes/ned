@@ -25,6 +25,8 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -50,6 +52,7 @@
 #include "Editor/Project/Session.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
+#include "Editor/Remote/Askpass.h"
 #include "Editor/Remote/RemoteBuffer.h"
 #include "Editor/Remote/Watch.h"
 #include "Editor/Tasks/TaskRunner.h"
@@ -772,6 +775,14 @@ class WindowManager {
         const std::filesystem::path&                                                   initPath,
         std::function<void(const std::filesystem::path&, editor::ProjectInitDecision)> onDecision);
 
+    // ssh's login questions, one shown at a time in the focused pane. One
+    // asked while that pane has a prompt open waits for PumpSshQuestions.
+    void AskSshQuestion(std::uint64_t id, const editor::remote::AskpassQuestion& question, editor::remote::AskpassReply reply);
+    void WithdrawSshQuestion(std::uint64_t id);
+    // Shows the next waiting question once no pane shows one and the
+    // focused pane's prompt is free. main.cpp calls it after every event.
+    void PumpSshQuestions();
+
     // Called whenever a buffer is about to be closed by a path that doesn't
     // go through BufferView::CloseBufferNow at all -- currently just
     // ProjectSidebar::OpenFileEntry, which closes the outgoing single-
@@ -1067,6 +1078,12 @@ class WindowManager {
     editor::dap::Manager*                           dapManager_     = nullptr;  // see SetDapManager
     editor::acp::Manager*                           acpManager_     = nullptr;  // see SetAcpManager
     editor::remote::Hosts*                             remoteHosts_    = nullptr;  // see SetRemoteHosts
+    struct WaitingSshQuestion {
+        std::uint64_t                   id = 0;
+        editor::remote::AskpassQuestion question;
+        editor::remote::AskpassReply    reply;
+    };
+    std::deque<WaitingSshQuestion>                     sshQuestions_;
     std::optional<std::string>                         lastAcpAgentSeed_;          // see SetLastKnownAcpAgent
     editor::ProjectUndoManager*                        projectUndo_ = nullptr;     // see SetProjectUndo
     const janet::Environment*                          janetEnv_    = nullptr;     // see SetJanetEnvironment
