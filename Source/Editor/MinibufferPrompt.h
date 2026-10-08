@@ -47,6 +47,8 @@ class MinibufferPrompt {
     // Moves the cursor to `offset` (a byte offset into Text()), clamped to
     // the text and snapped down to a codepoint boundary.
     void SetCursorByteOffset(std::size_t offset);
+    // Shows a bullet per codepoint in place of the text: a password.
+    void SetMasked(bool masked);
 
     [[nodiscard]] const std::string& Text() const;
     [[nodiscard]] std::string        StatusText() const; // label + current text, for the echo area
@@ -62,6 +64,7 @@ class MinibufferPrompt {
     std::string label_;
     std::string text_;
     std::size_t cursor_ = 0; // byte offset into text_, always on a codepoint boundary
+    bool        masked_ = false;
 };
 
 } // namespace ned::editor

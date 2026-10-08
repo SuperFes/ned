@@ -1390,6 +1390,44 @@ void WindowManager::RequestTrustProjectInit(
     }
 }
 
+void WindowManager::AskSshQuestion(std::uint64_t id, const editor::remote::AskpassQuestion& question, editor::remote::AskpassReply reply) {
+    sshQuestions_.push_back(WaitingSshQuestion{.id = id, .question = question, .reply = std::move(reply)});
+    PumpSshQuestions();
+}
+
+void WindowManager::WithdrawSshQuestion(std::uint64_t id) {
+    if (const auto waiting = std::ranges::find(sshQuestions_, id, &WaitingSshQuestion::id); waiting != sshQuestions_.end()) {
+        waiting->reply.Drop();
+        sshQuestions_.erase(waiting);
+        return;
+    }
+    for (Pane* pane : Leaves()) {
+        pane->Buffer().WithdrawSshQuestion(id);
+    }
+}
+
+void WindowManager::PumpSshQuestions() {
+    if (sshQuestions_.empty() || std::ranges::any_of(Leaves(), [](Pane* pane) { return pane->Buffer().ShowsSshQuestion(); })) {
+        return;
+    }
+    // A connect often starts from the Remote panel, which then has the keys
+    // and no pane is focused.
+    Pane* pane = FocusedPane();
+    if (pane == nullptr && !Leaves().empty()) {
+        pane = Leaves().front();
+    }
+    if (pane == nullptr) {
+        return;
+    }
+    const bool answerable = sshQuestions_.front().question.kind != editor::remote::AskpassKind::Notice;
+    if (pane->Buffer().AskSshQuestion(sshQuestions_.front().id, sshQuestions_.front().question, sshQuestions_.front().reply)) {
+        sshQuestions_.pop_front();
+        if (answerable) {
+            pane->Buffer().TakeFocus();
+        }
+    }
+}
+
 void WindowManager::StartAutoSaveTimer(EventLoop& eventLoop) {
     autoSaveThread_ = std::jthread([this, &eventLoop](std::stop_token stopToken) {
         std::mutex                  mutex;

@@ -1652,6 +1652,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         wm->ResyncRemoteWatches();
     });
     remotePanel.SetOnListedChanged([wm = windowManager.get()] { wm->ResyncRemoteWatches(); });
+    remoteHosts.SetAskpass(
+        [wm = windowManager.get()](std::uint64_t id, const ned::editor::remote::AskpassQuestion& question,
+                                   std::function<void(ned::editor::remote::AskpassAnswer)> answer) {
+            wm->AskSshQuestion(id, question, ned::editor::remote::AskpassReply(std::move(answer)));
+        },
+        [wm = windowManager.get()](std::uint64_t id) { wm->WithdrawSshQuestion(id); });
 
     // Issue-tracker panels, below the built-in ones in declaration order:
     // init.janet's (already loaded), the project's own, then any its git
@@ -3494,7 +3500,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // every widget -- see the dispatch site below for why this is global
     // rather than per-widget.
     ned::ui::ModifierTapDetector modifierTapDetector;
-    callbacks.onEvent = [&](const Event& event) {
+    const auto                   routeEvent = [&](const Event& event) {
         if (event.is_mouse()) {
             // The rail tooltip is informational: the mouse reaching it hides it
             // and passes through, so the dock sees the mouse leave its rail.
@@ -3561,6 +3567,11 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
                 focused->OnEvent(event);
             }
         }
+    };
+    // An ssh question that waited on a prompt the event may have closed.
+    callbacks.onEvent = [&](const Event& event) {
+        routeEvent(event);
+        windowManager->PumpSshQuestions();
     };
 
     // paste-perf-and-drag-drop follow-up: same dispatch shape as onEvent's

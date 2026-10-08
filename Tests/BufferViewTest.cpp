@@ -16807,3 +16807,156 @@ TEST_CASE("revert-buffer reloads the file as one undoable step, and says when th
     CHECK(fixture.statusMessage == "Buffer \"scratch\" has no file to reload.");
     std::filesystem::remove(path);
 }
+
+namespace {
+
+// Records what each ssh question was answered with.
+struct SshReplies {
+    std::vector<ned::editor::remote::AskpassAnswer> sent;
+
+    ned::editor::remote::AskpassReply Make() {
+        return ned::editor::remote::AskpassReply([this](ned::editor::remote::AskpassAnswer answer) { sent.push_back(std::move(answer)); });
+    }
+};
+
+ned::editor::remote::AskpassQuestion SshQuestion(std::string prompt, ned::editor::remote::AskpassKind kind, std::string detail = {}) {
+    return ned::editor::remote::AskpassQuestion{.destination = "members-dev", .prompt = std::move(prompt), .kind = kind, .detail = std::move(detail)};
+}
+
+} // namespace
+
+TEST_CASE("An ssh password is typed unseen and answered on Enter", "[BufferView][Askpass]") {
+    Fixture                           fixture;
+    ned::ui::ActiveBuffer             activeBuffer(fixture.buffer);
+    ned::ui::BufferView               view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                                           fixture.statusMessage, fixture.mode, fixture.theme);
+    SshReplies                        replies;
+    ned::editor::remote::AskpassReply reply = replies.Make();
+
+    REQUIRE(view.AskSshQuestion(1, SshQuestion("aaron@members-dev's password: ", ned::editor::remote::AskpassKind::Secret), reply));
+    REQUIRE(view.ShowsSshQuestion());
+    TypeText(view, "hunter2");
+    REQUIRE(fixture.statusMessage == "aaron@members-dev's password: •••••••");
+    REQUIRE(fixture.buffer.Text().empty());
+
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(replies.sent == std::vector<ned::editor::remote::AskpassAnswer>{std::string("hunter2")});
+    REQUIRE_FALSE(view.ShowsSshQuestion());
+    REQUIRE(fixture.statusMessage.empty());
+}
+
+TEST_CASE("C-g cancels an ssh question", "[BufferView][Askpass]") {
+    Fixture                           fixture;
+    ned::ui::ActiveBuffer             activeBuffer(fixture.buffer);
+    ned::ui::BufferView               view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                                           fixture.statusMessage, fixture.mode, fixture.theme);
+    SshReplies                        replies;
+    ned::editor::remote::AskpassReply reply = replies.Make();
+
+    REQUIRE(view.AskSshQuestion(1, SshQuestion("Verification code: ", ned::editor::remote::AskpassKind::Secret), reply));
+    // A prompt that doesn't name its host is told which one asks.
+    REQUIRE(fixture.statusMessage == "members-dev: Verification code: ");
+    TypeText(view, "12");
+    view.OnEvent(ned::ui::test::Ctrl('g'));
+    REQUIRE(replies.sent == std::vector<ned::editor::remote::AskpassAnswer>{std::nullopt});
+    REQUIRE(fixture.statusMessage == "Cancelled ssh's question.");
+    REQUIRE_FALSE(view.ShowsSshQuestion());
+}
+
+TEST_CASE("The host-key question shows ssh's text on one line and takes y for yes", "[BufferView][Askpass]") {
+    Fixture                           fixture;
+    ned::ui::ActiveBuffer             activeBuffer(fixture.buffer);
+    ned::ui::BufferView               view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                                           fixture.statusMessage, fixture.mode, fixture.theme);
+    SshReplies                        replies;
+    ned::editor::remote::AskpassReply reply = replies.Make();
+
+    REQUIRE(view.AskSshQuestion(2,
+                                SshQuestion("The authenticity of host 'members-dev (10.0.0.5)' can't be established.\n"
+                                            "ED25519 key fingerprint is SHA256:abc.\n"
+                                            "Are you sure you want to continue connecting (yes/no/[fingerprint])? ",
+                                            ned::editor::remote::AskpassKind::Text),
+                                reply));
+    REQUIRE(fixture.statusMessage == "The authenticity of host 'members-dev (10.0.0.5)' can't be established. ED25519 key fingerprint is SHA256:abc. "
+                                     "Are you sure you want to continue connecting (yes/no/[fingerprint])? ");
+    TypeText(view, "y");
+    REQUIRE(fixture.statusMessage.ends_with("? y"));
+    view.OnEvent(ned::ui::test::Return());
+    REQUIRE(replies.sent == std::vector<ned::editor::remote::AskpassAnswer>{std::string("yes")});
+}
+
+TEST_CASE("A retried ssh question says why the last answer failed", "[BufferView][Askpass]") {
+    Fixture                           fixture;
+    ned::ui::ActiveBuffer             activeBuffer(fixture.buffer);
+    ned::ui::BufferView               view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                                           fixture.statusMessage, fixture.mode, fixture.theme);
+    SshReplies                        replies;
+    ned::editor::remote::AskpassReply reply = replies.Make();
+
+    REQUIRE(view.AskSshQuestion(
+        3, SshQuestion("aaron@members-dev's password: ", ned::editor::remote::AskpassKind::Secret, "Permission denied, please try again."), reply));
+    REQUIRE(fixture.statusMessage == "Permission denied, please try again. aaron@members-dev's password: ");
+}
+
+TEST_CASE("An ssh confirmation takes y or n alone", "[BufferView][Askpass]") {
+    Fixture                           fixture;
+    ned::ui::ActiveBuffer             activeBuffer(fixture.buffer);
+    ned::ui::BufferView               view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                                           fixture.statusMessage, fixture.mode, fixture.theme);
+    SshReplies                        replies;
+    ned::editor::remote::AskpassReply allow = replies.Make();
+    ned::editor::remote::AskpassReply deny  = replies.Make();
+
+    REQUIRE(view.AskSshQuestion(4, SshQuestion("Allow use of key id_ed25519 on members-dev?", ned::editor::remote::AskpassKind::Confirm), allow));
+    REQUIRE(fixture.statusMessage == "Allow use of key id_ed25519 on members-dev? (y/n)");
+    view.OnEvent(ned::ui::test::Character("x"));
+    REQUIRE(replies.sent.empty());
+    view.OnEvent(ned::ui::test::Character("y"));
+    REQUIRE(view.AskSshQuestion(5, SshQuestion("Allow use of key id_ed25519 on members-dev?", ned::editor::remote::AskpassKind::Confirm), deny));
+    view.OnEvent(ned::ui::test::Character("n"));
+    REQUIRE(replies.sent == std::vector<ned::editor::remote::AskpassAnswer>{std::string("yes"), std::nullopt});
+    REQUIRE(fixture.buffer.Text().empty());
+}
+
+TEST_CASE("An ssh notice shows in the echo area until withdrawn, leaving the keys alone", "[BufferView][Askpass]") {
+    Fixture                           fixture;
+    ned::ui::ActiveBuffer             activeBuffer(fixture.buffer);
+    ned::ui::BufferView               view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                                           fixture.statusMessage, fixture.mode, fixture.theme);
+    SshReplies                        replies;
+    ned::editor::remote::AskpassReply reply = replies.Make();
+
+    REQUIRE(view.AskSshQuestion(6, SshQuestion("Confirm user presence for key ED25519-SK SHA256:abc", ned::editor::remote::AskpassKind::Notice), reply));
+    REQUIRE(fixture.statusMessage == "members-dev: Confirm user presence for key ED25519-SK SHA256:abc");
+    REQUIRE(view.ShowsSshQuestion());
+    TypeText(view, "ab");
+    REQUIRE(fixture.buffer.Text() == "ab");
+
+    view.WithdrawSshQuestion(99);
+    REQUIRE(view.ShowsSshQuestion());
+    view.WithdrawSshQuestion(6);
+    REQUIRE_FALSE(view.ShowsSshQuestion());
+    REQUIRE(fixture.statusMessage.empty());
+    // A withdrawn question is never answered.
+    REQUIRE(replies.sent.empty());
+}
+
+TEST_CASE("An ssh question waits for an open prompt, and one closed any other way is cancelled", "[BufferView][Askpass]") {
+    Fixture               fixture;
+    ned::ui::ActiveBuffer activeBuffer(fixture.buffer);
+    SshReplies            replies;
+    {
+        ned::ui::BufferView               view(activeBuffer, fixture.killRing, fixture.registers, fixture.promptHistory, fixture.bufferList, fixture.dispatcher,
+                                               fixture.statusMessage, fixture.mode, fixture.theme);
+        ned::editor::remote::AskpassReply waiting = replies.Make();
+        view.OnEvent(ned::ui::test::Ctrl('x'));
+        view.OnEvent(ned::ui::test::Ctrl('f'));
+        REQUIRE_FALSE(view.AskSshQuestion(7, SshQuestion("Password: ", ned::editor::remote::AskpassKind::Secret), waiting));
+        REQUIRE(fixture.statusMessage.starts_with("Find file: "));
+        view.OnEvent(ned::ui::test::Ctrl('g'));
+        REQUIRE(view.AskSshQuestion(7, SshQuestion("Password: ", ned::editor::remote::AskpassKind::Secret), waiting));
+        REQUIRE(replies.sent.empty());
+        // The view goes away with the question still open.
+    }
+    REQUIRE(replies.sent == std::vector<ned::editor::remote::AskpassAnswer>{std::nullopt});
+}

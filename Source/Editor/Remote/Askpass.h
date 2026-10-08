@@ -19,6 +19,7 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace ned::editor::remote {
 
@@ -50,6 +51,43 @@ using AskpassAnswer = std::optional<std::string>;
 // is requested: the login ended, was cancelled, or ssh stopped waiting. A
 // Notice has no answer and blocks until withdrawn.
 using AskpassHandler = std::function<AskpassAnswer(const AskpassQuestion& question, const std::stop_token& withdrawn)>;
+
+// A question's answer, sent once. Destroying it unsent cancels the
+// question, so one whose prompt goes away never leaves ssh waiting.
+class AskpassReply {
+  public:
+    AskpassReply() = default;
+    explicit AskpassReply(std::function<void(AskpassAnswer)> send) : send_(std::move(send)) {
+    }
+    ~AskpassReply() {
+        Send(std::nullopt);
+    }
+
+    AskpassReply(AskpassReply&& other) noexcept : send_(std::exchange(other.send_, nullptr)) {
+    }
+    AskpassReply& operator=(AskpassReply&& other) noexcept {
+        if (this != &other) {
+            Send(std::nullopt);
+            send_ = std::exchange(other.send_, nullptr);
+        }
+        return *this;
+    }
+    AskpassReply(const AskpassReply&)            = delete;
+    AskpassReply& operator=(const AskpassReply&) = delete;
+
+    void Send(AskpassAnswer answer) {
+        if (std::function<void(AskpassAnswer)> send = std::exchange(send_, nullptr)) {
+            send(std::move(answer));
+        }
+    }
+    // Forgets the question without answering it: it was withdrawn.
+    void Drop() noexcept {
+        send_ = nullptr;
+    }
+
+  private:
+    std::function<void(AskpassAnswer)> send_;
+};
 
 // The relay, in the process ssh started as SSH_ASKPASS: sends prompt and
 // hint to socketPath and writes the answer and a newline to output.

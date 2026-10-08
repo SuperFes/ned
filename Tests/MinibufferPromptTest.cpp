@@ -186,3 +186,16 @@ TEST_CASE("CursorDisplayColumn counts codepoints across label and text, one colu
     prompt.MoveCursorToStart();
     REQUIRE(prompt.CursorDisplayColumn() == 2); // right after the label, before any text
 }
+
+TEST_CASE("A masked prompt shows a bullet per codepoint and keeps the real text", "[MinibufferPrompt]") {
+    MinibufferPrompt prompt("Password: ");
+    prompt.SetMasked(true);
+    prompt.InsertChar(U'p');
+    prompt.InsertChar(U'é');
+    prompt.InsertChar(U'w');
+    prompt.MoveCursorLeft();
+
+    REQUIRE(prompt.Text() == "péw");
+    REQUIRE(prompt.StatusText() == "Password: •••");
+    REQUIRE(prompt.CursorDisplayColumn() == 12);
+}

@@ -1277,3 +1277,47 @@ TEST_CASE("A destroyed WindowManager leaves no async save dispatcher behind", "[
     CHECK_FALSE(buffer.Modified());
     std::filesystem::remove(path);
 }
+
+TEST_CASE("ssh questions wait for the focused pane's prompt and show one at a time", "[WindowManager][Askpass]") {
+    using ned::editor::remote::AskpassAnswer;
+    using ned::editor::remote::AskpassKind;
+    using ned::editor::remote::AskpassQuestion;
+    using ned::editor::remote::AskpassReply;
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus(); // see Fixture::Manager()'s own doc comment
+    ned::ui::Widget&           root = manager.RootComponent();
+    std::vector<AskpassAnswer> sent;
+    const auto                 reply    = [&sent] { return AskpassReply([&sent](AskpassAnswer answer) { sent.push_back(std::move(answer)); }); };
+    const auto                 question = [](std::string prompt) {
+        return AskpassQuestion{.destination = "members-dev", .prompt = std::move(prompt), .kind = AskpassKind::Secret, .detail = {}};
+    };
+
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Ctrl('f')});
+    manager.AskSshQuestion(1, question("Password: "), reply());
+    manager.AskSshQuestion(2, question("Verification code: "), reply());
+    REQUIRE(fixture.statusMessage.starts_with("Find file: "));
+
+    FeedSequence(root, {ned::ui::test::Ctrl('g')});
+    manager.PumpSshQuestions();
+    REQUIRE(fixture.statusMessage == "members-dev: Password: ");
+    manager.PumpSshQuestions();
+    REQUIRE(fixture.statusMessage == "members-dev: Password: ");
+
+    FeedSequence(root, {ned::ui::test::Character("p"), ned::ui::test::Return()});
+    manager.PumpSshQuestions();
+    REQUIRE(sent == std::vector<AskpassAnswer>{std::string("p")});
+    REQUIRE(fixture.statusMessage == "members-dev: Verification code: ");
+
+    manager.WithdrawSshQuestion(2);
+    REQUIRE(fixture.statusMessage.empty());
+
+    // One withdrawn while it waits never shows, and is never answered.
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Ctrl('f')});
+    manager.AskSshQuestion(3, question("Password: "), reply());
+    manager.WithdrawSshQuestion(3);
+    FeedSequence(root, {ned::ui::test::Ctrl('g')});
+    manager.PumpSshQuestions();
+    REQUIRE(fixture.statusMessage.find("Password") == std::string::npos);
+    REQUIRE(sent.size() == 1);
+}
