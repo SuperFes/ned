@@ -653,6 +653,13 @@ class Manager {
                            QuestionAsked };
     void SetOnAttention(std::function<void(Attention attention, std::chrono::steady_clock::duration turnElapsed)> handler);
 
+    // A path the current conversation's agent named, as a file on the
+    // machine that agent ran on.
+    [[nodiscard]] text::FileRef FileFor(const std::string& path) const;
+    // The directory the current conversation works in, on that machine:
+    // what its paths are shown relative to.
+    [[nodiscard]] std::filesystem::path TranscriptRoot() const;
+
     // A live tool call reached a new file (its first location changed) --
     // what following the agent opens. Not fired while replaying a loaded
     // session.
@@ -693,6 +700,9 @@ class Manager {
         std::string   title;             // session_info_update's
         bool          attention = false; // something happened while it wasn't shown
         bool          creating  = false; // session/new or session/fork not answered yet
+        // Where its agent ran: the host (empty for here) and the session's cwd.
+        std::string           host;
+        std::filesystem::path root;
 
         std::vector<TranscriptEntry> transcript;
         std::size_t                  generation = 0; // see Bump

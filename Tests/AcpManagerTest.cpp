@@ -149,6 +149,16 @@ TEST_CASE("Manager::StartSession runs initialize then session/new and reaches Ac
 }
 
 // ACP MCP tool-server bridge, slice 1.
+TEST_CASE("A local agent's paths are files here, shown against the project root", "[Acp]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartActiveSession("test-agent");
+
+    CHECK_FALSE(fixture.manager.AgentBeside().has_value());
+    CHECK(fixture.manager.FileFor("/src/a.c") == ned::text::FileRef(std::filesystem::path("/src/a.c")));
+    CHECK(fixture.manager.TranscriptRoot() == ned::editor::ProjectRoot());
+}
+
 TEST_CASE("Manager::StartSession advertises a stdio MCP server when a bridge is wired", "[Acp][Mcp]") {
     ManagerFixture fixture;
     fixture.InjectClient();

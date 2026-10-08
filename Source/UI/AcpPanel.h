@@ -101,7 +101,7 @@ class AcpPanel : public Widget {
 
     // Invoked when a tool call's location line is clicked; main.cpp opens
     // the file in an editor pane. `line` is 1-based.
-    void SetOnOpenLocation(std::function<void(const std::filesystem::path& path, std::size_t line)> onOpenLocation);
+    void SetOnOpenLocation(std::function<void(const text::FileRef& file, std::size_t line)> onOpenLocation);
 
     // Opens the review of a turn's file changes, from the review picker.
     void SetOnReviewRequest(std::function<void(std::string title, std::vector<editor::acp::TurnFile> files)> onReview);
@@ -452,7 +452,7 @@ class AcpPanel : public Widget {
     std::size_t                  lastTranscriptSize_           = 0;
     long long                    transcriptRowsTick_           = -1;
 
-    std::function<void(const std::filesystem::path&, std::size_t)>  onOpenLocation_;
+    std::function<void(const text::FileRef&, std::size_t)>               onOpenLocation_;
     std::function<void(const std::string&, const std::string&)>     desktopNotifier_;
     std::function<void(std::string, editor::acp::ComposeCallbacks)> onComposeRequest_;
     std::function<void()>                                           onRefocusRequest_;

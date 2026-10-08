@@ -1224,10 +1224,10 @@ TEST_CASE("AcpPanel opens a clicked tool location at its 1-based line", "[AcpPan
     Fixture fixture;
     fixture.InjectClient();
     fixture.StartActiveSession("claude-code");
-    std::filesystem::path opened;
-    std::size_t           openedLine = 0;
-    fixture.panel.SetOnOpenLocation([&](const std::filesystem::path& path, std::size_t line) {
-        opened     = path;
+    ned::text::FileRef opened;
+    std::size_t        openedLine = 0;
+    fixture.panel.SetOnOpenLocation([&](const ned::text::FileRef& file, std::size_t line) {
+        opened     = file;
         openedLine = line;
     });
     fixture.SendUpdate(ToolCallUpdate("t1", "completed"));
@@ -1235,7 +1235,7 @@ TEST_CASE("AcpPanel opens a clicked tool location at its 1-based line", "[AcpPan
     fixture.Paint();
 
     REQUIRE(fixture.panel.OnEvent(ned::ui::test::Mouse(6, 3, ned::ui::MouseEvent::Button::Left, ned::ui::MouseEvent::Motion::Pressed)));
-    REQUIRE(opened == ned::editor::ProjectRoot() / "Tests/Foo.cpp");
+    REQUIRE(opened == ned::text::FileRef(ned::editor::ProjectRoot() / "Tests/Foo.cpp"));
     REQUIRE(openedLine == 10);
 }
 

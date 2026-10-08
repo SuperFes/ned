@@ -990,7 +990,7 @@ const std::vector<acppanel::PhysicalLine>& AcpPanel::TranscriptRows(int width) {
                                                                    {.width        = width,
                                                                     .expanded     = [this](std::size_t index) { return EntryExpanded(index); },
                                                                     .hideThinking = thinking == editor::acp::ThinkingDisplay::Hidden,
-                                                                    .projectRoot  = editor::ProjectRoot(),
+                                                                    .projectRoot  = acpManager_->TranscriptRoot(),
                                                                     .highlightCode =
                                                                         [this](std::string_view language, std::string_view code) {
                                                                return HighlightCode(language, code);
@@ -1147,7 +1147,7 @@ bool AcpPanel::ActivateRowAt(int y) {
             return true;
         case acppanel::LineAction::OpenLocation:
             if (line.location && onOpenLocation_) {
-                onOpenLocation_(line.location->path, line.location->line.value_or(1));
+                onOpenLocation_(acpManager_->FileFor(line.location->path), line.location->line.value_or(1));
             }
             return line.location.has_value();
         case acppanel::LineAction::Copy:
@@ -1230,7 +1230,7 @@ void AcpPanel::NoteAttention(editor::acp::Manager::Attention attention, std::chr
                      body);
 }
 
-void AcpPanel::SetOnOpenLocation(std::function<void(const std::filesystem::path&, std::size_t)> onOpenLocation) {
+void AcpPanel::SetOnOpenLocation(std::function<void(const text::FileRef&, std::size_t)> onOpenLocation) {
     onOpenLocation_ = std::move(onOpenLocation);
 }
 

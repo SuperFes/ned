@@ -149,3 +149,28 @@ TEST_CASE("A host's ACP agent writes its files on the host", "[Acp][AcpRemote][H
     CHECK(f.manager.CheckpointAt(0).untrackedFiles == std::vector<text::FileRef>{text::RemoteFile{.destination = "host", .path = created}});
     f.manager.StopSession();
 }
+
+TEST_CASE("The paths a host's ACP agent names are files on that host", "[Acp][AcpRemote][HostAgent]") {
+    Fixture                                   f;
+    std::optional<acp::Manager::ToolLocation> reached;
+    f.manager.SetOnToolLocation([&](const acp::Manager::ToolLocation& location) { reached = location; });
+    REQUIRE(f.Start());
+    CHECK(f.manager.TranscriptRoot() == f.agent.project);
+
+    const Json toolCall{{"sessionUpdate", "tool_call"},
+                        {"toolCallId", "t1"},
+                        {"title", "Read a.c"},
+                        {"kind", "read"},
+                        {"status", "in_progress"},
+                        {"locations", Json::array({Json{{"path", f.agent.file.string()}, {"line", 1}}})}};
+    const Json script = Json::array({Json{{"method", "session/update"}, {"notify", true}, {"params", {{"sessionId", "s1"}, {"update", toolCall}}}}});
+    CHECK(f.manager.SendPrompt(script.dump()) == "Sent.");
+    REQUIRE(PumpUntil(f.loop, [&] { return !f.manager.PromptInFlight() && f.Said("done"); }));
+    REQUIRE(reached.has_value());
+    CHECK(f.manager.FileFor(reached->path) == text::FileRef(f.File()));
+
+    // The conversation stays on the host's files once the agent has gone.
+    f.manager.StopSession();
+    CHECK(f.manager.FileFor(f.agent.file.string()) == text::FileRef(f.File()));
+    CHECK(f.manager.TranscriptRoot() == f.agent.project);
+}
