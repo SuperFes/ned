@@ -1034,18 +1034,20 @@ void WindowManager::SetDapManager(editor::dap::Manager* dapManager) {
     // EventLoop::Run repaints unconditionally -- same as every other async
     // completion in this codebase.
     dapManager->SetOnStopped([this](const editor::dap::Manager::StoppedInfo& info) {
-        if (info.path) {
+        if (info.file) {
             // Status first, jump second: JumpToPathLine reports its own
             // failure via statusMessage_, and that error must survive, not
             // be overwritten by the happy-path text.
-            statusMessage_ = "Stopped (" + info.reason + ") at " + info.path->filename().string() + ":" +
-                             std::to_string(info.line);
+            const auto* remote = std::get_if<text::RemoteFile>(&*info.file);
+            statusMessage_     = "Stopped (" + info.reason + ") at " +
+                                 (remote ? text::RemoteBufferName(*remote) : text::PathOf(*info.file).filename().string()) + ":" +
+                                 std::to_string(info.line);
             Pane* pane     = FocusedPane();
             if (pane == nullptr && !Leaves().empty()) {
                 pane = Leaves().front();
             }
             if (pane != nullptr) {
-                pane->Buffer().JumpToPathLine(*info.path, info.line);
+                pane->Buffer().JumpToFileLine(*info.file, info.line);
             }
         }
         else {

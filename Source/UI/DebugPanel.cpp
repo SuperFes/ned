@@ -520,13 +520,13 @@ void DebugPanel::PushModel() {
                 break;
             }
             case Row::Kind::Frame: {
-                const std::filesystem::path* path = nullptr;
-                std::size_t                  line = 0;
+                const text::FileRef* file = nullptr;
+                std::size_t          line = 0;
                 for (const auto& [threadId, frames] : frames_) {
                     const auto it =
                         std::find_if(frames.begin(), frames.end(), [&row](const auto& frame) { return frame.id == row.id; });
                     if (it != frames.end()) {
-                        path = it->path ? &*it->path : nullptr;
+                        file = it->file ? &*it->file : nullptr;
                         line = it->line;
                         break;
                     }
@@ -538,8 +538,8 @@ void DebugPanel::PushModel() {
                 out.label               = row.key;
                 out.depth               = 2;
                 out.hasChildren         = false;
-                if (path != nullptr) {
-                    out.right = path->filename().string() + ":" + std::to_string(line);
+                if (file != nullptr) {
+                    out.right = text::PathOf(*file).filename().string() + ":" + std::to_string(line);
                 }
                 else {
                     // A frame with no source is real and common (a libc
@@ -720,8 +720,8 @@ void DebugPanel::PushModel() {
                 out.label          = source.name;
                 out.depth          = 1;
                 out.hasChildren    = false;
-                if (source.path) {
-                    out.right = source.path->parent_path().filename().string();
+                if (source.file) {
+                    out.right = text::PathOf(*source.file).parent_path().filename().string();
                 }
                 else {
                     // A source the adapter knows but that has no file --
@@ -892,8 +892,8 @@ void DebugPanel::HandleActivate(std::size_t index) {
             FetchWatchValues();
             for (const auto& [threadId, frames] : frames_) {
                 const auto it = std::find_if(frames.begin(), frames.end(), [&row](const auto& f) { return f.id == row.id; });
-                if (it != frames.end() && it->path && onVisitLocation_) {
-                    onVisitLocation_(*it->path, it->line);
+                if (it != frames.end() && it->file && onVisitLocation_) {
+                    onVisitLocation_(*it->file, it->line);
                     break;
                 }
             }
@@ -921,8 +921,8 @@ void DebugPanel::HandleActivate(std::size_t index) {
             Report("Press 'c' to edit this watch, 'd' to remove it.");
             return;
         case Row::Kind::LoadedSource: {
-            if (row.index < loadedSources_.size() && loadedSources_[row.index].path && onVisitLocation_) {
-                onVisitLocation_(*loadedSources_[row.index].path, 1);
+            if (row.index < loadedSources_.size() && loadedSources_[row.index].file && onVisitLocation_) {
+                onVisitLocation_(*loadedSources_[row.index].file, 1);
                 return;
             }
             Report("That source has no file to open.");

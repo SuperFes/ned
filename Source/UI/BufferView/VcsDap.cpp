@@ -1041,11 +1041,11 @@ void BufferView::BuildDebugInfoLines(std::function<void(std::vector<std::string>
             // marker, RestartFrameAtPoint's counterpart to
             // FormatDebugVariableLine's "[ref:N]"/"[owner:M]".
             const std::string frameMarker = "  [frame:" + std::to_string(frame.id) + "]";
-            if (frame.path) {
+            if (frame.file) {
                 // The established "path:line: text" results convention, so
                 // C-c C-v (project-search-visit-result) jumps to a frame
                 // with zero new navigation plumbing.
-                lines->push_back(frame.path->string() + ":" + std::to_string(frame.line) + ": #" + std::to_string(i) +
+                lines->push_back(text::ToString(*frame.file) + ":" + std::to_string(frame.line) + ": #" + std::to_string(i) +
                                  " " + frame.name + frameMarker);
             }
             else {
@@ -1533,11 +1533,11 @@ void BufferView::BuildDisassemblyBuffer(const std::vector<editor::dap::Manager::
     std::string text;
     for (const editor::dap::Manager::DisassembledInstruction& instruction : instructions) {
         std::string line;
-        if (instruction.path) {
+        if (instruction.file) {
             // The established "path:line: text" results convention, so
             // C-c C-v (project-search-visit-result) jumps to a located
             // instruction's source line with zero new navigation plumbing.
-            line += instruction.path->string() + ":" + std::to_string(instruction.line) + ": ";
+            line += text::ToString(*instruction.file) + ":" + std::to_string(instruction.line) + ": ";
         }
         line += (instruction.address == pcAddress) ? "-> " : "   ";
         line += instruction.address;

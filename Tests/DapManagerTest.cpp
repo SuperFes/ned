@@ -487,8 +487,8 @@ TEST_CASE("A stopped event fetches the top stack frame and reports its source lo
 
     REQUIRE(stoppedFired);
     REQUIRE(stopped.reason == "breakpoint");
-    REQUIRE(stopped.path.has_value());
-    REQUIRE(*stopped.path == std::filesystem::path("/tmp/dap-test-stop.c"));
+    REQUIRE(stopped.file.has_value());
+    REQUIRE(*stopped.file == ned::text::FileRef(std::filesystem::path("/tmp/dap-test-stop.c")));
     REQUIRE(stopped.line == 42);
 
     // continue resumes the stopped thread.
@@ -1507,10 +1507,10 @@ TEST_CASE("RequestDisassembly sends disassemble with the given window and parses
     REQUIRE(instructions.size() == 2);
     REQUIRE(instructions[0].address == "0xffe");
     REQUIRE(instructions[0].instructionBytes == "90");
-    REQUIRE_FALSE(instructions[0].path.has_value());
+    REQUIRE_FALSE(instructions[0].file.has_value());
     REQUIRE(instructions[1].instruction == "call foo");
-    REQUIRE(instructions[1].path.has_value());
-    REQUIRE(*instructions[1].path == std::filesystem::path("/tmp/dap-test.c"));
+    REQUIRE(instructions[1].file.has_value());
+    REQUIRE(*instructions[1].file == ned::text::FileRef(std::filesystem::path("/tmp/dap-test.c")));
     REQUIRE(instructions[1].line == 12);
     SetLaunchConfig("dap-manager-test-disassemble", "");
 }

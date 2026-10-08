@@ -72,6 +72,25 @@ TEST_CASE("A remote buffer's debug adapter runs on its host, in the project root
     CHECK(f.manager.State() == dap::Manager::SessionState::Inactive);
 }
 
+TEST_CASE("A host's debug adapter reports where it stopped as files on that host", "[Dap][DapRemote][HostAgent]") {
+    Fixture                                  f;
+    std::optional<dap::Manager::StoppedInfo> stopped;
+    f.manager.SetOnStopped([&](const dap::Manager::StoppedInfo& info) { stopped = info; });
+
+    REQUIRE(f.manager.StartOrContinue(kLanguage, f.File()).ends_with("on host..."));
+    REQUIRE(PumpUntil(f.loop, [&] { return stopped.has_value(); }));
+    CHECK(stopped->file == std::optional<text::FileRef>(f.File()));
+    CHECK(stopped->line == 2);
+    CHECK(f.manager.CurrentStopKeyAndLine() == std::make_optional(std::make_pair(f.File().ToString(), std::size_t{2})));
+
+    std::optional<std::vector<dap::Manager::StackFrame>> frames;
+    f.manager.RequestStackTrace([&](std::vector<dap::Manager::StackFrame> answer) { frames = std::move(answer); });
+    REQUIRE(PumpUntil(f.loop, [&] { return frames.has_value(); }));
+    REQUIRE(frames->size() == 1);
+    CHECK(frames->front().file == std::optional<text::FileRef>(f.File()));
+    f.manager.StopSession();
+}
+
 TEST_CASE("A debug session stopped before its adapter starts on the host never starts it", "[Dap][DapRemote][HostAgent]") {
     Fixture f;
     REQUIRE(f.manager.StartOrContinue(kLanguage, f.File()).ends_with("on host..."));
