@@ -1519,6 +1519,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     testRunner.SetHosts(&remoteHosts);
     vcsRunner.SetHosts(&remoteHosts);
     lspManager.SetRemoteHosts(&remoteHosts);
+    dapManager.SetRemoteHosts(&remoteHosts);
     windowManager->EnableRemoteSaving(eventLoop);
     windowManager->LoadRemoteBuffers(restoredRemoteBuffers);
 

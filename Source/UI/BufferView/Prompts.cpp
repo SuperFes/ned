@@ -1286,10 +1286,11 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         // ending) arrive later through the WindowManager-wired
         // SetOnStopped/SetOnSessionEnded callbacks, not here.
         case editor::InteractiveRequest::DapContinue:
-            statusMessage_ = dapManager_ ? dapManager_->StartOrContinue(editor::LanguageKeyForMode(mode_)) : "No debugger available.";
+            statusMessage_ = dapManager_ ? dapManager_->StartOrContinue(editor::LanguageKeyForMode(mode_), activeBuffer_.Get().Remote())
+                                         : "No debugger available.";
             return;
         case editor::InteractiveRequest::DapAttach:
-            statusMessage_ = dapManager_ ? dapManager_->Attach(editor::LanguageKeyForMode(mode_)) : "No debugger available.";
+            statusMessage_ = dapManager_ ? dapManager_->Attach(editor::LanguageKeyForMode(mode_), activeBuffer_.Get().Remote()) : "No debugger available.";
             return;
         case editor::InteractiveRequest::DapStop:
             statusMessage_ = dapManager_ ? dapManager_->StopSession() : "No debugger available.";

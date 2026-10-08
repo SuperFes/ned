@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "Config.h"
+#include "Editor/Remote/Placement.h"
 #include "Editor/Sparkline.h"
 
 namespace ned::editor::dap {
@@ -871,7 +872,7 @@ void Manager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     }
 }
 
-std::string Manager::StartOrContinue(const std::string& language) {
+std::string Manager::StartOrContinue(const std::string& language, const std::optional<text::RemoteFile>& beside) {
     if (state_ == SessionState::Stopped) {
         client_->SendRequest("continue", Json{{"threadId", CurrentThreadId()}},
                              [this](bool success, const Json&, const std::string& message) {
@@ -890,20 +891,20 @@ std::string Manager::StartOrContinue(const std::string& language) {
     if (!LaunchConfig(language)) {
         return "No launch configuration for " + language + " (ned/set-dap-launch).";
     }
-    return BeginSession(language, /*attach=*/false);
+    return BeginSession(language, /*attach=*/false, beside);
 }
 
-std::string Manager::Attach(const std::string& language) {
+std::string Manager::Attach(const std::string& language, const std::optional<text::RemoteFile>& beside) {
     if (state_ != SessionState::Inactive) {
         return "Debug session already running.";
     }
     if (!AttachConfig(language)) {
         return "No attach configuration for " + language + " (ned/set-dap-attach).";
     }
-    return BeginSession(language, /*attach=*/true);
+    return BeginSession(language, /*attach=*/true, beside);
 }
 
-std::string Manager::BeginSession(const std::string& language, bool attach) {
+std::string Manager::BeginSession(const std::string& language, bool attach, const std::optional<text::RemoteFile>& beside) {
     capabilities_ = Capabilities{}; // fresh adapter, fresh capabilities -- see the header's own doc comment
     exceptionFilters_.clear();
     enabledExceptionFilters_.clear();
@@ -918,6 +919,9 @@ std::string Manager::BeginSession(const std::string& language, bool attach) {
         if (!argv) {
             return "No debug adapter configured for " + language + " (ned/set-dap-adapter).";
         }
+        if (beside) {
+            return BeginSessionOnHost(language, *beside, *argv);
+        }
         try {
             client_ = std::make_unique<Client>(*argv, eventLoop_);
         }
@@ -930,14 +934,40 @@ std::string Manager::BeginSession(const std::string& language, bool attach) {
     // handshake against it.
 
     language_ = language;
+    sessionHost_ = beside ? std::optional<std::string>(beside->destination) : std::nullopt;
     SetState(SessionState::Starting);
+    SendInitialize();
+    return std::string("Starting debug session (") + language + ")...";
+}
+
+std::string Manager::BeginSessionOnHost(const std::string& language, const text::RemoteFile& beside, const std::vector<std::string>& argv) {
+    language_    = language;
+    sessionHost_ = beside.destination;
+    SetState(SessionState::Starting);
+    // No cwd: the adapter starts in the project root found on the host.
+    remote::SpawnBeside(hosts_, beside, remote::RemoteSpawn{.argv = argv, .stderrMode = process::StderrMode::Capture},
+                        spawnLifetime_.Token(), [this, label = std::filesystem::path(argv.front()).filename().string()](remote::Spawned spawned) {
+                            if (!spawned) {
+                                EndSession("Failed to start debug adapter: " + spawned.error());
+                                return;
+                            }
+                            client_ = std::make_unique<Client>(lsp::Transport(std::move(spawned->child), label), eventLoop_);
+                            SendInitialize();
+                        });
+    if (state_ == SessionState::Inactive) {
+        return "Debug session failed to start."; // why went to SetOnSessionEnded
+    }
+    return std::string("Starting debug session (") + language + ") on " + beside.destination + "...";
+}
+
+void Manager::SendInitialize() {
     WireClient(*client_);
 
     client_->SendRequest("initialize",
                          Json{
                              {"clientID", "ned"},
                              {"clientName", "ned"},
-                             {"adapterID", language},
+                             {"adapterID", language_},
                              {"linesStartAt1", true},
                              {"columnsStartAt1", true},
                              {"pathFormat", "path"},
@@ -1022,7 +1052,6 @@ std::string Manager::BeginSession(const std::string& language, bool attach) {
                              }
                              SendLaunchOrAttach();
                          });
-    return std::string("Starting debug session (") + language + ")...";
 }
 
 void Manager::SendLaunchOrAttach() {
@@ -1314,14 +1343,17 @@ std::string Manager::StopSession() {
     // right below could race the write thread's own stop and silently drop
     // this "disconnect" frame before it ever reaches the wire (see
     // Client.h's own header comment).
-    try {
-        client_->PrepareForGracefulShutdown();
-        // DAP round 3: an attached session never kills a process ned didn't
-        // start -- only a launched one does.
-        client_->SendRequest("disconnect", Json{{"terminateDebuggee", !isAttach_}}, [](bool, const Json&, const std::string&) {});
-    }
-    catch (const std::exception&) {
-        // EPIPE from an already-dead adapter — teardown proceeds regardless.
+    // An adapter still starting on a host has nothing to be told.
+    if (client_) {
+        try {
+            client_->PrepareForGracefulShutdown();
+            // DAP round 3: an attached session never kills a process ned didn't
+            // start -- only a launched one does.
+            client_->SendRequest("disconnect", Json{{"terminateDebuggee", !isAttach_}}, [](bool, const Json&, const std::string&) {});
+        }
+        catch (const std::exception&) {
+            // EPIPE from an already-dead adapter — teardown proceeds regardless.
+        }
     }
     EndSession("Debug session stopped.");
     return "Debug session stopped.";
@@ -2013,6 +2045,9 @@ void Manager::EndSession(std::string reason) {
     ClearFrameLocals();
     ++frameLocalsGeneration_;
     isAttach_ = false;
+    sessionHost_.reset();
+    // An adapter still starting on a host is dropped when it arrives.
+    spawnLifetime_.Revoke();
     // lsp-use-after-free follow-up: client_ used to move into retired_ here
     // instead of destroying in place, deferring to the next StartOrContinue
     // ("safe here: nothing of a previous session is on the stack" -- true,
@@ -2038,6 +2073,10 @@ void Manager::SetOnStopped(std::function<void(const StoppedInfo&)> handler) {
 
 void Manager::SetOnSessionEnded(std::function<void(std::string)> handler) {
     onSessionEnded_ = std::move(handler);
+}
+
+void Manager::SetRemoteHosts(remote::Hosts* hosts) {
+    hosts_ = hosts;
 }
 
 Client& Manager::SetClientForTesting(std::unique_ptr<Client> client) {
