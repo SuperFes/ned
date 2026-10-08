@@ -60,7 +60,9 @@
 #include "UI/EventLoop.h"
 
 #include "Client.h"
+#include "ConnectionKey.h"
 #include "Content.h"
+#include "Editor/Lifetime.h"
 // prose-checking follow-up: diagnosticsBySource_ stores
 // std::vector<text::Buffer::Diagnostic> directly, which needs Buffer's full
 // definition to name that nested type -- a forward declaration is no longer
@@ -72,6 +74,10 @@
 namespace ned::text {
 class BufferList;
 } // namespace ned::text
+
+namespace ned::editor::remote {
+class Hosts;
+} // namespace ned::editor::remote
 
 namespace ned::editor::lsp {
 
@@ -112,8 +118,11 @@ inline constexpr std::string_view kProseLanguageKey = "prose";
 // passes here; left as Json::object() (the default) for a language with
 // nothing configured, in which case the field is omitted entirely rather
 // than sent as an empty object.
+//
+// A server on a host gets no processId (local false): it can't see this
+// process, and one watching it would take it for dead and exit.
 [[nodiscard]] Json BuildInitializeParams(const std::filesystem::path& projectRoot,
-                                         const Json&                  initializationOptions = Json::object());
+                                         const Json& initializationOptions = Json::object(), bool local = true);
 
 class Manager {
   public:
@@ -127,6 +136,12 @@ class Manager {
 
     Manager(const Manager&)            = delete;
     Manager& operator=(const Manager&) = delete;
+
+    // Where a remote buffer's servers run, on its host; without it a remote
+    // buffer gets none.
+    void SetRemoteHosts(remote::Hosts* hosts) {
+        hosts_ = hosts;
+    }
 
     // Lazily spawns (+ initialize/initialized-handshakes) a server for
     // language if ServerCommand(language) is configured and none is
@@ -1580,7 +1595,11 @@ class Manager {
     // into TryConnectToBroker's own (root, language) keying -- see
     // ConnectionKey for how it also (usually invisibly) affects clients_'s
     // own key.
-    Client* ClientForLanguage(const std::string& serverKey, const std::filesystem::path& root);
+    //
+    // A root on a host is connected to and spawned there, so its first call
+    // returns nullptr and a later one, after the event loop has run, the
+    // client.
+    Client* ClientForLanguage(const std::string& serverKey, const ServerRoot& root);
 
     // LSP multi-root follow-up: clients_'s actual key for (root, serverKey)
     // -- collapses to serverKey unchanged when root equals
@@ -1592,7 +1611,7 @@ class Manager {
     // tier actually matched) earns a distinct, composite connection
     // identity. '\x1f' separator mirrors activeProgress_'s own existing
     // composite-key convention below, not a new one.
-    [[nodiscard]] std::string ConnectionKey(const std::filesystem::path& root, const std::string& serverKey) const;
+    [[nodiscard]] std::string ConnectionKey(const ServerRoot& root, const std::string& serverKey) const;
 
     // lsp-workspace-folders follow-up: ConnectionKey's result, then
     // redirected through joinedConnection_ if this root joined another
@@ -1601,11 +1620,12 @@ class Manager {
     // BufferSyncState stamping, ClientForLanguage's own lookup) goes
     // through this rather than ConnectionKey directly, so a joined root is
     // indistinguishable from a natively-owned one everywhere downstream.
-    [[nodiscard]] std::string ResolvedConnectionKey(const std::filesystem::path& root, const std::string& serverKey) const;
+    [[nodiscard]] std::string ResolvedConnectionKey(const ServerRoot& root, const std::string& serverKey) const;
 
-    // lsp-workspace-folders follow-up: every live local connection key
-    // serving serverKey, whatever root each resolved to (ConnectionKey.h).
-    [[nodiscard]] std::vector<std::string> ConnectionKeysForServer(const std::string& serverKey) const;
+    // lsp-workspace-folders follow-up: every live connection key serving
+    // serverKey on host (nullopt: here), whatever root each resolved to
+    // (ConnectionKey.h).
+    [[nodiscard]] std::vector<std::string> ConnectionKeysForServer(const std::string& serverKey, const std::optional<std::string>& host) const;
 
     // lsp-workspace-folders follow-up: the join half of ClientForLanguage.
     // Returns the canonical connection root now serves -- having sent
@@ -1618,8 +1638,7 @@ class Manager {
     // depend on frame timing rather than on what the server actually
     // supports. The caller treats that as "don't sync this buffer yet" and
     // retries on the next SyncBuffer, which is at most a frame away.
-    [[nodiscard]] std::optional<std::string> TryJoinWorkspaceFolder(const std::string&           serverKey,
-                                                                    const std::filesystem::path& root);
+    [[nodiscard]] std::optional<std::string> TryJoinWorkspaceFolder(const std::string& serverKey, const ServerRoot& root);
 
     // LSP multi-root follow-up: resolves and caches buffer's own LSP root
     // (RootResolver.h's ResolveLspRoot), keyed by its containing
@@ -1710,7 +1729,7 @@ class Manager {
     // SyncTextToServer directly with a virtual document's own padded text
     // instead. LSP multi-root follow-up: root is the buffer's own resolved
     // LSP root (ResolveCachedRoot), forwarded to ClientForLanguage.
-    void SyncToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId, const std::filesystem::path& root);
+    void SyncToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId, const ServerRoot& root);
 
     // embedded-language-documents follow-up: SyncToServer's actual body,
     // generalized so the text synced isn't always buffer.Text() -- an
@@ -1718,7 +1737,21 @@ class Manager {
     // and line/UTF-16 structure as the host buffer (see EmbeddedDocumentSync's
     // own doc comment) but not the same content.
     void SyncTextToServer(text::Buffer& buffer, const std::string& serverKey, const std::string& languageId,
-                          const std::string& documentText, const std::filesystem::path& root);
+                          const std::string& documentText, const ServerRoot& root);
+
+    // A remote buffer's root on its host: its language's markers, else its
+    // project root, found there and cached per directory. nullopt until
+    // the host answers, or for a while after it couldn't.
+    [[nodiscard]] std::optional<ServerRoot> ResolveRemoteRoot(const text::Buffer& buffer, const std::string& language);
+
+    // Starts command on root's host. The client arrives through AdoptClient,
+    // or the failure as a spawn failure.
+    void SpawnRemoteClient(const std::string& serverKey, const std::string& connectionKey, const ServerRoot& root,
+                           const std::vector<std::string>& command);
+
+    // A freshly started client's handshake and bookkeeping, wherever it runs.
+    Client* AdoptClient(std::unique_ptr<Client> client, const std::string& serverKey, const std::string& connectionKey,
+                        const ServerRoot& root, bool brokerBacked);
 
     // hover/completion/code-actions/definition/rename follow-up: resolves
     // the *primary* language's BufferSyncState for buffer via
@@ -2100,7 +2133,16 @@ class Manager {
     // (an embedded document shares its host buffer's root, never its own
     // embedded language's, see SyncBuffer's own doc comment). Erased in
     // NotifyBufferClosed.
-    text::PerBufferMap<std::filesystem::path> bufferResolvedRoot_;
+    text::PerBufferMap<ServerRoot> bufferResolvedRoot_;
+
+    remote::Hosts* hosts_ = nullptr;
+    // ResolveRemoteRoot's answers, keyed by host, directory and language;
+    // one being asked for; when one last couldn't be found.
+    std::unordered_map<std::string, std::filesystem::path>                 remoteRootCache_;
+    std::unordered_set<std::string>                                        remoteRootPending_;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> remoteRootFailedAt_;
+    // Connections being started on their host.
+    std::unordered_set<std::string> remoteSpawnPending_;
 
     // graceful-lsp-shutdown follow-up: languages whose current clients_
     // entry is a connection to an already-running LSP broker daemon rather
@@ -2764,6 +2806,9 @@ class Manager {
     std::unordered_map<std::string, std::string> activeProgress_;
 
     bool hasUnseenLogEntry_ = false; // see HasUnseenLogEntry/AcknowledgeLogEntry
+
+    // Last, so a host's late answer is dropped before anything it touches.
+    LifetimeGuard lifetime_;
 };
 
 } // namespace ned::editor::lsp

@@ -15,10 +15,17 @@
 
 namespace ned::editor::lsp {
 
-// destination is set for a root on that host; projectRoot only matters for
-// a local one.
-[[nodiscard]] std::string MakeConnectionKey(const std::optional<std::string>& destination, const std::filesystem::path& root,
-                                            const std::filesystem::path& projectRoot, std::string_view serverKey);
+// The root a server is started for, and the host it runs on when the root
+// is that host's path.
+struct ServerRoot {
+    std::optional<std::string> host;
+    std::filesystem::path      path;
+
+    [[nodiscard]] bool operator==(const ServerRoot&) const = default;
+};
+
+// projectRoot only matters for a local root.
+[[nodiscard]] std::string MakeConnectionKey(const ServerRoot& root, const std::filesystem::path& projectRoot, std::string_view serverKey);
 
 // The host a key's server runs on; nullopt for a local one.
 [[nodiscard]] std::optional<std::string> ConnectionHost(std::string_view key);

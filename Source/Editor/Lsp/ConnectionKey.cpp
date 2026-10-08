@@ -9,15 +9,14 @@ namespace {
 
 } // namespace
 
-std::string MakeConnectionKey(const std::optional<std::string>& destination, const std::filesystem::path& root,
-                              const std::filesystem::path& projectRoot, std::string_view serverKey) {
-    if (destination) {
-        return kHost + *destination + kHost + root.string() + kServer + std::string(serverKey);
+std::string MakeConnectionKey(const ServerRoot& root, const std::filesystem::path& projectRoot, std::string_view serverKey) {
+    if (root.host) {
+        return kHost + *root.host + kHost + root.path.string() + kServer + std::string(serverKey);
     }
-    if (root == projectRoot) {
+    if (root.path == projectRoot) {
         return std::string(serverKey);
     }
-    return root.string() + kServer + std::string(serverKey);
+    return root.path.string() + kServer + std::string(serverKey);
 }
 
 std::optional<std::string> ConnectionHost(std::string_view key) {
