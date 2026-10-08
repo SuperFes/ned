@@ -1,5 +1,6 @@
 #include "ChildProcess.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -16,6 +17,7 @@
 #include <poll.h>
 #include <spawn.h>
 #include <sys/eventfd.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -90,7 +92,7 @@ namespace {
 
 // Manual $PATH search -- see this file's own header comment for why this
 // exists instead of just calling posix_spawnp. Hoisted out of the anonymous
-// namespace (terminal-panel follow-up) so PtyProcess's pre-fork resolution
+// namespace (terminal-panel follow-up) so SpawnOnPty's pre-fork resolution
 // can reuse it -- execve after forkpty needs an already-resolved path, since
 // a post-fork $PATH walk isn't async-signal-safe.
 std::optional<std::string> ResolveExecutable(const std::string& name) {
@@ -119,6 +121,20 @@ std::optional<std::string> ResolveExecutable(const std::string& name) {
         start = sep + 1;
     }
     return std::nullopt;
+}
+
+std::vector<std::string> EnvironmentWith(const std::vector<std::pair<std::string, std::optional<std::string>>>& env) {
+    std::vector<std::string> environment;
+    for (char** entry = environ; *entry != nullptr; ++entry) {
+        environment.emplace_back(*entry);
+    }
+    for (const auto& [name, value] : env) {
+        std::erase_if(environment, [&name](const std::string& entry) { return entry.starts_with(name + "="); });
+        if (value) {
+            environment.push_back(name + "=" + *value);
+        }
+    }
+    return environment;
 }
 
 ChildProcess::ChildProcess(const std::vector<std::string>& argv, StderrMode stderrMode) : ChildProcess(argv, SpawnOptions{.stderrMode = stderrMode, .cwd = std::nullopt, .env = {}}) {
@@ -206,15 +222,7 @@ ChildProcess::ChildProcess(const std::vector<std::string>& argv, const SpawnOpti
     std::vector<char*>       childEnv;
     char**                   envp = environ;
     if (!options.env.empty()) {
-        for (char** entry = environ; *entry != nullptr; ++entry) {
-            environment.emplace_back(*entry);
-        }
-        for (const auto& [name, value] : options.env) {
-            std::erase_if(environment, [&name](const std::string& entry) { return entry.starts_with(name + "="); });
-            if (value) {
-                environment.push_back(name + "=" + *value);
-            }
-        }
+        environment = EnvironmentWith(options.env);
         for (std::string& entry : environment) {
             childEnv.push_back(entry.data());
         }
@@ -320,6 +328,16 @@ void ChildProcess::CloseInput() noexcept {
         (void)::dup3(devNull, writeFd_, O_CLOEXEC);
         ::close(devNull);
     }
+}
+
+void ChildProcess::ResizeTerminal(TerminalSize size) const noexcept {
+    if (control_ || writeFd_ < 0) {
+        return;
+    }
+    winsize windowSize{};
+    windowSize.ws_row = static_cast<unsigned short>(std::max(1, size.rows));
+    windowSize.ws_col = static_cast<unsigned short>(std::max(1, size.cols));
+    ::ioctl(writeFd_, TIOCSWINSZ, &windowSize);
 }
 
 void ChildProcess::Release() noexcept {
