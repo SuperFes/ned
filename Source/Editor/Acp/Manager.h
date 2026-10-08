@@ -515,6 +515,7 @@ class Manager {
         std::size_t           afterSequence  = 0;
     };
     struct Checkpoint {
+        std::uint64_t                         id              = 0; // unique for the process
         std::size_t                           transcriptIndex = 0; // index of this turn's own UserMessage entry
         std::string                           promptPreview;       // single-line, length-capped prompt text
         std::chrono::system_clock::time_point timestamp;
@@ -790,6 +791,12 @@ class Manager {
     // a turn's own session/prompt response arrives (success, error, or a
     // session tearing down mid-turn), never mid-turn.
     void FinalizePendingCheckpoint(Session& session);
+    // The "N files changed" line that opens the turn's review.
+    void SummarizeCheckpoint(Session& session, const Checkpoint& checkpoint);
+    // Brings each open buffer holding one of files up to its host's
+    // contents, then calls done.
+    void          CatchUpHostFiles(const std::vector<text::RemoteFile>& files, std::function<void()> done);
+    std::uint64_t nextCheckpointId_ = 1;
 
     text::BufferList&   bufferList_;
     ned::ui::EventLoop& eventLoop_;
@@ -870,6 +877,7 @@ class Manager {
     // Revoked with the agent's connection: drops an agent that arrives after
     // its session has ended, and a host's answer for a request it made.
     LifetimeGuard agentLifetime_;
+    LifetimeGuard lifetime_;
 };
 
 } // namespace ned::editor::acp

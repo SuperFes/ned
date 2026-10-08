@@ -63,14 +63,15 @@ namespace {
         return best;
     }
 
-    std::string DisplayPath(const std::filesystem::path& path, const std::filesystem::path& root) {
+    std::string DisplayPath(const text::FileRef& file, const std::filesystem::path& root) {
+        const std::filesystem::path& path = text::PathOf(file);
         if (!root.empty()) {
             const std::filesystem::path relative = path.lexically_relative(root);
             if (!relative.empty() && *relative.begin() != "..") {
                 return relative.generic_string();
             }
         }
-        return path.string();
+        return text::ToString(file);
     }
 
     std::string WithoutNewline(std::string_view line) {
@@ -189,8 +190,8 @@ std::string UndoHunk(text::BufferList& bufferList, ReviewSession& session, std::
     }
     const ReviewHunk&              hunk    = session.hunks[index];
     const TurnFile&                file    = session.files[hunk.fileIndex];
-    const std::string              name    = DisplayPath(file.path, session.root);
-    const std::optional<FileState> current = ReadTurnFile(bufferList, file.path);
+    const std::string              name    = DisplayPath(file.file, session.root);
+    const std::optional<FileState> current = ReadTurnFile(bufferList, file.file);
     if (!current) {
         return "Can't read " + name + ".";
     }
@@ -199,7 +200,7 @@ std::string UndoHunk(text::BufferList& bufferList, ReviewSession& session, std::
         return StateOf(*current, hunk) == HunkState::Undone ? "Already undone." : name + " has changed there since the turn.";
     }
     try {
-        WriteTurnFile(bufferList, file.path, *reverted);
+        WriteTurnFile(bufferList, file.file, *reverted);
     }
     catch (const std::exception& e) {
         return e.what();
@@ -214,8 +215,8 @@ std::string UndoFile(text::BufferList& bufferList, ReviewSession& session, std::
     }
     const std::size_t              fileIndex = session.hunks[index].fileIndex;
     const TurnFile&                file      = session.files[fileIndex];
-    const std::string              name      = DisplayPath(file.path, session.root);
-    const std::optional<FileState> current   = ReadTurnFile(bufferList, file.path);
+    const std::string              name      = DisplayPath(file.file, session.root);
+    const std::optional<FileState> current   = ReadTurnFile(bufferList, file.file);
     if (!current) {
         return "Can't read " + name + ".";
     }
@@ -250,7 +251,7 @@ std::string UndoFile(text::BufferList& bufferList, ReviewSession& session, std::
         return "Nothing left to undo in " + name + ".";
     }
     try {
-        WriteTurnFile(bufferList, file.path, state);
+        WriteTurnFile(bufferList, file.file, state);
     }
     catch (const std::exception& e) {
         return e.what();
@@ -269,7 +270,7 @@ std::vector<multibuffer::ExcerptSource> ReviewExcerpts(const text::BufferList& b
         const ReviewHunk& hunk = session.hunks[i];
         const TurnFile&   file = session.files[hunk.fileIndex];
         if (!read[hunk.fileIndex]) {
-            current[hunk.fileIndex] = ReadTurnFile(bufferList, file.path);
+            current[hunk.fileIndex] = ReadTurnFile(bufferList, file.file);
             read[hunk.fileIndex]    = true;
         }
         const std::optional<FileState>&  now   = current[hunk.fileIndex];
@@ -277,7 +278,7 @@ std::vector<multibuffer::ExcerptSource> ReviewExcerpts(const text::BufferList& b
         const std::optional<std::size_t> at    = now && state == HunkState::Applied ? LocateHunk(*now, hunk) : std::nullopt;
         const std::size_t                line  = (at ? *at : hunk.newStart) + 1;
 
-        std::string header = "▸ " + DisplayPath(file.path, session.root);
+        std::string header = "▸ " + DisplayPath(file.file, session.root);
         if (!hunk.created && !hunk.deleted) {
             header += ":" + std::to_string(line);
         }
@@ -303,7 +304,10 @@ std::vector<multibuffer::ExcerptSource> ReviewExcerpts(const text::BufferList& b
         add(hunk.contextAfter, "  ", multibuffer::LineTint::None);
 
         const std::size_t sourceLine = hunk.deleted ? 0 : line;
-        excerpts.push_back(multibuffer::ExcerptSource{.sourcePath      = file.path,
+        // A host's file goes by its host:/path name, which visiting it reads back.
+        excerpts.push_back(multibuffer::ExcerptSource{.sourcePath      = std::holds_alternative<text::RemoteFile>(file.file)
+                                                                             ? std::filesystem::path(text::ToString(file.file))
+                                                                             : text::PathOf(file.file),
                                                       .sourceStartLine = sourceLine,
                                                       .sourceEndLine   = sourceLine,
                                                       .headerText      = std::move(header),

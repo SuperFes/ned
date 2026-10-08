@@ -32,7 +32,7 @@ namespace {
 } // namespace
 
 void BufferView::OpenAcpTurnReview(std::string title, std::vector<editor::acp::TurnFile> files) {
-    editor::acp::ReviewSession session = editor::acp::MakeReviewSession(std::move(title), editor::ProjectRoot(), std::move(files));
+    editor::acp::ReviewSession session = editor::acp::MakeReviewSession(std::move(title), acpManager_ ? acpManager_->TranscriptRoot() : editor::ProjectRoot(), std::move(files));
     if (session.hunks.empty()) {
         statusMessage_ = "That turn left no file changes to review.";
         return;

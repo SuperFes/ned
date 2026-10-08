@@ -1507,7 +1507,7 @@ TEST_CASE("Manager snapshots a file an edit tool call names, before and after it
     REQUIRE(fixture.manager.CheckpointCount() == 1);
     const auto& files = fixture.manager.CheckpointAt(0).files;
     REQUIRE(files.size() == 1);
-    REQUIRE(files[0].path == path);
+    REQUIRE(files[0].file == ned::text::FileRef(path));
     REQUIRE(files[0].before.text == "one\ntwo\n");
     REQUIRE(files[0].after->text == "one\nTWO\n");
     const auto& summary = fixture.manager.Transcript().back();

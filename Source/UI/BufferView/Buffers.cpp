@@ -7,6 +7,7 @@
 //
 
 #include "Editor/Remote/Location.h"
+#include "Text/RemoteFile.h"
 #include "UI/BufferView/Internal.h"
 
 namespace ned::ui {
@@ -185,6 +186,13 @@ namespace {
 } // namespace
 
 void BufferView::JumpToExcerptSource(const editor::multibuffer::ExcerptSpan& span) {
+    // A host's file goes by its host:/path name (Acp/TurnReview.h).
+    if (!span.sourcePath.is_absolute()) {
+        if (const std::optional<text::RemoteFile> remote = text::ParseRemoteFile(span.sourcePath.string())) {
+            JumpToFileLine(*remote, span.sourceStartLine);
+            return;
+        }
+    }
     const text::Buffer& composite = activeBuffer_.Get();
     const std::size_t   point     = composite.Point();
 

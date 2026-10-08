@@ -11,6 +11,8 @@
 
 #include "Config.h"
 #include "ContentBlocks.h"
+#include "Editor/AutoMerge.h"
+#include "Editor/AutoRevert.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
 #include "Editor/Mcp/BridgeServer.h"
@@ -153,6 +155,27 @@ namespace {
             result += '\n';
         }
         return result;
+    }
+
+    // A host's newer contents into the buffer holding the file, as its watch
+    // would bring them: reverted into an unmodified buffer, merged into a
+    // modified one. followToggles leaves that to the auto-revert and
+    // auto-merge settings, as the watch does.
+    void SettleHostFile(text::Buffer& buffer, text::FileContents contents, bool followToggles) {
+        try {
+            if (!buffer.Modified() && (!followToggles || AutoRevertEnabled())) {
+                buffer.RevertFromRemote(std::move(contents));
+            }
+            else if (buffer.Modified() && (!followToggles || AutoMergeEnabled())) {
+                (void)buffer.MergeRemoteChanges(std::move(contents));
+            }
+            else {
+                buffer.NoteRemoteChanged();
+            }
+        }
+        catch (const std::exception&) {
+            buffer.NoteRemoteChanged();
+        }
     }
 
     // fs/read_text_file's answer: content, narrowed as asked.
@@ -1834,21 +1857,22 @@ void Manager::RecordCheckpointFileEdit(Session& s, text::Buffer& buffer, const t
 }
 
 void Manager::SnapshotBeforeEdit(Session& s, const std::string& path) {
-    if (!s.pendingCheckpoint || path.empty() || agentBeside_) {
+    if (!s.pendingCheckpoint || path.empty()) {
         return;
     }
     std::filesystem::path resolved(path);
     if (resolved.is_relative()) {
-        resolved = editor::ProjectRoot() / resolved;
+        resolved = (s.root.empty() ? editor::ProjectRoot() : s.root) / resolved;
     }
-    resolved = resolved.lexically_normal();
+    resolved                = resolved.lexically_normal();
+    const text::FileRef ref = s.host.empty() ? text::FileRef(resolved) : text::FileRef(text::RemoteFile{.destination = s.host, .path = resolved});
     for (const TurnFile& file : s.pendingCheckpoint->files) {
-        if (file.path == resolved) {
+        if (file.file == ref) {
             return;
         }
     }
-    if (std::optional<FileState> before = ReadTurnFile(bufferList_, resolved)) {
-        s.pendingCheckpoint->files.push_back(TurnFile{.path = resolved, .before = std::move(*before), .after = std::nullopt});
+    if (std::optional<FileState> before = ReadTurnFile(bufferList_, ref)) {
+        s.pendingCheckpoint->files.push_back(TurnFile{.file = ref, .before = std::move(*before), .after = std::nullopt});
     }
 }
 
@@ -1863,28 +1887,88 @@ void Manager::SnapshotToolCallFiles(Session& s, const TranscriptEntry& toolCall)
 }
 
 void Manager::FinalizePendingCheckpoint(Session& s) {
-    if (s.pendingCheckpoint) {
-        std::size_t changedFiles = 0;
-        std::size_t added        = 0;
-        std::size_t removed      = 0;
-        for (TurnFile& file : s.pendingCheckpoint->files) {
-            file.after                          = ReadTurnFile(bufferList_, file.path);
-            const std::vector<ReviewHunk> hunks = TurnHunks(file, 0);
-            changedFiles += hunks.empty() ? 0 : 1;
-            for (const ReviewHunk& hunk : hunks) {
-                added += hunk.newLines.size();
-                removed += hunk.oldLines.size();
+    if (!s.pendingCheckpoint) {
+        return;
+    }
+    Checkpoint& checkpoint = s.checkpoints.emplace_back(std::move(*s.pendingCheckpoint));
+    s.pendingCheckpoint.reset();
+    checkpoint.id = nextCheckpointId_++;
+    std::vector<text::RemoteFile> onHost;
+    for (TurnFile& file : checkpoint.files) {
+        if (const auto* remote = std::get_if<text::RemoteFile>(&file.file)) {
+            onHost.push_back(*remote);
+        }
+        else {
+            file.after = ReadTurnFile(bufferList_, file.file);
+        }
+    }
+    if (onHost.empty()) {
+        SummarizeCheckpoint(s, checkpoint);
+        return;
+    }
+    // The agent may have changed them itself, and its host's watch may not
+    // have brought that here yet.
+    CatchUpHostFiles(onHost, [this, key = s.key, id = checkpoint.id] {
+        Session* session = SessionByKey(key);
+        if (!session) {
+            return;
+        }
+        const auto found = std::find_if(session->checkpoints.begin(), session->checkpoints.end(), [id](const Checkpoint& c) { return c.id == id; });
+        if (found == session->checkpoints.end()) {
+            return; // rewound past meanwhile
+        }
+        for (TurnFile& file : found->files) {
+            if (std::holds_alternative<text::RemoteFile>(file.file)) {
+                file.after = ReadTurnFile(bufferList_, file.file);
             }
         }
-        if (changedFiles > 0) {
-            // The panel makes this line open the turn's review.
-            PushTranscriptEntry(s, TranscriptEntry{.kind   = TranscriptEntry::Kind::SessionEvent,
-                                                   .text   = std::to_string(changedFiles) + (changedFiles == 1 ? " file" : " files") +
-                                                             " changed (+" + std::to_string(added) + " −" + std::to_string(removed) + ")",
-                                                   .status = "review"});
+        SummarizeCheckpoint(*session, *found);
+    });
+}
+
+void Manager::SummarizeCheckpoint(Session& s, const Checkpoint& checkpoint) {
+    std::size_t changedFiles = 0;
+    std::size_t added        = 0;
+    std::size_t removed      = 0;
+    for (const TurnFile& file : checkpoint.files) {
+        const std::vector<ReviewHunk> hunks = TurnHunks(file, 0);
+        changedFiles += hunks.empty() ? 0 : 1;
+        for (const ReviewHunk& hunk : hunks) {
+            added += hunk.newLines.size();
+            removed += hunk.oldLines.size();
         }
-        s.checkpoints.push_back(std::move(*s.pendingCheckpoint));
-        s.pendingCheckpoint.reset();
+    }
+    if (changedFiles > 0) {
+        // The panel makes this line open the turn's review.
+        PushTranscriptEntry(s, TranscriptEntry{.kind   = TranscriptEntry::Kind::SessionEvent,
+                                               .text   = std::to_string(changedFiles) + (changedFiles == 1 ? " file" : " files") +
+                                                         " changed (+" + std::to_string(added) + " −" + std::to_string(removed) + ")",
+                                               .status = "review"});
+    }
+}
+
+void Manager::CatchUpHostFiles(const std::vector<text::RemoteFile>& files, std::function<void()> done) {
+    auto remaining = std::make_shared<std::size_t>(files.size());
+    auto finish    = std::make_shared<std::function<void()>>(std::move(done));
+    auto settled   = [remaining, finish] {
+        if (--*remaining == 0) {
+            (*finish)();
+        }
+    };
+    for (const text::RemoteFile& file : files) {
+        remote::Connection* connection = hosts_ ? hosts_->Find(file.destination) : nullptr;
+        if (!connection || !connection->Connected()) {
+            settled();
+            continue;
+        }
+        remote::ReadFile(*connection, file.path, remote::MaxRemoteFileBytes(),
+                         lifetime_.Token().Bind([this, file, settled](const remote::FsResult<text::FileContents>& read) {
+                             text::Buffer* buffer = bufferList_.FindByRemote(file);
+                             if (read && buffer && !buffer->IsLoading() && !buffer->IsSaving() && read->timestamp != buffer->RemoteTimestamp()) {
+                                 SettleHostFile(*buffer, *read, /*followToggles=*/true);
+                             }
+                             settled();
+                         }));
     }
 }
 
@@ -1929,7 +2013,7 @@ Manager::RewindOutcome Manager::RewindTo(std::size_t index) {
         }
         for (const text::FileRef& untracked : s.checkpoints[i].untrackedFiles) {
             const bool snapshotted = std::any_of(s.checkpoints[i].files.begin(), s.checkpoints[i].files.end(),
-                                                 [&](const TurnFile& file) { return text::FileRef(file.path) == untracked; });
+                                                 [&](const TurnFile& file) { return file.file == untracked; });
             if (!snapshotted) {
                 outcome.untrackedFiles.push_back(text::ToString(untracked));
             }
@@ -1938,21 +2022,21 @@ Manager::RewindOutcome Manager::RewindTo(std::size_t index) {
         // when they still read as the turn left them.
         for (const TurnFile& file : s.checkpoints[i].files) {
             const bool undoTracked = std::any_of(s.checkpoints[i].fileRecords.begin(), s.checkpoints[i].fileRecords.end(),
-                                                 [&](const CheckpointFileRecord& record) { return record.file == text::FileRef(file.path); });
+                                                 [&](const CheckpointFileRecord& record) { return record.file == file.file; });
             if (undoTracked) {
                 continue;
             }
-            const std::optional<FileState> current = ReadTurnFile(bufferList_, file.path);
+            const std::optional<FileState> current = ReadTurnFile(bufferList_, file.file);
             if (!current || !file.after || *current != *file.after) {
-                outcome.divergedFiles.push_back(file.path.string());
+                outcome.divergedFiles.push_back(text::ToString(file.file));
                 continue;
             }
             try {
-                WriteTurnFile(bufferList_, file.path, file.before);
-                outcome.revertedFiles.push_back(file.path.string());
+                WriteTurnFile(bufferList_, file.file, file.before);
+                outcome.revertedFiles.push_back(text::ToString(file.file));
             }
             catch (const std::exception&) {
-                outcome.divergedFiles.push_back(file.path.string());
+                outcome.divergedFiles.push_back(text::ToString(file.file));
             }
         }
     }
@@ -2029,8 +2113,11 @@ void Manager::WriteHostFile(const Json& params, RespondFn respond) {
         respond(std::nullopt, Json{{"code", 1}, {"message", "not connected to " + file.destination}});
         return;
     }
-    const Session*                     found = SessionFor(params);
+    Session*                           found = SessionFor(params);
     const std::optional<std::uint64_t> key   = found ? std::optional(found->key) : std::nullopt;
+    if (found) {
+        SnapshotBeforeEdit(*found, file.path.string());
+    }
     remote::WriteFile(*connection, host::FsWriteRequest{.path = file.path, .data = content, .expect = std::nullopt},
                       agentLifetime_.Token().Bind([this, file, content, key, respond](const remote::FsResult<host::FileStat>& written) {
                           if (!written) {
@@ -2045,17 +2132,7 @@ void Manager::WriteHostFile(const Json& params, RespondFn respond) {
                           }
                           const std::size_t beforeSequence = buffer ? buffer->CurrentUndoSequence() : 0;
                           if (buffer) {
-                              try {
-                                  if (buffer->Modified()) {
-                                      (void)buffer->MergeRemoteChanges(text::FileContents{.bytes = content, .timestamp = written->timestamp});
-                                  }
-                                  else {
-                                      buffer->RevertFromRemote(text::FileContents{.bytes = content, .timestamp = written->timestamp});
-                                  }
-                              }
-                              catch (const std::exception&) {
-                                  buffer->NoteRemoteChanged();
-                              }
+                              SettleHostFile(*buffer, text::FileContents{.bytes = content, .timestamp = written->timestamp}, /*followToggles=*/false);
                           }
                           Session* s = key ? SessionByKey(*key) : nullptr;
                           if (s && s->pendingCheckpoint) {
