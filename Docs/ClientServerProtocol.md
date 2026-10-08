@@ -163,9 +163,13 @@ One transport:
   pays for login (about 1 s to the test host, against ~0.4 s, or five round trips, per
   later session). Stopping the master with `-O exit` ends every session on it, and an
   editor starting up sends that to masters whose `<pid>` is gone. Every
-  invocation passes `BatchMode=yes`, `RemoteCommand=none`, `RequestTTY=no`,
-  `ClearAllForwardings=yes` and keepalives, and `ControlPersist=no` keeps a user's
-  persisting config from backgrounding the master out of the editor's ownership.
+  invocation passes `RemoteCommand=none`, `RequestTTY=no`, `ClearAllForwardings=yes`
+  and keepalives, and `ControlPersist=no` keeps a user's persisting config from
+  backgrounding the master out of the editor's ownership. Sessions also pass
+  `BatchMode=yes`. The master instead passes `BatchMode=no` and answers ssh's questions
+  (a password, a passphrase, a one-time code, an unknown host key) through
+  `SSH_ASKPASS_REQUIRE=force`. Its `SSH_ASKPASS` is ned itself, which relays each
+  question over a socket beside the control socket to the editor's minibuffer.
 
   The agent session is one `sh -c` script given every local `<build>-<arch>`. It picks the
   one matching `uname -m` that is installed, prints `ned-agent-stdio-1 <path>` and `exec`s
@@ -180,8 +184,9 @@ No TCP and no listening socket on either side.
 ## 6. Trust
 
 - **Authentication and transport security belong to ssh.** That means the user's own
-  config, agent, `known_hosts`, and a first-connection host-key prompt following
-  `Project/Trust.h`'s precedent. The agent opens no socket, so running it adds no attack
+  config, agent and `known_hosts`. An unknown host key is ssh's own question, asked in
+  the minibuffer, and accepting it writes `known_hosts` just as answering it in a
+  terminal would. The agent opens no socket, so running it adds no attack
   surface on the remote host: anyone who can speak to it already has a shell there.
 - **The agent only executes.** Every trust decision is made on the editor side, and the
   agent never decides whether to run something. A remote project's `.ned/` config and
