@@ -1850,7 +1850,8 @@ void InstallEditorBindings(Environment& env) {
                                      "describe-bindings lists each panel mode's commands.");
     env.Register<&NedSetFormatCommand>(
         "ned", "set-format-command",
-        "Set the shell command save-buffer pipes buffer content through before writing (empty string clears it).");
+        "Set the shell command save-buffer and format-buffer pipe buffer content through (empty string clears it). "
+        "A remote buffer's runs on its host, in its project root there.");
     env.Register<&NedSetUrlOpenCommand>(
         "ned", "set-url-open-command",
         "Set the command open-link-at-point launches (as its own argument, never a shell string) to open a URL -- "

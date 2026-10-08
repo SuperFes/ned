@@ -479,7 +479,7 @@ Override the naming-case convention for an entity kind ("function", "parameter",
 
 ## `ned/set-format-command`
 
-Set the shell command save-buffer pipes buffer content through before writing (empty string clears it).
+Set the shell command save-buffer and format-buffer pipe buffer content through (empty string clears it). A remote buffer's runs on its host, in its project root there.
 
 ## `ned/set-format-rewrite-expand-elseif`
 
