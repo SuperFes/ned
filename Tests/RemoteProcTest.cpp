@@ -150,10 +150,14 @@ TEST_CASE("A host's process on a pty has its terminal, resized from here", "[Rem
 
 TEST_CASE("A host's process that can't start says why, and one whose host goes ends", "[Remote][RemoteProc][HostAgent]") {
     Fixture  fixture;
-    Streamed missing;
-    missing.Start(remote::SpawnOnHost(*fixture.connection, Spawn({"ned-no-such-command"})), fixture.queue);
+    Streamed            missing;
+    std::string         why;
+    remote::RemoteSpawn unstartable = Spawn({"ned-no-such-command"});
+    unstartable.onSpawnFailed       = [&](const std::string& reason) { why = reason; };
+    missing.Start(remote::SpawnOnHost(*fixture.connection, std::move(unstartable)), fixture.queue);
     REQUIRE(PumpUntil(fixture.queue, [&] { return missing.exit.has_value(); }));
     CHECK_THAT(missing.output, ContainsSubstring("ned-no-such-command"));
+    CHECK_THAT(why, ContainsSubstring("ned-no-such-command"));
     CHECK(missing.exit == std::optional<std::optional<int>>(remote::kRemoteSpawnFailed));
 
     // Captured, stderr has its own descriptor.
