@@ -924,7 +924,13 @@ class WindowManager {
     // AddRemotePlaceholder) from its host, as a session restore leaves
     // them. One the host no longer has is closed; one that can't be read
     // stays open with its failure, so the session keeps it.
-    void LoadRemoteBuffers(std::span<const text::BufferIdentity> placeholders);
+    void LoadRemoteBuffers(std::span<const text::BufferIdentity> placeholders, bool createMissing = false);
+
+    // A remote file or directory named on the command line, once its host
+    // says which: a directory becomes a Remote panel root, and a file opens,
+    // as new when the host has none. show puts it in front -- the panel
+    // focused, or the file in the focused pane -- rather than behind.
+    void OpenRemoteArgument(const text::RemoteFile& file, bool show);
 
     // True while any save is still writing. The quit path polls this so
     // shutdown waits for a write rather than killing it partway through,

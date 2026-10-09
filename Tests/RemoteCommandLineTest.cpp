@@ -5,9 +5,14 @@
 #include <optional>
 #include <string>
 
+#include "Editor/Lifetime.h"
+#include "Editor/PostQueue.h"
 #include "Editor/Remote/CommandLine.h"
+#include "Editor/Remote/Hosts.h"
+#include "FakeRemoteHost.h"
 
 using ned::editor::remote::RemoteArgument;
+using ned::editor::remote::RemoteArgumentKind;
 namespace fs = std::filesystem;
 
 TEST_CASE("A command-line argument names a host's file the way scp reads one", "[Remote][RemoteCommandLine]") {
@@ -35,4 +40,28 @@ TEST_CASE("A command-line argument that exists here stays local", "[Remote][Remo
     fs::current_path(previous);
     fs::remove_all(dir);
     CHECK(local);
+}
+
+TEST_CASE("A remote command-line argument is a directory, a file, or a file to create", "[Remote][RemoteCommandLine][HostAgent]") {
+    ned::tests::FakeRemoteHost    fake;
+    ned::tests::ScopedEnvOverride home{"HOME", (fake.dir / "home").c_str()};
+    ned::editor::PostQueue        queue;
+    ned::editor::remote::Hosts    hosts{queue, [&fake](const std::string& destination) { return fake.Options(destination); },
+                                        ned::tests::FakeResolver(fake.dir)};
+    ned::editor::LifetimeGuard    lifetime;
+    std::ofstream(fake.dir / "notes.txt") << "notes\n";
+
+    const auto classify = [&](const std::string& destination, const fs::path& path) {
+        std::optional<std::expected<RemoteArgumentKind, std::string>> kind;
+        ned::editor::remote::ClassifyRemoteArgument(hosts, {.destination = destination, .path = path}, lifetime.Token(),
+                                                    [&](std::expected<RemoteArgumentKind, std::string> result) { kind = std::move(result); });
+        REQUIRE(ned::tests::PumpUntil(queue, [&] { return kind.has_value(); }));
+        return *kind;
+    };
+    CHECK(classify("host", fake.dir) == RemoteArgumentKind::Directory);
+    CHECK(classify("host", fake.dir / "notes.txt") == RemoteArgumentKind::File);
+    CHECK(classify("host", fake.dir / "new.txt") == RemoteArgumentKind::File);
+    const auto unreachable = classify("denied", "/etc");
+    REQUIRE_FALSE(unreachable.has_value());
+    CHECK(unreachable.error().find("Permission denied") != std::string::npos);
 }
