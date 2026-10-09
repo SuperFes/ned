@@ -9,6 +9,7 @@
 
 #include "Editor/AutoMerge.h"
 #include "Editor/AutoRevert.h"
+#include "Editor/ModeOverrides.h"
 #include "Editor/Remote/Fs.h"
 #include "Editor/Remote/RemoteBuffer.h"
 
@@ -81,6 +82,29 @@ namespace {
     }
 
 } // namespace
+
+std::vector<text::Buffer*> FollowRemoteMoves(text::BufferList& buffers, const std::string& destination, const std::vector<FileMove>& moves) {
+    std::vector<text::Buffer*> followed;
+    for (const auto& buffer : buffers.Buffers()) {
+        const std::optional<text::RemoteFile>& file = buffer->Remote();
+        if (!file || file->destination != destination) {
+            continue;
+        }
+        for (const FileMove& move : moves) {
+            const std::filesystem::path relative = file->path.lexically_relative(move.from);
+            if (relative.empty() || *relative.begin() == "..") {
+                continue;
+            }
+            const text::RemoteFile moved{.destination = destination, .path = (relative == "." ? move.to : move.to / relative).lexically_normal()};
+            buffer->SetRemote(moved);
+            buffer->Rename(text::RemoteBufferName(moved));
+            ClearModeCacheFor(*buffer);
+            followed.push_back(buffer.get());
+            break;
+        }
+    }
+    return followed;
+}
 
 void FollowRemoteChanges(Hosts& hosts, text::BufferList& buffers, const std::string& destination, const host::WatchEvents& events,
                          LifetimeToken token, std::function<void(const RemoteChange& change)> report) {

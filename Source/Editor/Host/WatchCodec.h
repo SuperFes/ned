@@ -7,12 +7,16 @@
 //                  its name in its directory, a directory by every entry
 //                  directly in it.
 //   $/watch/event  host to editor, once per burst of changes
-//                  params {events: [event], overflow: bool}
+//                  params {events: [event], moves: [move], overflow: bool}
 //
 //   event          {path, kind: "created" | "changed" | "deleted"}
+//   move           {from, to}
 //
-// Events name the paths as watch/set did, symlinks and all. overflow means
-// the host lost events, so anything watched may have changed.
+// Events name the paths as watch/set did, symlinks and all. A move (from
+// watch capability 2) is a rename the host saw both halves of, out of
+// something watched; it is in events too, as a delete and a create.
+// overflow means the host lost events, so anything watched may have
+// changed.
 //
 
 #ifndef NED_EDITOR_HOST_WATCHCODEC_H
@@ -40,6 +44,7 @@ struct WatchSetRequest {
 
 struct WatchEvents {
     std::vector<FileEvent> events;
+    std::vector<FileMove>  moves;
     bool                   overflow = false;
 
     [[nodiscard]] bool operator==(const WatchEvents&) const = default;

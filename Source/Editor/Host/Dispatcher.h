@@ -89,7 +89,7 @@ class Dispatcher {
     void FinishProcIfDone(std::uint64_t handle);
     // One burst from the watcher, as the editor named the paths; empty when
     // the watcher lost events.
-    void ReportWatchEvents(const std::vector<FileEvent>& burst);
+    void ReportWatchEvents(const std::vector<FileEvent>& burst, const std::vector<FileMove>& moves);
 
     protocol::Endpoint&                         endpoint_;
     PostQueue&                                  postQueue_;
@@ -105,8 +105,10 @@ class Dispatcher {
     // watch/set's paths, keyed by the canonical paths the watcher reports.
     std::map<std::filesystem::path, std::vector<std::filesystem::path>> watchedFiles_;
     std::map<std::filesystem::path, std::vector<std::filesystem::path>> watchedDirectories_;
-    // Made by the first watch/set. Only its own thread touches watchBurst_.
+    // Made by the first watch/set. Only its own thread touches watchBurst_
+    // and watchMoves_.
     std::vector<FileEvent>       watchBurst_;
+    std::vector<FileMove>        watchMoves_;
     std::unique_ptr<FileWatcher> watcher_;
 
     LifetimeGuard lifetime_;
