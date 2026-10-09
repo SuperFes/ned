@@ -362,7 +362,7 @@ TEST_CASE("StartOrContinue refuses to start without a launch configuration", "[D
     Manager         manager(eventLoop);
 
     const std::string status = manager.StartOrContinue("dap-manager-test-unconfigured");
-    REQUIRE(status == "No launch configuration for dap-manager-test-unconfigured (ned/set-dap-launch).");
+    REQUIRE(status == "No launch configuration for dap-manager-test-unconfigured (ned/set-dap-launch, or .ned/settings.json's dapLaunch).");
     REQUIRE(manager.State() == Manager::SessionState::Inactive);
 }
 
@@ -1328,7 +1328,7 @@ TEST_CASE("Attach refuses without an attach configuration", "[Dap]") {
     Manager         manager(eventLoop);
 
     const std::string status = manager.Attach("dap-manager-test-unconfigured-attach");
-    REQUIRE(status == "No attach configuration for dap-manager-test-unconfigured-attach (ned/set-dap-attach).");
+    REQUIRE(status == "No attach configuration for dap-manager-test-unconfigured-attach (ned/set-dap-attach, or .ned/settings.json's dapAttach).");
 }
 
 TEST_CASE("Attach sends an attach request (not launch) and StopSession never terminates the debuggee", "[Dap]") {

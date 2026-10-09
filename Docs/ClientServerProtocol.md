@@ -295,8 +295,11 @@ file operations and changes reach only local servers.
 
 **Debug adapters.** Starting or attaching from a remote buffer runs its language's adapter
 on that buffer's host, in the project root found there, connecting first if need be.
-The launch or attach configuration goes as configured, so its paths must make sense on the
-host. Breakpoints key a host's file as `host:/path`; a session is told only about those on
+Its launch or attach arguments are the project root's own `.ned/settings.json` `dapLaunch`
+or `dapAttach` entry for the language, read on the host, else `init.janet`'s
+(`ned/set-dap-launch`), with `${workspaceFolder}` in any string replaced by that root, so
+one configuration names the right paths on every machine (`Dap/Config.h`'s
+`SessionArguments`). Breakpoints key a host's file as `host:/path`; a session is told only about those on
 its own machine, by their paths there, and what it reports (where it stopped, frames,
 loaded sources, disassembly) comes back as files on that host. Run-to-cursor and
 jump-to-line refuse a file on another machine.

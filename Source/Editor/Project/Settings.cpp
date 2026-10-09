@@ -61,6 +61,15 @@ ProjectSettings ParseProjectSettings(std::string_view text, const std::filesyste
                 settings.lspInitializationOptionsByLanguage.emplace(language, options);
             }
         }
+        for (const auto& [key, target] : {std::pair{"dapLaunch", &settings.dapLaunchByLanguage}, std::pair{"dapAttach", &settings.dapAttachByLanguage}}) {
+            if (parsed.contains(key) && parsed[key].is_object()) {
+                for (const auto& [language, arguments] : parsed[key].items()) {
+                    if (arguments.is_object()) {
+                        target->emplace(language, arguments);
+                    }
+                }
+            }
+        }
         if (parsed.contains("lspWorkspaceConfiguration") && parsed["lspWorkspaceConfiguration"].is_object()) {
             settings.lspWorkspaceConfiguration = parsed["lspWorkspaceConfiguration"];
         }

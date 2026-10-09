@@ -20,9 +20,14 @@
 #ifndef NED_EDITOR_DAP_CONFIG_H
 #define NED_EDITOR_DAP_CONFIG_H
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
+
+#include <nlohmann/json.hpp>
+
+#include "Editor/Project/Settings.h"
 
 namespace ned::editor::dap {
 
@@ -43,6 +48,15 @@ void                                     SetLaunchConfig(const std::string& lang
 // path. An empty string clears.
 void                                     SetAttachConfig(const std::string& language, std::string attachConfigJson);
 [[nodiscard]] std::optional<std::string> AttachConfig(const std::string& language);
+
+// What a session for language sends as its launch (or attach) arguments:
+// the project's own (ProjectSettings' dapLaunch/dapAttach), else
+// init.janet's, with every ${workspaceFolder} in a string replaced by root,
+// the directory the adapter runs in -- so one configuration serves every
+// machine. nullopt when neither configures one. Throws std::runtime_error
+// for init.janet's that isn't JSON.
+[[nodiscard]] std::optional<nlohmann::json> SessionArguments(const ProjectSettings& settings, const std::string& language, bool attach,
+                                                             const std::filesystem::path& root);
 
 } // namespace ned::editor::dap
 

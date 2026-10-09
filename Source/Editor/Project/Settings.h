@@ -64,7 +64,11 @@
 // named, never defined, here: connections carry a token command and stay in
 // init.janet.
 //
-// All six default a mode/language/section with no entry to "nothing configured"
+// dapLaunch / dapAttach -- per language, the DAP launch or attach arguments
+// this project's sessions send, in place of init.janet's (Dap/Config.h). They
+// live with the project, so a host's are its own.
+//
+// All eight default a mode/language/section with no entry to "nothing configured"
 // -- the same convention everywhere else in this codebase (GitIgnoreMatcher's
 // missing .gitignore, Mode::fold's empty function, ...).
 //
@@ -107,6 +111,8 @@ struct ProjectSettings {
     std::unordered_map<std::string, ImportResolutionOverride>           importResolutionByLanguage;
     std::vector<std::filesystem::path>                                  acpAdditionalDirectories;
     std::vector<tracker::Panel>                                         trackerPanels;
+    std::unordered_map<std::string, nlohmann::json>                     dapLaunchByLanguage;
+    std::unordered_map<std::string, nlohmann::json>                     dapAttachByLanguage;
 };
 
 // Convenience accessor: settings.includePathsByMode[modeName], or an empty list if

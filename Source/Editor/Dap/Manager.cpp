@@ -5,7 +5,10 @@
 #include <utility>
 
 #include "Config.h"
+#include "Editor/Project/Root.h"
+#include "Editor/Project/Settings.h"
 #include "Editor/Remote/Placement.h"
+#include "Editor/Remote/ProjectSettings.h"
 #include "Editor/Sparkline.h"
 
 namespace ned::editor::dap {
@@ -896,8 +899,9 @@ std::string Manager::StartOrContinue(const std::string& language, const std::opt
     if (state_ != SessionState::Inactive) {
         return "Debug session already running.";
     }
-    if (!LaunchConfig(language)) {
-        return "No launch configuration for " + language + " (ned/set-dap-launch).";
+    // A host's own settings can still configure one there.
+    if (!beside && !LaunchConfig(language) && !LoadProjectSettings(editor::ProjectRoot()).dapLaunchByLanguage.contains(language)) {
+        return "No launch configuration for " + language + " (ned/set-dap-launch, or .ned/settings.json's dapLaunch).";
     }
     return BeginSession(language, /*attach=*/false, beside);
 }
@@ -906,8 +910,8 @@ std::string Manager::Attach(const std::string& language, const std::optional<tex
     if (state_ != SessionState::Inactive) {
         return "Debug session already running.";
     }
-    if (!AttachConfig(language)) {
-        return "No attach configuration for " + language + " (ned/set-dap-attach).";
+    if (!beside && !AttachConfig(language) && !LoadProjectSettings(editor::ProjectRoot()).dapAttachByLanguage.contains(language)) {
+        return "No attach configuration for " + language + " (ned/set-dap-attach, or .ned/settings.json's dapAttach).";
     }
     return BeginSession(language, /*attach=*/true, beside);
 }
@@ -941,6 +945,13 @@ std::string Manager::BeginSession(const std::string& language, bool attach, cons
     // else: a client injected via SetClientForTesting — run the same
     // handshake against it.
 
+    try {
+        sessionArguments_ = SessionArguments(LoadProjectSettings(editor::ProjectRoot()), language, attach, editor::ProjectRoot());
+    }
+    catch (const std::runtime_error& e) {
+        client_.reset();
+        return e.what();
+    }
     language_ = language;
     sessionHost_ = beside ? std::optional<std::string>(beside->destination) : std::nullopt;
     SetState(SessionState::Starting);
@@ -954,13 +965,30 @@ std::string Manager::BeginSessionOnHost(const std::string& language, const text:
     SetState(SessionState::Starting);
     // No cwd: the adapter starts in the project root found on the host.
     remote::SpawnBeside(hosts_, beside, remote::RemoteSpawn{.argv = argv, .stderrMode = process::StderrMode::Capture},
-                        spawnLifetime_.Token(), [this, label = std::filesystem::path(argv.front()).filename().string()](remote::Spawned spawned) {
+                        spawnLifetime_.Token(), [this, beside, label = std::filesystem::path(argv.front()).filename().string()](remote::Spawned spawned) {
                             if (!spawned) {
                                 EndSession("Failed to start debug adapter: " + spawned.error());
                                 return;
                             }
                             client_ = std::make_unique<Client>(lsp::Transport(std::move(spawned->child), label), eventLoop_);
-                            SendInitialize();
+                            // Its root's settings there say what to launch, paths and all.
+                            const std::filesystem::path root = spawned->cwd.value_or(beside.path.parent_path());
+                            remote::LoadHostProjectSettings(*hosts_, text::RemoteFile{.destination = beside.destination, .path = root}, spawnLifetime_.Token(),
+                                                            [this, root](const ProjectSettings& settings) {
+                                                                try {
+                                                                    sessionArguments_ = SessionArguments(settings, language_, isAttach_, root);
+                                                                }
+                                                                catch (const std::runtime_error& e) {
+                                                                    EndSession(e.what());
+                                                                    return;
+                                                                }
+                                                                if (!sessionArguments_) {
+                                                                    EndSession(std::string("No ") + (isAttach_ ? "attach" : "launch") + " configuration for " + language_ +
+                                                                               " on " + sessionHost_.value_or("its host") + ".");
+                                                                    return;
+                                                                }
+                                                                SendInitialize();
+                                                            });
                         });
     if (state_ == SessionState::Inactive) {
         return "Debug session failed to start."; // why went to SetOnSessionEnded
@@ -1063,18 +1091,8 @@ void Manager::SendInitialize() {
 }
 
 void Manager::SendLaunchOrAttach() {
-    const auto config    = isAttach_ ? AttachConfig(language_) : LaunchConfig(language_);
-    Json       arguments = Json::object();
-    if (config) {
-        try {
-            arguments = Json::parse(*config);
-        }
-        catch (const std::exception& e) {
-            EndSession(std::string(isAttach_ ? "attach" : "launch") + " configuration is not valid JSON: " + e.what());
-            return;
-        }
-    }
-    const std::string command = isAttach_ ? "attach" : "launch";
+    Json              arguments = sessionArguments_.value_or(Json::object());
+    const std::string command   = isAttach_ ? "attach" : "launch";
     client_->SendRequest(command, std::move(arguments), [this, command](bool success, const Json&, const std::string& message) {
         if (!success) {
             EndSession(command + " failed: " + message);
