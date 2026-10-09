@@ -6,8 +6,14 @@
 //   fs/read   params {path}
 //             chunk  bytes, at most kFsChunkBytes each
 //             result stat, its mtime taken before the read
-//   fs/write  params {path, data: bytes, expect?: mtime | null}
+//   fs/write  params {path, data: bytes | upload: uint, expect?: mtime | null}
 //             result stat of what was written
+//   fs/upload params {handle: uint, data: bytes}
+//             result {}
+//             Appends data to the upload handle names, which the editor
+//             numbers; a write or a search's live content takes it whole.
+//   fs/upload-drop params {handle}
+//             result {}
 //   fs/readdir params {path}
 //             chunk  [entry], at most kFsReaddirChunk each
 //             result {}
@@ -30,7 +36,9 @@
 //
 // An mtime is nanoseconds since the Unix epoch, as the host's clock reads
 // it. A write with expect is refused (kFileChanged) unless the file still
-// has that mtime, or, for null, still doesn't exist.
+// has that mtime, or, for null, still doesn't exist. Uploads (from fs
+// version 6) carry what doesn't fit one frame; they end with the
+// connection, and the host holds at most kMaxUploadBytes of them.
 //
 
 #ifndef NED_EDITOR_HOST_FSCODEC_H
@@ -59,7 +67,11 @@ inline constexpr std::string_view kFsRename   = "fs/rename";
 inline constexpr std::string_view kFsRemove   = "fs/remove";
 inline constexpr std::string_view kFsProjectRoot = "fs/project-root";
 
+inline constexpr std::string_view kFsUpload     = "fs/upload";
+inline constexpr std::string_view kFsUploadDrop = "fs/upload-drop";
+
 inline constexpr std::size_t kFsChunkBytes   = 256 * 1024;
+inline constexpr std::size_t kMaxUploadBytes = std::size_t{2} << 30;
 inline constexpr std::size_t kFsReaddirChunk = 1024;
 
 // Error codes an fs request answers with, past the protocol's own.
@@ -94,6 +106,8 @@ struct DirEntry {
 struct FsWriteRequest {
     std::filesystem::path path;
     std::string           data;
+    // Writes this upload instead of data.
+    std::optional<std::uint64_t> upload;
     // Unset writes regardless; see expect above.
     std::optional<std::optional<std::filesystem::file_time_type>> expect;
 };
@@ -124,6 +138,14 @@ struct FsProjectRootRequest {
 
 [[nodiscard]] nlohmann::json ToJson(const FsWriteRequest& request);
 [[nodiscard]] FsWriteRequest FsWriteRequestFromJson(const nlohmann::json& json);
+
+struct FsUploadRequest {
+    std::uint64_t handle = 0;
+    std::string   data;
+};
+
+[[nodiscard]] nlohmann::json  ToJson(const FsUploadRequest& request);
+[[nodiscard]] FsUploadRequest FsUploadRequestFromJson(const nlohmann::json& json);
 
 [[nodiscard]] nlohmann::json  ToJson(const FsRenameRequest& request);
 [[nodiscard]] FsRenameRequest FsRenameRequestFromJson(const nlohmann::json& json);

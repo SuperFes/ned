@@ -154,6 +154,9 @@ Dispatcher::Dispatcher(protocol::Endpoint& endpoint, PostQueue& postQueue, Ident
     endpoint_.Handle(std::string(kFsStat), lifetime_.Bind([this](Json params, Responder responder) { FsStat(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsRead), lifetime_.Bind([this](Json params, Responder responder) { FsRead(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsWrite), lifetime_.Bind([this](Json params, Responder responder) { FsWrite(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kFsUpload), lifetime_.Bind([this](Json params, Responder responder) { FsUpload(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kFsUploadDrop),
+                     lifetime_.Bind([this](Json params, Responder responder) { FsUploadDrop(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsReaddir), lifetime_.Bind([this](Json params, Responder responder) { FsReaddir(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsRealpath), lifetime_.Bind([this](Json params, Responder responder) { FsRealpath(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsMkdir), lifetime_.Bind([this](Json params, Responder responder) { FsMkdir(params, std::move(responder)); }));
@@ -201,7 +204,7 @@ void Dispatcher::Hello(const Json& params, Responder responder) {
     response.arch         = identity_.arch;
     response.codec        = ChooseCodec(request.codecs);
     response.window       = protocol::kDefaultWindow;
-    response.capabilities = Capabilities{.fs = 5, .proc = kProcVersion, .search = 1, .watch = 2};
+    response.capabilities = Capabilities{.fs = 6, .proc = kProcVersion, .search = 2, .watch = 2};
     responder.Result(ToJson(response));
     if (onCodec_) {
         onCodec_(response.codec);
@@ -222,6 +225,14 @@ void Dispatcher::SearchProject(const Json& params, Responder responder) {
     catch (const SearchPatternError& e) {
         responder.Error(error_code::kInvalidParams, e.what());
         return;
+    }
+    for (LiveUpload& upload : request->liveUploads) {
+        std::optional<std::string> text = TakeUpload(upload.upload);
+        if (!text) {
+            responder.Error(error_code::kInvalidParams, "no upload " + std::to_string(upload.upload));
+            return;
+        }
+        request->live.push_back(LiveContent{std::move(upload.path), std::move(upload.canonicalPath), std::move(*text), std::nullopt});
     }
 
     const std::uint64_t id  = nextJob_++;
@@ -349,10 +360,64 @@ void Dispatcher::FsRead(const Json& params, Responder responder) {
     });
 }
 
+void Dispatcher::FsUpload(const Json& params, Responder responder) {
+    FsUploadRequest request;
+    try {
+        request = FsUploadRequestFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    if (uploadBytes_ + request.data.size() > kMaxUploadBytes) {
+        if (const auto it = uploads_.find(request.handle); it != uploads_.end()) {
+            uploadBytes_ -= it->second.size();
+            uploads_.erase(it);
+        }
+        responder.Error(fs_error::kFailed, "uploads past " + std::to_string(kMaxUploadBytes >> 20) + " MiB aren't held");
+        return;
+    }
+    uploadBytes_ += request.data.size();
+    uploads_[request.handle] += request.data;
+    responder.Result(Json::object());
+}
+
+void Dispatcher::FsUploadDrop(const Json& params, Responder responder) {
+    try {
+        (void)TakeUpload(RequireUnsigned(params, "handle"));
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    responder.Result(Json::object());
+}
+
+std::optional<std::string> Dispatcher::TakeUpload(std::uint64_t handle) {
+    const auto it = uploads_.find(handle);
+    if (it == uploads_.end()) {
+        return std::nullopt;
+    }
+    std::string data = std::move(it->second);
+    uploads_.erase(it);
+    uploadBytes_ -= data.size();
+    return data;
+}
+
 void Dispatcher::FsWrite(const Json& params, Responder responder) {
     std::shared_ptr<const FsWriteRequest> request;
     try {
-        request = std::make_shared<const FsWriteRequest>(FsWriteRequestFromJson(params));
+        FsWriteRequest decoded = FsWriteRequestFromJson(params);
+        if (decoded.upload) {
+            std::optional<std::string> data = TakeUpload(*decoded.upload);
+            if (!data) {
+                responder.Error(error_code::kInvalidParams, "no upload " + std::to_string(*decoded.upload));
+                return;
+            }
+            decoded.data = std::move(*data);
+            decoded.upload.reset();
+        }
+        request = std::make_shared<const FsWriteRequest>(std::move(decoded));
     }
     catch (const protocol::ProtocolError& e) {
         responder.Error(error_code::kInvalidParams, e.what());

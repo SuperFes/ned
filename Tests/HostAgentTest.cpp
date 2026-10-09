@@ -143,8 +143,8 @@ TEST_CASE("ned-agent answers hello with its own build and settles the codec", "[
     REQUIRE(hello.build == host::FileBuildId(AgentBinary()));
     REQUIRE(hello.arch == host::BuildArch());
     REQUIRE(hello.codec == "zstd");
-    REQUIRE(hello.capabilities.search == 1);
-    REQUIRE(hello.capabilities.fs == 5);
+    REQUIRE(hello.capabilities.search == 2);
+    REQUIRE(hello.capabilities.fs == 6);
     REQUIRE(hello.capabilities.watch == 2);
     REQUIRE(hello.capabilities.proc == host::kProcVersion);
 }

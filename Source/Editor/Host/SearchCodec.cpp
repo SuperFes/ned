@@ -31,6 +31,9 @@ Json ToJson(const SearchRequest& request) {
         }
         live.push_back(std::move(item));
     }
+    for (const LiveUpload& entry : request.liveUploads) {
+        live.push_back(Json{{"path", PathToJson(entry.path)}, {"canonical", PathToJson(entry.canonicalPath)}, {"upload", entry.upload}});
+    }
     return Json{{"root", PathToJson(request.root)},
                 {"pattern", request.pattern},
                 {"live", std::move(live)},
@@ -44,6 +47,10 @@ SearchRequest SearchRequestFromJson(const Json& json) {
     request.pattern = RequireString(json, "pattern");
     for (const Json& item : RequireArray(json, "live")) {
         LiveContent entry{RequirePath(item, "path"), RequirePath(item, "canonical"), {}, std::nullopt};
+        if (item.is_object() && item.contains("upload")) {
+            request.liveUploads.push_back(LiveUpload{.path = std::move(entry.path), .canonicalPath = std::move(entry.canonicalPath), .upload = RequireUnsigned(item, "upload")});
+            continue;
+        }
         if (item.is_object() && item.contains("matches")) {
             entry.preScanned = MatchesFromJson(item["matches"]);
         }

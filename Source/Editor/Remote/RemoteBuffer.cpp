@@ -124,20 +124,45 @@ RemoteSaver::RemoteSaver(Hosts& hosts, text::BufferList& buffers, PostQueue& pos
 
 bool RemoteSaver::Dispatch(RemoteSaveRequest request) {
     auto shared = std::make_shared<RemoteSaveRequest>(std::move(request));
-    // Posted, so even a host that answers at once never settles the buffer
-    // inside the save that started it.
-    postQueue_.Post(lifetime_.Bind([this, shared] {
-        hosts_.Connect(shared->file.destination, lifetime_.Bind([this, shared](const std::expected<Connection*, std::string>& connection) {
-            if (!connection) {
-                Finish(shared, std::unexpected(FsFailure{.code = host::fs_error::kFailed, .message = connection.error()}));
+    if (!shared->encodeLater) {
+        // Posted, so even a host that answers at once never settles the
+        // buffer inside the save that started it.
+        postQueue_.Post(lifetime_.Bind([this, shared] { Write(shared); }));
+        return true;
+    }
+    std::erase_if(encoders_, [](const Encoder& encoder) { return encoder.finished->load(); });
+    Encoder& encoder = encoders_.emplace_back();
+    encoder.thread   = std::jthread([this, shared, finished = encoder.finished, alive = lifetime_.Token()] {
+        std::optional<std::string> failure;
+        std::string                bytes;
+        try {
+            bytes = text::EncodeSavePlan(shared->plan);
+        }
+        catch (const std::exception& e) {
+            failure = e.what();
+        }
+        postQueue_.Post(alive.Bind([this, shared, failure = std::move(failure), bytes = std::move(bytes)]() mutable {
+            if (failure) {
+                Finish(shared, std::unexpected(FsFailure{.code = host::fs_error::kFailed, .message = *failure}));
                 return;
             }
-            host::FsWriteRequest write{.path = shared->file.path, .data = std::move(shared->bytes), .expect = shared->expect};
-            (void)WriteFile(**connection, std::move(write),
-                            lifetime_.Bind([this, shared](const FsResult<host::FileStat>& written) { Finish(shared, written); }));
+            shared->bytes = std::move(bytes);
+            Write(shared);
         }));
-    }));
+        finished->store(true);
+    });
     return true;
+}
+
+void RemoteSaver::Write(const std::shared_ptr<RemoteSaveRequest>& request) {
+    hosts_.Connect(request->file.destination, lifetime_.Bind([this, request](const std::expected<Connection*, std::string>& connection) {
+        if (!connection) {
+            Finish(request, std::unexpected(FsFailure{.code = host::fs_error::kFailed, .message = connection.error()}));
+            return;
+        }
+        host::FsWriteRequest write{.path = request->file.path, .data = std::move(request->bytes), .expect = request->expect};
+        (void)WriteFile(**connection, std::move(write), lifetime_.Bind([this, request](const FsResult<host::FileStat>& written) { Finish(request, written); }));
+    }));
 }
 
 void RemoteSaver::Finish(const std::shared_ptr<RemoteSaveRequest>& request, const FsResult<host::FileStat>& written) {

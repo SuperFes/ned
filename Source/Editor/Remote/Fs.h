@@ -33,9 +33,12 @@ struct FsFailure {
 template <typename T>
 using FsResult = std::expected<T, FsFailure>;
 
-// The most a write carries: its content travels in one request, under the
-// frame cap.
+// The most a write carries in its own request, under the frame cap. More
+// goes up first as an upload, from an agent with fs version 6.
 inline constexpr std::size_t kMaxWriteBytes = std::size_t{48} << 20;
+
+// What one fs/upload request carries.
+inline constexpr std::size_t kUploadPieceBytes = std::size_t{8} << 20;
 
 // How long a write may hear nothing: the request timeout, plus the time its
 // content takes to go up a slow link.
@@ -48,7 +51,17 @@ std::uint64_t StatFile(Connection& connection, const std::filesystem::path& path
 // one the host answers malformed.
 std::uint64_t ReadFile(Connection& connection, const std::filesystem::path& path, std::size_t maxBytes,
                        std::function<void(FsResult<text::FileContents>)> done);
+// A write past kMaxWriteBytes goes up as an upload first, and returns 0:
+// it can't be cancelled.
 std::uint64_t WriteFile(Connection& connection, host::FsWriteRequest request, std::function<void(FsResult<host::FileStat>)> done);
+
+// A handle no other upload from this process has.
+[[nodiscard]] std::uint64_t NewUploadHandle();
+// Sends bytes up as upload handle, a piece at a time, each answered before
+// the next goes. done runs once: with nothing when the host holds it all,
+// else why not, the host having dropped what it had.
+void Upload(Connection& connection, std::uint64_t handle, std::shared_ptr<const std::string> bytes,
+            std::function<void(std::optional<FsFailure> failure)> done);
 // A directory's entries, unsorted. One with more than maxEntries is
 // cancelled and fails.
 std::uint64_t ListDirectory(Connection& connection, const std::filesystem::path& path, std::size_t maxEntries,
