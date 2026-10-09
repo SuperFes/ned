@@ -10,6 +10,7 @@
 #ifndef NED_EDITOR_ACP_TURNFILES_H
 #define NED_EDITOR_ACP_TURNFILES_H
 
+#include <expected>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -45,6 +46,11 @@ inline constexpr std::size_t kMaxTurnFileBytes = 4 * 1024 * 1024;
 // be tracked -- too large, binary, unreadable, still loading, or a host's
 // file that isn't open.
 [[nodiscard]] std::optional<FileState> ReadTurnFile(const text::BufferList& bufferList, const text::FileRef& file);
+
+// A host file's turn state from a read of it there: nullopt when it can't
+// be tracked (too large, binary, or a read that failed for any reason but
+// the file not existing).
+[[nodiscard]] std::optional<FileState> HostTurnFile(const std::expected<std::string, int>& read, int notFoundCode);
 
 // Makes the file read `state`. An open buffer with unsaved changes is
 // edited in place and left unsaved; otherwise the disk is written (after a

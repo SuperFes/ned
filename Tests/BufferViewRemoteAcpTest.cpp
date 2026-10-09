@@ -237,6 +237,55 @@ TEST_CASE("A host's ACP agent's own edit to an open file is reviewed and rewound
     fixture.acpManager.StopSession();
 }
 
+TEST_CASE("A host's file the agent changed while it wasn't open here is reviewed and rewound", "[BufferView][Remote][Acp][HostAgent]") {
+    Fixture fixture;
+    REQUIRE(Start(fixture));
+    const text::RemoteFile closed = fixture.File();
+    REQUIRE(fixture.bufferList.FindByRemote(closed) == nullptr);
+
+    REQUIRE(Turn(fixture, WriteScript(closed, "int x;\nint w;\n")));
+    REQUIRE(PumpUntil(fixture.loop, [&] { return Reviewable(fixture); }));
+    // Its "before" was read on the host ahead of the write, its "after" at the turn's end.
+    const acp::Manager::Checkpoint& turn = fixture.acpManager.CheckpointAt(0);
+    REQUIRE(turn.files.size() == 1);
+    CHECK(turn.files[0].before.text == "int x;\nint y;\n");
+    REQUIRE(turn.files[0].after.has_value());
+    CHECK(turn.files[0].after->text == "int x;\nint w;\n");
+    CHECK(turn.untrackedFiles.empty());
+
+    // The review opens it, to undo there.
+    fixture.view.OpenAcpTurnReview("write", turn.files);
+    REQUIRE(PumpUntil(fixture.loop, [&] { return fixture.activeBuffer.Get().Name() == acp::kReviewBufferName; }));
+    CHECK_THAT(fixture.activeBuffer.Get().Text(), ContainsSubstring("+ int w;"));
+    text::Buffer* opened = fixture.bufferList.FindByRemote(closed);
+    REQUIRE(opened != nullptr);
+    fixture.view.HandleAcpReviewRequest(ned::editor::InteractiveRequest::AcpReviewUndoHunk);
+    CHECK(opened->Text() == "int x;\nint y;\n");
+    CHECK(opened->Modified());
+    fixture.acpManager.StopSession();
+}
+
+TEST_CASE("Rewinding opens the host's files a turn changed that weren't open here", "[BufferView][Remote][Acp][HostAgent]") {
+    Fixture fixture;
+    REQUIRE(Start(fixture));
+    const text::RemoteFile closed = fixture.File();
+    REQUIRE(Turn(fixture, WriteScript(closed, "int x;\nint w;\n")));
+    REQUIRE(PumpUntil(fixture.loop, [&] { return Reviewable(fixture); }));
+
+    bool rewound = false;
+    fixture.acpManager.OpenHostTurnFiles(0, [&] {
+        const acp::Manager::RewindOutcome outcome = fixture.acpManager.RewindTo(0);
+        CHECK(outcome.revertedFiles == std::vector<std::string>{closed.ToString()});
+        rewound = true;
+    });
+    REQUIRE(PumpUntil(fixture.loop, [&] { return rewound; }));
+    text::Buffer* opened = fixture.bufferList.FindByRemote(closed);
+    REQUIRE(opened != nullptr);
+    CHECK(opened->Text() == "int x;\nint y;\n");
+    CHECK(opened->Modified());
+    fixture.acpManager.StopSession();
+}
+
 TEST_CASE("A host's ACP turn review names its files against the host's root and visits them there", "[BufferView][Remote][Acp][HostAgent]") {
     Fixture fixture;
     REQUIRE(fixture.OpenFile());
