@@ -86,13 +86,24 @@ TEST_CASE("A connected host's files are stat'd, read and written", "[Remote][Rem
         REQUIRE(PumpUntil(queue, [&] { return missing.value.has_value(); }));
         CHECK(missing.value->error().code == host::fs_error::kNotFound);
     }
-    SECTION("a write too large for one request never leaves") {
+    SECTION("a write too large for one request goes up as an upload first") {
         Answer<host::FileStat> huge;
-        CHECK(remote::WriteFile(connection, host::FsWriteRequest{.path = file, .data = std::string(remote::kMaxWriteBytes + 1, 'x'), .expect = std::nullopt},
-                                huge.Done()) == 0);
-        REQUIRE(huge.value.has_value());
-        CHECK_THAT(huge.value->error().message, ContainsSubstring("too large to write to a host (48 MiB, at most 48)"));
+        std::string            content(remote::kMaxWriteBytes + remote::kUploadPieceBytes / 2, 'x');
+        content.back() = 'y';
+        CHECK(remote::WriteFile(connection, host::FsWriteRequest{.path = file, .data = content, .expect = std::nullopt}, huge.Done()) == 0);
+        REQUIRE(PumpUntil(queue, [&] { return huge.value.has_value(); }, std::chrono::seconds(120)));
+        REQUIRE(huge.value->has_value());
+        CHECK((*huge.value)->size == content.size());
+        std::ifstream in(file, std::ios::binary);
+        CHECK(std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()) == content);
         CHECK(connection.Endpoint().PendingRequests() == 0);
+    }
+    SECTION("a write naming an upload the host doesn't hold is refused") {
+        Answer<host::FileStat> missing;
+        remote::WriteFile(connection, host::FsWriteRequest{.path = file, .data = {}, .upload = 999999, .expect = std::nullopt}, missing.Done());
+        REQUIRE(PumpUntil(queue, [&] { return missing.value.has_value(); }));
+        REQUIRE_FALSE(missing.value->has_value());
+        CHECK_THAT(missing.value->error().message, ContainsSubstring("no upload 999999"));
     }
 }
 

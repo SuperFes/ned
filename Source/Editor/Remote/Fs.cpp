@@ -1,6 +1,7 @@
 #include "Fs.h"
 
 #include <algorithm>
+#include <atomic>
 #include <iterator>
 #include <memory>
 #include <optional>
@@ -124,14 +125,77 @@ std::uint64_t ReadFile(Connection& connection, const std::filesystem::path& path
 }
 
 std::uint64_t WriteFile(Connection& connection, host::FsWriteRequest request, std::function<void(FsResult<host::FileStat>)> done) {
-    if (request.data.size() > kMaxWriteBytes) {
+    if (request.data.size() <= kMaxWriteBytes) {
+        const std::chrono::milliseconds limit = WriteIdleLimit(request.data.size());
+        return connection.Endpoint().Request(std::string(host::kFsWrite), host::ToJson(request), StatHandlers(std::move(done)), limit);
+    }
+    if (connection.Hello().capabilities.fs < 6) {
         done(std::unexpected(FsFailure{.code    = host::fs_error::kFailed,
-                                       .message = request.path.string() + " is too large to write to a host (" + std::to_string(request.data.size() >> 20) +
-                                                  " MiB, at most " + std::to_string(kMaxWriteBytes >> 20) + ")"}));
+                                       .message = request.path.string() + " is too large for this host's agent to write (" +
+                                                  std::to_string(request.data.size() >> 20) + " MiB, at most " + std::to_string(kMaxWriteBytes >> 20) + ")"}));
         return 0;
     }
-    const std::chrono::milliseconds limit = WriteIdleLimit(request.data.size());
-    return connection.Endpoint().Request(std::string(host::kFsWrite), host::ToJson(request), StatHandlers(std::move(done)), limit);
+    const std::uint64_t handle = NewUploadHandle();
+    auto                bytes  = std::make_shared<const std::string>(std::move(request.data));
+    request.data.clear();
+    request.upload = handle;
+    // The connection outlives every answer it gives, this upload's included.
+    Upload(connection, handle, bytes, [&connection, request = std::move(request), done = std::move(done)](std::optional<FsFailure> failure) mutable {
+        if (failure) {
+            done(std::unexpected(*failure));
+            return;
+        }
+        connection.Endpoint().Request(std::string(host::kFsWrite), host::ToJson(request), StatHandlers(std::move(done)), ProtocolRequestTimeoutMs());
+    });
+    return 0;
+}
+
+std::uint64_t NewUploadHandle() {
+    static std::atomic<std::uint64_t> next{0};
+    return ++next;
+}
+
+void Upload(Connection& connection, std::uint64_t handle, std::shared_ptr<const std::string> bytes, std::function<void(std::optional<FsFailure> failure)> done) {
+    struct State {
+        Connection&                                   connection;
+        std::uint64_t                                 handle;
+        std::shared_ptr<const std::string>            bytes;
+        std::function<void(std::optional<FsFailure>)> done;
+        std::size_t                                   sent    = 0;
+        bool                                          started = false; // an empty upload still sends one piece
+    };
+    auto state = std::make_shared<State>(State{.connection = connection, .handle = handle, .bytes = std::move(bytes), .done = std::move(done)});
+    // Each piece goes once the one before is answered: the host's answers
+    // pace it, and nothing piles up past one piece.
+    auto next = std::make_shared<std::function<void()>>();
+    *next     = [state, weakNext = std::weak_ptr<std::function<void()>>(next)] {
+        if (state->sent == state->bytes->size() && state->started) {
+            state->done(std::nullopt);
+            return;
+        }
+        state->started                     = true;
+        const std::size_t           length = std::min(kUploadPieceBytes, state->bytes->size() - state->sent);
+        const host::FsUploadRequest piece{.handle = state->handle, .data = state->bytes->substr(state->sent, length)};
+        state->sent += length;
+        state->connection.Endpoint().Request(
+            std::string(host::kFsUpload), host::ToJson(piece),
+            protocol::ResponseHandlers{[state, again = weakNext.lock()](const Json&) {
+                                           if (again) {
+                                               (*again)();
+                                           }
+                                       },
+                                       [state](const protocol::RemoteError& error) {
+                                           if (error.code != protocol::error_code::kConnectionClosed) {
+                                               state->connection.Endpoint().Request(std::string(host::kFsUploadDrop), Json{{"handle", state->handle}},
+                                                                                    protocol::ResponseHandlers{[](const Json&) {}, [](const protocol::RemoteError&) {}, {}},
+                                                                                    ProtocolRequestTimeoutMs());
+                                           }
+                                           state->done(FromRemote(error));
+                                       },
+                                       {}},
+            WriteIdleLimit(length));
+    };
+    (*next)();
 }
 
 std::uint64_t ListDirectory(Connection& connection, const std::filesystem::path& path, std::size_t maxEntries,

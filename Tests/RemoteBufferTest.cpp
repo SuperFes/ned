@@ -11,6 +11,7 @@
 #include "Editor/Remote/RemoteBuffer.h"
 #include "Editor/Session.h"
 #include "Text/BufferList.h"
+#include "Text/SavePlan.h"
 
 namespace remote = ned::editor::remote;
 namespace host   = ned::editor::host;
@@ -155,10 +156,13 @@ TEST_CASE("WriteBufferToDisk hands a remote buffer to the remote-save dispatcher
     CHECK_FALSE(taken->expect.has_value());
     buffer.AbandonSave();
 
-    // Too large for one request: refused before it leaves.
-    buffer.InsertAtPoint(std::string(remote::kMaxWriteBytes, 'x'));
+    // A large one is left for the dispatcher to encode off the main thread.
+    buffer.InsertAtPoint(std::string(static_cast<std::size_t>(ned::text::AsyncLoadThreshold()), 'x'));
     taken.reset();
-    CHECK_THROWS_WITH(ned::editor::WriteBufferToDisk(buffer, SaveDispatch::Automatic), Catch::Matchers::ContainsSubstring("too large to save to its host"));
-    CHECK_FALSE(taken.has_value());
-    CHECK_FALSE(buffer.IsSaving());
+    ned::editor::WriteBufferToDisk(buffer, SaveDispatch::Automatic);
+    REQUIRE(taken.has_value());
+    CHECK(taken->encodeLater);
+    CHECK(taken->bytes.empty());
+    CHECK(ned::text::EncodeSavePlan(taken->plan).size() > ned::text::AsyncLoadThreshold());
+    buffer.AbandonSave();
 }

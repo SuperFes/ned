@@ -81,7 +81,13 @@ FileStat FileStatFromJson(const Json& json) {
 }
 
 Json ToJson(const FsWriteRequest& request) {
-    Json json{{"path", PathToJson(request.path)}, {"data", Bytes(request.data)}};
+    Json json{{"path", PathToJson(request.path)}};
+    if (request.upload) {
+        json["upload"] = *request.upload;
+    }
+    else {
+        json["data"] = Bytes(request.data);
+    }
     if (request.expect) {
         json["expect"] = TimeToJson(*request.expect);
     }
@@ -91,11 +97,24 @@ Json ToJson(const FsWriteRequest& request) {
 FsWriteRequest FsWriteRequestFromJson(const Json& json) {
     FsWriteRequest request;
     request.path = RequirePath(json, "path");
-    request.data = RequireBytes(json, "data");
+    if (json.contains("upload")) {
+        request.upload = RequireUnsigned(json, "upload");
+    }
+    else {
+        request.data = RequireBytes(json, "data");
+    }
     if (json.contains("expect")) {
         request.expect = TimeFromJson(json, "expect");
     }
     return request;
+}
+
+Json ToJson(const FsUploadRequest& request) {
+    return Json{{"handle", request.handle}, {"data", Bytes(request.data)}};
+}
+
+FsUploadRequest FsUploadRequestFromJson(const Json& json) {
+    return FsUploadRequest{.handle = RequireUnsigned(json, "handle"), .data = RequireBytes(json, "data")};
 }
 
 Json ToJson(const FsRenameRequest& request) {

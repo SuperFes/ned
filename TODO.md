@@ -85,11 +85,6 @@ and sync on save; don't build a remote-authoritative buffer.
 - [ ] Verify a remote debug session end to end (PHP/Xdebug, with the adapter running on
       the host through `proc`).
 
-**File I/O and editing**
-- [ ] Remote saves over 48 MiB: `fs/write` carries the content in one request, so a
-      bigger file needs a streamed upload. Decoding a read and encoding a save run on the
-      main thread, which only matters at that size too.
-
 **Project tree and search**
 - [ ] Send remote buffers' unsaved edits with a remote project search, as `LiveContent`.
       Unsaved text can exceed the 64 MiB frame cap in total, so it needs to go up as a

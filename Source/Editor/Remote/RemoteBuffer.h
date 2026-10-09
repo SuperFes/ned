@@ -7,12 +7,15 @@
 #ifndef NED_EDITOR_REMOTE_REMOTEBUFFER_H
 #define NED_EDITOR_REMOTE_REMOTEBUFFER_H
 
+#include <atomic>
 #include <cstddef>
 #include <expected>
 #include <functional>
+#include <list>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 
 #include "Editor/BufferSave.h"
 #include "Editor/Lifetime.h"
@@ -81,6 +84,7 @@ class RemoteSaver {
     bool Dispatch(RemoteSaveRequest request);
 
   private:
+    void Write(const std::shared_ptr<RemoteSaveRequest>& request);
     void Finish(const std::shared_ptr<RemoteSaveRequest>& request, const FsResult<host::FileStat>& written);
 
     Hosts&                                   hosts_;
@@ -88,6 +92,13 @@ class RemoteSaver {
     PostQueue&                               postQueue_;
     std::function<void(std::string message)> report_;
     LifetimeGuard                            lifetime_;
+    // A large save's encoding, one thread each, joined on destruction; a
+    // finished one is cleared out when the next starts.
+    struct Encoder {
+        std::shared_ptr<std::atomic<bool>> finished = std::make_shared<std::atomic<bool>>(false);
+        std::jthread                       thread;
+    };
+    std::list<Encoder> encoders_;
 };
 
 } // namespace ned::editor::remote

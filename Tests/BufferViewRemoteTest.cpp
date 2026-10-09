@@ -597,6 +597,36 @@ TEST_CASE("save-buffer writes a remote buffer to its host, and asks before overw
     CHECK_FALSE(buffer.Modified());
 }
 
+TEST_CASE("save-buffer encodes a large remote buffer off the main thread, then writes it", "[BufferView][Remote][HostAgent]") {
+    Fixture                          fixture;
+    ned::editor::remote::RemoteSaver saver(fixture.hosts, fixture.bufferList, fixture.queue, [&](std::string message) { fixture.statusMessage = std::move(message); });
+    ned::editor::SetRemoteSaveDispatcher([&saver](ned::editor::RemoteSaveRequest request) { return saver.Dispatch(std::move(request)); });
+    const std::uintmax_t threshold = ned::text::AsyncLoadThreshold();
+    struct Restore {
+        std::uintmax_t threshold;
+        ~Restore() {
+            ned::editor::SetRemoteSaveDispatcher(nullptr);
+            ned::text::SetAsyncLoadThreshold(threshold);
+        }
+    } restore{threshold};
+    ned::text::SetAsyncLoadThreshold(1024);
+
+    const std::filesystem::path file = fixture.fake.dir / "big.txt";
+    std::ofstream(file, std::ios::binary) << "start\r\n";
+    fixture.Command("find-file");
+    fixture.Enter("host:" + file.string());
+    REQUIRE(fixture.StatusStartsWith("Opened host:" + file.string()));
+    ned::text::Buffer& buffer = fixture.activeBuffer.Get();
+    buffer.SetPoint(buffer.Size());
+    buffer.InsertAtPoint(std::string(4096, 'z') + "\n");
+
+    fixture.Command("save-buffer");
+    REQUIRE(fixture.StatusStartsWith("Wrote host:" + file.string()));
+    std::ifstream in(file, std::ios::binary);
+    CHECK(std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()) == "start\r\n" + std::string(4096, 'z') + "\r\n");
+    CHECK_FALSE(buffer.Modified());
+}
+
 TEST_CASE("save-buffer runs a remote buffer's format command on its host, then saves", "[BufferView][Remote][HostAgent]") {
     Fixture                          fixture;
     ned::editor::remote::RemoteSaver saver(fixture.hosts, fixture.bufferList, fixture.queue, [&](std::string message) { fixture.statusMessage = std::move(message); });

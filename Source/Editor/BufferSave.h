@@ -95,7 +95,10 @@ void SetAsyncSaveDispatcher(std::function<bool(AsyncSaveRequest)> dispatcher);
 struct RemoteSaveRequest {
     text::BufferIdentity buffer;
     text::RemoteFile     file;
-    std::string          bytes;
+    // Empty when encodeLater: the dispatcher encodes plan off the main
+    // thread, as a large local save does.
+    std::string bytes;
+    bool        encodeLater = false;
     // What the host's file must still be (Buffer::RemoteTimestamp; nullopt:
     // absent) for the write to go ahead. Unset writes regardless.
     std::optional<std::optional<std::filesystem::file_time_type>> expect;

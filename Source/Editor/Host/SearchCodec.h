@@ -2,19 +2,22 @@
 // Wire forms for search/project (Docs/ClientServerProtocol.md, section 7).
 //
 //   params  {root: path, pattern: str, live: [{path, canonical, text: bytes}
-//                                             | {path, canonical, matches}],
+//                                             | {path, canonical, matches}
+//                                             | {path, canonical, upload: uint}],
 //            threads: uint, editorconfig: bool}
 //   chunk   [{file: path, line: uint, text: bytes}, ...]
 //   result  {}
 //
 // Chunks arrive as files finish, in the order a local SearchDirectory
-// returns them. threads and editorconfig are the editor's own settings
+// returns them. A live entry naming an upload (fs/upload, from search
+// version 2) is searched as that upload's text, which it consumes. threads and editorconfig are the editor's own settings
 // (SearchOptions), so a remote search behaves as a local one would.
 //
 
 #ifndef NED_EDITOR_HOST_SEARCHCODEC_H
 #define NED_EDITOR_HOST_SEARCHCODEC_H
 
+#include <cstdint>
 #include <filesystem>
 #include <span>
 #include <string>
@@ -28,10 +31,18 @@ namespace ned::editor::host {
 
 inline constexpr std::string_view kSearchProject = "search/project";
 
+// Live content whose text went up as an upload.
+struct LiveUpload {
+    std::filesystem::path path;
+    std::filesystem::path canonicalPath;
+    std::uint64_t         upload = 0;
+};
+
 struct SearchRequest {
     std::filesystem::path    root;
     std::string              pattern;
     std::vector<LiveContent> live;
+    std::vector<LiveUpload>  liveUploads;
     SearchOptions            options = CurrentSearchOptions();
 };
 

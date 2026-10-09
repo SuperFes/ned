@@ -117,6 +117,13 @@ TEST_CASE("fs stats and writes round-trip, timestamps to the nanosecond", "[Host
         CHECK(decoded.data == request.data);
         CHECK(decoded.expect == expect);
     }
+    // A write of an upload carries its handle, not data.
+    const host::FsWriteRequest uploaded = host::FsWriteRequestFromJson(OverTheWire(host::ToJson(host::FsWriteRequest{.path = "/a", .data = {}, .upload = 7, .expect = {}})));
+    CHECK(uploaded.upload == std::optional<std::uint64_t>(7));
+    CHECK(uploaded.data.empty());
+    const host::FsUploadRequest piece = host::FsUploadRequestFromJson(OverTheWire(host::ToJson(host::FsUploadRequest{.handle = 7, .data = std::string("\0x", 2)})));
+    CHECK(piece.handle == 7);
+    CHECK(piece.data == std::string("\0x", 2));
     CHECK(host::PathParamsFromJson(OverTheWire(host::PathParams("/a/b"))) == "/a/b");
 }
 

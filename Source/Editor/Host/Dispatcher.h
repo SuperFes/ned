@@ -88,6 +88,10 @@ class Dispatcher {
     void OnProcExited(std::uint64_t handle, const ProcJob* job, std::optional<int> exit);
     void OnProcStderrDone(std::uint64_t handle, const ProcJob* job);
     void FinishProcIfDone(std::uint64_t handle);
+    void FsUpload(const nlohmann::json& params, protocol::Responder responder);
+    void FsUploadDrop(const nlohmann::json& params, protocol::Responder responder);
+    // Takes an upload whole, nullopt for a handle that names none.
+    [[nodiscard]] std::optional<std::string> TakeUpload(std::uint64_t handle);
     // One burst from the watcher, as the editor named the paths; empty when
     // the watcher lost events.
     void ReportWatchEvents(const std::vector<FileEvent>& burst, const std::vector<FileMove>& moves);
@@ -104,6 +108,9 @@ class Dispatcher {
     std::unordered_map<std::uint64_t, std::unique_ptr<WorkerJob>> workerJobs_;
     // By the editor's handle.
     std::unordered_map<std::uint64_t, std::unique_ptr<ProcJob>> procs_;
+    // fs/upload's, by the editor's handle, and what they hold in all.
+    std::unordered_map<std::uint64_t, std::string> uploads_;
+    std::size_t                                    uploadBytes_ = 0;
 
     // The last watch/set, and its paths keyed by the canonical paths the
     // watcher reports; a tree's directories are named as its walk found them.

@@ -57,16 +57,15 @@ namespace {
         if (!dispatcher) {
             fail("ned: no remote hosts to save " + file.ToString() + " through");
         }
-        RemoteSaveRequest request{.buffer = text::BufferIdentity(buffer), .file = file, .bytes = {}, .expect = std::nullopt, .plan = {}};
-        try {
-            request.bytes = text::EncodeSavePlan(plan);
-        }
-        catch (const std::exception& e) {
-            fail(e.what());
-        }
-        if (request.bytes.size() > remote::kMaxWriteBytes) {
-            fail("ned: " + file.ToString() + " is too large to save to its host (" + std::to_string(request.bytes.size() >> 20) + " MiB, at most " +
-                 std::to_string(remote::kMaxWriteBytes >> 20) + ")");
+        RemoteSaveRequest request{.buffer = text::BufferIdentity(buffer), .file = file, .bytes = {}, .encodeLater = false, .expect = std::nullopt, .plan = {}};
+        request.encodeLater = ShouldSaveAsynchronously(buffer);
+        if (!request.encodeLater) {
+            try {
+                request.bytes = text::EncodeSavePlan(plan);
+            }
+            catch (const std::exception& e) {
+                fail(e.what());
+            }
         }
         if (!overwriteChanged) {
             request.expect = buffer.RemoteTimestamp();
