@@ -60,10 +60,6 @@ dispatcher runs in-process. A real target host (Rocky 9, glibc 2.34, no compiler
 rules out both a dynamically linked agent and a client-only `rg` fallback. Edit locally
 and sync on save; don't build a remote-authoritative buffer.
 
-**Client/server protocol**, ordered by the design doc's staging section.
-- [ ] Verify a remote debug session end to end (PHP/Xdebug, with the adapter running on
-      the host through `proc`).
-
 ## Documentation & Companion Tooling
 
 - [ ] **Doxygen developer docs**, themed with Doxygen Awesome, as an opt-in `docs` target
