@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "SocketPath.h"
+#include "Text/RemoteFile.h"
 #include "ToolRegistry.h"
 
 namespace ned::editor::mcp {
@@ -138,6 +139,22 @@ void BridgeServer::Adopt(protocol::LineTransport transport) {
     connections_.emplace(id, std::move(connection));
 }
 
+std::uint64_t BridgeServer::AdoptRemote(std::string host, std::function<void(std::string line)> send) {
+    const ConnectionId id = nextConnectionId_++;
+    remotes_.emplace(id, RemotePeer{.host = std::move(host), .send = std::move(send)});
+    return id;
+}
+
+void BridgeServer::ReceiveRemote(std::uint64_t id, const std::string& line) {
+    if (remotes_.contains(id)) {
+        HandleFrame(id, line);
+    }
+}
+
+void BridgeServer::CloseRemote(std::uint64_t id) {
+    remotes_.erase(id);
+}
+
 void BridgeServer::HandleFrame(ConnectionId connectionId, const std::string& line) {
     Json frame;
     try {
@@ -176,7 +193,13 @@ void BridgeServer::HandleFrame(ConnectionId connectionId, const std::string& lin
     if (method == "tools/call") {
         const Json&       params = frame.value("params", Json::object());
         const std::string name   = params.value("name", std::string());
-        const Json        args   = params.value("arguments", Json::object());
+        Json              args   = params.value("arguments", Json::object());
+        // A host's agent names its own files.
+        if (const auto remote = remotes_.find(connectionId); remote != remotes_.end() && args.is_object() && args.contains("file") && args["file"].is_string()) {
+            if (const std::string file = args["file"].get<std::string>(); file.starts_with('/')) {
+                args["file"] = text::RemoteFile{.destination = remote->second.host, .path = std::filesystem::path(file).lexically_normal()}.ToString();
+            }
+        }
         if (!registry_.HasTool(name)) {
             SendError(connectionId, id, -32601, "Unknown tool: " + name);
             return;
@@ -198,13 +221,19 @@ void BridgeServer::SendError(ConnectionId id, const Json& requestId, int code, c
 }
 
 void BridgeServer::Send(ConnectionId id, const Json& requestId, Json response) {
-    const auto connection = connections_.find(id);
-    if (connection == connections_.end() || requestId.is_null()) {
+    if (requestId.is_null()) {
         return;
     }
     response["jsonrpc"] = "2.0";
     response["id"]      = requestId;
-    connection->second->SendFrame(response.dump());
+    if (const auto remote = remotes_.find(id); remote != remotes_.end()) {
+        remote->second.send(response.dump());
+        return;
+    }
+    const auto connection = connections_.find(id);
+    if (connection != connections_.end()) {
+        connection->second->SendFrame(response.dump());
+    }
 }
 
 } // namespace ned::editor::mcp

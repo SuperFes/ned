@@ -156,6 +156,9 @@ Dispatcher::Dispatcher(protocol::Endpoint& endpoint, PostQueue& postQueue, Ident
     endpoint_.Handle(std::string(kFsWrite), lifetime_.Bind([this](Json params, Responder responder) { FsWrite(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsUpload), lifetime_.Bind([this](Json params, Responder responder) { FsUpload(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsTree), lifetime_.Bind([this](Json params, Responder responder) { FsTree(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kMcpListen), lifetime_.Bind([this](Json params, Responder responder) { McpListen(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kMcpWrite), lifetime_.Bind([this](Json params, Responder responder) { McpWrite(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kMcpClose), lifetime_.Bind([this](Json params, Responder responder) { McpClose(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsUploadDrop),
                      lifetime_.Bind([this](Json params, Responder responder) { FsUploadDrop(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsReaddir), lifetime_.Bind([this](Json params, Responder responder) { FsReaddir(params, std::move(responder)); }));
@@ -488,6 +491,50 @@ void Dispatcher::FsTree(const Json& params, Responder responder) {
             answer.Result(Json::object());
         };
     });
+}
+
+void Dispatcher::McpListen(const Json&, Responder responder) {
+    if (!mcpRelays_) {
+        try {
+            mcpRelays_ = std::make_unique<McpRelays>(
+                postQueue_, McpRelays::Events{.opened = [this](std::uint64_t channel) { endpoint_.Notify(std::string(kMcpOpened), Json{{"channel", channel}}); },
+                                              .line   = [this](std::uint64_t channel, const std::string& line) { endpoint_.Notify(std::string(kMcpLine), Json{{"channel", channel}, {"line", Bytes(line)}}); },
+                                              .closed = [this](std::uint64_t channel) { endpoint_.Notify(std::string(kMcpClosed), Json{{"channel", channel}}); }});
+        }
+        catch (const std::runtime_error& e) {
+            responder.Error(fs_error::kFailed, e.what());
+            return;
+        }
+    }
+    responder.Result(Json{{"path", PathToJson(mcpRelays_->SocketPath())}});
+}
+
+void Dispatcher::McpWrite(const Json& params, Responder responder) {
+    try {
+        const std::uint64_t channel = RequireUnsigned(params, "channel");
+        if (!mcpRelays_ || !mcpRelays_->Write(channel, RequireBytes(params, "line"))) {
+            responder.Error(error_code::kInvalidParams, "no MCP channel " + std::to_string(channel));
+            return;
+        }
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    responder.Result(Json::object());
+}
+
+void Dispatcher::McpClose(const Json& params, Responder responder) {
+    try {
+        if (mcpRelays_) {
+            mcpRelays_->Close(RequireUnsigned(params, "channel"));
+        }
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    responder.Result(Json::object());
 }
 
 void Dispatcher::FsRealpath(const Json& params, Responder responder) {

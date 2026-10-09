@@ -25,6 +25,7 @@
 
 #include "Editor/FileWatch.h"
 #include "Editor/Host/Hello.h"
+#include "Editor/Host/McpRelays.h"
 #include "Editor/Host/WatchCodec.h"
 #include "Editor/Lifetime.h"
 #include "Editor/PostQueue.h"
@@ -89,6 +90,9 @@ class Dispatcher {
     void OnProcStderrDone(std::uint64_t handle, const ProcJob* job);
     void FinishProcIfDone(std::uint64_t handle);
     void FsTree(const nlohmann::json& params, protocol::Responder responder);
+    void McpListen(const nlohmann::json& params, protocol::Responder responder);
+    void McpWrite(const nlohmann::json& params, protocol::Responder responder);
+    void McpClose(const nlohmann::json& params, protocol::Responder responder);
     void FsUpload(const nlohmann::json& params, protocol::Responder responder);
     void FsUploadDrop(const nlohmann::json& params, protocol::Responder responder);
     // Takes an upload whole, nullopt for a handle that names none.
@@ -123,6 +127,8 @@ class Dispatcher {
     std::vector<FileEvent>       watchBurst_;
     std::vector<FileMove>        watchMoves_;
     std::unique_ptr<FileWatcher> watcher_;
+    // Made by the first mcp/listen.
+    std::unique_ptr<McpRelays> mcpRelays_;
 
     LifetimeGuard lifetime_;
 };

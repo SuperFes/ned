@@ -23,6 +23,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <stop_token>
 #include <string>
@@ -63,6 +64,14 @@ class BridgeServer {
     [[nodiscard]] bool                         IsListening() const noexcept;
     [[nodiscard]] const std::filesystem::path& SocketPath() const noexcept;
 
+    // A relay on a host (Host/McpRelays.h), whose lines arrive through
+    // ReceiveRemote and whose answers go to send. Its tool calls name that
+    // host's files: an absolute "file" argument is read as host:/path.
+    // Returns its id for the other two. Main thread only.
+    std::uint64_t AdoptRemote(std::string host, std::function<void(std::string line)> send);
+    void          ReceiveRemote(std::uint64_t id, const std::string& line);
+    void          CloseRemote(std::uint64_t id);
+
   private:
     using Connection   = protocol::FramedConnection<protocol::LineTransport>;
     using ConnectionId = std::uint64_t;
@@ -85,6 +94,11 @@ class BridgeServer {
 
     // Main-thread only.
     std::unordered_map<ConnectionId, std::unique_ptr<Connection>> connections_;
+    struct RemotePeer {
+        std::string                      host;
+        std::function<void(std::string)> send;
+    };
+    std::unordered_map<ConnectionId, RemotePeer>                  remotes_;
     ConnectionId                                                  nextConnectionId_ = 1;
 
     LifetimeGuard lifetime_;

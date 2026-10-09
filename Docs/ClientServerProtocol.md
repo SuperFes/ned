@@ -312,8 +312,13 @@ host's files it changed: one open here by its buffer; one that isn't by an `fs/r
 host ahead of the edit (a write the editor makes for the agent waits for it; an edit the
 agent makes itself is read as its tool call arrives), and by the host's text read as the
 turn ends. Review and rewind open such a file first, then edit its buffer, leaving it to be
-saved. It is offered none of ned's
-MCP tools, since the bridge is a local socket. Its additional directories come from its
+saved. ned's MCP tools reach it through a relay on its host: `mcp/listen` opens a private
+socket there (`Host/McpRelays.h`), the agent is given `ned-agent --mcp-relay <socket>` as
+its MCP server, and each relay that connects is a channel whose lines travel as
+`$/mcp/line` notifications and `mcp/write` requests to the editor's bridge
+(`Mcp/BridgeServer.h`), which serves it as a local relay; an absolute `file` argument
+names the host's file, and the git tools, which work on this machine's repository, refuse
+one. Its additional directories come from its
 root's `.ned/settings.json` on the host, read before the agent is initialized. In the
 composer, `@buffer` names a host file by its path there for an agent on that host, and
 `@` completion offers the host's project files, listed there through `fs/tree` each time

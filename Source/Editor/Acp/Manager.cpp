@@ -15,6 +15,8 @@
 #include "Editor/AutoRevert.h"
 #include "Editor/BackgroundActivity.h"
 #include "Editor/Backup.h"
+#include "Editor/Host/Codec.h"
+#include "Editor/Host/McpRelays.h"
 #include "Editor/Mcp/BridgeServer.h"
 #include "Editor/Mcp/BridgeSetting.h"
 #include "Editor/Project/Root.h"
@@ -361,8 +363,17 @@ Json Manager::SessionParams(Session& session) {
     session.root                     = root;
     Json params{{"cwd", root.string()}, {"mcpServers", Json::array()}};
     if (agentBeside_) {
-        // The bridge is a socket here.
-        if (mcpBridgeServer_ && mcp::McpBridgeEnabled()) {
+        // ned's tools reach it through a relay on its host (Host/McpRelays.h).
+        if (remote::Connection* connection = AgentConnection(); connection != nullptr && hostMcpSocket_) {
+            params["mcpServers"].push_back(Json{
+                {"type", "stdio"},
+                {"name", "ned"},
+                {"command", connection->Agent().remotePath.string()},
+                {"args", Json::array({"--mcp-relay", hostMcpSocket_->string()})},
+                {"env", Json::array()},
+            });
+        }
+        else if (mcpBridgeServer_ && mcp::McpBridgeEnabled()) {
             PushSessionEvent(session, "ned's MCP tools aren't offered to an agent on " + agentBeside_->destination);
         }
     }
@@ -1283,7 +1294,7 @@ void Manager::StartSessionOnHost(const text::RemoteFile& beside, const std::vect
                             remote::LoadHostProjectSettings(*hosts_, text::RemoteFile{.destination = beside.destination, .path = *agentRoot_},
                                                             agentLifetime_.Token(), [this](ProjectSettings settings) {
                                                                 hostSettings_ = std::move(settings);
-                                                                SendInitialize();
+                                                                StartHostMcp([this] { SendInitialize(); });
                                                             });
                         });
 }
@@ -2172,6 +2183,66 @@ void Manager::ExpireStaleRequests(std::chrono::milliseconds maxAge) {
     }
 }
 
+void Manager::StartHostMcp(std::function<void()> then) {
+    remote::Connection* connection = AgentConnection();
+    if (connection == nullptr || mcpBridgeServer_ == nullptr || !mcp::McpBridgeEnabled()) {
+        then();
+        return;
+    }
+    const std::string   destination = agentBeside_->destination;
+    protocol::Endpoint& endpoint    = connection->Endpoint();
+    endpoint.HandleNotification(std::string(host::kMcpOpened), agentLifetime_.Bind([this, destination](const Json& params) {
+        const std::uint64_t channel = params.value("channel", std::uint64_t{0});
+        // The bridge's answers go back down that channel.
+        hostMcpChannels_[channel] = mcpBridgeServer_->AdoptRemote(destination, agentLifetime_.Bind([this, destination, channel](const std::string& line) {
+            if (remote::Connection* live = hosts_ != nullptr ? hosts_->Find(destination) : nullptr) {
+                live->Endpoint().Request(std::string(host::kMcpWrite), Json{{"channel", channel}, {"line", host::Bytes(line)}},
+                                         protocol::ResponseHandlers{[](const Json&) {}, [](const protocol::RemoteError&) {}, {}}, ProtocolRequestTimeoutMs());
+            }
+        }));
+    }));
+    endpoint.HandleNotification(std::string(host::kMcpLine), agentLifetime_.Bind([this](const Json& params) {
+        const auto channel = hostMcpChannels_.find(params.value("channel", std::uint64_t{0}));
+        if (channel == hostMcpChannels_.end() || !params.contains("line") || !params["line"].is_binary()) {
+            return;
+        }
+        const auto& line = params["line"].get_binary();
+        mcpBridgeServer_->ReceiveRemote(channel->second, std::string(line.begin(), line.end()));
+    }));
+    endpoint.HandleNotification(std::string(host::kMcpClosed), agentLifetime_.Bind([this](const Json& params) {
+        if (const auto channel = hostMcpChannels_.find(params.value("channel", std::uint64_t{0})); channel != hostMcpChannels_.end()) {
+            mcpBridgeServer_->CloseRemote(channel->second);
+            hostMcpChannels_.erase(channel);
+        }
+    }));
+    auto settle = std::make_shared<std::function<void()>>(std::move(then));
+    endpoint.Request(std::string(host::kMcpListen), Json::object(),
+                     protocol::ResponseHandlers{agentLifetime_.Bind([this, settle](const Json& result) {
+                                                    try {
+                                                        hostMcpSocket_ = host::RequirePath(result, "path");
+                                                    }
+                                                    catch (const protocol::ProtocolError&) {
+                                                    }
+                                                    (*settle)();
+                                                }),
+                                                agentLifetime_.Bind([this, settle](const protocol::RemoteError& error) {
+                                                    AppendToOutputBuffer("\n[ned's MCP tools unavailable on the host: " + error.message + "]\n");
+                                                    (*settle)();
+                                                }),
+                                                {}},
+                     ProtocolRequestTimeoutMs());
+}
+
+void Manager::CloseHostMcp() {
+    if (mcpBridgeServer_ != nullptr) {
+        for (const auto& [channel, id] : hostMcpChannels_) {
+            mcpBridgeServer_->CloseRemote(id);
+        }
+    }
+    hostMcpChannels_.clear();
+    hostMcpSocket_.reset();
+}
+
 remote::Connection* Manager::AgentConnection() const {
     remote::Connection* connection = hosts_ && agentBeside_ ? hosts_->Find(agentBeside_->destination) : nullptr;
     return connection && connection->Connected() ? connection : nullptr;
@@ -2726,6 +2797,7 @@ void Manager::EndSession(std::string reason) {
     agentRoot_.reset();
     hostSettings_ = {};
     hostProjectFiles_.clear();
+    CloseHostMcp();
     agentLifetime_.Revoke();
     AppendToOutputBuffer("\n[" + reason + "]\n");
     for (const auto& session : sessions_) {
