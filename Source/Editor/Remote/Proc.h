@@ -16,6 +16,7 @@
 #define NED_EDITOR_REMOTE_PROC_H
 
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -33,6 +34,9 @@ struct RemoteSpawn {
     process::StderrMode                                             stderrMode = process::StderrMode::Discard;
     // Runs it on a pty of this size, whose stderr is its stdout.
     std::optional<process::TerminalSize> pty;
+    // On the main thread, ahead of the kRemoteSpawnFailed exit: why the host
+    // couldn't start it, so a caller can tell that from a crash.
+    std::function<void(const std::string& why)> onSpawnFailed;
 };
 
 // The exit status of a command the host couldn't start, as a shell reports

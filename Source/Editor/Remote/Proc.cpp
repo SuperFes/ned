@@ -427,7 +427,7 @@ process::ChildProcess SpawnOnHost(Connection& connection, RemoteSpawn spawn) {
                     relay->Finish(exit);
                 },
             .onError =
-                [relay, command](const protocol::RemoteError& error) {
+                [relay, command, onSpawnFailed = std::move(spawn.onSpawnFailed)](const protocol::RemoteError& error) {
                     if (error.code != host::proc_error::kSpawnFailed) {
                         if (error.code != protocol::error_code::kConnectionClosed) {
                             LogMessage(LogCategory::General, LogSeverity::Warning, "ned: remote " + command + ": " + error.message);
@@ -441,6 +441,9 @@ process::ChildProcess SpawnOnHost(Connection& connection, RemoteSpawn spawn) {
                     if (fd != 0) {
                         const std::lock_guard lock(relay->mutex);
                         relay->out[static_cast<std::size_t>(fd)].push_back(error.message + "\n");
+                    }
+                    if (onSpawnFailed) {
+                        onSpawnFailed(error.message);
                     }
                     relay->Finish(kRemoteSpawnFailed);
                 },
