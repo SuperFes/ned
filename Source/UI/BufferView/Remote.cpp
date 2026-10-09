@@ -15,6 +15,7 @@
 #include "Editor/ModeOverrides.h"
 #include "Editor/NextError.h"
 #include "Editor/Project/Registry.h"
+#include "Editor/Project/Root.h"
 #include "Editor/Remote/Fs.h"
 #include "Editor/Remote/Hosts.h"
 #include "Editor/Remote/KnownHosts.h"
@@ -301,15 +302,27 @@ void BufferView::StartRemoteSearch(const editor::remote::Location& root, const s
 }
 
 void BufferView::SendRemoteSearch(std::uint64_t generation, editor::remote::Connection& connection) {
-    statusMessage_         = "Searching " + remoteSearch_->root.ToString() + "...";
-    const std::uint64_t id = editor::remote::SearchProject(
-        connection, editor::host::SearchRequest{.root = remoteSearch_->root.path, .pattern = remoteSearch_->pattern, .live = {}},
-        lifetime_.Bind([this, generation](const std::vector<editor::SearchMatch>& matches) { AppendRemoteMatches(generation, matches); }),
-        lifetime_.Bind([this, generation](const std::optional<std::string>& failure) { FinishRemoteSearch(generation, failure); }));
-    // A connection already closing answers at once, ending the search.
-    if (remoteSearch_ && remoteSearch_->generation == generation) {
-        remoteSearch_->requestId = id;
-    }
+    statusMessage_ = "Searching " + remoteSearch_->root.ToString() + "...";
+    // Unsaved remote buffers first: the search sees what they hold.
+    editor::remote::GatherRemoteLive(
+        connection, bufferList_, remoteSearch_->root, lifetime_.Token(), [this, generation](std::expected<editor::remote::RemoteLive, std::string> live) {
+            if (!remoteSearch_ || remoteSearch_->generation != generation) {
+                return;
+            }
+            editor::remote::Connection* again = remoteHosts_->Find(remoteSearch_->root.destination);
+            if (!live || again == nullptr) {
+                FinishRemoteSearch(generation, live ? remoteSearch_->root.destination + " is not connected" : live.error());
+                return;
+            }
+            const std::uint64_t id = editor::remote::SearchProject(
+                *again, editor::remote::SearchRequestWithLive(remoteSearch_->root, remoteSearch_->pattern, std::move(*live)),
+                lifetime_.Bind([this, generation](const std::vector<editor::SearchMatch>& matches) { AppendRemoteMatches(generation, matches); }),
+                lifetime_.Bind([this, generation](const std::optional<std::string>& failure) { FinishRemoteSearch(generation, failure); }));
+            // A connection already closing answers at once, ending the search.
+            if (remoteSearch_ && remoteSearch_->generation == generation) {
+                remoteSearch_->requestId = id;
+            }
+        });
 }
 
 void BufferView::AppendRemoteMatches(std::uint64_t generation, const std::vector<editor::SearchMatch>& matches) {
@@ -648,6 +661,84 @@ void BufferView::RequestRemoteFormatBuffer() {
     statusMessage_ = "Formatting " + buffer.Name() + "...";
     if (!StartRemoteFormat(buffer, finish)) {
         finish(std::unexpected(std::string("no remote hosts")));
+    }
+}
+
+void BufferView::StartRemoteReplace(const text::RemoteFile& from, const std::string& pattern, const std::string& replacement) {
+    if (remoteHosts_ == nullptr) {
+        statusMessage_ = "No remote hosts.";
+        return;
+    }
+    const auto fail = [this](const std::string& why) { ReportError("Project replace on a host failed: " + why); };
+    statusMessage_  = "Searching " + from.destination + " for \"" + pattern + "\"...";
+    remoteHosts_->Connect(from.destination, lifetime_.Bind([this, from, pattern, replacement, fail](const std::expected<editor::remote::Connection*, std::string>& connection) {
+        if (!connection) {
+            fail(connection.error());
+            return;
+        }
+        (void)editor::remote::FindProjectRoot(
+            **connection, editor::host::FsProjectRootRequest{.path = from.path, .detect = editor::AutoDetectProjectRoot(), .markers = {}},
+            lifetime_.Bind([this, from, pattern, replacement, fail](editor::remote::FsResult<std::filesystem::path> root) {
+                editor::remote::Connection* live = remoteHosts_->Find(from.destination);
+                if (!root || live == nullptr) {
+                    fail(root ? from.destination + " is not connected" : root.error().message);
+                    return;
+                }
+                const text::RemoteFile searched{.destination = from.destination, .path = *root};
+                editor::remote::GatherRemoteLive(*live, bufferList_, searched, lifetime_.Token(),
+                                                 [this, searched, pattern, replacement, fail](std::expected<editor::remote::RemoteLive, std::string> unsaved) {
+                                                     editor::remote::Connection* again = remoteHosts_->Find(searched.destination);
+                                                     if (!unsaved || again == nullptr) {
+                                                         fail(unsaved ? searched.destination + " is not connected" : unsaved.error());
+                                                         return;
+                                                     }
+                                                     const auto found = std::make_shared<std::vector<editor::SearchMatch>>();
+                                                     (void)editor::remote::SearchProject(
+                                                         *again, editor::remote::SearchRequestWithLive(searched, pattern, std::move(*unsaved)),
+                                                         lifetime_.Bind([found](const std::vector<editor::SearchMatch>& matches) {
+                                                             found->insert(found->end(), matches.begin(), matches.end());
+                                                         }),
+                                                         lifetime_.Bind([this, searched, pattern, replacement, fail, found](const std::optional<std::string>& failure) {
+                                                             if (failure) {
+                                                                 fail(*failure);
+                                                                 return;
+                                                             }
+                                                             FinishRemoteReplace(searched.destination, pattern, replacement, std::move(*found));
+                                                         }));
+                                                 });
+            }));
+    }));
+}
+
+void BufferView::FinishRemoteReplace(const std::string& destination, const std::string& pattern, const std::string& replacement,
+                                     std::vector<editor::SearchMatch> matches) {
+    if (matches.empty()) {
+        statusMessage_ = "No matches for \"" + pattern + "\" on " + destination;
+        return;
+    }
+    // Every file it would change, open here first: the review edits their buffers.
+    editor::lsp::Manager::ResolvedRename touched;
+    for (const editor::SearchMatch& match : matches) {
+        touched.edits.push_back({.file = text::RemoteFile{.destination = destination, .path = match.file}, .edits = {}});
+    }
+    const auto build = [this, destination, pattern, replacement, matches](bool opened) {
+        if (!opened) {
+            return;
+        }
+        // Named as their excerpts go back to them: host:/path.
+        std::vector<editor::SearchMatch> named = matches;
+        for (editor::SearchMatch& match : named) {
+            match.file = text::RemoteFile{.destination = destination, .path = match.file}.ToString();
+        }
+        try {
+            BuildProjectReplaceReview(named, pattern, replacement);
+        }
+        catch (const std::exception& e) {
+            ReportError(std::string("Project replace: ") + e.what());
+        }
+    };
+    if (EnsureRemoteFilesOpen(touched, lifetime_.Bind(build))) {
+        build(true);
     }
 }
 

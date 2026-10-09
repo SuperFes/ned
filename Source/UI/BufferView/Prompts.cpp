@@ -709,7 +709,14 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             return;
         case editor::InteractiveRequest::ProjectReplace:
             inputMode_ = InputMode::ProjectReplace;
-            projectReplace_.emplace(editor::ProjectRoot(), &bufferList_);
+            // On a remote buffer, the project is the one on its host.
+            remoteReplaceFrom_ = activeBuffer_.Get().Remote();
+            if (remoteReplaceFrom_) {
+                projectReplace_.emplace(editor::ProjectReplace::WithoutSearch());
+            }
+            else {
+                projectReplace_.emplace(editor::ProjectRoot(), &bufferList_);
+            }
             statusMessage_ = projectReplace_->StatusText();
             return;
         case editor::InteractiveRequest::ToggleProjectSidebar:
@@ -3702,8 +3709,13 @@ void BufferView::HandleProjectReplaceKey(const editor::KeyChord& chord) {
                 // once the review buffer exists.
                 if (projectReplace_->CurrentStage() == editor::ProjectReplace::Stage::Confirming) {
                     try {
-                        BuildProjectReplaceReview(projectReplace_->Matches(), projectReplace_->PatternText(),
-                                                  projectReplace_->ReplacementText());
+                        if (remoteReplaceFrom_) {
+                            StartRemoteReplace(*remoteReplaceFrom_, projectReplace_->PatternText(), projectReplace_->ReplacementText());
+                        }
+                        else {
+                            BuildProjectReplaceReview(projectReplace_->Matches(), projectReplace_->PatternText(),
+                                                      projectReplace_->ReplacementText());
+                        }
                     }
                     catch (const std::exception& e) {
                         ReportError(std::string("Project replace: ") + e.what());

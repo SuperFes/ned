@@ -45,6 +45,12 @@ class ProjectReplace {
     // previewed match list reflects unsaved edits, not just what's on disk.
     explicit ProjectReplace(std::filesystem::path root, text::BufferList* liveBuffers = nullptr);
 
+    // Collects the pattern and replacement but searches nothing: the caller
+    // runs the search somewhere this can't, on a remote buffer's host.
+    // ConfirmPattern only checks the pattern; ConfirmReplacement always goes
+    // on to Confirming.
+    [[nodiscard]] static ProjectReplace WithoutSearch();
+
     // Valid during EnteringPattern/EnteringReplacement; a no-op otherwise.
     void AppendChar(char32_t codepoint);
     void DeleteChar();
@@ -87,6 +93,7 @@ class ProjectReplace {
   private:
     std::filesystem::path    root_;
     text::BufferList*        liveBuffers_ = nullptr; // see the constructor's own doc comment
+    bool                     searches_    = true;
     Stage                    stage_       = Stage::EnteringPattern;
     std::string              patternText_;
     std::string              replacementText_;

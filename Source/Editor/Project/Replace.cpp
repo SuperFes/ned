@@ -45,8 +45,19 @@ void ProjectReplace::DeleteChar() {
     }
 }
 
+ProjectReplace ProjectReplace::WithoutSearch() {
+    ProjectReplace replace({});
+    replace.searches_ = false;
+    return replace;
+}
+
 void ProjectReplace::ConfirmPattern() {
     if (stage_ != Stage::EnteringPattern || patternText_.empty()) {
+        return;
+    }
+    if (!searches_) {
+        (void)SearchPattern(patternText_); // throws SearchPatternError on invalid syntax
+        stage_ = Stage::EnteringReplacement;
         return;
     }
     // live-buffer-search follow-up: previews what the user is actually
@@ -60,7 +71,7 @@ void ProjectReplace::ConfirmReplacement() {
     if (stage_ != Stage::EnteringReplacement) {
         return;
     }
-    stage_ = matches_.empty() ? Stage::Done : Stage::Confirming;
+    stage_ = matches_.empty() && searches_ ? Stage::Done : Stage::Confirming;
 }
 
 
