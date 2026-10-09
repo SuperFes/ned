@@ -33,11 +33,14 @@ exit 0
 )";
 
     // The agent arrives on stdin and lands under a temporary name, so an
-    // interrupted upload never leaves a partial ned-agent behind. It's an
-    // argument to `sh -c`, so it stays on one line and free of backslashes for
-    // the login shell's quoting to pass through untouched.
+    // interrupted upload never leaves a partial ned-agent behind. Then the
+    // other <build>-<arch> directories no session has started an agent from
+    // within kPruneDays go; a pruning that fails doesn't fail the upload.
+    // It's an argument to `sh -c`, so it stays on one line and free of
+    // backslashes for the login shell's quoting to pass through untouched.
     constexpr std::string_view kUploadScript =
-        R"(t="$1/.ned-agent.$$"; trap 'rm -f "$t"' EXIT; umask 077 && mkdir -p "$1" && cat > "$t" && chmod 700 "$t" && mv -f "$t" "$1/ned-agent")";
+        R"(t="$1/.ned-agent.$$"; trap 'rm -f "$t"' EXIT; umask 077 && mkdir -p "$1" && cat > "$t" && chmod 700 "$t" && mv -f "$t" "$1/ned-agent" || exit 1; )"
+        R"sh(for o in "${1%/*}"/*-*/; do o="${o%/}"; if [ "$o" != "$1" ] && [ -n "$(find "$o" -prune -mtime +"$2" 2>/dev/null)" ]; then rm -rf "$o"; fi; done 2>/dev/null; exit 0)sh";
 
     std::string ReadFile(const std::filesystem::path& path) {
         std::ifstream in(path, std::ios::binary);
@@ -163,7 +166,7 @@ DeployedAgent EnsureAgent(const SshMaster& master, const AgentDirCandidates& can
         return agent;
     }
 
-    const std::vector<std::string> argv{"sh", "-c", std::string(kUploadScript), "sh", (host.agentRoot / directory).string()};
+    const std::vector<std::string> argv{"sh", "-c", std::string(kUploadScript), "sh", (host.agentRoot / directory).string(), std::to_string(kPruneDays)};
     const SessionResult            result = RunSession(master, argv, ReadFile(*local), ProtocolWriteStallTimeoutMs(), stop);
     if (result.exitCode != 0) {
         throw DeployError("installing the agent on " + master.Destination() + " failed: " +

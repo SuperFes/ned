@@ -22,12 +22,13 @@ namespace {
     constexpr std::size_t kMaxPreambleBytes{64 * 1024};
 
     // Runs the first of its arguments, <build>-<arch>, that matches this host
-    // and is installed. An argument to `sh -c`, so it stays on one line and
-    // free of backslashes for a non-POSIX login shell's quoting to pass
-    // through untouched; hence printf, then echo for the newline.
+    // and is installed, touching its directory so a deploy's pruning
+    // (Deploy.h) sees it in use. An argument to `sh -c`, so it stays on one
+    // line and free of backslashes for a non-POSIX login shell's quoting to
+    // pass through untouched; hence printf, then echo for the newline.
     constexpr std::string_view kStartScript =
         R"(r="${XDG_DATA_HOME:-$HOME/.local/share}/ned/agent"; a=$(uname -m); for d in "$@"; do if [ "$d" = "${d%-*}-$a" ] && [ -x "$r/$d/ned-agent" ]; then )"
-        R"(printf 'ned-agent-stdio-1 %s' "$r/$d/ned-agent"; echo; exec "$r/$d/ned-agent" --stdio; fi; done; echo ned-agent-missing-1)";
+        R"(touch "$r/$d" 2>/dev/null; printf 'ned-agent-stdio-1 %s' "$r/$d/ned-agent"; echo; exec "$r/$d/ned-agent" --stdio; fi; done; echo ned-agent-missing-1)";
 
     // What an agent that exited said on its way out.
     std::string ExitReason(const protocol::FrameTransport& transport) {

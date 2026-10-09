@@ -66,11 +66,16 @@ struct DeployedAgent {
     bool                  uploaded = false;
 };
 
+// How long an installed agent may go unstarted before an upload of another
+// build removes it. An editor that still wants it uploads it again.
+inline constexpr int kPruneDays = 30;
+
 // Makes sure the host has the agent this editor would deploy for its
 // architecture, uploading it when it's missing or when reinstall is set
-// (a hello that reported another build). Throws DeployError when there's
-// no local agent for the host's architecture or the install fails, and
-// SshError when the connection does.
+// (a hello that reported another build), and pruning old builds after an
+// upload (kPruneDays). Throws DeployError when there's no local agent for
+// the host's architecture or the install fails, and SshError when the
+// connection does.
 [[nodiscard]] DeployedAgent EnsureAgent(const SshMaster& master, const AgentDirCandidates& candidates, bool reinstall = false,
                                         const std::stop_token& stop = {});
 
