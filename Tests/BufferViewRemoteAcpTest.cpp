@@ -265,6 +265,8 @@ TEST_CASE("A host's ACP turn review names its files against the host's root and 
 
 TEST_CASE("The ACP composer names a host agent's files by their paths there", "[BufferView][Remote][Acp][AcpPanel][HostAgent]") {
     Fixture fixture;
+    // On the host, not open here: the host's listing offers it.
+    std::ofstream(fixture.agent.project / "src" / "listed.c") << "int z;\n";
     REQUIRE(fixture.OpenFile());
     REQUIRE(Start(fixture));
     ned::ui::AcpPanel panel{fixture.theme};
@@ -278,8 +280,12 @@ TEST_CASE("The ACP composer names a host agent's files by their paths there", "[
         }
     };
 
-    // Completion offers the host's open file; nothing on the host's disk can be listed.
+    // Completion offers the host's open file, and the host's project listing.
     type("@src/a");
+    panel.OnEvent(test::Return());
+    type(" @src/lis");
+    REQUIRE(PumpUntil(fixture.loop, [&] { return fixture.acpManager.HostProjectFiles().size() >= 2; }));
+    CHECK(fixture.acpManager.HostProjectFiles() == std::vector<std::string>{"src/a.c", "src/listed.c"});
     panel.OnEvent(test::Return());
     type(" @src/gone.c @buffer");
     panel.OnEvent(test::Return());
@@ -292,9 +298,10 @@ TEST_CASE("The ACP composer names a host agent's files by their paths there", "[
     for (const Json& block : prompt) {
         (block["type"] == "resource_link" ? links : resources).push_back(block);
     }
-    REQUIRE(links.size() == 1);
+    REQUIRE(links.size() == 2);
     CHECK(links[0]["uri"] == "file://" + fixture.agent.file.string());
     CHECK(links[0]["name"] == "src/a.c");
+    CHECK(links[1]["uri"] == "file://" + (fixture.agent.project / "src" / "listed.c").string());
     const auto resource = std::find_if(resources.begin(), resources.end(), [](const Json& block) { return block["type"] == "resource"; });
     REQUIRE(resource != resources.end());
     CHECK((*resource)["resource"]["uri"] == "file://" + fixture.agent.file.string());

@@ -42,6 +42,7 @@
 #include "Editor/Acp/PanelPicker.h"
 #include "Editor/Clipboard.h"
 #include "Editor/Injection.h"
+#include "Editor/Lifetime.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/MinibufferPrompt.h"
 #include "Theme.h"
@@ -544,6 +545,8 @@ class AcpPanel : public Widget {
     std::string              mentionQuery_;
     std::vector<std::string> mentionCandidates_;
     std::size_t              mentionSelection_ = 0;
+
+    editor::LifetimeGuard lifetime_; // last, so it expires first
 };
 
 } // namespace ned::ui

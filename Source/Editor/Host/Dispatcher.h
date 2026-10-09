@@ -88,6 +88,7 @@ class Dispatcher {
     void OnProcExited(std::uint64_t handle, const ProcJob* job, std::optional<int> exit);
     void OnProcStderrDone(std::uint64_t handle, const ProcJob* job);
     void FinishProcIfDone(std::uint64_t handle);
+    void FsTree(const nlohmann::json& params, protocol::Responder responder);
     void FsUpload(const nlohmann::json& params, protocol::Responder responder);
     void FsUploadDrop(const nlohmann::json& params, protocol::Responder responder);
     // Takes an upload whole, nullopt for a handle that names none.

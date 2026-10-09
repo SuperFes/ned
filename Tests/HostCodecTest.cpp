@@ -125,6 +125,13 @@ TEST_CASE("fs stats and writes round-trip, timestamps to the nanosecond", "[Host
     CHECK(piece.handle == 7);
     CHECK(piece.data == std::string("\0x", 2));
     CHECK(host::PathParamsFromJson(OverTheWire(host::PathParams("/a/b"))) == "/a/b");
+
+    // A tree's files stay inside it.
+    const std::vector<std::filesystem::path> relative{"a.c", "src/b.c"};
+    CHECK(host::RelativePathsFromJson(OverTheWire(host::RelativePathsToJson(relative))) == relative);
+    CHECK_THROWS_AS(host::RelativePathsFromJson(Json::array({host::Bytes("/etc/passwd")})), ProtocolError);
+    CHECK_THROWS_AS(host::RelativePathsFromJson(Json::array({host::Bytes("src/../../x")})), ProtocolError);
+    CHECK_THROWS_AS(host::RelativePathsFromJson(Json::array({"text"})), ProtocolError);
 }
 
 TEST_CASE("Malformed fs messages are protocol errors", "[Host][HostCodec]") {

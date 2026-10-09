@@ -185,4 +185,31 @@ std::filesystem::path RealpathParamsFromJson(const Json& json) {
     return bytes.empty() ? std::filesystem::path(".") : std::filesystem::path(bytes);
 }
 
+Json RelativePathsToJson(std::span<const std::filesystem::path> paths) {
+    Json json = Json::array();
+    for (const std::filesystem::path& path : paths) {
+        json.push_back(Bytes(path.generic_string()));
+    }
+    return json;
+}
+
+std::vector<std::filesystem::path> RelativePathsFromJson(const Json& json) {
+    if (!json.is_array()) {
+        throw protocol::ProtocolError("ned: expected a list of paths");
+    }
+    std::vector<std::filesystem::path> paths;
+    paths.reserve(json.size());
+    for (const Json& item : json) {
+        if (!item.is_binary()) {
+            throw protocol::ProtocolError("ned: a path isn't bytes");
+        }
+        const std::filesystem::path path = std::string(item.get_binary().begin(), item.get_binary().end());
+        if (path.empty() || path.is_absolute() || *path.lexically_normal().begin() == "..") {
+            throw protocol::ProtocolError("ned: '" + path.string() + "' isn't a path inside the tree");
+        }
+        paths.push_back(path.lexically_normal());
+    }
+    return paths;
+}
+
 } // namespace ned::editor::host

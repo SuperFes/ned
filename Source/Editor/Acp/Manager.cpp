@@ -1310,6 +1310,33 @@ const std::optional<text::RemoteFile>& Manager::AgentBeside() const {
     return agentBeside_;
 }
 
+const std::vector<std::string>& Manager::HostProjectFiles() const {
+    return hostProjectFiles_;
+}
+
+void Manager::RefreshHostProjectFiles(std::function<void()> changed) {
+    // Plenty for a picker; a bigger project offers its open files alone.
+    constexpr std::size_t kMaxListedFiles = 50000;
+    remote::Connection*   connection      = hosts_ != nullptr && agentBeside_ ? hosts_->Find(agentBeside_->destination) : nullptr;
+    if (connection == nullptr || !agentRoot_) {
+        return;
+    }
+    (void)remote::ListTree(*connection, *agentRoot_, kMaxListedFiles,
+                           agentLifetime_.Bind([this, changed = std::move(changed)](remote::FsResult<std::vector<std::filesystem::path>> files) {
+                               if (!files) {
+                                   return;
+                               }
+                               hostProjectFiles_.clear();
+                               for (const std::filesystem::path& file : *files) {
+                                   hostProjectFiles_.push_back(file.generic_string());
+                               }
+                               std::ranges::sort(hostProjectFiles_);
+                               if (changed) {
+                                   changed();
+                               }
+                           }));
+}
+
 void Manager::SetRemoteHosts(remote::Hosts* hosts) {
     hosts_ = hosts;
 }
@@ -2616,6 +2643,7 @@ void Manager::EndSession(std::string reason) {
     agentBeside_.reset();
     agentRoot_.reset();
     hostSettings_ = {};
+    hostProjectFiles_.clear();
     agentLifetime_.Revoke();
     AppendToOutputBuffer("\n[" + reason + "]\n");
     for (const auto& session : sessions_) {

@@ -229,6 +229,13 @@ class Manager {
     // for one running here.
     [[nodiscard]] const std::optional<text::RemoteFile>& AgentBeside() const;
 
+    // A host agent's project files, relative to its root there, sorted, as
+    // last listed on the host; empty for an agent here.
+    [[nodiscard]] const std::vector<std::string>& HostProjectFiles() const;
+    // Lists them again. changed runs on the main thread once a new list is
+    // in, unless the agent has gone first.
+    void RefreshHostProjectFiles(std::function<void()> changed);
+
     // Session settings the agent advertises: its modes (session/new's
     // `modes`) and config options (`configOptions` -- mode, model, effort,
     // ...), kept current by current_mode_update/config_option_update. An
@@ -876,6 +883,7 @@ class Manager {
     std::optional<text::RemoteFile>      agentBeside_;
     std::optional<std::filesystem::path> agentRoot_; // set once a host's agent has started
     ProjectSettings                      hostSettings_; // that root's, read on its host
+    std::vector<std::string>             hostProjectFiles_;
     // Revoked with the agent's connection: drops an agent that arrives after
     // its session has ended, and a host's answer for a request it made.
     LifetimeGuard agentLifetime_;

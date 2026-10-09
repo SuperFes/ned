@@ -1325,6 +1325,14 @@ void AcpPanel::RefreshMentionState() {
     mentionPickerOpen_          = true;
     if (reopen) {
         RefreshMentionCandidates(); // fresh each time the picker (re)opens -- see its own doc comment
+        // A host's listing arrives later; the picker takes it up if still open.
+        if (file && acpManager_->AgentBeside()) {
+            acpManager_->RefreshHostProjectFiles(lifetime_.Bind([this] {
+                if (mentionPickerOpen_ && completionKind_ == CompletionKind::File) {
+                    RefreshMentionCandidates();
+                }
+            }));
+        }
     }
     const std::size_t count = editor::FuzzyFilterAndRank(mentionCandidates_, mentionQuery_).size();
     mentionSelection_       = count == 0 ? 0 : std::min(mentionSelection_, count - 1);
@@ -1350,9 +1358,14 @@ void AcpPanel::RefreshMentionCandidates() {
         mentionCandidates_.push_back("selection");
     }
     if (const std::optional<text::RemoteFile>& beside = acpManager_->AgentBeside()) {
+        // The host's listing, with what's open here that it doesn't name.
+        std::vector<std::string> files = acpManager_->HostProjectFiles();
         for (std::string& path : OpenHostFiles(beside->destination, acpManager_->TranscriptRoot())) {
-            mentionCandidates_.push_back(std::move(path));
+            if (!std::ranges::binary_search(acpManager_->HostProjectFiles(), path)) {
+                files.push_back(std::move(path));
+            }
         }
+        std::ranges::move(files, std::back_inserter(mentionCandidates_));
         return;
     }
     const std::filesystem::path root = editor::ProjectRoot();
@@ -1605,7 +1618,8 @@ void AcpPanel::AppendFileMentionLinks(const std::string& text, std::vector<edito
         }
         std::error_code             ec;
         const std::filesystem::path path = std::filesystem::path(mention).is_absolute() ? std::filesystem::path(mention) : root / mention;
-        const bool                  file = beside ? bufferList_ && bufferList_->FindFile(text::RemoteFile{.destination = beside->destination, .path = path.lexically_normal()})
+        const bool                  file = beside ? (bufferList_ && bufferList_->FindFile(text::RemoteFile{.destination = beside->destination, .path = path.lexically_normal()})) ||
+                                                        std::ranges::binary_search(acpManager_->HostProjectFiles(), path.lexically_normal().lexically_relative(root).generic_string())
                                                   : std::filesystem::is_regular_file(path, ec);
         if (!file) {
             continue; // not a file -- an @-handle or plain text, left alone

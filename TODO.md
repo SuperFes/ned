@@ -74,8 +74,6 @@ and sync on save; don't build a remote-authoritative buffer.
       `ned-agent` would relay the agent's MCP stdio back over the connection.
 - [ ] Turn review and rewind of a host file the agent changed while it wasn't open
       here: its "before" would have to be taken on the host, ahead of the edit.
-- [ ] `@` completion for a host agent offers only the host's files open here, and an
-      `@path` links only those; it needs a project listing from the host.
 
 **Client/server protocol**, ordered by the design doc's staging section.
 - [ ] Verify a remote debug session end to end (PHP/Xdebug, with the adapter running on
