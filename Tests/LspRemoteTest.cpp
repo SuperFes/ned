@@ -97,6 +97,30 @@ TEST_CASE("A remote buffer's language server waits for its host; nothing connect
     CHECK_FALSE(fs::exists(f.server.log));
 }
 
+TEST_CASE("A remote server command its host can't start fails once, with the host's reason", "[Lsp][LspRemote][HostAgent]") {
+    Fixture f;
+    REQUIRE(f.Connect());
+    ned::editor::lsp::SetLspServerCommand(kLanguage, {"ned-no-such-server"});
+
+    text::BufferList bufferList;
+    lsp::Manager     manager(bufferList, f.loop);
+    manager.SetRemoteHosts(&f.hosts);
+    text::Buffer& buffer = f.Open(bufferList);
+
+    bool sawDisconnected = false;
+    auto status          = [&] {
+        manager.SyncBuffer(buffer, kLanguage);
+        const lsp::Manager::Status now = manager.StatusForLanguage(manager.ConnectionKeyForBuffer(buffer, kLanguage));
+        sawDisconnected |= now == lsp::Manager::Status::Disconnected;
+        return now;
+    };
+    REQUIRE(PumpUntil(f.loop, [&] { return status() == lsp::Manager::Status::SpawnFailed; }));
+    // Long enough for a retry past the respawn debounce.
+    CHECK_FALSE(PumpUntil(f.loop, [&] { return status() != lsp::Manager::Status::SpawnFailed; }, std::chrono::milliseconds(1500)));
+    CHECK_FALSE(sawDisconnected);
+    CHECK(manager.SpawnFailureDetail(manager.ConnectionKeyForBuffer(buffer, kLanguage)).find("ned-no-such-server") != std::string::npos);
+}
+
 TEST_CASE("A remote server's diagnostics and answers reach the buffer it means", "[Lsp][LspRemote][HostAgent]") {
     Fixture f;
     REQUIRE(f.Connect());
