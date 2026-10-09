@@ -118,5 +118,5 @@ Start with this keybinding convention: "emacs" (default), "vim", or "modern" (th
 
 ### `paths TEXT`
 
-Files or directories to open
+Files or directories to open; host:/path opens one on a host
 

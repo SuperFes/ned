@@ -168,6 +168,9 @@ std::string RenderManPage(const CLI::App& app) {
         << app.get_description() << "\n\n"
         << "A path may be a file or a directory; a directory opens as a project. Paths beyond the\n"
            "first open as background buffers.\n\n"
+           "A path written *host*:/*path*, as scp reads one, is on that host: a directory there\n"
+           "becomes a Remote panel root, and a file opens over ssh. A local file by that name wins;\n"
+           "./*host*:/*path* always names one.\n\n"
         << kSymlinkProse << "\n";
 
     for (const Section& section : Sections(app)) {

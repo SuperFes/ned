@@ -93,6 +93,7 @@
 #include "Editor/RecentFiles.h"
 #include "Editor/Register.h"
 #include "Editor/Remote/Askpass.h"
+#include "Editor/Remote/CommandLine.h"
 #include "Editor/Remote/Hosts.h"
 #include "Editor/Repl/Config.h"
 #include "Editor/RustfmtConfig.h"
@@ -561,7 +562,11 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     ned::text::BufferList bufferList;
     std::string           statusMessage;
 
-    const char* pathArg = paths.empty() ? nullptr : paths.front().c_str();
+    // A remote argument opens once the hosts exist, further down.
+    const std::optional<ned::text::RemoteFile> remoteArg = paths.empty() ? std::nullopt : ned::editor::remote::RemoteArgument(paths.front());
+    std::vector<ned::text::RemoteFile>         remoteExtraArgs;
+
+    const char* pathArg = paths.empty() || remoteArg ? nullptr : paths.front().c_str();
 
     // Whether the path argument is a directory decides two independent
     // things below: it's never handed to OpenOrCreateFile (a directory
@@ -650,6 +655,10 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     for (std::size_t i = 1; i < paths.size(); ++i) {
         std::error_code extraIsDirectoryEc;
 
+        if (std::optional<ned::text::RemoteFile> remote = ned::editor::remote::RemoteArgument(paths[i])) {
+            remoteExtraArgs.push_back(std::move(*remote));
+            continue;
+        }
         if (std::filesystem::is_directory(paths[i], extraIsDirectoryEc)) {
             continue;
         }
@@ -679,6 +688,10 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         }
 
         const std::filesystem::path cwd = std::filesystem::current_path();
+        // A remote project has no root here; cwd stands in, and no session is kept.
+        if (remoteArg) {
+            return cwd;
+        }
 
         if (const auto markerRoot = ned::editor::FindProjectMarkerRoot(cwd)) {
             return *markerRoot;
@@ -703,7 +716,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // runs its editor from the repository root, so a commit that didn't
     // skip this would quit having replaced the project's real session with
     // one holding nothing but .git/COMMIT_EDITMSG.
-    if (!noRestore && !ned::editor::TransientMode() && ned::editor::HasProjectMarker(projectRoot)) {
+    if (!noRestore && !remoteArg && !ned::editor::TransientMode() && ned::editor::HasProjectMarker(projectRoot)) {
         ned::editor::SetActiveProjectSessionRoot(projectRoot);
     }
 
@@ -1660,6 +1673,12 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
             wm->AskSshQuestion(id, question, ned::editor::remote::AskpassReply(std::move(answer)));
         },
         [wm = windowManager.get()](std::uint64_t id) { wm->WithdrawSshQuestion(id); });
+    if (remoteArg) {
+        windowManager->OpenRemoteArgument(*remoteArg, /*show=*/true);
+    }
+    for (const ned::text::RemoteFile& extra : remoteExtraArgs) {
+        windowManager->OpenRemoteArgument(extra, /*show=*/false);
+    }
 
     // Issue-tracker panels, below the built-in ones in declaration order:
     // init.janet's (already loaded), the project's own, then any its git

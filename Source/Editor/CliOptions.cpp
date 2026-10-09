@@ -93,7 +93,7 @@ void BuildCli(CLI::App& app, CliArgs& args) {
                    "setting ned/set-keymap-style controls; applied after init.janet loads, so this flag wins over "
                    "any ned/set-keymap-style call there)")
         ->check(CLI::IsMember({"emacs", "vim", "modern"}));
-    app.add_option("paths", args.paths, "Files or directories to open");
+    app.add_option("paths", args.paths, "Files or directories to open; host:/path opens one on a host");
 }
 
 } // namespace ned::editor
