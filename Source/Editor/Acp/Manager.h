@@ -53,6 +53,7 @@
 
 #include "Editor/Lifetime.h"
 #include "Editor/ProcessTimeouts.h"
+#include "Editor/Project/Settings.h"
 #include "Text/RemoteFile.h"
 #include "UI/EventLoop.h"
 
@@ -874,6 +875,7 @@ class Manager {
     remote::Hosts*                       hosts_ = nullptr;
     std::optional<text::RemoteFile>      agentBeside_;
     std::optional<std::filesystem::path> agentRoot_; // set once a host's agent has started
+    ProjectSettings                      hostSettings_; // that root's, read on its host
     // Revoked with the agent's connection: drops an agent that arrives after
     // its session has ended, and a host's answer for a request it made.
     LifetimeGuard agentLifetime_;

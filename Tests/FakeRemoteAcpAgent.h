@@ -63,7 +63,7 @@ while True:
     if "id" not in message:
         continue
     if method == "initialize":
-        result = {"protocolVersion": 1, "agentCapabilities": {"promptCapabilities": {"embeddedContext": True}, "sessionCapabilities": {"list": {}, "resume": {}}}}
+        result = {"protocolVersion": 1, "agentCapabilities": {"promptCapabilities": {"embeddedContext": True}, "sessionCapabilities": {"list": {}, "resume": {}, "additionalDirectories": {}}}}
     elif method == "session/new":
         result = {"sessionId": "s1"}
     elif method == "session/list":
