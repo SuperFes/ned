@@ -24,6 +24,7 @@
 #include "Editor/Process/Pty.h"
 #include "Editor/ProcessTimeouts.h"
 #include "Editor/Project/Root.h"
+#include "Editor/Project/Tree.h"
 
 namespace ned::editor::host {
 
@@ -499,7 +500,7 @@ void Dispatcher::WatchSet(const Json& params, Responder responder) {
         return;
     }
     if (!watcher_) {
-        if (request.files.empty() && request.directories.empty()) {
+        if (request.files.empty() && request.directories.empty() && request.trees.empty()) {
             responder.Result(Json::object());
             return;
         }
@@ -513,7 +514,12 @@ void Dispatcher::WatchSet(const Json& params, Responder responder) {
             [this](std::vector<FileEvent> events) { watchBurst_ = std::move(events); });
         watcher_->SetReportsDirectoryEntries(true);
     }
+    watchRequest_ = std::move(request);
+    ApplyWatchSet();
+    responder.Result(Json::object());
+}
 
+void Dispatcher::ApplyWatchSet() {
     const auto canonical = [](const std::filesystem::path& path) {
         std::error_code             ec;
         const std::filesystem::path resolved = std::filesystem::weakly_canonical(path, ec);
@@ -521,20 +527,30 @@ void Dispatcher::WatchSet(const Json& params, Responder responder) {
     };
     watchedFiles_.clear();
     watchedDirectories_.clear();
-    for (const std::filesystem::path& file : request.files) {
+    for (const std::filesystem::path& file : watchRequest_.files) {
         watchedFiles_[canonical(file)].push_back(file);
+    }
+    std::vector<std::filesystem::path> named = watchRequest_.directories;
+    for (const std::filesystem::path& tree : watchRequest_.trees) {
+        named.push_back(tree);
+        for (ProjectTreeEntry& entry : BuildProjectTree(tree)) {
+            if (entry.isDirectory) {
+                named.push_back(std::move(entry.path));
+            }
+        }
     }
     // The watcher canonicalizes files itself but takes directories as given.
     std::vector<std::filesystem::path> directories;
-    for (const std::filesystem::path& directory : request.directories) {
+    for (const std::filesystem::path& directory : named) {
         auto [it, inserted] = watchedDirectories_.try_emplace(canonical(directory));
-        it->second.push_back(directory);
+        if (std::ranges::find(it->second, directory) == it->second.end()) {
+            it->second.push_back(directory);
+        }
         if (inserted) {
             directories.push_back(it->first);
         }
     }
-    watcher_->SetWatchedFiles(request.files, directories);
-    responder.Result(Json::object());
+    watcher_->SetWatchedFiles(watchRequest_.files, directories);
 }
 
 void Dispatcher::ReportWatchEvents(const std::vector<FileEvent>& burst, const std::vector<FileMove>& moves) {
@@ -574,6 +590,13 @@ void Dispatcher::ReportWatchEvents(const std::vector<FileEvent>& burst, const st
                 report.moves.push_back(FileMove{.from = from, .to = to.empty() ? move.to : to.front()});
             }
         }
+    }
+    // A directory made inside a tree is walked into, so its entries are watched too.
+    if (!watchRequest_.trees.empty() && std::ranges::any_of(report.events, [](const FileEvent& event) {
+            std::error_code ec;
+            return event.kind == FileEvent::Kind::Created && std::filesystem::is_directory(event.path, ec);
+        })) {
+        ApplyWatchSet();
     }
     if (report.events.empty() && report.moves.empty() && !report.overflow) {
         return;

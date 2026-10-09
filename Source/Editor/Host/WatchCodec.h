@@ -1,11 +1,13 @@
 //
 // Wire forms for the watch namespace (Docs/ClientServerProtocol.md, section 7).
 //
-//   watch/set      params {files: [path], directories: [path]}
+//   watch/set      params {files: [path], directories: [path], trees: [path]}
 //                  result {}
 //                  Replaces everything the connection watches: a file by
 //                  its name in its directory, a directory by every entry
-//                  directly in it.
+//                  directly in it, and a tree (from watch capability 2) by
+//                  every entry of every directory under it that isn't a
+//                  dot-directory or ignored by git.
 //   $/watch/event  host to editor, once per burst of changes
 //                  params {events: [event], moves: [move], overflow: bool}
 //
@@ -38,6 +40,7 @@ inline constexpr std::string_view kWatchEvent = "$/watch/event";
 struct WatchSetRequest {
     std::vector<std::filesystem::path> files;
     std::vector<std::filesystem::path> directories;
+    std::vector<std::filesystem::path> trees;
 
     [[nodiscard]] bool operator==(const WatchSetRequest&) const = default;
 };

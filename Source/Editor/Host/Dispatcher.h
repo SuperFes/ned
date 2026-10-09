@@ -25,6 +25,7 @@
 
 #include "Editor/FileWatch.h"
 #include "Editor/Host/Hello.h"
+#include "Editor/Host/WatchCodec.h"
 #include "Editor/Lifetime.h"
 #include "Editor/PostQueue.h"
 #include "Editor/Project/SearchEngine.h"
@@ -90,6 +91,8 @@ class Dispatcher {
     // One burst from the watcher, as the editor named the paths; empty when
     // the watcher lost events.
     void ReportWatchEvents(const std::vector<FileEvent>& burst, const std::vector<FileMove>& moves);
+    // Hands the watcher what watchRequest_ asks for, walking its trees.
+    void ApplyWatchSet();
 
     protocol::Endpoint&                         endpoint_;
     PostQueue&                                  postQueue_;
@@ -102,7 +105,9 @@ class Dispatcher {
     // By the editor's handle.
     std::unordered_map<std::uint64_t, std::unique_ptr<ProcJob>> procs_;
 
-    // watch/set's paths, keyed by the canonical paths the watcher reports.
+    // The last watch/set, and its paths keyed by the canonical paths the
+    // watcher reports; a tree's directories are named as its walk found them.
+    WatchSetRequest                                                     watchRequest_;
     std::map<std::filesystem::path, std::vector<std::filesystem::path>> watchedFiles_;
     std::map<std::filesystem::path, std::vector<std::filesystem::path>> watchedDirectories_;
     // Made by the first watch/set. Only its own thread touches watchBurst_

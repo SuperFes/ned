@@ -1603,6 +1603,11 @@ void WindowManager::ResyncRemoteWatches() {
                 wanted[directory.destination].directories.insert(directory.path);
             }
         }
+        if (lspManager_ != nullptr) {
+            for (auto& [destination, roots] : lspManager_->HostWatchedFileRoots()) {
+                wanted[destination].trees = std::move(roots);
+            }
+        }
     }
     remoteWatches_->Set(std::move(wanted));
 }
@@ -1632,6 +1637,17 @@ void WindowManager::HandleRemoteWatchEvents(const std::string& destination, cons
                                                     break;
                                             }
                                         });
+    if (lspManager_ != nullptr) {
+        std::vector<editor::lsp::Manager::WatchedFileChange> changes;
+        for (const editor::FileEvent& event : events.events) {
+            using Kind      = editor::FileEvent::Kind;
+            const auto type = event.kind == Kind::Created   ? editor::lsp::Manager::FileChangeType::Created
+                              : event.kind == Kind::Deleted ? editor::lsp::Manager::FileChangeType::Deleted
+                                                            : editor::lsp::Manager::FileChangeType::Changed;
+            changes.push_back({.path = event.path, .type = type});
+        }
+        lspManager_->NotifyWatchedFilesChanged(changes, destination);
+    }
     if (remotePanel_ != nullptr) {
         if (events.overflow) {
             remotePanel_->RelistHost(destination);

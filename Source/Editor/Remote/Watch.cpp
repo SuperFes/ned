@@ -66,7 +66,9 @@ void Watches::Sync(const std::string& destination) {
     }
     told.sent = want;
     const host::WatchSetRequest request{.files       = std::vector(want.files.begin(), want.files.end()),
-                                        .directories = std::vector(want.directories.begin(), want.directories.end())};
+                                        .directories = std::vector(want.directories.begin(), want.directories.end()),
+                                        .trees       = connection->Hello().capabilities.watch >= 2 ? std::vector(want.trees.begin(), want.trees.end())
+                                                                                                   : std::vector<std::filesystem::path>{}};
     connection->Endpoint().Request(std::string(host::kWatchSet), host::ToJson(request),
                                    protocol::ResponseHandlers{[](const Json&) {},
                                                               [destination](const protocol::RemoteError& error) {

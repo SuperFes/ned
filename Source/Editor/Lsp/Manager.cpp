@@ -4875,14 +4875,30 @@ Json Manager::HandleShowDocument(const std::string& connectionKey, const Json& p
     return Json{{"success", showDocumentHandler_(request)}};
 }
 
-void Manager::NotifyWatchedFilesChanged(const std::vector<WatchedFileChange>& changes) {
+std::map<std::string, std::set<std::filesystem::path>> Manager::HostWatchedFileRoots() const {
+    std::map<std::string, std::set<std::filesystem::path>> roots;
+    for (const auto& [connectionKey, registrations] : dynamicRegistrations_) {
+        const std::optional<std::string> host = ConnectionHost(connectionKey);
+        if (!host || !clients_.contains(connectionKey)) {
+            continue;
+        }
+        if (std::ranges::any_of(registrations, [](const DynamicRegistration& registration) {
+                return registration.method == "workspace/didChangeWatchedFiles" && !registration.watchers.empty();
+            })) {
+            roots[*host].insert(*ConnectionHostRoot(connectionKey));
+        }
+    }
+    return roots;
+}
+
+void Manager::NotifyWatchedFilesChanged(const std::vector<WatchedFileChange>& changes, const std::optional<std::string>& host) {
     if (changes.empty()) {
         return;
     }
     for (const auto& [connectionKey, client] : clients_) {
         const auto registrationsIt = dynamicRegistrations_.find(connectionKey);
-        // These are this machine's files; a host's server watches its own.
-        if (ConnectionHost(connectionKey) || registrationsIt == dynamicRegistrations_.end()) {
+        // Each machine's servers hear of its own files alone.
+        if (ConnectionHost(connectionKey) != host || registrationsIt == dynamicRegistrations_.end()) {
             continue;
         }
         Json events = Json::array();

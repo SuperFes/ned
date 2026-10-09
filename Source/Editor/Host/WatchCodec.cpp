@@ -39,11 +39,13 @@ namespace {
 } // namespace
 
 Json ToJson(const WatchSetRequest& request) {
-    return Json{{"files", PathsToJson(request.files)}, {"directories", PathsToJson(request.directories)}};
+    return Json{{"files", PathsToJson(request.files)}, {"directories", PathsToJson(request.directories)}, {"trees", PathsToJson(request.trees)}};
 }
 
 WatchSetRequest WatchSetRequestFromJson(const Json& json) {
-    return WatchSetRequest{.files = PathsFromJson(json, "files"), .directories = PathsFromJson(json, "directories")};
+    return WatchSetRequest{.files       = PathsFromJson(json, "files"),
+                           .directories = PathsFromJson(json, "directories"),
+                           .trees       = json.contains("trees") ? PathsFromJson(json, "trees") : std::vector<std::filesystem::path>{}};
 }
 
 Json ToJson(const WatchEvents& events) {

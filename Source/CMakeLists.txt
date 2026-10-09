@@ -216,7 +216,6 @@ add_library(ned_lib STATIC
         Editor/Project/CaseCheck.cpp
         Editor/Project/CaseViolationsBuffer.cpp
         Editor/Project/Replace.cpp
-        Editor/Project/Tree.cpp
         Editor/Project/Settings.cpp
         Editor/ToolchainIncludePaths.cpp
         Editor/NodeModules.cpp
