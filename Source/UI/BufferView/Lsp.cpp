@@ -2685,8 +2685,12 @@ void BufferView::RefreshPathCompletionPopup() {
             return candidate.ends_with('/') ? editor::FolderIcon(false) : editor::FileIcon(std::filesystem::path(candidate));
         })
                    : std::function<editor::Glyph(const std::string&)>{};
+    const bool                                           hostMode = !isPathMode && (inputMode_ == InputMode::RemoteConnect || inputMode_ == InputMode::RemoteSearchRoot || inputMode_ == InputMode::RemoteOpenRoot);
+    const std::function<std::string(const std::string&)> detail =
+        hostMode ? std::function<std::string(const std::string&)>([this](const std::string& candidate) { return RemoteHostCandidateDetail(candidate); })
+                 : std::function<std::string(const std::string&)>{};
     ListPopupModel model = BuildFuzzyCandidatePopupModel(prompt_->StatusText(), candidates, pathCompletionSelection_.value_or(0), display, icon,
-                                                         theme_.background);
+                                                         theme_.background, detail);
     if (!pathCompletionSelection_) {
         model.selectedIndex.reset();
     }

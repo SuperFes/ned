@@ -14,9 +14,9 @@
 // Same layering as ProjectTrust.h/Session.h: a pure, unit-testable
 // ProjectRegistryStore plus mutex-guarded process-wide accessors.
 //
-// root is stored as a plain string, not a std::filesystem::path -- local
-// paths today, future-proofed for a remote `user@host:/path` URI later
-// (ROADMAP.md's Remote Development section) without a shape change here.
+// root is stored as a plain string, not a std::filesystem::path: a local
+// path, or a host's directory as host:/path (Text/RemoteFile.h), keyed by
+// that name rather than anything on this machine.
 //
 // No eager pruning of entries whose root no longer exists on disk, unlike
 // ProjectTrustStore::PruneMissingFiles -- a stale *trust* entry is a
@@ -41,7 +41,7 @@ namespace ned::editor {
 
 struct ProjectRegistryEntry {
     std::string  name;
-    std::string  root;         // local path today; see header comment above
+    std::string  root;         // a local path or host:/path; see header comment above
     std::int64_t lastUsed = 0; // Unix seconds; refreshed by Touch/Add
 
     bool operator==(const ProjectRegistryEntry&) const = default;

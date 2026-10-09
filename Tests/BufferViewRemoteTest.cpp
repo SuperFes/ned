@@ -22,6 +22,7 @@
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/PostQueue.h"
+#include "Editor/Project/Registry.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
 #include "Editor/Remote/Hosts.h"
@@ -217,6 +218,81 @@ TEST_CASE("The host prompts offer the hosts ssh knows, and Tab takes one", "[Buf
     REQUIRE(popup->rows.at(0).main == "zqalias");
 }
 
+TEST_CASE("The host prompts show where ssh_config takes a host, and offer projects on hosts first", "[BufferView][Remote][HostAgent]") {
+    Fixture                     fixture;
+    const std::filesystem::path home = fixture.fake.dir / "home";
+    std::filesystem::create_directories(home / ".ssh");
+    std::ofstream(home / ".ssh" / "config") << "Host zqalias\n  HostName zq.example.com\n  Port 2200\n  User me\n";
+    std::ofstream(home / ".ssh" / "known_hosts") << "[zq.example.com]:2200 ssh-ed25519 AAAA\n[zqother.example]:2201 ssh-ed25519 AAAA\n";
+    const ned::tests::ScopedEnvOverride homeOverride("HOME", home.c_str());
+    const ned::tests::ScopedEnvOverride state("XDG_STATE_HOME", (fixture.fake.dir / "state").c_str());
+    ned::editor::ResetProjectRegistryForTesting();
+    struct RegistryGuard {
+        ~RegistryGuard() {
+            ned::editor::ResetProjectRegistryForTesting();
+        }
+    } registryGuard;
+    ned::editor::RegisterProject("zqproj", "zqalias:/srv/zq");
+    ned::ui::RemotePanel panel(fixture.theme, fixture.hosts);
+    fixture.view.SetRemotePanel(&panel);
+
+    std::optional<ned::ui::ListPopupModel> popup;
+    fixture.view.SetOnCandidatesChanged([&](std::optional<ned::ui::ListPopupModel> model) { popup = std::move(model); });
+
+    fixture.Command("remote-open-root");
+    REQUIRE(popup.has_value());
+    REQUIRE(popup->rows.size() >= 3);
+    CHECK(popup->rows[0].main == "zqalias:/srv/zq");
+    CHECK(popup->rows[0].right == "zqproj");
+    CHECK(popup->rows[1].main == "zqalias");
+    CHECK(popup->rows[1].right == "me@zq.example.com:2200");
+    // known_hosts' own name for zqalias isn't offered again.
+    CHECK(popup->rows[2].main == "ssh://zqother.example:2201");
+    CHECK(popup->rows[2].right.empty());
+    fixture.Type("zqpr");
+    REQUIRE(popup->rows.size() == 1);
+    CHECK(popup->rows[0].right == "zqproj");
+    fixture.view.OnEvent(test::Ctrl('g'));
+
+    // Connecting offers a project's host.
+    fixture.Command("remote-connect");
+    CHECK(popup->rows.at(0).main == "zqalias");
+    CHECK(popup->rows.at(0).right == "zqproj");
+}
+
+TEST_CASE("open-project takes a host's directory, which opens in the Remote panel", "[BufferView][Remote][HostAgent]") {
+    Fixture                             fixture;
+    const ned::tests::ScopedEnvOverride state("XDG_STATE_HOME", (fixture.fake.dir / "state").c_str());
+    ned::editor::ResetProjectRegistryForTesting();
+    struct RegistryGuard {
+        ~RegistryGuard() {
+            ned::editor::ResetProjectRegistryForTesting();
+        }
+    } registryGuard;
+    ned::ui::RemotePanel        panel(fixture.theme, fixture.hosts);
+    const std::filesystem::path dir = fixture.fake.dir / "proj";
+    std::filesystem::create_directories(dir);
+    fixture.view.SetRemotePanel(&panel);
+    const ned::text::RemoteFile root{.destination = "host", .path = dir};
+
+    fixture.Command("open-project");
+    fixture.Enter(root.ToString() + "/");
+    CHECK(fixture.statusMessage == "Project name: proj");
+    fixture.view.OnEvent(test::Return());
+    CHECK(fixture.statusMessage == "Opened " + root.ToString() + " in the Remote panel.");
+    CHECK(panel.Roots() == std::vector{root});
+    const std::vector<ned::editor::ProjectRegistryEntry> projects = ned::editor::ListProjects();
+    REQUIRE(projects.size() == 1);
+    CHECK(projects[0].name == "proj");
+    CHECK(projects[0].root == root.ToString());
+
+    // Registered: switch-project opens it again.
+    fixture.Command("switch-project");
+    fixture.view.OnEvent(test::Return());
+    CHECK(fixture.statusMessage == "Opened " + root.ToString() + " in the Remote panel.");
+    CHECK(panel.Roots() == std::vector{root});
+}
+
 TEST_CASE("find-file completes a host's path from its listing, connecting first", "[BufferView][Remote][HostAgent]") {
     Fixture                     fixture;
     const std::filesystem::path dir = fixture.fake.dir / "proj";
@@ -386,6 +462,22 @@ TEST_CASE("find-file opens a host:/path through the host, once, and a missing on
     CHECK(fixture.activeBuffer.Get().Text().empty());
     CHECK_FALSE(fixture.activeBuffer.Get().RemoteTimestamp().has_value());
     CHECK_FALSE(std::filesystem::exists(fixture.fake.dir / "new.txt"));
+}
+
+TEST_CASE("find-file opens a file on another port through an ssh URI", "[BufferView][Remote][HostAgent]") {
+    Fixture                     fixture;
+    const std::filesystem::path file = fixture.fake.dir / "code.py";
+    std::ofstream(file) << "x = 1\n";
+    const std::string where = "ssh://me@host:2222" + file.string();
+
+    fixture.Command("find-file");
+    fixture.Enter(where);
+    REQUIRE(fixture.StatusStartsWith("Opened " + where));
+    const ned::text::Buffer& opened = fixture.activeBuffer.Get();
+    CHECK(opened.Text() == "x = 1\n");
+    CHECK(opened.Name() == "host:2222:code.py");
+    CHECK(opened.Remote() == ned::text::RemoteFile{.destination = "ssh://me@host:2222", .path = file});
+    CHECK(fixture.hosts.Destinations() == std::vector<std::string>{"ssh://me@host:2222"});
 }
 
 TEST_CASE("find-file on a host:/path that can't be read closes its buffer and says why", "[BufferView][Remote][HostAgent]") {

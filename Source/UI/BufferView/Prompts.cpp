@@ -657,8 +657,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
         case editor::InteractiveRequest::RemoteConnect:
             inputMode_ = InputMode::RemoteConnect;
             prompt_.emplace("Connect to host: ");
-            remoteHostCandidates_    = RemoteHostCandidates();
-            remoteLookupTyped_.reset();
+            PrepareRemoteHostPrompt();
             pathCompletionSelection_.reset();
             RefreshPathCompletionPopup();
             return;
@@ -684,8 +683,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             if (const auto& roots = promptHistory_.Entries(HistoryKeyForInputMode(InputMode::RemoteSearchRoot)); !roots.empty()) {
                 prompt_->SetText(roots.front());
             }
-            remoteHostCandidates_    = RemoteHostCandidates();
-            remoteLookupTyped_.reset();
+            PrepareRemoteHostPrompt();
             remoteListingDirectory_.reset();
             pathCompletionSelection_.reset();
             RefreshPathCompletionPopup();
@@ -751,8 +749,7 @@ void BufferView::StartInteractiveSession(editor::InteractiveRequest request) {
             }
             inputMode_ = InputMode::RemoteOpenRoot;
             prompt_.emplace("Open remote root (host:/path, or a host for its home): ");
-            remoteHostCandidates_ = RemoteHostCandidates();
-            remoteLookupTyped_.reset();
+            PrepareRemoteHostPrompt();
             remoteListingDirectory_.reset();
             pathCompletionSelection_.reset();
             RefreshPathCompletionPopup();
@@ -2929,7 +2926,9 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
         }
     }
     else if (inputMode_ == InputMode::OpenProjectPath) {
-        const std::filesystem::path root = editor::DetectProjectRoot(input);
+        // A host's directory is the root as typed: nothing here can look for one there.
+        const std::optional<editor::remote::Location> remote = editor::remote::ParsePromptLocation(input);
+        const std::filesystem::path                   root   = remote ? std::filesystem::path(remote->ToString()) : editor::DetectProjectRoot(input);
         if (editor::FindProjectByRoot(root)) {
             // Already registered/named -- nothing to ask, activate directly.
             ActivateProjectAndReport(root);
@@ -2942,7 +2941,7 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
             pendingOpenProjectRoot_ = root;
             inputMode_              = InputMode::OpenProjectName;
             prompt_.emplace("Project name: ");
-            prompt_->SetText(root.filename().string());
+            prompt_->SetText(remote ? remote->path.filename().string() : root.filename().string());
             statusMessage_ = prompt_->StatusText();
             return bufferview::PromptCommit::Transitioned;
         }
@@ -2990,11 +2989,11 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
     }
     else if (inputMode_ == InputMode::RemoteConnect) {
         if (!input.empty()) {
-            ConnectToHost(input);
+            ConnectToHost(text::NormalizeDestination(input));
         }
     }
     else if (inputMode_ == InputMode::RemoteDisconnect) {
-        DisconnectFromHost(input);
+        DisconnectFromHost(text::NormalizeDestination(input));
     }
     else if (inputMode_ == InputMode::RemoteSearchRoot) {
         if (const std::optional<editor::remote::Location> root = editor::remote::ParseLocation(input)) {
@@ -3008,12 +3007,8 @@ bufferview::PromptCommit BufferView::CommitTextEntryPrompt(const std::string& in
         statusMessage_ = "Expected host:/path, not \"" + input + "\"";
     }
     else if (inputMode_ == InputMode::RemoteOpenRoot) {
-        if (remotePanel_ != nullptr && !input.empty()) {
-            remotePanel_->OpenRoot(input);
-            if (leftDock_ != nullptr) {
-                leftDock_->PrepareForKeyboardFocus(&remotePanel_->Tree());
-                remotePanel_->Tree().TakeFocus();
-            }
+        if (!input.empty()) {
+            OpenRemotePanelRoot(input);
         }
     }
     else if (inputMode_ == InputMode::RemoteSearchPattern) {
@@ -5643,6 +5638,18 @@ void BufferView::HandleBufferCharsetKey(const editor::KeyChord& chord) {
 // contract in BufferView.h.
 
 void BufferView::ActivateProjectAndReport(const std::filesystem::path& root) {
+    // A host's project opens in the Remote panel rather than as this
+    // process's project.
+    if (const std::optional<text::RemoteFile> remote = root.is_absolute() ? std::nullopt : text::ParseRemoteFile(root.string())) {
+        editor::TouchProject(root);
+        if (remotePanel_ == nullptr) {
+            statusMessage_ = "No Remote panel to open " + remote->ToString() + " in.";
+            return;
+        }
+        OpenRemotePanelRoot(remote->ToString());
+        statusMessage_ = "Opened " + remote->ToString() + " in the Remote panel.";
+        return;
+    }
     switch (editor::ActivateProjectRoot(root)) {
         case editor::ProjectActivationOutcome::OpenedInNewTab:
             statusMessage_ = "Opened " + root.string() + " in a new tab.";

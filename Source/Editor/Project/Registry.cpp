@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include "Editor/Session.h"
+#include "Text/RemoteFile.h"
 
 namespace ned::editor {
 
@@ -33,26 +34,39 @@ namespace {
         return store;
     }
 
+    // A local root is absolute; anything else that parses is a host's.
+    std::optional<text::RemoteFile> RemoteRoot(const std::filesystem::path& root) {
+        return root.is_absolute() ? std::nullopt : text::ParseRemoteFile(root.string());
+    }
+
+    // A host's root by its host:/path name; a local one by its canonical path.
+    std::string RootKey(const std::filesystem::path& root) {
+        if (const std::optional<text::RemoteFile> remote = RemoteRoot(root)) {
+            return remote->ToString();
+        }
+        return FilePlaceStore::NormalizePathKey(root);
+    }
+
 } // namespace
 
 bool ProjectRegistryStore::Add(std::string name, const std::filesystem::path& root,
                                std::optional<std::int64_t> nowSeconds) {
     const std::int64_t    now      = nowSeconds.value_or(NowSeconds());
-    const std::string     key      = FilePlaceStore::NormalizePathKey(root);
+    const std::string     key      = RootKey(root);
     const bool            isNewOne = entries_.find(key) == entries_.end();
     ProjectRegistryEntry& entry    = entries_[key];
     entry.name                     = std::move(name);
-    entry.root                     = root.string();
+    entry.root                     = RemoteRoot(root) ? key : root.string();
     entry.lastUsed                 = now;
     return isNewOne;
 }
 
 bool ProjectRegistryStore::Remove(const std::filesystem::path& root) {
-    return entries_.erase(FilePlaceStore::NormalizePathKey(root)) > 0;
+    return entries_.erase(RootKey(root)) > 0;
 }
 
 bool ProjectRegistryStore::Rename(const std::filesystem::path& root, std::string newName) {
-    const auto it = entries_.find(FilePlaceStore::NormalizePathKey(root));
+    const auto it = entries_.find(RootKey(root));
     if (it == entries_.end()) {
         return false;
     }
@@ -61,14 +75,14 @@ bool ProjectRegistryStore::Rename(const std::filesystem::path& root, std::string
 }
 
 void ProjectRegistryStore::Touch(const std::filesystem::path& root, std::optional<std::int64_t> nowSeconds) {
-    const auto it = entries_.find(FilePlaceStore::NormalizePathKey(root));
+    const auto it = entries_.find(RootKey(root));
     if (it != entries_.end()) {
         it->second.lastUsed = nowSeconds.value_or(NowSeconds());
     }
 }
 
 std::optional<ProjectRegistryEntry> ProjectRegistryStore::LookupByRoot(const std::filesystem::path& root) const {
-    const auto it = entries_.find(FilePlaceStore::NormalizePathKey(root));
+    const auto it = entries_.find(RootKey(root));
     if (it == entries_.end()) {
         return std::nullopt;
     }

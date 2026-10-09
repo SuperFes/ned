@@ -72,6 +72,7 @@
 #include "Editor/QueryReplace.h"
 #include "Editor/Register.h"
 #include "Editor/Remote/Askpass.h"
+#include "Editor/Remote/KnownHosts.h"
 #include "Editor/Remote/Location.h"
 #include "Editor/Remote/PathCompletion.h"
 #include "Editor/RenameReview.h"
@@ -4418,6 +4419,14 @@ class BufferView : public Widget {
     void RevertRemoteBuffer(text::Buffer& buffer, std::optional<text::Charset> charset);
     // Hosts already in use or used before, then the ones ssh knows.
     [[nodiscard]] std::vector<std::string> RemoteHostCandidates() const;
+    // Reads what a host prompt offers as it opens: the hosts, the
+    // registered projects on hosts, and ssh_config.
+    void PrepareRemoteHostPrompt();
+    // A host dropdown row's trailing column: the project it is, or where
+    // ssh_config takes its host.
+    [[nodiscard]] std::string RemoteHostCandidateDetail(const std::string& candidate) const;
+    // Adds root to the Remote panel and focuses it there.
+    void OpenRemotePanelRoot(const std::string& root);
     // The host dropdown's candidates for what the prompt holds now.
     [[nodiscard]] std::vector<std::string> RemoteHostCompletions() const;
     // The host part of a host prompt, or nullopt once nothing would
@@ -4439,6 +4448,12 @@ class BufferView : public Widget {
     std::uint64_t                  remoteSearchGeneration_ = 0;
     editor::remote::Location       pendingRemoteSearchRoot_;
     std::vector<std::string>       remoteHostCandidates_; // read when a host prompt opens
+    struct RemoteProject {
+        std::string      name;
+        text::RemoteFile root;
+    };
+    std::vector<RemoteProject>     remoteProjects_;       // ditto
+    editor::remote::SshConfig      remoteSshConfig_;      // ditto
     std::optional<std::string>     remoteLookupTyped_;    // the host text last looked up
     std::vector<std::string>       remoteResolvedHosts_;  // what resolved for it
     // The host directory a path prompt last listed, and its entries once

@@ -539,6 +539,31 @@ TEST_CASE("A remote location is a destination, a colon, then an absolute path", 
     REQUIRE_FALSE(ParseLocation(":/tmp"));
 }
 
+TEST_CASE("A destination on another port is an ssh URI, whose path follows it", "[Remote]") {
+    using ned::editor::remote::ParseLocation;
+    using ned::text::NormalizeDestination;
+    const auto uri = ParseLocation("ssh://me@box:2222/srv/./app/");
+    REQUIRE(uri.has_value());
+    CHECK(uri->destination == "ssh://me@box:2222");
+    CHECK(uri->path == "/srv/app");
+    CHECK(uri->ToString() == "ssh://me@box:2222/srv/app");
+    // The colon spelling of the same file, as destination + ":" + path builds it.
+    CHECK(ParseLocation("ssh://me@box:2222:/srv/app") == uri);
+    CHECK(ParseLocation("ssh://[::1]:2200/tmp")->destination == "ssh://[::1]:2200");
+    // Port 22, or none, is the plain destination.
+    CHECK(ParseLocation("ssh://me@box:22/srv")->ToString() == "me@box:/srv");
+    CHECK(ParseLocation("ssh://box/srv")->destination == "box");
+    CHECK(ParseLocation("ssh://[::1]/tmp")->destination == "[::1]");
+    CHECK_FALSE(ParseLocation("ssh://box"));
+    CHECK_FALSE(ParseLocation("ssh:///srv"));
+
+    CHECK(NormalizeDestination("ssh://box:22/") == "box");
+    CHECK(NormalizeDestination("ssh://u@box:2222") == "ssh://u@box:2222");
+    CHECK(NormalizeDestination("u@box") == "u@box");
+    CHECK(ned::text::ShortDestination("ssh://me@box.example.com:2222") == "box:2222");
+    CHECK(ned::text::ShortDestination("ssh://[::1]:2200") == "[::1]:2200");
+}
+
 TEST_CASE("A typed host path splits into the directory to list and the name begun in it", "[Remote]") {
     using ned::editor::remote::SplitRemotePathPrefix;
     namespace host    = ned::editor::host;
@@ -551,6 +576,8 @@ TEST_CASE("A typed host path splits into the directory to list and the name begu
     CHECK(SplitRemotePathPrefix("box:/")->partialName.empty());
     CHECK_FALSE(SplitRemotePathPrefix("/local/path").has_value());
     CHECK_FALSE(SplitRemotePathPrefix("box").has_value());
+    CHECK_FALSE(SplitRemotePathPrefix("ssh:/").has_value());
+    CHECK(SplitRemotePathPrefix("ssh://box:2222/srv/a")->typedDirectory == "ssh://box:2222/srv/");
 
     const std::vector<host::DirEntry> entries{{.name = "main.py", .kind = host::FileKind::File, .link = false},
                                               {.name = "make", .kind = host::FileKind::Directory, .link = true},

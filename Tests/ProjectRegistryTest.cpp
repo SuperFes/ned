@@ -133,3 +133,19 @@ TEST_CASE("A malformed entry is skipped, not fatal to the whole file", "[Project
     REQUIRE(store.Count() == 1);
     REQUIRE(store.LookupByRoot("/a")->name == "good");
 }
+
+TEST_CASE("A host's root registers by its host:/path name, never as a local path", "[ProjectRegistry]") {
+    ProjectRegistryStore store;
+    REQUIRE(store.Add("app", "me@box:/srv/app/", 1000));
+    REQUIRE_FALSE(store.Add("renamed", "me@box:/srv/./app", 2000));
+    REQUIRE(store.Add("ported", "ssh://me@box:2222/srv/app", 3000));
+    REQUIRE(store.Count() == 2);
+    const auto entry = store.LookupByRoot("me@box:/srv/app");
+    REQUIRE(entry.has_value());
+    CHECK(entry->root == "me@box:/srv/app");
+    CHECK(entry->name == "renamed");
+    CHECK(store.LookupByRoot("ssh://me@box:2222:/srv/app")->root == "ssh://me@box:2222/srv/app");
+
+    const ProjectRegistryStore loaded = ProjectRegistryStore::FromJson(store.ToJson());
+    CHECK(loaded.LookupByRoot("me@box:/srv/app") == entry);
+}

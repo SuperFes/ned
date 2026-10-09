@@ -342,7 +342,8 @@ inline ListPopupModel BuildFuzzyCandidatePopupModel(const std::string& title, co
                                                     std::size_t                                             selected,
                                                     const std::function<std::string(const std::string&)>&   display        = nullptr,
                                                     const std::function<editor::Glyph(const std::string&)>& icon           = nullptr,
-                                                    const Color&                                            iconBackground = Color::Default) {
+                                                    const Color&                                            iconBackground = Color::Default,
+                                                    const std::function<std::string(const std::string&)>&   detail         = nullptr) {
     ListPopupModel model;
     model.title = title;
     if (ranked.empty()) {
@@ -360,7 +361,8 @@ inline ListPopupModel BuildFuzzyCandidatePopupModel(const std::string& title, co
         const editor::Glyph glyph = icon ? icon(ranked[i]) : editor::Glyph{};
         model.rows.push_back({.left           = glyph.text,
                               .main           = display ? display(ranked[i]) : ranked[i],
-                              .leftForeground = GlyphForeground(glyph, iconBackground)});
+                              .leftForeground = GlyphForeground(glyph, iconBackground),
+                              .right          = detail ? detail(ranked[i]) : std::string()});
     }
     model.selectedIndex = (selected - windowStart) + (windowStart > 0 ? 1 : 0);
 
