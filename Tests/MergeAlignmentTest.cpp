@@ -10,6 +10,7 @@ using ned::text::MergeSideFromMarkers;
 using ned::text::MergeSideKind;
 using ned::text::PaneAlignment;
 using ned::text::ParseConflictHunks;
+using ned::text::RefineMergeSide;
 
 namespace {
 
@@ -198,4 +199,56 @@ TEST_CASE("TopForRow inside the leading rows settles on line 0", "[MergeAlignmen
     CHECK(pane.RowAtTop(Top{.line = 0, .padding = 0}) == 0);
     CHECK(pane.LineCount() == 1);
     CHECK(PaneAlignment().TopForRow(5) == Top{});
+}
+
+TEST_CASE("Refining with the side's own marker text keeps the marker chunks", "[MergeAlignment]") {
+    const std::string merged  = "a\n<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> feature\nb\n";
+    const MergeSide   markers = Side(merged, MergeSideKind::Ours);
+    const MergeSide   refined = RefineMergeSide(markers, markers.text);
+    REQUIRE(refined.text == markers.text);
+    REQUIRE(refined.lineCount == markers.lineCount);
+    REQUIRE(refined.chunks == markers.chunks);
+}
+
+TEST_CASE("A clean auto-merge outside the conflict becomes its own changed chunk", "[MergeAlignment]") {
+    // Theirs changed b to B cleanly; ours' stage still has b.
+    const std::string merged  = "a\nB\nc\n<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> feature\nd\n";
+    const MergeSide   refined = RefineMergeSide(Side(merged, MergeSideKind::Ours), "a\nb\nc\nx\nd\n");
+    REQUIRE(refined.text == "a\nb\nc\nx\nd\n");
+    REQUIRE(refined.lineCount == 5);
+    REQUIRE(refined.chunks == std::vector<AlignedChunk>{
+                                  {0, 1, 0, 1, false}, {1, 1, 1, 1, true}, {2, 1, 2, 1, false}, {3, 5, 3, 1, true}, {8, 1, 4, 1, false}});
+}
+
+TEST_CASE("A line the merge added that the side lacks is a changed chunk with no side lines", "[MergeAlignment]") {
+    const std::string merged  = "a\n<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> feature\nb\nadded\n";
+    const MergeSide   refined = RefineMergeSide(Side(merged, MergeSideKind::Ours), "a\nx\nb\n");
+    REQUIRE(refined.chunks == std::vector<AlignedChunk>{{0, 1, 0, 1, false}, {1, 5, 1, 1, true}, {6, 1, 2, 1, false}, {7, 1, 3, 0, true}});
+}
+
+TEST_CASE("A side change touching a conflict joins the conflict's chunk", "[MergeAlignment]") {
+    const std::string merged  = "a\n<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> feature\nB\n";
+    const MergeSide   refined = RefineMergeSide(Side(merged, MergeSideKind::Ours), "a\nx\nb\n");
+    REQUIRE(refined.chunks == std::vector<AlignedChunk>{{0, 1, 0, 1, false}, {1, 6, 1, 2, true}});
+}
+
+TEST_CASE("With every conflict resolved, refining is a plain diff against the merged text", "[MergeAlignment]") {
+    const std::string merged  = "a\nb\nc\n";
+    const MergeSide   refined = RefineMergeSide(Side(merged, MergeSideKind::Theirs), "a\nc\nd\n");
+    REQUIRE(refined.chunks == std::vector<AlignedChunk>{{0, 1, 0, 1, false}, {1, 1, 1, 0, true}, {2, 1, 1, 1, false}, {3, 0, 2, 1, true}});
+}
+
+TEST_CASE("Refined sides align so the lines after each change share a row", "[MergeAlignment]") {
+    // Theirs changed b cleanly and appended e; both conflict on x/y.
+    const std::string merged = "a\nB\n<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> feature\nd\ne\n";
+    const MergeSide   ours   = RefineMergeSide(Side(merged, MergeSideKind::Ours), "a\nb\nx\nd\n");
+    const MergeSide   theirs = RefineMergeSide(Side(merged, MergeSideKind::Theirs), "a\nB\ny\nd\ne\n");
+    const auto        panes  = Align(9, {&ours, &theirs});
+
+    // "d" is merged 7, ours 3, theirs 3.
+    const std::size_t dRow = panes[0].AlignedRow(7);
+    REQUIRE(panes[1].AlignedRow(3) == dRow);
+    REQUIRE(panes[2].AlignedRow(3) == dRow);
+    REQUIRE(panes[0].TotalRows() == panes[1].TotalRows());
+    REQUIRE(panes[0].TotalRows() == panes[2].TotalRows());
 }
