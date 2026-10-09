@@ -21,6 +21,10 @@
   (def slashes (string/find-all "/" path))
   (if (empty? slashes) "." (string/slice path 0 (last slashes))))
 
+(defn- basename [path]
+  (def slashes (string/find-all "/" path))
+  (if (empty? slashes) path (string/slice path (+ 1 (last slashes)))))
+
 (defn blame-argv [path]
   ["git" "-C" (dirname path) "blame" "--porcelain" path])
 
@@ -85,6 +89,12 @@
 
 (defn staged-diff-argv [path]
   ["git" "-C" (dirname path) "diff" "--cached" "--no-color" "-U0" "--" path])
+
+## A conflicted file's index stages: 1 is the merge base, 2 ours, 3 theirs.
+## ":./" resolves the name against -C's directory, not the repository root.
+(defn conflict-side-argv [path side]
+  (def stage (case side "base" 1 "ours" 2 "theirs" 3))
+  ["git" "-C" (dirname path) "show" (string ":" stage ":./" (basename path))])
 
 (defn stage-patch-argv [root patch-path]
   ["git" "-C" root "apply" "--cached" "--unidiff-zero" patch-path])
@@ -429,6 +439,7 @@
    :stage-argv stage-argv
    :unstage-argv unstage-argv
    :staged-diff-argv staged-diff-argv
+   :conflict-side-argv conflict-side-argv
    :stage-patch-argv stage-patch-argv
    :unstage-patch-argv unstage-patch-argv
    :revert-patch-argv revert-patch-argv

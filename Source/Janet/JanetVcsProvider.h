@@ -30,7 +30,7 @@ namespace ned::janet {
 // :push-argv, :pull-argv, :fetch-argv, :ahead-behind-argv,
 // :parse-ahead-behind -- VCS side panel follow-up -- :sequence-state-argv,
 // :parse-sequence-state, :sequence-continue-argv, :sequence-abort-argv,
-// :sequence-skip-argv) -- vocabulary-completion
+// :sequence-skip-argv, :conflict-side-argv) -- vocabulary-completion
 // follow-up, replacing the
 // original 7-positional-argument form outright once the vocabulary grew
 // past what positional arguments could carry legibly. Only :detect is
@@ -96,6 +96,7 @@ class JanetVcsProvider : public editor::vcs::Provider {
     [[nodiscard]] editor::vcs::CommandSpec AmendCommitArgv(const std::filesystem::path& root,
                                                               const std::string&           message) const override;
     [[nodiscard]] editor::vcs::CommandSpec PreviousCommitMessageArgv(const std::filesystem::path& root) const override;
+    [[nodiscard]] editor::vcs::CommandSpec ConflictSideArgv(const std::filesystem::path& path, text::MergeSideKind side) const override;
     // VcsPanel commit-variants follow-up.
     [[nodiscard]] editor::vcs::CommandSpec ExtendCommitArgv(const std::filesystem::path& root) const override;
     // Reword follow-up.

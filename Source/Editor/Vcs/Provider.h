@@ -26,6 +26,10 @@
 #include <string>
 #include <vector>
 
+namespace ned::text {
+enum class MergeSideKind;
+} // namespace ned::text
+
 namespace ned::editor::vcs {
 
 // One line's worth of blame attribution -- returned per source line, in
@@ -217,6 +221,15 @@ class Provider {
         (void)root;
         (void)commitHash;
         throw std::runtime_error("commit diff not supported by this provider");
+    }
+
+    // One side of path's unresolved merge, whole, as the VCS recorded it
+    // before writing conflict markers (git: the index's stage 1, 2 or 3).
+    // No parse half: stdout is the file's content.
+    [[nodiscard]] virtual CommandSpec ConflictSideArgv(const std::filesystem::path& path, text::MergeSideKind side) const {
+        (void)path;
+        (void)side;
+        throw std::runtime_error("conflict sides not supported by this provider");
     }
 
     // Everything below is the vocabulary-completion follow-up's optional
