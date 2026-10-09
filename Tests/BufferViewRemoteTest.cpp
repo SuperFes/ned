@@ -21,6 +21,7 @@
 #include "Editor/Keymap.h"
 #include "Editor/Mode.h"
 #include "Editor/ModeOverrides.h"
+#include "Editor/Multibuffer.h"
 #include "Editor/PostQueue.h"
 #include "Editor/Project/Registry.h"
 #include "Editor/PromptHistory.h"
@@ -132,6 +133,24 @@ TEST_CASE("remote-project-search connects, then streams matches into a results b
     fixture.view.OnEvent(test::Return());
     fixture.Enter("nothing here");
     REQUIRE(fixture.StatusStartsWith("No matches for \"nothing here\""));
+}
+
+TEST_CASE("remote-project-search finds what a remote buffer holds unsaved", "[BufferView][Remote][HostAgent]") {
+    Fixture                     fixture;
+    const std::filesystem::path tree = fixture.fake.dir / "tree";
+    std::filesystem::create_directories(tree);
+    std::ofstream(tree / "a.txt") << "hay\n";
+
+    fixture.view.VisitRemoteFile({.destination = "host", .path = tree / "a.txt"});
+    REQUIRE(PumpUntil(fixture.queue, [&] { return fixture.activeBuffer.Get().Remote().has_value() && !fixture.activeBuffer.Get().IsLoading(); }));
+    fixture.activeBuffer.Get().SetPoint(0);
+    fixture.activeBuffer.Get().InsertAtPoint("needle unsaved\n");
+
+    fixture.Command("remote-project-search");
+    fixture.Enter("host:" + tree.string() + "/");
+    fixture.Enter("needle");
+    REQUIRE(fixture.StatusStartsWith("1 match for \"needle\""));
+    CHECK_THAT(fixture.activeBuffer.Get().Text(), ContainsSubstring("host:" + (tree / "a.txt").string() + ":1: needle unsaved\n"));
 }
 
 TEST_CASE("remote-project-search rejects a bad root or pattern before connecting", "[BufferView][Remote]") {
@@ -499,6 +518,43 @@ TEST_CASE("project-find-references with no server searches a remote buffer's pro
     CHECK_THAT(results, ContainsSubstring("host:" + (project / "src" / "a.c").string() + ":1: int needle;\n"));
     CHECK_THAT(results, ContainsSubstring("host:" + (project / "src" / "b.c").string() + ":2: use(needle);\n"));
     CHECK(results.find("outside.c") == std::string::npos);
+}
+
+TEST_CASE("project-replace on a remote buffer reviews its host project's matches in remote buffers", "[BufferView][Remote][HostAgent]") {
+    Fixture                     fixture;
+    const std::filesystem::path project = fixture.fake.dir / "proj";
+    std::filesystem::create_directories(project / ".git");
+    std::filesystem::create_directories(project / "src");
+    std::ofstream(project / "src" / "a.c") << "foo one\n";
+    std::ofstream(project / "src" / "b.c") << "two foo\n";
+    std::ofstream(project / "src" / "c.c") << "nothing\n";
+
+    fixture.view.VisitRemoteFile({.destination = "host", .path = project / "src" / "a.c"});
+    REQUIRE(PumpUntil(fixture.queue, [&] { return fixture.activeBuffer.Get().Remote().has_value() && !fixture.activeBuffer.Get().IsLoading(); }));
+    ned::text::Buffer& a = fixture.activeBuffer.Get();
+    // Unsaved, and searched as it is.
+    a.SetPoint(a.Size());
+    a.InsertAtPoint("foo three\n");
+
+    fixture.Command("project-replace");
+    fixture.Enter("foo");
+    fixture.Enter("bar");
+    REQUIRE(fixture.StatusStartsWith("3 replacements in 3 lines across 2 files"));
+    ned::text::Buffer& review = fixture.activeBuffer.Get();
+    CHECK(review.Name() == "*project replace*");
+    CHECK_THAT(review.Text(), ContainsSubstring("host:" + (project / "src" / "b.c").string() + ":1"));
+
+    const ned::editor::multibuffer::CommitResult committed =
+        ned::editor::multibuffer::CommitExcerptChanges(fixture.bufferList, review, nullptr, nullptr, ned::editor::multibuffer::CommitTarget::Disk);
+    CHECK(committed.skipped.empty());
+    CHECK(a.Text() == "bar one\nbar three\n");
+    ned::text::Buffer* b = fixture.bufferList.FindByRemote({.destination = "host", .path = project / "src" / "b.c"});
+    REQUIRE(b != nullptr);
+    CHECK(b->Text() == "two bar\n");
+    CHECK(b->Modified());
+    // Nothing on the host changes until they're saved.
+    std::ifstream in(project / "src" / "b.c");
+    CHECK(std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()) == "two foo\n");
 }
 
 TEST_CASE("find-file on a host:/path that can't be read closes its buffer and says why", "[BufferView][Remote][HostAgent]") {

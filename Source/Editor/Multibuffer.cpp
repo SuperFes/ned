@@ -137,6 +137,18 @@ namespace {
         return std::make_pair(content.LineToByteOffset(startLine - 1), content.LineToByteOffset(clampedEndLine));
     }
 
+    // A host's file, which an excerpt names by its host:/path (no absolute
+    // local path can be one).
+    std::optional<text::RemoteFile> RemoteSource(const std::filesystem::path& sourcePath) {
+        return sourcePath.is_absolute() ? std::nullopt : text::ParseRemoteFile(sourcePath.string());
+    }
+
+    // The buffer holding an excerpt's source, if one is open.
+    text::Buffer* FindSource(text::BufferList& bufferList, const std::filesystem::path& sourcePath) {
+        const std::optional<text::RemoteFile> remote = RemoteSource(sourcePath);
+        return remote ? bufferList.FindByRemote(*remote) : bufferList.FindByPath(sourcePath);
+    }
+
 } // namespace
 
 std::string ReadExcerptText(text::BufferList& bufferList, const text::FileRef& file, std::size_t startLine, std::size_t endLine) {
@@ -306,10 +318,11 @@ text::Buffer& BuildMultibuffer(text::BufferList& bufferList, const std::string& 
             // originalText), so unlike ReadExcerptText there's no source
             // text to slice out at all, live-buffer or disk.
             std::optional<std::pair<std::size_t, std::size_t>> range;
-            if (text::Buffer* open = bufferList.FindByPath(excerpt.sourcePath)) {
+            // A host's file only through the buffer holding it.
+            if (text::Buffer* open = FindSource(bufferList, excerpt.sourcePath)) {
                 range = LineRangeToByteRange(open->Content(), excerpt.sourceStartLine, excerpt.sourceEndLine);
             }
-            else if (std::ifstream input(excerpt.sourcePath, std::ios::binary); input) {
+            else if (std::ifstream input(excerpt.sourcePath, std::ios::binary); !RemoteSource(excerpt.sourcePath) && input) {
                 std::ostringstream contents;
                 contents << input.rdbuf();
                 range = LineRangeToByteRange(contents.str(), excerpt.sourceStartLine, excerpt.sourceEndLine);
@@ -633,7 +646,9 @@ CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& co
         // file itself and never open a buffer for it. A file whose buffer is
         // open *and modified* deliberately falls through to the LiveBuffers
         // path below instead -- see CommitTarget's own doc comment.
-        text::Buffer* const openBuffer = bufferList.FindByPath(path);
+        text::Buffer* const openBuffer = FindSource(bufferList, path);
+        // A host's file is only ever changed in the buffer holding it.
+        const bool remote = RemoteSource(path).has_value();
         // A huge source is never read whole here either -- it takes the
         // LiveBuffers path below, where Buffer's own storage applies the edit
         // in place. Huge-file support stays second-class throughout this
@@ -643,7 +658,7 @@ CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& co
         const std::uintmax_t sourceSize = std::filesystem::file_size(path, hugeCheckError);
         const bool           hugeSource = !hugeCheckError && sourceSize > text::HugeFileThreshold();
 
-        if (target == CommitTarget::Disk && !hugeSource && (openBuffer == nullptr || !openBuffer->Modified())) {
+        if (target == CommitTarget::Disk && !remote && !hugeSource && (openBuffer == nullptr || !openBuffer->Modified())) {
             std::optional<std::string> fileText = ReadWholeFile(path);
             if (!fileText) {
                 result.skipped.emplace_back(path, "source file could not be read");
@@ -688,9 +703,15 @@ CommitResult CommitExcerptChanges(text::BufferList& bufferList, text::Buffer& co
             continue;
         }
 
-        text::Buffer* source = nullptr;
+        text::Buffer* source = remote ? openBuffer : nullptr;
+        if (remote && source == nullptr) {
+            result.skipped.emplace_back(path, "isn't open here");
+            continue;
+        }
         try {
-            source = &bufferList.OpenOrCreateFile(path);
+            if (!remote) {
+                source = &bufferList.OpenOrCreateFile(path);
+            }
         }
         catch (const std::runtime_error& e) {
             result.skipped.emplace_back(path, e.what());

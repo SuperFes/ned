@@ -65,8 +65,6 @@ and sync on save; don't build a remote-authoritative buffer.
       against them through `NED_TEST_AGENT`: x86_64 natively, aarch64 under
       `qemu-aarch64`.
 
-**Language servers on a host**
-
 **Debug adapters on a host**
 - [ ] Launch and attach configurations for a host: one per language today, sent
       unchanged, so a remote session needs paths that exist on the host.
@@ -84,12 +82,6 @@ and sync on save; don't build a remote-authoritative buffer.
 **Client/server protocol**, ordered by the design doc's staging section.
 - [ ] Verify a remote debug session end to end (PHP/Xdebug, with the adapter running on
       the host through `proc`).
-
-**Project tree and search**
-- [ ] Send remote buffers' unsaved edits with a remote project search, as `LiveContent`.
-      Unsaved text can exceed the 64 MiB frame cap in total, so it needs to go up as a
-      stream rather than inside the request. Decide how project-replace, find-references
-      and the agenda scan run against a remote root.
 
 ## Documentation & Companion Tooling
 

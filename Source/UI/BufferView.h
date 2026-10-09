@@ -3112,6 +3112,12 @@ class BufferView : public Widget {
     //
     // Throws editor::RegexPatternError if the replacement can't be applied
     // (see RegexPattern.h's match-limit safety net); the caller reports it.
+    // project-replace on a remote buffer: searches its project on its host,
+    // unsaved buffers included, opens the files that match, then builds the
+    // same review over their remote buffers.
+    void StartRemoteReplace(const text::RemoteFile& from, const std::string& pattern, const std::string& replacement);
+    void FinishRemoteReplace(const std::string& destination, const std::string& pattern, const std::string& replacement,
+                             std::vector<editor::SearchMatch> matches);
     void BuildProjectReplaceReview(const std::vector<editor::SearchMatch>& matches, const std::string& pattern,
                                    const std::string& replacement);
 
@@ -4335,6 +4341,7 @@ class BufferView : public Widget {
     std::size_t                           promptHistoryIndex_ = kNoHistoryIndex;
     std::string                           promptHistoryStash_;
     std::optional<editor::ProjectReplace> projectReplace_;
+    std::optional<text::RemoteFile>       remoteReplaceFrom_;                        // a project-replace's remote buffer
     text::BufferIdentity                  pendingClose_;                             // buffer awaiting y/n in ConfirmCloseBuffer
     TaskPromptAction                      taskPromptAction_ = TaskPromptAction::Run; // see InputMode::TaskName
 

@@ -38,6 +38,10 @@ reason, so it stays a conscious call.
 - [ ] **Client-only remote mode** (no agent; per-operation `ssh`/`sftp`). A second
       backend behind the same host API, with search falling back to a remote `rg` or
       `grep -r`. Justified by a host where deploying the agent isn't allowed.
+- [ ] **The Org agenda over a host's project.** The agenda scans the local project root:
+      it's the user's own org files, which live here. On a host it would be a remote
+      search for headlines, then an `fs/read` of each org file to parse its timestamps.
+      Justified by a user who keeps org notes on a host.
 
 ### Performance
 

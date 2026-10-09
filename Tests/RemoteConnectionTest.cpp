@@ -28,6 +28,8 @@
 #include "Editor/Remote/Search.h"
 #include "EnvOverride.h"
 #include "FakeRemoteHost.h"
+#include "Text/BufferList.h"
+#include "Text/Rope.h"
 
 using Catch::Matchers::ContainsSubstring;
 using Catch::Matchers::StartsWith;
@@ -501,6 +503,60 @@ TEST_CASE("A remote project search streams the host's matches", "[Remote][Connec
     REQUIRE(PumpUntil(queue, [&] { return done.has_value(); }));
     REQUIRE(done->has_value());
     REQUIRE_THAT(**done, ContainsSubstring("missing )"));
+}
+
+TEST_CASE("A remote project search sees unsaved remote buffers, inline or uploaded", "[Remote][Connection][HostAgent]") {
+    namespace remote = ned::editor::remote;
+    FakeHost       fake;
+    PostQueue      queue;
+    const fs::path tree = fake.dir / "tree";
+    fs::create_directories(tree);
+    std::ofstream(tree / "a.txt") << "hay\n";
+    std::ofstream(tree / "b.txt") << "hay\n";
+    fs::create_directory_symlink(tree, fake.dir / "link");
+    remote::Connection connection(remote::Connect(fake.Options()), queue);
+
+    ned::text::BufferList buffers;
+    const auto            open = [&](const fs::path& path, const std::string& text) -> ned::text::Buffer& {
+        ned::text::Buffer& buffer = buffers.AddRemotePlaceholder({.destination = "host", .path = path});
+        buffer.FinishLoad(ned::text::Rope("hay\n"));
+        buffer.SetPoint(0);
+        buffer.InsertAtPoint(text);
+        return buffer;
+    };
+    open(tree / "a.txt", "needle a\n");
+    // Opened through a symlink: matched to the walked file by its real path.
+    open(fake.dir / "link" / "b.txt", "needle b, much longer\n");
+    // Outside the root, so not sent.
+    open(fake.dir / "c.txt", "needle c\n");
+
+    ned::editor::LifetimeGuard                                    guard;
+    std::optional<std::expected<remote::RemoteLive, std::string>> gathered;
+    remote::GatherRemoteLive(connection, buffers, {.destination = "host", .path = fs::canonical(tree)}, guard.Token(), [&](std::expected<remote::RemoteLive, std::string> live) { gathered = std::move(live); }, 13);
+    REQUIRE(PumpUntil(queue, [&] { return gathered.has_value(); }));
+    REQUIRE(gathered->has_value());
+    CHECK((*gathered)->inlined.size() == 1);
+    REQUIRE((*gathered)->uploaded.size() == 1);
+    CHECK((*gathered)->uploaded[0].canonicalPath == fs::canonical(tree) / "b.txt");
+
+    std::vector<std::string>   lines;
+    std::optional<std::string> failure;
+    bool                       finished = false;
+    remote::SearchProject(
+        connection, remote::SearchRequestWithLive({.destination = "host", .path = fs::canonical(tree)}, "needle", std::move(**gathered)),
+        [&](const std::vector<ned::editor::SearchMatch>& matches) {
+            for (const ned::editor::SearchMatch& match : matches) {
+                lines.push_back(match.file.filename().string() + ":" + match.lineText);
+            }
+        },
+        [&](std::optional<std::string> why) {
+            failure  = std::move(why);
+            finished = true;
+        });
+    REQUIRE(PumpUntil(queue, [&] { return finished; }));
+    CHECK_FALSE(failure.has_value());
+    std::ranges::sort(lines);
+    CHECK(lines == std::vector<std::string>{"a.txt:needle a", "b.txt:needle b, much longer"});
 }
 
 TEST_CASE("A remote project search refuses matches outside its root", "[Remote][Connection]") {
