@@ -87,6 +87,12 @@ void Client::DispatchFrame(const std::string& frameText) {
         // spec-following server's progress reporting. No handler means a
         // MethodNotFound error response per JSON-RPC, not silence.
         if (message.contains("id")) {
+            if (const auto deferred = deferredRequestHandlers_.find(method); deferred != deferredRequestHandlers_.end() && deferred->second) {
+                deferred->second(params, lifetime_.Bind([this, id = message["id"]](Json result) {
+                    connection_.SendFrame(Json{{"jsonrpc", "2.0"}, {"id", id}, {"result", std::move(result)}}.dump());
+                }));
+                return;
+            }
             const auto it = requestHandlers_.find(method);
             Json       response;
             if (it != requestHandlers_.end() && it->second) {
@@ -192,7 +198,13 @@ void Client::SetNotificationHandler(std::string method, NotificationHandler hand
     notificationHandlers_[std::move(method)] = std::move(handler);
 }
 
+void Client::SetDeferredRequestHandler(std::string method, DeferredRequestHandler handler) {
+    requestHandlers_.erase(method);
+    deferredRequestHandlers_[std::move(method)] = std::move(handler);
+}
+
 void Client::SetRequestHandler(std::string method, RequestHandler handler) {
+    deferredRequestHandlers_.erase(method);
     requestHandlers_[std::move(method)] = std::move(handler);
 }
 

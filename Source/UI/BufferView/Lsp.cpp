@@ -1399,13 +1399,21 @@ void BufferView::ApplyCodeAction(const editor::lsp::CodeAction& action) {
             statusMessage_ = "\"" + action.title + "\" names a file this editor can't resolve -- not applied.";
             return;
         }
-        if (!EnsureRemoteFilesOpen(*resolved, [this, action] { ApplyCodeAction(action); })) {
-            return;
+        const auto apply = [this, action](const PreparedEdit& prepared) {
+            // ReportError/statusMessage_ already surfaced a failure.
+            if (prepared && ApplyResolvedWorkspaceEdit(*prepared, "Applied \"" + action.title + "\".")) {
+                RunCodeActionCommand(action);
+            }
+        };
+        if (const PreparedEdit ready = PrepareRemoteEdit(*resolved, lifetime_.Bind(apply))) {
+            apply(ready);
         }
-        if (!ApplyResolvedWorkspaceEdit(*resolved, "Applied \"" + action.title + "\".")) {
-            return; // ReportError/statusMessage_ already surfaced the failure
-        }
+        return;
     }
+    RunCodeActionCommand(action);
+}
+
+void BufferView::RunCodeActionCommand(const editor::lsp::CodeAction& action) {
     if (!action.command) {
         statusMessage_ = "Applied \"" + action.title + "\".";
         return;
@@ -2346,10 +2354,16 @@ void BufferView::RequestRenameAtPoint(const std::string& newName) {
         serverKey);
 }
 
-void BufferView::ApplyRename(const editor::lsp::Manager::ResolvedRename& result) {
-    if (!EnsureRemoteFilesOpen(result, [this, result] { ApplyRename(result); })) {
+void BufferView::ApplyRename(const editor::lsp::Manager::ResolvedRename& requested) {
+    const PreparedEdit ready = PrepareRemoteEdit(requested, lifetime_.Bind([this](const PreparedEdit& prepared) {
+        if (prepared) {
+            ApplyRename(*prepared);
+        }
+    }));
+    if (!ready) {
         return;
     }
+    const editor::lsp::Manager::ResolvedRename& result = *ready;
     std::string declineNote;
     if (TryReviewRename(result, declineNote)) {
         return;
@@ -2462,8 +2476,15 @@ bool BufferView::TryReviewRename(const editor::lsp::Manager::ResolvedRename& res
     return BuildRenameReview(std::move(files), renameOldName_, renameNewName_);
 }
 
-bool BufferView::ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label) {
-    return ApplyResolvedWorkspaceEdit(edit, "Applied \"" + label + "\" (server request).");
+void BufferView::ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label,
+                                                std::function<void(bool applied)> done) {
+    const std::string description = "Applied \"" + label + "\" (server request).";
+    const auto        apply       = [this, description, done](const PreparedEdit& prepared) {
+        done(prepared && ApplyResolvedWorkspaceEdit(*prepared, description));
+    };
+    if (const PreparedEdit ready = PrepareRemoteEdit(edit, lifetime_.Bind(apply))) {
+        apply(ready);
+    }
 }
 
 bool BufferView::ApplyAgentWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label) {
@@ -2590,7 +2611,187 @@ bool BufferView::ApplyResolvedWorkspaceEdit(const editor::lsp::Manager::Resolved
     return true;
 }
 
-bool BufferView::EnsureRemoteFilesOpen(const editor::lsp::Manager::ResolvedRename& edit, std::function<void()> then) {
+struct BufferView::HostEditRun {
+    editor::lsp::Manager::ResolvedRename edit;
+    std::function<void(PreparedEdit)>    then;
+};
+
+namespace {
+
+    bool IsHostFileOp(const editor::lsp::Manager::ResolvedDocumentChangeOp& op) {
+        return op.kind != editor::lsp::DocumentChangeOp::Kind::EditFile &&
+               (std::holds_alternative<text::RemoteFile>(op.file) || std::holds_alternative<text::RemoteFile>(op.oldFile));
+    }
+
+} // namespace
+
+BufferView::PreparedEdit BufferView::PrepareRemoteEdit(const editor::lsp::Manager::ResolvedRename& edit, std::function<void(PreparedEdit prepared)> then) {
+    if (remoteHosts_ != nullptr && std::ranges::any_of(edit.documentChangeOps, IsHostFileOp)) {
+        RunHostFileOps(std::make_shared<HostEditRun>(HostEditRun{.edit = edit, .then = std::move(then)}));
+        return std::nullopt;
+    }
+    if (EnsureRemoteFilesOpen(edit, [edit, then](bool opened) { then(opened ? PreparedEdit(edit) : std::nullopt); })) {
+        return edit;
+    }
+    return std::nullopt;
+}
+
+void BufferView::RunHostFileOps(std::shared_ptr<HostEditRun> run) {
+    const auto next = std::ranges::find_if(run->edit.documentChangeOps, IsHostFileOp);
+    if (next == run->edit.documentChangeOps.end()) {
+        if (EnsureRemoteFilesOpen(run->edit, [run](bool opened) { run->then(opened ? PreparedEdit(run->edit) : std::nullopt); })) {
+            run->then(run->edit);
+        }
+        return;
+    }
+    const auto  index  = static_cast<std::size_t>(next - run->edit.documentChangeOps.begin());
+    const auto* target = std::get_if<text::RemoteFile>(&next->file);
+    const auto* source = std::get_if<text::RemoteFile>(&next->oldFile);
+    if (target == nullptr || (next->kind == editor::lsp::DocumentChangeOp::Kind::RenameFile && (source == nullptr || source->destination != target->destination))) {
+        ReportError("Moving a file between machines isn't supported: " + text::ToString(next->oldFile) + " to " + text::ToString(next->file),
+                    editor::LogCategory::Lsp);
+        run->then(std::nullopt);
+        return;
+    }
+    remoteHosts_->Connect(target->destination, lifetime_.Bind([this, run, index, file = *target](const std::expected<editor::remote::Connection*, std::string>& connection) {
+        if (!connection) {
+            ReportError("Couldn't connect to " + file.destination + ": " + connection.error(), editor::LogCategory::Lsp);
+            run->then(std::nullopt);
+            return;
+        }
+        (void)editor::remote::StatFile(**connection, file.path, lifetime_.Bind([this, run, index, file](editor::remote::FsResult<editor::host::FileStat> stat) {
+            if (!stat) {
+                ReportError("Couldn't look at " + file.ToString() + ": " + stat.error().message, editor::LogCategory::Lsp);
+                run->then(std::nullopt);
+                return;
+            }
+            RunHostFileOp(run, index, stat->kind != editor::host::FileKind::Missing);
+        }));
+    }));
+}
+
+void BufferView::RunHostFileOp(const std::shared_ptr<HostEditRun>& run, std::size_t index, bool exists) {
+    using Kind                                                  = editor::lsp::DocumentChangeOp::Kind;
+    const editor::lsp::Manager::ResolvedDocumentChangeOp op     = run->edit.documentChangeOps[index];
+    const text::RemoteFile&                              target = std::get<text::RemoteFile>(op.file);
+    const auto                                           fail   = [this, run](const std::string& message) {
+        ReportError("Couldn't change a host's files: " + message, editor::LogCategory::Lsp);
+        run->then(std::nullopt);
+    };
+    // Each step's answer settles this operation; the next one runs after it.
+    // Only ever called from this BufferView's own bound callbacks.
+    const auto settled = [this, run, index, fail](const std::optional<std::string>& failure) {
+        if (failure) {
+            fail(*failure);
+            return;
+        }
+        run->edit.documentChangeOps.erase(run->edit.documentChangeOps.begin() + static_cast<std::ptrdiff_t>(index));
+        RunHostFileOps(run);
+    };
+    editor::remote::Connection* connection = remoteHosts_->Find(target.destination);
+    if (connection == nullptr) {
+        fail(target.destination + " is not connected");
+        return;
+    }
+    const auto failureOf = [](const auto& result) { return result ? std::nullopt : std::optional(result.error().message); };
+    switch (op.kind) {
+        case Kind::CreateFile: {
+            if (exists && op.ignoreIfExists) {
+                settled(std::nullopt);
+                return;
+            }
+            if (exists && !op.overwrite) {
+                fail("create: " + target.ToString() + " already exists");
+                return;
+            }
+            if (exists) {
+                // Emptied, as a local create with overwrite empties its buffer.
+                if (text::Buffer* open = bufferList_.FindByRemote(target)) {
+                    open->BeginUndoGroup();
+                    open->DeleteRange(0, open->Content().ByteLength());
+                    open->EndUndoGroup();
+                }
+                (void)editor::remote::WriteFile(*connection, editor::host::FsWriteRequest{.path = target.path, .data = {}, .expect = std::nullopt},
+                                                lifetime_.Bind([settled, failureOf](const editor::remote::FsResult<editor::host::FileStat>& written) { settled(failureOf(written)); }));
+                return;
+            }
+            (void)editor::remote::MakeDirectory(
+                *connection, target.path.parent_path(),
+                lifetime_.Bind([this, target, settled, failureOf](const editor::remote::FsResult<editor::host::FileStat>& made) {
+                    editor::remote::Connection* again = remoteHosts_->Find(target.destination);
+                    if (!made || again == nullptr) {
+                        settled(made ? std::optional(target.destination + " is not connected") : failureOf(made));
+                        return;
+                    }
+                    // Made only if nothing is there yet.
+                    (void)editor::remote::WriteFile(*again, editor::host::FsWriteRequest{.path = target.path, .data = {}, .expect = std::optional<std::optional<std::filesystem::file_time_type>>(std::nullopt)},
+                                                    lifetime_.Bind([settled, failureOf](const editor::remote::FsResult<editor::host::FileStat>& written) { settled(failureOf(written)); }));
+                }));
+            return;
+        }
+        case Kind::DeleteFile:
+            if (!exists) {
+                if (op.ignoreIfNotExists) {
+                    settled(std::nullopt);
+                }
+                else {
+                    fail("delete: " + target.ToString() + " does not exist");
+                }
+                return;
+            }
+            (void)editor::remote::RemovePath(*connection, target.path,
+                                             lifetime_.Bind([settled, failureOf](const editor::remote::FsResult<void>& removed) { settled(failureOf(removed)); }));
+            return;
+        case Kind::RenameFile: {
+            if (exists && !op.overwrite) {
+                if (op.ignoreIfExists) {
+                    settled(std::nullopt);
+                }
+                else {
+                    fail("rename: " + target.ToString() + " already exists");
+                }
+                return;
+            }
+            const text::RemoteFile source = std::get<text::RemoteFile>(op.oldFile);
+            const auto             move   = [this, source, target, settled, failureOf]() {
+                editor::remote::Connection* again = remoteHosts_->Find(target.destination);
+                if (again == nullptr) {
+                    settled(target.destination + " is not connected");
+                    return;
+                }
+                (void)editor::remote::RenamePath(*again, editor::host::FsRenameRequest{.from = source.path, .to = target.path},
+                                                 lifetime_.Bind([this, source, target, settled, failureOf](const editor::remote::FsResult<void>& renamed) {
+                                                     if (renamed) {
+                                                         if (text::Buffer* open = bufferList_.FindByRemote(source)) {
+                                                             open->SetRemote(target);
+                                                             open->Rename(text::RemoteBufferName(target));
+                                                             editor::ClearModeCacheFor(*open);
+                                                         }
+                                                     }
+                                                     settled(failureOf(renamed));
+                                                 }));
+            };
+            if (!exists) {
+                move();
+                return;
+            }
+            // RenamePath refuses onto an existing target.
+            (void)editor::remote::RemovePath(*connection, target.path, lifetime_.Bind([move, settled, failureOf](const editor::remote::FsResult<void>& removed) {
+                if (!removed) {
+                    settled(failureOf(removed));
+                    return;
+                }
+                move();
+            }));
+            return;
+        }
+        case Kind::EditFile:
+            settled(std::nullopt);
+            return;
+    }
+}
+
+bool BufferView::EnsureRemoteFilesOpen(const editor::lsp::Manager::ResolvedRename& edit, std::function<void(bool opened)> then) {
     std::vector<text::RemoteFile> missing;
     const auto                    note = [&](const text::FileRef& file) {
         const auto* remote = std::get_if<text::RemoteFile>(&file);
@@ -2611,9 +2812,9 @@ bool BufferView::EnsureRemoteFilesOpen(const editor::lsp::Manager::ResolvedRenam
     }
 
     struct Loading {
-        std::size_t           outstanding = 0;
-        bool                  failed      = false;
-        std::function<void()> then;
+        std::size_t               outstanding = 0;
+        bool                      failed      = false;
+        std::function<void(bool)> then;
     };
     const auto loading = std::make_shared<Loading>(Loading{.outstanding = missing.size(), .failed = false, .then = std::move(then)});
     statusMessage_     = "Reading " + std::to_string(missing.size()) + (missing.size() == 1 ? " file" : " files") + " from " +
@@ -2629,8 +2830,8 @@ bool BufferView::EnsureRemoteFilesOpen(const editor::lsp::Manager::ResolvedRenam
                                                      ReportError("Couldn't open " + file.ToString() + ": " + outcome.loaded.error());
                                                  }
                                              }
-                                             if (--loading->outstanding == 0 && !loading->failed) {
-                                                 loading->then();
+                                             if (--loading->outstanding == 0) {
+                                                 loading->then(!loading->failed);
                                              }
                                          });
     }

@@ -722,20 +722,26 @@ void Manager::WireNotificationHandlers(Client& client, const std::string& server
     // comment. Per spec, "params.edit" is required and the response is
     // always {applied: bool, failureReason?: string} -- never an error
     // response, even on failure.
-    client.SetRequestHandler("workspace/applyEdit", [this, connectionKey](const Json& params) -> Json {
+    // Answered once the edit lands, which for a host's files waits for them
+    // to be read.
+    client.SetDeferredRequestHandler("workspace/applyEdit", [this, connectionKey](const Json& params, std::function<void(Json result)> respond) {
+        const auto refuse = [&respond](const std::string& reason) { respond(Json{{"applied", false}, {"failureReason", reason}}); };
         const auto editIt = params.find("edit");
         if (editIt == params.end()) {
-            return Json{{"applied", false}, {"failureReason", "missing \"edit\""}};
+            refuse("missing \"edit\"");
+            return;
         }
         const RenameResult parsed = ExtractRenameEdits(*editIt);
         if (parsed.touchesUnsupportedForm) {
-            return Json{{"applied", false}, {"failureReason", "unsupported edit form"}};
+            refuse("unsupported edit form");
+            return;
         }
         ResolvedRename resolved;
         for (const RenameEdit& edit : parsed.edits) {
             const std::optional<std::filesystem::path> path = UriToPath(edit.uri);
             if (!path) {
-                return Json{{"applied", false}, {"failureReason", "unresolvable uri"}};
+                refuse("unresolvable uri");
+                return;
             }
             resolved.edits.push_back(ResolvedRenameEdit{.file = DocumentFile(connectionKey, *path), .edits = edit.edits});
         }
@@ -743,19 +749,22 @@ void Manager::WireNotificationHandlers(Client& client, const std::string& server
             const std::optional<std::vector<ResolvedDocumentChangeOp>> resolvedOps =
                 ResolveDocumentChangeOps(parsed.documentChangeOps, ConnectionHost(connectionKey));
             if (!resolvedOps) {
-                return Json{{"applied", false}, {"failureReason", "unresolvable uri"}};
+                refuse("unresolvable uri");
+                return;
             }
             resolved.documentChangeOps = std::move(*resolvedOps);
         }
         resolved.hasEdit = !resolved.edits.empty() || !resolved.documentChangeOps.empty();
         if (!resolved.hasEdit) {
-            return Json{{"applied", false}, {"failureReason", "empty edit"}};
+            refuse("empty edit");
+            return;
         }
         if (!applyEditHandler_) {
-            return Json{{"applied", false}, {"failureReason", "not supported"}};
+            refuse("not supported");
+            return;
         }
         const std::string label = params.value("label", std::string("workspace edit"));
-        return Json{{"applied", applyEditHandler_(resolved, label)}};
+        applyEditHandler_(resolved, label, [respond](bool applied) { respond(Json{{"applied", applied}}); });
     });
     // server-refresh follow-up: four requests (not notifications -- each
     // expects a response, and its result is null by spec) a server sends when

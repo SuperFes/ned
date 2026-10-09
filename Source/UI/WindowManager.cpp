@@ -654,9 +654,10 @@ void WindowManager::SetLspManager(editor::lsp::Manager* lspManager) {
     // per Manager (not per-pane -- the handler itself is one std::function
     // owned by Manager, no pane-specific state to re-wire on split/close).
     if (lspManager_) {
-        lspManager_->SetApplyEditHandler([this](const editor::lsp::Manager::ResolvedRename& edit, const std::string& label) {
-            return ApplyServerPushedWorkspaceEdit(edit, label);
-        });
+        lspManager_->SetApplyEditHandler(
+            [this](const editor::lsp::Manager::ResolvedRename& edit, const std::string& label, std::function<void(bool applied)> done) {
+                ApplyServerPushedWorkspaceEdit(edit, label, std::move(done));
+            });
         // window-messages follow-up: same once-per-Manager wiring as the
         // handler above. A server's own message has nowhere else to go --
         // Editor/ owns no echo area, and until now these were dropped
@@ -1335,14 +1336,19 @@ void WindowManager::StartDeleteFileAt(const std::filesystem::path& path) {
     }
 }
 
-bool WindowManager::ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label) {
+void WindowManager::ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label,
+                                                   std::function<void(bool applied)> done) {
     // A panel holding focus leaves no focused pane, and the edit still has
     // to land -- the first leaf is as good a host as any.
     Pane* pane = FocusedPane();
     if (pane == nullptr && !Leaves().empty()) {
         pane = Leaves().front();
     }
-    return pane != nullptr && pane->Buffer().ApplyServerPushedWorkspaceEdit(edit, label);
+    if (pane == nullptr) {
+        done(false);
+        return;
+    }
+    pane->Buffer().ApplyServerPushedWorkspaceEdit(edit, label, std::move(done));
 }
 
 bool WindowManager::ApplyAgentWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label) {
