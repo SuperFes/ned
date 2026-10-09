@@ -2180,6 +2180,11 @@ class BufferView : public Widget {
     // A remote server's references, as results lines naming host:/path;
     // their text comes from buffers already open here.
     void ShowRemoteReferences(const std::string& word, const std::vector<editor::lsp::Manager::ResolvedLocation>& locations);
+    // The same results buffer from host:/path:line: text lines already built.
+    void ShowReferenceLines(const std::string& word, const std::string& lines, std::size_t count);
+    // project-find-references' text search, on a remote buffer's host, in
+    // the project root found there.
+    void FindRemoteReferences(const text::RemoteFile& file, const std::string& word);
 
     // peek-definition follow-up: JetBrains/VSCode-style "look without leaving" --
     // requests Manager::RequestDefinition the same way RequestDefinitionAtPoint

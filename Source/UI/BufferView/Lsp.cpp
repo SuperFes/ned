@@ -9,6 +9,7 @@
 #include "Editor/FileIcons.h"
 #include "Editor/Format.h"
 #include "Editor/Remote/RemoteBuffer.h"
+#include "Editor/Remote/Search.h"
 #include "Editor/Tracker/IssueBuffer.h"
 #include "Editor/Tracker/IssueKey.h"
 #include "Editor/Tracker/KeyCompletion.h"
@@ -1568,6 +1569,10 @@ void BufferView::ShowRemoteReferences(const std::string& word, const std::vector
         }
         lines += text::ToString(location.file) + ":" + std::to_string(lineNumber) + ": " + lineText + "\n";
     }
+    ShowReferenceLines(word, lines, locations.size());
+}
+
+void BufferView::ShowReferenceLines(const std::string& word, const std::string& lines, std::size_t count) {
     const std::string name    = "*references: " + word + "*";
     text::Buffer&     results = bufferList_.CreateBuffer(name);
     results.InsertAtPoint(lines);
@@ -1575,7 +1580,61 @@ void BufferView::ShowRemoteReferences(const std::string& word, const std::vector
     results.SetReadOnly(true);
     editor::SetLastResultsBuffer(results.Name());
     activeBuffer_.Set(results);
-    statusMessage_ = std::to_string(locations.size()) + " reference" + (locations.size() == 1 ? "" : "s") + " to \"" + word + "\"";
+    statusMessage_ = std::to_string(count) + " reference" + (count == 1 ? "" : "s") + " to \"" + word + "\"";
+}
+
+void BufferView::FindRemoteReferences(const text::RemoteFile& file, const std::string& word) {
+    if (remoteHosts_ == nullptr) {
+        statusMessage_ = "No remote hosts.";
+        return;
+    }
+    const std::size_t generation = referencesRequest_.Begin();
+    const auto        fail       = [this, generation](const std::string& why) {
+        if (!referencesRequest_.IsStale(generation)) {
+            ReportError("Couldn't search for references: " + why);
+        }
+    };
+    statusMessage_ = "Searching " + file.destination + " for references to \"" + word + "\"...";
+    remoteHosts_->Connect(file.destination, lifetime_.Bind([this, file, word, generation, fail](
+                                                               const std::expected<editor::remote::Connection*, std::string>& connection) {
+        if (!connection) {
+            fail(connection.error());
+            return;
+        }
+        (void)editor::remote::FindProjectRoot(
+            **connection, editor::host::FsProjectRootRequest{.path = file.path, .detect = editor::AutoDetectProjectRoot(), .markers = {}},
+            lifetime_.Bind([this, file, word, generation, fail](editor::remote::FsResult<std::filesystem::path> root) {
+                editor::remote::Connection* live = remoteHosts_->Find(file.destination);
+                if (!root || live == nullptr) {
+                    fail(root ? file.destination + " is not connected" : root.error().message);
+                    return;
+                }
+                // "\bword\b", the same pattern the local search uses.
+                const auto found = std::make_shared<std::vector<editor::SearchMatch>>();
+                (void)editor::remote::SearchProject(
+                    *live, editor::host::SearchRequest{.root = *root, .pattern = "\\b" + word + "\\b", .live = {}},
+                    lifetime_.Bind([found](const std::vector<editor::SearchMatch>& matches) { found->insert(found->end(), matches.begin(), matches.end()); }),
+                    lifetime_.Bind([this, file, word, generation, fail, found](const std::optional<std::string>& failure) {
+                        if (failure) {
+                            fail(*failure);
+                            return;
+                        }
+                        if (referencesRequest_.IsStale(generation)) {
+                            return;
+                        }
+                        if (found->empty()) {
+                            statusMessage_ = "No references to \"" + word + "\" found.";
+                            return;
+                        }
+                        std::string lines;
+                        for (const editor::SearchMatch& match : *found) {
+                            lines += text::RemoteFile{.destination = file.destination, .path = match.file}.ToString() + ":" + std::to_string(match.lineNumber) +
+                                     ": " + match.lineText + "\n";
+                        }
+                        ShowReferenceLines(word, lines, found->size());
+                    }));
+            }));
+    }));
 }
 
 void BufferView::RequestPeekDefinitionAtPoint() {
@@ -3000,6 +3059,11 @@ void BufferView::RequestProjectFindReferences() {
                                  " -- C-c v v to visit";
             }),
             serverKey);
+        return;
+    }
+
+    if (const std::optional<text::RemoteFile>& remote = buffer.Remote()) {
+        FindRemoteReferences(*remote, word);
         return;
     }
 

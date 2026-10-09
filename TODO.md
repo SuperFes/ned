@@ -66,8 +66,6 @@ and sync on save; don't build a remote-authoritative buffer.
       `qemu-aarch64`.
 
 **Language servers on a host**
-- [ ] `project-find-references` with no server running searches the local project root
-      for a remote buffer.
 
 **Debug adapters on a host**
 - [ ] Launch and attach configurations for a host: one per language today, sent

@@ -480,6 +480,27 @@ TEST_CASE("find-file opens a file on another port through an ssh URI", "[BufferV
     CHECK(fixture.hosts.Destinations() == std::vector<std::string>{"ssh://me@host:2222"});
 }
 
+TEST_CASE("project-find-references with no server searches a remote buffer's project on its host", "[BufferView][Remote][HostAgent]") {
+    Fixture                     fixture;
+    const std::filesystem::path project = fixture.fake.dir / "proj";
+    std::filesystem::create_directories(project / ".git");
+    std::filesystem::create_directories(project / "src");
+    std::ofstream(project / "src" / "a.c") << "int needle;\n";
+    std::ofstream(project / "src" / "b.c") << "// b\nuse(needle);\nneedles();\n";
+    std::ofstream(fixture.fake.dir / "outside.c") << "needle\n";
+
+    fixture.view.VisitRemoteFile({.destination = "host", .path = project / "src" / "a.c"});
+    REQUIRE(PumpUntil(fixture.queue, [&] { return fixture.activeBuffer.Get().Remote().has_value() && !fixture.activeBuffer.Get().IsLoading(); }));
+    fixture.activeBuffer.Get().SetPoint(5);
+
+    fixture.Command("project-find-references");
+    REQUIRE(fixture.StatusStartsWith("2 references to \"needle\""));
+    const std::string results = fixture.activeBuffer.Get().Text();
+    CHECK_THAT(results, ContainsSubstring("host:" + (project / "src" / "a.c").string() + ":1: int needle;\n"));
+    CHECK_THAT(results, ContainsSubstring("host:" + (project / "src" / "b.c").string() + ":2: use(needle);\n"));
+    CHECK(results.find("outside.c") == std::string::npos);
+}
+
 TEST_CASE("find-file on a host:/path that can't be read closes its buffer and says why", "[BufferView][Remote][HostAgent]") {
     Fixture fixture;
     const auto remoteBuffers = [&fixture] {

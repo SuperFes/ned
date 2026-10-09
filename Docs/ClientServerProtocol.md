@@ -276,7 +276,9 @@ come from that root's `.ned/settings.json` on the host (`Remote/ProjectSettings.
 read before it starts. It is sent no `processId`, since it can't see this process. The
 prose checker reads only text, so it stays here, told of a remote buffer by a stand-in
 path under `/.ned-remote/<destination>/` that keeps the file's name, and what it says
-about that path lands on the remote buffer. Its URIs are host paths, so what it names comes back as a file on that host
+about that path lands on the remote buffer. With no server running, `project-find-references`
+searches the remote buffer's project on its host instead, in the root `fs/project-root`
+finds there. Its URIs are host paths, so what it names comes back as a file on that host
 (`Text/RemoteFile.h`'s `FileRef`): a jump opens it there, references list `host:/path`
 lines, the problem list (`*diagnostics*`) names the host's files by `host:/path`, read-only
 and with no line text for one not open here, and an edit opens the host's files it
