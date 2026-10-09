@@ -19,6 +19,10 @@ Ned -- a terminal-based, Janet-scriptable text editor.
 A path may be a file or a directory; a directory opens as a project. Paths beyond the
 first open as background buffers.
 
+A path written *host*:/*path*, as scp reads one, is on that host: a directory there
+becomes a Remote panel root, and a file opens over ssh. A local file by that name wins;
+./*host*:/*path* always names one.
+
 Four of the startup modes are also installed as their own executables, so a build tool can
 call one by name instead of remembering a flag. `ned-format` is `ned --format`, `ned-langc`
 is `ned --compile-language`, `ned-import-language` is `ned --import-language`, and
@@ -127,7 +131,7 @@ first.
 
 `paths TEXT`
 
-:   Files or directories to open
+:   Files or directories to open; host:/path opens one on a host
 
 # EXIT STATUS
 
