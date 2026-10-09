@@ -33,6 +33,7 @@
 #include <string_view>
 
 #include "Text/Buffer.h"
+#include "Text/RemoteFile.h"
 
 namespace ned::editor {
 
@@ -55,7 +56,7 @@ class FilePlaceStore {
     // now" scope call kAsyncLoadThreshold made.
     static constexpr std::size_t kMaxEntries = 1000;
 
-    [[nodiscard]] std::optional<FilePlace> Lookup(const std::filesystem::path& path) const;
+    [[nodiscard]] std::optional<FilePlace> Lookup(const text::FileRef& file) const;
 
     // Stores place under path's normalized key, stamping lastUsed (nowSeconds
     // is injectable for tests only; the default is the real clock). A
@@ -65,14 +66,13 @@ class FilePlaceStore {
     // place (or a new entry) marks the store Dirty() -- a lastUsed bump
     // alone doesn't, so the periodic save can skip rewriting an unchanged
     // file every tick.
-    void Record(const std::filesystem::path& path, FilePlace place,
-                std::optional<std::int64_t> nowSeconds = std::nullopt);
+    void Record(const text::FileRef& file, FilePlace place, std::optional<std::int64_t> nowSeconds = std::nullopt);
 
     // Refreshes path's lastUsed stamp if present (a restore counts as use,
     // keeping actively revisited files from aging out of the LRU cap).
     // Doesn't mark the store Dirty() -- same reasoning as Record's own
     // lastUsed-only case.
-    void Touch(const std::filesystem::path& path, std::optional<std::int64_t> nowSeconds = std::nullopt);
+    void Touch(const text::FileRef& file, std::optional<std::int64_t> nowSeconds = std::nullopt);
 
     // Missing file loads as an empty store; a malformed/unparseable one is
     // discarded the same way (this is convenience state, not user content
@@ -93,6 +93,10 @@ class FilePlaceStore {
     // back to absolute() -- deliberately the same normalization, duplicated
     // rather than depended on: Session has no business pulling in Dap).
     [[nodiscard]] static std::string NormalizePathKey(const std::filesystem::path& path);
+
+    // A local file by NormalizePathKey; a remote one by destination:/path,
+    // already lexically normal and never resolved against this machine.
+    [[nodiscard]] static std::string KeyFor(const text::FileRef& file);
 
   private:
     struct Entry {
@@ -131,7 +135,7 @@ void SaveFilePlaces(bool force = false);
 
 // Applies buffer's stored place, if any: sets point to the stored
 // line/column (clamped by ByteOffsetForLineAndColumn) and refreshes the
-// entry's lastUsed. A no-op when disabled, when buffer has no path, or
+// entry's lastUsed. A no-op when disabled, when buffer has no file, or
 // while it's still an IsLoading() async placeholder (restoring into empty
 // placeholder content would clamp to 0 and stick).
 //
@@ -147,7 +151,7 @@ void SaveFilePlaces(bool force = false);
 // tabWidth is the same explicit pass-through Buffer's own tab-aware calls take.
 void RestoreFilePlace(text::Buffer& buffer, std::size_t tabWidth);
 
-// buffer's stored place, if any (nullopt when disabled or pathless) --
+// buffer's stored place, if any (nullopt when disabled or fileless) --
 // BufferView reads topLine out of this at its buffer-switch seam.
 [[nodiscard]] std::optional<FilePlace> StoredFilePlaceFor(const text::Buffer& buffer);
 
