@@ -91,9 +91,6 @@ and sync on save; don't build a remote-authoritative buffer.
       main thread, which only matters at that size too.
 
 **Project tree and search**
-- [ ] A remote test run's `*test results*` lines resolve their sources against the local
-      tree (`TestRun/TestSourceResolver.h`); they should resolve on the host and open
-      remote buffers.
 - [ ] Send remote buffers' unsaved edits with a remote project search, as `LiveContent`.
       Unsaved text can exceed the 64 MiB frame cap in total, so it needs to go up as a
       stream rather than inside the request. Decide how project-replace, find-references

@@ -278,6 +278,9 @@ void TestRunner::ParseResults(const std::string& format, const std::string& inpu
                                     (fresh.failuresOnly ? FailuresOnlyHint(fresh.format) : std::string()) + "]\n");
     }
 
+    if (placedAt_ && ranIn_) {
+        fresh.ranOn = text::RemoteFile{.destination = placedAt_->destination, .path = *ranIn_};
+    }
     MergeOutcome(std::move(fresh));
 
     // A pending rerun-failed sequence chains its next filtered run from
@@ -329,6 +332,7 @@ void TestRunner::MergeOutcome(Outcome fresh) {
         if (!merged.failuresOnly) {
             merged.passed = passedInList;
         }
+        merged.ranOn   = fresh.ranOn;
         latestOutcome_ = std::move(merged);
     }
     else if (!currentFiltered_ || fresh.parsedOk) {

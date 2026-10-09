@@ -247,7 +247,9 @@ different seam later means changing that place and `ChildProcess`, not the call 
 **Where a process runs.** A process that works on a buffer or its project runs where
 the buffer's file is: on its host for a remote buffer (`Text/RemoteFile.h`), connecting
 first if need be, in the project root `fs/project-root` finds there unless the caller
-names a directory. A task re-run from its output buffer runs where it last ran. The clipboard, desktop helpers, URL opening, the LSP
+names a directory. A task re-run from its output buffer runs where it last ran. A remote
+test run's `*test results*` name the host's files, `host:/path`, absolute as reported or
+under the directory it ran in. The clipboard, desktop helpers, URL opening, the LSP
 broker and ssh itself are always local.
 
 **A remote buffer's repository.** VCS commands for a remote buffer run on its host, in

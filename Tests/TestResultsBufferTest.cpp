@@ -224,3 +224,15 @@ TEST_CASE("RebuildTestResultsBuffer leaves an unresolvable path exactly as repor
 
     std::filesystem::remove_all(root);
 }
+
+TEST_CASE("A remote run's results name the host's files, under the directory it ran in", "[TestRun][Remote]") {
+    const EmptyProjectRootGuard rootGuard;
+    BufferList                  bufferList;
+    Outcome                     outcome = MixedOutcome();
+    outcome.results.push_back(TestResult{.name = "test_abs", .status = TestResult::Status::Failed, .file = "/opt/lib/x.py", .line = 2});
+    outcome.ranOn = ned::text::RemoteFile{.destination = "me@box", .path = "/srv/app"};
+
+    const std::string text = RebuildTestResultsBuffer(bufferList, outcome).Text();
+    CHECK(text.find("me@box:/srv/app/tests/a.py:7: [FAILED] test_fails") != std::string::npos);
+    CHECK(text.find("me@box:/opt/lib/x.py:2: [FAILED] test_abs") != std::string::npos);
+}

@@ -7,6 +7,7 @@
 #include "TestSourceResolver.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
+#include "Text/RemoteFile.h"
 
 namespace ned::editor::testrun {
 
@@ -35,12 +36,25 @@ namespace {
     // scratch buffer on Enter. An unresolvable path is left exactly as the
     // framework reported it: still informative to read, and no worse than
     // before.
-    std::string FormatResultLine(const TestResult& result, TestSourceResolver& resolver) {
+    //
+    // A remote run's files are its host's, named host:/path: absolute as
+    // reported, else under the directory it ran in. Nothing here can look
+    // on the host, so they're taken as given.
+    std::string ResolvedFile(const TestResult& result, const Outcome& outcome, TestSourceResolver& resolver) {
+        if (result.file.empty()) {
+            return {};
+        }
+        if (outcome.ranOn) {
+            const std::filesystem::path reported(result.file);
+            const std::filesystem::path path = reported.is_absolute() ? reported : outcome.ranOn->path / reported;
+            return text::RemoteFile{.destination = outcome.ranOn->destination, .path = path.lexically_normal()}.ToString();
+        }
+        return resolver.Resolve(result.file, result.packagePath).value_or(std::filesystem::path(result.file)).string();
+    }
+
+    std::string FormatResultLine(const TestResult& result, const Outcome& outcome, TestSourceResolver& resolver) {
         std::string       line;
-        const std::string file =
-            result.file.empty()
-                ? std::string()
-                : resolver.Resolve(result.file, result.packagePath).value_or(std::filesystem::path(result.file)).string();
+        const std::string file = ResolvedFile(result, outcome, resolver);
         if (!file.empty() && result.line != 0) {
             line += file + ":" + std::to_string(result.line) + ": ";
         }
@@ -84,7 +98,7 @@ text::Buffer& RebuildTestResultsBuffer(text::BufferList& bufferList, const Outco
         offset += text.size() + 1;
     };
     const auto appendResultLine = [&](const TestResult& result) {
-        const std::string line      = FormatResultLine(result, resolver);
+        const std::string line      = FormatResultLine(result, outcome, resolver);
         const std::size_t startByte = offset;
         appendLine(line);
         // -1 excludes the trailing newline from the diagnostic's own range,
