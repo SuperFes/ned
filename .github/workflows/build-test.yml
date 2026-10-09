@@ -122,3 +122,36 @@ jobs:
         run: ctest --test-dir ${{ matrix.binary_dir }} --output-on-failure ${{ matrix.ctest_args }}
         env:
           TERM: xterm-256color
+
+      # The static agents a remote host runs (CMakePresets.json's agent-*
+      # presets, cross-built with zig against musl), each put through every
+      # [HostAgent] test in place of the build's own agent: x86_64 natively,
+      # aarch64 under qemu-user through binfmt. The aarch64 agent reports its
+      # own architecture, which the tests are told.
+      - name: Set up zig
+        if: matrix.name == 'default'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Register qemu for aarch64
+        if: matrix.name == 'default'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build the static agents
+        if: matrix.name == 'default'
+        run: |
+          cmake --preset agent-x86_64
+          cmake --build --preset agent-x86_64 -j"$(nproc)"
+          cmake --preset agent-aarch64
+          cmake --build --preset agent-aarch64 -j"$(nproc)"
+
+      - name: Test against the static agents
+        if: matrix.name == 'default'
+        run: |
+          NED_TEST_AGENT="$PWD/build-agent-x86_64/ned-agent" ./build/Tests/ned_tests '[HostAgent]'
+          NED_TEST_AGENT="$PWD/build-agent-aarch64/ned-agent" NED_TEST_AGENT_ARCH=aarch64 ./build/Tests/ned_tests '[HostAgent]'
+        env:
+          TERM: xterm-256color
