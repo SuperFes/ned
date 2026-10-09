@@ -35,8 +35,10 @@
 #include "UI/AcpPanel.h"
 #include "UI/ActiveBuffer.h"
 #include "UI/EventLoop.h"
+#include "UI/LeftDock.h"
 #include "UI/RemotePanel.h"
 #include "UI/Theme.h"
+#include "UI/TreeView.h"
 #include "UI/WindowManager.h"
 
 namespace {
@@ -835,6 +837,56 @@ TEST_CASE("A remote buffer and the Remote panel follow their host's changes once
         std::ofstream(fake.dir / "made.txt") << "made\n";
         return false;
     }));
+}
+
+TEST_CASE("A remote command-line argument opens a directory in the Remote panel and a file in a pane", "[WindowManager][Remote][HostAgent]") {
+    ned::tests::FakeRemoteHost    fake;
+    ned::tests::ScopedEnvOverride home{"HOME", (fake.dir / "home").c_str()};
+    ned::editor::PostQueue        queue;
+    ned::editor::remote::Hosts    hosts{queue, [&fake](const std::string& destination) { return fake.Options(destination); },
+                                        ned::tests::FakeResolver(fake.dir)};
+    const ned::text::RemoteFile   notes{.destination = "host", .path = fake.dir / "notes.txt"};
+    const ned::text::RemoteFile   created{.destination = "host", .path = fake.dir / "new.txt"};
+    std::ofstream(notes.path) << "notes\n";
+
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+    manager.SetRemoteHosts(&hosts);
+    ned::ui::RemotePanel panel(fixture.theme, hosts);
+    manager.SetRemotePanel(&panel);
+    ned::ui::TreeView files(fixture.theme);
+    ned::ui::LeftDock dock(fixture.theme);
+    dock.AddPanel(U'F', "Files", files);
+    const std::size_t remoteId = dock.AddPanel(U'R', "Remote", panel.Tree());
+    dock.SetCollapsed(true);
+    manager.SetLeftDock(&dock);
+
+    manager.OpenRemoteArgument({.destination = "host", .path = fake.dir}, /*show=*/true);
+    REQUIRE(ned::tests::PumpUntil(queue, [&] { return !panel.Roots().empty(); }));
+    CHECK(panel.Roots() == std::vector{ned::text::RemoteFile{.destination = "host", .path = fake.dir}});
+    CHECK_FALSE(dock.Collapsed());
+    CHECK(dock.ActivePanel() == remoteId);
+    CHECK(panel.Tree().Focused());
+
+    manager.OpenRemoteArgument(notes, /*show=*/true);
+    REQUIRE(ned::tests::PumpUntil(queue, [&] {
+        const ned::text::Buffer& shown = manager.FocusedActiveBuffer().Get();
+        return shown.Remote() == notes && !shown.IsLoading();
+    }));
+    CHECK(manager.FocusedActiveBuffer().Get().Text() == "notes\n");
+
+    manager.OpenRemoteArgument(created, /*show=*/false);
+    REQUIRE(ned::tests::PumpUntil(queue, [&] {
+        const ned::text::Buffer* opened = fixture.bufferList.FindByRemote(created);
+        return opened != nullptr && !opened->IsLoading();
+    }));
+    CHECK(fixture.bufferList.FindByRemote(created)->Text().empty());
+    CHECK(manager.FocusedActiveBuffer().Get().Remote() == notes);
+
+    manager.OpenRemoteArgument({.destination = "denied", .path = "/etc/hosts"}, /*show=*/true);
+    REQUIRE(ned::tests::PumpUntil(queue, [&] { return fixture.statusMessage.starts_with("Couldn't open denied:/etc/hosts: "); }));
+    CHECK(fixture.bufferList.FindByRemote({.destination = "denied", .path = "/etc/hosts"}) == nullptr);
 }
 
 TEST_CASE("RestoreWindowLayout is a no-op when windowLayout is empty", "[WindowManager]") {

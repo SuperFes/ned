@@ -25,6 +25,7 @@
 #include "Editor/Project/Session.h"
 #include "Editor/Project/Tree.h"
 #include "Editor/RecentFiles.h"
+#include "Editor/Remote/CommandLine.h"
 #include "Editor/Remote/ExternalChanges.h"
 #include "Editor/Remote/Hosts.h"
 #include "Editor/ScratchPad.h"
@@ -2344,7 +2345,7 @@ void WindowManager::EnableRemoteSaving(EventLoop& eventLoop) {
     editor::SetRemoteSaveDispatcher([saver = remoteSaver_.get()](editor::RemoteSaveRequest request) { return saver->Dispatch(std::move(request)); });
 }
 
-void WindowManager::LoadRemoteBuffers(std::span<const text::BufferIdentity> placeholders) {
+void WindowManager::LoadRemoteBuffers(std::span<const text::BufferIdentity> placeholders, bool createMissing) {
     if (remoteHosts_ == nullptr) {
         return;
     }
@@ -2354,7 +2355,7 @@ void WindowManager::LoadRemoteBuffers(std::span<const text::BufferIdentity> plac
             continue;
         }
         editor::remote::LoadRemoteBuffer(
-            *remoteHosts_, bufferList_, *placeholder, false, lifetime_.Token(),
+            *remoteHosts_, bufferList_, *placeholder, createMissing, lifetime_.Token(),
             [this](text::Buffer& buffer, const editor::remote::RemoteLoadOutcome& outcome) {
                 if (outcome.loaded) {
                     return;
@@ -2370,6 +2371,42 @@ void WindowManager::LoadRemoteBuffers(std::span<const text::BufferIdentity> plac
                 statusMessage_ = "Couldn't open " + where + ": " + outcome.loaded.error();
             });
     }
+}
+
+void WindowManager::OpenRemoteArgument(const text::RemoteFile& file, bool show) {
+    if (remoteHosts_ == nullptr) {
+        return;
+    }
+    if (show) {
+        statusMessage_ = "Opening " + file.ToString() + "...";
+    }
+    editor::remote::ClassifyRemoteArgument(
+        *remoteHosts_, file, lifetime_.Token(), [this, file, show](std::expected<editor::remote::RemoteArgumentKind, std::string> kind) {
+            if (!kind) {
+                statusMessage_ = "Couldn't open " + file.ToString() + ": " + kind.error();
+                return;
+            }
+            if (*kind == editor::remote::RemoteArgumentKind::Directory) {
+                if (remotePanel_ == nullptr) {
+                    return;
+                }
+                remotePanel_->OpenRoot(file.ToString());
+                if (show && leftDock_ != nullptr) {
+                    // Expanded first, so focus leaving it later doesn't fold it away.
+                    leftDock_->SetCollapsed(false);
+                    leftDock_->PrepareForKeyboardFocus(&remotePanel_->Tree());
+                    remotePanel_->Tree().TakeFocus();
+                }
+                return;
+            }
+            if (show) {
+                RequestVisitRemoteFile(file);
+                return;
+            }
+            if (bufferList_.FindByRemote(file) == nullptr) {
+                LoadRemoteBuffers(std::vector{text::BufferIdentity(bufferList_.AddRemotePlaceholder(file))}, /*createMissing=*/true);
+            }
+        });
 }
 
 void WindowManager::EnableAsyncFileSaving(EventLoop& eventLoop) {
