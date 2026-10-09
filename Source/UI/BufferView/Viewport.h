@@ -184,6 +184,7 @@ class Viewport {
     void EnsureRowCounts() const;
     [[nodiscard]] std::vector<RenderedVirtualText> LineVirtualText(std::size_t lineStart, std::size_t lineEnd) const;
     void EnsureLinks() const;
+    void                                           SeatLoadedTopLine(const text::Buffer& buffer);
 
     EditorContext&     context_;
     const GutterModel& gutters_;
@@ -203,6 +204,11 @@ class Viewport {
     // validated" flag: the seeding in RestoreInitialPlace() must stay, or a
     // genuine buffer switch becomes indistinguishable from the first paint.
     bool topLineNeedsSizeClamp_ = false;
+
+    // A remote buffer is seated while it is still an empty placeholder, so its
+    // stored topLine clamps to 0; the first paint after its content lands
+    // seats it again.
+    bool topLineAwaitsLoad_ = false;
 
     mutable CacheStamp                                       hiddenLineRangesStamp_;
     mutable std::vector<std::pair<std::size_t, std::size_t>> hiddenLineRanges_;
