@@ -41,3 +41,7 @@ set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE ONLY)
 
 # zig's linker has no --dependency-file.
 set(CMAKE_LINK_DEPENDS_USE_LINKER OFF)
+
+# Ninja would scan C++23 sources with the host's clang-scan-deps, which
+# can't see zig's headers through the wrapper; nothing here uses modules.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
