@@ -54,6 +54,12 @@ enum class MergeSideKind { Ours,
 [[nodiscard]] std::optional<MergeSide> MergeSideFromMarkers(std::string_view merged, std::span<const ConflictHunk> hunks,
                                                             MergeSideKind kind);
 
+// The side whose whole text is `sideText` (an index stage, say), aligned
+// through `fromMarkers`: lines where `sideText` differs from
+// `fromMarkers.text` become changed chunks too, and one that overlaps or
+// touches a conflict's chunk joins it, so a conflict stays one chunk.
+[[nodiscard]] MergeSide RefineMergeSide(const MergeSide& fromMarkers, std::string sideText);
+
 // Where each line of one pane lands once blank rows are inserted. Rows are
 // counted in unwrapped lines -- alignment assumes no soft wrap.
 class PaneAlignment {

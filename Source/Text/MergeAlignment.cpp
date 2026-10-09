@@ -98,6 +98,75 @@ std::optional<MergeSide> MergeSideFromMarkers(std::string_view merged, std::span
     return side;
 }
 
+MergeSide RefineMergeSide(const MergeSide& fromMarkers, std::string sideText) {
+    // A run of fromMarkers' lines [first, last) that is changed against the
+    // merged text, the side text, or both, and how many lines it adds to
+    // each of those over its own count.
+    struct Region {
+        std::size_t    first;
+        std::size_t    last;
+        std::ptrdiff_t mergedExtra = 0;
+        std::ptrdiff_t sideExtra   = 0;
+    };
+
+    const std::vector<std::string_view> markerLines = SplitLines(fromMarkers.text);
+    const std::vector<std::string_view> sideLines   = SplitLines(sideText);
+    const std::vector<LineDiffHunk>     hunks       = DiffLines(markerLines, sideLines);
+
+    std::vector<Region> pieces;
+    for (const AlignedChunk& chunk : fromMarkers.chunks) {
+        if (chunk.changed) {
+            pieces.push_back({chunk.sideLine, chunk.sideLine + chunk.sideCount,
+                              static_cast<std::ptrdiff_t>(chunk.mergedCount) - static_cast<std::ptrdiff_t>(chunk.sideCount), 0});
+        }
+    }
+    for (const LineDiffHunk& hunk : hunks) {
+        pieces.push_back({hunk.aStart, hunk.aStart + hunk.aCount, 0,
+                          static_cast<std::ptrdiff_t>(hunk.bCount) - static_cast<std::ptrdiff_t>(hunk.aCount)});
+    }
+    std::ranges::stable_sort(pieces, {}, &Region::first);
+
+    // Pieces that overlap or touch become one region, so a conflict chunk is
+    // never split and a side change beside it joins it.
+    std::vector<Region> regions;
+    for (const Region& piece : pieces) {
+        if (!regions.empty() && piece.first <= regions.back().last) {
+            Region& region = regions.back();
+            region.last    = std::max(region.last, piece.last);
+            region.mergedExtra += piece.mergedExtra;
+            region.sideExtra += piece.sideExtra;
+        }
+        else {
+            regions.push_back(piece);
+        }
+    }
+
+    MergeSide   side{.text = std::move(sideText), .lineCount = sideLines.size(), .chunks = {}};
+    std::size_t markerLine = 0;
+    std::size_t mergedLine = 0;
+    std::size_t sideLine   = 0;
+    auto        unchanged  = [&](std::size_t until) {
+        if (const std::size_t count = until - markerLine; count > 0) {
+            side.chunks.push_back({mergedLine, count, sideLine, count, false});
+            mergedLine += count;
+            sideLine += count;
+        }
+        markerLine = until;
+    };
+    for (const Region& region : regions) {
+        unchanged(region.first);
+        const std::size_t span        = region.last - region.first;
+        const auto        mergedCount = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(span) + region.mergedExtra);
+        const auto        sideCount   = static_cast<std::size_t>(static_cast<std::ptrdiff_t>(span) + region.sideExtra);
+        side.chunks.push_back({mergedLine, mergedCount, sideLine, sideCount, true});
+        mergedLine += mergedCount;
+        sideLine += sideCount;
+        markerLine = region.last;
+    }
+    unchanged(fromMarkers.lineCount);
+    return side;
+}
+
 PaneAlignment::PaneAlignment(std::vector<std::size_t> rowOfLine) : rowOfLine_(std::move(rowOfLine)) {
 }
 
