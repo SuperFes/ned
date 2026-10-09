@@ -7,6 +7,7 @@
 
 #include "Editor/FileIcons.h"
 #include "Editor/Remote/Fs.h"
+#include "Editor/Remote/Location.h"
 #include "GlyphPaint.h"
 
 namespace ned::ui {
@@ -201,7 +202,7 @@ void RemotePanel::OpenRoot(const std::string& typed) {
         }
         return;
     }
-    std::string destination = typed.substr(0, typed.find(':'));
+    const std::string destination = text::NormalizeDestination(editor::remote::TypedHost(typed).value_or(""));
     if (destination.empty()) {
         Report("Open a remote root as host:/path, or a host for its home.");
         return;

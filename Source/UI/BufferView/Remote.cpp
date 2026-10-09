@@ -10,9 +10,11 @@
 #include "Editor/DiagnosticsLog.h"
 #include "Editor/Format.h"
 #include "Editor/FormatOnSave.h"
+#include "Editor/FuzzyMatch.h"
 #include "Editor/Host/SearchCodec.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/NextError.h"
+#include "Editor/Project/Registry.h"
 #include "Editor/Remote/Fs.h"
 #include "Editor/Remote/Hosts.h"
 #include "Editor/Remote/KnownHosts.h"
@@ -317,7 +319,8 @@ void BufferView::AppendRemoteMatches(std::uint64_t generation, const std::vector
     RemoteSearchRun& run = *remoteSearch_;
     std::string      lines;
     for (const editor::SearchMatch& match : matches) {
-        lines += run.root.destination + ":" + match.file.string() + ":" + std::to_string(match.lineNumber) + ": " + match.lineText + "\n";
+        lines += text::RemoteFile{.destination = run.root.destination, .path = match.file}.ToString() + ":" + std::to_string(match.lineNumber) + ": " +
+                 match.lineText + "\n";
     }
 
     if (run.results.Empty()) {
@@ -388,13 +391,46 @@ std::vector<std::string> BufferView::RemoteHostCandidates() const {
     return unique;
 }
 
+void BufferView::PrepareRemoteHostPrompt() {
+    remoteHostCandidates_ = RemoteHostCandidates();
+    remoteProjects_.clear();
+    for (const editor::ProjectRegistryEntry& entry : editor::ListProjects()) {
+        if (const std::optional<text::RemoteFile> root = std::filesystem::path(entry.root).is_absolute() ? std::nullopt : text::ParseRemoteFile(entry.root)) {
+            remoteProjects_.push_back(RemoteProject{.name = entry.name, .root = *root});
+        }
+    }
+    remoteSshConfig_ = editor::remote::SshConfig::Load(editor::remote::DefaultHostSources());
+    remoteLookupTyped_.reset();
+}
+
+std::string BufferView::RemoteHostCandidateDetail(const std::string& candidate) const {
+    for (const RemoteProject& project : remoteProjects_) {
+        if (candidate == project.root.ToString() || (inputMode_ == InputMode::RemoteConnect && candidate == project.root.destination)) {
+            return project.name;
+        }
+    }
+    const std::optional<text::RemoteFile> root = text::ParseRemoteFile(candidate);
+    return remoteSshConfig_.Describe(root ? root->destination : candidate);
+}
+
+void BufferView::OpenRemotePanelRoot(const std::string& root) {
+    if (remotePanel_ == nullptr) {
+        return;
+    }
+    remotePanel_->OpenRoot(root);
+    if (leftDock_ != nullptr) {
+        leftDock_->PrepareForKeyboardFocus(&remotePanel_->Tree());
+        remotePanel_->Tree().TakeFocus();
+    }
+}
+
 std::optional<std::string> BufferView::TypedRemoteHost() const {
     if (inputMode_ == InputMode::RemoteConnect) {
         return prompt_->Text();
     }
     // Past the host, RemotePathCompletions takes over.
-    if ((inputMode_ == InputMode::RemoteSearchRoot || inputMode_ == InputMode::RemoteOpenRoot) && prompt_->Text().find(":/") == std::string::npos) {
-        return prompt_->Text().substr(0, prompt_->Text().find(':'));
+    if (inputMode_ == InputMode::RemoteSearchRoot || inputMode_ == InputMode::RemoteOpenRoot) {
+        return editor::remote::TypedHost(prompt_->Text());
     }
     return std::nullopt;
 }
@@ -417,10 +453,27 @@ std::vector<std::string> BufferView::RemoteHostCompletions() const {
     }
     if (inputMode_ == InputMode::RemoteSearchRoot) {
         for (std::string& host : hosts) {
-            host += ":/";
+            host = editor::remote::RootOf(host);
         }
     }
-    return hosts;
+    // Registered projects on hosts come first, matched by name or root.
+    std::vector<std::string> offered;
+    for (const RemoteProject& project : remoteProjects_) {
+        const std::string root = project.root.ToString();
+        if (!editor::FuzzyScore(project.name, *typed) && !editor::FuzzyScore(root, *typed)) {
+            continue;
+        }
+        std::string candidate = inputMode_ == InputMode::RemoteConnect ? project.root.destination : root;
+        if (std::ranges::find(offered, candidate) == offered.end()) {
+            offered.push_back(std::move(candidate));
+        }
+    }
+    for (std::string& host : hosts) {
+        if (std::ranges::find(offered, host) == offered.end()) {
+            offered.push_back(std::move(host));
+        }
+    }
+    return offered;
 }
 
 void BufferView::RequestRemoteHostLookup() {
@@ -430,7 +483,8 @@ void BufferView::RequestRemoteHostLookup() {
     }
     remoteLookupTyped_ = typed;
     remoteResolvedHosts_.clear();
-    if (typed->empty()) {
+    // A URI names its host whole.
+    if (typed->empty() || typed->starts_with(text::kSshScheme)) {
         remoteHosts_->Lookup().Cancel();
         return;
     }
@@ -444,7 +498,8 @@ void BufferView::RequestRemoteHostLookup() {
 }
 
 std::optional<editor::remote::RemotePathPrefix> BufferView::TypedRemotePath() const {
-    if (inputMode_ != InputMode::FindFile && inputMode_ != InputMode::RemoteSearchRoot && inputMode_ != InputMode::RemoteOpenRoot) {
+    if (inputMode_ != InputMode::FindFile && inputMode_ != InputMode::RemoteSearchRoot && inputMode_ != InputMode::RemoteOpenRoot &&
+        inputMode_ != InputMode::OpenProjectPath) {
         return std::nullopt;
     }
     return editor::remote::SplitRemotePathPrefix(prompt_->Text());

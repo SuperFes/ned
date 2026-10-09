@@ -5,8 +5,8 @@
 namespace ned::editor::remote {
 
 std::optional<RemotePathPrefix> SplitRemotePathPrefix(std::string_view typed) {
-    const std::size_t split = typed.find(":/");
-    if (split == std::string_view::npos || split == 0) {
+    // "ssh:/" is a URI on its way, not a host named ssh.
+    if (text::kSshScheme.starts_with(typed) || !text::ParseRemoteFile(typed)) {
         return std::nullopt;
     }
     const std::size_t               lastSlash = typed.rfind('/');

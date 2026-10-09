@@ -101,15 +101,6 @@ and sync on save; don't build a remote-authoritative buffer.
 - [ ] Remote saves over 48 MiB: `fs/write` carries the content in one request, so a
       bigger file needs a streamed upload. Decoding a read and encoding a save run on the
       main thread, which only matters at that size too.
-- [ ] Project-registry roots accept `user@host:/path`.
-
-**Connect**
-- [ ] Parse `~/.ssh/config` directly (`Host`/`HostName`/`User`/`Port`/`IdentityFile`/
-      `ProxyJump`, wildcards) to fill in defaults.
-- [ ] The remote prompts complete hosts (`Remote/KnownHosts.h`, `Remote/HostLookup.h`)
-      and the path after them. Still to come: the project name ahead of the host.
-- [ ] A destination with a port. `host:/path` can't carry one, so known_hosts entries
-      on a port other than 22 aren't offered.
 
 **Project tree and search**
 - [ ] A file moved on its host isn't followed by the buffer holding it, as

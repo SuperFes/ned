@@ -18,6 +18,8 @@ using ned::editor::remote::MatchHosts;
 using ned::editor::remote::ParseKnownHosts;
 using ned::editor::remote::ParseSearchDomains;
 using ned::editor::remote::ParseSshConfig;
+using ned::editor::remote::SshConfig;
+using ned::editor::remote::SshTarget;
 namespace fs = std::filesystem;
 using Names  = std::vector<std::string>;
 
@@ -38,7 +40,7 @@ TEST_CASE("ssh_config gives the hosts it names outright", "[Remote][KnownHosts]"
     REQUIRE(names.includes == Names{"conf.d/*.conf", "/home/me/abs.conf"});
 }
 
-TEST_CASE("known_hosts gives readable names on the default port", "[Remote][KnownHosts]") {
+TEST_CASE("known_hosts gives readable names, a host on another port as an ssh URI", "[Remote][KnownHosts]") {
     const Names hosts = ParseKnownHosts("box.example.com,10.0.0.1 ssh-ed25519 AAAA\n"
                                         "\n"
                                         "# comment\n"
@@ -49,8 +51,10 @@ TEST_CASE("known_hosts gives readable names on the default port", "[Remote][Know
                                         "@cert-authority *.example.com ssh-ed25519 AAAA\n"
                                         "@revoked gone.example.com ssh-ed25519 AAAA\n"
                                         "@cert-authority ca.example.com ssh-ed25519 AAAA\n"
-                                        "fe80::1 ssh-ed25519 AAAA\n");
-    REQUIRE(hosts == Names{"box.example.com", "10.0.0.2", "std.example.com", "ca.example.com", "fe80::1"});
+                                        "fe80::1 ssh-ed25519 AAAA\n"
+                                        "[fe80::2]:2200 ssh-ed25519 AAAA\n");
+    REQUIRE(hosts == Names{"box.example.com", "10.0.0.2", "ssh://alt.example.com:2222", "std.example.com", "ca.example.com", "fe80::1",
+                           "ssh://[fe80::2]:2200"});
 }
 
 TEST_CASE("resolv.conf's last search or domain line gives the search domains", "[Remote][KnownHosts]") {
@@ -84,6 +88,75 @@ TEST_CASE("Known hosts rank the user config, then known_hosts, then the system c
     // An Include that loops stops at ssh's own depth.
     std::ofstream(home / ".ssh" / "conf.d" / "b.conf") << "Host nested\nInclude conf.d/b.conf\n";
     REQUIRE(KnownHosts(sources).size() == 6);
+    fs::remove_all(dir);
+}
+
+TEST_CASE("ssh_config resolves a destination as ssh does: first value wins, patterns and negation", "[Remote][KnownHosts]") {
+    const SshConfig config = SshConfig::Parse("Port 2200\n"
+                                              "Host box\n"
+                                              "    HostName box.example.com\n"
+                                              "    User aaron\n"
+                                              "    IdentityFile ~/.ssh/box\n"
+                                              "Host *.example.com !bad.example.com\n"
+                                              "    User fallback\n"
+                                              "    ProxyJump gate\n"
+                                              "Host short?\n"
+                                              "    HostName %h.lan\n"
+                                              "Match host \"*.corp\" !host secret.corp\n"
+                                              "    User corp\n"
+                                              "Match exec \"true\"\n"
+                                              "    User never\n"
+                                              "Host *\n"
+                                              "    IdentityFile ~/.ssh/id_ed25519\n"
+                                              "    User everyone\n",
+                                              "/home/me");
+    CHECK(config.Resolve("box") == SshTarget{.hostName      = "box.example.com",
+                                             .user          = "aaron",
+                                             .port          = "2200",
+                                             .identityFiles = {"~/.ssh/box", "~/.ssh/id_ed25519"},
+                                             .proxyJump     = std::nullopt});
+    // Matched against the host as given, never the HostName it became.
+    CHECK(config.Resolve("box").proxyJump == std::nullopt);
+    CHECK(config.Resolve("web.example.com").user == "fallback");
+    CHECK(config.Resolve("web.example.com").proxyJump == "gate");
+    CHECK(config.Resolve("bad.example.com").user == "everyone");
+    CHECK(config.Resolve("BOX").hostName == "box.example.com");
+    CHECK(config.Resolve("short1").hostName == "short1.lan");
+    CHECK(config.Resolve("dev.corp").user == "corp");
+    CHECK(config.Resolve("secret.corp").user == "everyone");
+    // The destination's own user and port win.
+    CHECK(config.Resolve("root@box").user == "root");
+    CHECK(config.Resolve("ssh://box:2222").port == "2222");
+    CHECK(config.Resolve("ssh://[fe80::1]:2222").hostName == "fe80::1");
+
+    CHECK(config.Describe("box") == "aaron@box.example.com:2200");
+    CHECK(config.Describe("web.example.com") == "fallback@web.example.com:2200 via gate");
+    CHECK(SshConfig::Parse("Host plain\n  Port 22\n", "/home/me").Describe("plain").empty());
+    CHECK(SshConfig::Parse("", "/home/me").Describe("me@there").empty());
+}
+
+TEST_CASE("ssh_config reads an Include in place, applying it only where its block does", "[Remote][KnownHosts]") {
+    const fs::path dir = ned::tests::FreshRemoteDir();
+    std::ofstream(dir / "work.conf") << "User worker\nHost *\n  Port 2022\n";
+    const SshConfig config = SshConfig::Parse("Host work-*\n  Include work.conf\n  HostName %h.example.com\n"
+                                              "Host *\n  User me\n",
+                                              "/home/me", dir);
+    CHECK(config.Resolve("work-1") == SshTarget{.hostName = "work-1.example.com", .user = "worker", .port = "2022", .identityFiles = {}, .proxyJump = {}});
+    // The included file's Host * never matches outside its block.
+    CHECK(config.Resolve("home") == SshTarget{.hostName = "home", .user = "me", .port = "22", .identityFiles = {}, .proxyJump = {}});
+    fs::remove_all(dir);
+}
+
+TEST_CASE("Known hosts leave out an ssh URI a config host already reaches", "[Remote][KnownHosts]") {
+    const fs::path dir  = ned::tests::FreshRemoteDir();
+    const fs::path home = dir / "home";
+    fs::create_directories(home / ".ssh");
+    std::ofstream(home / ".ssh" / "config") << "Host box\n  HostName box.example.com\n  Port 2222\n";
+    std::ofstream(home / ".ssh" / "known_hosts") << "[box.example.com]:2222 ssh-ed25519 AAAA\n"
+                                                 << "[other.example.com]:2222 ssh-ed25519 AAAA\n"
+                                                 << "box.example.com ssh-ed25519 AAAA\n";
+    const HostSources sources{.home = home, .userConfig = home / ".ssh" / "config", .systemConfig = {}, .knownHosts = {home / ".ssh" / "known_hosts"}};
+    CHECK(KnownHosts(sources) == Names{"box", "ssh://other.example.com:2222", "box.example.com"});
     fs::remove_all(dir);
 }
 

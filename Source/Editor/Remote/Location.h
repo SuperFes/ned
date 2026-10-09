@@ -8,6 +8,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <system_error>
 
@@ -19,6 +20,28 @@ using Location = text::RemoteFile;
 
 [[nodiscard]] inline std::optional<Location> ParseLocation(std::string_view text) {
     return text::ParseRemoteFile(text);
+}
+
+// The host a host:/path prompt holds while no path has begun yet: up to a
+// ':', or an ssh URI up to its path's '/'. nullopt once a path has begun.
+[[nodiscard]] inline std::optional<std::string> TypedHost(std::string_view text) {
+    if (text.starts_with(text::kSshScheme)) {
+        const std::string_view authority = text.substr(text::kSshScheme.size());
+        if (authority.find('/') != std::string_view::npos) {
+            return std::nullopt;
+        }
+        return std::string(text);
+    }
+    if (text.find(":/") != std::string_view::npos) {
+        return std::nullopt;
+    }
+    return std::string(text.substr(0, text.find(':')));
+}
+
+// The text a host's root path starts after, for completing a host into a
+// host:/path prompt.
+[[nodiscard]] inline std::string RootOf(const std::string& destination) {
+    return destination.starts_with(text::kSshScheme) ? destination + "/" : destination + ":/";
 }
 
 // What a path prompt means by text: host:/path, unless a local file has that

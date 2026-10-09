@@ -128,9 +128,16 @@ hello  -> {protocol: {major, minor}, codecs: [str], window: uint}
 - `Remote/Hosts.h` keeps one `Connection` per destination for the editor, sharing an
   attempt between callers. `remote-connect`, `remote-disconnect` and
   `remote-project-search` (`host:/path`, results streamed into `*search results*`) run
-  through it. Their host prompts offer `Remote/KnownHosts.h`'s names (ssh_config and
-  known_hosts), plus what the typed name resolves to under resolv.conf's search domains
-  (`Remote/HostLookup.h`, through a killable `getent ahosts`).
+  through it. Their host prompts offer registered projects on hosts first, by name, then
+  `Remote/KnownHosts.h`'s names (ssh_config and known_hosts), plus what the typed name
+  resolves to under resolv.conf's search domains (`Remote/HostLookup.h`, through a
+  killable `getent ahosts`). Each row says where ssh_config takes its host
+  (`SshConfig`, evaluated as ssh does: Host and Match blocks, Includes in place, first
+  value wins). A destination on a port other than 22 is an ssh URI,
+  `ssh://[user@]host:port`, and a file there is `ssh://[user@]host:port/path`, as scp
+  writes one; a known_hosts entry on another port is offered that way, unless a config
+  host already leads there. A project registry root may be a `host:/path`
+  (`open-project`), and switching to it opens it in the Remote panel.
 - A remote buffer (`Text/RemoteFile.h`) holds a host's file and has no local path, so
   nothing that reads or writes a buffer's local file (the watcher, LSP, VCS, backups,
   autosave, revert) touches a same-named file here. `find-file host:/path` opens one
