@@ -186,3 +186,21 @@ TEST_CASE("A host's change reverts, merges or marks the remote buffers holding i
     REQUIRE(PumpUntil(fixture.queue, [&] { return changed(open["e.txt"]->Name(), Outcome::Reverted); }));
     CHECK(changes.size() == 1);
 }
+
+TEST_CASE("A move on a host carries the remote buffers on the file or under the directory along", "[Remote][RemoteWatch]") {
+    ned::text::BufferList list;
+    ned::text::Buffer&    file  = list.AddRemotePlaceholder({.destination = "host", .path = "/srv/a.txt"});
+    ned::text::Buffer&    inner = list.AddRemotePlaceholder({.destination = "host", .path = "/srv/dir/b.txt"});
+    ned::text::Buffer&    other = list.AddRemotePlaceholder({.destination = "other", .path = "/srv/a.txt"});
+    ned::text::Buffer&    near  = list.AddRemotePlaceholder({.destination = "host", .path = "/srv/directory/c.txt"});
+
+    const std::vector<ned::text::Buffer*> followed =
+        remote::FollowRemoteMoves(list, "host", {{.from = "/srv/a.txt", .to = "/srv/z.txt"}, {.from = "/srv/dir", .to = "/srv/moved"}});
+    CHECK(followed == std::vector<ned::text::Buffer*>{&file, &inner});
+    CHECK(file.Remote() == ned::text::RemoteFile{.destination = "host", .path = "/srv/z.txt"});
+    CHECK(file.Name() == "host:z.txt");
+    CHECK(inner.Remote() == ned::text::RemoteFile{.destination = "host", .path = "/srv/moved/b.txt"});
+    CHECK(other.Remote() == ned::text::RemoteFile{.destination = "other", .path = "/srv/a.txt"});
+    // A sibling whose name only starts the same isn't under the directory.
+    CHECK(near.Remote() == ned::text::RemoteFile{.destination = "host", .path = "/srv/directory/c.txt"});
+}

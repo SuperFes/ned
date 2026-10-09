@@ -1608,6 +1608,12 @@ void WindowManager::ResyncRemoteWatches() {
 }
 
 void WindowManager::HandleRemoteWatchEvents(const std::string& destination, const editor::host::WatchEvents& events) {
+    // Ahead of the events, whose delete and create name the same move.
+    if (const std::vector<text::Buffer*> followed = editor::remote::FollowRemoteMoves(bufferList_, destination, events.moves); !followed.empty()) {
+        statusMessage_ = followed.size() == 1 ? "Followed a file moved on its host: " + followed.front()->Name()
+                                              : "Followed " + std::to_string(followed.size()) + " files moved on their host";
+        ResyncRemoteWatches();
+    }
     editor::remote::FollowRemoteChanges(*remoteHosts_, bufferList_, destination, events, lifetime_.Token(),
                                         [this](const editor::remote::RemoteChange& change) {
                                             using Outcome = editor::remote::RemoteChange::Outcome;

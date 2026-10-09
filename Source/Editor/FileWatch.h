@@ -50,6 +50,8 @@ void               SetFileWatchEnabled(bool enabled);
 struct FileMove {
     std::filesystem::path from;
     std::filesystem::path to;
+
+    bool operator==(const FileMove&) const = default;
 };
 
 // lsp-did-change-watched-files follow-up: one entry of a watched directory

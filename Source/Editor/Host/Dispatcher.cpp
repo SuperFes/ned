@@ -200,7 +200,7 @@ void Dispatcher::Hello(const Json& params, Responder responder) {
     response.arch         = identity_.arch;
     response.codec        = ChooseCodec(request.codecs);
     response.window       = protocol::kDefaultWindow;
-    response.capabilities = Capabilities{.fs = 5, .proc = kProcVersion, .search = 1, .watch = 1};
+    response.capabilities = Capabilities{.fs = 5, .proc = kProcVersion, .search = 1, .watch = 2};
     responder.Result(ToJson(response));
     if (onCodec_) {
         onCodec_(response.codec);
@@ -503,12 +503,14 @@ void Dispatcher::WatchSet(const Json& params, Responder responder) {
             responder.Result(Json::object());
             return;
         }
-        auto report = lifetime_.Bind([this](const std::vector<FileEvent>& burst) { ReportWatchEvents(burst); });
-        watcher_    = std::make_unique<FileWatcher>(
+        auto report =
+            lifetime_.Bind([this](const std::vector<FileEvent>& burst, const std::vector<FileMove>& moves) { ReportWatchEvents(burst, moves); });
+        watcher_ = std::make_unique<FileWatcher>(
             [this, report] {
-                postQueue_.Post([report, burst = std::exchange(watchBurst_, {})] mutable { report(burst); });
+                postQueue_.Post([report, burst = std::exchange(watchBurst_, {}), moves = std::exchange(watchMoves_, {})] mutable { report(burst, moves); });
             },
-            nullptr, [this](std::vector<FileEvent> events) { watchBurst_ = std::move(events); });
+            [this](std::vector<FileMove> moves) { watchMoves_ = std::move(moves); },
+            [this](std::vector<FileEvent> events) { watchBurst_ = std::move(events); });
         watcher_->SetReportsDirectoryEntries(true);
     }
 
@@ -535,29 +537,45 @@ void Dispatcher::WatchSet(const Json& params, Responder responder) {
     responder.Result(Json::object());
 }
 
-void Dispatcher::ReportWatchEvents(const std::vector<FileEvent>& burst) {
+void Dispatcher::ReportWatchEvents(const std::vector<FileEvent>& burst, const std::vector<FileMove>& moves) {
     if (watchedFiles_.empty() && watchedDirectories_.empty()) {
         return;
     }
+    // A path as watch/set named it: through each name of a watched file,
+    // and of the watched directory holding it.
+    const auto names = [this](const std::filesystem::path& path) {
+        std::vector<std::filesystem::path> aliases;
+        if (const auto file = watchedFiles_.find(path); file != watchedFiles_.end()) {
+            aliases.insert(aliases.end(), file->second.begin(), file->second.end());
+        }
+        if (const auto directory = watchedDirectories_.find(path.parent_path()); directory != watchedDirectories_.end()) {
+            for (const std::filesystem::path& alias : directory->second) {
+                aliases.push_back(alias / path.filename());
+            }
+        }
+        return aliases;
+    };
     // A file also inside a watched directory is reported once.
     std::map<std::filesystem::path, FileEvent::Kind> named;
     for (const FileEvent& event : burst) {
-        if (const auto file = watchedFiles_.find(event.path); file != watchedFiles_.end()) {
-            for (const std::filesystem::path& alias : file->second) {
-                named.emplace(alias, event.kind);
-            }
-        }
-        if (const auto directory = watchedDirectories_.find(event.path.parent_path()); directory != watchedDirectories_.end()) {
-            for (const std::filesystem::path& alias : directory->second) {
-                named.emplace(alias / event.path.filename(), event.kind);
-            }
+        for (const std::filesystem::path& alias : names(event.path)) {
+            named.emplace(alias, event.kind);
         }
     }
-    WatchEvents report{.events = {}, .overflow = burst.empty()};
+    WatchEvents report{.events = {}, .moves = {}, .overflow = burst.empty() && moves.empty()};
     for (auto& [path, kind] : named) {
         report.events.push_back(FileEvent{.path = path, .kind = kind});
     }
-    if (report.events.empty() && !report.overflow) {
+    // Only a move out of something watched; it lands wherever it went.
+    for (const FileMove& move : moves) {
+        const std::vector<std::filesystem::path> to = names(move.to);
+        for (const std::filesystem::path& from : names(move.from)) {
+            if (std::ranges::none_of(report.moves, [&from](const FileMove& known) { return known.from == from; })) {
+                report.moves.push_back(FileMove{.from = from, .to = to.empty() ? move.to : to.front()});
+            }
+        }
+    }
+    if (report.events.empty() && report.moves.empty() && !report.overflow) {
         return;
     }
     endpoint_.Notify(std::string(kWatchEvent), ToJson(report));

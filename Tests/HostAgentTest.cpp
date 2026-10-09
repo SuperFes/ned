@@ -145,7 +145,7 @@ TEST_CASE("ned-agent answers hello with its own build and settles the codec", "[
     REQUIRE(hello.codec == "zstd");
     REQUIRE(hello.capabilities.search == 1);
     REQUIRE(hello.capabilities.fs == 5);
-    REQUIRE(hello.capabilities.watch == 1);
+    REQUIRE(hello.capabilities.watch == 2);
     REQUIRE(hello.capabilities.proc == host::kProcVersion);
 }
 
@@ -388,10 +388,12 @@ TEST_CASE("ned-agent reports changes to watched files and directory entries, nam
     AgentClient client(FrameTransport({AgentBinary(), "--stdio"}, true));
 
     std::vector<ned::editor::FileEvent> events;
+    std::vector<ned::editor::FileMove>  moves;
     bool                                overflow = false;
     client.endpoint.HandleNotification(std::string(host::kWatchEvent), [&](const Json& params) {
         const host::WatchEvents batch = host::WatchEventsFromJson(params);
         events.insert(events.end(), batch.events.begin(), batch.events.end());
+        moves.insert(moves.end(), batch.moves.begin(), batch.moves.end());
         overflow = overflow || batch.overflow;
     });
     const auto has = [&](const std::filesystem::path& path) {
@@ -415,6 +417,14 @@ TEST_CASE("ned-agent reports changes to watched files and directory entries, nam
     events.clear();
     REQUIRE(client.PumpUntil([&] { return has(dir / "link" / "new.txt"); }));
     CHECK(events.back().kind == ned::editor::FileEvent::Kind::Deleted);
+
+    // A rename it sees both halves of is a move, named as asked for.
+    std::ofstream(dir / "sub" / "old.txt") << "old\n";
+    REQUIRE(client.PumpUntil([&] { return has(dir / "link" / "old.txt"); }));
+    std::filesystem::rename(dir / "sub" / "old.txt", dir / "sub" / "renamed.txt");
+    REQUIRE(client.PumpUntil([&] {
+        return std::ranges::contains(moves, ned::editor::FileMove{.from = dir / "link" / "old.txt", .to = dir / "link" / "renamed.txt"});
+    }));
 
     // An empty set stops reporting.
     REQUIRE(client.Call(std::string(host::kWatchSet), host::ToJson(host::WatchSetRequest{})).result == Json::object());

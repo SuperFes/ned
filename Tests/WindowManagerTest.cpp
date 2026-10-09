@@ -812,6 +812,12 @@ TEST_CASE("A remote buffer and the Remote panel follow their host's changes once
     CHECK_FALSE(remote.Modified());
     CHECK(fixture.statusMessage == "Reverted (changed on its host): " + remote.Name());
 
+    // Moved on the host, the buffer follows it there.
+    std::filesystem::rename(file, fake.dir / "renamed.txt");
+    REQUIRE(ned::tests::PumpUntil(queue, [&] { return remote.Remote() == ned::text::RemoteFile{.destination = "host", .path = fake.dir / "renamed.txt"}; }));
+    CHECK(fixture.statusMessage == "Followed a file moved on its host: host:renamed.txt");
+    CHECK(remote.Text() == "after\n");
+
     // A directory the panel shows is watched as soon as it's listed.
     ned::ui::RemotePanel panel(fixture.theme, hosts);
     manager.SetRemotePanel(&panel);
@@ -829,7 +835,7 @@ TEST_CASE("A remote buffer and the Remote panel follow their host's changes once
         }
         return painted.find(name) != std::string::npos;
     };
-    REQUIRE(ned::tests::PumpUntil(queue, [&] { return shown("notes.txt"); }));
+    REQUIRE(ned::tests::PumpUntil(queue, [&] { return shown("renamed.txt"); }));
     REQUIRE(ned::tests::PumpUntil(queue, [&] {
         if (shown("made.txt")) {
             return true;

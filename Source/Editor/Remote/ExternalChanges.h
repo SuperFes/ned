@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "Editor/Host/WatchCodec.h"
 #include "Editor/Lifetime.h"
@@ -34,6 +35,11 @@ struct RemoteChange {
     Outcome     outcome   = Outcome::Noted;
     std::size_t conflicts = 0;
 };
+
+// Moves each open remote buffer on destination whose file, or a directory
+// above it, moved there to where it went, as a local buffer follows a move
+// on disk. The buffers that moved.
+std::vector<text::Buffer*> FollowRemoteMoves(text::BufferList& buffers, const std::string& destination, const std::vector<FileMove>& moves);
 
 // Checks every open remote buffer on destination that events names, or
 // every one there when the host lost events. Nothing connects: a host

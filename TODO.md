@@ -99,9 +99,6 @@ and sync on save; don't build a remote-authoritative buffer.
       main thread, which only matters at that size too.
 
 **Project tree and search**
-- [ ] A file moved on its host isn't followed by the buffer holding it, as
-      `WindowManager::HandleExternalMoves` does locally. The host reports the move as a
-      delete and a create; `watch` would need to pair them (`FileWatch.h`'s `FileMove`).
 - [ ] The Remote panel doesn't colour rows by their repository's status, as the project
       sidebar does locally.
 - [ ] A remote test run's `*test results*` lines resolve their sources against the local

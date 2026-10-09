@@ -192,8 +192,11 @@ TEST_CASE("Watch requests and events round-trip and refuse what they can't name"
                     ProtocolError);
 
     const host::WatchEvents events{.events   = {{.path = "/a", .kind = Kind::Created}, {.path = "/b", .kind = Kind::Changed}, {.path = "/c", .kind = Kind::Deleted}},
+                                   .moves    = {{.from = "/c", .to = "/a"}},
                                    .overflow = true};
     CHECK(host::WatchEventsFromJson(OverTheWire(host::ToJson(events))) == events);
+    // An agent before watch capability 2 names no moves.
+    CHECK(host::WatchEventsFromJson(Json{{"events", Json::array()}, {"overflow", false}}).moves.empty());
     CHECK_THROWS_AS(host::WatchEventsFromJson(Json{{"events", Json::array({Json{{"path", host::Bytes("/a")}, {"kind", "moved"}}})}, {"overflow", false}}),
                     ProtocolError);
     CHECK_THROWS_AS(host::WatchEventsFromJson(Json{{"events", Json::array({Json{{"path", host::Bytes("a")}, {"kind", "created"}}})}, {"overflow", false}}),
