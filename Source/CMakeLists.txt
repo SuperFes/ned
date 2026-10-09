@@ -593,6 +593,7 @@ target_link_libraries(ned_lib
         # own headers via Source/Editor/Terminal/Emulator.h.
         PUBLIC vterm
         PUBLIC utf8proc
+        PRIVATE unistring
         PUBLIC nlohmann_json::nlohmann_json
         # Editor/CliOptions.h registers every top-level flag against one
         # CLI::App; ned_tests walks that same App to generate the invocation

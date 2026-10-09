@@ -1,10 +1,14 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <string>
+#include <vector>
+
+#include <notcurses/notcurses.h>
 
 #include "Text/DisplayWidth.h"
 #include "Text/Rope.h"
 #include "Text/RopeStorage.h"
+#include "Text/Utf8.h"
 
 using ned::text::Glyph;
 using ned::text::GlyphAt;
@@ -14,6 +18,7 @@ using ned::text::PrefixBytesForColumns;
 using ned::text::Rope;
 using ned::text::RopeStorage;
 using ned::text::StringColumns;
+using ned::text::TerminalColumns;
 
 TEST_CASE("ASCII glyphs are one byte and one column", "[DisplayWidth]") {
     const Glyph glyph = GlyphAt(std::string_view("ab"), 0);
@@ -156,4 +161,32 @@ TEST_CASE("A prefix never splits a wide glyph", "[DisplayWidth]") {
     CHECK(PrefixBytesForColumns("漢字", 4) == 6);
     CHECK(PrefixBytesForColumns("a漢", 1) == 1);
     CHECK(PrefixBytesForColumns("ab", 5) == 2);
+}
+
+TEST_CASE("TerminalColumns measures every codepoint and cluster as Notcurses does", "[DisplayWidth]") {
+    // Every scalar value but NUL, alone and after a base it may join.
+    std::size_t differences = 0;
+    for (char32_t cp = 1; cp <= 0x10FFFF; ++cp) {
+        if (cp >= 0xD800 && cp <= 0xDFFF) {
+            continue;
+        }
+        for (const std::string& text : {ned::text::EncodeCodepointUtf8(cp), "a" + ned::text::EncodeCodepointUtf8(cp)}) {
+            if (TerminalColumns(text.c_str()) != ncstrwidth(text.c_str(), nullptr, nullptr)) {
+                if (++differences <= 10) {
+                    UNSCOPED_INFO("U+" << std::hex << static_cast<unsigned>(cp) << " in \"" << text << "\"");
+                }
+            }
+        }
+    }
+    CHECK(differences == 0);
+
+    const std::vector<std::string> clusters{
+        "e\u0301", "\U0001F468\u200D\U0001F469\u200D\U0001F467", "\U0001F44D\U0001F3FD", "\U0001F1FA\U0001F1F8",
+        "\u2764\uFE0F", "\u1100\u1161\u11A8", "\u0915\u094D\u0937", "a\u200Db",
+        "\uFE0F", "\u0301", "x \u3000y", "\u2028",
+        "\u0E01\u0E33", "\U0001F3F3\uFE0F\u200D\U0001F308", "\u00AD", "\u200B"};
+    for (const std::string& cluster : clusters) {
+        INFO(cluster);
+        CHECK(TerminalColumns(cluster.c_str()) == ncstrwidth(cluster.c_str(), nullptr, nullptr));
+    }
 }
