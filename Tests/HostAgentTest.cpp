@@ -58,6 +58,13 @@ std::string AgentBinary() {
     return override != nullptr && *override != '\0' ? override : NED_AGENT_BINARY;
 }
 
+// What that agent reports as its own architecture: NED_TEST_AGENT_ARCH for
+// a cross build run under emulation, else this binary's.
+std::string AgentArch() {
+    const char* override = std::getenv("NED_TEST_AGENT_ARCH");
+    return override != nullptr && *override != '\0' ? override : ned::editor::host::BuildArch();
+}
+
 // The editor's end of a connection to an agent.
 struct AgentClient {
     PostQueue                  queue;
@@ -141,7 +148,7 @@ TEST_CASE("ned-agent answers hello with its own build and settles the codec", "[
     const host::HelloResponse hello = host::HelloResponseFromJson(*answer.result);
     REQUIRE(hello.major == host::kProtocolMajor);
     REQUIRE(hello.build == host::FileBuildId(AgentBinary()));
-    REQUIRE(hello.arch == host::BuildArch());
+    REQUIRE(hello.arch == AgentArch());
     REQUIRE(hello.codec == "zstd");
     REQUIRE(hello.capabilities.search == 2);
     REQUIRE(hello.capabilities.fs == 6);

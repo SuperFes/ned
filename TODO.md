@@ -60,11 +60,6 @@ dispatcher runs in-process. A real target host (Rocky 9, glibc 2.34, no compiler
 rules out both a dynamically linked agent and a client-only `rg` fallback. Edit locally
 and sync on save; don't build a remote-authoritative buffer.
 
-**Agent**
-- [ ] A CI job that builds both static agents (`agent-*` presets) and runs `[HostAgent]`
-      against them through `NED_TEST_AGENT`: x86_64 natively, aarch64 under
-      `qemu-aarch64`.
-
 **Client/server protocol**, ordered by the design doc's staging section.
 - [ ] Verify a remote debug session end to end (PHP/Xdebug, with the adapter running on
       the host through `proc`).
