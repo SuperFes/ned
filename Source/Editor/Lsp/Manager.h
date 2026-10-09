@@ -58,6 +58,7 @@
 #include "Editor/ColorLiteral.h"
 #include "Editor/Mode.h"
 #include "Editor/ProcessTimeouts.h"
+#include "Editor/Project/Settings.h"
 #include "UI/EventLoop.h"
 
 #include "Client.h"
@@ -1764,8 +1765,9 @@ class Manager {
                            const std::vector<std::string>& command);
 
     // A freshly started client's handshake and bookkeeping, wherever it runs.
+    // settings, when given, are root's own, already read from its host.
     Client* AdoptClient(std::unique_ptr<Client> client, const std::string& serverKey, const std::string& connectionKey,
-                        const ServerRoot& root, bool brokerBacked);
+                        const ServerRoot& root, bool brokerBacked, const std::optional<editor::ProjectSettings>& settings = std::nullopt);
 
     // hover/completion/code-actions/definition/rename follow-up: resolves
     // the *primary* language's BufferSyncState for buffer via

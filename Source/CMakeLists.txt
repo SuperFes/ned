@@ -334,6 +334,7 @@ add_library(ned_lib STATIC
         Editor/Remote/PathCompletion.cpp
         Editor/Remote/Placement.cpp
         Editor/Remote/Proc.cpp
+        Editor/Remote/ProjectSettings.cpp
         Editor/Remote/ProtocolDump.cpp
         Editor/Remote/RemoteBuffer.cpp
         Editor/Remote/Search.cpp

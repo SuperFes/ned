@@ -1,21 +1,24 @@
 #include "Settings.h"
 
 #include <fstream>
+#include <iterator>
 
 #include <nlohmann/json.hpp>
 
 namespace ned::editor {
 
 ProjectSettings LoadProjectSettings(const std::filesystem::path& root) {
-    ProjectSettings settings;
-
     std::ifstream file(root / ".ned" / "settings.json", std::ios::binary);
     if (!file) {
-        return settings;
+        return ProjectSettings{};
     }
+    return ParseProjectSettings(std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()), root);
+}
 
+ProjectSettings ParseProjectSettings(std::string_view text, const std::filesystem::path& root) {
+    ProjectSettings settings;
     try {
-        const nlohmann::json parsed = nlohmann::json::parse(file);
+        const nlohmann::json parsed = nlohmann::json::parse(text);
         if (parsed.contains("includePaths") && parsed["includePaths"].is_object()) {
             for (const auto& [modeName, entries] : parsed["includePaths"].items()) {
                 if (!entries.is_array()) {

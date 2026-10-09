@@ -75,6 +75,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -133,6 +134,9 @@ struct ProjectSettings {
 // return a default-constructed (empty) ProjectSettings, the same "absent means
 // nothing configured" convention GitIgnoreMatcher uses for a missing .gitignore.
 [[nodiscard]] ProjectSettings LoadProjectSettings(const std::filesystem::path& root);
+// The same, for a settings file's text already read; relative paths in it
+// resolve under root.
+[[nodiscard]] ProjectSettings ParseProjectSettings(std::string_view text, const std::filesystem::path& root);
 
 } // namespace ned::editor
 
