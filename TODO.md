@@ -69,9 +69,6 @@ and sync on save; don't build a remote-authoritative buffer.
 - [ ] A CI job that builds both static agents (`agent-*` presets) and runs `[HostAgent]`
       against them through `NED_TEST_AGENT`: x86_64 natively, aarch64 under
       `qemu-aarch64`.
-- [ ] Prune `<build>-<arch>` agent directories no editor has used in a while.
-- [ ] Reveal in Terminal for a Remote-panel row: a terminal on that host, in that
-      directory.
 
 **Language servers on a host**
 - [ ] A host server's edit that creates, renames or deletes a file is refused; run it
@@ -125,8 +122,6 @@ and sync on save; don't build a remote-authoritative buffer.
 - [ ] A file moved on its host isn't followed by the buffer holding it, as
       `WindowManager::HandleExternalMoves` does locally. The host reports the move as a
       delete and a create; `watch` would need to pair them (`FileWatch.h`'s `FileMove`).
-- [ ] A watch burst the host lost events from (`overflow`) checks every remote buffer
-      on that host but doesn't relist the Remote panel; `g` does.
 - [ ] The Remote panel doesn't colour rows by their repository's status, as the project
       sidebar does locally.
 - [ ] A remote test run's `*test results*` lines resolve their sources against the local

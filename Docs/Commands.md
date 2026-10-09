@@ -1983,4 +1983,5 @@ selection rather than on a buffer, so they aren't `M-x` commands; rebind them wi
 | `+` | `remote-panel-new-directory` | Create a directory in the selected directory, or beside the selected file. |
 | `R` | `remote-panel-rename` | Rename or move the selected file or directory on its host. |
 | `D` | `remote-panel-delete` | Delete the selected file or directory from its host, after confirming. |
+| `t` | `remote-panel-reveal-in-terminal` | Open a terminal on the selected row's host, in its directory or a file's own. |
 

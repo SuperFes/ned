@@ -1565,6 +1565,10 @@ than on a buffer, so they aren't `M-x` commands; rebind them with `ned/define-pa
 
 :   Delete the selected file or directory from its host, after confirming.
 
+`remote-panel-reveal-in-terminal` (`t`)
+
+:   Open a terminal on the selected row's host, in its directory or a file's own.
+
 # SEE ALSO
 
 **ned**(1), **ned-janet**(7)

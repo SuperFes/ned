@@ -1626,7 +1626,16 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     remotePanel.SetOnOpenFile([wm = windowManager.get()](const ned::text::RemoteFile& file) { wm->RequestVisitRemoteFile(file); });
     vcsPanel->SetOnOpenRemoteFile([wm = windowManager.get()](const ned::text::RemoteFile& file) { wm->RequestVisitRemoteFile(file); });
     remotePanel.SetOnRequestOpenRoot([wm = windowManager.get()] { wm->RequestRemoteOpenRoot(); });
-    remotePanel.SetOnFileAction([wm = windowManager.get(), dock = leftDock.get()](ned::ui::RemotePanel::FileAction action, const ned::text::RemoteFile& target) {
+    // Assigned once the terminal tabs exist, below.
+    std::function<void(const ned::text::RemoteFile& directory)> revealRemoteInTerminal;
+    remotePanel.SetOnFileAction([wm = windowManager.get(), dock = leftDock.get(), &revealRemoteInTerminal](ned::ui::RemotePanel::FileAction action,
+                                                                                                           const ned::text::RemoteFile&     target) {
+        if (action == ned::ui::RemotePanel::FileAction::RevealInTerminal) {
+            if (revealRemoteInTerminal) {
+                revealRemoteInTerminal(target);
+            }
+            return;
+        }
         // The prompts are the focused pane's.
         wm->TakeFocus();
         dock->NoteFocusReturned();
@@ -1643,6 +1652,8 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
                 break;
             case ned::ui::RemotePanel::FileAction::Delete:
                 wm->StartDeleteFileAt(typed);
+                break;
+            case ned::ui::RemotePanel::FileAction::RevealInTerminal:
                 break;
         }
     });
@@ -2245,6 +2256,22 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
         }
         showTerminalTab(tab);
         tab.panel->SendText("cd " + ned::editor::ShellQuoteSingle(dir) + "\n");
+    };
+    // A directory on a host: cd's a running shell on that host there, or
+    // starts a new tab's shell in it, since a shell still connecting would
+    // drop the cd.
+    revealRemoteInTerminal = [&terminalTabs, &addTerminalTab, &showTerminalTab, &remoteHosts](const ned::text::RemoteFile& dir) {
+        const auto running = std::find_if(terminalTabs.begin(), terminalTabs.end(), [&dir](const TerminalTab& tab) {
+            return tab.panel->Beside() && tab.panel->Beside()->destination == dir.destination && tab.panel->ShellRunning();
+        });
+        if (running != terminalTabs.end()) {
+            showTerminalTab(*running);
+            running->panel->SendText("cd " + ned::editor::ShellQuoteSingle(dir.path) + "\n");
+            return;
+        }
+        TerminalTab& tab = addTerminalTab();
+        tab.panel->SetPlacement(&remoteHosts, dir, dir.path);
+        showTerminalTab(tab);
     };
 
     // The first terminal tab, created eagerly so toggle-terminal's cold-open

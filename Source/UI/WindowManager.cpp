@@ -1621,6 +1621,9 @@ void WindowManager::HandleRemoteWatchEvents(const std::string& destination, cons
                                             }
                                         });
     if (remotePanel_ != nullptr) {
+        if (events.overflow) {
+            remotePanel_->RelistHost(destination);
+        }
         for (const editor::FileEvent& event : events.events) {
             remotePanel_->Changed(text::RemoteFile{.destination = destination, .path = event.path});
         }

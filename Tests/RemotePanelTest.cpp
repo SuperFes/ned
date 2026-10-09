@@ -213,16 +213,19 @@ TEST_CASE("The Remote panel's file keys name the selected row, and a change reli
 
     // A new file or directory goes in a selected directory, or beside a file.
     fixture.Select("c.txt");
-    for (const char* key : {"n", "+", "R", "D"}) {
+    for (const char* key : {"n", "+", "R", "D", "t"}) {
         fixture.panel.Tree().OnEvent(test::Character(key));
     }
     fixture.Select("deep");
     fixture.panel.Tree().OnEvent(test::Character("+"));
+    fixture.panel.Tree().OnEvent(test::Character("t"));
     CHECK(fixture.actions == std::vector<std::pair<FileAction, ned::text::RemoteFile>>{{FileAction::NewFile, at(dir / "sub")},
                                                                                        {FileAction::NewDirectory, at(dir / "sub")},
                                                                                        {FileAction::Rename, at(dir / "sub" / "c.txt")},
                                                                                        {FileAction::Delete, at(dir / "sub" / "c.txt")},
-                                                                                       {FileAction::NewDirectory, at(dir / "sub" / "deep")}});
+                                                                                       {FileAction::RevealInTerminal, at(dir / "sub")},
+                                                                                       {FileAction::NewDirectory, at(dir / "sub" / "deep")},
+                                                                                       {FileAction::RevealInTerminal, at(dir / "sub" / "deep")}});
 
     // A root is removed with x, never renamed or deleted.
     fixture.actions.clear();
@@ -266,6 +269,36 @@ TEST_CASE("The Remote panel's file keys name the selected row, and a change reli
     fixture.panel.Changed(at(dir / "x" / "y"));
     REQUIRE(fixture.RowsSettle(7));
     CHECK_THAT(fixture.AllRows(), ContainsSubstring("▸ x"));
+}
+
+TEST_CASE("The Remote panel relists every expanded directory on a host that lost events", "[RemotePanel][Remote][HostAgent]") {
+    const FileIconsOff          noIcons;
+    Fixture                     fixture;
+    const std::filesystem::path dir   = fixture.fake.dir / "proj";
+    const std::filesystem::path other = fixture.fake.dir / "other";
+    std::filesystem::create_directories(dir / "sub");
+    std::filesystem::create_directories(dir / "shut");
+    std::filesystem::create_directories(other);
+    std::ofstream(dir / "a.txt") << "a\n";
+
+    fixture.panel.OpenRoot("host:" + dir.string());
+    REQUIRE(fixture.RowsSettle(4));
+    fixture.Select("sub");
+    fixture.panel.Tree().OnEvent(test::Return());
+    fixture.panel.OpenRoot("elsewhere:" + other.string());
+    REQUIRE(fixture.RowsSettle(5));
+
+    std::ofstream(dir / "b.txt") << "b\n";
+    std::ofstream(dir / "sub" / "c.txt") << "c\n";
+    std::ofstream(dir / "shut" / "d.txt") << "d\n";
+    std::ofstream(other / "e.txt") << "e\n";
+    fixture.panel.RelistHost("host");
+    REQUIRE(fixture.RowsSettle(7));
+    const std::string rows = fixture.AllRows();
+    CHECK_THAT(rows, ContainsSubstring("b.txt") && ContainsSubstring("c.txt"));
+    // Collapsed, or on another host: left as they were.
+    CHECK(rows.find("d.txt") == std::string::npos);
+    CHECK(rows.find("e.txt") == std::string::npos);
 }
 
 TEST_CASE("The Remote panel hides and shows dotfiles with '.'", "[RemotePanel][Remote][HostAgent]") {

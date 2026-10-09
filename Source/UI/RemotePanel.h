@@ -9,7 +9,7 @@
 // stay listed while their host is disconnected; expanding one connects.
 // Dotfiles show unless '.' hides them. n, +, R and D make a file or a
 // directory beside the selection, or rename or delete it, through the
-// focused pane's prompts. Its keys are remote-panel-mode's
+// focused pane's prompts; t opens a terminal there. Its keys are remote-panel-mode's
 // (Editor/PanelMode.h), so init.janet can rebind them. Expanded directories
 // are watched on their hosts (ListedDirectories), and a change relists them.
 //
@@ -74,14 +74,19 @@ class RemotePanel {
     enum class FileAction { NewFile,
                             NewDirectory,
                             Rename,
-                            Delete };
-    // n, +, R, D: the panel has no prompt of its own. A new file or
-    // directory is offered the selected directory, or a file's own.
+                            Delete,
+                            RevealInTerminal };
+    // n, +, R, D, t: the panel has no prompt or terminal of its own. A new
+    // file or directory, or a terminal, is offered the selected directory,
+    // or a file's own.
     void SetOnFileAction(std::function<void(FileAction action, const text::RemoteFile& target)> handler);
 
     // The host's tree changed at path: the directory holding it is listed
     // again wherever it's shown, keeping what's expanded under it.
     void Changed(const text::RemoteFile& path);
+    // The host lost events (a watch overflow): every directory shown
+    // expanded on destination is listed again.
+    void RelistHost(const std::string& destination);
 
     // The directories shown expanded, each once, for their hosts to watch.
     [[nodiscard]] std::vector<text::RemoteFile> ListedDirectories() const;

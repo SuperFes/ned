@@ -127,7 +127,7 @@ TEST_CASE("The bindings report lists each panel mode's live keys and docstrings"
     const KeymapStack stack({&global}, {"Global"});
     const std::string report = RenderBindingsReport(stack, ThreeCommands(), "");
 
-    REQUIRE(report.find("Remote panel (remote-panel-mode) -- 10 bindings\n") != std::string::npos);
+    REQUIRE(report.find("Remote panel (remote-panel-mode) -- 11 bindings\n") != std::string::npos);
     REQUIRE(report.find("  r  remote-panel-rename\n") != std::string::npos);
     REQUIRE(report.find("  R  remote-panel-rename\n") != std::string::npos);
     REQUIRE(report.find("Rename or move the selected file or directory on its host.") != std::string::npos);
