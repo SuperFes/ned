@@ -91,8 +91,6 @@ and sync on save; don't build a remote-authoritative buffer.
       main thread, which only matters at that size too.
 
 **Project tree and search**
-- [ ] The Remote panel doesn't colour rows by their repository's status, as the project
-      sidebar does locally.
 - [ ] A remote test run's `*test results*` lines resolve their sources against the local
       tree (`TestRun/TestSourceResolver.h`); they should resolve on the host and open
       remote buffers.

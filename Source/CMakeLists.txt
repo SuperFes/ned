@@ -541,6 +541,7 @@ add_library(ned_lib STATIC
         UI/HugeFileLoader.cpp
         UI/TabBar.cpp
         UI/ScrollArrowButton.cpp
+        UI/FileTreeVcs.cpp
         UI/ProjectSidebar.cpp
         UI/RemotePanel.cpp
         UI/PanelKeys.cpp
