@@ -10,6 +10,7 @@
 #include <nlohmann/json.hpp>
 
 #include "Editor/Lsp/Manager.h"
+#include "Editor/Lsp/ProseChecker.h"
 #include "Editor/Remote/Hosts.h"
 #include "FakeRemoteHost.h"
 #include "FakeRemoteLspServer.h"
@@ -95,6 +96,66 @@ TEST_CASE("A remote buffer's language server is configured by its root's .ned/se
     CHECK(f.server.Find("initialize")->at("params")["initializationOptions"] == Json{{"flavor", "host"}});
     REQUIRE(PumpUntil(f.loop, [&] { return f.server.Find("workspace/didChangeConfiguration").has_value(); }));
     CHECK(f.server.Find("workspace/didChangeConfiguration")->at("params")["settings"] == Json{{"tabs", 3}});
+}
+
+TEST_CASE("A remote buffer is prose-checked here, by a stand-in path that keeps its file name", "[Lsp][LspRemote][ProseChecker][HostAgent]") {
+    Fixture f;
+    // Logs the documents it's handed and flags each one's first word.
+    std::ofstream(f.fake.dir / "prose.py") << R"(import json, sys
+log = open(sys.argv[1], "a")
+inp, out = sys.stdin.buffer, sys.stdout.buffer
+while True:
+    length = None
+    while True:
+        line = inp.readline()
+        if not line:
+            sys.exit(0)
+        line = line.strip()
+        if not line:
+            break
+        if line.lower().startswith(b"content-length:"):
+            length = int(line.split(b":")[1])
+    message = json.loads(inp.read(length))
+    method, reply = message.get("method"), None
+    if method == "initialize":
+        reply = {"id": message["id"], "result": {"capabilities": {"textDocumentSync": 1}}}
+    elif "id" in message and method:
+        reply = {"id": message["id"], "result": None}
+    elif method == "textDocument/didOpen":
+        uri = message["params"]["textDocument"]["uri"]
+        log.write(uri + "\n")
+        log.flush()
+        reply = {"method": "textDocument/publishDiagnostics", "params": {"uri": uri, "diagnostics": [
+            {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 3}}, "severity": 4, "message": "a word"}]}}
+    if reply:
+        body = json.dumps(dict(jsonrpc="2.0", **reply)).encode()
+        out.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+        out.flush()
+)";
+    struct ProseGuard {
+        ~ProseGuard() {
+            lsp::SetProseCheckerCommand({});
+            lsp::SetProseCheckingEnabled(false);
+        }
+    } guard;
+    lsp::SetProseCheckingEnabled(true);
+    lsp::SetProseCheckerCommand({"python3", (f.fake.dir / "prose.py").string(), (f.fake.dir / "prose.log").string()});
+    REQUIRE(f.Connect());
+
+    text::BufferList bufferList;
+    lsp::Manager     manager(bufferList, f.loop);
+    manager.SetRemoteHosts(&f.hosts);
+    text::Buffer& buffer = f.Open(bufferList);
+    REQUIRE(PumpUntil(f.loop, [&] {
+        manager.SyncBuffer(buffer, kLanguage);
+        return std::ranges::any_of(buffer.Diagnostics(), [](const text::Buffer::Diagnostic& diagnostic) {
+            return diagnostic.origin == text::Buffer::Diagnostic::Origin::Prose;
+        });
+    }));
+    std::ifstream log(f.fake.dir / "prose.log");
+    std::string   uri;
+    std::getline(log, uri);
+    CHECK(uri == text::PathToFileUri("/.ned-remote/host" / f.server.file.relative_path()));
 }
 
 TEST_CASE("A remote buffer's language server waits for its host; nothing connects to start one", "[Lsp][LspRemote][HostAgent]") {
