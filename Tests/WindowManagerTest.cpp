@@ -839,6 +839,65 @@ TEST_CASE("A remote buffer and the Remote panel follow their host's changes once
     }));
 }
 
+TEST_CASE("A local and a remote file of one name share a layout, each edited and saved where it lives", "[WindowManager][Remote][HostAgent]") {
+    ned::tests::FakeRemoteHost    fake;
+    ned::tests::ScopedEnvOverride home{"HOME", (fake.dir / "home").c_str()};
+    ned::ui::EventLoop            loop;
+    ned::editor::remote::Hosts    hosts{loop, [&fake](const std::string& destination) { return fake.Options(destination); },
+                                        ned::tests::FakeResolver(fake.dir)};
+    const std::filesystem::path   herePath  = fake.dir / "here" / "notes.txt";
+    const std::filesystem::path   therePath = fake.dir / "there" / "notes.txt";
+    std::filesystem::create_directories(herePath.parent_path());
+    std::filesystem::create_directories(therePath.parent_path());
+    std::ofstream(herePath) << "local\n";
+    std::ofstream(therePath) << "remote\n";
+    const ned::text::RemoteFile there{.destination = "host", .path = therePath};
+    const auto                  read = [](const std::filesystem::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+    manager.SetRemoteHosts(&hosts);
+    manager.EnableRemoteSaving(loop);
+    ned::ui::Widget&   root  = manager.RootComponent();
+    ned::text::Buffer& local = fixture.bufferList.OpenOrCreateFile(herePath);
+    manager.FocusedActiveBuffer().Set(local);
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("3")});
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")});
+    manager.RequestVisitRemoteFile(there);
+    REQUIRE(ned::tests::PumpUntil(loop, [&] {
+        const ned::text::Buffer& shown = manager.FocusedActiveBuffer().Get();
+        return shown.Remote() == there && !shown.IsLoading();
+    }));
+    ned::text::Buffer& remote = manager.FocusedActiveBuffer().Get();
+    CHECK(&remote != &local);
+    CHECK(local.Name() == "notes.txt");
+    CHECK(remote.Name() == "host:notes.txt");
+
+    FeedSequence(root, {ned::ui::test::Character("R"), ned::ui::test::Ctrl('x'), ned::ui::test::Ctrl('s')});
+    REQUIRE(ned::tests::PumpUntil(loop, [&] { return !remote.Modified(); }));
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("o")});
+    REQUIRE(&manager.FocusedActiveBuffer().Get() == &local);
+    FeedSequence(root, {ned::ui::test::Character("L"), ned::ui::test::Ctrl('x'), ned::ui::test::Ctrl('s')});
+    REQUIRE(ned::tests::PumpUntil(loop, [&] { return !local.Modified(); }));
+    CHECK(read(herePath) == "Llocal\n");
+    CHECK(read(therePath) == "Rremote\n");
+
+    ned::ui::Screen screen(100, 12);
+    RenderFullScreen(root, screen);
+    const std::string top = RowText(screen, 0, 100);
+    CHECK(top.find("Llocal") < top.find("Rremote"));
+
+    ned::editor::ProjectSessionData data;
+    manager.CaptureWindowLayout(data);
+    REQUIRE(data.windowLayout.size() == 3);
+    CHECK(data.windowLayout[0].file == ned::editor::SessionFile(herePath));
+    CHECK(data.windowLayout[1].file == ned::editor::SessionFile(there));
+}
+
 TEST_CASE("A remote command-line argument opens a directory in the Remote panel and a file in a pane", "[WindowManager][Remote][HostAgent]") {
     ned::tests::FakeRemoteHost    fake;
     ned::tests::ScopedEnvOverride home{"HOME", (fake.dir / "home").c_str()};

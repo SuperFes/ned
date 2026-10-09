@@ -108,7 +108,6 @@ and sync on save; don't build a remote-authoritative buffer.
       bigger file needs a streamed upload. Decoding a read and encoding a save run on the
       main thread, which only matters at that size too.
 - [ ] Project-registry roots accept `user@host:/path`.
-- [ ] Confirm local and remote buffers mix in one window layout.
 
 **Connect**
 - [ ] Parse `~/.ssh/config` directly (`Host`/`HostName`/`User`/`Port`/`IdentityFile`/
