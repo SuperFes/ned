@@ -72,9 +72,47 @@ namespace {
         return text::PathToFileUri((ec ? path : absolute).lexically_normal());
     }
 
-    // A remote buffer's URI names its path on its host, where its server runs.
-    std::string DocumentUri(const text::Buffer& buffer) {
-        return buffer.Remote() ? text::PathToFileUri(buffer.Remote()->path) : PathToUri(*buffer.Path());
+    // Where a server here (the prose checker) is told a host's file is: a
+    // directory nothing real is in, with the file's own name, so a checker
+    // that goes by extension still can. Its destination's slashes (an ssh
+    // URI's) are escaped to stay one component.
+    constexpr std::string_view kRemoteStandInRoot = "/.ned-remote";
+
+    std::filesystem::path RemoteStandIn(const text::RemoteFile& file) {
+        std::string destination;
+        for (const char c : file.destination) {
+            destination += c == '%' ? std::string("%25") : c == '/' ? std::string("%2F")
+                                                                    : std::string(1, c);
+        }
+        return std::filesystem::path(kRemoteStandInRoot) / destination / file.path.relative_path();
+    }
+
+    std::optional<text::RemoteFile> FromRemoteStandIn(const std::filesystem::path& path) {
+        const std::filesystem::path relative = path.lexically_normal().lexically_relative(kRemoteStandInRoot);
+        if (relative.empty() || *relative.begin() == ".." || std::distance(relative.begin(), relative.end()) < 2) {
+            return std::nullopt;
+        }
+        const std::string escaped = relative.begin()->string();
+        std::string       destination;
+        for (std::size_t i = 0; i < escaped.size(); ++i) {
+            if (escaped.compare(i, 3, "%2F") == 0 || escaped.compare(i, 3, "%25") == 0) {
+                destination += escaped[i + 2] == 'F' ? '/' : '%';
+                i += 2;
+            }
+            else {
+                destination += escaped[i];
+            }
+        }
+        return text::RemoteFile{.destination = destination, .path = "/" / relative.lexically_relative(*relative.begin())};
+    }
+
+    // A remote buffer's URI names its path on its host, where its server
+    // runs, or its stand-in to a server here.
+    std::string DocumentUri(const text::Buffer& buffer, bool serverOnHost) {
+        if (buffer.Remote()) {
+            return text::PathToFileUri(serverOnHost ? buffer.Remote()->path : RemoteStandIn(*buffer.Remote()));
+        }
+        return PathToUri(*buffer.Path());
     }
 
     // Servers do percent-encode: clangd reports libstdc++ headers as
@@ -87,6 +125,9 @@ namespace {
     text::FileRef DocumentFileOn(const std::optional<std::string>& host, const std::filesystem::path& path) {
         if (host) {
             return text::RemoteFile{.destination = *host, .path = path.lexically_normal()};
+        }
+        if (std::optional<text::RemoteFile> remote = FromRemoteStandIn(path)) {
+            return *remote;
         }
         return path;
     }
@@ -1232,9 +1273,11 @@ void Manager::SyncBuffer(text::Buffer& buffer, const std::string& language) {
             return;
         }
         bufferResolvedRoot_[&buffer] = *root;
-        // The prose checker and file-creation reports read the buffer's file
-        // on this machine's disk.
+        // File-creation reports read the buffer's file on this machine's
+        // disk. The prose checker reads only text, so it stays here, told
+        // of the file by its stand-in.
         SyncToServer(buffer, language, language, *root);
+        SyncToServer(buffer, std::string(kProseLanguageKey), language, ServerRoot{.path = editor::ProjectRoot()});
         return;
     }
     const ServerRoot root{.path = ResolveCachedRoot(*buffer.Path(), language)};
@@ -1470,7 +1513,7 @@ void Manager::SyncTextToServer(text::Buffer& buffer, const std::string& serverKe
             return;
         }
         state.connectionKey = ResolvedConnectionKey(root, serverKey); // lsp-workspace-folders follow-up: canonical, not raw
-        state.uri           = DocumentUri(buffer);
+        state.uri           = DocumentUri(buffer, ConnectionHost(state.connectionKey).has_value());
         state.version       = 1;
         client->SendNotification("textDocument/didOpen", {
                                                              {"textDocument",
