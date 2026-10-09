@@ -13,6 +13,7 @@ add_library(ned_core STATIC
         ${CMAKE_CURRENT_LIST_DIR}/Editor/EditorConfig.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/FileWatch.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/GitIgnore.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/Editor/Mcp/StdioRelay.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/PostQueue.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Process/ChildProcess.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Process/Pty.cpp
@@ -65,6 +66,7 @@ add_library(ned_host STATIC
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Host/Fs.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Host/FsCodec.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Host/Hello.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/Editor/Host/McpRelays.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Host/ProcCodec.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Host/SearchCodec.cpp
         ${CMAKE_CURRENT_LIST_DIR}/Editor/Host/WatchCodec.cpp)

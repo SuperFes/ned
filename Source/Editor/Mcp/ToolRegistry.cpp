@@ -125,7 +125,13 @@ namespace {
     // file the human hasn't opened in ned gets a clear error instead of
     // silently spawning a new background buffer/LSP sync behind their back.
     text::Buffer* FindOpenBuffer(text::BufferList& bufferList, const std::string& file) {
-        return bufferList.FindByPath(ResolveArgPath(file));
+        return bufferList.FindFile(ResolveArgFile(file));
+    }
+
+    // Whether file names a host's file, which a tool that works on this
+    // machine's repository or files can't take.
+    bool NamesHostFile(const std::string& file) {
+        return std::holds_alternative<text::RemoteFile>(ResolveArgFile(file));
     }
 
     std::optional<std::string> RequireString(const Json& args, const char* key) {
@@ -444,6 +450,10 @@ void ToolRegistry::RegisterBuiltinTools() {
             auto onComplete = [callback](std::string rawDiff) { callback(MakeTextToolResult(rawDiff.empty() ? "No changes." : rawDiff)); };
             auto onError    = [callback](const std::string& error) { callback(MakeTextToolResult("git diff failed: " + error, true)); };
             if (const auto file = RequireString(args, "file")) {
+                if (NamesHostFile(*file)) {
+                    callback(MakeTextToolResult("git tools work on this machine's repository; run git on the host instead: " + *file, true));
+                    return;
+                }
                 vcsRunner_.RequestFileDiffText(vcs::LocalRepo(), ResolveArgPath(*file), /*staged=*/false, onComplete, onError);
             }
             else {
@@ -552,6 +562,10 @@ void ToolRegistry::RegisterBuiltinTools() {
                 callback(MakeTextToolResult("Missing required argument: file", true));
                 return;
             }
+            if (NamesHostFile(*file)) {
+                callback(MakeTextToolResult("git tools work on this machine's repository; run git on the host instead: " + *file, true));
+                return;
+            }
             vcsRunner_.RequestStage(vcs::LocalRepo(), ResolveArgPath(*file), [callback, file] { callback(MakeTextToolResult("Staged " + *file + ".")); }, [callback](const std::string& error) { callback(MakeTextToolResult("git stage failed: " + error, true)); });
         });
 
@@ -566,6 +580,10 @@ void ToolRegistry::RegisterBuiltinTools() {
             const auto file = RequireString(args, "file");
             if (!file) {
                 callback(MakeTextToolResult("Missing required argument: file", true));
+                return;
+            }
+            if (NamesHostFile(*file)) {
+                callback(MakeTextToolResult("git tools work on this machine's repository; run git on the host instead: " + *file, true));
                 return;
             }
             vcsRunner_.RequestUnstage(vcs::LocalRepo(), ResolveArgPath(*file), [callback, file] { callback(MakeTextToolResult("Unstaged " + *file + ".")); }, [callback](const std::string& error) { callback(MakeTextToolResult("git unstage failed: " + error, true)); });
@@ -982,6 +1000,10 @@ void ToolRegistry::RegisterBuiltinTools() {
             }
             if (!editorHooks_.visitLocation) {
                 callback(MakeTextToolResult("Navigation isn't available in this ned session.", true));
+                return;
+            }
+            if (NamesHostFile(*file)) {
+                callback(MakeTextToolResult("Can't show a host's file from here: " + *file, true));
                 return;
             }
             const std::filesystem::path path = ResolveArgPath(*file);

@@ -893,6 +893,14 @@ class Manager {
     std::optional<text::RemoteFile>      agentBeside_;
     std::optional<std::filesystem::path> agentRoot_; // set once a host's agent has started
     ProjectSettings                      hostSettings_; // that root's, read on its host
+    // The socket a host agent's MCP relay connects to there, and the
+    // bridge's id for each of its channels.
+    std::optional<std::filesystem::path>   hostMcpSocket_;
+    std::map<std::uint64_t, std::uint64_t> hostMcpChannels_;
+    // Asks the host for an MCP socket and carries its channels to the
+    // bridge; then runs either way.
+    void                                 StartHostMcp(std::function<void()> then);
+    void                                 CloseHostMcp();
     std::vector<std::string>             hostProjectFiles_;
     // Revoked with the agent's connection: drops an agent that arrives after
     // its session has ended, and a host's answer for a request it made.

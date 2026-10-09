@@ -10,10 +10,16 @@
 
 #include "Editor/Host/Agent.h"
 #include "Editor/Host/Hello.h"
+#include "Editor/Mcp/StdioRelay.h"
 
 int main(int argc, char** argv) {
+    // The MCP server an ACP agent on this host is given: a relay to the
+    // socket the running agent's mcp/listen opened.
+    if (argc == 3 && std::string_view(argv[1]) == "--mcp-relay") {
+        return ned::editor::mcp::RunStdioRelay(argv[2], "ned-agent --mcp-relay");
+    }
     if (argc != 2 || std::string_view(argv[1]) != "--stdio") {
-        std::fprintf(stderr, "usage: ned-agent --stdio\n");
+        std::fprintf(stderr, "usage: ned-agent --stdio | --mcp-relay <socket>\n");
         return 2;
     }
     // A write to an editor that already hung up must fail, not kill us.

@@ -1,22 +1,33 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "Editor/Acp/Manager.h"
+#include "Editor/Dap/Manager.h"
+#include "Editor/Lsp/Manager.h"
+#include "Editor/Mcp/BridgeServer.h"
+#include "Editor/Mcp/ToolRegistry.h"
+#include "Editor/Process/ChildProcess.h"
 #include "Editor/Remote/Hosts.h"
+#include "Editor/TestRun/TestRunner.h"
+#include "Editor/Vcs/Runner.h"
 #include "FakeRemoteAcpAgent.h"
 #include "FakeRemoteHost.h"
+#include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/RemoteFile.h"
+#include "Text/Rope.h"
 #include "UI/EventLoop.h"
 
 namespace fs     = std::filesystem;
@@ -188,4 +199,60 @@ TEST_CASE("The paths a host's ACP agent names are files on that host", "[Acp][Ac
     f.manager.StopSession();
     CHECK(f.manager.FileFor(f.agent.file.string()) == text::FileRef(f.File()));
     CHECK(f.manager.TranscriptRoot() == f.agent.project);
+}
+
+TEST_CASE("A host's ACP agent reaches ned's MCP tools through a relay on its host", "[Acp][AcpRemote][Mcp][HostAgent]") {
+    Fixture                          f;
+    ned::editor::lsp::Manager        lsp{f.buffers, f.loop};
+    ned::editor::vcs::Runner         vcs{f.loop};
+    ned::editor::testrun::TestRunner tests{f.buffers, f.loop};
+    ned::editor::dap::Manager        dap{f.loop};
+    ned::editor::mcp::ToolRegistry   registry{f.buffers, lsp, vcs, tests, dap};
+    ned::editor::mcp::BridgeServer   bridge{registry, f.loop};
+    f.manager.SetMcpBridgeServer(&bridge);
+    // The host's file, open here with a finding on it.
+    text::Buffer& open = f.buffers.AddRemotePlaceholder(f.File());
+    open.FinishLoad(text::Rope("int x;\nint y;\n"));
+    open.SetDiagnostics({text::Buffer::Diagnostic{.startByte = 4, .endByte = 5, .severity = text::Buffer::Diagnostic::Severity::Error, .message = "found on the host"}});
+    REQUIRE(f.Start());
+
+    const std::vector<Json> created = f.agent.Requests("session/new");
+    REQUIRE(created.size() == 1);
+    const Json& servers = created.front()["params"]["mcpServers"];
+    REQUIRE(servers.size() == 1);
+    CHECK(servers[0]["args"][0] == "--mcp-relay");
+
+    // What the agent would run there; the fake host is this machine.
+    std::vector<std::string> argv{servers[0]["command"].get<std::string>()};
+    for (const Json& arg : servers[0]["args"]) {
+        argv.push_back(arg.get<std::string>());
+    }
+    ned::editor::process::ChildProcess relay(argv);
+    std::atomic<bool>                  done{false};
+    std::vector<Json>                  answers;
+    std::thread                        client([&] {
+        const auto ask = [&](const Json& request) {
+            relay.WriteAll(request.dump() + "\n", std::chrono::seconds(5));
+            std::string line;
+            while (line.find('\n') == std::string::npos) {
+                const std::string chunk = relay.ReadSome();
+                if (chunk.empty()) {
+                    return;
+                }
+                line += chunk;
+            }
+            answers.push_back(Json::parse(line.substr(0, line.find('\n'))));
+        };
+        ask(Json{{"jsonrpc", "2.0"}, {"id", 1}, {"method", "initialize"}, {"params", {{"protocolVersion", "2025-06-18"}}}});
+        ask(Json{{"jsonrpc", "2.0"}, {"id", 2}, {"method", "tools/call"}, {"params", {{"name", "get_diagnostics"}, {"arguments", {{"file", f.agent.file.string()}}}}}});
+        done = true;
+    });
+    const bool                         finished = PumpUntil(f.loop, [&] { return done.load(); });
+    client.join();
+    REQUIRE(finished);
+    REQUIRE(answers.size() == 2);
+    CHECK(answers[0]["result"]["serverInfo"]["name"] == "ned");
+    const std::string text = answers[1]["result"]["content"][0]["text"].get<std::string>();
+    CHECK(text.find("found on the host") != std::string::npos);
+    f.manager.StopSession();
 }

@@ -69,10 +69,6 @@ and sync on save; don't build a remote-authoritative buffer.
 - [ ] Launch and attach configurations for a host: one per language today, sent
       unchanged, so a remote session needs paths that exist on the host.
 
-**ACP agents on a host**
-- [ ] ned's MCP tools for an agent on a host: the bridge is a local socket, so
-      `ned-agent` would relay the agent's MCP stdio back over the connection.
-
 **Client/server protocol**, ordered by the design doc's staging section.
 - [ ] Verify a remote debug session end to end (PHP/Xdebug, with the adapter running on
       the host through `proc`).
