@@ -192,13 +192,23 @@ against.
 
 ---
 
+## Remote Development
+
+- ✅ **Remote development over SSH**: `host:/path`, or `ssh://host:port/path`, opens a
+  host's file or directory to edit here and save there, through a static `ned-agent`
+  deployed on first connect; ssh_config, known_hosts and registered projects complete the
+  host.
+- ✅ **A client/server protocol** for the agent (`Docs/ClientServerProtocol.md`): CBOR
+  frames with per-frame zstd, streams paced by credit, uploads for large saves.
+- ✅ **The toolchain on the host**: search, watches, language servers, debug adapters,
+  tasks, tests, VCS, terminals and ACP agents run beside the remote buffer that starts
+  them, with ned's MCP tools relayed to an agent there.
+- ✅ **Remote debugging**, e.g. PHP through Xdebug with the adapter on the host.
+
+---
+
 ## Horizon
 
-- 🔜 **Remote development over SSH**: edit files on a remote host locally, with an
-  optional thin agent for search and toolchain-native language servers.
-- 🔜 **A client/server protocol** for the remote agent, with local execution as its
-  in-process case.
-- 🔜 **Remote debugging**, e.g. attaching to live PHP.
 - 🔜 **Documentation**: Doxygen developer docs, a `ned-setup` first-run generator, and
   debugger cookbook entries.
 - 🔜 **1.0**: a frozen Janet API, no known data-loss paths, release artifacts, and a
