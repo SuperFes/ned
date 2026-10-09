@@ -79,6 +79,17 @@ TEST_CASE("A remote buffer's ACP agent runs on its host, in the project root the
     CHECK_FALSE(f.manager.AgentBeside().has_value());
 }
 
+TEST_CASE("A host's ACP agent gets the additional directories its root's settings name there", "[Acp][AcpRemote][HostAgent]") {
+    Fixture f;
+    fs::create_directories(f.agent.project / ".ned");
+    std::ofstream(f.agent.project / ".ned" / "settings.json") << R"({"acpAdditionalDirectories": ["../shared", "/srv/other"]})";
+    REQUIRE(f.Start());
+
+    const std::vector<Json> created = f.agent.Requests("session/new");
+    REQUIRE(created.size() == 1);
+    CHECK(created.front()["params"]["additionalDirectories"] == Json::array({(f.agent.project.parent_path() / "shared").string(), "/srv/other"}));
+}
+
 TEST_CASE("A host's ACP agent lists its sessions in the host's project root", "[Acp][AcpRemote][HostAgent]") {
     Fixture f;
     REQUIRE(f.Start());

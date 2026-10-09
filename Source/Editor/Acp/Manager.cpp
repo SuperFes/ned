@@ -22,6 +22,7 @@
 #include "Editor/Remote/Fs.h"
 #include "Editor/Remote/Hosts.h"
 #include "Editor/Remote/Placement.h"
+#include "Editor/Remote/ProjectSettings.h"
 #include "Editor/Remote/RemoteBuffer.h"
 #include "Editor/WrapOverrides.h"
 #include "Text/Buffer.h"
@@ -358,19 +359,19 @@ Json Manager::SessionParams(Session& session) {
     const std::filesystem::path root = SessionRoot();
     session.host                     = agentBeside_ ? agentBeside_->destination : std::string();
     session.root                     = root;
+    Json params{{"cwd", root.string()}, {"mcpServers", Json::array()}};
     if (agentBeside_) {
-        // Neither reaches a host: the bridge is a socket here, and the
-        // directories are this machine's.
+        // The bridge is a socket here.
         if (mcpBridgeServer_ && mcp::McpBridgeEnabled()) {
             PushSessionEvent(session, "ned's MCP tools aren't offered to an agent on " + agentBeside_->destination);
         }
-        if (!LoadProjectSettings(editor::ProjectRoot()).acpAdditionalDirectories.empty()) {
-            PushSessionEvent(session, "acpAdditionalDirectories not sent to an agent on " + agentBeside_->destination);
-        }
-        return Json{{"cwd", root.string()}, {"mcpServers", Json::array()}};
     }
-    Json       params{{"cwd", root.string()}, {"mcpServers", McpServers()}};
-    const auto configured = LoadProjectSettings(root).acpAdditionalDirectories;
+    else {
+        params["mcpServers"] = McpServers();
+    }
+    // A host's directories are its own, from its root's settings there,
+    // and only the host can say whether they exist.
+    const auto configured = agentBeside_ ? hostSettings_.acpAdditionalDirectories : LoadProjectSettings(root).acpAdditionalDirectories;
     if (configured.empty()) {
         return params;
     }
@@ -381,7 +382,7 @@ Json Manager::SessionParams(Session& session) {
     Json directories = Json::array();
     for (const std::filesystem::path& directory : configured) {
         std::error_code ec;
-        if (std::filesystem::is_directory(directory, ec)) {
+        if (agentBeside_ || std::filesystem::is_directory(directory, ec)) {
             directories.push_back(directory.string());
         }
         else {
@@ -1278,7 +1279,12 @@ void Manager::StartSessionOnHost(const text::RemoteFile& beside, const std::vect
                             }
                             agentRoot_ = spawned->cwd ? *spawned->cwd : beside.path.parent_path();
                             client_    = std::make_unique<Client>(protocol::LineTransport(std::move(spawned->child), label), eventLoop_);
-                            SendInitialize();
+                            // The root's settings there come first: session/new carries its directories.
+                            remote::LoadHostProjectSettings(*hosts_, text::RemoteFile{.destination = beside.destination, .path = *agentRoot_},
+                                                            agentLifetime_.Token(), [this](ProjectSettings settings) {
+                                                                hostSettings_ = std::move(settings);
+                                                                SendInitialize();
+                                                            });
                         });
 }
 
@@ -2609,6 +2615,7 @@ void Manager::EndSession(std::string reason) {
     client_.reset();
     agentBeside_.reset();
     agentRoot_.reset();
+    hostSettings_ = {};
     agentLifetime_.Revoke();
     AppendToOutputBuffer("\n[" + reason + "]\n");
     for (const auto& session : sessions_) {

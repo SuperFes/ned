@@ -310,7 +310,8 @@ it names are that host's: following it and its tool locations open the files the
 conversation keeps its host after the agent has gone. A turn's review and rewind cover the
 host's files that were open here, with the "after" read from the host as the turn ends,
 and a rewind edits the open buffer, leaving it to be saved. It is offered none of ned's
-MCP tools, since the bridge is a local socket, and no additional directories. In the
+MCP tools, since the bridge is a local socket. Its additional directories come from its
+root's `.ned/settings.json` on the host, read before the agent is initialized. In the
 composer, `@buffer` names a host file by its path there for an agent on that host, and
 `@` completion offers the host's files open here.
 
