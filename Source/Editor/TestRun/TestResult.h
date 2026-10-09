@@ -13,9 +13,12 @@
 #define NED_EDITOR_TESTRUN_TESTRESULT_H
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include "Text/RemoteFile.h"
 
 namespace ned::editor::testrun {
 
@@ -63,6 +66,9 @@ struct Outcome {
     // lines and no summary recognized) -- callers report a parse failure
     // instead of showing a misleading all-zero outcome.
     bool parsedOk = false;
+    // The host and directory a remote run ran in: its files are that
+    // host's, and a relative one is relative to that directory.
+    std::optional<text::RemoteFile> ranOn;
 };
 
 // True when a result the runner parsed refers to the discovered test

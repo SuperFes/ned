@@ -292,6 +292,8 @@ TEST_CASE("A test run from a remote buffer runs on its host and reads its result
     CHECK(runner.LatestOutcome()->passed == 1);
     REQUIRE(runner.LatestOutcome()->results.size() == 1);
     CHECK(runner.LatestOutcome()->results.front().name == "Remote");
+    // Where it ran, for its results' files.
+    CHECK(runner.LatestOutcome()->ranOn == ned::text::RemoteFile{.destination = "host", .path = fixture.project});
 
     SECTION("again from its output, without a buffer") {
         fs::remove(fixture.project / "out" / "results.txt");
