@@ -290,6 +290,10 @@ bool Viewport::VisibleRowCountAtLeast(std::size_t startLine, std::size_t endLine
 void Viewport::EnsureTopLineValidForActiveBuffer() {
     text::Buffer& buffer = context_.activeBuffer.Get();
     if (topLineValidatedBuffer_.Is(buffer)) {
+        if (topLineAwaitsLoad_ && !buffer.IsLoading()) {
+            topLineAwaitsLoad_ = false;
+            SeatLoadedTopLine(buffer);
+        }
         // A place restored at construction was clamped by point's own line
         // rather than by MaxTopLine(), which was unknowable then (0x0 widget).
         // Redo it properly now that there is a size: a file that shrank
@@ -304,6 +308,7 @@ void Viewport::EnsureTopLineValidForActiveBuffer() {
         return;
     }
     topLineNeedsSizeClamp_  = false;
+    topLineAwaitsLoad_      = buffer.IsLoading() && buffer.Remote();
     topLineValidatedBuffer_ = text::BufferIdentity(buffer);
     host_.dismissHover(); // hover-tooltips follow-up: a tooltip from the previous buffer means nothing here
     // session-persistence slice 1: a stored viewport for this buffer wins
@@ -345,6 +350,27 @@ void Viewport::EnsureTopLineValidForActiveBuffer() {
     // the new buffer's own point (e.g. switching between two similarly
     // long buffers), it's left exactly where it was instead of always
     // jumping back to the top.
+    ScrollToShowPoint();
+}
+
+void Viewport::SeatLoadedTopLine(const text::Buffer& buffer) {
+    const auto place = editor::StoredFilePlaceFor(buffer);
+    if (!place || !place->topLine) {
+        return;
+    }
+    // Something that moved point once the content landed, a jump to a line,
+    // owns the view instead.
+    const std::size_t pointLine = buffer.Content().ByteOffsetToLine(buffer.Point());
+    if (pointLine != place->line) {
+        return;
+    }
+    if (host_.size().height > 0) {
+        topLine_ = std::min(*place->topLine, MaxTopLine());
+    }
+    else {
+        topLine_               = std::min(*place->topLine, pointLine);
+        topLineNeedsSizeClamp_ = true;
+    }
     ScrollToShowPoint();
 }
 
@@ -683,6 +709,7 @@ void Viewport::RestoreInitialPlace() {
     // away any scroll a wheel or scroll-bar event made before that paint -- a
     // real regression this exact seeding once introduced, caught by a test.
     topLineValidatedBuffer_ = text::BufferIdentity(context_.activeBuffer.Get());
+    topLineAwaitsLoad_      = context_.activeBuffer.Get().IsLoading() && context_.activeBuffer.Get().Remote();
 
     // Clamped by the line point is on rather than MaxTopLine(), which is
     // meaningless here: the widget is still 0x0 at construction. A consistently

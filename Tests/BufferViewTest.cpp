@@ -49,6 +49,7 @@
 #include "Editor/PromptHistory.h"
 #include "Editor/Protocol/LineTransport.h"
 #include "Editor/Register.h"
+#include "Editor/Remote/RemoteBuffer.h"
 #include "Editor/RenameReviewSettings.h"
 #include "Editor/RulerSettings.h"
 #include "Editor/ScratchPad.h"
@@ -5072,6 +5073,45 @@ TEST_CASE("A stored place past a shrunken file's end still shows content, not bl
         }
     }
     CHECK(anyContent);
+
+    ned::editor::ResetFilePlacesForTesting();
+}
+
+TEST_CASE("A remote buffer's stored topLine lands once its content does", "[BufferView][Session][Remote]") {
+    ned::editor::ResetFilePlacesForTesting();
+    const ned::text::RemoteFile file{.destination = "host", .path = "/srv/a.txt"};
+    std::string                 content;
+    for (int i = 0; i < 100; ++i) {
+        content += "line " + std::to_string(i) + "\n";
+    }
+    {
+        ned::text::Buffer before = ned::text::Buffer::FromRemoteContents(file, ned::text::FileContents{.bytes = content, .timestamp = std::nullopt});
+        before.SetPoint(before.ByteOffsetForLineAndColumn(50, 0));
+        ned::editor::RecordFilePlace(before, 48, 4);
+    }
+
+    auto loadAndPaint = [&](const std::function<void(ned::text::Buffer&)>& afterLoad) {
+        Fixture            fixture;
+        ned::text::Buffer& placeholder = fixture.bufferList.AddRemotePlaceholder(file);
+        fixture.activeBuffer.Set(placeholder);
+        ned::ui::BufferView view = fixture.View();
+        view.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+        ned::ui::Screen screen = ned::ui::Screen(40, 5);
+        ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 39, .y_min = 0, .y_max = 4});
+        view.Paint(canvas);
+        REQUIRE(view.TopLine() == 0);
+
+        REQUIRE_FALSE(ned::editor::remote::FinishRemoteLoad(placeholder, ned::text::FileContents{.bytes = content, .timestamp = std::nullopt}).has_value());
+        afterLoad(placeholder);
+        view.Paint(canvas);
+        return view.TopLine();
+    };
+
+    CHECK(loadAndPaint([](ned::text::Buffer&) {}) == 48);
+
+    // A jump made once the content landed owns the view.
+    const std::size_t jumped = loadAndPaint([](ned::text::Buffer& buffer) { buffer.SetPoint(buffer.ByteOffsetForLineAndColumn(10, 0)); });
+    CHECK(jumped <= 10);
 
     ned::editor::ResetFilePlacesForTesting();
 }
