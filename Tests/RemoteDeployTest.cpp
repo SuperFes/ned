@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -130,6 +131,34 @@ TEST_CASE("An agent is uploaded once per build, owner-only, and again on request
     REQUIRE(second.uploaded);
     REQUIRE(second.remotePath != first.remotePath);
     REQUIRE(Contents(second.remotePath) == Contents(local));
+    fs::remove_all(dir);
+}
+
+TEST_CASE("An upload prunes other builds no session has started in a while", "[Remote][Deploy]") {
+    const fs::path                      dir = FreshDir();
+    const ned::tests::ScopedEnvOverride data("XDG_DATA_HOME", (dir / "data").c_str());
+    const fs::path                      root = dir / "data" / "ned" / "agent";
+    WriteAgent(dir / "agents" / host::BuildArch() / "ned-agent", "echo new");
+    WriteAgent(root / "stale-x86_64" / "ned-agent", "echo stale");
+    WriteAgent(root / "recent-x86_64" / "ned-agent", "echo recent");
+    WriteAgent(root / "notes" / "keep", "not an agent");
+    const auto aged = fs::file_time_type::clock::now() - std::chrono::days(ned::editor::remote::kPruneDays + 5);
+    fs::last_write_time(root / "stale-x86_64", aged);
+    fs::last_write_time(root / "notes", aged);
+    fs::last_write_time(root / "recent-x86_64", fs::file_time_type::clock::now() - std::chrono::days(ned::editor::remote::kPruneDays - 5));
+
+    SshMaster master("host", SshOptions{.program = NED_FAKE_SSH}, dir / "m");
+    master.Start();
+    const DeployedAgent deployed = EnsureAgent(master, Only(dir / "agents"));
+    REQUIRE(deployed.uploaded);
+    CHECK(fs::exists(deployed.remotePath));
+    CHECK_FALSE(fs::exists(root / "stale-x86_64"));
+    CHECK(fs::exists(root / "recent-x86_64" / "ned-agent"));
+    // Not named <build>-<arch>, so not the editor's to remove.
+    CHECK(fs::exists(root / "notes" / "keep"));
+
+    // Pruning nothing still succeeds.
+    REQUIRE(EnsureAgent(master, Only(dir / "agents"), true).uploaded);
     fs::remove_all(dir);
 }
 

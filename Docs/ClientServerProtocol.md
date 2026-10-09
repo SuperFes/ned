@@ -116,7 +116,9 @@ hello  -> {protocol: {major, minor}, codecs: [str], window: uint}
   `<build>-<arch>` directories after a marker line that skips anything a login script
   printed. When the local agent's build isn't among them, it goes up on the stdin of one
   `sh -c` session, under a temporary name moved into place, so an interrupted upload never
-  leaves a partial agent. Local agents come from `libexec/ned/agent/<arch>/`
+  leaves a partial agent. Starting an agent touches its directory, and an upload removes
+  the other `<build>-<arch>` directories nothing has started from in 30 days; an editor
+  that still wants one uploads it again. Local agents come from `libexec/ned/agent/<arch>/`
   (`$NED_AGENT_DIR` overrides): `cmake --install build-agent-<arch> --component agent
   --prefix <prefix>` puts a static build there, the editor's build tree included.
 - `Remote/Connection.h` puts it together: master, an agent session (deploying when it finds

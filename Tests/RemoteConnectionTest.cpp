@@ -144,8 +144,13 @@ TEST_CASE("A host that already has the agent starts it in one session", "[Remote
     REQUIRE(ned::editor::remote::Connect(fake.Options()).agent.uploaded);
     REQUIRE(sessions() == 4);
 
+    // Starting it marks its directory in use, for a deploy's pruning.
+    const fs::path installed = fake.dir / "data" / "ned" / "agent" / (host::FileBuildId(fake.local) + "-" + host::BuildArch());
+    const auto     aged      = fs::file_time_type::clock::now() - std::chrono::days(60);
+    fs::last_write_time(installed, aged);
     const Handshake again = ned::editor::remote::Connect(fake.Options());
     REQUIRE(sessions() == 5);
+    CHECK(fs::last_write_time(installed) > aged + std::chrono::days(59));
     REQUIRE_FALSE(again.agent.uploaded);
     REQUIRE(again.agent.arch == host::BuildArch());
     REQUIRE(again.agent.build == host::FileBuildId(fake.local));
