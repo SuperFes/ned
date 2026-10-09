@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <random>
+
 #include "Text/LineDiff.h"
 
 using ned::text::DiffLine;
@@ -195,4 +197,42 @@ TEST_CASE("DiffLines reports two long unrelated texts as one hunk", "[LineDiff]"
     const auto hunks = ned::text::DiffLines(Views(a), Views(b));
     REQUIRE(hunks.size() == 1);
     REQUIRE(ApplyHunks(a, b, hunks) == b);
+}
+
+TEST_CASE("DiffLines finds a minimal edit script of maximal hunks for random input", "[LineDiff]") {
+    std::mt19937                       random(1234);
+    std::uniform_int_distribution<int> length(0, 40);
+    std::uniform_int_distribution<int> letter(0, 3);
+    for (int trial = 0; trial < 2000; ++trial) {
+        std::vector<std::string> a(static_cast<std::size_t>(length(random)));
+        std::vector<std::string> b(static_cast<std::size_t>(length(random)));
+        for (auto& line : a) {
+            line = std::string(1, static_cast<char>('a' + letter(random)));
+        }
+        for (auto& line : b) {
+            line = std::string(1, static_cast<char>('a' + letter(random)));
+        }
+
+        // Reference LCS length by dynamic programming.
+        std::vector<std::vector<std::size_t>> lcs(a.size() + 1, std::vector<std::size_t>(b.size() + 1, 0));
+        for (std::size_t i = a.size(); i-- > 0;) {
+            for (std::size_t j = b.size(); j-- > 0;) {
+                lcs[i][j] = a[i] == b[j] ? lcs[i + 1][j + 1] + 1 : std::max(lcs[i + 1][j], lcs[i][j + 1]);
+            }
+        }
+
+        const auto  hunks = DiffLines(Views(a), Views(b));
+        std::size_t edits = 0;
+        for (std::size_t h = 0; h < hunks.size(); ++h) {
+            edits += hunks[h].aCount + hunks[h].bCount;
+            if (h > 0) {
+                const LineDiffHunk& previous = hunks[h - 1];
+                const std::size_t   aGap     = hunks[h].aStart - (previous.aStart + previous.aCount);
+                REQUIRE(aGap > 0);
+                REQUIRE(aGap == hunks[h].bStart - (previous.bStart + previous.bCount));
+            }
+        }
+        REQUIRE(ApplyHunks(a, b, hunks) == b);
+        REQUIRE(edits == a.size() + b.size() - 2 * lcs[0][0]);
+    }
 }
