@@ -1571,7 +1571,8 @@ class Manager {
     // (diagnosticsBySource_) -- one server's publish must not erase what
     // another said about the same file.
     struct ProjectDiagnosticFile {
-        std::filesystem::path          path;
+        text::FileRef file; // a host's for a host's server
+
         std::vector<ProjectDiagnostic> diagnostics;
         // False once the file on disk stops matching what it was when the
         // server spoke -- see ProjectDiagnosticSlice::fileSize. A reader
@@ -1588,7 +1589,7 @@ class Manager {
     // tested for what it does with the data without also standing up a
     // fake server to deliver it -- the delivery path has its own end-to-end
     // coverage through a real publish frame in LspManagerTest.
-    void SetProjectDiagnosticsForTesting(const std::filesystem::path& path, const std::string& connectionKey,
+    void SetProjectDiagnosticsForTesting(const text::FileRef& file, const std::string& connectionKey,
                                          std::vector<ProjectDiagnostic> diagnostics);
 
   private:
@@ -1957,13 +1958,13 @@ class Manager {
     // entries: that is how a server says "fixed", and a file whose every
     // server has gone quiet must leave the store entirely rather than
     // lingering as an empty row.
-    void RecordProjectDiagnostics(const std::filesystem::path& path, const nlohmann::json& params,
+    void RecordProjectDiagnostics(const text::FileRef& file, const nlohmann::json& params,
                                   const std::string& serverKey, const std::string& connectionKey);
 
     // Drops every slice recorded for path -- called when a buffer opens for
     // it, since a resident buffer's own diagnostics supersede anything
     // recorded while it was closed, and the two must never both be reported.
-    void DropProjectDiagnostics(const std::filesystem::path& path);
+    void DropProjectDiagnostics(const text::FileRef& file);
 
     // embedded-language-documents follow-up: factored out of
     // HandlePublishDiagnostics so pull-diagnostics' own response handler

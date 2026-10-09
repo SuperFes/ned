@@ -437,3 +437,42 @@ TEST_CASE("A project-diagnostics file that cannot be read still lists", "[Buffer
 
     std::filesystem::remove_all(root);
 }
+
+TEST_CASE("The *diagnostics* buffer lists a host's files, open or not, read-only and by host:/path", "[BufferView][Diagnostics][Remote]") {
+    using ned::editor::lsp::Manager;
+    Fixture            fixture;
+    ned::ui::EventLoop eventLoop;
+    Manager            manager(fixture.bufferList, eventLoop);
+
+    const ned::text::RemoteFile unopened{.destination = "box", .path = "/srv/app/never.c"};
+    manager.SetProjectDiagnosticsForTesting(unopened, "c",
+                                            {Manager::ProjectDiagnostic{.start    = {.line = 2, .character = 4},
+                                                                        .end      = {.line = 2, .character = 5},
+                                                                        .severity = Buffer::Diagnostic::Severity::Error,
+                                                                        .message  = "on the host"}});
+    REQUIRE(manager.ProjectDiagnostics().size() == 1);
+    CHECK(manager.ProjectDiagnostics()[0].file == ned::text::FileRef(unopened));
+
+    Buffer& open = fixture.bufferList.AddRemotePlaceholder({.destination = "box", .path = "/srv/app/open.c"});
+    open.FinishLoad(ned::text::Rope("int y;\n"));
+    open.SetDiagnostics({Buffer::Diagnostic{.startByte = 4, .endByte = 5, .severity = Buffer::Diagnostic::Severity::Warning, .message = "open there"}});
+
+    BufferView view = fixture.View();
+    view.SetLspManager(&manager);
+    view.RequestDiagnosticsBufferForTesting();
+
+    Buffer* results = fixture.bufferList.Find("*diagnostics*");
+    REQUIRE(results != nullptr);
+    const std::string text = results->Text();
+    CHECK(text.find("box:/srv/app/never.c:3") != std::string::npos);
+    CHECK(text.find("box:/srv/app/open.c:1") != std::string::npos);
+    CHECK(text.find("int y;") != std::string::npos);
+    // Neither is editable through the composite.
+    CHECK(results->ExcerptRanges().empty());
+    REQUIRE(MultibufferIndexFor(*results) != nullptr);
+    CHECK(MultibufferIndexFor(*results)->Spans().size() == 2);
+
+    // A buffer opened on the host's file takes over from the record.
+    fixture.bufferList.AddRemotePlaceholder(unopened);
+    CHECK(manager.ProjectDiagnostics().empty());
+}

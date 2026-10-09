@@ -274,7 +274,9 @@ name there, found by `fs/project-root`, and only on a host already connected: sy
 buffer never opens a connection. It is sent no `processId`, since it can't see this
 process. Its URIs are host paths, so what it names comes back as a file on that host
 (`Text/RemoteFile.h`'s `FileRef`): a jump opens it there, references list `host:/path`
-lines, and an edit opens the host's files it touches before changing them, including a
+lines, the problem list (`*diagnostics*`) names the host's files by `host:/path`, read-only
+and with no line text for one not open here, and an edit opens the host's files it
+touches before changing them, including a
 server-sent `workspace/applyEdit`, which is answered once the edit lands. An edit's file
 creates, renames and deletes on a host run through `fs` in order ahead of its text edits
 (`mkdir` and an exclusive write for a create), and a buffer holding a moved file follows

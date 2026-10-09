@@ -66,8 +66,6 @@ and sync on save; don't build a remote-authoritative buffer.
       `qemu-aarch64`.
 
 **Language servers on a host**
-- [ ] The problem list (project diagnostics) leaves out a host's unopened files: its
-      entries are local paths.
 - [ ] A host's `.ned/settings.json` (initialization options, workspace configuration).
 - [ ] The prose checker on remote buffers.
 - [ ] `project-find-references` with no server running searches the local project root
