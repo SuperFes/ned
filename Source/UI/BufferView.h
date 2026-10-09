@@ -772,7 +772,9 @@ class BufferView : public Widget {
     // ApplyResolvedWorkspaceEdit helper) and returns whether it actually
     // applied, which the caller reports back to the server as the spec's
     // own {applied: bool} response.
-    [[nodiscard]] bool ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label);
+    // done runs once the edit has landed or failed, which for a host's
+    // files may be after they're read.
+    void ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label, std::function<void(bool applied)> done);
     // ApplyServerPushedWorkspaceEdit for an edit an ACP agent requested.
     [[nodiscard]] bool ApplyAgentWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label);
 
@@ -2098,6 +2100,8 @@ class BufferView : public Widget {
     // modal Select/Confirm input modes already block ordinary
     // typing/editing for the whole exchange) and applies them.
     void ApplyCodeAction(const editor::lsp::CodeAction& action);
+    // A code action's command, after its edit (if any) applied.
+    void RunCodeActionCommand(const editor::lsp::CodeAction& action);
     // code-actions-resolve follow-up (factored out for quick-fix). Sends
     // codeAction/resolve first when the action arrived without its edit
     // (action.resolvable), applying from inside that async callback;
@@ -2620,13 +2624,25 @@ class BufferView : public Widget {
     // existing "saves are always user-initiated" convention.
     //
     // A host's file is edited only in a buffer already holding it, and
-    // creating, renaming or deleting one is refused.
+    // creating, renaming or deleting one is left to PrepareRemoteEdit.
     bool ApplyResolvedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, std::string description);
 
+    // An edit's work on hosts, done before it applies: each host file it
+    // creates, renames or deletes goes through fs, in order, then every host
+    // file it edits is opened. Returns the edit when there was nothing to do
+    // there. Otherwise nullopt, and then runs later with the edit left to
+    // apply, or with nullopt once a step failed and was reported.
+    using PreparedEdit = std::optional<editor::lsp::Manager::ResolvedRename>;
+    PreparedEdit PrepareRemoteEdit(const editor::lsp::Manager::ResolvedRename& edit, std::function<void(PreparedEdit prepared)> then);
+    struct HostEditRun;
+    // The next host file operation of run, or its files opened once none is left.
+    void RunHostFileOps(std::shared_ptr<HostEditRun> run);
+    void RunHostFileOp(const std::shared_ptr<HostEditRun>& run, std::size_t index, bool exists);
+
     // Whether every host's file edit touches is open here. If not, opens
-    // them and runs then once all have loaded, or reports the one that
-    // couldn't be.
-    bool EnsureRemoteFilesOpen(const editor::lsp::Manager::ResolvedRename& edit, std::function<void()> then);
+    // them and runs then once all have loaded, or with false after
+    // reporting the one that couldn't be.
+    bool EnsureRemoteFilesOpen(const editor::lsp::Manager::ResolvedRename& edit, std::function<void(bool opened)> then);
 
     // project-undo follow-up: applies one WorkspaceTextEdit list per buffer
     // (via the file-local ApplyWorkspaceTextEdits helper, one undo group

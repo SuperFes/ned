@@ -66,10 +66,6 @@ and sync on save; don't build a remote-authoritative buffer.
       `qemu-aarch64`.
 
 **Language servers on a host**
-- [ ] A host server's edit that creates, renames or deletes a file is refused; run it
-      through `fs` (`mkdir`, `rename`, `remove`, a write for a create).
-- [ ] `workspace/applyEdit` from a host's server only edits files already open here,
-      since its answer can't wait for a load; it answers "not applied" otherwise.
 - [ ] Watched-file notifications for a host's server, from the host's `watch`. Local
       changes no longer reach it.
 - [ ] The problem list (project diagnostics) leaves out a host's unopened files: its

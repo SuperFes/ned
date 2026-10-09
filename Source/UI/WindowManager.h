@@ -676,10 +676,10 @@ class WindowManager {
     // to Manager::SetApplyEditHandler (see SetLspManager below) so a
     // server-pushed workspace/applyEdit request applies against the focused
     // pane's own BufferView, or the first leaf while a panel holds focus.
-    // Returns false (never applied) when there is no pane at all, the
+    // Answers false (never applied) when there is no pane at all, the
     // honest "nowhere to route this" answer the spec's own {applied: bool}
     // response expects.
-    [[nodiscard]] bool ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label);
+    void ApplyServerPushedWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label, std::function<void(bool applied)> done);
     // The same apply for an edit an ACP agent asked for through an MCP tool.
     [[nodiscard]] bool ApplyAgentWorkspaceEdit(const editor::lsp::Manager::ResolvedRename& edit, const std::string& label);
 

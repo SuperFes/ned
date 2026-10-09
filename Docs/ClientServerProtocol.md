@@ -274,10 +274,11 @@ name there, found by `fs/project-root`, and only on a host already connected: sy
 buffer never opens a connection. It is sent no `processId`, since it can't see this
 process. Its URIs are host paths, so what it names comes back as a file on that host
 (`Text/RemoteFile.h`'s `FileRef`): a jump opens it there, references list `host:/path`
-lines, and an edit opens the host's files it touches before changing them. A server-sent
-`workspace/applyEdit` edits only those already open, and file creates, renames and
-deletes on a host are refused. Local file operations and watched-file changes reach only
-local servers.
+lines, and an edit opens the host's files it touches before changing them, including a
+server-sent `workspace/applyEdit`, which is answered once the edit lands. An edit's file
+creates, renames and deletes on a host run through `fs` in order ahead of its text edits
+(`mkdir` and an exclusive write for a create), and a buffer holding a moved file follows
+it. Local file operations and watched-file changes reach only local servers.
 
 **Debug adapters.** Starting or attaching from a remote buffer runs its language's adapter
 on that buffer's host, in the project root found there, connecting first if need be.

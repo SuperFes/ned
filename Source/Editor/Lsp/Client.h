@@ -38,6 +38,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Editor/Lifetime.h"
 #include "Editor/ProcessTimeouts.h"
 #include "Editor/Protocol/FramedConnection.h"
 #include "UI/EventLoop.h"
@@ -93,6 +94,9 @@ using NotificationHandler = std::function<void(const Json& params)>;
 // the first server->client request any capability this client declares can
 // prompt, and its result is simply null).
 using RequestHandler = std::function<Json(const Json& params)>;
+// A server request answered later: respond sends the result, at most once,
+// on the main thread, and does nothing once the Client is gone.
+using DeferredRequestHandler = std::function<void(const Json& params, std::function<void(Json result)> respond)>;
 
 class Client {
   public:
@@ -179,6 +183,9 @@ class Client {
     // previously it was silently ignored, defensible only while no declared
     // capability could ever prompt one.
     void SetRequestHandler(std::string method, RequestHandler handler);
+    // The same, for a request whose answer has to wait (DeferredRequestHandler).
+    // Replaces a RequestHandler for method, and is replaced by one.
+    void SetDeferredRequestHandler(std::string method, DeferredRequestHandler handler);
 
     // error-visibility follow-up. Invoked exactly once, on the main thread,
     // the moment the connection stops running for any reason -- clean EOF
@@ -239,7 +246,8 @@ class Client {
     int                                                  nextRequestId_ = 1;
     std::unordered_map<int, PendingRequest>              pending_;
     std::unordered_map<std::string, NotificationHandler> notificationHandlers_;
-    std::unordered_map<std::string, RequestHandler>      requestHandlers_;
+    std::unordered_map<std::string, RequestHandler>         requestHandlers_;
+    std::unordered_map<std::string, DeferredRequestHandler> deferredRequestHandlers_;
     std::function<void(std::string reason)>              onDisconnected_; // see SetOnDisconnected
     std::string                                          activityName_{kLspActivityName};
 
@@ -250,6 +258,8 @@ class Client {
     // opens, replayed in order once it does.
     bool                               handshakeComplete_ = true;
     std::vector<std::function<void()>> pendingUntilHandshake_;
+
+    LifetimeGuard lifetime_; // last, so a deferred respond expires first
 };
 
 } // namespace ned::editor::lsp

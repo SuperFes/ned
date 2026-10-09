@@ -150,10 +150,16 @@ TEST_CASE("lsp-rename on a remote buffer edits the host's files, opening the one
     CHECK_THAT(fixture.statusMessage, Catch::Matchers::StartsWith("Renamed"));
 }
 
-TEST_CASE("lsp-rename refuses to create a file on a remote buffer's host", "[BufferView][Remote][Lsp][HostAgent]") {
+TEST_CASE("lsp-rename creates and moves a host's files through it, in order, then edits them", "[BufferView][Remote][Lsp][HostAgent]") {
     Fixture fixture;
     REQUIRE(fixture.OpenFile());
-    fixture.activeBuffer.Get().SetPoint(4);
+    text::Buffer& file = fixture.activeBuffer.Get();
+    file.SetPoint(4);
+    // b.c is open here, so its buffer follows the move.
+    fixture.view.VisitRemoteFile({.destination = "host", .path = fixture.server.other});
+    REQUIRE(PumpUntil(fixture.loop, [&] { return fixture.Showing(fixture.server.other); }));
+    text::Buffer& moved = fixture.activeBuffer.Get();
+    fixture.activeBuffer.Set(file);
 
     fixture.Command("lsp-rename");
     REQUIRE(PumpUntil(fixture.loop, [&] { return fixture.statusMessage.starts_with("New name: "); }));
@@ -162,7 +168,42 @@ TEST_CASE("lsp-rename refuses to create a file on a remote buffer's host", "[Buf
     }
     fixture.view.OnEvent(test::Return());
 
-    REQUIRE(PumpUntil(fixture.loop, [&] { return fixture.statusMessage.find("isn't supported") != std::string::npos; }));
-    CHECK(fixture.activeBuffer.Get().Text() == "int x;\n");
-    CHECK_FALSE(std::filesystem::exists(fixture.server.pkg / "src" / "c.c"));
+    const std::filesystem::path created = fixture.server.pkg / "src" / "c.c";
+    const std::filesystem::path renamed = fixture.server.pkg / "src" / "d.c";
+    text::Buffer*               made    = nullptr;
+    REQUIRE(PumpUntil(fixture.loop, [&] {
+        made = fixture.bufferList.FindByRemote({.destination = "host", .path = created});
+        return made != nullptr && !made->IsLoading() && made->Text() == "int moved;\n";
+    }));
+    CHECK(std::filesystem::exists(created));
+    CHECK_FALSE(std::filesystem::exists(fixture.server.other));
+    CHECK(std::filesystem::exists(renamed));
+    CHECK(moved.Remote() == text::RemoteFile{.destination = "host", .path = renamed});
+    CHECK(moved.Name() == "host:d.c");
+    CHECK(file.Text() == "int moved;\n");
+    CHECK_THAT(fixture.statusMessage, Catch::Matchers::StartsWith("Renamed"));
+}
+
+TEST_CASE("A host server's workspace/applyEdit opens the host's files it edits, then answers", "[BufferView][Remote][Lsp][HostAgent]") {
+    Fixture fixture;
+    fixture.lsp.SetApplyEditHandler(
+        [&](const ned::editor::lsp::Manager::ResolvedRename& edit, const std::string& label, std::function<void(bool applied)> done) {
+            fixture.view.ApplyServerPushedWorkspaceEdit(edit, label, std::move(done));
+        });
+    REQUIRE(fixture.OpenFile());
+
+    fixture.lsp.ExecuteCommand(fixture.activeBuffer.Get(), ned::tests::kRemoteLspLanguage, "push", nlohmann::json::array(), [](bool) {});
+    text::Buffer* other = nullptr;
+    REQUIRE(PumpUntil(fixture.loop, [&] {
+        other = fixture.bufferList.FindByRemote({.destination = "host", .path = fixture.server.other});
+        return other != nullptr && !other->IsLoading() && other->Text() == "// b\nint pushed;\n";
+    }));
+    REQUIRE(PumpUntil(fixture.loop, [&] {
+        for (const nlohmann::json& message : fixture.server.Messages()) {
+            if (message.value("id", nlohmann::json()) == "pushed" && message.contains("result")) {
+                return message["result"]["applied"] == true;
+            }
+        }
+        return false;
+    }));
 }

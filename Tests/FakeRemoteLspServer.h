@@ -27,8 +27,10 @@ inline constexpr const char* kRemoteLspLanguage = "remote-lsp-test";
 // object a line. Reports a diagnostic on each document opened, and answers
 // initialize, hover, definition (b.c, line 1, column 4), references
 // (there and a.c, line 0, column 4), a workspace symbol y (at the
-// definition), switchSourceHeader (b.c) and rename (x in a.c and y in b.c,
-// or creating c.c when the new name is "moved"). Anything else it is asked
+// definition), switchSourceHeader (b.c) and rename (x in a.c and y in b.c;
+// or, when the new name is "moved", creating c.c and writing it, moving b.c
+// to d.c and renaming x). workspace/executeCommand has it ask the editor to
+// apply an edit to y in b.c, as request "pushed". Anything else it is asked
 // gets null.
 inline constexpr const char* kRemoteLspServer = R"(import json, os, sys
 log = open(sys.argv[1], "a")
@@ -52,7 +54,7 @@ while True:
     message = json.loads(inp.read(length))
     log.write(json.dumps(message) + "\n")
     log.flush()
-    method, reply = message.get("method"), None
+    method, reply, ask = message.get("method"), None, None
     if method == "initialize":
         reply = {"id": message["id"], "result": {"capabilities": {"textDocumentSync": 1, "hoverProvider": True}}}
     elif method == "textDocument/hover":
@@ -68,7 +70,16 @@ while True:
     elif method == "textDocument/prepareRename":
         reply = {"id": message["id"], "result": {"defaultBehavior": True}}
     elif method == "textDocument/rename" and message["params"]["newName"] == "moved":
-        reply = {"id": message["id"], "result": {"documentChanges": [{"kind": "create", "uri": here + "c.c"}]}}
+        start = {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}
+        reply = {"id": message["id"], "result": {"documentChanges": [
+            {"kind": "create", "uri": here + "c.c"},
+            {"textDocument": {"uri": here + "c.c", "version": None}, "edits": [{"range": start, "newText": "int moved;\n"}]},
+            {"kind": "rename", "oldUri": here + "b.c", "newUri": here + "d.c"},
+            {"textDocument": {"uri": here + "a.c", "version": None}, "edits": [{"range": at("a.c", 0)["range"], "newText": "moved"}]}]}}
+    elif method == "workspace/executeCommand":
+        reply = {"id": message["id"], "result": None}
+        ask = {"id": "pushed", "method": "workspace/applyEdit", "params": {"label": "push", "edit": {"changes": {
+            here + "b.c": [{"range": at("b.c", 1)["range"], "newText": "pushed"}]}}}}
     elif method == "textDocument/rename":
         name = message["params"]["newName"]
         reply = {"id": message["id"], "result": {"changes": {
@@ -80,10 +91,11 @@ while True:
         uri = message["params"]["textDocument"]["uri"]
         reply = {"method": "textDocument/publishDiagnostics", "params": {"uri": uri, "diagnostics": [
             {"range": {"start": {"line": 0, "character": 4}, "end": {"line": 0, "character": 5}}, "severity": 1, "message": "seen on the host"}]}}
-    if reply:
-        body = json.dumps(dict(jsonrpc="2.0", **reply)).encode()
-        out.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
-        out.flush()
+    for sent in (reply, ask):
+        if sent:
+            body = json.dumps(dict(jsonrpc="2.0", **sent)).encode()
+            out.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+            out.flush()
 )";
 
 // dir/project/pkg is the language's root, holding src/a.c ("int x;\n") and

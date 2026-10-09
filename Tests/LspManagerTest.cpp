@@ -3435,10 +3435,10 @@ TEST_CASE("Manager routes workspace/applyEdit through the wired handler, resolve
 
     std::optional<Manager::ResolvedRename> gotEdit;
     std::string                               gotLabel;
-    manager.SetApplyEditHandler([&](const Manager::ResolvedRename& edit, const std::string& label) {
+    manager.SetApplyEditHandler([&](const Manager::ResolvedRename& edit, const std::string& label, std::function<void(bool)> done) {
         gotEdit  = edit;
         gotLabel = label;
-        return true;
+        done(true);
     });
 
     Client* client = nullptr;
@@ -3469,7 +3469,7 @@ TEST_CASE("Manager answers workspace/applyEdit with applied:false for an unresol
     BufferList         bufferList;
     ned::ui::EventLoop eventLoop;
     Manager         manager(bufferList, eventLoop);
-    manager.SetApplyEditHandler([](const Manager::ResolvedRename&, const std::string&) { return true; });
+    manager.SetApplyEditHandler([](const Manager::ResolvedRename&, const std::string&, std::function<void(bool)> done) { done(true); });
 
     Client* client = nullptr;
     FakeServer server = FakeServer::Create(manager, "test-lang", eventLoop, client);

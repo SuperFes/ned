@@ -574,8 +574,7 @@ class Manager {
     // WorkspaceEdit at the client unprompted (e.g. in response to a
     // workspace/executeCommand the client itself just sent), which per spec
     // the client must answer with {applied: bool}. Parsing/resolving the
-    // pushed edit stays here (Client::RequestHandler is synchronous-only,
-    // and the parse/resolve step already is), but actually applying it needs
+    // pushed edit stays here, but actually applying it needs
     // real buffer mutation plus project-undo bookkeeping that only
     // Source/UI/'s BufferView owns -- applyEditHandler, set via
     // SetApplyEditHandler, is the same "Editor/ stays UI-free, hand the UI
@@ -586,8 +585,10 @@ class Manager {
     // unsupported capability, rather than silently claiming success. label
     // is the server's own optional human-readable description of the edit
     // (WorkspaceEdit's sibling "label" field on the request, not on the edit
-    // itself), passed through for the handler's own status message.
-    using ApplyEditHandler = std::function<bool(const ResolvedRename& edit, const std::string& label)>;
+    // itself), passed through for the handler's own status message. The
+    // handler calls done once, when the edit has landed or failed; a host's
+    // files may have to be read first.
+    using ApplyEditHandler = std::function<void(const ResolvedRename& edit, const std::string& label, std::function<void(bool applied)> done)>;
     void SetApplyEditHandler(ApplyEditHandler handler) {
         applyEditHandler_ = std::move(handler);
     }
