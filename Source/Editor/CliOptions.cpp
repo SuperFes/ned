@@ -76,6 +76,11 @@ void BuildCli(CLI::App& app, CliArgs& args) {
         ->excludes(lspBrokerOpt)
         ->group(kStartupModesGroup);
     app.add_flag("--bless", args.bless, "With --test-language: rewrite each failing case's expected tree to what the grammar parses now");
+    app.add_flag("--protocol-dump", args.protocolDump,
+                 "Print each captured host-protocol stream given (or stdin) as one JSON message per line and exit -- "
+                 "for a byte stream recorded between the editor and a remote agent")
+        ->excludes(lspBrokerOpt)
+        ->group(kStartupModesGroup);
     app.add_flag("--force-binary", args.forceBinary,
                  "Open files that look binary anyway, without an interactive confirmation");
     app.add_flag("--no-restore", args.noRestore,

@@ -343,6 +343,7 @@ add_executable(ned_tests
             RemoteConnectionTest.cpp
             RemoteDeployTest.cpp
             RemoteFsTest.cpp
+            RemoteProtocolDumpTest.cpp
             RemotePlacementTest.cpp
             LspRemoteTest.cpp
             BufferViewRemoteLspTest.cpp

@@ -95,6 +95,12 @@ class FrameTransport {
 // sends.
 [[nodiscard]] std::string EncodeFrame(std::string_view payload, bool compress);
 
+// The whole frames at the front of bytes, each payload decompressed, as
+// ReadFrame reads them off a stream; an incomplete last frame stays in bytes.
+// Throws as ReadFrame does on a reserved flag, an oversized length or a
+// payload zstd rejects.
+[[nodiscard]] std::vector<std::string> TakeFrames(std::string& bytes);
+
 } // namespace ned::editor::protocol
 
 #endif // NED_EDITOR_PROTOCOL_FRAMETRANSPORT_H

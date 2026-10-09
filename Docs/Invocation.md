@@ -54,6 +54,10 @@ Turn a tree-sitter grammar repository (a git URL or a checkout) into a ned langu
 
 Run each given language package's corpus against its grammar and exit
 
+### `--protocol-dump`
+
+Print each captured host-protocol stream given (or stdin) as one JSON message per line and exit -- for a byte stream recorded between the editor and a remote agent
+
 ## Options
 
 ### `-h, --help`

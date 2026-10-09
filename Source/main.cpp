@@ -95,6 +95,7 @@
 #include "Editor/Remote/Askpass.h"
 #include "Editor/Remote/CommandLine.h"
 #include "Editor/Remote/Hosts.h"
+#include "Editor/Remote/ProtocolDump.h"
 #include "Editor/Repl/Config.h"
 #include "Editor/RustfmtConfig.h"
 #include "Editor/ScriptingSession.h"
@@ -3930,6 +3931,9 @@ auto main(int argc, char** argv) -> int {
 
     if (cli.compileLanguage) {
         return ned::editor::grammar::compile::RunCompileLanguage(cli.paths, cli.compileOutput, std::cout, std::cerr);
+    }
+    if (cli.protocolDump) {
+        return ned::editor::remote::RunProtocolDump(cli.paths, std::cout, std::cerr);
     }
     if (cli.importLanguage) {
         if (cli.paths.size() != 1) {

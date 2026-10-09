@@ -94,7 +94,6 @@ and sync on save; don't build a remote-authoritative buffer.
       `@path` links only those; it needs a project listing from the host.
 
 **Client/server protocol**, ordered by the design doc's staging section.
-- [ ] `ned --protocol-dump`: decode a captured byte stream to readable JSON.
 - [ ] Verify a remote debug session end to end (PHP/Xdebug, with the adapter running on
       the host through `proc`).
 

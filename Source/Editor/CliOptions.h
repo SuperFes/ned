@@ -29,6 +29,7 @@ struct CliArgs {
     bool                     format          = false;
     bool                     forceHuge       = false;
     bool                     compileLanguage = false;
+    bool                     protocolDump    = false;
     std::string              compileOutput;
     bool                     importLanguage = false;
     std::string              importName;
