@@ -358,6 +358,7 @@ add_executable(ned_tests
             RemoteKnownHostsTest.cpp
             RemoteAskpassTest.cpp
             RemoteSshTest.cpp
+            RemoteCommandLineTest.cpp
             AcpClientTest.cpp
             AcpConfigTest.cpp
             AcpManagerTest.cpp
