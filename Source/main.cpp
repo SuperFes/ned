@@ -1616,6 +1616,7 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     // runs; nothing connects until one is expanded.
     ned::ui::RemotePanel remotePanel(theme, remoteHosts);
     windowManager->SetRemotePanel(&remotePanel);
+    remotePanel.SetVcsRunner(&vcsRunner);
     remotePanel.Tree().SetDrawBorder(false);
     // server (U+F233).
     leftDock->AddPanel(U'\uF233', "Remote", remotePanel.Tree());

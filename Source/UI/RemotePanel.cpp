@@ -8,6 +8,7 @@
 #include "Editor/FileIcons.h"
 #include "Editor/Remote/Fs.h"
 #include "Editor/Remote/Location.h"
+#include "Editor/Vcs/HostRepo.h"
 #include "GlyphPaint.h"
 
 namespace ned::ui {
@@ -372,6 +373,8 @@ void RemotePanel::Settle(const std::string& topKey, const std::filesystem::path&
     if (selected) {
         SelectNearest(selected->first, selected->second);
     }
+    // A root just listed, or listed again after a change, may have changed status.
+    RefreshVcs(topKey);
 }
 
 void RemotePanel::HandleActivate(std::size_t index) {
@@ -515,8 +518,12 @@ void RemotePanel::PushModel() {
     }
 
     TreeViewModel model{.title = "Remote", .rows = {}, .selectedIndex = std::nullopt};
+    std::string   topKey;
     for (const Row& row : rows_) {
         const Node& node      = *row.node;
+        if (row.depth == 0) {
+            topKey = TopKey(node);
+        }
         const bool  directory = node.kind == editor::host::FileKind::Directory;
         TreeRow     out{.kindGlyph       = "",
                         .kindForeground  = std::nullopt,
@@ -542,6 +549,9 @@ void RemotePanel::PushModel() {
             const editor::Glyph icon = directory ? editor::FolderIcon(node.expanded) : editor::FileIcon(node.location.path);
             out.kindGlyph            = icon.text;
             out.kindForeground       = GlyphForeground(icon, theme_.background);
+            if (const auto vcs = vcsByTop_.find(topKey); vcs != vcsByTop_.end()) {
+                out.labelForeground = VcsStatusColor(LookupVcsStatus(vcs->second, node.location.path), theme_);
+            }
             if (node.link) {
                 out.label += " →";
             }
@@ -589,6 +599,50 @@ std::vector<text::RemoteFile> RemotePanel::ListedDirectories() const {
 
 void RemotePanel::SetOnListedChanged(std::function<void()> handler) {
     onListedChanged_ = std::move(handler);
+}
+
+void RemotePanel::SetVcsRunner(editor::vcs::Runner* runner) {
+    vcsRunner_ = runner;
+    for (const Node& top : tops_) {
+        RefreshVcs(TopKey(top));
+    }
+}
+
+void RemotePanel::RefreshVcs(const std::string& topKey) {
+    Node* top = FindTop(topKey);
+    if (vcsRunner_ == nullptr || top == nullptr || top->location.path.empty() || hosts_.Find(top->location.destination) == nullptr) {
+        return;
+    }
+    if (const auto pending = vcsPending_.find(topKey); pending != vcsPending_.end()) {
+        pending->second = true;
+        return;
+    }
+    vcsPending_[topKey] = false;
+    // Only ever called from this panel's own bound callbacks.
+    const auto settle = [this, topKey](std::optional<VcsStatusIndex> index) {
+        if (index) {
+            vcsByTop_[topKey] = std::move(*index);
+        }
+        else {
+            vcsByTop_.erase(topKey);
+        }
+        const bool again = vcsPending_[topKey];
+        vcsPending_.erase(topKey);
+        PushModel();
+        if (again) {
+            RefreshVcs(topKey);
+        }
+    };
+    editor::vcs::FindRepoOnHost(hosts_, top->location, lifetime_.Token(), [this, settle](std::expected<editor::vcs::Repo, std::string> repo) {
+        if (!repo) {
+            settle(std::nullopt);
+            return;
+        }
+        vcsRunner_->RequestStatus(
+            *repo,
+            lifetime_.Bind([settle, root = repo->root](const std::vector<editor::vcs::StatusEntry>& entries) { settle(BuildVcsStatusIndex(entries, root)); }),
+            lifetime_.Bind([settle](const std::string&) { settle(std::nullopt); }));
+    });
 }
 
 } // namespace ned::ui

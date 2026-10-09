@@ -154,7 +154,8 @@ hello  -> {protocol: {major, minor}, codecs: [str], window: uint}
   merges into its edits otherwise, or, with `ned/set-auto-revert` or
   `ned/set-auto-merge` off, marks it so the next save asks first. The panel relists a
   directory whose entries changed, and every directory it shows on a host whose burst
-  says it lost events.
+  says it lost events. Each root's rows are coloured by its repository's status on the
+  host, as the project sidebar colours a local tree.
 
 ## 5. Transports
 

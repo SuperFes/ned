@@ -18,6 +18,7 @@
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Tree.h"
 #include "Editor/Vcs/ConflictedFiles.h"
+#include "FileTreeVcs.h"
 #include "GlyphPaint.h"
 #include "KeyTranslation.h"
 #include "Text/BinaryDetect.h"
@@ -147,79 +148,6 @@ namespace {
         return filename.empty() ? root.string() : filename;
     }
 
-    // changed-files-highlight follow-up: builds the absolute-path -> status
-    // index RefreshVcsStatus stores. Every changed file gets its own
-    // classified status; every ancestor directory between it and root gets
-    // the max (most severe) status over all its changed descendants, the
-    // same "does this directory contain a change" propagation VS Code's own
-    // file-tree decorations do. Mirrors RevealPath's own ancestor-walk loop
-    // exactly (walk parent_path() up to root, bail out at the filesystem
-    // root if root is somehow never reached).
-    std::unordered_map<std::filesystem::path, RowStatus> BuildVcsStatusIndex(
-        const std::vector<editor::vcs::StatusEntry>& entries, const std::filesystem::path& root) {
-        std::unordered_map<std::filesystem::path, RowStatus> index;
-        auto                                                    merge = [&index](const std::filesystem::path& path, RowStatus status) {
-            auto [it, inserted] = index.try_emplace(path, status);
-            if (!inserted && status > it->second) {
-                it->second = status;
-            }
-        };
-        // Real conflicts (VCS-unmerged AND still carrying on-disk markers --
-        // see Editor/Vcs/ConflictedFiles.h's own header comment for why both
-        // halves matter) upgrade a path past whatever ClassifyPorcelainStatus
-        // alone would say, so a conflicted file -- and every ancestor
-        // directory down to root, via the same merge() rollup every other
-        // status already gets -- reads as the tree's most urgent state.
-        const std::set<std::filesystem::path> conflicted =
-            editor::vcs::DetectConflictedFiles(editor::vcs::PartitionVcsStatus(entries), root);
-        for (const editor::vcs::StatusEntry& entry : entries) {
-            const std::filesystem::path filePath = (root / entry.path).lexically_normal();
-            const RowStatus              status  = conflicted.contains(filePath) ? RowStatus::Conflicted
-                                                                                  : editor::vcs::ClassifyPorcelainStatus(entry.state);
-            merge(filePath, status);
-
-            std::filesystem::path dir = filePath.parent_path();
-            while (dir != root) {
-                const std::filesystem::path parent = dir.parent_path();
-                if (parent == dir) {
-                    break; // reached the filesystem root without finding root -- not under it
-                }
-                merge(dir, status);
-                dir = parent;
-            }
-        }
-        return index;
-    }
-
-    [[nodiscard]] RowStatus LookupVcsStatus(const std::unordered_map<std::filesystem::path, RowStatus>& index,
-                                               const std::filesystem::path&                                   path) {
-        const auto it = index.find(path.lexically_normal());
-        return it == index.end() ? RowStatus::None : it->second;
-    }
-
-    // Reuses the diff gutter's own three constants (BufferView.cpp) rather
-    // than adding new Theme fields -- foreground-only, same deliberate
-    // choice Theme.h's own diffAddedBackground/diffRemovedBackground comment
-    // documents (a background wash was tried for the live gutter and
-    // reverted for fighting syntax-highlight contrast). BrightCyan for
-    // Untracked is the one new addition, since nothing existing covers it.
-    [[nodiscard]] std::optional<Color> VcsStatusColor(RowStatus status, const Theme& theme) {
-        switch (status) {
-            case RowStatus::Conflicted:
-            case RowStatus::Deleted:
-                return theme.diagnosticError;
-            case RowStatus::Modified:
-                return theme.vcsModifiedForeground;
-            case RowStatus::Added:
-                return theme.successForeground;
-            case RowStatus::Untracked:
-                return theme.vcsUntrackedForeground;
-            case RowStatus::None:
-                return std::nullopt;
-        }
-        return std::nullopt;
-    }
-
     // Ancestor entries of entries[index], returned root-to-leaf (index 0 =
     // shallowest), found by scanning backward for the nearest preceding
     // entry at each successively shallower depth -- depth-first order
@@ -330,7 +258,10 @@ void ProjectSidebar::SetVcsRunner(editor::vcs::Runner* vcsRunner) {
 }
 
 void ProjectSidebar::DispatchVcsStatusForTesting(const std::vector<editor::vcs::StatusEntry>& entries) {
-    vcsStatus_ = BuildVcsStatusIndex(entries, editor::ProjectRoot());
+    {
+        const std::filesystem::path root = editor::ProjectRoot();
+        vcsStatus_                       = BuildVcsStatusIndex(entries, root, editor::vcs::DetectConflictedFiles(editor::vcs::PartitionVcsStatus(entries), root));
+    }
 }
 
 void ProjectSidebar::RefreshVcsStatus(const std::filesystem::path& root) {
@@ -344,7 +275,10 @@ void ProjectSidebar::RefreshVcsStatus(const std::filesystem::path& root) {
     // until the next tick's request actually completes. No VCS provider
     // resolving for root behaves the same way, which is exactly
     // "highlighting is only meaningful in a VCS-tracked project tree".
-    vcsRunner_->RequestStatus(editor::vcs::LocalRepo(), [this, root](std::vector<editor::vcs::StatusEntry> entries) { vcsStatus_ = BuildVcsStatusIndex(entries, root); }, [](const std::string&) {});
+    vcsRunner_->RequestStatus(editor::vcs::LocalRepo(), [this, root](std::vector<editor::vcs::StatusEntry> entries) {
+        // Real conflicts (VCS-unmerged AND still carrying on-disk markers --
+        // see Editor/Vcs/ConflictedFiles.h) read as the tree's most urgent state.
+        vcsStatus_ = BuildVcsStatusIndex(entries, root, editor::vcs::DetectConflictedFiles(editor::vcs::PartitionVcsStatus(entries), root)); }, [](const std::string&) {});
 }
 
 void ProjectSidebar::SetOnBufferClosed(std::function<void(text::Buffer&)> handler) {

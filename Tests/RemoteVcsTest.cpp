@@ -42,6 +42,7 @@
 #include "UI/ActiveBuffer.h"
 #include "UI/BufferView.h"
 #include "UI/EventLoop.h"
+#include "UI/RemotePanel.h"
 #include "UI/Theme.h"
 #include "UI/VcsPanel.h"
 
@@ -607,4 +608,43 @@ TEST_CASE("The VCS panel marks a host's conflicted file and resolves it in its r
     panel.ResolveAllConflicts(fixture.file, ned::editor::ConflictResolution::TakeOurs);
     CHECK(&activeBuffer.Get() == &conflicted);
     CHECK(conflicted.Text() == "line one MAIN\nline two\nline three\n");
+}
+
+TEST_CASE("The Remote panel colours a root's rows by its repository's status on the host", "[Remote][RemoteVcs][RemotePanel][HostAgent]") {
+    if (!GitAvailable()) {
+        SKIP("git is not installed");
+    }
+    Fixture fixture;
+    std::ofstream(fixture.repo / "new.txt") << "untracked\n";
+    vcs::Runner runner(fixture.loop);
+    runner.SetHosts(&fixture.hosts);
+    const ned::ui::Theme theme = ned::ui::DarkTheme();
+    ned::ui::RemotePanel panel(theme, fixture.hosts);
+    panel.SetVcsRunner(&runner);
+    panel.Tree().SetBox_(ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 9});
+    panel.Tree().SetDrawBorder(false);
+    panel.OpenRoot("host:" + fixture.repo.string());
+
+    // The foreground a row's label is painted in, once that row shows.
+    const auto labelColour = [&](const std::string& name) -> std::optional<ned::ui::Color> {
+        ned::ui::Screen screen{60, 10};
+        panel.Tree().Paint(ned::ui::Canvas(screen, panel.Tree().Box_()));
+        for (int y = 0; y < 10; ++y) {
+            std::string row;
+            for (int x = 0; x < 60; ++x) {
+                row += screen.PixelAt(x, y).character;
+            }
+            if (row.find(name) != std::string::npos) {
+                for (int x = 0; x < 59; ++x) {
+                    if (screen.PixelAt(x, y).character == std::string(1, name.front()) && screen.PixelAt(x + 1, y).character == std::string(1, name[1])) {
+                        return screen.PixelAt(x, y).foreground_color;
+                    }
+                }
+            }
+        }
+        return std::nullopt;
+    };
+    REQUIRE(PumpUntil(fixture.loop, [&] { return labelColour("file.txt") == theme.vcsModifiedForeground; }));
+    CHECK(labelColour("new.txt") == theme.vcsUntrackedForeground);
+    CHECK(labelColour("src") != theme.vcsModifiedForeground);
 }
