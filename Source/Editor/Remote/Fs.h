@@ -66,6 +66,11 @@ void Upload(Connection& connection, std::uint64_t handle, std::shared_ptr<const 
 // cancelled and fails.
 std::uint64_t ListDirectory(Connection& connection, const std::filesystem::path& path, std::size_t maxEntries,
                             std::function<void(FsResult<std::vector<host::DirEntry>>)> done);
+// Every file under a directory on the host that Project/Tree.h's walk
+// reaches, relative to it, unsorted; from fs version 6. More than
+// maxEntries is cancelled and fails.
+std::uint64_t ListTree(Connection& connection, const std::filesystem::path& path, std::size_t maxEntries,
+                       std::function<void(FsResult<std::vector<std::filesystem::path>>)> done);
 // path resolved on the host: made absolute against the agent's working
 // directory, the login's home, with its symlinks followed.
 std::uint64_t ResolvePath(Connection& connection, const std::filesystem::path& path, std::function<void(FsResult<std::filesystem::path>)> done);

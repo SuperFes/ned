@@ -107,6 +107,34 @@ TEST_CASE("A connected host's files are stat'd, read and written", "[Remote][Rem
     }
 }
 
+TEST_CASE("A connected host's tree lists its files as git sees them", "[Remote][RemoteFs][HostAgent]") {
+    const ned::tests::FakeRemoteHost fake;
+    PostQueue                        queue;
+    remote::Connection               connection(remote::Connect(fake.Options()), queue);
+    const fs::path                   dir = fake.dir / "tree";
+    fs::create_directories(dir / ".git");
+    fs::create_directories(dir / "src" / "deep");
+    fs::create_directories(dir / "build");
+    std::ofstream(dir / ".gitignore") << "build/\n";
+    std::ofstream(dir / "src" / "a.c");
+    std::ofstream(dir / "src" / "deep" / "b.c");
+    std::ofstream(dir / "build" / "out.o");
+    std::ofstream(dir / ".git" / "HEAD");
+
+    Answer<std::vector<fs::path>> listed;
+    remote::ListTree(connection, dir, 100, listed.Done());
+    REQUIRE(PumpUntil(queue, [&] { return listed.value.has_value(); }));
+    REQUIRE(listed.value->has_value());
+    std::vector<fs::path> files = **listed.value;
+    std::ranges::sort(files);
+    CHECK(files == std::vector<fs::path>{".gitignore", "src/a.c", "src/deep/b.c"});
+
+    Answer<std::vector<fs::path>> capped;
+    remote::ListTree(connection, dir, 2, capped.Done());
+    REQUIRE(PumpUntil(queue, [&] { return capped.value.has_value(); }));
+    CHECK_FALSE(capped.value->has_value());
+}
+
 TEST_CASE("A connected host's directories are listed and its paths resolved", "[Remote][RemoteFs][HostAgent]") {
     const ned::tests::FakeRemoteHost fake;
     PostQueue                        queue;

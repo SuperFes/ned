@@ -155,6 +155,7 @@ Dispatcher::Dispatcher(protocol::Endpoint& endpoint, PostQueue& postQueue, Ident
     endpoint_.Handle(std::string(kFsRead), lifetime_.Bind([this](Json params, Responder responder) { FsRead(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsWrite), lifetime_.Bind([this](Json params, Responder responder) { FsWrite(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsUpload), lifetime_.Bind([this](Json params, Responder responder) { FsUpload(params, std::move(responder)); }));
+    endpoint_.Handle(std::string(kFsTree), lifetime_.Bind([this](Json params, Responder responder) { FsTree(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsUploadDrop),
                      lifetime_.Bind([this](Json params, Responder responder) { FsUploadDrop(params, std::move(responder)); }));
     endpoint_.Handle(std::string(kFsReaddir), lifetime_.Bind([this](Json params, Responder responder) { FsReaddir(params, std::move(responder)); }));
@@ -456,6 +457,36 @@ void Dispatcher::FsReaddir(const Json& params, Responder responder) {
         catch (const FsError& e) {
             return [code = e.Code(), message = std::string(e.what())](Responder& answer) { answer.Error(code, message); };
         }
+    });
+}
+
+void Dispatcher::FsTree(const Json& params, Responder responder) {
+    std::filesystem::path path;
+    try {
+        path = PathParamsFromJson(params);
+    }
+    catch (const protocol::ProtocolError& e) {
+        responder.Error(error_code::kInvalidParams, e.what());
+        return;
+    }
+    RunOnWorker(std::move(responder), [path = std::move(path)]() -> WorkerAnswer {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(path, ec)) {
+            return [message = "no such directory: " + path.string()](Responder& answer) { answer.Error(fs_error::kNotFound, message); };
+        }
+        auto files = std::make_shared<std::vector<std::filesystem::path>>();
+        for (ProjectTreeEntry& entry : BuildProjectTree(path)) {
+            if (!entry.isDirectory) {
+                files->push_back(entry.path.lexically_relative(path));
+            }
+        }
+        return [files](Responder& answer) {
+            const std::span<const std::filesystem::path> all(*files);
+            for (std::size_t at = 0; at < all.size(); at += kFsReaddirChunk) {
+                answer.Chunk(RelativePathsToJson(all.subspan(at, std::min(kFsReaddirChunk, all.size() - at))));
+            }
+            answer.Result(Json::object());
+        };
     });
 }
 

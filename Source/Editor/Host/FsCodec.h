@@ -14,6 +14,11 @@
 //             numbers; a write or a search's live content takes it whole.
 //   fs/upload-drop params {handle}
 //             result {}
+//   fs/tree   params {path}, a directory
+//             chunk  [relative path], at most kFsReaddirChunk each
+//             result {}
+//             Every file under it Project/Tree.h's walk reaches: no
+//             dot-directories, nothing git ignores.
 //   fs/readdir params {path}
 //             chunk  [entry], at most kFsReaddirChunk each
 //             result {}
@@ -67,6 +72,7 @@ inline constexpr std::string_view kFsRename   = "fs/rename";
 inline constexpr std::string_view kFsRemove   = "fs/remove";
 inline constexpr std::string_view kFsProjectRoot = "fs/project-root";
 
+inline constexpr std::string_view kFsTree       = "fs/tree";
 inline constexpr std::string_view kFsUpload     = "fs/upload";
 inline constexpr std::string_view kFsUploadDrop = "fs/upload-drop";
 
@@ -155,6 +161,11 @@ struct FsUploadRequest {
 
 [[nodiscard]] nlohmann::json        DirEntriesToJson(std::span<const DirEntry> entries);
 [[nodiscard]] std::vector<DirEntry> DirEntriesFromJson(const nlohmann::json& json);
+
+// fs/tree's chunk: paths relative to the tree's root, as bytes.
+[[nodiscard]] nlohmann::json RelativePathsToJson(std::span<const std::filesystem::path> paths);
+// Throws ProtocolError for an absolute path or one climbing out with "..".
+[[nodiscard]] std::vector<std::filesystem::path> RelativePathsFromJson(const nlohmann::json& json);
 
 // fs/realpath's params, whose path may be relative; empty means ".".
 [[nodiscard]] std::filesystem::path RealpathParamsFromJson(const nlohmann::json& json);
