@@ -42,11 +42,10 @@ struct LineDiffHunk {
     bool operator==(const LineDiffHunk&) const = default;
 };
 
-// Trims a common prefix/suffix of matching lines, then an LCS
-// dynamic-programming backtrack over the remaining core to extract a minimal
-// hunk list -- a hunk is a maximal run of non-matching lines. O(m*n) over the
-// trimmed core; fine for the tool-call/permission-prompt-sized diffs this is
-// built for, not intended for whole-repository-scale input.
+// A minimal hunk list (Myers' shortest edit script, linear space) -- a hunk
+// is a maximal run of non-matching lines. O((m + n) * D) time for an edit
+// distance of D; texts too unrelated to finish within a fixed work budget
+// report their differing core as one hunk.
 [[nodiscard]] std::vector<LineDiffHunk> DiffLines(const std::vector<std::string_view>& a, const std::vector<std::string_view>& b);
 
 // A rendered unified-diff-style line, trailing '\n' already stripped (each

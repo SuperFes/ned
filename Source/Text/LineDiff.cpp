@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <optional>
 #include <utility>
 
 namespace ned::text {
@@ -23,160 +24,150 @@ std::vector<std::string_view> SplitLines(std::string_view text) {
 
 namespace {
 
-    // Myers' greedy shortest-edit search over the cores a[prefix, prefix+m)
-    // and b[prefix, prefix+n), keeping each step's diagonal frontier for the
-    // backtrack -- O(D^2) memory for an edit distance of D. An edit distance
-    // past kMaxEditDistance (two unrelated texts) reports the whole core as
-    // one hunk instead.
-    std::vector<LineDiffHunk> MyersHunks(const std::vector<std::string_view>& a, const std::vector<std::string_view>& b, std::size_t prefix,
-                                         std::size_t m, std::size_t n) {
-        constexpr std::ptrdiff_t kMaxEditDistance = 2000;
-        const std::ptrdiff_t     aLength          = static_cast<std::ptrdiff_t>(m);
-        const std::ptrdiff_t     bLength          = static_cast<std::ptrdiff_t>(n);
-        const std::ptrdiff_t     limit            = std::min(aLength + bLength, kMaxEditDistance);
-        const std::ptrdiff_t     offset           = aLength + bLength + 1;
-        auto                     same             = [&](std::ptrdiff_t x, std::ptrdiff_t y) {
-            return a[prefix + static_cast<std::size_t>(x)] == b[prefix + static_cast<std::size_t>(y)];
-        };
+    // Linear-space Myers (1986, section 4b): search forward from the start
+    // and backward from the end of a range at once until the two frontiers
+    // overlap, split the range there, and recurse on both halves. O(N + M)
+    // memory and O((N + M) * D) time for an edit distance of D.
+    class MyersDiff {
+      public:
+        MyersDiff(const std::vector<std::string_view>& a, const std::vector<std::string_view>& b, std::ptrdiff_t halfLimit) : a_(a), b_(b), halfLimit_(halfLimit) {
+        }
 
-        std::vector<std::ptrdiff_t>              frontier(static_cast<std::size_t>(2 * offset + 1), 0);
-        std::vector<std::vector<std::ptrdiff_t>> trace; // trace[d][k + d] = furthest x on diagonal k after d edits
-        std::ptrdiff_t                           distance = -1;
-        for (std::ptrdiff_t d = 0; d <= limit && distance < 0; ++d) {
-            std::vector<std::ptrdiff_t> step(static_cast<std::size_t>(2 * d + 1), 0);
-            for (std::ptrdiff_t k = -d; k <= d; k += 2) {
-                const bool     down = k == -d || (k != d && frontier[offset + k - 1] < frontier[offset + k + 1]);
-                std::ptrdiff_t x    = down ? frontier[offset + k + 1] : frontier[offset + k - 1] + 1;
-                std::ptrdiff_t y    = x - k;
-                while (x < aLength && y < bLength && same(x, y)) {
-                    ++x;
-                    ++y;
-                }
-                frontier[offset + k] = x;
-                step[k + d]          = x;
-                if (x >= aLength && y >= bLength) {
-                    distance = d;
+        std::vector<LineDiffHunk> Run() && {
+            Compare(0, static_cast<std::ptrdiff_t>(a_.size()), 0, static_cast<std::ptrdiff_t>(b_.size()));
+            return std::move(hunks_);
+        }
+
+      private:
+        void Compare(std::ptrdiff_t a0, std::ptrdiff_t a1, std::ptrdiff_t b0, std::ptrdiff_t b1) {
+            while (a0 < a1 && b0 < b1 && Same(a0, b0)) {
+                ++a0;
+                ++b0;
+            }
+            while (a0 < a1 && b0 < b1 && Same(a1 - 1, b1 - 1)) {
+                --a1;
+                --b1;
+            }
+            if (a0 < a1 && b0 < b1) {
+                const std::optional<std::pair<std::ptrdiff_t, std::ptrdiff_t>> split = MiddleSnake(a0, a1, b0, b1);
+                // A split on either corner would recurse on the same range.
+                if (split && !(split->first == a0 && split->second == b0) && !(split->first == a1 && split->second == b1)) {
+                    Compare(a0, split->first, b0, split->second);
+                    Compare(split->first, a1, split->second, b1);
+                    return;
                 }
             }
-            trace.push_back(std::move(step));
-        }
-        if (distance < 0) {
-            return {LineDiffHunk{prefix, m, prefix, n}};
+            Emit(a0, a1, b0, b1);
         }
 
-        // Walk back from the end, collecting the matched pairs of each snake.
-        std::vector<std::pair<std::ptrdiff_t, std::ptrdiff_t>> matches;
-        std::ptrdiff_t                                         x = aLength;
-        std::ptrdiff_t                                         y = bLength;
-        for (std::ptrdiff_t d = distance; d > 0; --d) {
-            const std::vector<std::ptrdiff_t>& previous = trace[static_cast<std::size_t>(d - 1)];
-            const std::ptrdiff_t               k        = x - y;
-            auto                               at       = [&](std::ptrdiff_t diagonal) { return previous[diagonal + d - 1]; };
-            const bool                         down     = k == -d || (k != d && at(k - 1) < at(k + 1));
-            const std::ptrdiff_t               fromK    = down ? k + 1 : k - 1;
-            const std::ptrdiff_t               fromX    = at(fromK);
-            const std::ptrdiff_t               fromY    = fromX - fromK;
-            const std::ptrdiff_t               snakeX   = down ? fromX : fromX + 1;
-            const std::ptrdiff_t               snakeY   = down ? fromY + 1 : fromY;
-            for (std::ptrdiff_t i = x - 1, j = y - 1; i >= snakeX; --i, --j) {
-                matches.emplace_back(i, j);
-            }
-            x = fromX;
-            y = fromY;
-        }
-        for (std::ptrdiff_t i = x - 1, j = y - 1; i >= 0; --i, --j) {
-            matches.emplace_back(i, j);
-        }
-        std::reverse(matches.begin(), matches.end());
+        // Where the forward and backward searches over a[a0, a1) and
+        // b[b0, b1) meet, or nullopt once halfLimit_ edits each way haven't
+        // met (the range is then reported as one hunk).
+        std::optional<std::pair<std::ptrdiff_t, std::ptrdiff_t>> MiddleSnake(std::ptrdiff_t a0, std::ptrdiff_t a1, std::ptrdiff_t b0,
+                                                                             std::ptrdiff_t b1) const {
+            const std::ptrdiff_t n      = a1 - a0;
+            const std::ptrdiff_t m      = b1 - b0;
+            const std::ptrdiff_t maxD   = std::min((n + m + 1) / 2, halfLimit_);
+            const std::ptrdiff_t offset = maxD + 1;
+            // forward[offset + k]: furthest x on diagonal k = x - y from the
+            // start; backward likewise, with x and y counted from the end.
+            std::vector<std::ptrdiff_t> forward(static_cast<std::size_t>(2 * offset + 1), -1);
+            std::vector<std::ptrdiff_t> backward(forward.size(), -1);
+            forward[static_cast<std::size_t>(offset + 1)]  = 0;
+            backward[static_cast<std::size_t>(offset + 1)] = 0;
 
-        std::vector<LineDiffHunk> hunks;
-        std::ptrdiff_t            i     = 0;
-        std::ptrdiff_t            j     = 0;
-        auto                      flush = [&](std::ptrdiff_t toI, std::ptrdiff_t toJ) {
-            if (i < toI || j < toJ) {
-                hunks.push_back(LineDiffHunk{prefix + static_cast<std::size_t>(i), static_cast<std::size_t>(toI - i),
-                                             prefix + static_cast<std::size_t>(j), static_cast<std::size_t>(toJ - j)});
+            auto at      = [&](std::vector<std::ptrdiff_t>& v, std::ptrdiff_t k) -> std::ptrdiff_t& { return v[static_cast<std::size_t>(offset + k)]; };
+            auto inRange = [&](std::ptrdiff_t k) { return offset + k >= 0 && offset + k < static_cast<std::ptrdiff_t>(forward.size()); };
+
+            const std::ptrdiff_t delta = n - m;
+            // With an odd delta the frontiers can only meet on a forward
+            // step, with an even one on a backward step.
+            const bool     front        = delta % 2 != 0;
+            std::ptrdiff_t forwardStart = 0, forwardEnd = 0, backwardStart = 0, backwardEnd = 0;
+            for (std::ptrdiff_t d = 0; d < maxD; ++d) {
+                for (std::ptrdiff_t k = -d + forwardStart; k <= d - forwardEnd; k += 2) {
+                    std::ptrdiff_t x = k == -d || (k != d && at(forward, k - 1) < at(forward, k + 1)) ? at(forward, k + 1) : at(forward, k - 1) + 1;
+                    std::ptrdiff_t y = x - k;
+                    while (x < n && y < m && Same(a0 + x, b0 + y)) {
+                        ++x;
+                        ++y;
+                    }
+                    at(forward, k) = x;
+                    if (x > n) {
+                        forwardEnd += 2;
+                    }
+                    else if (y > m) {
+                        forwardStart += 2;
+                    }
+                    else if (front && inRange(delta - k) && at(backward, delta - k) != -1 && x >= n - at(backward, delta - k)) {
+                        return std::pair{a0 + x, b0 + y};
+                    }
+                }
+                for (std::ptrdiff_t k = -d + backwardStart; k <= d - backwardEnd; k += 2) {
+                    std::ptrdiff_t x = k == -d || (k != d && at(backward, k - 1) < at(backward, k + 1)) ? at(backward, k + 1) : at(backward, k - 1) + 1;
+                    std::ptrdiff_t y = x - k;
+                    while (x < n && y < m && Same(a1 - x - 1, b1 - y - 1)) {
+                        ++x;
+                        ++y;
+                    }
+                    at(backward, k) = x;
+                    if (x > n) {
+                        backwardEnd += 2;
+                    }
+                    else if (y > m) {
+                        backwardStart += 2;
+                    }
+                    else if (!front && inRange(delta - k) && at(forward, delta - k) != -1) {
+                        const std::ptrdiff_t forwardX = at(forward, delta - k);
+                        if (forwardX >= n - x) {
+                            return std::pair{a0 + forwardX, b0 + forwardX - (delta - k)};
+                        }
+                    }
+                }
             }
-        };
-        for (const auto& [matchI, matchJ] : matches) {
-            flush(matchI, matchJ);
-            i = matchI + 1;
-            j = matchJ + 1;
+            return std::nullopt;
         }
-        flush(aLength, bLength);
-        return hunks;
-    }
+
+        bool Same(std::ptrdiff_t i, std::ptrdiff_t j) const {
+            return a_[static_cast<std::size_t>(i)] == b_[static_cast<std::size_t>(j)];
+        }
+
+        // Records a[a0, a1) replaced by b[b0, b1), joined onto the previous
+        // hunk when no matching line separates them.
+        void Emit(std::ptrdiff_t a0, std::ptrdiff_t a1, std::ptrdiff_t b0, std::ptrdiff_t b1) {
+            if (a0 == a1 && b0 == b1) {
+                return;
+            }
+            const auto aStart = static_cast<std::size_t>(a0);
+            const auto bStart = static_cast<std::size_t>(b0);
+            if (!hunks_.empty()) {
+                LineDiffHunk& last = hunks_.back();
+                if (last.aStart + last.aCount == aStart && last.bStart + last.bCount == bStart) {
+                    last.aCount += static_cast<std::size_t>(a1 - a0);
+                    last.bCount += static_cast<std::size_t>(b1 - b0);
+                    return;
+                }
+            }
+            hunks_.push_back(LineDiffHunk{aStart, static_cast<std::size_t>(a1 - a0), bStart, static_cast<std::size_t>(b1 - b0)});
+        }
+
+        const std::vector<std::string_view>& a_;
+        const std::vector<std::string_view>& b_;
+        std::ptrdiff_t                       halfLimit_;
+        std::vector<LineDiffHunk>            hunks_;
+    };
 
 } // namespace
 
 std::vector<LineDiffHunk> DiffLines(const std::vector<std::string_view>& a, const std::vector<std::string_view>& b) {
-    const std::size_t aSize = a.size();
-    const std::size_t bSize = b.size();
-
-    std::size_t prefix = 0;
-    while (prefix < aSize && prefix < bSize && a[prefix] == b[prefix]) {
-        ++prefix;
-    }
-    std::size_t suffix = 0;
-    while (suffix < aSize - prefix && suffix < bSize - prefix && a[aSize - 1 - suffix] == b[bSize - 1 - suffix]) {
-        ++suffix;
-    }
-
-    const std::size_t m = aSize - prefix - suffix; // core length in a
-    const std::size_t n = bSize - prefix - suffix; // core length in b
-
-    std::vector<LineDiffHunk> hunks;
-    if (m == 0 && n == 0) {
-        return hunks;
-    }
-    if (m == 0 || n == 0) {
-        hunks.push_back(LineDiffHunk{prefix, m, prefix, n});
-        return hunks;
-    }
-
-    // The LCS table is m*n; past a few million cells (a long file edited
-    // near both ends) Myers' O((m+n)*D) search takes over.
-    constexpr std::size_t kMaxLcsCells = 4'000'000;
-    if (m * n > kMaxLcsCells) {
-        return MyersHunks(a, b, prefix, m, n);
-    }
-
-    // dp[i][j] = LCS length of a[prefix+i .. prefix+m) and b[prefix+j .. prefix+n).
-    std::vector<std::vector<std::size_t>> dp(m + 1, std::vector<std::size_t>(n + 1, 0));
-    for (std::size_t i = m; i-- > 0;) {
-        for (std::size_t j = n; j-- > 0;) {
-            if (a[prefix + i] == b[prefix + j]) {
-                dp[i][j] = dp[i + 1][j + 1] + 1;
-            }
-            else {
-                dp[i][j] = std::max(dp[i + 1][j], dp[i][j + 1]);
-            }
-        }
-    }
-
-    std::size_t i = 0, j = 0;
-    while (i < m || j < n) {
-        if (i < m && j < n && a[prefix + i] == b[prefix + j]) {
-            ++i;
-            ++j;
-            continue;
-        }
-        const std::size_t hunkAStart = prefix + i;
-        const std::size_t hunkBStart = prefix + j;
-        // Consume the mismatch run: guided by the LCS table while both sides
-        // still have content, else forced to drain whichever side is left
-        // (one side exhausted before the other).
-        while ((i < m || j < n) && !(i < m && j < n && a[prefix + i] == b[prefix + j])) {
-            if (j >= n || (i < m && dp[i + 1][j] >= dp[i][j + 1])) {
-                ++i;
-            }
-            else {
-                ++j;
-            }
-        }
-        hunks.push_back(LineDiffHunk{hunkAStart, i + prefix - hunkAStart, hunkBStart, j + prefix - hunkBStart});
-    }
-    return hunks;
+    // Past this much work, or this edit distance on small input, the texts
+    // are effectively unrelated and the differing core is reported as one
+    // hunk rather than searched to the end.
+    constexpr std::ptrdiff_t kMaxWork         = 16'000'000;
+    constexpr std::ptrdiff_t kMaxEditDistance = 2000;
+    const std::ptrdiff_t     total            = std::max<std::ptrdiff_t>(1, static_cast<std::ptrdiff_t>(a.size() + b.size()));
+    const std::ptrdiff_t     halfLimit        = std::max(kMaxEditDistance / 2, kMaxWork / total);
+    return MyersDiff(a, b, halfLimit).Run();
 }
 
 namespace {
