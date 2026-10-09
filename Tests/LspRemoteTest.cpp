@@ -79,6 +79,24 @@ TEST_CASE("A remote buffer's language server runs on its host, in its language's
     CHECK(didOpen["params"]["textDocument"]["text"] == "int x;\n");
 }
 
+TEST_CASE("A remote buffer's language server is configured by its root's .ned/settings.json on the host", "[Lsp][LspRemote][HostAgent]") {
+    Fixture f;
+    std::filesystem::create_directories(f.server.pkg / ".ned");
+    std::ofstream(f.server.pkg / ".ned" / "settings.json")
+        << R"({"lspInitializationOptions": {")" << kLanguage << R"(": {"flavor": "host"}}, "lspWorkspaceConfiguration": {"tabs": 3}})";
+    REQUIRE(f.Connect());
+
+    text::BufferList bufferList;
+    lsp::Manager     manager(bufferList, f.loop);
+    manager.SetRemoteHosts(&f.hosts);
+    text::Buffer& buffer = f.Open(bufferList);
+    REQUIRE(f.Opened(manager, buffer));
+
+    CHECK(f.server.Find("initialize")->at("params")["initializationOptions"] == Json{{"flavor", "host"}});
+    REQUIRE(PumpUntil(f.loop, [&] { return f.server.Find("workspace/didChangeConfiguration").has_value(); }));
+    CHECK(f.server.Find("workspace/didChangeConfiguration")->at("params")["settings"] == Json{{"tabs", 3}});
+}
+
 TEST_CASE("A remote buffer's language server waits for its host; nothing connects to start one", "[Lsp][LspRemote][HostAgent]") {
     Fixture f;
 

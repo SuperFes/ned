@@ -23,6 +23,7 @@
 #include "Editor/Remote/Fs.h"
 #include "Editor/Remote/Hosts.h"
 #include "Editor/Remote/Placement.h"
+#include "Editor/Remote/ProjectSettings.h"
 #include "Editor/TabWidth.h"
 #include "Position.h"
 #include "ProseChecker.h"
@@ -1074,33 +1075,39 @@ void Manager::SpawnRemoteClient(const std::string& serverKey, const std::string&
         spawnFailureDetail_[connectionKey] = why;
         LogError(serverKey, why);
     });
-    remote::SpawnBeside(hosts_, text::RemoteFile{.destination = *root.host, .path = root.path},
-                        remote::RemoteSpawn{.argv          = command,
-                                            .cwd           = root.path,
-                                            .stderrMode    = process::StderrMode::Capture,
-                                            .onSpawnFailed = std::move(spawnFailed)},
-                        lifetime_.Token(),
-                        [this, serverKey, connectionKey, root, command](remote::Spawned spawned) {
-                            remoteSpawnPending_.erase(connectionKey);
-                            if (!spawned) {
-                                failedCommands_[connectionKey]     = command;
-                                spawnFailureDetail_[connectionKey] = spawned.error();
-                                LogError(serverKey, spawned.error());
-                                return;
-                            }
-                            Transport transport(std::move(spawned->child), std::filesystem::path(command.front()).filename().string());
-                            AdoptClient(std::make_unique<Client>(std::move(transport), eventLoop_, /*startHandshakeComplete=*/false), serverKey,
-                                        connectionKey, root, /*brokerBacked=*/false);
-                        });
+    // The root's settings there come first: the handshake carries them.
+    const text::RemoteFile beside{.destination = *root.host, .path = root.path};
+    remote::LoadHostProjectSettings(
+        *hosts_, beside, lifetime_.Token(),
+        [this, serverKey, connectionKey, root, command, beside, spawnFailed = std::move(spawnFailed)](editor::ProjectSettings settings) mutable {
+            remote::SpawnBeside(hosts_, beside,
+                                remote::RemoteSpawn{.argv          = command,
+                                                    .cwd           = root.path,
+                                                    .stderrMode    = process::StderrMode::Capture,
+                                                    .onSpawnFailed = std::move(spawnFailed)},
+                                lifetime_.Token(),
+                                [this, serverKey, connectionKey, root, command, settings = std::move(settings)](remote::Spawned spawned) {
+                                    remoteSpawnPending_.erase(connectionKey);
+                                    if (!spawned) {
+                                        failedCommands_[connectionKey]     = command;
+                                        spawnFailureDetail_[connectionKey] = spawned.error();
+                                        LogError(serverKey, spawned.error());
+                                        return;
+                                    }
+                                    Transport transport(std::move(spawned->child), std::filesystem::path(command.front()).filename().string());
+                                    AdoptClient(std::make_unique<Client>(std::move(transport), eventLoop_, /*startHandshakeComplete=*/false),
+                                                serverKey, connectionKey, root, /*brokerBacked=*/false, settings);
+                                });
+        });
 }
 
 Client* Manager::AdoptClient(std::unique_ptr<Client> client, const std::string& serverKey, const std::string& connectionKey,
-                             const ServerRoot& root, bool brokerBacked) {
+                             const ServerRoot& root, bool brokerBacked, const std::optional<editor::ProjectSettings>& settings) {
     // LSP multi-root follow-up: root, not unconditionally editor::ProjectRoot()
     // -- a subpackage with its own <root>/.ned/settings.json gets its own
     // settings, same as it would opening that subdirectory as its own
-    // top-level project. A host's .ned/settings.json isn't read yet.
-    const editor::ProjectSettings projectSettings = root.host ? editor::ProjectSettings{} : editor::LoadProjectSettings(root.path);
+    // top-level project. A host's come read from there already.
+    const editor::ProjectSettings projectSettings = settings ? *settings : editor::LoadProjectSettings(root.path);
     WireNotificationHandlers(*client, serverKey, connectionKey, projectSettings.lspWorkspaceConfiguration);
 
     Client* rawClient = client.get();

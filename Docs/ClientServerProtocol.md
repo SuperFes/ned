@@ -271,8 +271,9 @@ starts in that directory.
 **Language servers.** A remote buffer's language server runs on its host, with the same
 command as a local one, outside the broker. It starts in the root its language's markers
 name there, found by `fs/project-root`, and only on a host already connected: syncing a
-buffer never opens a connection. It is sent no `processId`, since it can't see this
-process. Its URIs are host paths, so what it names comes back as a file on that host
+buffer never opens a connection. Its initialization options and workspace configuration
+come from that root's `.ned/settings.json` on the host (`Remote/ProjectSettings.h`),
+read before it starts. It is sent no `processId`, since it can't see this process. Its URIs are host paths, so what it names comes back as a file on that host
 (`Text/RemoteFile.h`'s `FileRef`): a jump opens it there, references list `host:/path`
 lines, the problem list (`*diagnostics*`) names the host's files by `host:/path`, read-only
 and with no line text for one not open here, and an edit opens the host's files it
