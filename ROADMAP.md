@@ -146,7 +146,7 @@ against.
 - ✅ **Commit, history, blame, and branches**; ned works as `$EDITOR` for git, hg, svn,
   jj, and fossil (transient mode).
 - ✅ **Merge-conflict resolution mode** and a side-by-side merge view.
-- 🔜 Showing git's clean auto-merges in the merge view (from index stages).
+- ✅ Showing git's clean auto-merges in the merge view (from index stages).
 - 💭 A base pane in the merge view.
 
 ## Tasks, Tests & Terminal

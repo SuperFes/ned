@@ -2119,6 +2119,9 @@ void WindowManager::OpenMergeView(text::Buffer& merged) {
     mergeViewSavedLayout_ = SaveLayout(*root_);
     mergeView_            = std::make_unique<editor::MergeViewSession>(
         bufferList_, merged, std::vector{text::MergeSideKind::Ours, text::MergeSideKind::Theirs});
+    if (vcsRunner_ != nullptr) {
+        mergeView_->RequestWholeSides(*vcsRunner_);
+    }
     const std::vector<text::Buffer*> sides = mergeView_->Sides();
 
     auto leaf = [this](text::Buffer& buffer) {

@@ -98,7 +98,8 @@ reason, so it stays a conscious call.
 - [ ] **Buffer-word completion for huge buffers**, via a viewport-windowed scan.
 - [ ] **Excerpt-scoped search** for `next-error`, dabbrev and Vim `/`. Only isearch and
       query-replace honour `ExcerptBodyRanges` today.
-- [ ] **Merge view base pane.** `MergeViewSession` already derives it from diff3 markers.
+- [ ] **Merge view base pane.** `MergeViewSession` already derives it from diff3 markers;
+      without them, `ConflictSideArgv`'s base (git's stage 1) could supply it.
 - [ ] **Merge-conflict chrome with no VCS verdict** falls back to marker text, and `C-c x`
       ignores the verdict. Revisit if a custom provider can't express "unmerged", or if
       "chips gone but `C-c x o` worked" reads as a bug.

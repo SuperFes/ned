@@ -5,13 +5,19 @@
 #include "Editor/Commands.h"
 #include "Editor/MergeView.h"
 #include "Editor/Mode.h"
+#include "Editor/Project/Root.h"
 #include "Editor/PromptHistory.h"
 #include "Editor/Register.h"
+#include "Editor/Vcs/Provider.h"
+#include "Editor/Vcs/ProviderRegistry.h"
+#include "Editor/Vcs/Runner.h"
+#include "FakeRemoteHost.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/KillRing.h"
 #include "UI/ActiveBuffer.h"
+#include "UI/EventLoop.h"
 #include "UI/Theme.h"
 #include "UI/WindowManager.h"
 
@@ -97,6 +103,18 @@ ned::text::Buffer& OpenConflicted(Fixture& fixture, ned::ui::WindowManager& mana
     ToggleMergeView();
     return merged;
 }
+
+// Prints a fixed whole text for each side of any file.
+class ConflictSidesProvider : public ned::editor::vcs::Provider {
+  public:
+    [[nodiscard]] bool Detect(const std::filesystem::path&) const override {
+        return true;
+    }
+    [[nodiscard]] ned::editor::vcs::CommandSpec ConflictSideArgv(const std::filesystem::path&, MergeSideKind side) const override {
+        return {.argv  = {"printf", "%s", side == MergeSideKind::Ours ? "top\nbefore\nours 1\nours 2\nafter\n" : "TOP\nbefore\ntheirs\nafter\n"},
+                .input = std::nullopt};
+    }
+};
 
 void FocusBuffer(ned::ui::WindowManager& manager, const std::string& name) {
     for (int i = 0; i < 4 && manager.FocusedActiveBuffer().Get().Name() != name; ++i) {
@@ -274,4 +292,43 @@ TEST_CASE("Side panes wash their hunk lines in their own conflict colour", "[Win
     CHECK(backgroundOf(1, "theirs", true) == fixture.theme.conflictTheirsBackground);
     CHECK(backgroundOf(0, "before", false) != fixture.theme.conflictOursBackground);
     CHECK(backgroundOf(7, "after", true) != fixture.theme.conflictTheirsBackground);
+}
+
+TEST_CASE("Opening the merge view fetches whole sides and shows the merge's clean changes", "[WindowManager][MergeView][Vcs]") {
+    ned::editor::vcs::ClearRegistry();
+    ned::editor::vcs::RegisterProvider("sides", std::make_unique<ConflictSidesProvider>());
+    const auto previousRoot = ned::editor::ProjectRoot();
+    ned::editor::SetProjectRoot("/tmp");
+    {
+        Fixture                fixture;
+        ned::ui::WindowManager manager = fixture.Manager();
+        manager.TakeFocus();
+        ned::ui::EventLoop       eventLoop;
+        ned::editor::vcs::Runner runner(eventLoop);
+        manager.SetVcsRunner(&runner);
+
+        ned::text::Buffer& merged = fixture.bufferList.OpenOrCreateFile("/tmp/ned-merge-view-whole-sides-test.cpp");
+        merged.InsertAtPoint(std::string("TOP\n") + kConflicted);
+        merged.SetPoint(0);
+        manager.FocusedActiveBuffer().Set(merged);
+        ToggleMergeView();
+        REQUIRE(manager.MergeView() != nullptr);
+
+        ned::text::Buffer* ours = fixture.bufferList.Find(MergeSideBufferName(MergeSideKind::Ours, merged.Name()));
+        REQUIRE(ours != nullptr);
+        REQUIRE(ned::tests::PumpUntil(eventLoop, [&] {
+            manager.SyncMergeView();
+            return ours->Text().starts_with("top\n");
+        }));
+        CHECK(manager.MergeView()->ChangedLines(*ours) == std::vector<std::pair<std::size_t, std::size_t>>{{0, 1}, {2, 4}});
+        // Theirs made the clean change, so its first line matches the merged one.
+        ned::text::Buffer* theirs = fixture.bufferList.Find(MergeSideBufferName(MergeSideKind::Theirs, merged.Name()));
+        REQUIRE(ned::tests::PumpUntil(eventLoop, [&] {
+            manager.SyncMergeView();
+            return theirs->Text() == "TOP\nbefore\ntheirs\nafter\n";
+        }));
+        CHECK(manager.MergeView()->ChangedLines(*theirs) == std::vector<std::pair<std::size_t, std::size_t>>{{2, 3}});
+    }
+    ned::editor::SetProjectRoot(previousRoot);
+    ned::editor::vcs::ClearRegistry();
 }

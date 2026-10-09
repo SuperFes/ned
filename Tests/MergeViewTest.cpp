@@ -215,3 +215,51 @@ TEST_CASE("Side buffers highlight in the merged buffer's mode", "[MergeView]") {
     CHECK(ned::editor::CachedModeForBuffer(*session.Sides()[0]).name == mergedMode);
     ned::editor::ClearModeCacheFor(merged);
 }
+
+TEST_CASE("A whole side shows the merge's clean changes as chunks beside the conflict", "[MergeView]") {
+    // Theirs changed "top" cleanly; ours' whole side still has the original.
+    BufferList       list;
+    Buffer&          merged = MergedBuffer(list, std::string("TOP\n") + kConflicted);
+    MergeViewSession session(list, merged, {MergeSideKind::Ours, MergeSideKind::Theirs});
+    REQUIRE(session.SetWholeSide(MergeSideKind::Ours, "top\nbefore\nours 1\nours 2\nafter\n"));
+    session.Refresh();
+
+    Buffer& ours = *session.Sides()[0];
+    CHECK(ours.Text() == "top\nbefore\nours 1\nours 2\nafter\n");
+    CHECK(session.ChangedLines(ours) == std::vector<std::pair<std::size_t, std::size_t>>{{0, 1}, {2, 4}});
+    CHECK(session.NextChangedLine(0) == 2);
+
+    // Taking ours' first chunk undoes the clean change alone.
+    REQUIRE(session.TakeSide(ours, 0));
+    CHECK(merged.Text() == std::string("top\n") + kConflicted);
+    CHECK(session.ConflictCount() == 1);
+}
+
+TEST_CASE("A whole side is decoded and its line endings normalized", "[MergeView]") {
+    BufferList       list;
+    Buffer&          merged = MergedBuffer(list, kConflicted);
+    MergeViewSession session(list, merged, {MergeSideKind::Ours, MergeSideKind::Theirs});
+    REQUIRE(session.SetWholeSide(MergeSideKind::Theirs, "\xEF\xBB\xBF"
+                                                        "before\r\ntheirs\r\nafter\r\n"));
+    session.Refresh();
+    CHECK(session.Sides()[1]->Text() == "before\ntheirs\nafter\n");
+    CHECK(session.ChangedLines(*session.Sides()[1]) == std::vector<std::pair<std::size_t, std::size_t>>{{1, 2}});
+}
+
+TEST_CASE("A whole side for a kind the session doesn't show is refused", "[MergeView]") {
+    BufferList       list;
+    Buffer&          merged = MergedBuffer(list, kConflicted);
+    MergeViewSession session(list, merged, {MergeSideKind::Ours});
+    CHECK_FALSE(session.SetWholeSide(MergeSideKind::Theirs, "before\ntheirs\nafter\n"));
+}
+
+TEST_CASE("Resolving every conflict leaves a whole side's differences from the merged text", "[MergeView]") {
+    BufferList       list;
+    Buffer&          merged = MergedBuffer(list, kConflicted);
+    MergeViewSession session(list, merged, {MergeSideKind::Ours, MergeSideKind::Theirs});
+    REQUIRE(session.SetWholeSide(MergeSideKind::Theirs, "before\ntheirs\nafter\n"));
+    REQUIRE(session.TakeSide(*session.Sides()[0], 1));
+    CHECK(merged.Text() == "before\nours 1\nours 2\nafter\n");
+    CHECK(session.ConflictCount() == 0);
+    CHECK(session.ChangedLines(merged) == std::vector<std::pair<std::size_t, std::size_t>>{{1, 3}});
+}
