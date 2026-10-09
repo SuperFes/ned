@@ -146,7 +146,8 @@ hello  -> {protocol: {major, minor}, codecs: [str], window: uint}
   so its own saves stay quiet. Then `Remote/ExternalChanges.h` reverts it when unmodified,
   merges into its edits otherwise, or, with `ned/set-auto-revert` or
   `ned/set-auto-merge` off, marks it so the next save asks first. The panel relists a
-  directory whose entries changed.
+  directory whose entries changed, and every directory it shows on a host whose burst
+  says it lost events.
 
 ## 5. Transports
 
@@ -256,7 +257,9 @@ commit message, works in the last one found.
 a remote buffer's opens on its host, in the project root found there, as a login shell
 (`$SHELL -l`, through `/bin/sh` to find it). A restart reconnects to the same host. The
 tab's label names the host, and one that can't start shows why in place of its output.
-Reveal in Terminal is local only: it takes the first terminal here.
+Reveal in Terminal from the project sidebar takes the first terminal here. From the Remote
+panel (`t`) it `cd`s a running shell on that row's host, or else opens a tab whose shell
+starts in that directory.
 
 **Language servers.** A remote buffer's language server runs on its host, with the same
 command as a local one, outside the broker. It starts in the root its language's markers

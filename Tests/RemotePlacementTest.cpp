@@ -198,6 +198,33 @@ TEST_CASE("A terminal beside a remote buffer runs a login shell on its host, in 
     CHECK(painted[4] == "8 200");
 }
 
+TEST_CASE("A terminal placed in a host's directory starts its shell there", "[Remote][RemotePlacement][TerminalPanel][HostAgent]") {
+    Fixture        fixture;
+    const fs::path shell = fixture.fake.dir / "shell";
+    std::ofstream(shell) << "#!/bin/sh\npwd\n";
+    fs::permissions(shell, fs::perms::owner_all);
+    const fs::path deep = fixture.project / "src" / "deep";
+    fs::create_directories(deep);
+    const ned::ui::Theme              theme = ned::ui::DarkTheme();
+    ned::ui::TerminalPanel            panel(theme);
+    std::optional<std::optional<int>> exit;
+    panel.SetBox_(ned::ui::Box{.x_min = 0, .x_max = 199, .y_min = 0, .y_max = 5});
+    panel.SetEventLoop(&fixture.loop);
+    panel.SetEnvironment({{"SHELL", shell.string()}});
+    panel.SetPlacement(&fixture.hosts, ned::text::RemoteFile{.destination = "host", .path = deep}, deep);
+    panel.SetOnExit([&](std::optional<int> code) { exit = code; });
+
+    panel.EnsureStarted();
+    REQUIRE(PumpUntil(fixture.loop, [&] { return exit.has_value(); }));
+    ned::ui::Screen screen{200, 6};
+    panel.Paint(ned::ui::Canvas(screen, panel.Box_()));
+    std::string row;
+    for (int x = 0; x < 200; ++x) {
+        row += screen.PixelAt(x, 0).character;
+    }
+    CHECK(row.substr(0, row.find_last_not_of(' ') + 1) == deep.string());
+}
+
 TEST_CASE("A task started from a remote buffer runs on its host, and again from its output", "[Remote][RemotePlacement][Tasks][HostAgent]") {
     Fixture               fixture;
     ned::text::BufferList buffers;

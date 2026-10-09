@@ -261,6 +261,32 @@ void RemotePanel::Changed(const text::RemoteFile& path) {
     PushModel();
 }
 
+void RemotePanel::RelistHost(const std::string& destination) {
+    std::vector<std::pair<std::string, std::filesystem::path>> stale;
+    const auto                                                 collect = [&stale](this const auto& self, const std::string& key, const Node& node) -> void {
+        if (!node.expanded || !node.children) {
+            return;
+        }
+        if (!node.loading) {
+            stale.emplace_back(key, node.location.path);
+        }
+        for (const Node& child : *node.children) {
+            self(key, child);
+        }
+    };
+    for (const Node& top : tops_) {
+        if (top.location.destination == destination && !top.location.path.empty()) {
+            collect(TopKey(top), top);
+        }
+    }
+    for (const auto& [key, path] : stale) {
+        if (Node* node = FindNode(key, path)) {
+            Relist(key, *node);
+        }
+    }
+    PushModel();
+}
+
 void RemotePanel::Relist(const std::string& topKey, Node& node) {
     node.loading = true;
     node.error.clear();
@@ -416,6 +442,9 @@ void RemotePanel::Run(std::string_view command) {
     }
     else if (command == "remote-panel-delete") {
         HandleFileAction(FileAction::Delete, rows_[selectedIndex_].depth, *node);
+    }
+    else if (command == "remote-panel-reveal-in-terminal") {
+        HandleFileAction(FileAction::RevealInTerminal, rows_[selectedIndex_].depth, *node);
     }
     else if (command == "remote-panel-refresh") {
         if (node->kind == editor::host::FileKind::Directory) {

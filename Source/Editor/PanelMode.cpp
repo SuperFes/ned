@@ -25,6 +25,7 @@ namespace {
         PanelCommand{"remote-panel-new-directory", "+", "Create a directory in the selected directory, or beside the selected file."},
         PanelCommand{"remote-panel-rename", "R", "Rename or move the selected file or directory on its host."},
         PanelCommand{"remote-panel-delete", "D", "Delete the selected file or directory from its host, after confirming."},
+        PanelCommand{"remote-panel-reveal-in-terminal", "t", "Open a terminal on the selected row's host, in its directory or a file's own."},
     };
 
     constexpr std::array kPanelModes{

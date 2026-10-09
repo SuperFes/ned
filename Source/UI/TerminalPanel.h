@@ -74,6 +74,7 @@
 #ifndef NED_UI_TERMINALPANEL_H
 #define NED_UI_TERMINALPANEL_H
 
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -122,8 +123,9 @@ class TerminalPanel : public Widget {
     void SetOnToggleRequest(std::function<void()> onToggle);
 
     // Where the next spawn runs: beside on its host (a login shell there for
-    // the default argv), or here when unset. hosts may be null.
-    void SetPlacement(editor::remote::Hosts* hosts, std::optional<text::RemoteFile> beside);
+    // the default argv), or here when unset, in directory when given, else
+    // the project root found beside it. hosts may be null.
+    void SetPlacement(editor::remote::Hosts* hosts, std::optional<text::RemoteFile> beside, std::optional<std::filesystem::path> directory = std::nullopt);
     // Whether SetPlacement has been called, and where it put the shell.
     [[nodiscard]] bool Placed() const {
         return placed_;
@@ -255,6 +257,7 @@ class TerminalPanel : public Widget {
     std::vector<std::pair<std::string, std::string>> env_;
     editor::remote::Hosts*                           hosts_ = nullptr;
     std::optional<text::RemoteFile>                  beside_;
+    std::optional<std::filesystem::path>             directory_;
     bool                                             placed_ = false;
     std::function<void(std::optional<int> exitCode)> onExit_;
 

@@ -65,10 +65,11 @@ void TerminalPanel::SetOnToggleRequest(std::function<void()> onToggle) {
     onToggleRequest_ = std::move(onToggle);
 }
 
-void TerminalPanel::SetPlacement(editor::remote::Hosts* hosts, std::optional<text::RemoteFile> beside) {
-    hosts_  = hosts;
-    beside_ = std::move(beside);
-    placed_ = true;
+void TerminalPanel::SetPlacement(editor::remote::Hosts* hosts, std::optional<text::RemoteFile> beside, std::optional<std::filesystem::path> directory) {
+    hosts_     = hosts;
+    beside_    = std::move(beside);
+    directory_ = std::move(directory);
+    placed_    = true;
 }
 
 void TerminalPanel::EnsureStarted() {
@@ -95,7 +96,7 @@ void TerminalPanel::EnsureStarted() {
     starting_ = true;
     editor::remote::SpawnBeside(hosts_, beside_,
                                 editor::remote::RemoteSpawn{.argv       = std::move(argv),
-                                                            .cwd        = std::nullopt,
+                                                            .cwd        = directory_,
                                                             .env        = editor::terminal::PtyProcess::ShellEnvironment(env_),
                                                             .stderrMode = editor::process::StderrMode::MergeWithStdout,
                                                             .pty        = size},
