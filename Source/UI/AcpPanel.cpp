@@ -334,7 +334,11 @@ void AcpPanel::OpenPicker(editor::acp::PanelPicker picker) {
                 items.push_back({.label = checkpoint.promptPreview, .detail = LocalTimeLabel(checkpoint.timestamp)});
             }
             picker_.emplace(count == 0 ? "No turns recorded yet" : "Rewind to before which turn?", std::move(items),
-                            [this, count](std::size_t offset) { acpManager_->RewindTo(count - 1 - offset); });
+                            [this, count](std::size_t offset) {
+                                const std::size_t index = count - 1 - offset;
+                                // A host's files are restored in their buffers, so they open first.
+                                acpManager_->OpenHostTurnFiles(index, lifetime_.Bind([this, index] { acpManager_->RewindTo(index); }));
+                            });
             break;
         }
         case editor::acp::PanelPicker::Mode: {

@@ -155,9 +155,13 @@ TEST_CASE("A host's ACP agent writes its files on the host", "[Acp][AcpRemote][H
     CHECK(answers[0]["result"] == Json::object());
     std::ifstream in(created);
     CHECK(std::string(std::istreambuf_iterator<char>(in), {}) == "int b;\n");
-    // Not open here, so nothing to undo it with.
+    // Not open here: tracked from a read on the host ahead of the write,
+    // which found nothing there yet.
     REQUIRE(f.manager.CheckpointCount() == 1);
-    CHECK(f.manager.CheckpointAt(0).untrackedFiles == std::vector<text::FileRef>{text::RemoteFile{.destination = "host", .path = created}});
+    CHECK(f.manager.CheckpointAt(0).untrackedFiles.empty());
+    REQUIRE(f.manager.CheckpointAt(0).files.size() == 1);
+    CHECK(f.manager.CheckpointAt(0).files[0].file == text::FileRef(text::RemoteFile{.destination = "host", .path = created}));
+    CHECK_FALSE(f.manager.CheckpointAt(0).files[0].before.exists);
     f.manager.StopSession();
 }
 

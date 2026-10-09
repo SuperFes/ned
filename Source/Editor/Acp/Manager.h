@@ -567,6 +567,10 @@ class Manager {
     // rewound on its next reply. A no-op (default-constructed outcome) if
     // `index` is out of range.
     RewindOutcome RewindTo(std::size_t index);
+    // Opens the host files the turns from `index` on changed that aren't
+    // open here, which RewindTo can only restore in their buffers, then runs
+    // then. Its failure goes to the transcript.
+    void OpenHostTurnFiles(std::size_t index, std::function<void()> then);
 
     // subprocess-hang-protection follow-up. A no-op if no session is active;
     // otherwise forwards to the live client_'s own ExpireStaleRequests. See
@@ -803,7 +807,11 @@ class Manager {
     void SummarizeCheckpoint(Session& session, const Checkpoint& checkpoint);
     // Brings each open buffer holding one of files up to its host's
     // contents, then calls done.
-    void          CatchUpHostFiles(const std::vector<text::RemoteFile>& files, std::function<void()> done);
+    // Each file's text as the host read it, or nullopt when it couldn't be
+    // tracked (HostTurnFile); an open buffer settles to it on the way.
+    using HostReads = std::vector<std::pair<text::RemoteFile, std::optional<FileState>>>;
+    void          WriteHostFileNow(const text::RemoteFile& file, std::string content, std::optional<std::uint64_t> sessionKey, RespondFn respond);
+    void          CatchUpHostFiles(const std::vector<text::RemoteFile>& files, std::function<void(HostReads reads)> done);
     std::uint64_t nextCheckpointId_ = 1;
 
     text::BufferList&   bufferList_;
@@ -850,7 +858,9 @@ class Manager {
     void                    StopToolTimers(Session& session);
     // Records `path`'s text as the in-flight turn's "before" the first time
     // the turn is about to change it.
-    void                               SnapshotBeforeEdit(Session& session, const std::string& path);
+    // A host's file not open here is read there first; then runs once the
+    // snapshot is taken, at once otherwise.
+    void                               SnapshotBeforeEdit(Session& session, const std::string& path, std::function<void()> then = {});
     void                               SnapshotToolCallFiles(Session& session, const TranscriptEntry& toolCall);
     static TranscriptEntry*            FindToolCall(Session& session, const std::string& toolCallId);
     std::size_t                        elicitationCount_ = 0;

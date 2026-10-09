@@ -34,6 +34,16 @@ namespace {
 
 } // namespace
 
+std::optional<FileState> HostTurnFile(const std::expected<std::string, int>& read, int notFoundCode) {
+    if (!read) {
+        return read.error() == notFoundCode ? std::optional(FileState{}) : std::nullopt;
+    }
+    if (read->size() > kMaxTurnFileBytes || read->find('\0') != std::string::npos) {
+        return std::nullopt;
+    }
+    return FileState{.exists = true, .text = *read};
+}
+
 std::optional<FileState> ReadTurnFile(const text::BufferList& bufferList, const text::FileRef& file) {
     FileState state;
     if (const text::Buffer* buffer = bufferList.FindFile(file)) {

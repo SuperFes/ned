@@ -1889,8 +1889,11 @@ void Manager::RecordCheckpointFileEdit(Session& s, text::Buffer& buffer, const t
     });
 }
 
-void Manager::SnapshotBeforeEdit(Session& s, const std::string& path) {
+void Manager::SnapshotBeforeEdit(Session& s, const std::string& path, std::function<void()> then) {
     if (!s.pendingCheckpoint || path.empty()) {
+        if (then) {
+            then();
+        }
         return;
     }
     std::filesystem::path resolved(path);
@@ -1899,14 +1902,41 @@ void Manager::SnapshotBeforeEdit(Session& s, const std::string& path) {
     }
     resolved                = resolved.lexically_normal();
     const text::FileRef ref = s.host.empty() ? text::FileRef(resolved) : text::FileRef(text::RemoteFile{.destination = s.host, .path = resolved});
-    for (const TurnFile& file : s.pendingCheckpoint->files) {
-        if (file.file == ref) {
-            return;
+    const auto          tracked = [&ref](const Checkpoint& checkpoint) {
+        return std::ranges::any_of(checkpoint.files, [&ref](const TurnFile& file) { return file.file == ref; });
+    };
+    if (tracked(*s.pendingCheckpoint)) {
+        if (then) {
+            then();
         }
+        return;
     }
-    if (std::optional<FileState> before = ReadTurnFile(bufferList_, ref)) {
-        s.pendingCheckpoint->files.push_back(TurnFile{.file = ref, .before = std::move(*before), .after = std::nullopt});
+    const auto*         remote     = std::get_if<text::RemoteFile>(&ref);
+    remote::Connection* connection = remote != nullptr && bufferList_.FindByRemote(*remote) == nullptr ? AgentConnection() : nullptr;
+    if (connection == nullptr) {
+        if (std::optional<FileState> before = ReadTurnFile(bufferList_, ref)) {
+            s.pendingCheckpoint->files.push_back(TurnFile{.file = ref, .before = std::move(*before), .after = std::nullopt});
+        }
+        if (then) {
+            then();
+        }
+        return;
     }
+    // Its "before" is on the host: read there ahead of the edit.
+    (void)remote::ReadFile(*connection, remote->path, kMaxTurnFileBytes + 1,
+                           agentLifetime_.Bind([this, key = s.key, ref, tracked, then = std::move(then)](const remote::FsResult<text::FileContents>& read) {
+                               Session* session = SessionByKey(key);
+                               if (session != nullptr && session->pendingCheckpoint && !tracked(*session->pendingCheckpoint)) {
+                                   const std::expected<std::string, int> bytes =
+                                       read ? std::expected<std::string, int>(read->bytes) : std::unexpected(read.error().code);
+                                   if (std::optional<FileState> before = HostTurnFile(bytes, host::fs_error::kNotFound)) {
+                                       session->pendingCheckpoint->files.push_back(TurnFile{.file = ref, .before = std::move(*before), .after = std::nullopt});
+                                   }
+                               }
+                               if (then) {
+                                   then();
+                               }
+                           }));
 }
 
 void Manager::SnapshotToolCallFiles(Session& s, const TranscriptEntry& toolCall) {
@@ -1941,7 +1971,7 @@ void Manager::FinalizePendingCheckpoint(Session& s) {
     }
     // The agent may have changed them itself, and its host's watch may not
     // have brought that here yet.
-    CatchUpHostFiles(onHost, [this, key = s.key, id = checkpoint.id] {
+    CatchUpHostFiles(onHost, [this, key = s.key, id = checkpoint.id](const HostReads& reads) {
         Session* session = SessionByKey(key);
         if (!session) {
             return;
@@ -1951,8 +1981,16 @@ void Manager::FinalizePendingCheckpoint(Session& s) {
             return; // rewound past meanwhile
         }
         for (TurnFile& file : found->files) {
-            if (std::holds_alternative<text::RemoteFile>(file.file)) {
+            const auto* remote = std::get_if<text::RemoteFile>(&file.file);
+            if (remote == nullptr) {
+                continue;
+            }
+            // An open buffer has the host's text by now; else the read itself.
+            if (bufferList_.FindByRemote(*remote) != nullptr) {
                 file.after = ReadTurnFile(bufferList_, file.file);
+            }
+            else if (const auto read = std::ranges::find(reads, *remote, &HostReads::value_type::first); read != reads.end()) {
+                file.after = read->second;
             }
         }
         SummarizeCheckpoint(*session, *found);
@@ -1980,18 +2018,23 @@ void Manager::SummarizeCheckpoint(Session& s, const Checkpoint& checkpoint) {
     }
 }
 
-void Manager::CatchUpHostFiles(const std::vector<text::RemoteFile>& files, std::function<void()> done) {
-    auto remaining = std::make_shared<std::size_t>(files.size());
-    auto finish    = std::make_shared<std::function<void()>>(std::move(done));
-    auto settled   = [remaining, finish] {
-        if (--*remaining == 0) {
-            (*finish)();
+void Manager::CatchUpHostFiles(const std::vector<text::RemoteFile>& files, std::function<void(HostReads reads)> done) {
+    struct State {
+        std::size_t                    remaining = 0;
+        HostReads                      reads;
+        std::function<void(HostReads)> done;
+    };
+    auto state   = std::make_shared<State>(State{.remaining = files.size(), .reads = {}, .done = std::move(done)});
+    auto settled = [state](const text::RemoteFile& file, std::optional<FileState> read) {
+        state->reads.emplace_back(file, std::move(read));
+        if (--state->remaining == 0) {
+            state->done(std::move(state->reads));
         }
     };
     for (const text::RemoteFile& file : files) {
         remote::Connection* connection = hosts_ ? hosts_->Find(file.destination) : nullptr;
         if (!connection || !connection->Connected()) {
-            settled();
+            settled(file, std::nullopt);
             continue;
         }
         remote::ReadFile(*connection, file.path, remote::MaxRemoteFileBytes(),
@@ -2000,7 +2043,8 @@ void Manager::CatchUpHostFiles(const std::vector<text::RemoteFile>& files, std::
                              if (read && buffer && !buffer->IsLoading() && !buffer->IsSaving() && read->timestamp != buffer->RemoteTimestamp()) {
                                  SettleHostFile(*buffer, *read, /*followToggles=*/true);
                              }
-                             settled();
+                             settled(file, HostTurnFile(read ? std::expected<std::string, int>(read->bytes) : std::unexpected(read.error().code),
+                                                        host::fs_error::kNotFound));
                          }));
     }
 }
@@ -2013,6 +2057,30 @@ std::size_t Manager::CheckpointCount() const {
 const Manager::Checkpoint& Manager::CheckpointAt(std::size_t index) const {
     const Session& s = *current_;
     return s.checkpoints.at(index);
+}
+
+void Manager::OpenHostTurnFiles(std::size_t index, std::function<void()> then) {
+    Session&                      s = *current_;
+    std::vector<text::RemoteFile> files;
+    for (std::size_t i = index; i < s.checkpoints.size(); ++i) {
+        for (const TurnFile& file : s.checkpoints[i].files) {
+            if (const auto* remote = std::get_if<text::RemoteFile>(&file.file)) {
+                files.push_back(*remote);
+            }
+        }
+    }
+    if (files.empty() || hosts_ == nullptr) {
+        then();
+        return;
+    }
+    remote::OpenRemoteFiles(*hosts_, bufferList_, files, lifetime_.Token(), [this, key = s.key, then = std::move(then)](std::optional<std::string> failure) {
+        if (failure) {
+            if (Session* session = SessionByKey(key)) {
+                PushSessionEvent(*session, "Couldn't open a turn's file: " + *failure);
+            }
+        }
+        then();
+    });
 }
 
 Manager::RewindOutcome Manager::RewindTo(std::size_t index) {
@@ -2148,8 +2216,21 @@ void Manager::WriteHostFile(const Json& params, RespondFn respond) {
     }
     Session*                           found = SessionFor(params);
     const std::optional<std::uint64_t> key   = found ? std::optional(found->key) : std::nullopt;
-    if (found) {
-        SnapshotBeforeEdit(*found, file.path.string());
+    if (!found) {
+        WriteHostFileNow(file, std::move(content), key, std::move(respond));
+        return;
+    }
+    // The file as it was goes into the turn first: once written, it's gone.
+    SnapshotBeforeEdit(*found, file.path.string(), [this, file, content = std::move(content), key, respond = std::move(respond)]() mutable {
+        WriteHostFileNow(file, std::move(content), key, std::move(respond));
+    });
+}
+
+void Manager::WriteHostFileNow(const text::RemoteFile& file, std::string content, std::optional<std::uint64_t> key, RespondFn respond) {
+    remote::Connection* connection = AgentConnection();
+    if (!connection) {
+        respond(std::nullopt, Json{{"code", 1}, {"message", "not connected to " + file.destination}});
+        return;
     }
     remote::WriteFile(*connection, host::FsWriteRequest{.path = file.path, .data = content, .expect = std::nullopt},
                       agentLifetime_.Token().Bind([this, file, content, key, respond](const remote::FsResult<host::FileStat>& written) {
@@ -2172,7 +2253,8 @@ void Manager::WriteHostFile(const Json& params, RespondFn respond) {
                               if (buffer) {
                                   RecordCheckpointFileEdit(*s, *buffer, file, beforeSequence);
                               }
-                              else {
+                              else if (std::ranges::none_of(s->pendingCheckpoint->files,
+                                                            [&file](const TurnFile& turnFile) { return turnFile.file == text::FileRef(file); })) {
                                   s->pendingCheckpoint->untrackedFiles.emplace_back(file);
                               }
                           }

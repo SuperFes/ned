@@ -72,8 +72,6 @@ and sync on save; don't build a remote-authoritative buffer.
 **ACP agents on a host**
 - [ ] ned's MCP tools for an agent on a host: the bridge is a local socket, so
       `ned-agent` would relay the agent's MCP stdio back over the connection.
-- [ ] Turn review and rewind of a host file the agent changed while it wasn't open
-      here: its "before" would have to be taken on the host, ahead of the edit.
 
 **Client/server protocol**, ordered by the design doc's staging section.
 - [ ] Verify a remote debug session end to end (PHP/Xdebug, with the adapter running on

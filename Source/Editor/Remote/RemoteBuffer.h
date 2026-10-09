@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "Editor/BufferSave.h"
 #include "Editor/Lifetime.h"
@@ -56,6 +57,13 @@ struct RemoteLoadOutcome {
 // or an expired token, ends the load silently.
 void LoadRemoteBuffer(Hosts& hosts, text::BufferList& buffers, const text::Buffer& placeholder, bool createMissing,
                       LifetimeToken token, std::function<void(text::Buffer& buffer, RemoteLoadOutcome outcome)> done);
+
+// Opens each of files not open here yet, each one the host doesn't have as
+// a new empty file. done runs once, on the main thread, when all have
+// loaded, with why the first that couldn't didn't (its placeholder closed);
+// not at all once token has died.
+void OpenRemoteFiles(Hosts& hosts, text::BufferList& buffers, const std::vector<text::RemoteFile>& files, LifetimeToken token,
+                     std::function<void(std::optional<std::string> failure)> done);
 
 // revert-buffer for a loaded remote buffer: reads its file from its host
 // again and takes it as one undoable step (Buffer::RevertFromRemote),

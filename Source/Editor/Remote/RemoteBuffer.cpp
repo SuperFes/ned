@@ -87,6 +87,43 @@ void LoadRemoteBuffer(Hosts& hosts, text::BufferList& buffers, const text::Buffe
                      });
 }
 
+void OpenRemoteFiles(Hosts& hosts, text::BufferList& buffers, const std::vector<text::RemoteFile>& files, LifetimeToken token,
+                     std::function<void(std::optional<std::string> failure)> done) {
+    std::vector<text::RemoteFile> missing;
+    for (const text::RemoteFile& file : files) {
+        if (buffers.FindByRemote(file) == nullptr && std::ranges::find(missing, file) == missing.end()) {
+            missing.push_back(file);
+        }
+    }
+    if (missing.empty()) {
+        if (token.Alive()) {
+            done(std::nullopt);
+        }
+        return;
+    }
+    struct State {
+        std::size_t                                     outstanding = 0;
+        std::optional<std::string>                      failure;
+        std::function<void(std::optional<std::string>)> done;
+    };
+    auto state = std::make_shared<State>(State{.outstanding = missing.size(), .failure = std::nullopt, .done = std::move(done)});
+    for (const text::RemoteFile& file : missing) {
+        text::Buffer& placeholder = buffers.AddRemotePlaceholder(file);
+        LoadRemoteBuffer(hosts, buffers, placeholder, /*createMissing=*/true, token,
+                         [&buffers, state, file](text::Buffer& buffer, const RemoteLoadOutcome& outcome) {
+                             if (!outcome.loaded) {
+                                 buffers.Close(buffer.Name());
+                                 if (!state->failure) {
+                                     state->failure = "couldn't open " + file.ToString() + ": " + outcome.loaded.error();
+                                 }
+                             }
+                             if (--state->outstanding == 0) {
+                                 state->done(state->failure);
+                             }
+                         });
+    }
+}
+
 void ReloadRemoteBuffer(Hosts& hosts, text::BufferList& buffers, const text::Buffer& buffer, std::optional<text::Charset> charset,
                         LifetimeToken token, std::function<void(text::Buffer& buffer, std::optional<std::string> failure)> done) {
     ReadRemoteBuffer(hosts, buffers, buffer, std::move(token),

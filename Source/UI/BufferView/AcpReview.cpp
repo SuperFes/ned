@@ -9,6 +9,7 @@
 #include "Editor/ModeOverrides.h"
 #include "Editor/Multibuffer.h"
 #include "Editor/Project/Root.h"
+#include "Editor/Remote/RemoteBuffer.h"
 #include "UI/BufferView/Internal.h"
 
 namespace ned::ui {
@@ -32,6 +33,25 @@ namespace {
 } // namespace
 
 void BufferView::OpenAcpTurnReview(std::string title, std::vector<editor::acp::TurnFile> files) {
+    // A host's files are undone in their buffers, so they open first.
+    std::vector<text::RemoteFile> closed;
+    for (const editor::acp::TurnFile& file : files) {
+        if (const auto* remote = std::get_if<text::RemoteFile>(&file.file); remote != nullptr && bufferList_.FindByRemote(*remote) == nullptr) {
+            closed.push_back(*remote);
+        }
+    }
+    if (!closed.empty() && remoteHosts_ != nullptr) {
+        statusMessage_ = "Opening the turn's files on " + closed.front().destination + "...";
+        editor::remote::OpenRemoteFiles(*remoteHosts_, bufferList_, closed, lifetime_.Token(),
+                                        [this, title = std::move(title), files = std::move(files)](std::optional<std::string> failure) mutable {
+                                            if (failure) {
+                                                ReportError("Couldn't review the turn: " + *failure);
+                                                return;
+                                            }
+                                            OpenAcpTurnReview(std::move(title), std::move(files));
+                                        });
+        return;
+    }
     editor::acp::ReviewSession session = editor::acp::MakeReviewSession(std::move(title), acpManager_ ? acpManager_->TranscriptRoot() : editor::ProjectRoot(), std::move(files));
     if (session.hunks.empty()) {
         statusMessage_ = "That turn left no file changes to review.";
