@@ -22,6 +22,7 @@ using ned::editor::protocol::kCompressMinBytes;
 using ned::editor::protocol::kFrameFlagZstd;
 using ned::editor::protocol::kMaxCborDepth;
 using ned::editor::protocol::kMaxFrameBytes;
+using ned::editor::protocol::TakeFrames;
 using Json = nlohmann::json;
 
 namespace {
@@ -150,6 +151,21 @@ TEST_CASE("FrameTransport rejects malformed frames", "[Protocol][FrameTransport]
     if (pipe.writeFd >= 0) {
         pipe.CloseWriter();
     }
+}
+
+TEST_CASE("TakeFrames splits whole frames off a buffer and leaves a partial one", "[Protocol][FrameTransport]") {
+    const std::string big(kCompressMinBytes * 4, 'z');
+    std::string       bytes = EncodeFrame("one", false) + EncodeFrame(big, true) + EncodeFrame("", false);
+    const std::string last  = EncodeFrame("three", false);
+    bytes += last.substr(0, 6);
+    CHECK(TakeFrames(bytes) == std::vector<std::string>{"one", big, ""});
+    CHECK(bytes == last.substr(0, 6));
+    bytes += last.substr(6);
+    CHECK(TakeFrames(bytes) == std::vector<std::string>{"three"});
+    CHECK(bytes.empty());
+
+    std::string reserved = Header(1, 0x02) + "x";
+    REQUIRE_THROWS_AS(TakeFrames(reserved), std::runtime_error);
 }
 
 TEST_CASE("FrameTransport refuses to send a payload over the cap", "[Protocol][FrameTransport]") {

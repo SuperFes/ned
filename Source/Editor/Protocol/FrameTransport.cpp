@@ -92,6 +92,23 @@ namespace {
         return true;
     }
 
+    struct FrameHeader {
+        std::size_t   length = 0;
+        unsigned char flags  = 0;
+    };
+
+    FrameHeader ParseHeader(std::string_view header) {
+        const auto        byte   = [header](std::size_t i) { return static_cast<std::uint32_t>(static_cast<unsigned char>(header[i])); };
+        const FrameHeader parsed = {.length = (byte(0) << 24) | (byte(1) << 16) | (byte(2) << 8) | byte(3), .flags = static_cast<unsigned char>(header[4])};
+        if ((parsed.flags & ~kFrameFlagZstd) != 0) {
+            throw std::runtime_error("ned: frame has a reserved flag set");
+        }
+        if (parsed.length > kMaxFrameBytes) {
+            throw std::runtime_error("ned: frame length exceeds the size cap");
+        }
+        return parsed;
+    }
+
     std::string BaseName(const std::string& path) {
         const std::size_t slash = path.find_last_of('/');
         return slash == std::string::npos ? path : path.substr(slash + 1);
@@ -106,6 +123,22 @@ std::string EncodeFrame(std::string_view payload, bool compress) {
     std::string            frame(header.begin(), header.end());
     frame += body;
     return frame;
+}
+
+std::vector<std::string> TakeFrames(std::string& bytes) {
+    std::vector<std::string> frames;
+    std::size_t              at = 0;
+    while (bytes.size() - at >= kFrameHeaderBytes) {
+        const FrameHeader header = ParseHeader(std::string_view(bytes).substr(at, kFrameHeaderBytes));
+        if (bytes.size() - at - kFrameHeaderBytes < header.length) {
+            break;
+        }
+        const std::string_view payload = std::string_view(bytes).substr(at + kFrameHeaderBytes, header.length);
+        frames.push_back((header.flags & kFrameFlagZstd) != 0 ? Decompress(payload) : std::string(payload));
+        at += kFrameHeaderBytes + header.length;
+    }
+    bytes.erase(0, at);
+    return frames;
 }
 
 FrameTransport::FrameTransport(const std::vector<std::string>& argv, bool captureStderr) : child_(argv, captureStderr ? process::StderrMode::Capture : process::StderrMode::Discard),
@@ -131,21 +164,13 @@ std::optional<std::string> FrameTransport::ReadFrame(std::chrono::milliseconds s
     if (!ReadExact(child_, header.data(), header.size(), true, stallTimeout)) {
         return std::nullopt;
     }
-    const auto          byte   = [&header](std::size_t i) { return static_cast<std::uint32_t>(static_cast<unsigned char>(header[i])); };
-    const std::size_t   length = (byte(0) << 24) | (byte(1) << 16) | (byte(2) << 8) | byte(3);
-    const unsigned char flags  = static_cast<unsigned char>(header[4]);
-    if ((flags & ~kFrameFlagZstd) != 0) {
-        throw std::runtime_error("ned: frame has a reserved flag set");
-    }
-    if (length > kMaxFrameBytes) {
-        throw std::runtime_error("ned: frame length exceeds the size cap");
-    }
+    const FrameHeader parsed = ParseHeader(std::string_view(header.data(), header.size()));
 
-    std::string payload(length, '\0');
-    if (length > 0) {
-        ReadExact(child_, payload.data(), length, false, stallTimeout);
+    std::string payload(parsed.length, '\0');
+    if (parsed.length > 0) {
+        ReadExact(child_, payload.data(), parsed.length, false, stallTimeout);
     }
-    return (flags & kFrameFlagZstd) != 0 ? Decompress(payload) : payload;
+    return (parsed.flags & kFrameFlagZstd) != 0 ? Decompress(payload) : payload;
 }
 
 bool FrameTransport::WaitReadable(std::chrono::milliseconds timeout) const {
