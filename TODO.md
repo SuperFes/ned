@@ -88,8 +88,6 @@ and sync on save; don't build a remote-authoritative buffer.
       entries are local paths.
 - [ ] A host's `.ned/settings.json` (initialization options, workspace configuration).
 - [ ] The prose checker on remote buffers.
-- [ ] A server command missing on the host exits 127 and counts as a crash rather than
-      a spawn failure, so it is retried until the crash-loop guard gives up.
 - [ ] `project-find-references` with no server running searches the local project root
       for a remote buffer.
 

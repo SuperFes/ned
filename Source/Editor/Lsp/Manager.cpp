@@ -1058,8 +1058,19 @@ Client* Manager::ClientForLanguage(const std::string& serverKey, const ServerRoo
 void Manager::SpawnRemoteClient(const std::string& serverKey, const std::string& connectionKey, const ServerRoot& root,
                                 const std::vector<std::string>& command) {
     remoteSpawnPending_.insert(connectionKey);
+    // Latched before the exit arrives, so the disconnect it causes reads as
+    // a known-bad command rather than a crash worth retrying.
+    auto spawnFailed = lifetime_.Bind([this, serverKey, connectionKey, command](const std::string& why) {
+        failedCommands_[connectionKey]     = command;
+        spawnFailureDetail_[connectionKey] = why;
+        LogError(serverKey, why);
+    });
     remote::SpawnBeside(hosts_, text::RemoteFile{.destination = *root.host, .path = root.path},
-                        remote::RemoteSpawn{.argv = command, .cwd = root.path, .stderrMode = process::StderrMode::Capture}, lifetime_.Token(),
+                        remote::RemoteSpawn{.argv          = command,
+                                            .cwd           = root.path,
+                                            .stderrMode    = process::StderrMode::Capture,
+                                            .onSpawnFailed = std::move(spawnFailed)},
+                        lifetime_.Token(),
                         [this, serverKey, connectionKey, root, command](remote::Spawned spawned) {
                             remoteSpawnPending_.erase(connectionKey);
                             if (!spawned) {
