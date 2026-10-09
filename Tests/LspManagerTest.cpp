@@ -7092,7 +7092,7 @@ TEST_CASE("Diagnostics for a file with no open buffer are kept and reported", "[
 
     const auto files = manager.ProjectDiagnostics();
     REQUIRE(files.size() == 1);
-    REQUIRE(files[0].path == unopened);
+    REQUIRE(files[0].file == ned::text::FileRef(unopened));
     REQUIRE(files[0].diagnostics.size() == 1);
     REQUIRE(files[0].diagnostics[0].message == "mismatched types");
     // Positions stay in the server's own space: there is no resident content
@@ -7126,7 +7126,7 @@ TEST_CASE("Diagnostics for a file with no open buffer are kept and reported", "[
         WaitUntil(eventLoop, [&] { return manager.ProjectDiagnostics().size() > 1; });
         const auto after = manager.ProjectDiagnostics();
         REQUIRE(after.size() == 1);
-        REQUIRE(after[0].path == unopened);
+        REQUIRE(after[0].file == ned::text::FileRef(unopened));
     }
 
     std::filesystem::remove_all(root);

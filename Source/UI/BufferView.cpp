@@ -1579,6 +1579,9 @@ void BufferView::RequestDiagnosticsBuffer() {
         // only ever compared against siblings on the same line of the same
         // file, where both are monotonic in the same direction.
         std::size_t sortColumn = 0;
+        // A host's file, named by its host:/path: excerpted read-only, and
+        // with no text when it isn't open here.
+        bool remote = false;
     };
     std::vector<PendingDiagnostic> pending;
 
@@ -1592,7 +1595,7 @@ void BufferView::RequestDiagnosticsBuffer() {
 
     for (const auto& bufferPtr : bufferList_.Buffers()) {
         text::Buffer& buffer = *bufferPtr;
-        if (!buffer.Path() || buffer.Diagnostics().empty() || editor::multibuffer::MultibufferIndexFor(buffer)) {
+        if ((!buffer.Path() && !buffer.Remote()) || buffer.Diagnostics().empty() || editor::multibuffer::MultibufferIndexFor(buffer)) {
             continue;
         }
         const text::ITextStorage& content = buffer.Content();
@@ -1602,13 +1605,14 @@ void BufferView::RequestDiagnosticsBuffer() {
             }
             const auto [line, lineStart, lineEnd] = lineOf(content, diagnostic.startByte);
             pending.push_back(PendingDiagnostic{
-                .path        = *buffer.Path(),
+                .path        = buffer.Path() ? *buffer.Path() : std::filesystem::path(buffer.Remote()->ToString()),
                 .line        = line,
                 .bodyText    = content.Substring(lineStart, lineEnd - lineStart),
                 .startInLine = diagnostic.startByte > lineStart ? diagnostic.startByte - lineStart : 0,
                 .endInLine   = diagnostic.endByte > lineStart ? diagnostic.endByte - lineStart : 0,
                 .diagnostic  = diagnostic,
                 .sortColumn  = diagnostic.startByte > lineStart ? diagnostic.startByte - lineStart : 0,
+                .remote      = buffer.Remote().has_value(),
             });
         }
     }
@@ -1619,20 +1623,22 @@ void BufferView::RequestDiagnosticsBuffer() {
     // any path that currently has one.
     if (lspManager_ != nullptr && editor::lsp::ProjectDiagnosticsEnabled()) {
         for (const editor::lsp::Manager::ProjectDiagnosticFile& file : lspManager_->ProjectDiagnostics()) {
+            const bool remote = std::holds_alternative<text::RemoteFile>(file.file);
             for (const editor::lsp::Manager::ProjectDiagnostic& diagnostic : file.diagnostics) {
                 pending.push_back(PendingDiagnostic{
-                    .path       = file.path,
-                    .line       = diagnostic.start.line, // the server's own line, no read needed to sort by it
-                    .diagnostic = text::Buffer::Diagnostic{.startByte = 0,
-                                                           .endByte   = 0,
-                                                           .severity  = diagnostic.severity,
-                                                           .origin    = text::Buffer::Diagnostic::Origin::Code,
-                                                           .message   = diagnostic.message},
+                    .path           = remote ? std::filesystem::path(text::ToString(file.file)) : text::PathOf(file.file),
+                    .line           = diagnostic.start.line, // the server's own line, no read needed to sort by it
+                    .diagnostic     = text::Buffer::Diagnostic{.startByte = 0,
+                                                               .endByte   = 0,
+                                                               .severity  = diagnostic.severity,
+                                                               .origin    = text::Buffer::Diagnostic::Origin::Code,
+                                                               .message   = diagnostic.message},
                     .stale          = !file.positionsCurrent,
-                    .deferred       = true,
+                    .deferred       = !remote, // nothing here to read
                     .startCharacter = diagnostic.start.character,
                     .endCharacter   = diagnostic.end.character,
                     .sortColumn     = diagnostic.start.character,
+                    .remote         = remote,
                 });
             }
         }
@@ -1735,7 +1741,7 @@ void BufferView::RequestDiagnosticsBuffer() {
             header += " (file changed since)";
         }
         excerpts.push_back(editor::multibuffer::ExcerptSource{
-            item.path, item.line + 1, item.line + 1, std::move(header), item.bodyText, {}, /*editable=*/true});
+            item.path, item.line + 1, item.line + 1, std::move(header), item.bodyText, {}, /*editable=*/!item.remote});
     }
 
     text::Buffer& results = editor::multibuffer::BuildMultibuffer(bufferList_, "*diagnostics*", excerpts, totalFound);

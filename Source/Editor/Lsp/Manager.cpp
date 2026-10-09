@@ -2013,10 +2013,8 @@ void Manager::HandlePublishDiagnostics(const Json& params, const std::string& la
         // about a document it was handed, so a path with no buffer is a
         // stale publish for one that just closed, not news about the
         // project.
-        //
-        // The problem list names local files, so a host's are left out.
-        if (language != kProseLanguageKey && !ConnectionHost(connectionKey)) {
-            RecordProjectDiagnostics(*path, params, language, connectionKey);
+        if (language != kProseLanguageKey) {
+            RecordProjectDiagnostics(DocumentFile(connectionKey, *path), params, language, connectionKey);
         }
         return;
     }
@@ -2024,9 +2022,7 @@ void Manager::HandlePublishDiagnostics(const Json& params, const std::string& la
     // A resident buffer's own diagnostics supersede anything recorded while
     // it was closed -- clear the file out rather than letting the same
     // finding be reported from two places at once.
-    if (!ConnectionHost(connectionKey)) {
-        DropProjectDiagnostics(*path);
-    }
+    DropProjectDiagnostics(DocumentFile(connectionKey, *path));
 
     // prose-diagnostic-callout follow-up: language is the same per-server
     // key HandlePublishDiagnostics is registered under (see the
@@ -2131,9 +2127,25 @@ namespace {
         return {size, written.time_since_epoch().count()};
     }
 
+    // What projectDiagnostics_ keys a file by: a local one's absolute path,
+    // a host's by its host:/path name, which no absolute path can be.
+    std::optional<std::filesystem::path> ProjectDiagnosticKey(const text::FileRef& file) {
+        if (const auto* remote = std::get_if<text::RemoteFile>(&file)) {
+            return std::filesystem::path(remote->ToString());
+        }
+        std::error_code             ec;
+        const std::filesystem::path absolute = std::filesystem::absolute(std::get<std::filesystem::path>(file), ec).lexically_normal();
+        return ec ? std::nullopt : std::optional(absolute);
+    }
+
+    // A host's file can't be stat'd here, so its stamp never goes stale.
+    std::pair<std::uintmax_t, std::int64_t> FileStamp(const std::filesystem::path& key, bool remote) {
+        return remote ? std::pair<std::uintmax_t, std::int64_t>{0, 0} : FileStamp(key);
+    }
+
 } // namespace
 
-void Manager::RecordProjectDiagnostics(const std::filesystem::path& path, const Json& params, const std::string& serverKey,
+void Manager::RecordProjectDiagnostics(const text::FileRef& file, const Json& params, const std::string& serverKey,
                                        const std::string& connectionKey) {
     // Scope guard: only files this connection actually serves. A server is
     // entitled to publish about its own stdlib or a dependency checkout,
@@ -2142,18 +2154,17 @@ void Manager::RecordProjectDiagnostics(const std::filesystem::path& path, const 
     if (folders == connectionFolders_.end()) {
         return;
     }
-    std::error_code             ec;
-    const std::filesystem::path absolute = std::filesystem::absolute(path, ec).lexically_normal();
-    if (ec) {
+    const std::optional<std::filesystem::path> key = ProjectDiagnosticKey(file);
+    if (!key) {
         return;
     }
-    const bool served = std::any_of(folders->second.begin(), folders->second.end(),
-                                    [&absolute](const std::filesystem::path& folder) {
-                                        return PathIsUnder(absolute, folder.lexically_normal());
-                                    });
-    if (!served) {
+    const bool                  remote = std::holds_alternative<text::RemoteFile>(file);
+    const std::filesystem::path served = remote ? text::PathOf(file) : *key;
+    if (std::none_of(folders->second.begin(), folders->second.end(),
+                     [&served](const std::filesystem::path& folder) { return PathIsUnder(served, folder.lexically_normal()); })) {
         return;
     }
+    const std::filesystem::path& absolute = *key;
 
     // An empty array is how a server says "fixed" -- erase this connection's
     // slice, and the file with it once no server has anything left to say.
@@ -2196,33 +2207,30 @@ void Manager::RecordProjectDiagnostics(const std::filesystem::path& path, const 
             .message  = item.value("message", std::string()),
         });
     }
-    const auto [size, mtime] = FileStamp(absolute);
+    const auto [size, mtime] = FileStamp(absolute, remote);
     slice.fileSize           = size;
     slice.fileMTime          = mtime;
 
     projectDiagnostics_[absolute][connectionKey] = std::move(slice);
 }
 
-void Manager::SetProjectDiagnosticsForTesting(const std::filesystem::path& path, const std::string& connectionKey,
-                                             std::vector<ProjectDiagnostic> diagnostics) {
-    std::error_code             ec;
-    const std::filesystem::path absolute = std::filesystem::absolute(path, ec).lexically_normal();
-    if (ec) {
+void Manager::SetProjectDiagnosticsForTesting(const text::FileRef& file, const std::string& connectionKey,
+                                              std::vector<ProjectDiagnostic> diagnostics) {
+    const std::optional<std::filesystem::path> key = ProjectDiagnosticKey(file);
+    if (!key) {
         return;
     }
-    const auto [size, mtime]                 = FileStamp(absolute);
+    const auto [size, mtime] = FileStamp(*key, std::holds_alternative<text::RemoteFile>(file));
     ProjectDiagnosticSlice slice{.diagnostics = std::move(diagnostics), .fileSize = size, .fileMTime = mtime};
-    projectDiagnostics_[absolute][connectionKey] = std::move(slice);
+    projectDiagnostics_[*key][connectionKey] = std::move(slice);
 }
 
-void Manager::DropProjectDiagnostics(const std::filesystem::path& path) {
+void Manager::DropProjectDiagnostics(const text::FileRef& file) {
     if (projectDiagnostics_.empty()) {
         return; // the overwhelmingly common case -- don't pay for absolute() to learn it
     }
-    std::error_code             ec;
-    const std::filesystem::path absolute = std::filesystem::absolute(path, ec).lexically_normal();
-    if (!ec) {
-        projectDiagnostics_.erase(absolute);
+    if (const std::optional<std::filesystem::path> key = ProjectDiagnosticKey(file)) {
+        projectDiagnostics_.erase(*key);
     }
 }
 
@@ -2232,17 +2240,19 @@ std::vector<Manager::ProjectDiagnosticFile> Manager::ProjectDiagnostics() const 
     // projectDiagnostics_ is a std::map, so this comes out path-sorted
     // already -- the order a problem list wants to be read in.
     for (const auto& [path, bySource] : projectDiagnostics_) {
+        // A host's file is keyed by its host:/path name.
+        const std::optional<text::RemoteFile> remote = path.is_absolute() ? std::nullopt : text::ParseRemoteFile(path.string());
         // A resident buffer's own diagnostics supersede anything recorded
         // while it was closed, and the two must never both be reported.
         // Gating on the read rather than on didOpen/didClose is what keeps
         // that true without a second lifecycle hook to drift out of sync --
         // a buffer can appear or vanish between any two publishes, and this
         // asks the question at the only moment the answer is used.
-        if (bufferList_.FindByPath(path) != nullptr) {
+        if (remote ? bufferList_.FindByRemote(*remote) != nullptr : bufferList_.FindByPath(path) != nullptr) {
             continue;
         }
-        ProjectDiagnosticFile file{.path = path};
-        const auto [size, mtime] = FileStamp(path);
+        ProjectDiagnosticFile file{.file = remote ? text::FileRef(*remote) : text::FileRef(path)};
+        const auto [size, mtime] = FileStamp(path, remote.has_value());
         for (const auto& [serverKey, slice] : bySource) {
             // Every server's positions were stamped against the file as it
             // was when that server spoke; one stale slice makes the file's
