@@ -175,7 +175,9 @@ TEST_CASE("A host's change reverts, merges or marks the remote buffers holding i
     }
 
     // A file still as the buffer last saw it -- the buffer's own save, say
-    // -- changes nothing. Its stat is answered ahead of e's.
+    // -- changes nothing. Its stat is answered ahead of e's. The host's own
+    // events stop counting first: a late burst from the rewrites above would.
+    fixture.onEvents = nullptr;
     changes.clear();
     std::ofstream(dir / "e.txt") << "one\ntwo\nTHREE\n";
     remote::FollowRemoteChanges(fixture.hosts, list, "host",
