@@ -9,6 +9,7 @@
 #include "Janet/EditorBindings.h"
 #include "Janet/Environment.h"
 #include "JanetTestSupport.h"
+#include "Text/MergeAlignment.h"
 
 using ned::janet::Environment;
 using ned::janet::InstallEditorBindings;
@@ -42,6 +43,7 @@ TEST_CASE("ned/vcs-register-provider registers a provider resolvable via ActiveP
          :parse-diff (fn [stdout] [{:old-start 2 :old-count 1 :new-start 2 :new-count 3}])
          :working-diff-argv (fn [root] ["fake-vcs" "working-diff" root])
          :commit-diff-argv (fn [root commit-hash] ["fake-vcs" "commit-diff" root commit-hash])
+         :conflict-side-argv (fn [path side] ["fake-vcs" "show" side path])
          :status-argv (fn [root] ["fake-vcs" "status" root])
          :parse-status (fn [stdout] [{:state "??" :path "new.txt"}])
          :stage-argv (fn [path] ["fake-vcs" "stage" path])
@@ -109,6 +111,11 @@ TEST_CASE("ned/vcs-register-provider registers a provider resolvable via ActiveP
 
     REQUIRE(provider->CommitArgv("/repo", "a \"quoted\" message").argv ==
             std::vector<std::string>{"fake-vcs", "commit", "/repo", "a \"quoted\" message"});
+
+    REQUIRE(provider->ConflictSideArgv("/repo/a.txt", ned::text::MergeSideKind::Base).argv ==
+            std::vector<std::string>{"fake-vcs", "show", "base", "/repo/a.txt"});
+    REQUIRE(provider->ConflictSideArgv("/repo/a.txt", ned::text::MergeSideKind::Theirs).argv ==
+            std::vector<std::string>{"fake-vcs", "show", "theirs", "/repo/a.txt"});
 
     // VcsPanel amend follow-up.
     REQUIRE(provider->AmendCommitArgv("/repo", "amended message").argv ==
@@ -228,6 +235,7 @@ TEST_CASE("a provider registered without an operation's callbacks reports it as 
     REQUIRE_THROWS_WITH(provider->CommitArgv("/root", "msg"), "commit not supported by this provider");
     REQUIRE_THROWS_WITH(provider->AmendCommitArgv("/root", "msg"), "amend commit not supported by this provider");
     REQUIRE_THROWS_WITH(provider->PreviousCommitMessageArgv("/root"), "previous commit message not supported by this provider");
+    REQUIRE_THROWS_WITH(provider->ConflictSideArgv("x", ned::text::MergeSideKind::Ours), "conflict sides not supported by this provider");
     REQUIRE_THROWS_WITH(provider->ExtendCommitArgv("/root"), "extend commit not supported by this provider");
     REQUIRE_THROWS_WITH(provider->RewordCommitArgv("/root", "msg"), "reword commit not supported by this provider");
     REQUIRE_THROWS_WITH(provider->BranchListArgv("/root"), "branch listing not supported by this provider");

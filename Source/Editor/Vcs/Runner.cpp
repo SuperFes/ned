@@ -365,6 +365,16 @@ void Runner::RequestDiff(const text::Buffer& buffer, std::function<void(std::vec
     });
 }
 
+void Runner::RequestConflictSide(const text::Buffer& buffer, text::MergeSideKind side, std::function<void(std::string)> onComplete,
+                                 std::function<void(std::string)> onError) {
+    InBufferRepo(buffer, onError, [this, side, onComplete, onError](const Repo& repo, const std::filesystem::path& path) {
+        RunProviderOperation(
+            repo, "conflict side", "conflict-side:" + std::to_string(static_cast<int>(side)) + ":" + path.string(),
+            [path, side](Provider& provider) { return provider.ConflictSideArgv(path, side); },
+            [onComplete](Provider&, std::string output) { onComplete(std::move(output)); }, onError);
+    });
+}
+
 void Runner::RequestFullDiff(const Repo& repo, std::function<void(std::string)> onComplete, std::function<void(std::string)> onError) {
     const std::filesystem::path& root = repo.root;
     RunProviderOperation(

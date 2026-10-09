@@ -21,6 +21,7 @@
 #include "Janet/Environment.h"
 #include "Janet/PluginLoader.h"
 #include "JanetTestSupport.h"
+#include "Text/MergeAlignment.h"
 #include "UI/EventLoop.h"
 
 using ned::editor::process::ChildProcess;
@@ -977,4 +978,50 @@ TEST_CASE("bundled git plugin probes and drives an in-progress rebase, cherry-pi
         REQUIRE(ProbeSequence(*provider, repo).kind.empty());
         REQUIRE(RunToCompletion({"git", "-C", root, "log", "-1", "--pretty=%s"}).starts_with("Merge branch 'topic'"));
     }
+}
+
+TEST_CASE("bundled git plugin reads each side of a conflicted file from the index", "[GitVcsPlugin]") {
+    if (!GitAvailable()) {
+        SKIP("git not found on $PATH");
+    }
+
+    RegistryResetGuard guard;
+    Environment&       env = ned_tests::TestEnvironment();
+    InstallEditorBindings(env);
+    LoadBundledPlugins(env);
+
+    const std::filesystem::path repo =
+        std::filesystem::temp_directory_path() / ("ned-git-vcs-conflict-side-test-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(repo);
+    std::filesystem::create_directories(repo / "sub");
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() {
+            std::filesystem::remove_all(path);
+        }
+    } cleanup{repo};
+
+    const std::string           root = repo.string();
+    const std::filesystem::path file = repo / "sub" / "file.txt";
+    RunToCompletion({"git", "init", "-q", "-b", "main", root});
+    RunToCompletion({"git", "-C", root, "config", "user.email", "ned-test@example.com"});
+    RunToCompletion({"git", "-C", root, "config", "user.name", "Ned Test"});
+    const auto commitFile = [&](const std::string& content, const std::string& message) {
+        std::ofstream(file) << content;
+        RunToCompletion({"git", "-C", root, "add", "sub/file.txt"});
+        RunToCompletion({"git", "-C", root, "commit", "-q", "-m", message});
+    };
+    commitFile("a\nb\nc\nd\ne\n", "base");
+    RunToCompletion({"git", "-C", root, "checkout", "-q", "-b", "topic"});
+    commitFile("A\nb\nc\nd\ntheirs\n", "topic");
+    RunToCompletion({"git", "-C", root, "checkout", "-q", "main"});
+    commitFile("a\nb\nc\nd\nours\n", "main");
+    REQUIRE(RunAllowingFailure({"git", "-C", root, "merge", "-q", "topic"}) != 0);
+
+    auto* provider = ned::editor::vcs::ActiveProviderFor(repo);
+    REQUIRE(provider != nullptr);
+    using ned::text::MergeSideKind;
+    CHECK(RunToCompletion(provider->ConflictSideArgv(file, MergeSideKind::Base).argv) == "a\nb\nc\nd\ne\n");
+    CHECK(RunToCompletion(provider->ConflictSideArgv(file, MergeSideKind::Ours).argv) == "a\nb\nc\nd\nours\n");
+    CHECK(RunToCompletion(provider->ConflictSideArgv(file, MergeSideKind::Theirs).argv) == "A\nb\nc\nd\ntheirs\n");
 }

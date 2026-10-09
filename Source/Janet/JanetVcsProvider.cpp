@@ -1,6 +1,7 @@
 #include "JanetVcsProvider.h"
 
 #include "Environment.h"
+#include "Text/MergeAlignment.h"
 #include "Value.h"
 
 namespace ned::janet {
@@ -22,6 +23,7 @@ namespace {
         "parse-diff",
         "working-diff-argv",
         "commit-diff-argv",
+        "conflict-side-argv",
         "status-argv",
         "parse-status",
         "stage-argv",
@@ -465,6 +467,16 @@ editor::vcs::CommandSpec JanetVcsProvider::AmendCommitArgv(const std::filesystem
         return Provider::AmendCommitArgv(root, message);
     }
     return ParseCommandSpec(CallWithStrings(*fn, root.string(), message));
+}
+
+editor::vcs::CommandSpec JanetVcsProvider::ConflictSideArgv(const std::filesystem::path& path, text::MergeSideKind side) const {
+    const std::string* fn = InternalName("conflict-side-argv");
+    if (!fn) {
+        return Provider::ConflictSideArgv(path, side);
+    }
+    const char* word = side == text::MergeSideKind::Base ? "base" : side == text::MergeSideKind::Ours ? "ours"
+                                                                                                      : "theirs";
+    return ParseCommandSpec(CallWithStrings(*fn, path.string(), word));
 }
 
 editor::vcs::CommandSpec JanetVcsProvider::PreviousCommitMessageArgv(const std::filesystem::path& root) const {

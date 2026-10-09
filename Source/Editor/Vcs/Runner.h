@@ -145,6 +145,10 @@ class Runner {
     // concurrent diffs if refreshes are requested faster than one completes.
     void RequestDiff(const text::Buffer& buffer, std::function<void(std::vector<DiffHunk>)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
 
+    // One side of buffer's file's unresolved merge (Provider::ConflictSideArgv),
+    // as the raw bytes the VCS stored.
+    void RequestConflictSide(const text::Buffer& buffer, text::MergeSideKind side, std::function<void(std::string content)> onComplete, std::function<void(std::string)> onError = [](const std::string&) {});
+
     // Multibuffers follow-up: root-scoped, real raw diff text (every changed
     // file, real context lines) -- see Provider::WorkingDiffArgv's own
     // doc comment for how this differs from RequestDiff above. No parse
