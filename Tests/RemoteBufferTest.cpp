@@ -9,6 +9,7 @@
 #include "Editor/Host/FsCodec.h"
 #include "Editor/Protocol/Endpoint.h"
 #include "Editor/Remote/RemoteBuffer.h"
+#include "Editor/Session.h"
 #include "Text/BufferList.h"
 
 namespace remote = ned::editor::remote;
@@ -44,6 +45,26 @@ TEST_CASE("A remote read that fails leaves its placeholder loading, unless the f
     CHECK_FALSE(missing.IsLoading());
     CHECK(missing.Text().empty());
     CHECK_FALSE(missing.RemoteTimestamp().has_value());
+}
+
+TEST_CASE("A remote read restores the file's saved place", "[Remote][RemoteBuffer][Session]") {
+    struct PlacesGuard {
+        PlacesGuard() {
+            ned::editor::ResetFilePlacesForTesting();
+        }
+        ~PlacesGuard() {
+            ned::editor::ResetFilePlacesForTesting();
+        }
+    } guard;
+    const ned::text::RemoteFile file{.destination = "host", .path = "/srv/notes.txt"};
+    ned::text::Buffer           before = ned::text::Buffer::FromRemoteContents(file, FileContents{.bytes = "one\ntwo\nthree\n", .timestamp = std::nullopt});
+    before.SetPoint(before.ByteOffsetForLineAndColumn(2, 3));
+    ned::editor::RecordFilePlace(before, std::nullopt, 4);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    placeholder = list.AddRemotePlaceholder(file);
+    REQUIRE_FALSE(remote::FinishRemoteLoad(placeholder, FileContents{.bytes = "one\ntwo\nthree\n", .timestamp = std::nullopt}).has_value());
+    CHECK(placeholder.Point() == placeholder.ByteOffsetForLineAndColumn(2, 3));
 }
 
 TEST_CASE("A remote save keeps edits made while it was in flight, and a host's refusal asks next time", "[Remote][RemoteBuffer]") {

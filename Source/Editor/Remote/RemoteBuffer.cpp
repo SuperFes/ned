@@ -4,6 +4,8 @@
 #include "Editor/FileSettings.h"
 #include "Editor/ModeOverrides.h"
 #include "Editor/PersistentUndo.h"
+#include "Editor/Session.h"
+#include "Editor/TabWidth.h"
 #include "Text/BinaryDetect.h"
 #include "Text/BufferList.h"
 
@@ -36,6 +38,7 @@ std::optional<std::string> FinishRemoteLoad(text::Buffer& placeholder, const FsR
     ClearModeCacheFor(placeholder);
     ApplyFileSettings(placeholder);
     TryRestoreUndoHistory(placeholder);
+    RestoreFilePlace(placeholder, static_cast<std::size_t>(TabWidth()));
     return std::nullopt;
 }
 
