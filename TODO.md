@@ -48,18 +48,6 @@ table is the evidence this stage was waiting for.
       bindings, and a refresh callback. It falls under the 1.0 freeze the moment it ships
       as `ned/*`.
 
-## Remote Development
-
-Goal: edit files on a remote host over SSH without the editor running remotely,
-comfortably enough that it doesn't feel like a degraded mode.
-
-**Approach.** A thin, self-contained agent first, speaking `Docs/ClientServerProtocol.md`
-over `ssh host ned-agent --stdio`. It does search, file I/O, change notification, and
-hosts LSP/DAP/task/VCS processes against the remote toolchain. Locally, the same
-dispatcher runs in-process. A real target host (Rocky 9, glibc 2.34, no compiler, no `rg`)
-rules out both a dynamically linked agent and a client-only `rg` fallback. Edit locally
-and sync on save; don't build a remote-authoritative buffer.
-
 ## Documentation & Companion Tooling
 
 - [ ] **Doxygen developer docs**, themed with Doxygen Awesome, as an opt-in `docs` target
