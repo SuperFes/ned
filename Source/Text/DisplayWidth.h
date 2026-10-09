@@ -1,8 +1,9 @@
 //
 // How many terminal columns text occupies. The renderer is Notcurses, so
-// its measurement (ncstrwidth) is the authority: anything that lines text up
-// on screen -- the buffer view, goal columns, fill, table alignment, widget
-// labels -- asks here rather than counting codepoints.
+// its measurement (ncstrwidth) is the authority, mirrored here by
+// TerminalColumns so the text layer needn't link the renderer: anything that
+// lines text up on screen -- the buffer view, goal columns, fill, table
+// alignment, widget labels -- asks here rather than counting codepoints.
 //
 // The unit is the grapheme cluster (UAX #29, the same segmentation
 // Grapheme.h moves the cursor by): a base character with its combining
@@ -56,6 +57,9 @@ struct Glyph {
 [[nodiscard]] int PlaceholderDigits(char32_t codepoint);
 // The placeholder's text, "◁XX▷", and its width (digits plus the brackets).
 [[nodiscard]] std::string PlaceholderText(char32_t codepoint);
+// ncstrwidth's answer for NUL-terminated UTF-8 text: its columns, or -1 for
+// what Notcurses refuses to draw.
+[[nodiscard]] int TerminalColumns(const char* text);
 // A placeholder glyph's text: its codepoint's, or "◁\xE9▷" for a raw byte.
 [[nodiscard]] std::string PlaceholderText(const Glyph& glyph);
 [[nodiscard]] inline int  PlaceholderColumns(char32_t codepoint) {

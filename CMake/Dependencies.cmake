@@ -32,6 +32,15 @@ pkg_check_modules(UTF8PROC REQUIRED IMPORTED_TARGET libutf8proc)
 add_library(utf8proc ALIAS PkgConfig::UTF8PROC)
 #------------------------------------------------------------------------------
 
+#--- System libunistring -------------------------------------------------------
+# Text/DisplayWidth.cpp measures grapheme clusters the way Notcurses does,
+# with the same library's break rules. It ships no pkg-config file.
+find_path(UNISTRING_INCLUDE_DIR unigbrk.h REQUIRED)
+find_library(UNISTRING_LIBRARY unistring REQUIRED)
+add_library(unistring UNKNOWN IMPORTED)
+set_target_properties(unistring PROPERTIES IMPORTED_LOCATION "${UNISTRING_LIBRARY}" INTERFACE_INCLUDE_DIRECTORIES "${UNISTRING_INCLUDE_DIR}")
+#------------------------------------------------------------------------------
+
 #--- CLI11 (command-line parameter handling follow-up) ------------------------
 # System package (Gentoo's dev-cpp/cli11) ships a real CLI11Config.cmake, so
 # find_package hands back the same CLI11::CLI11 target FetchContent used to.

@@ -1,9 +1,13 @@
 #include "DisplayWidth.h"
 
 #include <algorithm>
+#include <climits>
 #include <cstdlib>
+#include <cwchar>
+#include <cwctype>
 
-#include <notcurses/notcurses.h>
+#include <unictype.h>
+#include <unigbrk.h>
 #include <utf8proc.h>
 
 #include "ITextStorage.h"
@@ -41,9 +45,84 @@ namespace {
         bool        raw       = false;
     };
 
+    // One of Notcurses' own clusters starting at text (egcpool.h's
+    // utf8_egc_len, 3.0.17): its byte length, or -1 for what it refuses to
+    // draw, and its columns, those of its first codepoint libc gives a
+    // width. A break is tested against the cluster's first codepoint, not
+    // the previous one; a variation selector ends a cluster; everything
+    // after a ZWJ joins it.
+    int NotcursesClusterLength(const char* text, int& columns) {
+        std::size_t length = 0;
+        columns            = 0;
+        std::mbstate_t state{};
+        wchar_t        wc     = 0;
+        wchar_t        first  = 0;
+        bool           joined = false;
+        int            read   = 0;
+        do {
+            read = static_cast<int>(std::mbrtowc(&wc, text, MB_LEN_MAX, &state));
+            if (read < 0) {
+                return -1;
+            }
+            if (first != 0 && !joined && uc_is_grapheme_break(static_cast<ucs4_t>(first), static_cast<ucs4_t>(wc))) {
+                break;
+            }
+            int cols = 0;
+            if (uc_is_property_variation_selector(static_cast<ucs4_t>(wc))) {
+                length += static_cast<std::size_t>(read);
+                break;
+            }
+            if (wc == L'\u200d' || joined) {
+                joined = true;
+            }
+            else {
+                cols = ::wcwidth(wc);
+                if (cols < 0) {
+                    if (std::iswspace(static_cast<wint_t>(wc)) != 0) {
+                        columns = 1;
+                        return static_cast<int>(length + 1);
+                    }
+                    cols = 1;
+                    if (std::iswcntrl(static_cast<wint_t>(wc)) != 0) {
+                        return -1;
+                    }
+                }
+            }
+            if (columns == 0) {
+                columns += cols;
+            }
+            length += static_cast<std::size_t>(read);
+            text += read;
+            if (first == 0) {
+                first = wc;
+            }
+        }
+        while (read != 0);
+        return static_cast<int>(length);
+    }
+
+} // namespace
+
+int TerminalColumns(const char* text) {
+    int total = 0;
+    do {
+        int       columns = 0;
+        const int length  = NotcursesClusterLength(text, columns);
+        if (length < 0) {
+            return -1;
+        }
+        text += length;
+        total += columns;
+    }
+    while (*text != '\0');
+    return total;
+}
+
+namespace {
+
     // Measures an already-segmented, well-formed cluster.
     Glyph Measure(const std::string& cluster, char32_t first, std::size_t byteLength) {
-        const int columns = ncstrwidth(cluster.c_str(), nullptr, nullptr);
+        const int columns = TerminalColumns(cluster.c_str());
         if (columns > 0) {
             return Glyph{.byteLength = byteLength, .codepoint = first, .columns = std::min(columns, 2)};
         }

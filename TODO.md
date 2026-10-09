@@ -60,11 +60,6 @@ dispatcher runs in-process. A real target host (Rocky 9, glibc 2.34, no compiler
 rules out both a dynamically linked agent and a client-only `rg` fallback. Edit locally
 and sync on save; don't build a remote-authoritative buffer.
 
-**Library split** — the agent links only what it needs. Measured by include closure,
-2026-10-05.
-- [ ] `Text/DisplayWidth.cpp` includes Notcurses, which blocks a clean text library. It
-      doesn't block the agent.
-
 **Agent**
 - [ ] A CI job that builds both static agents (`agent-*` presets) and runs `[HostAgent]`
       against them through `NED_TEST_AGENT`: x86_64 natively, aarch64 under
