@@ -30,6 +30,15 @@ std::optional<std::string> ConnectionHost(std::string_view key) {
     return std::string(key.substr(1, end - 1));
 }
 
+std::optional<std::filesystem::path> ConnectionHostRoot(std::string_view key) {
+    const std::optional<std::string> host = ConnectionHost(key);
+    if (!host) {
+        return std::nullopt;
+    }
+    const std::string_view rest = key.substr(host->size() + 2);
+    return std::filesystem::path(rest.substr(0, rest.rfind(kServer)));
+}
+
 std::string_view ConnectionServer(std::string_view key) {
     const std::size_t separator = key.rfind(kServer);
     return separator == std::string_view::npos ? key : key.substr(separator + 1);

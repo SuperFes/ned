@@ -30,7 +30,8 @@ inline constexpr const char* kRemoteLspLanguage = "remote-lsp-test";
 // definition), switchSourceHeader (b.c) and rename (x in a.c and y in b.c;
 // or, when the new name is "moved", creating c.c and writing it, moving b.c
 // to d.c and renaming x). workspace/executeCommand has it ask the editor to
-// apply an edit to y in b.c, as request "pushed". Anything else it is asked
+// apply an edit to y in b.c, as request "pushed". Once initialized, it
+// registers for watched changes to *.c files. Anything else it is asked
 // gets null.
 inline constexpr const char* kRemoteLspServer = R"(import json, os, sys
 log = open(sys.argv[1], "a")
@@ -87,6 +88,9 @@ while True:
             here + "b.c": [{"range": at("b.c", 1)["range"], "newText": name}]}}}
     elif "id" in message and method:
         reply = {"id": message["id"], "result": None}
+    elif method == "initialized":
+        ask = {"id": "watch", "method": "client/registerCapability", "params": {"registrations": [{"id": "c-files",
+            "method": "workspace/didChangeWatchedFiles", "registerOptions": {"watchers": [{"globPattern": "**/*.c"}]}}]}}
     elif method == "textDocument/didOpen":
         uri = message["params"]["textDocument"]["uri"]
         reply = {"method": "textDocument/publishDiagnostics", "params": {"uri": uri, "diagnostics": [

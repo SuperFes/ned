@@ -39,12 +39,13 @@
 #define NED_EDITOR_LSP_MANAGER_H
 
 #include <chrono>
-#include <filesystem>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -687,7 +688,14 @@ class Manager {
     // every connection to a server that declares its capabilities
     // statically -- the notification is meaningful only as the other half
     // of a registration.
-    void NotifyWatchedFilesChanged(const std::vector<WatchedFileChange>& changes);
+    //
+    // host names the machine the changes happened on: they reach only that
+    // host's servers, or only local ones when it's unset.
+    void NotifyWatchedFilesChanged(const std::vector<WatchedFileChange>& changes, const std::optional<std::string>& host = std::nullopt);
+
+    // Each host's servers that registered a watcher, by the roots they run
+    // in there: what the host is asked to watch for them.
+    [[nodiscard]] std::map<std::string, std::set<std::filesystem::path>> HostWatchedFileRoots() const;
 
     // window-messages follow-up. A server's own `window/showMessage` (and
     // the message half of `window/showMessageRequest`), handed to the UI

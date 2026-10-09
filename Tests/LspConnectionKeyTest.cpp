@@ -6,6 +6,7 @@
 #include "Editor/Lsp/ConnectionKey.h"
 
 using ned::editor::lsp::ConnectionHost;
+using ned::editor::lsp::ConnectionHostRoot;
 using ned::editor::lsp::ConnectionServer;
 using ned::editor::lsp::MakeConnectionKey;
 
@@ -32,4 +33,6 @@ TEST_CASE("A host's connection names the host, even for a root matching the loca
     REQUIRE(key != MakeConnectionKey({.host = "other", .path = "/work/app"}, "/work/app", "cpp"));
     REQUIRE(ConnectionHost(key) == "me@box");
     REQUIRE(ConnectionServer(key) == "cpp");
+    REQUIRE(ConnectionHostRoot(key) == std::filesystem::path("/work/app"));
+    REQUIRE(ConnectionHostRoot(MakeConnectionKey({.path = "/work/app/sub"}, "/work/app", "python")) == std::nullopt);
 }

@@ -28,9 +28,11 @@
 #include "Editor/Vim/Settings.h"
 #include "FakeLspServer.h"
 #include "FakeRemoteHost.h"
+#include "FakeRemoteLspServer.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
+#include "Text/FileUri.h"
 #include "Text/KillRing.h"
 #include "UI/AcpPanel.h"
 #include "UI/ActiveBuffer.h"
@@ -902,6 +904,51 @@ TEST_CASE("A local and a remote file of one name share a layout, each edited and
     REQUIRE(data.windowLayout.size() == 3);
     CHECK(data.windowLayout[0].file == ned::editor::SessionFile(herePath));
     CHECK(data.windowLayout[1].file == ned::editor::SessionFile(there));
+}
+
+TEST_CASE("A host's language server hears of changes under its root through the host's watch", "[WindowManager][Remote][Lsp][HostAgent]") {
+    ned::tests::FakeRemoteHost      fake;
+    ned::tests::ScopedEnvOverride   home{"HOME", (fake.dir / "home").c_str()};
+    ned::ui::EventLoop              loop;
+    ned::editor::remote::Hosts      hosts{loop, [&fake](const std::string& destination) { return fake.Options(destination); },
+                                          ned::tests::FakeResolver(fake.dir)};
+    ned::tests::FakeRemoteLspServer server{fake.dir};
+
+    Fixture                   fixture;
+    ned::editor::lsp::Manager lsp{fixture.bufferList, loop};
+    lsp.SetRemoteHosts(&hosts);
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+    manager.SetRemoteHosts(&hosts);
+    manager.SetLspManager(&lsp);
+    manager.StartFileWatcher(loop);
+
+    ned::text::Buffer& buffer = fixture.bufferList.AddRemotePlaceholder({.destination = "host", .path = server.file});
+    manager.LoadRemoteBuffers(std::vector{ned::text::BufferIdentity(buffer)});
+    REQUIRE(ned::tests::PumpUntil(loop, [&] { return !buffer.IsLoading(); }));
+    // Open on its server, which then registers for *.c files.
+    REQUIRE(ned::tests::PumpUntil(loop, [&] {
+        lsp.SyncBuffer(buffer, ned::tests::kRemoteLspLanguage);
+        return !lsp.HostWatchedFileRoots().empty();
+    }));
+    CHECK(lsp.HostWatchedFileRoots() == std::map<std::string, std::set<std::filesystem::path>>{{"host", {server.pkg}}});
+
+    std::filesystem::create_directories(server.pkg / "sub");
+    const std::string uri  = ned::text::PathToFileUri(server.pkg / "sub" / "new.c");
+    const auto        told = [&] {
+        for (const nlohmann::json& message : server.Messages()) {
+            if (message.value("method", "") == "workspace/didChangeWatchedFiles" && message["params"]["changes"][0]["uri"] == uri) {
+                return true;
+            }
+        }
+        return false;
+    };
+    // Rewritten until noticed: the tree is watched once the host has the set.
+    REQUIRE(ned::tests::PumpUntil(loop, [&] {
+        manager.ResyncRemoteWatches();
+        std::ofstream(server.pkg / "sub" / "new.c") << "int n;\n";
+        return told();
+    }));
 }
 
 TEST_CASE("A remote command-line argument opens a directory in the Remote panel and a file in a pane", "[WindowManager][Remote][HostAgent]") {

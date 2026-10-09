@@ -25,6 +25,8 @@ namespace ned::editor::remote {
 struct WatchSet {
     std::set<std::filesystem::path> files;
     std::set<std::filesystem::path> directories;
+    // Everything under each, as a host's language server wants to hear of it.
+    std::set<std::filesystem::path> trees;
 
     [[nodiscard]] bool operator==(const WatchSet&) const = default;
 };

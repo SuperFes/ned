@@ -66,8 +66,6 @@ and sync on save; don't build a remote-authoritative buffer.
       `qemu-aarch64`.
 
 **Language servers on a host**
-- [ ] Watched-file notifications for a host's server, from the host's `watch`. Local
-      changes no longer reach it.
 - [ ] The problem list (project diagnostics) leaves out a host's unopened files: its
       entries are local paths.
 - [ ] A host's `.ned/settings.json` (initialization options, workspace configuration).

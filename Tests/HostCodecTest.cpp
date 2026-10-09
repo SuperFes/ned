@@ -184,8 +184,10 @@ TEST_CASE("Project root requests carry a language's markers, which must be strin
 
 TEST_CASE("Watch requests and events round-trip and refuse what they can't name", "[Host][HostCodec]") {
     using Kind = ned::editor::FileEvent::Kind;
-    const host::WatchSetRequest request{.files = {"/a/caf\xC3\xA9", "/b"}, .directories = {"/c/d"}};
+    const host::WatchSetRequest request{.files = {"/a/caf\xC3\xA9", "/b"}, .directories = {"/c/d"}, .trees = {"/e"}};
     CHECK(host::WatchSetRequestFromJson(OverTheWire(host::ToJson(request))) == request);
+    // An editor before watch capability 2 names no trees.
+    CHECK(host::WatchSetRequestFromJson(Json{{"files", Json::array()}, {"directories", Json::array()}}).trees.empty());
     CHECK(host::WatchSetRequestFromJson(OverTheWire(host::ToJson(host::WatchSetRequest{}))) == host::WatchSetRequest{});
     CHECK_THROWS_AS(host::WatchSetRequestFromJson(Json{{"files", Json::array()}}), ProtocolError);
     CHECK_THROWS_AS(host::WatchSetRequestFromJson(Json{{"files", Json::array({host::Bytes("rel")})}, {"directories", Json::array()}}),

@@ -426,6 +426,20 @@ TEST_CASE("ned-agent reports changes to watched files and directory entries, nam
         return std::ranges::contains(moves, ned::editor::FileMove{.from = dir / "link" / "old.txt", .to = dir / "link" / "renamed.txt"});
     }));
 
+    // A tree reports every directory under it, one made later included.
+    std::filesystem::create_directories(dir / "tree" / "deep");
+    REQUIRE(client.Call(std::string(host::kWatchSet), host::ToJson(host::WatchSetRequest{.files = {}, .directories = {}, .trees = {dir / "tree"}})).result ==
+            Json::object());
+    events.clear();
+    std::ofstream(dir / "tree" / "deep" / "x.c") << "x\n";
+    REQUIRE(client.PumpUntil([&] { return has(dir / "tree" / "deep" / "x.c"); }));
+    std::filesystem::create_directories(dir / "tree" / "later");
+    REQUIRE(client.PumpUntil([&] { return has(dir / "tree" / "later"); }));
+    REQUIRE(client.PumpUntil([&] {
+        std::ofstream(dir / "tree" / "later" / "y.c") << "y\n";
+        return has(dir / "tree" / "later" / "y.c");
+    }));
+
     // An empty set stops reporting.
     REQUIRE(client.Call(std::string(host::kWatchSet), host::ToJson(host::WatchSetRequest{})).result == Json::object());
     events.clear();

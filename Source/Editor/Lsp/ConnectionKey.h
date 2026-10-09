@@ -29,6 +29,8 @@ struct ServerRoot {
 
 // The host a key's server runs on; nullopt for a local one.
 [[nodiscard]] std::optional<std::string> ConnectionHost(std::string_view key);
+// The root a host's server runs in, on that host; nullopt for a local one.
+[[nodiscard]] std::optional<std::filesystem::path> ConnectionHostRoot(std::string_view key);
 
 [[nodiscard]] std::string_view ConnectionServer(std::string_view key);
 
