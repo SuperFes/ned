@@ -3,8 +3,11 @@
 #include <algorithm>
 
 #include "Editor/ModeOverrides.h"
+#include "Editor/Vcs/Runner.h"
+#include "Text/Charset.h"
 #include "Text/ConflictHunk.h"
 #include "Text/LineDiff.h"
+#include "Text/LineEnding.h"
 
 namespace ned::editor {
 
@@ -174,6 +177,32 @@ std::size_t MergeViewSession::ConflictCount() {
     return conflictCount_;
 }
 
+bool MergeViewSession::SetWholeSide(text::MergeSideKind kind, std::string bytes) {
+    const text::Buffer* merged = Merged();
+    const auto          side   = std::ranges::find(sides_, kind, &Side::kind);
+    if (!merged || side == sides_.end()) {
+        return false;
+    }
+    std::optional<std::string> decoded = text::DecodeAnnouncedCharset(std::move(bytes), merged->FileCharset());
+    if (!decoded) {
+        return false;
+    }
+    side->whole = text::NormalizeToLf(*decoded);
+    mergedGeneration_.reset();
+    return true;
+}
+
+void MergeViewSession::RequestWholeSides(vcs::Runner& runner) {
+    const text::Buffer* merged = Merged();
+    if (!merged) {
+        return;
+    }
+    for (const Side& side : sides_) {
+        runner.RequestConflictSide(*merged, side.kind,
+                                   lifetime_.Bind([this, kind = side.kind](std::string bytes) { (void)SetWholeSide(kind, std::move(bytes)); }));
+    }
+}
+
 void MergeViewSession::Refresh() {
     text::Buffer* merged = Merged();
     if (!merged) {
@@ -195,6 +224,9 @@ void MergeViewSession::Refresh() {
     std::vector<const text::MergeSide*> models;
     for (Side& side : sides_) {
         side.model = text::MergeSideFromMarkers(text, hunks, side.kind).value_or(Unchanged(text, mergedLines));
+        if (side.whole) {
+            side.model = text::RefineMergeSide(side.model, *side.whole);
+        }
         if (text::Buffer* buffer = BufferOf(side)) {
             RewriteReadOnlyBuffer(*buffer, side.model.text);
             side.writtenGeneration = buffer->ContentGeneration();

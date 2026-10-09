@@ -20,11 +20,16 @@
 #include <utility>
 #include <vector>
 
+#include "Editor/Lifetime.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
 #include "Text/MergeAlignment.h"
 
 namespace ned::editor {
+
+namespace vcs {
+    class Runner;
+} // namespace vcs
 
 class MergeViewSession {
   public:
@@ -44,6 +49,16 @@ class MergeViewSession {
     [[nodiscard]] std::optional<text::MergeSideKind> KindOf(const text::Buffer& buffer) const;
     [[nodiscard]] bool                               Contains(const text::Buffer& buffer) const;
     [[nodiscard]] std::size_t                        ConflictCount();
+
+    // Gives `kind`'s side its whole text, as the version control system
+    // stored it (bytes in the merged buffer's charset), so what the merge
+    // changed cleanly shows beside the conflicts. False when there is no
+    // such side or the bytes don't decode.
+    bool SetWholeSide(text::MergeSideKind kind, std::string bytes);
+
+    // Asks `runner` for every side's whole text, applying each as it
+    // arrives; a side it can't supply keeps what the markers give.
+    void RequestWholeSides(vcs::Runner& runner);
 
     // Re-derives the sides and alignment if the merged buffer changed, or a
     // side buffer was edited out from under the session. Rewrites side
@@ -83,6 +98,8 @@ class MergeViewSession {
         std::string         name;
         text::MergeSide     model;
         std::size_t         writtenGeneration = 0;
+        // From SetWholeSide; the markers alone define the side until then.
+        std::optional<std::string> whole;
     };
 
     [[nodiscard]] text::Buffer*            BufferOf(const Side& side) const;
@@ -95,6 +112,7 @@ class MergeViewSession {
     std::vector<text::PaneAlignment> alignments_; // [0] merged, [1 + i] sides_[i]
     std::size_t                      conflictCount_ = 0;
     std::optional<std::size_t>       mergedGeneration_;
+    LifetimeGuard                    lifetime_; // last, so it expires first
 };
 
 // "*merge ours: main.cpp*" and so on.

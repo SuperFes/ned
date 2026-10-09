@@ -29,10 +29,6 @@ about features. Declaring it makes breaking any of them a major-version event. C
 
 ## Editor & UI
 
-- [ ] **Merge view: index-stage source.** Sides come from conflict markers today, so git's
-      clean auto-merges aren't shown. Diff the `:1:`/`:2:`/`:3:` stages (a new Provider
-      verb) against the merged buffer into the same `AlignedChunk` list. `DiffLines` is an
-      O(m*n) LCS, so this needs a linear-space diff first.
 - [ ] **The Files, VCS and Debug panels onto panel modes.** Their keys are still raw
       codepoint checks, so `ned/define-panel-key`, which-key and `describe-bindings`
       can't see them. The Remote panel's `remote-panel-mode` (`Editor/PanelMode.h`,
