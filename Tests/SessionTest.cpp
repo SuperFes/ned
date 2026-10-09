@@ -333,3 +333,35 @@ TEST_CASE("A pathless buffer never records or restores", "[Session]") {
     REQUIRE_FALSE(StoredFilePlaceFor(scratch).has_value());
     RestoreFilePlace(scratch, 4); // must be a no-op, not a throw
 }
+
+TEST_CASE("FilePlaceStore keys a remote file apart from the same local path", "[Session][Remote]") {
+    const ned::text::RemoteFile remote{.destination = "user@host", .path = "/srv/app/main.c"};
+    REQUIRE(FilePlaceStore::KeyFor(remote) == "user@host:/srv/app/main.c");
+
+    FilePlaceStore store;
+    store.Record(remote, FilePlace{.line = 4, .column = 1, .topLine = 2});
+    REQUIRE_FALSE(store.Lookup(std::filesystem::path("/srv/app/main.c")).has_value());
+    REQUIRE_FALSE(store.Lookup(ned::text::RemoteFile{.destination = "other", .path = "/srv/app/main.c"}).has_value());
+
+    const FilePlaceStore loaded = FilePlaceStore::FromJson(store.ToJson());
+    REQUIRE(loaded.Lookup(remote) == FilePlace{.line = 4, .column = 1, .topLine = 2});
+}
+
+TEST_CASE("RecordFilePlace and RestoreFilePlace round-trip through a remote Buffer", "[Session][Remote]") {
+    SessionStateGuard           guard;
+    const ned::text::RemoteFile remote{.destination = "host", .path = "/home/me/notes.txt"};
+
+    ned::text::Buffer recorded("host:notes.txt");
+    recorded.SetRemote(remote);
+    recorded.InsertAtPoint("alpha\nbravo\ncharlie\n");
+    recorded.SetPoint(recorded.ByteOffsetForLineAndColumn(1, 2));
+    RecordFilePlace(recorded, 1, /*tabWidth=*/4);
+    REQUIRE(StoredFilePlaceFor(recorded) == FilePlace{.line = 1, .column = 2, .topLine = 1});
+
+    ned::text::Buffer restored("host:notes.txt");
+    restored.SetRemote(remote);
+    restored.InsertAtPoint("alpha\nbravo\ncharlie\n");
+    restored.SetPoint(0);
+    RestoreFilePlace(restored, /*tabWidth=*/4);
+    REQUIRE(restored.Point() == restored.ByteOffsetForLineAndColumn(1, 2));
+}

@@ -8,6 +8,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <system_error>
+#include <variant>
 
 #include <nlohmann/json.hpp>
 
@@ -49,18 +50,24 @@ std::string FilePlaceStore::NormalizePathKey(const std::filesystem::path& path) 
     return std::filesystem::absolute(path).string();
 }
 
-std::optional<FilePlace> FilePlaceStore::Lookup(const std::filesystem::path& path) const {
-    const auto it = entries_.find(NormalizePathKey(path));
+std::string FilePlaceStore::KeyFor(const text::FileRef& file) {
+    if (const auto* remote = std::get_if<text::RemoteFile>(&file)) {
+        return remote->ToString();
+    }
+    return NormalizePathKey(std::get<std::filesystem::path>(file));
+}
+
+std::optional<FilePlace> FilePlaceStore::Lookup(const text::FileRef& file) const {
+    const auto it = entries_.find(KeyFor(file));
     if (it == entries_.end()) {
         return std::nullopt;
     }
     return it->second.place;
 }
 
-void FilePlaceStore::Record(const std::filesystem::path& path, FilePlace place,
-                            std::optional<std::int64_t> nowSeconds) {
+void FilePlaceStore::Record(const text::FileRef& file, FilePlace place, std::optional<std::int64_t> nowSeconds) {
     const std::int64_t now    = nowSeconds.value_or(NowSeconds());
-    const auto [it, inserted] = entries_.try_emplace(NormalizePathKey(path));
+    const auto [it, inserted] = entries_.try_emplace(KeyFor(file));
     Entry& entry              = it->second;
 
     if (!place.topLine) {
@@ -75,8 +82,8 @@ void FilePlaceStore::Record(const std::filesystem::path& path, FilePlace place,
     EvictPastCap();
 }
 
-void FilePlaceStore::Touch(const std::filesystem::path& path, std::optional<std::int64_t> nowSeconds) {
-    const auto it = entries_.find(NormalizePathKey(path));
+void FilePlaceStore::Touch(const text::FileRef& file, std::optional<std::int64_t> nowSeconds) {
+    const auto it = entries_.find(KeyFor(file));
     if (it != entries_.end()) {
         it->second.lastUsed = nowSeconds.value_or(NowSeconds());
     }
@@ -233,7 +240,8 @@ void SaveFilePlaces(bool force) {
 }
 
 void RestoreFilePlace(text::Buffer& buffer, std::size_t tabWidth) {
-    if (!buffer.Path() || buffer.IsLoading()) {
+    const std::optional<text::FileRef> file = buffer.File();
+    if (!file || buffer.IsLoading()) {
         return;
     }
 
@@ -243,9 +251,9 @@ void RestoreFilePlace(text::Buffer& buffer, std::size_t tabWidth) {
         if (!SavePlaceStorage()) {
             return;
         }
-        place = StoreStorage().Lookup(*buffer.Path());
+        place = StoreStorage().Lookup(*file);
         if (place) {
-            StoreStorage().Touch(*buffer.Path());
+            StoreStorage().Touch(*file);
         }
     }
     if (!place) {
@@ -256,7 +264,8 @@ void RestoreFilePlace(text::Buffer& buffer, std::size_t tabWidth) {
 }
 
 std::optional<FilePlace> StoredFilePlaceFor(const text::Buffer& buffer) {
-    if (!buffer.Path()) {
+    const std::optional<text::FileRef> file = buffer.File();
+    if (!file) {
         return std::nullopt;
     }
 
@@ -264,11 +273,12 @@ std::optional<FilePlace> StoredFilePlaceFor(const text::Buffer& buffer) {
     if (!SavePlaceStorage()) {
         return std::nullopt;
     }
-    return StoreStorage().Lookup(*buffer.Path());
+    return StoreStorage().Lookup(*file);
 }
 
 void RecordFilePlace(const text::Buffer& buffer, std::optional<std::size_t> topLine, std::size_t tabWidth) {
-    if (!buffer.Path() || buffer.IsLoading()) {
+    const std::optional<text::FileRef> file = buffer.File();
+    if (!file || buffer.IsLoading()) {
         return;
     }
 
@@ -281,7 +291,7 @@ void RecordFilePlace(const text::Buffer& buffer, std::optional<std::size_t> topL
     if (!SavePlaceStorage()) {
         return;
     }
-    StoreStorage().Record(*buffer.Path(), FilePlace{.line = line, .column = column, .topLine = topLine});
+    StoreStorage().Record(*file, FilePlace{.line = line, .column = column, .topLine = topLine});
 }
 
 void ResetFilePlacesForTesting() {
