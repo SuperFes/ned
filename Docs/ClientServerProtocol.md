@@ -302,7 +302,12 @@ one configuration names the right paths on every machine (`Dap/Config.h`'s
 `SessionArguments`). Breakpoints key a host's file as `host:/path`; a session is told only about those on
 its own machine, by their paths there, and what it reports (where it stopped, frames,
 loaded sources, disassembly) comes back as files on that host. Run-to-cursor and
-jump-to-line refuse a file on another machine.
+jump-to-line refuse a file on another machine. A PHP session is checked end to end against
+vscode-php-debug and Xdebug on a host (`Tests/DapRemoteTest.cpp`, run when
+`NED_TEST_PHP_DEBUG` names `phpDebug.js` and `NED_TEST_XDEBUG` the extension): the
+adapter only fills in `${port}`, so the launch's `runtimeArgs` ask for
+`-dxdebug.mode=debug -dxdebug.start_with_request=yes -dxdebug.client_port=${port}`
+themselves.
 
 **Agents (ACP).** An agent started while a remote buffer is focused (the agent prompt,
 or the panel reconnecting) runs on that buffer's host, with the same command as a local

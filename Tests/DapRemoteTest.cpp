@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -125,4 +126,71 @@ TEST_CASE("A debug session on a host fails at once when there are no hosts", "[D
           "Debug session failed to start.");
     CHECK(manager.State() == dap::Manager::SessionState::Inactive);
     CHECK(ended.starts_with("Failed to start debug adapter: no remote host"));
+}
+
+// A real adapter against a real debugger: vscode-php-debug's phpDebug.js
+// (NED_TEST_PHP_DEBUG) launching PHP with Xdebug (NED_TEST_XDEBUG, the
+// zend_extension to load), both on the fake host, reached through proc.
+TEST_CASE("A PHP script on a host debugs through Xdebug, with the adapter running there", "[Dap][DapRemote][Xdebug][HostAgent]") {
+    const char* xdebug   = std::getenv("NED_TEST_XDEBUG");
+    const char* phpDebug = std::getenv("NED_TEST_PHP_DEBUG");
+    if (xdebug == nullptr || phpDebug == nullptr) {
+        SKIP("NED_TEST_XDEBUG and NED_TEST_PHP_DEBUG name Xdebug and vscode-php-debug's phpDebug.js");
+    }
+    ned::tests::FakeRemoteHost fake;
+    ned::ui::EventLoop         loop;
+    remote::Hosts              hosts{loop, [&fake](const std::string& destination) { return fake.Options(destination); }, ned::tests::FakeResolver(fake.dir)};
+    dap::Manager               manager{loop};
+    manager.SetRemoteHosts(&hosts);
+    const fs::path project = fake.dir / "site";
+    fs::create_directories(project / ".git");
+    std::ofstream(project / "index.php") << "<?php\n$a = 20;\n$b = $a + 22;\necho $b, \"\\n\";\n";
+    const text::RemoteFile script{.destination = "host", .path = fs::canonical(project) / "index.php"};
+
+    struct Restore {
+        ~Restore() {
+            dap::SetAdapterCommand("php", {});
+            dap::SetLaunchConfig("php", "");
+        }
+    } restore;
+    dap::SetAdapterCommand("php", {"node", phpDebug});
+    dap::SetLaunchConfig("php", Json{{"program", "${workspaceFolder}/index.php"},
+                                     {"runtimeExecutable", "php"},
+                                     // The adapter fills in ${port}, the one it listens on there.
+                                     {"runtimeArgs", Json::array({"-n", std::string("-dzend_extension=") + xdebug, "-dxdebug.mode=debug",
+                                                                  "-dxdebug.start_with_request=yes", "-dxdebug.client_port=${port}"})},
+                                     {"port", 0}}
+                                    .dump());
+    std::optional<dap::Manager::StoppedInfo> stopped;
+    std::optional<std::string>               ended;
+    manager.SetOnStopped([&](const dap::Manager::StoppedInfo& info) { stopped = info; });
+    manager.SetOnSessionEnded([&](std::string reason) { ended = std::move(reason); });
+    manager.ToggleBreakpoint(script, 3);
+
+    REQUIRE(manager.StartOrContinue("php", script).ends_with("on host..."));
+    REQUIRE(PumpUntil(loop, [&] { return stopped.has_value() || ended.has_value(); }, std::chrono::seconds(60)));
+    INFO(ended.value_or(""));
+    REQUIRE(stopped.has_value());
+    CHECK(stopped->file == std::optional<text::FileRef>(script));
+    CHECK(stopped->line == 3);
+
+    // The host's PHP holds $a as the script set it.
+    std::optional<std::vector<dap::Manager::StackFrame>> frames;
+    manager.RequestStackTrace([&](std::vector<dap::Manager::StackFrame> answer) { frames = std::move(answer); });
+    REQUIRE(PumpUntil(loop, [&] { return frames.has_value(); }));
+    REQUIRE_FALSE(frames->empty());
+    std::optional<std::vector<dap::Manager::Scope>> scopes;
+    manager.RequestScopes(frames->front().id, [&](std::vector<dap::Manager::Scope> answer) { scopes = std::move(answer); });
+    REQUIRE(PumpUntil(loop, [&] { return scopes.has_value(); }));
+    REQUIRE_FALSE(scopes->empty());
+    std::optional<std::vector<dap::Manager::Variable>> variables;
+    manager.RequestVariables(scopes->front().variablesReference, [&](std::vector<dap::Manager::Variable> answer) { variables = std::move(answer); });
+    REQUIRE(PumpUntil(loop, [&] { return variables.has_value(); }));
+    const auto a = std::ranges::find(*variables, std::string("$a"), &dap::Manager::Variable::name);
+    REQUIRE(a != variables->end());
+    CHECK(a->value == "20");
+
+    // Run to the end: the script finishes on the host.
+    manager.StartOrContinue("php", script);
+    REQUIRE(PumpUntil(loop, [&] { return ended.has_value(); }, std::chrono::seconds(60)));
 }
