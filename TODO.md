@@ -65,10 +65,6 @@ and sync on save; don't build a remote-authoritative buffer.
       against them through `NED_TEST_AGENT`: x86_64 natively, aarch64 under
       `qemu-aarch64`.
 
-**Debug adapters on a host**
-- [ ] Launch and attach configurations for a host: one per language today, sent
-      unchanged, so a remote session needs paths that exist on the host.
-
 **Client/server protocol**, ordered by the design doc's staging section.
 - [ ] Verify a remote debug session end to end (PHP/Xdebug, with the adapter running on
       the host through `proc`).

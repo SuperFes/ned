@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <vector>
@@ -70,6 +71,18 @@ TEST_CASE("A remote buffer's debug adapter runs on its host, in the project root
 
     CHECK(f.manager.StopSession() == "Debug session stopped.");
     CHECK(f.manager.State() == dap::Manager::SessionState::Inactive);
+}
+
+TEST_CASE("A host's debug session launches what its root's settings there say, ${workspaceFolder} and all", "[Dap][DapRemote][HostAgent]") {
+    Fixture f;
+    std::filesystem::create_directories(f.adapter.project / ".ned");
+    std::ofstream(f.adapter.project / ".ned" / "settings.json")
+        << R"({"dapLaunch": {")" << kLanguage << R"(": {"program": "${workspaceFolder}/build/app"}}})";
+
+    REQUIRE(f.manager.StartOrContinue(kLanguage, f.File()) == std::string("Starting debug session (") + kLanguage + ") on host...");
+    REQUIRE(PumpUntil(f.loop, [&] { return f.adapter.Requests("launch").size() == 1; }));
+    CHECK(f.adapter.Requests("launch").front()["arguments"]["program"] == (f.adapter.project / "build" / "app").string());
+    f.manager.StopSession();
 }
 
 TEST_CASE("A host's debug adapter reports where it stopped as files on that host", "[Dap][DapRemote][HostAgent]") {

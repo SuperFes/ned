@@ -904,6 +904,9 @@ class Manager {
     std::string                language_;
     // The adapter's host; unset when it runs here.
     std::optional<std::string> sessionHost_;
+    // What the session's launch or attach request sends (Config.h's
+    // SessionArguments), settled before initialize.
+    std::optional<nlohmann::json> sessionArguments_;
     SessionState               state_           = SessionState::Inactive;
     int                        stoppedThreadId_ = 0;
     // Where the debuggee is stopped (slice 2) -- see CurrentStopKeyAndLine.

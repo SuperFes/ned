@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -52,4 +53,29 @@ TEST_CASE("SetAttachConfig stores and clears the attach JSON verbatim", "[Dap]")
 
     SetAttachConfig("dap-config-test-attach", ""); // empty clears
     REQUIRE_FALSE(AttachConfig("dap-config-test-attach").has_value());
+}
+
+TEST_CASE("A session's arguments are the project's own, else init.janet's, with ${workspaceFolder} filled in", "[Dap]") {
+    using ned::editor::dap::SessionArguments;
+    using Json = nlohmann::json;
+    struct Clear {
+        ~Clear() {
+            SetLaunchConfig("dap-config-test-session", "");
+            SetAttachConfig("dap-config-test-session", "");
+        }
+    } clear;
+    ned::editor::ProjectSettings settings;
+    CHECK_FALSE(SessionArguments(settings, "dap-config-test-session", false, "/srv/app").has_value());
+
+    SetLaunchConfig("dap-config-test-session", R"({"program": "${workspaceFolder}/bin/app", "args": ["--root=${workspaceFolder}"]})");
+    CHECK(SessionArguments(settings, "dap-config-test-session", false, "/srv/app") ==
+          Json{{"program", "/srv/app/bin/app"}, {"args", Json::array({"--root=/srv/app"})}});
+
+    settings.dapLaunchByLanguage["dap-config-test-session"] = Json{{"program", "${workspaceFolder}/build/run"}, {"stopOnEntry", true}};
+    CHECK(SessionArguments(settings, "dap-config-test-session", false, "/home/me/proj") == Json{{"program", "/home/me/proj/build/run"}, {"stopOnEntry", true}});
+    // Attach has its own.
+    CHECK_FALSE(SessionArguments(settings, "dap-config-test-session", true, "/srv/app").has_value());
+
+    SetAttachConfig("dap-config-test-session", "{not json");
+    CHECK_THROWS_AS(SessionArguments(settings, "dap-config-test-session", true, "/srv/app"), std::runtime_error);
 }

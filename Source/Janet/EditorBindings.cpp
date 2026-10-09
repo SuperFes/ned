@@ -2601,14 +2601,17 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-dap-launch",
         "Set the DAP launch configuration for a language: (language json), e.g. (ned/set-dap-launch \"cpp\" "
         "`{\"program\": \"./build/ned\"}`). The string is passed verbatim as the launch request's own "
-        "adapter-specific arguments object -- see your adapter's documentation for its keys. An empty string clears "
-        "it. Both this and ned/set-dap-adapter must be configured before dap-continue (F5) can start a session.");
+        "adapter-specific arguments object -- see your adapter's documentation for its keys -- with ${workspaceFolder} "
+        "in any string replaced by the directory the adapter runs in, on a remote buffer's host too. A project's "
+        ".ned/settings.json dapLaunch entry for the language takes its place. An empty string clears it. Both this "
+        "and ned/set-dap-adapter must be configured before dap-continue (F5) can start a session.");
     env.Register<&NedSetDapAttach>(
         "ned", "set-dap-attach",
         "Set the DAP attach configuration for a language: (language json), ned/set-dap-launch's own shape but for "
         "the dap-attach command's `attach` request instead of `launch` -- see your adapter's documentation for its "
-        "attach-specific keys (commonly a process id or a connection host/port). An empty string clears it. Both "
-        "this and ned/set-dap-adapter must be configured before dap-attach can start a session.");
+        "attach-specific keys (commonly a process id or a connection host/port), ${workspaceFolder} and a project's "
+        "dapAttach entry working the same way. An empty string clears it. Both this and ned/set-dap-adapter must be "
+        "configured before dap-attach can start a session.");
     env.Register<&NedSetTaskCommand>(
         "ned", "set-task-command",
         "Set the command run by run-task for a task name: (name argv), e.g. (ned/set-task-command \"build\" "
