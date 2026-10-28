@@ -63,6 +63,9 @@ Real, reproduced, non-urgent. Fix opportunistically; delete when fixed.
 - **Notcurses and the terminal can disagree on glyph width**: VS16 emoji, and Nerd Font
   private-use glyphs under tmux. Nothing has been seen in Konsole. A startup
   cursor-position probe could calibrate an exception table.
+- **`ClearToolchainIncludePathCache removes the cache file…` failed once under `ctest -j8`**
+  in an Ubuntu 26.04 container and passed alone three times; likely a cache path shared
+  with a parallel test. CI's ctest runs serially.
 - **`search-everywhere debounces a background text search…` flakes under `ctest -j8`**.
   It's a timing margin under contention; pin the debounce to a fake clock if it
   resurfaces.
