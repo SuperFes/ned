@@ -18,7 +18,6 @@ about features. Declaring it makes breaking any of them a major-version event. C
 
 ## Unverified Against Real Environments
 
-- [ ] The GNOME Terminal handler in `TerminalTabLauncher` has never run live.
 - [ ] `C-Tab`/`C-S-Tab` in the modern keymap are untested on a legacy (non-kitty-protocol)
       terminal.
 
