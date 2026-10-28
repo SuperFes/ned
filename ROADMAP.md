@@ -127,12 +127,12 @@ against.
 - ✅ **Breakpoints**: line, conditional, hit-count, function, exception, and data.
 - ✅ **Stepping**: run to cursor, jump to line, restart frame, reverse execution, and
   attach.
-- ✅ **Debug panel**: scopes, watches, threads, and a console with completion.
+- ✅ **Debug panel**: scopes, watches, threads, and a console with completion, tested live
+  against gdb, lldb-dap, and debugpy.
 - ✅ **Inline variable values**, resolved through each language's scope rules.
 - ✅ **Pointer-graph view**, memory hex view, and disassembly.
 - ✅ **Sanitizer and Valgrind output parsing**, a Massif heap graph, and lcov
   coverage.
-- 🔜 Live verification of the newer requests against lldb-dap and debugpy.
 - 💭 A shared variables cache, and inline values for fields and watches.
 
 ## Version Control
