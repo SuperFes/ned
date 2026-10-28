@@ -1043,6 +1043,28 @@ TEST_CASE("AcpPanel dock-hosted mode paints content starting at row 0, no title 
     }
 }
 
+TEST_CASE("A right-docked AcpPanel reserves its left edge column as the resize divider", "[AcpPanel]") {
+    ned::editor::acp::SetAcpPanelDock("right");
+    struct DockGuard {
+        ~DockGuard() {
+            ned::editor::acp::SetAcpPanelDock("bottom");
+        }
+    } dockGuard;
+
+    Fixture fixture;
+    REQUIRE(fixture.panel.OnEvent(ned::ui::test::Character('h')));
+    fixture.Paint();
+
+    REQUIRE(fixture.screen.PixelAt(0, 0).character == "╭");
+    for (int y = 1; y < kHeight; ++y) {
+        REQUIRE(fixture.screen.PixelAt(0, y).character == "│");
+    }
+    REQUIRE(fixture.RowText(kHeight - 1).starts_with("│Prompt: h"));
+    // The caret moves with the content, one column right of where a bottom dock puts it.
+    const ned::ui::Cell& caretCell = fixture.screen.PixelAt(1 + static_cast<int>(std::string("Prompt: h").size()), kHeight - 1);
+    REQUIRE(caretCell.background_color == fixture.theme.echoArea.foreground);
+}
+
 TEST_CASE("AcpPanel dock-hosted mode ignores the standalone close/minimize/resize-divider hit-tests", "[AcpPanel]") {
     Fixture fixture;
     fixture.panel.SetDockHosted(true);

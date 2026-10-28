@@ -245,7 +245,10 @@ class AcpPanel : public Widget {
     // brings back the new one's.
     void SyncSessionView();
     // Paints the session strip on row y and remembers where its items are.
-    void PaintSessionStrip(Canvas& canvas, int y, int width);
+    // Everything below the title chrome, into the columns left for content.
+    void               PaintContent(Canvas canvas);
+    [[nodiscard]] bool RightDockedStandalone() const;
+    void               PaintSessionStrip(Canvas& canvas, int y, int width);
     // A click on the session strip; `right` opens its menu.
     void ClickSessionStrip(int x, bool right, Point anchor);
     void StartLogin(const editor::acp::Manager::AuthMethod& method);

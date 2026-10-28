@@ -1052,10 +1052,11 @@ void AcpPanel::PaintImages(Canvas& canvas, const std::vector<acppanel::PhysicalL
         if (place.row != 0 || row + place.rows > visibleRows || place.column + place.columns > width) {
             continue;
         }
-        const Box box{.x_min = Box_().x_min + place.column,
-                      .x_max = Box_().x_min + place.column + place.columns - 1,
-                      .y_min = Box_().y_min + titleRows + row,
-                      .y_max = Box_().y_min + titleRows + row + place.rows - 1};
+        const Point origin = canvas.Origin();
+        const Box   box{.x_min = origin.x + place.column,
+                        .x_max = origin.x + place.column + place.columns - 1,
+                        .y_min = origin.y + titleRows + row,
+                        .y_max = origin.y + titleRows + row + place.rows - 1};
         if (!occlusionTest_ || !occlusionTest_(box)) {
             images_.ShowPixels(*image, box, theme_.background);
         }
@@ -1798,6 +1799,34 @@ void AcpPanel::Paint(Canvas canvas) {
         }
     }
 
+    // Right-docked, the left edge column is the resize divider, so it gets a
+    // border of its own rather than sharing a column with content.
+    if (RightDockedStandalone()) {
+        const Brush&        frameBrush = Focused() ? theme_.borderAccent : theme_.border;
+        const BorderGlyphs& glyphs     = RoundedBorderGlyphs();
+        for (int y = 0; y < height; ++y) {
+            Cell& cell     = canvas[{.x = 0, .y = y}];
+            cell.character = text::EncodeCodepointUtf8(y == 0 ? glyphs.topLeft : glyphs.vertical);
+            frameBrush.ApplyTo(cell);
+        }
+        const Point origin = canvas.Origin();
+        PaintContent(canvas.ForBox(Box{.x_min = origin.x + 1, .x_max = origin.x + width - 1, .y_min = origin.y, .y_max = origin.y + height - 1}));
+        return;
+    }
+    PaintContent(canvas);
+}
+
+bool AcpPanel::RightDockedStandalone() const {
+    return !dockHosted_ && editor::acp::GetAcpPanelDock() == editor::acp::PanelDock::Right;
+}
+
+void AcpPanel::PaintContent(Canvas canvas) {
+    const int width  = canvas.size().width;
+    int       height = canvas.size().height;
+    if (width <= 0) {
+        return;
+    }
+
     int titleRows = dockHosted_ ? 0 : 1;
     if (height < titleRows + 1) {
         return;
@@ -2040,7 +2069,7 @@ bool AcpPanel::OnEvent(const Event& event) {
         if (!collapsed_ && acpManager_ && stripRow_ >= 0 && mouse->at.y == stripRow_ && mouse->motion == MouseEvent::Motion::Pressed &&
             (mouse->button == MouseEvent::Button::Left || mouse->button == MouseEvent::Button::Right)) {
             TakeFocus();
-            ClickSessionStrip(mouse->at.x, mouse->button == MouseEvent::Button::Right, rawMouse.at);
+            ClickSessionStrip(mouse->at.x - (RightDockedStandalone() ? 1 : 0), mouse->button == MouseEvent::Button::Right, rawMouse.at);
             SyncSessionView();
             return true;
         }
@@ -2088,8 +2117,7 @@ bool AcpPanel::OnEvent(const Event& event) {
                 // panel's own left edge column for a right dock (the
                 // boundary shared with BufferView beneath it --
                 // ProjectSidebar's own right-edge divider, mirrored).
-                const bool rightDock = editor::acp::GetAcpPanelDock() == editor::acp::PanelDock::Right;
-                if (rightDock ? mouse->at.x == 0 : mouse->at.y == 0) {
+                if (RightDockedStandalone() ? mouse->at.x == 0 : mouse->at.y == 0) {
                     // A second press within the double-click window
                     // collapses instead of starting a resize -- ProjectSidebar/
                     // VcsPanel's own divider convention, previously missing
