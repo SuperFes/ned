@@ -3,6 +3,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "Editor/TerminalTabLauncher.h"
 
@@ -12,6 +13,7 @@ using ned::editor::BuildLaunchArgv;
 using ned::editor::EnvLookup;
 using ned::editor::KonsoleDbusApiEnabledFromConfig;
 using ned::editor::SelectTerminal;
+using ned::editor::TerminalFromAncestors;
 using ned::editor::TerminalKind;
 
 namespace {
@@ -53,6 +55,38 @@ TEST_CASE("SelectTerminal detects each GUI emulator by its own env var", "[Termi
     REQUIRE(SelectTerminal(FakeEnv({{"WEZTERM_PANE", "1"}}), true) == TerminalKind::WezTerm);
     REQUIRE(SelectTerminal(FakeEnv({{"GHOSTTY_RESOURCES_DIR", "/usr/share/ghostty"}}), true) == TerminalKind::Ghostty);
     REQUIRE(SelectTerminal(FakeEnv({{"KITTY_WINDOW_ID", "1"}}), true) == TerminalKind::Kitty);
+}
+
+TEST_CASE("TerminalFromAncestors picks the nearest terminal, not one an environment leaked from", "[TerminalTabLauncher]") {
+    // gnome-terminal started from a Konsole shell: its tabs carry KONSOLE_*.
+    const std::vector<std::string> gnomeInKonsole{"zsh", "gnome-terminal-server", "systemd", "konsole", "plasmashell"};
+    REQUIRE(TerminalFromAncestors(gnomeInKonsole) == TerminalKind::GnomeTerminal);
+    const std::vector<std::string> tmuxInKitty{"fish", "tmux", "fish", "kitty"};
+    REQUIRE(TerminalFromAncestors(tmuxInKitty) == TerminalKind::Tmux);
+    const std::vector<std::string> konsoleInTmux{"bash", "konsole", "bash", "tmux"};
+    REQUIRE(TerminalFromAncestors(konsoleInTmux) == TerminalKind::Konsole);
+}
+
+TEST_CASE("TerminalFromAncestors knows each terminal by its executable name", "[TerminalTabLauncher]") {
+    const auto nearest = [](std::string name) {
+        const std::vector<std::string> names{"sh", std::move(name)};
+        return TerminalFromAncestors(names);
+    };
+    REQUIRE(nearest("tmux") == TerminalKind::Tmux);
+    REQUIRE(nearest("screen") == TerminalKind::Screen);
+    REQUIRE(nearest("screen-4.9.1") == TerminalKind::Screen);
+    REQUIRE(nearest("konsole") == TerminalKind::Konsole);
+    REQUIRE(nearest("gnome-terminal-server") == TerminalKind::GnomeTerminal);
+    REQUIRE(nearest("gnome-terminal-") == TerminalKind::GnomeTerminal); // comm's truncation
+    REQUIRE(nearest("wezterm-gui") == TerminalKind::WezTerm);
+    REQUIRE(nearest("ghostty") == TerminalKind::Ghostty);
+    REQUIRE(nearest("kitty") == TerminalKind::Kitty);
+}
+
+TEST_CASE("TerminalFromAncestors returns nullopt with no recognized ancestor", "[TerminalTabLauncher]") {
+    const std::vector<std::string> overSsh{"bash", "sshd", "sshd", "systemd"};
+    REQUIRE_FALSE(TerminalFromAncestors(overSsh).has_value());
+    REQUIRE_FALSE(TerminalFromAncestors({}).has_value());
 }
 
 TEST_CASE("KonsoleDbusApiEnabledFromConfig reads the exact confirmed key", "[TerminalTabLauncher]") {

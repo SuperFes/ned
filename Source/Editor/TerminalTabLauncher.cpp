@@ -1,8 +1,12 @@
 #include "TerminalTabLauncher.h"
 
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <string>
+
+#include <unistd.h>
 
 #include "Process/ChildProcess.h"
 
@@ -49,6 +53,46 @@ namespace {
         }
         const std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         return KonsoleDbusApiEnabledFromConfig(content);
+    }
+
+    // Executable names of this process's ancestors, parent first, from
+    // /proc/<pid>/exe (comm, truncated to 15 bytes, when exe is unreadable).
+    // Empty when /proc isn't there.
+    std::vector<std::string> RealAncestorExecutableNames() {
+        constexpr int            kMaxDepth = 64;
+        std::vector<std::string> names;
+        pid_t                    pid = ::getppid();
+        for (int depth = 0; pid > 1 && depth < kMaxDepth; ++depth) {
+            const std::filesystem::path proc = std::filesystem::path("/proc") / std::to_string(pid);
+            std::error_code             ec;
+            std::string                 name = std::filesystem::read_symlink(proc / "exe", ec).filename().string();
+            if (ec) {
+                std::ifstream(proc / "comm") >> name;
+            }
+            // An executable replaced by an upgrade reads "konsole (deleted)".
+            if (const std::size_t deleted = name.find(" (deleted)"); deleted != std::string::npos) {
+                name.resize(deleted);
+            }
+            if (name.empty()) {
+                break;
+            }
+            names.push_back(std::move(name));
+
+            // stat is "pid (comm) state ppid ..."; comm may itself hold spaces or ')'.
+            std::ifstream     stat(proc / "stat");
+            const std::string line((std::istreambuf_iterator<char>(stat)), std::istreambuf_iterator<char>());
+            const std::size_t close = line.rfind(')');
+            if (close == std::string::npos) {
+                break;
+            }
+            char  state  = 0;
+            pid_t parent = 0;
+            if (std::sscanf(line.c_str() + close + 1, " %c %d", &state, &parent) != 2) {
+                break;
+            }
+            pid = parent;
+        }
+        return names;
     }
 
     // Runs argv to completion, discarding its output -- for a handler whose
@@ -123,6 +167,35 @@ namespace {
 
 } // namespace
 
+std::optional<TerminalKind> TerminalFromAncestors(std::span<const std::string> executableNames) {
+    for (const std::string& name : executableNames) {
+        if (name == "tmux") {
+            return TerminalKind::Tmux;
+        }
+        // Distributions install screen under a versioned name behind a symlink.
+        if (name == "screen" || name.starts_with("screen-")) {
+            return TerminalKind::Screen;
+        }
+        if (name == "konsole") {
+            return TerminalKind::Konsole;
+        }
+        // comm truncates gnome-terminal-server to "gnome-terminal-".
+        if (name.starts_with("gnome-terminal-")) {
+            return TerminalKind::GnomeTerminal;
+        }
+        if (name == "wezterm-gui") {
+            return TerminalKind::WezTerm;
+        }
+        if (name == "ghostty") {
+            return TerminalKind::Ghostty;
+        }
+        if (name == "kitty") {
+            return TerminalKind::Kitty;
+        }
+    }
+    return std::nullopt;
+}
+
 std::optional<TerminalKind> SelectTerminal(const EnvLookup& env, bool konsoleDbusApiEnabled) {
     if (env("TMUX")) {
         return TerminalKind::Tmux;
@@ -177,7 +250,14 @@ bool KonsoleDbusApiEnabledFromConfig(std::string_view konsolercContent) {
 }
 
 std::optional<TerminalKind> DetectTerminal() {
-    return SelectTerminal(RealEnvLookup, RealKonsoleDbusApiEnabled());
+    const bool konsoleDbusApiEnabled = RealKonsoleDbusApiEnabled();
+    if (const std::optional<TerminalKind> nearest = TerminalFromAncestors(RealAncestorExecutableNames())) {
+        if (*nearest == TerminalKind::Konsole && !konsoleDbusApiEnabled) {
+            return std::nullopt;
+        }
+        return nearest;
+    }
+    return SelectTerminal(RealEnvLookup, konsoleDbusApiEnabled);
 }
 
 std::vector<std::string> BuildLaunchArgv(TerminalKind kind, const std::filesystem::path& nedExecutable,

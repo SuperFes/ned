@@ -24,7 +24,7 @@
 // and not a gap: launching a fully disconnected process adds nothing over
 // ProjectSwitch.h's own custom-command/replace-in-place fallback tiers.
 //
-// SelectTerminal/KonsoleDbusApiEnabledFromConfig/BuildLaunchArgv/
+// TerminalFromAncestors/SelectTerminal/KonsoleDbusApiEnabledFromConfig/BuildLaunchArgv/
 // BuildKonsoleNewSessionArgv/BuildKonsoleRunCommandArgv are pure and
 // unit-tested; DetectTerminal/TryOpenInNewTab do real environment/file/
 // process work and are verified live instead, the same split Clipboard.h's
@@ -38,6 +38,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -65,6 +66,13 @@ using EnvLookup = std::function<std::optional<std::string>(std::string_view name
 // launch anything.
 [[nodiscard]] std::optional<TerminalKind> SelectTerminal(const EnvLookup& env, bool konsoleDbusApiEnabled);
 
+// The terminal or multiplexer nearest ned in its process ancestry, given each
+// ancestor's executable name from the parent outward. Environment variables
+// leak into terminals launched from another one (gnome-terminal started from
+// Konsole carries KONSOLE_*), so the process tree is the authority and
+// SelectTerminal only the fallback when no ancestor is recognized.
+[[nodiscard]] std::optional<TerminalKind> TerminalFromAncestors(std::span<const std::string> executableNames);
+
 // Parses konsolerc's own on-disk format directly (never a D-Bus call, so
 // checking this never has a side effect): true only if a `[KonsoleWindow]`
 // section's `EnableSecuritySensitiveDBusAPI` key is exactly `true`. Missing
@@ -73,8 +81,9 @@ using EnvLookup = std::function<std::optional<std::string>(std::string_view name
 // (Session::isCalledViaDbusAndForbidden) and reproduced live.
 [[nodiscard]] bool KonsoleDbusApiEnabledFromConfig(std::string_view konsolercContent);
 
-// The real, production entry point: gathers real getenv values and a real
-// konsolerc read, then calls SelectTerminal. Not unit-tested directly, for
+// The real, production entry point: TerminalFromAncestors over /proc, else
+// SelectTerminal over the real environment; Konsole either way only when
+// konsolerc enables its D-Bus API. Not unit-tested directly, for
 // the same reason Clipboard.h's own platform detection isn't -- verified
 // live instead (see this file's .cpp header comment).
 [[nodiscard]] std::optional<TerminalKind> DetectTerminal();
