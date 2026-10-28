@@ -856,6 +856,8 @@ class Manager {
     // debug-panel: the single assignment point for state_, so no transition
     // can be made without onSessionStateChanged_ hearing about it.
     void SetState(SessionState state);
+    // Merges the boolean capabilities a body names; any it omits keep their value.
+    void ApplyCapabilities(const Json& capabilities);
     void HandleInitializedEvent();
     void HandleStoppedEvent(const Json& body);
     // Debugging wishlist: watch-history sparkline -- fans out one Evaluate

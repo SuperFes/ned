@@ -2305,6 +2305,23 @@ TEST_CASE("RequestStepInTargets answers empty without asking an adapter that nev
     SetLaunchConfig("dap-manager-test-step-in-uncapable", "");
 }
 
+TEST_CASE("A capabilities event after launch enables a request the initialize response left out", "[Dap]") {
+    ManagerFixture fixture;
+    fixture.InjectClient();
+    fixture.StartRunningSession("dap-manager-test-capabilities-event");
+    fixture.client->DispatchFrame(
+        EventFrame("capabilities", Json{{"capabilities", Json{{"supportsStepInTargetsRequest", true}}}}));
+    fixture.client->DispatchFrame(EventFrame("stopped", Json{{"reason", "breakpoint"}, {"threadId", 1}}));
+    const Json stackTrace = fixture.reader.Next();
+    fixture.client->DispatchFrame(ResponseFrame(stackTrace["seq"].get<int>(), "stackTrace", true,
+                                                Json{{"stackFrames", Json::array({Json{{"id", 3}, {"name", "main"}}})}}));
+
+    fixture.manager.RequestStepInTargets(3, [](std::vector<Manager::StepInTarget>) {});
+    const Json request = fixture.reader.Next();
+    REQUIRE(request["command"] == "stepInTargets");
+    SetLaunchConfig("dap-manager-test-capabilities-event", "");
+}
+
 TEST_CASE("StepIntoTarget carries the chosen target id alongside the thread", "[Dap]") {
     ManagerFixture fixture;
     fixture.InjectClient();

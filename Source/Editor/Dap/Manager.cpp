@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <string_view>
 #include <utility>
 
 #include "Config.h"
@@ -1014,62 +1015,7 @@ void Manager::SendInitialize() {
                                  EndSession("initialize failed: " + message);
                                  return;
                              }
-                             if (body.contains("supportsConditionalBreakpoints") && body["supportsConditionalBreakpoints"].is_boolean()) {
-                                 capabilities_.conditionalBreakpoints = body["supportsConditionalBreakpoints"].get<bool>();
-                             }
-                             if (body.contains("supportsLogPoints") && body["supportsLogPoints"].is_boolean()) {
-                                 capabilities_.logPoints = body["supportsLogPoints"].get<bool>();
-                             }
-                             if (body.contains("supportsSetVariable") && body["supportsSetVariable"].is_boolean()) {
-                                 capabilities_.setVariable = body["supportsSetVariable"].get<bool>();
-                             }
-                             if (body.contains("supportsHitConditionalBreakpoints") &&
-                                 body["supportsHitConditionalBreakpoints"].is_boolean()) {
-                                 capabilities_.hitConditionalBreakpoints = body["supportsHitConditionalBreakpoints"].get<bool>();
-                             }
-                             if (body.contains("supportsFunctionBreakpoints") && body["supportsFunctionBreakpoints"].is_boolean()) {
-                                 capabilities_.functionBreakpoints = body["supportsFunctionBreakpoints"].get<bool>();
-                             }
-                             if (body.contains("supportsRestartFrame") && body["supportsRestartFrame"].is_boolean()) {
-                                 capabilities_.restartFrame = body["supportsRestartFrame"].get<bool>();
-                             }
-                             if (body.contains("supportsDisassembleRequest") && body["supportsDisassembleRequest"].is_boolean()) {
-                                 capabilities_.disassemble = body["supportsDisassembleRequest"].get<bool>();
-                             }
-                             if (body.contains("supportsReadMemoryRequest") && body["supportsReadMemoryRequest"].is_boolean()) {
-                                 capabilities_.readMemory = body["supportsReadMemoryRequest"].get<bool>();
-                             }
-                             if (body.contains("supportsGotoTargetsRequest") && body["supportsGotoTargetsRequest"].is_boolean()) {
-                                 capabilities_.gotoTargets = body["supportsGotoTargetsRequest"].get<bool>();
-                             }
-                             if (body.contains("supportsStepBack") && body["supportsStepBack"].is_boolean()) {
-                                 capabilities_.stepBack = body["supportsStepBack"].get<bool>();
-                             }
-                             if (body.contains("supportsDataBreakpoints") && body["supportsDataBreakpoints"].is_boolean()) {
-                                 capabilities_.dataBreakpoints = body["supportsDataBreakpoints"].get<bool>();
-                             }
-                             if (body.contains("supportsCompletionsRequest") &&
-                                 body["supportsCompletionsRequest"].is_boolean()) {
-                                 capabilities_.completions = body["supportsCompletionsRequest"].get<bool>();
-                             }
-                             if (body.contains("supportsStepInTargetsRequest") &&
-                                 body["supportsStepInTargetsRequest"].is_boolean()) {
-                                 capabilities_.stepInTargets = body["supportsStepInTargetsRequest"].get<bool>();
-                             }
-                             if (body.contains("supportsBreakpointLocationsRequest") &&
-                                 body["supportsBreakpointLocationsRequest"].is_boolean()) {
-                                 capabilities_.breakpointLocations = body["supportsBreakpointLocationsRequest"].get<bool>();
-                             }
-                             if (body.contains("supportsSetExpression") && body["supportsSetExpression"].is_boolean()) {
-                                 capabilities_.setExpression = body["supportsSetExpression"].get<bool>();
-                             }
-                             if (body.contains("supportsModulesRequest") && body["supportsModulesRequest"].is_boolean()) {
-                                 capabilities_.modules = body["supportsModulesRequest"].get<bool>();
-                             }
-                             if (body.contains("supportsLoadedSourcesRequest") &&
-                                 body["supportsLoadedSourcesRequest"].is_boolean()) {
-                                 capabilities_.loadedSources = body["supportsLoadedSourcesRequest"].get<bool>();
-                             }
+                             ApplyCapabilities(body);
                              if (body.contains("exceptionBreakpointFilters") && body["exceptionBreakpointFilters"].is_array()) {
                                  for (const Json& filterJson : body["exceptionBreakpointFilters"]) {
                                      ExceptionFilter filter;
@@ -1104,8 +1050,43 @@ void Manager::SendLaunchOrAttach() {
     });
 }
 
+void Manager::ApplyCapabilities(const Json& capabilities) {
+    static constexpr std::pair<std::string_view, bool Capabilities::*> kFlags[] = {
+        {"supportsConditionalBreakpoints", &Capabilities::conditionalBreakpoints},
+        {"supportsLogPoints", &Capabilities::logPoints},
+        {"supportsSetVariable", &Capabilities::setVariable},
+        {"supportsHitConditionalBreakpoints", &Capabilities::hitConditionalBreakpoints},
+        {"supportsFunctionBreakpoints", &Capabilities::functionBreakpoints},
+        {"supportsRestartFrame", &Capabilities::restartFrame},
+        {"supportsDisassembleRequest", &Capabilities::disassemble},
+        {"supportsReadMemoryRequest", &Capabilities::readMemory},
+        {"supportsGotoTargetsRequest", &Capabilities::gotoTargets},
+        {"supportsStepBack", &Capabilities::stepBack},
+        {"supportsDataBreakpoints", &Capabilities::dataBreakpoints},
+        {"supportsCompletionsRequest", &Capabilities::completions},
+        {"supportsStepInTargetsRequest", &Capabilities::stepInTargets},
+        {"supportsBreakpointLocationsRequest", &Capabilities::breakpointLocations},
+        {"supportsSetExpression", &Capabilities::setExpression},
+        {"supportsModulesRequest", &Capabilities::modules},
+        {"supportsLoadedSourcesRequest", &Capabilities::loadedSources},
+    };
+    for (const auto& [key, flag] : kFlags) {
+        const auto found = capabilities.find(key);
+        if (found != capabilities.end() && found->is_boolean()) {
+            capabilities_.*flag = found->get<bool>();
+        }
+    }
+}
+
 void Manager::WireClient(Client& client) {
     client.SetEventHandler("initialized", [this](const Json&) { HandleInitializedEvent(); });
+    // Some adapters (lldb-dap) announce part of their capabilities only
+    // here, after launch, rather than in the initialize response.
+    client.SetEventHandler("capabilities", [this](const Json& body) {
+        if (body.contains("capabilities") && body["capabilities"].is_object()) {
+            ApplyCapabilities(body["capabilities"]);
+        }
+    });
     client.SetEventHandler("stopped", [this](const Json& body) { HandleStoppedEvent(body); });
     client.SetEventHandler("terminated", [this](const Json&) { EndSession("Debug session terminated."); });
     client.SetEventHandler("exited", [this](const Json& body) {
