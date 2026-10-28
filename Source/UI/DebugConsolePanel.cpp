@@ -380,13 +380,14 @@ bool DebugConsolePanel::TryComplete(const editor::KeyChord& chord) {
     // DAP's column is 1-based and counts from the start of `text`; the
     // prompt's cursor is a byte offset, and the console's input is a single
     // line, so the two differ by exactly one.
-    const int column = static_cast<int>(prompt_.CursorByteOffset()) + 1;
-    dapManager_->RequestCompletions(text, column, [this, text](std::vector<editor::dap::Manager::Completion> completions) {
+    const std::size_t cursor = prompt_.CursorByteOffset();
+    const int         column = static_cast<int>(cursor) + 1;
+    dapManager_->RequestCompletions(text, column, [this, text, cursor](std::vector<editor::dap::Manager::Completion> completions) {
         if (completions.empty()) {
             return; // no opinion, or nothing matches -- say nothing rather than guess
         }
         if (completions.size() == 1) {
-            ApplyCompletion(completions.front(), text);
+            ApplyCompletion(completions.front(), text, cursor);
             return;
         }
         // The common prefix first, so repeated Tab still makes progress,
@@ -402,7 +403,7 @@ bool DebugConsolePanel::TryComplete(const editor::KeyChord& chord) {
         if (!shared.empty()) {
             editor::dap::Manager::Completion prefix = completions.front();
             prefix.text                             = shared;
-            ApplyCompletion(prefix, text);
+            ApplyCompletion(prefix, text, cursor);
         }
         std::string line;
         for (const editor::dap::Manager::Completion& completion : completions) {
@@ -416,36 +417,15 @@ bool DebugConsolePanel::TryComplete(const editor::KeyChord& chord) {
     return true;
 }
 
-void DebugConsolePanel::ApplyCompletion(const editor::dap::Manager::Completion& completion, const std::string& requestText) {
-    // The adapter may name the exact span its suggestion replaces; when it
-    // doesn't, replace the identifier-ish run ending at the cursor, which
-    // is the only span a completion could sensibly mean.
-    std::size_t start  = 0;
-    std::size_t length = 0;
-    if (completion.start >= 0 && completion.length >= 0 &&
-        static_cast<std::size_t>(completion.start) + static_cast<std::size_t>(completion.length) <= requestText.size()) {
-        start  = static_cast<std::size_t>(completion.start);
-        length = static_cast<std::size_t>(completion.length);
-    }
-    else {
-        std::size_t wordStart = requestText.size();
-        while (wordStart > 0) {
-            const unsigned char character = static_cast<unsigned char>(requestText[wordStart - 1]);
-            if (std::isalnum(character) == 0 && character != '_' && character != '$' && (character & 0x80U) == 0) {
-                break;
-            }
-            --wordStart;
-        }
-        start  = wordStart;
-        length = requestText.size() - wordStart;
-    }
+void DebugConsolePanel::ApplyCompletion(const editor::dap::Manager::Completion& completion, const std::string& requestText,
+                                        std::size_t cursor) {
     // The prompt may have moved on while the request was in flight; only
     // splice into text that still starts the way the request did.
     const std::string current = prompt_.Text();
-    if (current.compare(0, start + length, requestText, 0, start + length) != 0) {
+    if (current.compare(0, cursor, requestText, 0, cursor) != 0) {
         return;
     }
-    prompt_.SetText(current.substr(0, start) + completion.text + current.substr(start + length));
+    prompt_.SetText(editor::dap::ApplyCompletion(current, cursor, completion));
 }
 
 } // namespace ned::ui

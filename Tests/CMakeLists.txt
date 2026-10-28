@@ -393,6 +393,7 @@ add_executable(ned_tests
             DapConfigTest.cpp
             DapClientTest.cpp
             DapManagerTest.cpp
+            DapLiveAdapterTest.cpp
             InlineDebugValuesTest.cpp
             PointerGraphNodeTest.cpp
             SparklineTest.cpp

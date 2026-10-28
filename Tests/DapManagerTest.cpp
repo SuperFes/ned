@@ -2352,3 +2352,22 @@ TEST_CASE("StepIntoTarget carries the chosen target id alongside the thread", "[
     REQUIRE(stepIn["arguments"]["threadId"] == 2);
     SetLaunchConfig("dap-manager-test-step-in", "");
 }
+
+TEST_CASE("ApplyCompletion replaces the length the adapter names, counted back from the cursor", "[Dap]") {
+    using ned::editor::dap::ApplyCompletion;
+    // debugpy and lldb-dap: the typed fragment.
+    CHECK(ApplyCompletion("tot", 3, Manager::Completion{.label = "total", .text = "total", .length = 3}) == "total");
+    CHECK(ApplyCompletion("node->k", 7, Manager::Completion{.label = "key", .text = "key", .length = 1}) == "node->key");
+    // gdb: the whole line, with a length that overshoots what was typed.
+    CHECK(ApplyCompletion("print tot", 9, Manager::Completion{.label = "print total", .text = "print total", .length = 11}) ==
+          "print total");
+    // Text after the cursor stays put.
+    CHECK(ApplyCompletion("tot + 1", 3, Manager::Completion{.label = "total", .text = "total", .length = 3}) == "total + 1");
+}
+
+TEST_CASE("ApplyCompletion replaces the identifier before the cursor when the adapter names no length", "[Dap]") {
+    using ned::editor::dap::ApplyCompletion;
+    CHECK(ApplyCompletion("node->k", 7, Manager::Completion{.label = "key", .text = "key"}) == "node->key");
+    CHECK(ApplyCompletion("x + $tm", 7, Manager::Completion{.label = "$tmp", .text = "$tmp"}) == "x + $tmp");
+    CHECK(ApplyCompletion("", 0, Manager::Completion{.label = "main", .text = "main"}) == "main");
+}

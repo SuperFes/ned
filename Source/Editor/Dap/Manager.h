@@ -43,6 +43,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -609,10 +610,10 @@ class Manager {
         std::string label; // what to show
         std::string text;  // what to insert; falls back to label when the adapter sent none
         std::string type;  // "function", "variable", ... -- adapter-defined, display only
-        // The span of the typed text this replaces, both 0-based byte
-        // offsets into what was sent. Defaults to "replace the word the
-        // console worked out itself" -- see RequestCompletions.
-        int start  = -1;
+        // How many bytes before the cursor this replaces; -1 when the
+        // adapter didn't say. DAP's `start` is not kept: adapters disagree
+        // on its base, while `length` read this way matches every adapter
+        // tested and VS Code -- see ApplyCompletion.
         int length = -1;
     };
     void RequestCompletions(const std::string& text, int column, std::function<void(std::vector<Completion>)> callback);
@@ -1050,6 +1051,11 @@ class Manager {
     // after its session was stopped is dropped.
     LifetimeGuard spawnLifetime_;
 };
+
+// text with completion spliced in at cursor. The completion replaces the
+// `length` bytes before the cursor (clamped to the start of text: gdb counts
+// its whole-line answer), else the identifier-ish run ending there.
+[[nodiscard]] std::string ApplyCompletion(std::string_view text, std::size_t cursor, const Manager::Completion& completion);
 
 } // namespace ned::editor::dap
 

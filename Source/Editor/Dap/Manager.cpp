@@ -1,6 +1,7 @@
 #include "Manager.h"
 
 #include <algorithm>
+#include <cctype>
 #include <exception>
 #include <string_view>
 #include <utility>
@@ -1432,7 +1433,6 @@ void Manager::RequestCompletions(const std::string& text, int column, std::funct
                                      }
                                      completion.text   = targetJson.value("text", completion.label);
                                      completion.type   = targetJson.value("type", "");
-                                     completion.start  = targetJson.value("start", -1);
                                      completion.length = targetJson.value("length", -1);
                                      completions.push_back(std::move(completion));
                                  }
@@ -2089,6 +2089,27 @@ void Manager::SetRemoteHosts(remote::Hosts* hosts) {
 Client& Manager::SetClientForTesting(std::unique_ptr<Client> client) {
     client_ = std::move(client);
     return *client_;
+}
+
+std::string ApplyCompletion(std::string_view text, std::size_t cursor, const Manager::Completion& completion) {
+    cursor            = std::min(cursor, text.size());
+    std::size_t start = cursor;
+    if (completion.length >= 0) {
+        start = cursor - std::min(cursor, static_cast<std::size_t>(completion.length));
+    }
+    else {
+        while (start > 0) {
+            const auto character = static_cast<unsigned char>(text[start - 1]);
+            if (std::isalnum(character) == 0 && character != '_' && character != '$' && (character & 0x80U) == 0) {
+                break;
+            }
+            --start;
+        }
+    }
+    std::string result{text.substr(0, start)};
+    result += completion.text;
+    result += text.substr(cursor);
+    return result;
 }
 
 } // namespace ned::editor::dap

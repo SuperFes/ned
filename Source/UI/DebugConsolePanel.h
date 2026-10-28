@@ -134,7 +134,7 @@ class DebugConsolePanel : public Widget {
     // Splices one completion into the prompt, over the span the adapter
     // named or (when it named none) the identifier run the request ended
     // with. A no-op if the prompt has changed under the request.
-    void ApplyCompletion(const editor::dap::Manager::Completion& completion, const std::string& requestText);
+    void ApplyCompletion(const editor::dap::Manager::Completion& completion, const std::string& requestText, std::size_t cursor);
 
     const Theme&             theme_;
     editor::dap::Manager* dapManager_    = nullptr;
