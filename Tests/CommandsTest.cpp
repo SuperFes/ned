@@ -664,6 +664,14 @@ TEST_CASE("BuildModernOverrideKeymap binds the universal cut/copy/paste/undo/red
     CHECK(Bound("C-f").commandName == "isearch-forward");
 }
 
+TEST_CASE("BuildModernOverrideKeymap switches tabs from M-PAGEUP/M-PAGEDOWN as well as C-TAB", "[Commands]") {
+    const Keymap keymap = BuildModernOverrideKeymap();
+    CHECK(keymap.Resolve(ParseKeySequence("C-TAB")).commandName == "tab-next");
+    CHECK(keymap.Resolve(ParseKeySequence("C-S-TAB")).commandName == "tab-previous");
+    CHECK(keymap.Resolve(ParseKeySequence("M-PAGEDOWN")).commandName == "tab-next");
+    CHECK(keymap.Resolve(ParseKeySequence("M-PAGEUP")).commandName == "tab-previous");
+}
+
 TEST_CASE("BuildModernOverrideKeymap's C-c/C-x are leaf commands, not prefixes", "[Commands]") {
     const Keymap keymap = BuildModernOverrideKeymap();
 

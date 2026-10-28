@@ -5787,6 +5787,10 @@ Keymap BuildModernOverrideKeymap() {
     // own header comment.
     keymap.Bind(ParseKeySequence("C-TAB"), "tab-next");
     keymap.Bind(ParseKeySequence("C-S-TAB"), "tab-previous");
+    // Terminals commonly keep C-TAB (and C-PAGEUP/C-PAGEDOWN) for their own
+    // tabs; Konsole and GNOME Terminal pass these through.
+    keymap.Bind(ParseKeySequence("M-PAGEDOWN"), "tab-next");
+    keymap.Bind(ParseKeySequence("M-PAGEUP"), "tab-previous");
 
     return keymap;
 }

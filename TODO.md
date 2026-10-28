@@ -16,11 +16,6 @@ about features. Declaring it makes breaking any of them a major-version event. C
 - [ ] Release artifacts.
 - [ ] The mdBook site (`Docs/book.toml`) published.
 
-## Unverified Against Real Environments
-
-- [ ] `C-Tab`/`C-S-Tab` in the modern keymap are untested on a legacy (non-kitty-protocol)
-      terminal.
-
 ## Janet Widget Surface
 
 The tracker panels, buffer list and DAP thread panel now share `UI/TableView.h`. That
