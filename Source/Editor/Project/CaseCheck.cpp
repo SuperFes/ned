@@ -85,15 +85,16 @@ std::vector<ProjectCaseViolation> CollectProjectCaseViolations(const std::filesy
         }
 
         const std::filesystem::directory_entry& entry    = *it;
-        const std::filesystem::path             relative = std::filesystem::relative(entry.path(), root);
+        const std::filesystem::path             relative = entry.path().lexically_relative(root);
 
-        if (entry.is_directory()) {
+        std::error_code typeEc;
+        if (entry.is_directory(typeEc)) {
             if (IsDotDirectory(entry) || gitIgnore.IsIgnored(relative, /*isDirectory=*/true)) {
                 it.disable_recursion_pending();
             }
             continue;
         }
-        if (!entry.is_regular_file() || gitIgnore.IsIgnored(relative, /*isDirectory=*/false) ||
+        if (!entry.is_regular_file(typeEc) || gitIgnore.IsIgnored(relative, /*isDirectory=*/false) ||
             text::LooksBinary(entry.path())) {
             continue;
         }

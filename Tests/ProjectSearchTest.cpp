@@ -588,3 +588,20 @@ TEST_CASE("SearchDirectory stops early and returns nothing once stop is requeste
 
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("SearchDirectory skips a self-referencing symlink instead of throwing", "[ProjectSearch]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_search_test_symlink_loop";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "sub");
+    {
+        std::ofstream(dir / "sub" / "a.txt") << "needle\n";
+    }
+    std::filesystem::create_symlink("loop", dir / "sub" / "loop");
+
+    const std::vector<SearchMatch> matches = SearchDirectory(dir, "needle");
+
+    REQUIRE(matches.size() == 1);
+    REQUIRE(AnyMatchIn(matches, std::filesystem::absolute(dir / "sub" / "a.txt"), 1));
+
+    std::filesystem::remove_all(dir);
+}

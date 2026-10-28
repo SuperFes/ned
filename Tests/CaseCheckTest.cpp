@@ -129,3 +129,22 @@ TEST_CASE("CollectProjectCaseViolations prefers a live, modified open buffer's c
     std::filesystem::remove_all(dir);
 }
 
+TEST_CASE("CollectProjectCaseViolations skips a self-referencing symlink instead of throwing", "[CaseCheck]") {
+    const FormatRulesGuard      guard;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_case_check_test_symlink_loop";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+
+    SetCaseConvention("function", CaseConvention::SnakeCase);
+    {
+        std::ofstream(dir / "a.cpp") << "void BadName() {\n}\n";
+    }
+    std::filesystem::create_symlink("loop.cpp", dir / "loop.cpp");
+
+    const std::vector<ProjectCaseViolation> violations = CollectProjectCaseViolations(dir);
+
+    REQUIRE(violations.size() == 1);
+    REQUIRE(FindByName(violations, "BadName") != nullptr);
+
+    std::filesystem::remove_all(dir);
+}

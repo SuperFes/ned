@@ -30,13 +30,14 @@ namespace {
         std::error_code ec;
         for (const auto& entry :
              std::filesystem::directory_iterator(directory, std::filesystem::directory_options::skip_permission_denied, ec)) {
-            const std::filesystem::path relative = std::filesystem::relative(entry.path(), absoluteRoot);
-            if (entry.is_directory()) {
+            const std::filesystem::path relative = entry.path().lexically_relative(absoluteRoot);
+            std::error_code             typeEc;
+            if (entry.is_directory(typeEc)) {
                 if ((includeDotDirectories || !IsDotDirectory(entry)) && !gitIgnore.IsIgnored(relative, /*isDirectory=*/true)) {
                     directories.push_back(entry.path());
                 }
             }
-            else if (entry.is_regular_file() && !gitIgnore.IsIgnored(relative, /*isDirectory=*/false)) {
+            else if (entry.is_regular_file(typeEc) && !gitIgnore.IsIgnored(relative, /*isDirectory=*/false)) {
                 files.push_back(entry.path());
             }
         }

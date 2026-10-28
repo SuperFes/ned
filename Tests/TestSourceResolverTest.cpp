@@ -173,3 +173,15 @@ TEST_CASE("TestSourceResolver with an empty root resolves nothing by walking", "
     TestSourceResolver resolver(std::filesystem::path{});
     REQUIRE_FALSE(resolver.Resolve("anything_test.go", "").has_value());
 }
+
+TEST_CASE("TestSourceResolver walks past a self-referencing symlink instead of throwing", "[TestSourceResolver]") {
+    const TempTree tree("symlink_loop");
+    tree.Write("internal/sub/only_test.go");
+    std::filesystem::create_symlink("loop", tree.root / "internal" / "loop");
+
+    TestSourceResolver resolver(tree.root);
+    const auto         resolved = resolver.Resolve("only_test.go", "");
+
+    REQUIRE(resolved.has_value());
+    REQUIRE(*resolved == (tree.root / "internal" / "sub" / "only_test.go"));
+}

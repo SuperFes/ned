@@ -161,3 +161,20 @@ TEST_CASE("BuildProjectTree skips a directory excluded by .gitignore, without de
 
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("BuildProjectTree skips a self-referencing symlink instead of throwing", "[ProjectTree]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_tree_test_symlink_loop";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream(dir / "afile.txt") << "x";
+    }
+    std::filesystem::create_symlink("loop", dir / "loop");
+
+    const std::vector<ProjectTreeEntry> entries = BuildProjectTree(dir);
+
+    REQUIRE(entries.size() == 1);
+    REQUIRE(entries[0].path.filename() == "afile.txt");
+
+    std::filesystem::remove_all(dir);
+}

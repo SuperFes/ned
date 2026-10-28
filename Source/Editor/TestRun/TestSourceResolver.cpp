@@ -179,12 +179,13 @@ void TestSourceResolver::EnsureIndex() {
             if (ec) {
                 continue;
             }
-            if (entry.is_directory()) {
+            std::error_code typeEc;
+            if (entry.is_directory(typeEc)) {
                 if (!IsDotDirectory(entry) && !gitIgnore.IsIgnored(relative, /*isDirectory=*/true)) {
                     pending.push_back(entry.path());
                 }
             }
-            else if (entry.is_regular_file() && !gitIgnore.IsIgnored(relative, /*isDirectory=*/false)) {
+            else if (entry.is_regular_file(typeEc) && !gitIgnore.IsIgnored(relative, /*isDirectory=*/false)) {
                 byBasename_[entry.path().filename().string()].push_back(entry.path());
             }
         }
