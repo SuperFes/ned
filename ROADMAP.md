@@ -21,14 +21,13 @@ against.
 - ✅ **Multiple cursors**, including adding cursors and removing the last one added.
 - ✅ **Structural editing**: sexp motion, expand/shrink selection, auto-paired brackets
   and quotes.
-- ✅ **Snippets**: TextMate/LSP syntax with nested tabstops, variables, choices, and
-  macro replay.
+- ✅ **Snippets**: TextMate/LSP syntax with nested tabstops, variables (including inside
+  placeholder defaults), choices, and macro replay.
 - ✅ **Huge files**: memory-mapped, windowed highlighting, streaming search and save,
   and crash-recovery backups.
 - ✅ **Safe file handling**: async large-file save, auto-revert and three-way auto-merge
   on external change, and charset detection that preserves bytes rather than guessing.
 - ✅ **Bracketed paste and drag-and-drop.**
-- 🔜 Variables inside snippet placeholder defaults.
 - 💭 Multi-cursor paste distribution, and a mixed tabs-and-spaces indent style.
 
 ## Keymaps
@@ -64,7 +63,6 @@ against.
 - ✅ **Colour swatches and a colour picker.**
 - ✅ **Reusable widgets**: `TableView` (sortable record tables) and `TreeView`.
 - ✅ **Mouse support** layered over keyboard commands, never replacing them.
-- 🔜 A resize border for a right-docked agent panel.
 - 💭 Styled spans in list and table rows, remembered table sort order, configurable
   indicator glyphs, and a settings UI.
 
@@ -107,9 +105,9 @@ against.
 
 ## Language Servers (LSP)
 
-- ✅ **Full client**: diagnostics, completion (with resolve and merged sources), hover,
-  signature help, highlights, inlay hints, semantic tokens (range and delta), code
-  lens, document links, and colours.
+- ✅ **Full client**, with percent-encoded URIs both ways: diagnostics, completion (with
+  resolve and merged sources), hover, signature help, highlights, inlay hints, semantic
+  tokens (range and delta), code lens, document links, and colours.
 - ✅ **Navigation**: definition, declaration, type definition, implementation,
   references, and call/type hierarchies.
 - ✅ **Code actions** with a quick-fix gutter marker, and formatting.
@@ -121,7 +119,6 @@ against.
 - ✅ **LSP broker daemon**, which shares warm servers across ned processes (and can run
   under systemd).
 - ✅ **Prose checking** through harper-ls.
-- 🔜 Percent-encoded outgoing URIs.
 - 💭 Answers to server questions (`showMessageRequest`), broker pre-warming, and
   servers for Markdown/Org code blocks.
 
@@ -159,8 +156,9 @@ against.
 
 ## AI Agents
 
-- ✅ **Agent Client Protocol panel**: multiple sessions, forking, resume, per-turn
-  review and rewind, inline images, logins, questions, and notifications.
+- ✅ **Agent Client Protocol panel**, docked bottom or right with a resize border:
+  multiple sessions, forking, resume, per-turn review and rewind, inline images, logins,
+  questions, and notifications.
 - ✅ **MCP bridge**, giving agents ned's diagnostics, definitions, search, rename, code
   actions, and navigation.
 - ✅ **Tested with Claude, opencode, and Antigravity**, with nothing agent-specific in
