@@ -244,3 +244,20 @@ TEST_CASE("StreamSearchDirectory reads .editorconfig charsets only when its opti
 
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("SearchDirectory walks each directory in name order, depth first", "[SearchEngine]") {
+    const std::filesystem::path dir = FreshDir("ned_search_engine_order");
+    // Created out of order: the result must not depend on what the filesystem lists first.
+    for (const char* name : {"z.txt", "m.txt", "b/y.txt", "a.txt", "b/c.txt"}) {
+        std::filesystem::create_directories((dir / name).parent_path());
+        std::ofstream(dir / name) << "needle\n";
+    }
+
+    std::vector<std::filesystem::path> files;
+    for (const SearchMatch& match : SearchDirectory(dir, "needle")) {
+        files.push_back(match.file.lexically_relative(dir));
+    }
+    REQUIRE(files == std::vector<std::filesystem::path>{"a.txt", "b/c.txt", "b/y.txt", "m.txt", "z.txt"});
+
+    std::filesystem::remove_all(dir);
+}

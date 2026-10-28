@@ -7,7 +7,8 @@
 // worker pool (SearchOptions::threads). The directory walk -- dot-directories,
 // GitIgnore.h's matcher, Text/BinaryDetect.h's sniff -- runs on the calling
 // thread, feeding the pool as it finds files, then joins the scan once it's
-// done. Results come back in walk order regardless of which worker scanned a
+// done. Results come back in walk order -- depth-first, each directory by
+// name, so the same on every filesystem -- regardless of which worker scanned a
 // file.
 //
 

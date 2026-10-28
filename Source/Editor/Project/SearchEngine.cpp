@@ -29,42 +29,49 @@ namespace {
         return !name.empty() && name.front() == '.';
     }
 
-    // Single-threaded: a recursive_directory_iterator can't be shared across
-    // threads. Calls onFile with each searchable file, in walk order.
+    // Single-threaded and depth-first, each directory's entries in name
+    // order, so results come back in the same order on every filesystem.
+    // Calls onFile with each searchable file, in walk order. Like the
+    // recursive_directory_iterator this replaces, it never follows a
+    // symlinked directory.
     template <typename OnFile>
     void WalkSearchableFiles(const std::filesystem::path& absoluteRoot, const std::stop_token& stop, OnFile onFile) {
-        std::error_code ec;
-        auto            it = std::filesystem::recursive_directory_iterator(
-            absoluteRoot, std::filesystem::directory_options::skip_permission_denied, ec);
-        const auto end = std::filesystem::recursive_directory_iterator();
-        if (ec) {
-            return;
-        }
-
         const GitIgnoreMatcher& gitIgnore = CachedGitIgnoreMatcher(absoluteRoot);
 
-        for (; it != end; it.increment(ec)) {
-            if (ec || stop.stop_requested()) {
-                break;
+        // false once the walk should stop.
+        const auto walk = [&](const auto& self, const std::filesystem::path& directory) -> bool {
+            std::vector<std::filesystem::directory_entry> entries;
+            std::error_code                               ec;
+            for (auto it = std::filesystem::directory_iterator(directory, std::filesystem::directory_options::skip_permission_denied, ec);
+                 !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+                entries.push_back(*it);
             }
+            std::ranges::sort(entries, {}, [](const std::filesystem::directory_entry& entry) { return entry.path().filename(); });
 
-            const std::filesystem::directory_entry& entry    = *it;
-            const std::filesystem::path             relative = entry.path().lexically_relative(absoluteRoot);
-
-            std::error_code typeEc;
-            if (entry.is_directory(typeEc)) {
-                if (IsDotDirectory(entry) || gitIgnore.IsIgnored(relative, /*isDirectory=*/true)) {
-                    it.disable_recursion_pending();
+            for (const std::filesystem::directory_entry& entry : entries) {
+                if (stop.stop_requested()) {
+                    return false;
                 }
-                continue;
-            }
-            if (!entry.is_regular_file(typeEc) || gitIgnore.IsIgnored(relative, /*isDirectory=*/false) ||
-                text::LooksBinary(entry.path())) {
-                continue;
-            }
+                const std::filesystem::path relative = entry.path().lexically_relative(absoluteRoot);
 
-            onFile(entry.path());
-        }
+                std::error_code typeEc;
+                if (entry.is_directory(typeEc)) {
+                    if (!entry.is_symlink(typeEc) && !IsDotDirectory(entry) && !gitIgnore.IsIgnored(relative, /*isDirectory=*/true) &&
+                        !self(self, entry.path())) {
+                        return false;
+                    }
+                    continue;
+                }
+                if (!entry.is_regular_file(typeEc) || gitIgnore.IsIgnored(relative, /*isDirectory=*/false) ||
+                    text::LooksBinary(entry.path())) {
+                    continue;
+                }
+
+                onFile(entry.path());
+            }
+            return true;
+        };
+        walk(walk, absoluteRoot);
     }
 
     // Whether p is at or under root, decided lexically (no syscalls, and no
