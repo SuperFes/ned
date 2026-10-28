@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Rebuild this directory's .patch files from CMake/PatchNotcurses*.cmake, which
 # are the source of truth (see README.md). Run after editing any of those
-# scripts, or after bumping the pinned Notcurses version in CMakeLists.txt.
+# scripts, or after bumping the pinned Notcurses version in
+# CMake/BundledLibs.cmake.
 #
 # Each script is replayed onto a throwaway pristine checkout and committed, in
-# CMakeLists.txt's own PATCH_COMMAND order, so every patch's context reflects
+# BundledLibs.cmake's own PATCH_COMMAND order, so every patch's context reflects
 # the tree as it stands after the previous one -- which is what lets them apply
 # in sequence.
 #
@@ -17,13 +18,13 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 out="$repo/Patches/notcurses"
 
-# Order must match CMakeLists.txt's PATCH_COMMAND chain.
+# Order must match BundledLibs.cmake's PATCH_COMMAND chain.
 scripts=(PatchNotcursesNulKey PatchNotcursesMouseWheel PatchNotcursesBracketedPaste)
 
-# The pinned tag, read from CMakeLists.txt rather than duplicated here.
-tag="$(sed -n '/FetchContent_Declare(notcurses/,/)/p' "$repo/CMakeLists.txt" \
-       | sed -n 's/.*GIT_TAG[[:space:]]\+\([^[:space:]]*\).*/\1/p' | head -1)"
-[ -n "$tag" ] || { echo "regenerate: no notcurses GIT_TAG in CMakeLists.txt" >&2; exit 1; }
+# The pinned tag, read from BundledLibs.cmake rather than duplicated here.
+tag="$(sed -n '/FetchContent_Declare(notcurses/,/)/p' "$repo/CMake/BundledLibs.cmake" \
+       | sed -n 's|.*/archive/refs/tags/\([^/]*\)\.tar\.gz.*|\1|p' | head -1)"
+[ -n "$tag" ] || { echo "regenerate: no notcurses tag in CMake/BundledLibs.cmake" >&2; exit 1; }
 
 # Prefer the already-fetched tree (no network); fall back to upstream.
 src="$repo/build/_deps/notcurses-src"

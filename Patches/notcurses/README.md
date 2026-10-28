@@ -1,7 +1,7 @@
 # Notcurses patches
 
 Three fixes ned needs from Notcurses, as `git am`-able / `patch -p1`-able files,
-for building against a **system** Notcurses instead of the FetchContent copy.
+for building against a **system** Notcurses instead of the bundled copy.
 
 Generated against **notcurses v3.0.17** (`7767278`). Verified 2026-09-11: all
 three apply with `patch -p1` in numeric order against a pristine v3.0.17, and
@@ -23,18 +23,18 @@ context lines will not match.
 
 These files are **derived**. The originals are the CMake
 string-replacement scripts under `CMake/PatchNotcurses*.cmake`, which
-`CMakeLists.txt` runs as Notcurses' `FetchContent` `PATCH_COMMAND` — that is
-what the normal in-tree build uses, and it is what must be edited to change
-behaviour. These `.patch` files exist because a distro package manager wants a
+`CMake/BundledLibs.cmake` runs as Notcurses' `FetchContent` `PATCH_COMMAND` —
+that is what a `NED_BUNDLE_LIBS` build uses, and it is what must be edited to
+change behaviour. These `.patch` files exist because a distro package manager wants a
 unified diff, not a CMake script.
 
 Being derived, they can go stale. `./regenerate.sh` rebuilds them from the
 CMake scripts; run it after touching any `PatchNotcurses*.cmake`, or after
-bumping the pinned Notcurses version in `CMakeLists.txt`.
+bumping the pinned Notcurses version in `CMake/BundledLibs.cmake`.
 
 The CMake scripts each `FATAL_ERROR` if their anchor text no longer matches, so
 a Notcurses bump that moves the code fails the configure loudly rather than
-silently dropping a fix. That check protects the in-tree build; `regenerate.sh`
+silently dropping a fix. That check protects the bundled build; `regenerate.sh`
 is what propagates the result here.
 
 ## Using them

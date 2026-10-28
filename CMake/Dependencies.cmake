@@ -1,7 +1,8 @@
 # Third-party dependencies resolved from the system package manager (never
-# FetchContent -- see git log for the migration off it). Included from the
+# FetchContent, but for NED_BUNDLE_LIBS's opt-in Notcurses and Janet in
+# CMake/BundledLibs.cmake). Included from the
 # root CMakeLists.txt before any target that links against these; every
-# target/variable this file produces (notcurses-core, utf8proc, CLI11::CLI11,
+# target/variable this file produces (ned::notcurses, utf8proc, CLI11::CLI11,
 # nlohmann_json::nlohmann_json, re2::re2, pcre2-8-static, vterm, zstd::libzstd, the Janet_*
 # pkg-config variables, Catch2::Catch2WithMain) is consumed from Source/ and
 # Tests/ subdirectories added afterward.
@@ -23,8 +24,13 @@
 # a real ABI mismatch against a stale system notcurses (enum member order in
 # ncblitter_e changed between 3.0.8 and the version this project pins), which
 # is exactly why the tag match above matters and isn't a formality.
-pkg_check_modules(NOTCURSES REQUIRED IMPORTED_TARGET notcurses-core)
-add_library(notcurses-core ALIAS PkgConfig::NOTCURSES)
+# NED_BUNDLE_LIBS builds it from source instead (CMake/BundledLibs.cmake).
+if (NED_BUNDLE_LIBS)
+    include(${CMAKE_CURRENT_LIST_DIR}/BundledLibs.cmake)
+else()
+    pkg_check_modules(NOTCURSES REQUIRED IMPORTED_TARGET notcurses-core)
+    add_library(ned::notcurses ALIAS PkgConfig::NOTCURSES)
+endif()
 #------------------------------------------------------------------------------
 
 #--- System utf8proc -----------------------------------------------------------
@@ -140,5 +146,8 @@ endif()
 # Requires a system install of `janet` discoverable via pkg-config (the build
 # fails at configure time otherwise). Sets Janet_INCLUDE_DIRS/Janet_LIBRARIES/
 # Janet_LIBRARY_DIRS, consumed by Source/CMakeLists.txt.
-pkg_check_modules(Janet REQUIRED janet)
+# NED_BUNDLE_LIBS sets the same variables from its own build.
+if (NOT NED_BUNDLE_LIBS)
+    pkg_check_modules(Janet REQUIRED janet)
+endif()
 #------------------------------------------------------------------------------

@@ -23,6 +23,16 @@
             }
         },
         {
+            "name": "bundled",
+            "displayName": "Clang + LLD, patched Notcurses and Janet built in and static (Release)",
+            "inherits": "default",
+            "binaryDir": "${sourceDir}/build-bundled",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "NED_BUNDLE_LIBS": "ON"
+            }
+        },
+        {
             "name": "agent-x86_64",
             "displayName": "Static ned-agent, x86_64 musl (zig)",
             "binaryDir": "${sourceDir}/build-agent-x86_64",
@@ -55,6 +65,10 @@
         {
             "name": "sanitize",
             "configurePreset": "sanitize"
+        },
+        {
+            "name": "bundled",
+            "configurePreset": "bundled"
         },
         {
             "name": "agent-x86_64",

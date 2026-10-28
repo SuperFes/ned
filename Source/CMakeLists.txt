@@ -3,7 +3,7 @@
 # add_subdirectory(Source) from the root CMakeLists.txt, after
 # CMake/Dependencies.cmake, CMake/Grammars.cmake and CMake/DataTree.cmake
 # have already run -- this file links against targets all three produce
-# (notcurses-core, vterm, utf8proc, nlohmann_json::nlohmann_json, re2::re2,
+# (ned::notcurses, vterm, utf8proc, nlohmann_json::nlohmann_json, re2::re2,
 # pcre2-8-static, Janet_*,
 # ned_data).
 
@@ -576,6 +576,9 @@ target_include_directories(ned_lib
 # implicitly searched -- ld.lld: unable to find library -ljanet. Explicit
 # target_link_directories is what actually fixes it, not luck.
 target_link_directories(ned_lib PUBLIC ${Janet_LIBRARY_DIRS})
+if (TARGET janet_bundled)
+    add_dependencies(ned_lib janet_bundled)
+endif()
 
 target_link_libraries(ned_lib
         # The editor compiles out-of-tree language packages in process, and
@@ -586,13 +589,9 @@ target_link_libraries(ned_lib
         PUBLIC ${Janet_LIBRARIES}
         # Every widget (Widget/KeyTranslation/Theme/EventLoop/Layout and every
         # concrete widget through main.cpp's own composition root) is built on
-        # Notcurses. Shared, not static (notcurses' static build needs a
-        # static libdeflate/zlib this project has no reason to require) --
-        # notcurses' own CMakeLists.txt already installs notcurses-core's
-        # shared library to CMAKE_INSTALL_LIBDIR unconditionally, so
-        # `cmake --install` places it on the normal system library path
-        # alongside `ned` with no RPATH trick needed.
-        PUBLIC notcurses-core
+        # Notcurses: the system's shared library, or with NED_BUNDLE_LIBS a
+        # patched static copy (CMake/BundledLibs.cmake).
+        PUBLIC ned::notcurses
         # Terminal-panel follow-up: PUBLIC because vterm.h reaches ned_lib's
         # own headers via Source/Editor/Terminal/Emulator.h.
         PUBLIC vterm
@@ -642,15 +641,8 @@ add_dependencies(ned ned_data)
 # executable, standard GNUInstallDirs layout, no desktop file or icon. Man
 # pages are opt-in and live in CMake/ManPages.cmake, not here.
 include(GNUInstallDirs)
-# notcurses-core used to be a private FetchContent'd copy, which needed its
-# own install(TARGETS ...) plus an INSTALL_RPATH pointing `ned` at a private,
-# ned-only subdirectory rather than the shared system libdir -- avoiding a
-# real install-time collision with a system notcurses package owning that
-# same SONAME path, and pinning the exact version/ABI a system package might
-# not carry (see PatchNotcurses*.cmake above). Now that notcurses-core *is*
-# the system package (see its own comment above), neither concern applies:
-# `ned` links against and finds it exactly the way any other system-library
-# consumer does, with the linker's normal default search path.
+# NED_BUNDLE_LIBS links Notcurses and Janet statically, so nothing of theirs
+# is installed beside `ned`.
 install(TARGETS ned RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 
 # ned-langc is a real program rather than one more argv[0] symlink onto
