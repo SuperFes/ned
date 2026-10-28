@@ -823,21 +823,21 @@ do
 (file
   (declaration_expression
     (do
-      (application_expression
-        (infix_expression
+      (infix_expression
+        (long_identifier_or_op
+          (long_identifier
+            (identifier)
+            (identifier)))
+        (infix_op)
+        (application_expression
           (long_identifier_or_op
             (long_identifier
               (identifier)
               (identifier)))
-          (infix_op)
           (long_identifier_or_op
             (long_identifier
               (identifier)
-              (identifier))))
-        (long_identifier_or_op
-          (long_identifier
-            (identifier)
-            (identifier)))))))
+              (identifier))))))))
 
 ================================================================================
 ce expression 1
@@ -2277,34 +2277,34 @@ let f xs =
         (argument_patterns
           (long_identifier
             (identifier))))
-      (application_expression
-        (infix_expression
-          (long_identifier_or_op
-            (identifier))
-          (infix_op)
+      (infix_expression
+        (long_identifier_or_op
+          (identifier))
+        (infix_op)
+        (application_expression
           (long_identifier_or_op
             (long_identifier
               (identifier)
-              (identifier))))
-        (paren_expression
-          (fun_expression
-            (argument_patterns
-              (long_identifier
-                (identifier)))
-            (declaration_expression
-              (function_or_value_defn
-                (value_declaration_left
-                  (identifier_pattern
+              (identifier)))
+          (paren_expression
+            (fun_expression
+              (argument_patterns
+                (long_identifier
+                  (identifier)))
+              (declaration_expression
+                (function_or_value_defn
+                  (value_declaration_left
+                    (identifier_pattern
+                      (long_identifier_or_op
+                        (identifier))))
+                  (infix_expression
                     (long_identifier_or_op
-                      (identifier))))
-                (infix_expression
-                  (long_identifier_or_op
-                    (identifier))
-                  (infix_op)
-                  (const
-                    (int))))
-              (long_identifier_or_op
-                (identifier)))))))))
+                      (identifier))
+                    (infix_op)
+                    (const
+                      (int))))
+                (long_identifier_or_op
+                  (identifier))))))))))
 
 ================================================================================
 list index with slice ranges
@@ -3672,33 +3672,33 @@ let f x =
           (long_identifier
             (identifier))))
       (infix_expression
-        (application_expression
-          (infix_expression
-            (long_identifier_or_op
-              (identifier))
-            (infix_op)
+        (infix_expression
+          (long_identifier_or_op
+            (identifier))
+          (infix_op)
+          (application_expression
             (long_identifier_or_op
               (long_identifier
                 (identifier)
-                (identifier))))
-          (paren_expression
-            (fun_expression
-              (argument_patterns
-                (long_identifier
-                  (identifier)))
-              (match_expression
-                (long_identifier_or_op
-                  (identifier))
-                (rules
-                  (rule
-                    (identifier_pattern
-                      (long_identifier_or_op
-                        (identifier)))
-                    (application_expression
-                      (long_identifier_or_op
-                        (identifier))
-                      (long_identifier_or_op
-                        (identifier)))))))))
+                (identifier)))
+            (paren_expression
+              (fun_expression
+                (argument_patterns
+                  (long_identifier
+                    (identifier)))
+                (match_expression
+                  (long_identifier_or_op
+                    (identifier))
+                  (rules
+                    (rule
+                      (identifier_pattern
+                        (long_identifier_or_op
+                          (identifier)))
+                      (application_expression
+                        (long_identifier_or_op
+                          (identifier))
+                        (long_identifier_or_op
+                          (identifier))))))))))
         (infix_op)
         (long_identifier_or_op
           (long_identifier
@@ -3784,3 +3784,27 @@ let setDefaultColors fg bg sp =
                 (int))))))
       (block_comment
         (block_comment_content)))))
+
+================================================================================
+application binds tighter than infix
+================================================================================
+
+do
+  1 + f a
+
+--------------------------------------------------------------------------------
+
+(file
+  (declaration_expression
+    (do
+      (infix_expression
+        (const
+          (int))
+        (infix_op)
+        (application_expression
+          (long_identifier_or_op
+            (identifier))
+          (long_identifier_or_op
+            (long_identifier
+              (identifier))))))))
+

@@ -34,8 +34,6 @@ about features. Declaring it makes breaking any of them a major-version event. C
       can't see them. The Remote panel's `remote-panel-mode` (`Editor/PanelMode.h`,
       `UI/PanelKeys.h`) is the pattern; the VCS panel's footer legend would read its
       keys from the mode rather than from fixed strings.
-- [ ] **Right-docked `AcpPanel` has no reserved resize border**, unlike
-      `ProjectSidebar`'s divider column.
 
 ## Janet Widget Surface
 
@@ -74,9 +72,6 @@ table is the evidence this stage was waiting for.
 
 Real, reproduced, non-urgent. Fix opportunistically; delete when fixed.
 
-- **F# grammar**: application and infix share `prec-left 16`, so `1 + f a` parses as
-  `(1 + f) a`. Also, `let f x y = ()` without a trailing newline doesn't parse as a
-  function.
 - **Markdown emphasis on a pathological paragraph.** Each unclosed opener reads ahead up
   to 4096 codepoints: 15,000 of them in 45 KB take 0.65 s. A closer-free memo in the
   scanner state would fix it if a real document hits this.

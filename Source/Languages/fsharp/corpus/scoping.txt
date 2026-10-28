@@ -238,15 +238,15 @@ do
           (argument_patterns
             (long_identifier
               (identifier)))
-          (application_expression
-            (infix_expression
+          (infix_expression
+            (long_identifier_or_op
+              (identifier))
+            (infix_op)
+            (application_expression
               (long_identifier_or_op
                 (identifier))
-              (infix_op)
               (long_identifier_or_op
-                (identifier)))
-            (long_identifier_or_op
-              (identifier))))))))
+                (identifier)))))))))
 
 ================================================================================
 offside infix op

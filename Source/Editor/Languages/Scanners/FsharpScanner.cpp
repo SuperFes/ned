@@ -39,6 +39,7 @@ enum TokenType {
   INSIDE_STRING,
   NEWLINE_NO_ALIGNED,
   TUPLE_MARKER,
+  DO_KEYWORD,
   ERROR_SENTINEL
 };
 
@@ -226,7 +227,9 @@ static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
       indent_length += 8;
       skip(lexer);
     } else if (lexer->eof(lexer)) {
+      // End of file closes every open block, exactly as a final newline would.
       found_end_of_line = true;
+      indent_length = 0;
       break;
     } else if (lexer->lookahead == '/') {
       skip(lexer);
@@ -489,6 +492,20 @@ static bool scan(Scanner *scanner, Lexer *lexer, const bool *valid_symbols) {
             }
           }
         }
+      }
+    }
+  } else if (lexer->lookahead == 'd' && valid_symbols[DO_KEYWORD]) {
+    // A loop's own `do`, told apart from a `do` expression that would
+    // otherwise be read as an argument to the condition's last term.
+    advance(lexer);
+    if (lexer->lookahead == 'o') {
+      advance(lexer);
+      if (lexer->lookahead == ' ' || lexer->lookahead == '\t' ||
+          lexer->lookahead == '\r' || lexer->lookahead == '\n' ||
+          lexer->eof(lexer)) {
+        lexer->markEnd(lexer);
+        lexer->resultSymbol = DO_KEYWORD;
+        return true;
       }
     }
   } else if (lexer->lookahead == 'e' &&

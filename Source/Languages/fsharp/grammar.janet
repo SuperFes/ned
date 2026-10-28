@@ -35,6 +35,7 @@
              _inside_string_marker
              _newline_not_aligned
              _tuple_marker
+             _do_keyword
              _error_sentinel]
  :inline [_module_elem
           _expression_or_range
@@ -280,14 +281,14 @@
                    (:choice
                     (:seq _pattern "in" _expression_or_range)
                     (:seq identifier "=" _expression (:choice "to" "downto") _expression))
-                   "do"
+                   (:alias _do_keyword "do")
                    _expression_block
                    (:choice "done" :blank)))
   while_expression (:prec 9
                     (:seq
                      (:choice "while" "while!")
                      _expression
-                     "do"
+                     (:alias _do_keyword "do")
                      _expression_block
                      (:choice "done" :blank)))
   _else_expression (:seq "else" (:field :else _expression_block))
@@ -357,12 +358,12 @@
                   (:seq
                    _expression
                    (:choice unit (:seq (:token-immediate (:prec 10000 "(")) _expression_block ")"))))
-  _low_prec_app (:prec-left 16 (:seq _expression _expression))
+  _low_prec_app (:prec-left 17 (:seq _expression _expression))
   application_expression (:choice _high_prec_app _low_prec_app)
   dot_expression (:prec-right 19
                   (:seq (:field :base _expression) "." (:field :field long_identifier_or_op)))
   infix_expression (:prec-left 16 (:seq _expression infix_op _expression))
-  ce_expression (:prec-left 15
+  ce_expression (:prec-left 17
                  (:seq
                   (:prec -1 _expression)
                   "{"

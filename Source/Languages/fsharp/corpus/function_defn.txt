@@ -252,3 +252,23 @@ module Program =
                 (identifier))))
           (const
             (unit)))))))
+
+================================================================================
+function definition without a trailing newline
+================================================================================
+
+let f x y = ()
+--------------------------------------------------------------------------------
+
+(file
+  (declaration_expression
+    (function_or_value_defn
+      (function_declaration_left
+        (identifier)
+        (argument_patterns
+          (long_identifier
+            (identifier))
+          (long_identifier
+            (identifier))))
+      (const
+        (unit)))))
