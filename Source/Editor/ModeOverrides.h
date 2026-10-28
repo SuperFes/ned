@@ -64,7 +64,8 @@ void ClearAllModeCaches();
 // at it in either order. extension may be given with or without a leading
 // '.' (both "phtml" and ".phtml" resolve the same way) -- Janet callers
 // naturally write the former, but ModeForFileOverride is called with
-// std::filesystem::path::extension()'s own with-a-dot form.
+// std::filesystem::path::extension()'s own with-a-dot form. An empty
+// modeName removes the override.
 void SetModeForExtension(const std::string& extension, const std::string& modeName);
 
 // Points filename (the full, exact base name of a file, e.g.
@@ -72,7 +73,8 @@ void SetModeForExtension(const std::string& extension, const std::string& modeNa
 // resolved the same lazy way SetModeForExtension is. Checked before
 // SetModeForExtension's table by ModeForFileOverride, matching Emacs'
 // auto-mode-alist convention that a more specific (whole-filename) pattern
-// wins over a less specific (extension-only) one.
+// wins over a less specific (extension-only) one. An empty modeName removes
+// the override.
 void SetModeForFilename(const std::string& filename, const std::string& modeName);
 
 // Resolves path against SetModeForFilename's table (path.filename(), exact

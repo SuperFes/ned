@@ -697,11 +697,11 @@ Set the minimap's width in columns (default 5). Each column packs 2 braille sub-
 
 ## `ned/set-mode-for-extension`
 
-Map a file extension (with or without a leading '.') to a mode name -- either a registered language's `<name>`-mode (ned/register-language), or one of ned's own built-in mode names (e.g. "php-mode", "python-mode"). Checked before ned's own built-in extension table, so this can override a bundled mapping too, not just add a new one.
+Map a file extension (with or without a leading '.') to a mode name -- either a registered language's `<name>`-mode (ned/register-language), or one of ned's own built-in mode names (e.g. "php-mode", "python-mode"). Checked before ned's own built-in extension table, so this can override a bundled mapping too, not just add a new one. An empty mode name removes the mapping.
 
 ## `ned/set-mode-for-filename`
 
-Map an exact, full filename (e.g. "CMakeLists.txt", not a pattern/glob) to a mode name, the same way ned/set-mode-for-extension does for an extension -- checked first, before any extension mapping, for files identified by name rather than by a distinguishing extension.
+Map an exact, full filename (e.g. "CMakeLists.txt", not a pattern/glob) to a mode name, the same way ned/set-mode-for-extension does for an extension -- checked first, before any extension mapping, for files identified by name rather than by a distinguishing extension. An empty mode name removes the mapping.
 
 ## `ned/set-multibuffer-auto-collapse-byte-threshold`
 

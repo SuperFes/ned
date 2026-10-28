@@ -31,7 +31,8 @@ TEST_CASE("IconForPath follows an extension override, past its own cache", "[Fil
     // One naming no mode leaves the file to the bundled tables, as ModeForPath.
     ned::editor::SetModeForExtension("c", "no-such-mode");
     CHECK(IconForPath("b.c") == kC);
-    ned::editor::SetModeForExtension("c", "c-mode");
+    ned::editor::SetModeForExtension("c", "");
+    ned::editor::SetModeForExtension("nedicontest", "");
 }
 
 TEST_CASE("FileIcon falls back to a kind glyph, then a plain document", "[FileIcons]") {

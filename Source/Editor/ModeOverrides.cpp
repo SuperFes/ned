@@ -184,14 +184,24 @@ std::optional<Mode> ModeByName(const std::string& name) {
 
 void SetModeForExtension(const std::string& extension, const std::string& modeName) {
     const std::lock_guard lock(g_mutex);
-    g_extensionOverrides.insert_or_assign(StripLeadingDot(extension), modeName);
+    if (modeName.empty()) {
+        g_extensionOverrides.erase(StripLeadingDot(extension));
+    }
+    else {
+        g_extensionOverrides.insert_or_assign(StripLeadingDot(extension), modeName);
+    }
     g_modeCache.clear(); // see RegisterMode's own comment on why
     g_iconCache.clear();
 }
 
 void SetModeForFilename(const std::string& filename, const std::string& modeName) {
     const std::lock_guard lock(g_mutex);
-    g_filenameOverrides.insert_or_assign(filename, modeName);
+    if (modeName.empty()) {
+        g_filenameOverrides.erase(filename);
+    }
+    else {
+        g_filenameOverrides.insert_or_assign(filename, modeName);
+    }
     g_modeCache.clear(); // see RegisterMode's own comment on why
     g_iconCache.clear();
 }

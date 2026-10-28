@@ -121,6 +121,7 @@ TEST_CASE("A registered definition's own :extensions claim files with no overrid
     REQUIRE(ModeForPath("/some/path/script.lua").name == "python-mode");
     SetModeForExtension(".lua", "lua-mode");
     REQUIRE(ModeForFileOverride("/some/path/other.lua").has_value());
+    SetModeForExtension(".lua", "");
 }
 
 TEST_CASE("SetModeForExtension can point an extension at a bundled mode by name", "[ModeOverrides]") {
@@ -188,7 +189,16 @@ TEST_CASE("ModeForPath falls back to FundamentalMode for an unrecognized extensi
 TEST_CASE("ModeForPath prefers a configured override over the bundled extension table", "[ModeOverrides]") {
     SetModeForExtension("cpp", "python-mode"); // deliberately perverse, just to prove precedence
     REQUIRE(ModeForPath("/some/path/main.cpp").name == "python-mode");
-    SetModeForExtension("cpp", "cpp-mode"); // restore, since g_extensionOverrides is process-wide state
+    SetModeForExtension("cpp", ""); // g_extensionOverrides is process-wide state
+}
+
+TEST_CASE("An empty mode name removes an extension or filename override", "[ModeOverrides]") {
+    SetModeForExtension("cleared-test-ext", "python-mode");
+    SetModeForFilename("ClearedTestFile", "python-mode");
+    SetModeForExtension(".cleared-test-ext", "");
+    SetModeForFilename("ClearedTestFile", "");
+    REQUIRE_FALSE(ModeForFileOverride("/some/path/file.cleared-test-ext").has_value());
+    REQUIRE_FALSE(ModeForFileOverride("/some/path/ClearedTestFile").has_value());
 }
 
 TEST_CASE("ModeForBuffer falls back to FundamentalMode for a path-less buffer", "[ModeOverrides]") {
