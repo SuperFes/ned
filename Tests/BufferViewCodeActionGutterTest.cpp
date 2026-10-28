@@ -158,9 +158,9 @@ struct FrameReader {
         if (pending.size() < bodyStart + contentLength) {
             return std::nullopt;
         }
-        const Json frame = Json::parse(pending.substr(bodyStart, contentLength));
+        Json frame = Json::parse(pending.substr(bodyStart, contentLength));
         pending.erase(0, bodyStart + contentLength);
-        return frame;
+        return std::optional<Json>(std::in_place, std::move(frame)); // a bare Json converts ambiguously before nlohmann_json 3.12
     }
 };
 
