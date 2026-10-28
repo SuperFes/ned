@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "Editor/PanelMode.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Vcs/ProviderRegistry.h"
 #include "TestEvents.h"
@@ -910,6 +911,55 @@ TEST_CASE("Footer legend names the key that actually moves the focused file, not
     // Discard targets HEAD, which an untracked file has no copy in -- its
     // slot is left blank rather than claiming a key that would just error.
     REQUIRE(RowText(screen, kDiscardRow, 60).find_first_not_of(' ') == std::string::npos);
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("VcsPanel keys and footer legend follow vcs-panel-mode's live bindings", "[VcsPanel][PanelMode]") {
+    struct Guard {
+        ~Guard() {
+            ned::editor::ResetPanelKeysForTesting();
+        }
+    } guard;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_vcs_panel_test_rebound";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList list;
+    ned::text::Buffer&    scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer activeBuffer(scratch);
+    ned::ui::Theme        theme = ned::ui::DarkTheme();
+    std::string           statusMessage;
+    ned::ui::VcsPanel     panel([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlacePanel(panel, 60, 22);
+    panel.DispatchVcsStatusForTesting({{" M", "b.txt"}});
+    panel.TakeFocus();
+
+    ned::editor::DefinePanelKey("vcs-panel-mode", "s", "vcs-panel-stage");
+    ned::editor::DefinePanelKey("vcs-panel-mode", "a", "");
+    ned::editor::DefinePanelKey("vcs-panel-mode", "f", "");
+
+    ned::ui::Screen screen = ned::ui::Screen(60, 22);
+    ned::ui::Canvas canvas(screen, ned::ui::Box{.x_min = 0, .x_max = 59, .y_min = 0, .y_max = 21});
+    // Footer block starts at row 7: four row slots, a separator, then the
+    // root slots, fetch last.
+    const int kStageUnstageRow = 9;
+    const int kFetchRow        = 21;
+
+    // Rows: 0 "Staged (0)" header, 1 "Unstaged (1)" header, 2 b.txt.
+    panel.OnEvent(ned::ui::test::ArrowDown());
+    panel.OnEvent(ned::ui::test::ArrowDown());
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, kStageUnstageRow, 60).find("s stage") != std::string::npos);
+    REQUIRE(RowText(screen, kFetchRow, 60).find_first_not_of(' ') == std::string::npos);
+
+    panel.OnEvent(ned::ui::test::Character('a'));
+    REQUIRE(statusMessage == "a is undefined in VCS panel");
+
+    panel.OnEvent(ned::ui::test::Character('x'));
+    panel.Paint(canvas);
+    REQUIRE(RowText(screen, 7, 60).find("y confirm") != std::string::npos);
 
     std::filesystem::remove_all(dir);
 }

@@ -205,6 +205,15 @@ namespace {
 ProjectSidebar::ProjectSidebar(std::function<ActiveBuffer&()> activeBufferProvider, text::BufferList& bufferList,
                                std::string& statusMessage, const Theme& theme) : activeBufferProvider_(std::move(activeBufferProvider)), bufferList_(bufferList), statusMessage_(statusMessage),
                                                                                  theme_(theme) {
+    keys_.SetOnMessage([this](std::string message) { statusMessage_ = std::move(message); });
+}
+
+void ProjectSidebar::SetOnFileAction(std::function<void(FileAction, const std::filesystem::path&)> handler) {
+    onFileAction_ = std::move(handler);
+}
+
+void ProjectSidebar::SetOnPrefixHint(std::function<void(std::optional<WhichKeyHint>)> handler) {
+    keys_.SetOnHint(std::move(handler));
 }
 
 std::vector<editor::ProjectTreeEntry> ProjectSidebar::VisibleEntries(const std::vector<editor::ProjectTreeEntry>& all) const {
@@ -702,74 +711,121 @@ bool ProjectSidebar::HandleKeyEvent(const Event& event) {
         return true; // focused: swallow undecodable input rather than leaking it
     }
 
-    const bool cancel = chord->Special == editor::SpecialKey::Escape ||
-                        (chord->Control && chord->Codepoint == U'g');
+    if (chord->Special == editor::SpecialKey::Escape || (chord->Control && chord->Codepoint == U'g')) {
+        keys_.Reset();
+        ReturnFocus();
+        return true;
+    }
 
     const std::vector<editor::ProjectTreeEntry> entries = VisibleEntries(CachedTree());
-    if (entries.empty()) {
-        if (cancel) {
-            ReturnFocus();
-        }
-        return true; // nothing to navigate; still consume -- we hold focus
-    }
-    selectedIndex_                        = std::clamp(selectedIndex_, 0, static_cast<int>(entries.size()) - 1);
-    const editor::ProjectTreeEntry& entry = entries[static_cast<std::size_t>(selectedIndex_)];
+    std::optional<editor::ProjectTreeEntry>     selected;
+    if (!entries.empty()) {
+        selectedIndex_                        = std::clamp(selectedIndex_, 0, static_cast<int>(entries.size()) - 1);
+        const editor::ProjectTreeEntry& entry = entries[static_cast<std::size_t>(selectedIndex_)];
+        selected                              = entry;
 
-    const bool up   = chord->Special == editor::SpecialKey::Up || (chord->Control && chord->Codepoint == U'p');
-    const bool down = chord->Special == editor::SpecialKey::Down || (chord->Control && chord->Codepoint == U'n');
+        const bool up   = chord->Special == editor::SpecialKey::Up || (chord->Control && chord->Codepoint == U'p');
+        const bool down = chord->Special == editor::SpecialKey::Down || (chord->Control && chord->Codepoint == U'n');
 
-    if (up || down) {
-        selectedIndex_ = std::clamp(selectedIndex_ + (down ? 1 : -1), 0, static_cast<int>(entries.size()) - 1);
-        EnsureSelectionVisible();
-        return true;
-    }
-    if (chord->Special == editor::SpecialKey::Enter) {
-        if (entry.isDirectory) {
-            ToggleDirectory(entry.path);
+        if (up || down) {
+            selectedIndex_ = std::clamp(selectedIndex_ + (down ? 1 : -1), 0, static_cast<int>(entries.size()) - 1);
+            EnsureSelectionVisible();
+            return true;
         }
-        else {
-            // A deliberate keyboard open is a permanent one (the same
-            // promotion a mouse double-click gets, never a transient
-            // preview), and it hands focus straight back to the editor --
-            // the point of opening a file is to edit it.
-            OpenFileEntry(entry.path, /*isDoubleClick=*/true);
-            ReturnFocus();
+        if (chord->Special == editor::SpecialKey::Enter) {
+            if (entry.isDirectory) {
+                ToggleDirectory(entry.path);
+            }
+            else {
+                // A deliberate keyboard open is a permanent one (the same
+                // promotion a mouse double-click gets, never a transient
+                // preview), and it hands focus straight back to the editor --
+                // the point of opening a file is to edit it.
+                OpenFileEntry(entry.path, /*isDoubleClick=*/true);
+                ReturnFocus();
+            }
+            return true;
         }
-        return true;
-    }
-    if (chord->Special == editor::SpecialKey::Right) {
-        if (entry.isDirectory && !expandedDirs_.contains(entry.path)) {
-            ToggleDirectory(entry.path);
+        if (chord->Special == editor::SpecialKey::Right) {
+            if (entry.isDirectory && !expandedDirs_.contains(entry.path)) {
+                ToggleDirectory(entry.path);
+            }
+            return true;
         }
-        return true;
-    }
-    if (chord->Special == editor::SpecialKey::Left) {
-        if (entry.isDirectory && expandedDirs_.contains(entry.path)) {
-            ToggleDirectory(entry.path);
+        if (chord->Special == editor::SpecialKey::Left) {
+            if (entry.isDirectory && expandedDirs_.contains(entry.path)) {
+                ToggleDirectory(entry.path);
+            }
+            return true;
         }
-        return true;
     }
-    if (!chord->Control && !chord->Meta && chord->Codepoint == U'.') {
+    if (const std::optional<std::string> command = keys_.Feed(*chord)) {
+        Run(*command, selected);
+    }
+    return true; // every other key is consumed while this widget holds focus
+}
+
+void ProjectSidebar::Run(std::string_view command, const std::optional<editor::ProjectTreeEntry>& entry) {
+    if (command == "files-panel-toggle-dotfiles") {
         showDotDirectories_ = !showDotDirectories_;
         InvalidateTree();
         // Keep the selection on its entry, or else on its nearest listed ancestor.
         const std::vector<editor::ProjectTreeEntry> after = VisibleEntries(CachedTree());
-        for (std::filesystem::path path = entry.path; !after.empty(); path = path.parent_path()) {
-            const auto it = std::ranges::find(after, path, &editor::ProjectTreeEntry::path);
-            if (it != after.end() || path == path.parent_path()) {
-                selectedIndex_ = it != after.end() ? static_cast<int>(it - after.begin()) : 0;
-                break;
+        if (entry) {
+            for (std::filesystem::path path = entry->path; !after.empty(); path = path.parent_path()) {
+                const auto it = std::ranges::find(after, path, &editor::ProjectTreeEntry::path);
+                if (it != after.end() || path == path.parent_path()) {
+                    selectedIndex_ = it != after.end() ? static_cast<int>(it - after.begin()) : 0;
+                    break;
+                }
             }
         }
         EnsureSelectionVisible();
         statusMessage_ = showDotDirectories_ ? "Showing dot-directories" : "Hiding dot-directories";
-        return true;
+        return;
     }
-    if (cancel) {
+    if (command == "files-panel-refresh") {
+        InvalidateTree();
+        return;
+    }
+
+    std::optional<FileAction> action;
+    if (command == "files-panel-new-file") {
+        action = FileAction::NewFile;
+    }
+    else if (command == "files-panel-new-directory") {
+        action = FileAction::NewDirectory;
+    }
+    else if (command == "files-panel-rename") {
+        action = FileAction::Rename;
+    }
+    else if (command == "files-panel-delete") {
+        action = FileAction::Delete;
+    }
+    else if (command == "files-panel-reveal-in-terminal") {
+        action = FileAction::RevealInTerminal;
+    }
+    if (!action || !onFileAction_) {
+        return;
+    }
+
+    std::filesystem::path target;
+    if (*action == FileAction::Rename || *action == FileAction::Delete) {
+        if (!entry) {
+            statusMessage_ = "Nothing selected to " + std::string(*action == FileAction::Rename ? "rename" : "delete");
+            return;
+        }
+        target = entry->path;
+    }
+    else {
+        target = !entry ? editor::ProjectRoot() : entry->isDirectory ? entry->path
+                                                                     : entry->path.parent_path();
+    }
+    // The prompts are the focused pane's.
+    if (*action != FileAction::RevealInTerminal) {
         ReturnFocus();
-        return true;
     }
-    return true; // every other key is consumed while this widget holds focus
+    onFileAction_(*action, target);
 }
 
 std::optional<std::filesystem::path> ProjectSidebar::DraggingFilePath() const {

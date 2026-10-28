@@ -61,6 +61,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -68,6 +69,7 @@
 #include "Editor/Project/Tree.h"
 #include "Editor/Vcs/RowStatus.h"
 #include "Editor/Vcs/Runner.h"
+#include "PanelKeys.h"
 #include "Text/BufferList.h"
 #include "Theme.h"
 #include "Widget.h"
@@ -226,6 +228,20 @@ class ProjectSidebar : public Widget {
     // means right-click is a no-op, matching every other Set* hook here.
     void SetOnContextMenuRequest(std::function<void(const std::filesystem::path&, bool isDirectory, Point anchor)> handler);
 
+    // files-panel-mode's file commands. The target is the selected entry for
+    // Rename/Delete, and otherwise the directory it implies: itself, a
+    // file's parent, or the project root when nothing is listed. Focus is
+    // already back on the pane for the prompting actions.
+    enum class FileAction { NewFile,
+                            NewDirectory,
+                            Rename,
+                            Delete,
+                            RevealInTerminal };
+    void SetOnFileAction(std::function<void(FileAction action, const std::filesystem::path& target)> handler);
+
+    // A pending files-panel-mode prefix's next keys, for the which-key popup.
+    void SetOnPrefixHint(std::function<void(std::optional<WhichKeyHint>)> handler);
+
   private:
     std::function<ActiveBuffer&()>                                 activeBufferProvider_;
     text::BufferList&                                              bufferList_;
@@ -234,6 +250,8 @@ class ProjectSidebar : public Widget {
     std::function<void(text::Buffer&)>                             onBufferClosed_;
     std::function<void(const std::filesystem::path&)>              onBinaryFileOpenRequest_; // see SetOnBinaryFileOpenRequest()
     std::function<void(const std::filesystem::path&, bool, Point)> onContextMenuRequest_;    // see SetOnContextMenuRequest
+    std::function<void(FileAction, const std::filesystem::path&)>  onFileAction_;
+    PanelKeys                                                      keys_{editor::FilesPanelMode()};
 
     int scrollOffset_ = 0; // first visible row (post-sticky-headers), in *visible* (post-collapse) tree-entry units
 
@@ -276,6 +294,8 @@ class ProjectSidebar : public Widget {
     void ReturnFocus(); // fires onFocusReturn_ -- LeftDock::NoteFocusReturned is chained on at the wiring site
 
     bool HandleKeyEvent(const Event& event);
+    // One of files-panel-mode's commands, against the selected entry if any.
+    void Run(std::string_view command, const std::optional<editor::ProjectTreeEntry>& entry);
     void ToggleDirectory(const std::filesystem::path& path); // shared by mouse click and Enter
     void EnsureSelectionVisible();
 

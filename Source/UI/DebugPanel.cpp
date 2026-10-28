@@ -65,13 +65,19 @@ namespace {
 
 } // namespace
 
-DebugPanel::DebugPanel(const Theme& theme, editor::dap::Manager& dapManager) : theme_(theme), dapManager_(dapManager), tree_(theme) {
+DebugPanel::DebugPanel(const Theme& theme, editor::dap::Manager& dapManager) : theme_(theme), dapManager_(dapManager), tree_(theme), keys_(editor::DebugPanelMode()) {
     tree_.SetOnSelectionChanged([this](std::size_t index) { selectedIndex_ = index; });
     tree_.SetOnActivate([this](std::size_t index) { HandleActivate(index); });
     tree_.SetOnToggleExpand([this](std::size_t index) { HandleToggleExpand(index); });
     tree_.SetOnCollapseRequested([this](std::size_t index) { HandleCollapse(index); });
-    tree_.SetOnKey([this](const editor::KeyChord& chord) { HandleKey(chord); });
+    tree_.SetOnKey([this](const editor::KeyChord& chord) {
+        if (const std::optional<std::string> command = keys_.Feed(chord)) {
+            Run(*command);
+        }
+    });
+    keys_.SetOnMessage([this](std::string message) { Report(std::move(message)); });
     tree_.SetOnCancel([this] {
+        keys_.Reset();
         if (onCancel_) {
             onCancel_();
         }
@@ -98,6 +104,10 @@ void DebugPanel::SetOnMessage(std::function<void(std::string)> handler) {
 
 void DebugPanel::SetOnCancel(std::function<void()> handler) {
     onCancel_ = std::move(handler);
+}
+
+void DebugPanel::SetOnPrefixHint(std::function<void(std::optional<WhichKeyHint>)> handler) {
+    keys_.SetOnHint(std::move(handler));
 }
 
 void DebugPanel::Report(std::string message) {
@@ -1267,46 +1277,39 @@ void DebugPanel::ClearSectionAt(std::size_t index) {
     }
 }
 
-void DebugPanel::HandleKey(const editor::KeyChord& chord) {
-    if (chord.Control || chord.Meta) {
-        return; // the pane's own chords, not this panel's single-letter set
-    }
+void DebugPanel::Run(std::string_view command) {
     const std::size_t index = tree_.SelectedRow().value_or(selectedIndex_);
-    switch (chord.Codepoint) {
-        case U' ':
-            ToggleEnabledAt(index);
-            break;
-        case U'd':
-            RemoveAt(index);
-            break;
-        case U'c':
-            EditAt(index);
-            break;
-        case U'h':
-            SetHitConditionAt(index);
-            break;
-        case U'l':
-            SetLogMessageAt(index);
-            break;
-        case U'a':
-            AddFunctionBreakpointPrompt();
-            break;
-        case U'w':
-            WatchVariableAt(index);
-            break;
-        case U'=':
-            AssignAt(index);
-            break;
-        case U'X':
-            ClearSectionAt(index);
-            break;
-        case U'g':
-            // Re-asks the adapter as well as rebuilding -- the manual
-            // escape hatch for anything the change feeds missed.
-            FetchSessionData();
-            break;
-        default:
-            return;
+    if (command == "debug-panel-toggle-enabled") {
+        ToggleEnabledAt(index);
+    }
+    else if (command == "debug-panel-remove") {
+        RemoveAt(index);
+    }
+    else if (command == "debug-panel-edit") {
+        EditAt(index);
+    }
+    else if (command == "debug-panel-set-hit-condition") {
+        SetHitConditionAt(index);
+    }
+    else if (command == "debug-panel-set-log-message") {
+        SetLogMessageAt(index);
+    }
+    else if (command == "debug-panel-add-function-breakpoint") {
+        AddFunctionBreakpointPrompt();
+    }
+    else if (command == "debug-panel-watch") {
+        WatchVariableAt(index);
+    }
+    else if (command == "debug-panel-set-value") {
+        AssignAt(index);
+    }
+    else if (command == "debug-panel-clear-section") {
+        ClearSectionAt(index);
+    }
+    else if (command == "debug-panel-refresh") {
+        // Re-asks the adapter as well as rebuilding -- the manual
+        // escape hatch for anything the change feeds missed.
+        FetchSessionData();
     }
 }
 

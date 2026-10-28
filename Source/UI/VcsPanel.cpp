@@ -2,6 +2,7 @@
 #include "ThemePaints.h"
 
 #include <algorithm>
+#include <array>
 #include <exception>
 #include <map>
 #include <unordered_map>
@@ -10,6 +11,8 @@
 #include "Border.h"
 #include "DrawText.h"
 #include "Editor/Key.h"
+#include "Editor/Keymap.h"
+#include "Editor/PanelMode.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Vcs/ConflictedFiles.h"
 #include "KeyTranslation.h"
@@ -26,14 +29,9 @@ namespace {
 
     constexpr int kHeaderHeight = 1;
 
-    // Key-legend follow-up: fixed-slot line counts for the two halves of
-    // VcsPanel::FooterLines() (row-scoped/RowFooterLines, root-scoped/
-    // RootFooterLines) -- this panel has no other on-screen affordance for
-    // its own single-letter bindings at all (they're handled as raw
-    // codepoint checks in HandleKeyEvent, never registered in a Keymap/
-    // CommandRegistry, so the Dispatcher-driven which-key popup --
-    // WhichKeyHint.h -- has nothing to hook into here even in principle).
-    // One key per LINE, not packed onto a row (this panel is narrow but
+    // Fixed-slot line counts for the two halves of VcsPanel::FooterLines()
+    // (row-scoped/RowFooterLines, root-scoped/RootFooterLines), each line
+    // showing vcs-panel-mode's live key for its command. One key per LINE, not packed onto a row (this panel is narrow but
     // tall -- a real docked instance runs the full window height -- so
     // width is the scarce resource here and height the abundant one), and
     // FIXED counts rather than "however many currently apply": both
@@ -250,11 +248,29 @@ namespace {
         return out;
     }
 
+    using KeyLabels = std::map<std::string, std::string>;
+
+    KeyLabels PanelKeyLabels() {
+        const editor::Keymap keymap = editor::PanelKeymap(editor::VcsPanelMode());
+        return editor::ShortestBindingPerCommand(editor::KeymapStack({&keymap}));
+    }
+
+    // "<key> <label>", or empty when init.janet left the command unbound.
+    std::string Legend(const KeyLabels& keys, std::string_view command, std::string_view label) {
+        const auto it = keys.find(std::string(command));
+        return it == keys.end() ? std::string() : it->second + " " + std::string(label);
+    }
+
 } // namespace
 
 VcsPanel::VcsPanel(std::function<ActiveBuffer&()> activeBufferProvider, text::BufferList& bufferList,
                    std::string& statusMessage, const Theme& theme) : activeBufferProvider_(std::move(activeBufferProvider)),
                                                                      bufferList_(bufferList), statusMessage_(statusMessage), theme_(theme) {
+    keys_.SetOnMessage([this](std::string message) { statusMessage_ = std::move(message); });
+}
+
+void VcsPanel::SetOnPrefixHint(std::function<void(std::optional<WhichKeyHint>)> handler) {
+    keys_.SetOnHint(std::move(handler));
 }
 
 void VcsPanel::SetOnFocusReturn(std::function<void()> handler) {
@@ -555,7 +571,13 @@ std::vector<std::string> VcsPanel::RowFooterLines(const std::vector<Row>& rows) 
     const auto index = static_cast<std::size_t>(std::clamp(selectedIndex_, 0, static_cast<int>(rows.size()) - 1));
     const Row& row   = rows[index];
 
-    std::size_t next = 0;
+    const KeyLabels keys = PanelKeyLabels();
+    std::size_t     next = 0;
+    auto            add  = [&](std::string_view command, std::string_view label) {
+        if (std::string line = Legend(keys, command, label); !line.empty()) {
+            lines[next++] = std::move(line);
+        }
+    };
     switch (row.kind) {
     case Row::Kind::SectionHeader:
         lines[next++] = "RET toggle";
@@ -564,13 +586,13 @@ std::vector<std::string> VcsPanel::RowFooterLines(const std::vector<Row>& rows) 
         // worth advertising here when there IS a marked set, since a header
         // row itself is never a stage/unstage target.
         if (!selected_.empty()) {
-            lines[next++] = "a stage marked";
-            lines[next++] = "u unstage marked";
+            add("vcs-panel-stage", "stage marked");
+            add("vcs-panel-unstage", "unstage marked");
         }
         break;
     case Row::Kind::StashEntry:
         lines[next++] = "RET apply";
-        lines[next++] = "d drop";
+        add("vcs-panel-drop-stash", "drop");
         break;
     case Row::Kind::Entry:
         if (row.entry.isDirectory) {
@@ -578,17 +600,22 @@ std::vector<std::string> VcsPanel::RowFooterLines(const std::vector<Row>& rows) 
         }
         else {
             lines[next++] = "RET open";
-            lines[next++] = "SPC mark";
+            add("vcs-panel-mark", "mark");
             // Staging an already-staged file (or unstaging an already-
             // unstaged one) is a harmless no-op server-side, but advertising
             // only the key that actually moves this row keeps the legend
             // honest about what's useful right here.
-            lines[next++] = row.section == VcsPanelSection::Staged ? "u unstage" : "a stage";
+            if (row.section == VcsPanelSection::Staged) {
+                add("vcs-panel-unstage", "unstage");
+            }
+            else {
+                add("vcs-panel-stage", "stage");
+            }
             // Discard targets HEAD (`git checkout HEAD -- path`, see
             // vcs-git.janet's own revert-argv doc comment) -- meaningless
             // for a file with no HEAD copy to restore.
             if (row.section != VcsPanelSection::Untracked) {
-                lines[next++] = "x discard";
+                add("vcs-panel-discard", "discard");
             }
         }
         break;
@@ -618,36 +645,37 @@ std::vector<std::string> VcsPanel::RootFooterLines() const {
     // what aheadBehind_ being set at all already confirms -- so "no
     // upstream" leaves both slots blank the same way "up to date" does,
     // rather than advertising a key that would just error.
+    const KeyLabels keys = PanelKeyLabels();
     if (aheadBehind_) {
         if (aheadBehind_->behind > 0) {
-            lines[0] = "F pull ↓" + std::to_string(aheadBehind_->behind);
+            lines[0] = Legend(keys, "vcs-panel-pull", "pull ↓" + std::to_string(aheadBehind_->behind));
         }
         if (aheadBehind_->ahead > 0) {
-            lines[1] = "P push ↑" + std::to_string(aheadBehind_->ahead);
+            lines[1] = Legend(keys, "vcs-panel-push", "push ↑" + std::to_string(aheadBehind_->ahead));
         }
     }
     // Transient commit menu follow-up: 'c' now opens the four-way commit
     // menu (create/amend/extend/reword) rather than committing directly --
     // "commit" is still the honest label for what the key does.
-    lines[2] = "c commit";
+    lines[2] = Legend(keys, "vcs-panel-commit-menu", "commit");
     // VcsPanel amend follow-up: "C" as amend's shifted twin, next to
     // commit -- the same capital-letter-variant precedent pull/push (F/P
     // below) and hunk-staging's own uppercase-reverse already establish.
-    lines[3] = "C amend";
+    lines[3] = Legend(keys, "vcs-panel-amend", "amend");
     // VcsPanel commit-variants follow-up: "e" for extend, Magit's own
     // mnemonic for the same operation.
-    lines[4] = "e extend";
+    lines[4] = Legend(keys, "vcs-panel-extend", "extend");
     // Reword follow-up: "r" for reword, next to "e" -- matches the global
     // keymap's own "C-c v r" mnemonic.
-    lines[5] = "r reword";
-    lines[6] = "z stash";
-    lines[7] = "w switch";
-    lines[8] = "n new branch";
+    lines[5] = Legend(keys, "vcs-panel-reword", "reword");
+    lines[6] = Legend(keys, "vcs-panel-stash", "stash");
+    lines[7] = Legend(keys, "vcs-panel-switch-branch", "switch");
+    lines[8] = Legend(keys, "vcs-panel-new-branch", "new branch");
     // Fetch has no matching "is there something to fetch" fact this panel
     // tracks (unlike push/pull, it needs no upstream to mean something --
     // it just refreshes the remote-tracking refs), so it's always offered,
     // like commit/amend/extend/reword/stash/switch/new-branch above.
-    lines[9] = "f fetch";
+    lines[9] = Legend(keys, "vcs-panel-fetch", "fetch");
     return lines;
 }
 
@@ -1349,107 +1377,77 @@ bool VcsPanel::HandleKeyEvent(const Event& event) {
         }
         return true;
     }
-    if (chord->Special == editor::SpecialKey::None && chord->Codepoint == U' ' && !chord->Control) {
-        if (row.kind == Row::Kind::Entry && !row.entry.isDirectory) {
-            if (selected_.contains(row.entry.path)) {
-                selected_.erase(row.entry.path);
-            }
-            else {
-                selected_.insert(row.entry.path);
-            }
-        }
-        return true;
-    }
-    if (chord->Special == editor::SpecialKey::None && !chord->Control && !chord->Meta) {
-        if (chord->Codepoint == U'a') {
-            StageOrUnstageSelectionOrFocused(/*stage=*/true);
-            return true;
-        }
-        if (chord->Codepoint == U'u') {
-            StageOrUnstageSelectionOrFocused(/*stage=*/false);
-            return true;
-        }
-        if (chord->Codepoint == U'x') {
-            // Discard/revert: dired's own "delete/discard" mnemonic. Only
-            // meaningful on a real file row -- a section header or
-            // directory has nothing to revert.
-            if (row.kind == Row::Kind::Entry && !row.entry.isDirectory) {
-                pendingRevertConfirm_ = row.entry.path;
-            }
-            return true;
-        }
-        if (chord->Codepoint == U'z') {
-            // Stash support: Magit's own real-world mnemonic for its stash
-            // prefix -- stashes the whole working tree (not row-scoped),
-            // meaningful from anywhere in the panel.
-            PushStash();
-            return true;
-        }
-        if (chord->Codepoint == U'd') {
-            // Drop the focused stash entry -- meaningless anywhere else.
-            if (row.kind == Row::Kind::StashEntry) {
-                DropStash(row.stash.ref);
-            }
-            return true;
-        }
-        if (chord->Codepoint == U'f') {
-            // Push/pull/fetch: Magit's own real-world 'f'/'F'/'P' mnemonics,
-            // reused directly. Meaningful from anywhere in the panel (root-
-            // scoped, not row-scoped); no confirm friction -- the least
-            // destructive of the remote-touching actions here.
-            RunRemoteAction(RemoteAction::Fetch);
-            return true;
-        }
-        if (chord->Codepoint == U'F') {
-            RunRemoteAction(RemoteAction::Pull);
-            return true;
-        }
-        if (chord->Codepoint == U'P') {
-            RunRemoteAction(RemoteAction::Push);
-            return true;
-        }
-        // Transient commit menu follow-up: 'c' stopped being a one-shot
-        // Commit trigger -- committing has four variants now, so 'c' opens
-        // a small lettered menu over them instead (main.cpp's job, same
-        // "this widget has no ListPopup of its own" reasoning as the
-        // context menu above). Reports the panel's own top-left content
-        // corner as the anchor -- there's no click position to reuse here,
-        // unlike the mouse-driven context menu.
-        if (chord->Codepoint == U'c') {
-            if (onCommitMenuRequest_) {
-                const Box& box = Box_();
-                onCommitMenuRequest_(Point{.x = box.x_min, .y = box.y_min + kHeaderHeight});
-            }
-            return true;
-        }
-        if (chord->Codepoint == U'C' || chord->Codepoint == U'e' || chord->Codepoint == U'r' || chord->Codepoint == U'w' ||
-            chord->Codepoint == U'n') {
-            // ReturnFocus() *before* firing onAction_ -- WindowManager::
-            // RequestVcsPanelAction resolves "the focused pane"
-            // (RequestOpenBinaryFile's own shape), and while this widget
-            // itself still holds keyboard focus, no BufferView reports
-            // Focused() at all, silently no-opping the request. Handing
-            // focus back first (falling back to the first leaf if nothing
-            // else was already focused -- WindowManager::TakeFocus's own
-            // documented fallback) is what makes a real pane resolvable by
-            // the time onAction_ actually runs. Confirmed live: the commit
-            // trigger was a silent no-op before this fix.
-            ReturnFocus();
-            if (onAction_) {
-                onAction_(chord->Codepoint == U'C'   ? VcsPanelAction::AmendCommit
-                          : chord->Codepoint == U'e' ? VcsPanelAction::ExtendCommit
-                          : chord->Codepoint == U'r' ? VcsPanelAction::RewordCommit
-                          : chord->Codepoint == U'w' ? VcsPanelAction::SwitchBranch
-                                                     : VcsPanelAction::CreateBranch);
-            }
-            return true;
-        }
-    }
     if (cancel) {
+        keys_.Reset();
         ReturnFocus();
         return true;
     }
+    if (const std::optional<std::string> command = keys_.Feed(*chord)) {
+        Run(*command, row);
+    }
     return true;
+}
+
+void VcsPanel::Run(std::string_view command, const Row& row) {
+    const bool fileRow = row.kind == Row::Kind::Entry && !row.entry.isDirectory;
+    if (command == "vcs-panel-mark") {
+        if (fileRow && !selected_.erase(row.entry.path)) {
+            selected_.insert(row.entry.path);
+        }
+    }
+    else if (command == "vcs-panel-stage" || command == "vcs-panel-unstage") {
+        StageOrUnstageSelectionOrFocused(/*stage=*/command == "vcs-panel-stage");
+    }
+    else if (command == "vcs-panel-discard") {
+        // Only a file has anything to revert.
+        if (fileRow) {
+            pendingRevertConfirm_ = row.entry.path;
+        }
+    }
+    else if (command == "vcs-panel-stash") {
+        PushStash();
+    }
+    else if (command == "vcs-panel-drop-stash") {
+        if (row.kind == Row::Kind::StashEntry) {
+            DropStash(row.stash.ref);
+        }
+    }
+    else if (command == "vcs-panel-fetch") {
+        RunRemoteAction(RemoteAction::Fetch);
+    }
+    else if (command == "vcs-panel-pull") {
+        RunRemoteAction(RemoteAction::Pull);
+    }
+    else if (command == "vcs-panel-push") {
+        RunRemoteAction(RemoteAction::Push);
+    }
+    else if (command == "vcs-panel-commit-menu") {
+        // main.cpp owns the menu; there's no click to anchor it at, so it
+        // opens at the panel's top-left content corner.
+        if (onCommitMenuRequest_) {
+            const Box& box = Box_();
+            onCommitMenuRequest_(Point{.x = box.x_min, .y = box.y_min + kHeaderHeight});
+        }
+    }
+    else {
+        constexpr std::array<std::pair<std::string_view, VcsPanelAction>, 5> kActions{{
+            {"vcs-panel-amend", VcsPanelAction::AmendCommit},
+            {"vcs-panel-extend", VcsPanelAction::ExtendCommit},
+            {"vcs-panel-reword", VcsPanelAction::RewordCommit},
+            {"vcs-panel-switch-branch", VcsPanelAction::SwitchBranch},
+            {"vcs-panel-new-branch", VcsPanelAction::CreateBranch},
+        }};
+        const auto                                                           it = std::ranges::find(kActions, command, &std::pair<std::string_view, VcsPanelAction>::first);
+        if (it == kActions.end()) {
+            return;
+        }
+        // Focus goes back first: WindowManager::RequestVcsPanelAction acts
+        // on the focused pane, and none reports focus while this panel holds it.
+        ReturnFocus();
+        if (onAction_) {
+            onAction_(it->second);
+        }
+    }
 }
 
 } // namespace ned::ui

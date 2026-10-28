@@ -6,8 +6,10 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
+#include "Editor/PanelMode.h"
 #include "Editor/Project/Root.h"
 #include "TestEvents.h"
 #include "Text/BufferList.h"
@@ -928,6 +930,94 @@ TEST_CASE("While focused, '.' shows and hides dot-directories, keeping the selec
     REQUIRE(rows().find(".github") == std::string::npos);
     sidebar.OnEvent(ned::ui::test::Return());
     CHECK(activeBuffer.Get().Path() == dir / "z.txt");
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("files-panel-mode's file commands report the entry, or the directory it implies", "[ProjectSidebar][PanelMode]") {
+    struct Guard {
+        ~Guard() {
+            ned::editor::ResetPanelKeysForTesting();
+        }
+    } guard;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_file_actions";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "sub");
+    {
+        std::ofstream(dir / "a.txt") << "x";
+    }
+    const CurrentPathGuard      cwdGuard(dir);
+    const std::filesystem::path root = ned::editor::ProjectRoot();
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 6);
+
+    using FileAction = ned::ui::ProjectSidebar::FileAction;
+    std::vector<std::pair<FileAction, std::filesystem::path>> actions;
+    int                                                       focusReturns = 0;
+    sidebar.SetOnFileAction([&](FileAction action, const std::filesystem::path& target) { actions.emplace_back(action, target); });
+    sidebar.SetOnFocusReturn([&] { ++focusReturns; });
+    const auto press = [&](const char* key) {
+        sidebar.TakeFocus();
+        sidebar.OnEvent(ned::ui::test::Character(key));
+    };
+
+    // Rows: sub/, a.txt -- sub is selected.
+    press("n");
+    press("t");
+    sidebar.OnEvent(ned::ui::test::ArrowDown());
+    press("+");
+    press("R");
+    press("D");
+    CHECK(actions == std::vector<std::pair<FileAction, std::filesystem::path>>{
+                         {FileAction::NewFile, root / "sub"},
+                         {FileAction::RevealInTerminal, root / "sub"},
+                         {FileAction::NewDirectory, root},
+                         {FileAction::Rename, root / "a.txt"},
+                         {FileAction::Delete, root / "a.txt"},
+                     });
+    CHECK(focusReturns == 4); // every action but the terminal hands the prompt to the pane
+
+    actions.clear();
+    ned::editor::DefinePanelKey("files-panel-mode", "r", "files-panel-rename");
+    ned::editor::DefinePanelKey("files-panel-mode", "R", "");
+    press("R");
+    CHECK(statusMessage == "R is undefined in Files panel");
+    press("r");
+    CHECK(actions == std::vector<std::pair<FileAction, std::filesystem::path>>{{FileAction::Rename, root / "a.txt"}});
+
+    std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("files-panel-mode creates at the project root when nothing is listed, and renames nothing", "[ProjectSidebar][PanelMode]") {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "ned_project_sidebar_test_file_actions_empty";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const CurrentPathGuard cwdGuard(dir);
+
+    ned::text::BufferList   list;
+    ned::text::Buffer&      scratch = list.CreateBuffer("scratch");
+    ned::ui::ActiveBuffer   activeBuffer(scratch);
+    ned::ui::Theme          theme = ned::ui::DarkTheme();
+    std::string             statusMessage;
+    ned::ui::ProjectSidebar sidebar([&activeBuffer]() -> ned::ui::ActiveBuffer& { return activeBuffer; }, list, statusMessage, theme);
+    PlaceSidebar(sidebar, 28, 6);
+
+    using FileAction = ned::ui::ProjectSidebar::FileAction;
+    std::vector<std::pair<FileAction, std::filesystem::path>> actions;
+    sidebar.SetOnFileAction([&](FileAction action, const std::filesystem::path& target) { actions.emplace_back(action, target); });
+
+    sidebar.TakeFocus();
+    sidebar.OnEvent(ned::ui::test::Character("D"));
+    CHECK(statusMessage == "Nothing selected to delete");
+    sidebar.TakeFocus();
+    sidebar.OnEvent(ned::ui::test::Character("n"));
+    CHECK(actions == std::vector<std::pair<FileAction, std::filesystem::path>>{{FileAction::NewFile, ned::editor::ProjectRoot()}});
 
     std::filesystem::remove_all(dir);
 }

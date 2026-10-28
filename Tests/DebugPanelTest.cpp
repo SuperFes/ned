@@ -24,6 +24,7 @@
 #include "Editor/Dap/Config.h"
 #include "Editor/Dap/Manager.h"
 #include "Editor/Lsp/Transport.h"
+#include "Editor/PanelMode.h"
 #include "TestEvents.h"
 #include "UI/DebugPanel.h"
 #include "UI/EventLoop.h"
@@ -561,6 +562,30 @@ TEST_CASE("DebugPanel keeps the selection on the same breakpoint when one is add
     // Line 40 is what was selected, so line 40 is what was removed.
     REQUIRE(fixture.manager.BreakpointsForFile(path) == std::vector<std::size_t>{10});
     REQUIRE(message == "Breakpoint removed.");
+}
+
+TEST_CASE("DebugPanel keys come from debug-panel-mode, so init.janet can rebind them", "[DebugPanel][PanelMode]") {
+    struct Guard {
+        ~Guard() {
+            ned::editor::ResetPanelKeysForTesting();
+        }
+    } guard;
+    Fixture    fixture;
+    const auto path = TestPath("debug-panel-rebind.c");
+    fixture.manager.ToggleBreakpoint(path, 7);
+
+    std::string message;
+    fixture.panel.SetOnMessage([&](std::string m) { message = std::move(m); });
+    ned::editor::DefinePanelKey("debug-panel-mode", "e", "debug-panel-toggle-enabled");
+    ned::editor::DefinePanelKey("debug-panel-mode", "SPC", "");
+
+    fixture.Select("7");
+    REQUIRE(fixture.panel.Tree().OnEvent(ned::ui::test::Character(" ")));
+    REQUIRE(message == "SPC is undefined in Debug panel");
+    REQUIRE(fixture.manager.BreakpointsForKey(Manager::NormalizePathKey(path))[0].enabled);
+
+    REQUIRE(fixture.panel.Tree().OnEvent(ned::ui::test::Character("e")));
+    REQUIRE(message == "Breakpoint disabled.");
 }
 
 TEST_CASE("DebugPanel lists function breakpoints and toggles them with Space", "[DebugPanel]") {

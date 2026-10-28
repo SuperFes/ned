@@ -31,6 +31,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -42,6 +43,7 @@
 #include "Editor/Vcs/RowStatus.h"
 #include "Editor/Vcs/Runner.h"
 #include "Editor/Vcs/Sequence.h"
+#include "PanelKeys.h"
 #include "Text/BufferList.h"
 #include "Theme.h"
 #include "Widget.h"
@@ -134,6 +136,9 @@ class VcsPanel : public Widget {
     // Unset (the default) is a safe no-op, matching every other Set* hook
     // in this codebase.
     void SetOnAction(std::function<void(VcsPanelAction)> handler);
+
+    // A pending vcs-panel-mode prefix's next keys, for the which-key popup.
+    void SetOnPrefixHint(std::function<void(std::optional<WhichKeyHint>)> handler);
 
     // Inline diff preview: fired whenever the keyboard/mouse selection
     // moves onto (or off of) a staged/unstaged file row -- std::nullopt for
@@ -396,6 +401,7 @@ class VcsPanel : public Widget {
     // small, self-contained piece of state rather than reusing a shared
     // mechanism that doesn't exist here.
     std::optional<std::filesystem::path> pendingRevertConfirm_;
+    PanelKeys                            keys_{editor::VcsPanelMode()};
 
     editor::LifetimeGuard lifetime_;
 
@@ -482,6 +488,8 @@ class VcsPanel : public Widget {
 
     void ToggleDirectory(const std::filesystem::path& path);
     bool HandleKeyEvent(const Event& event);
+    // One of vcs-panel-mode's commands, against the focused row.
+    void Run(std::string_view command, const Row& row);
     void EnsureSelectionVisible();
 };
 

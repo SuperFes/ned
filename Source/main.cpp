@@ -2646,6 +2646,9 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
     };
     windowManager->SetOnPrefixHintChanged(showPrefixHint);
     remotePanel.SetOnPrefixHint(showPrefixHint);
+    debugPanel.SetOnPrefixHint(showPrefixHint);
+    vcsPanel->SetOnPrefixHint(showPrefixHint);
+    projectSidebar->SetOnPrefixHint(showPrefixHint);
 
     // generic-popup follow-up (Phase 3): the shared candidate popup behind
     // M-x/project-find-file/find-recent-file/bookmark-jump/select-theme/LSP
@@ -3015,6 +3018,26 @@ int RunInteractiveEditor(bool forceBinary, bool noRestore, const std::string& ke
             yMin = std::max(0, yMax - height + 1);
         }
         return Box{.x_min = xMin, .x_max = xMax, .y_min = yMin, .y_max = yMax};
+    });
+    projectSidebar->SetOnFileAction([wm = windowManager.get(), &revealPathInTerminal](ned::ui::ProjectSidebar::FileAction action,
+                                                                                      const std::filesystem::path&        target) {
+        switch (action) {
+            case ned::ui::ProjectSidebar::FileAction::NewFile:
+                wm->StartCreateFileAt(target);
+                break;
+            case ned::ui::ProjectSidebar::FileAction::NewDirectory:
+                wm->StartCreateDirectoryAt(target);
+                break;
+            case ned::ui::ProjectSidebar::FileAction::Rename:
+                wm->StartRenameFileAt(target);
+                break;
+            case ned::ui::ProjectSidebar::FileAction::Delete:
+                wm->StartDeleteFileAt(target);
+                break;
+            case ned::ui::ProjectSidebar::FileAction::RevealInTerminal:
+                revealPathInTerminal(target);
+                break;
+        }
     });
     projectSidebar->SetOnContextMenuRequest(
         [&overlays, panel = &sidebarContextMenu, &sidebarContextMenuActions, wm = windowManager.get(),

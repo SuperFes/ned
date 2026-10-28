@@ -31,6 +31,9 @@ struct PanelMode {
     std::span<const PanelCommand> commands;
 };
 
+[[nodiscard]] const PanelMode&           FilesPanelMode();
+[[nodiscard]] const PanelMode&           VcsPanelMode();
+[[nodiscard]] const PanelMode&           DebugPanelMode();
 [[nodiscard]] const PanelMode&           RemotePanelMode();
 [[nodiscard]] std::span<const PanelMode> PanelModes();
 [[nodiscard]] const PanelMode*           FindPanelMode(std::string_view name);

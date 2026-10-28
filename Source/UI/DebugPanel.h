@@ -33,12 +33,15 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Editor/Dap/Manager.h"
 #include "Editor/Key.h"
+#include "PanelKeys.h"
 #include "Theme.h"
 #include "TreeView.h"
 
@@ -82,6 +85,9 @@ class DebugPanel {
     // NoteFocusReturned pairing lives at the wiring site, ProjectSidebar's
     // precedent).
     void SetOnCancel(std::function<void()> handler);
+
+    // A pending debug-panel-mode prefix's next keys, for the which-key popup.
+    void SetOnPrefixHint(std::function<void(std::optional<WhichKeyHint>)> handler);
 
     // The session's state changed: re-fetches everything that is only
     // meaningful while stopped (threads, frames, scopes, variables, watch
@@ -150,6 +156,7 @@ class DebugPanel {
     const Theme&          theme_;
     editor::dap::Manager& dapManager_;
     TreeView              tree_;
+    PanelKeys             keys_;
 
     std::vector<Row> rows_;
     std::size_t      selectedIndex_ = 0;
@@ -195,7 +202,8 @@ class DebugPanel {
     void HandleActivate(std::size_t index);
     void HandleToggleExpand(std::size_t index);
     void HandleCollapse(std::size_t index);
-    void HandleKey(const editor::KeyChord& chord);
+    // One of debug-panel-mode's commands, against the selected row.
+    void Run(std::string_view command);
 
     // Key actions, each a no-op reporting why when the selected row is the
     // wrong kind for it.

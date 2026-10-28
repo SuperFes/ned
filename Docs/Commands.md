@@ -1970,6 +1970,53 @@ A dock panel's own keys, live while it has focus. They act on the panel's
 selection rather than on a buffer, so they aren't `M-x` commands; rebind them with
 `ned/define-panel-key`.
 
+### Files panel (`files-panel-mode`)
+
+| Key | Command | Description |
+|-----|---------|-------------|
+| `.` | `files-panel-toggle-dotfiles` | Show or hide directories whose names start with a dot. |
+| `g` | `files-panel-refresh` | Read the project tree from disk again. |
+| `n` | `files-panel-new-file` | Create a file in the selected directory, or beside the selected file. |
+| `+` | `files-panel-new-directory` | Create a directory in the selected directory, or beside the selected file. |
+| `R` | `files-panel-rename` | Rename or move the selected file or directory. |
+| `D` | `files-panel-delete` | Delete the selected file or directory, after confirming. |
+| `t` | `files-panel-reveal-in-terminal` | Open a terminal in the selected directory, or in a file's own. |
+
+### VCS panel (`vcs-panel-mode`)
+
+| Key | Command | Description |
+|-----|---------|-------------|
+| `SPC` | `vcs-panel-mark` | Mark or unmark the selected file, for staging or unstaging several at once. |
+| `a` | `vcs-panel-stage` | Stage the marked files, or the selected one. |
+| `u` | `vcs-panel-unstage` | Unstage the marked files, or the selected one. |
+| `x` | `vcs-panel-discard` | Discard the selected file's changes, after confirming. |
+| `z` | `vcs-panel-stash` | Stash the whole working tree. |
+| `d` | `vcs-panel-drop-stash` | Drop the selected stash entry. |
+| `f` | `vcs-panel-fetch` | Fetch from the remote. |
+| `F` | `vcs-panel-pull` | Pull from the remote. |
+| `P` | `vcs-panel-push` | Push to the remote. |
+| `c` | `vcs-panel-commit-menu` | Open the commit menu: commit, amend, extend or reword. |
+| `C` | `vcs-panel-amend` | Amend the previous commit, starting from its message. |
+| `e` | `vcs-panel-extend` | Fold the staged changes into the previous commit, keeping its message. |
+| `r` | `vcs-panel-reword` | Reword the previous commit's message, leaving its tree as it is. |
+| `w` | `vcs-panel-switch-branch` | Switch to another branch. |
+| `n` | `vcs-panel-new-branch` | Create a branch and switch to it. |
+
+### Debug panel (`debug-panel-mode`)
+
+| Key | Command | Description |
+|-----|---------|-------------|
+| `SPC` | `debug-panel-toggle-enabled` | Enable or disable the selected breakpoint. |
+| `d` | `debug-panel-remove` | Remove the selected breakpoint or watch. |
+| `c` | `debug-panel-edit` | Edit the selected row: a breakpoint's condition, a watch's expression or a variable's value. |
+| `h` | `debug-panel-set-hit-condition` | Set the selected breakpoint's hit count condition. |
+| `l` | `debug-panel-set-log-message` | Turn the selected breakpoint into a logpoint, or edit its message. |
+| `a` | `debug-panel-add-function-breakpoint` | Add a breakpoint on a function, by name. |
+| `w` | `debug-panel-watch` | Watch the selected variable by name. |
+| `=` | `debug-panel-set-value` | Assign a new value to the selected watch or variable. |
+| `X` | `debug-panel-clear-section` | Clear every entry in the selected row's section. |
+| `g` | `debug-panel-refresh` | Ask the debug adapter for the session's state again. |
+
 ### Remote panel (`remote-panel-mode`)
 
 | Key | Command | Description |
