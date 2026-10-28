@@ -5,6 +5,7 @@
 #include "Border.h"
 #include "Text/DisplayWidth.h"
 #include "Text/Utf8.h"
+#include "UI/PointerShape.h"
 
 namespace ned::ui {
 
@@ -433,6 +434,21 @@ bool PanelDock::HandleTabStripClick(int x) {
     return false; // unclaimed row-0 column -- start a resize-drag instead
 }
 
+bool PanelDock::IsResizeColumn(int x) const {
+    if (x >= ButtonClusterStartColumn()) {
+        return false;
+    }
+    if (x >= 1) {
+        const int contentColumn = x - 1 + tabScrollOffset_;
+        for (const TabLabelSpan& span : ComputeTabLabelLayout()) {
+            if (contentColumn >= span.startColumn && contentColumn < span.endColumn) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 void PanelDock::BeginResize(Point globalMouse) {
     resizing_           = true;
     resizeAnchorGlobal_ = globalMouse;
@@ -488,17 +504,24 @@ bool PanelDock::OnEvent(const Event& event) {
     // hit test below, since a fast drag can carry the cursor outside this
     // widget's own Box mid-session.
     if (rawMouse.motion == MouseEvent::Motion::Moved && resizing_) {
+        RequestPointerShape(PointerShape::RowResize);
         UpdateResize(rawMouse.at);
         return true;
     }
     if (rawMouse.motion == MouseEvent::Motion::Released && resizing_) {
         EndResize();
+        if (const std::optional<MouseEvent> mouse = LocalMouseEvent(event); mouse && mouse->at.y == 0 && IsResizeColumn(mouse->at.x)) {
+            RequestPointerShape(PointerShape::RowResize);
+        }
         return true;
     }
 
     const std::optional<MouseEvent> mouse = LocalMouseEvent(event);
     if (!mouse) {
         return false;
+    }
+    if (mouse->at.y == 0 && IsResizeColumn(mouse->at.x)) {
+        RequestPointerShape(PointerShape::RowResize);
     }
 
     if (mouse->at.y == 0 && (mouse->button == MouseEvent::Button::WheelUp || mouse->button == MouseEvent::Button::WheelDown)) {

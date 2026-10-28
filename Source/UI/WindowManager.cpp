@@ -34,6 +34,7 @@
 #include "Editor/Tracker/CommentBuffer.h"
 #include "Editor/Tracker/IssueBuffer.h"
 #include "Text/ConflictHunk.h"
+#include "UI/PointerShape.h"
 
 namespace ned::ui {
 
@@ -107,13 +108,18 @@ namespace {
             // every event, a live drag session owns move/release outright"
             // contract ProjectSidebar's own IsResizing()-gated handling in
             // BufferView relies on (see Widget.h's own header comment).
+            const PointerShape shape = vertical_ ? PointerShape::ColumnResize : PointerShape::RowResize;
             if (resizing_) {
                 if (rawMouse.motion == MouseEvent::Motion::Moved) {
+                    RequestPointerShape(shape);
                     UpdateResize(globalCoord);
                     return true;
                 }
                 if (rawMouse.motion == MouseEvent::Motion::Released) {
                     EndResize();
+                    if (LocalMouseEvent(event)) {
+                        RequestPointerShape(shape);
+                    }
                     return true;
                 }
             }
@@ -122,6 +128,7 @@ namespace {
             if (!mouse) {
                 return false;
             }
+            RequestPointerShape(shape);
             if (mouse->button == MouseEvent::Button::Left && mouse->motion == MouseEvent::Motion::Pressed) {
                 BeginResize(globalCoord);
                 return true;

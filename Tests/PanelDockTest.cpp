@@ -13,6 +13,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "PointerShapeTestSupport.h"
 #include "TestEvents.h"
 #include "UI/PanelDock.h"
 #include "UI/Widget.h"
@@ -355,6 +356,19 @@ TEST_CASE("PanelDock drag-resize writes through the active tab's own percent pai
     REQUIRE(f.claudePercent == 105);
     REQUIRE(f.dock.Percent() == 105);
     REQUIRE(f.terminalPercent == 75); // untouched by the second drag
+}
+
+TEST_CASE("PanelDock's tab strip shows a row-resize pointer only on bare strip", "[PanelDock][PointerShape]") {
+    using ned::ui::PointerShape;
+    using ned::ui::test::Hover;
+    using ned::ui::test::PointerAfter;
+    Fixture f;
+    f.dock.AddPanel(
+        "Terminal", f.terminal, {}, [&f] { return f.terminalPercent; }, [&f](int p) { f.terminalPercent = p; });
+    f.Paint();
+    REQUIRE(PointerAfter(f.dock, Hover(25, 0)) == PointerShape::RowResize); // see the drag test above for column 25
+    REQUIRE(PointerAfter(f.dock, Hover(2, 0)) == PointerShape::Default);    // the tab label
+    REQUIRE(PointerAfter(f.dock, Hover(25, 3)) == PointerShape::Default);   // the panel below
 }
 
 TEST_CASE("PanelDock resize on a tab with no percent pair still moves the shared height, just doesn't persist it",

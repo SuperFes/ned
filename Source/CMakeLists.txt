@@ -189,6 +189,7 @@ add_library(ned_lib STATIC
         Editor/AutoFormatOnSave.cpp
         Editor/ScopedFormat.cpp
         Editor/Clipboard.cpp
+        Editor/PointerShapeSettings.cpp
         Editor/TabWidth.cpp
         Editor/IndentStyle.cpp
         Editor/IndentDefaults.cpp
@@ -489,6 +490,7 @@ add_library(ned_lib STATIC
         UI/PaintParse.cpp
         UI/ThemePaints.cpp
         UI/EventLoop.cpp
+        UI/PointerShape.cpp
         UI/Layout.cpp
         UI/ScrollBar.cpp
         UI/ProgressBar.cpp

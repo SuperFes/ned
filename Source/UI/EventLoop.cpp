@@ -17,6 +17,7 @@
 #include "Editor/Key.h"
 #include "Text/Utf8.h"
 #include "UI/KeyTranslation.h"
+#include "UI/PointerShape.h"
 
 namespace ned::ui {
 
@@ -182,6 +183,7 @@ EventLoop::EventLoop() {
 
 EventLoop::~EventLoop() {
     if (nc_ != nullptr) {
+        ResetPointerShape();
         DisableBracketedPaste();
         notcurses_stop(nc_);
     }
@@ -424,8 +426,15 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
                     }
                 }
             }
+            const bool mouse = nckey_mouse_p(input.id);
+            if (mouse) {
+                BeginPointerEvent(heldMouseButtonId_.has_value());
+            }
             if (callbacks.onEvent) {
                 SafeInvoke("onEvent", [&] { callbacks.onEvent(Event(input)); });
+            }
+            if (mouse) {
+                CommitPointerShape();
             }
             needsRepaint = true;
         }
@@ -449,6 +458,7 @@ void EventLoop::Run(const EventLoopCallbacks& callbacks) {
             if (callbacks.onSuspend) {
                 SafeInvoke("onSuspend", callbacks.onSuspend);
             }
+            ResetPointerShape();
             DisableBracketedPaste();
             notcurses_stop(nc_);
             nc_           = nullptr;

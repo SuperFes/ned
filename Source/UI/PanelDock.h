@@ -215,6 +215,9 @@ class PanelDock : public Widget {
     // resize-drag instead" (AcpPanel's own `mouse->at.y == 0` fallback,
     // generalized to every unclaimed column).
     bool HandleTabStripClick(int x);
+    // Whether row 0's column x is bare strip, neither a tab label nor a
+    // button: HandleTabStripClick's false, without invoking anything.
+    [[nodiscard]] bool IsResizeColumn(int x) const;
 
     // Lazily seeds sharedPercent_ from the first tab that registers a
     // getPercent, the first time Percent()/BeginResize needs a value --

@@ -246,6 +246,7 @@ add_executable(ned_tests
             TrimOnSaveTest.cpp
             FormatOnSaveTest.cpp
             ClipboardTest.cpp
+            PointerShapeTest.cpp
             ClipboardTestGuard.cpp
             LocaleTestGuard.cpp
             TimeZoneTestGuard.cpp

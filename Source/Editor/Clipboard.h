@@ -174,6 +174,10 @@ bool CopyImageToSystemClipboard(std::string_view mimeType, std::string_view byte
 // sequence rather than forwarding it to the real terminal underneath.
 [[nodiscard]] std::string BuildOsc52CopySequence(std::string_view text, bool wrapForTmux);
 
+// sequence inside tmux's DCS passthrough envelope, for any escape sequence
+// meant for the terminal underneath tmux rather than tmux itself.
+[[nodiscard]] std::string WrapForTmuxPassthrough(std::string_view sequence);
+
 } // namespace ned::editor
 
 #endif // NED_EDITOR_CLIPBOARD_H

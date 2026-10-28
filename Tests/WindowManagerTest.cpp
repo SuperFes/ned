@@ -29,6 +29,7 @@
 #include "FakeLspServer.h"
 #include "FakeRemoteHost.h"
 #include "FakeRemoteLspServer.h"
+#include "PointerShapeTestSupport.h"
 #include "TestEvents.h"
 #include "Text/Buffer.h"
 #include "Text/BufferList.h"
@@ -1067,6 +1068,37 @@ TEST_CASE("Dragging a SplitRight divider resizes the split", "[WindowManager][Sp
     RenderFullScreen(root, screen);
     REQUIRE(screen.PixelAt(50, 0).character == "\xe2\x94\x82"); // the divider followed the drag 1:1
     REQUIRE(screen.PixelAt(40, 0).character != "\xe2\x94\x82"); // and isn't still at the old spot too
+}
+
+TEST_CASE("Hovering a split divider shows the resize pointer for its direction", "[WindowManager][SplitResize][PointerShape]") {
+    using ned::ui::PointerShape;
+    using ned::ui::test::Hover;
+    using ned::ui::test::PointerAfter;
+    Fixture                fixture;
+    ned::ui::WindowManager manager = fixture.Manager();
+    manager.TakeFocus();
+
+    ned::ui::Widget& root = manager.RootComponent();
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("3")}); // SplitRight
+    ned::ui::Screen screen = ned::ui::Screen(81, 24);
+    RenderFullScreen(root, screen);
+    REQUIRE(PointerAfter(root, Hover(40, 5)) == PointerShape::ColumnResize);
+    REQUIRE(PointerAfter(root, Hover(20, 5)) == PointerShape::Default);
+
+    FeedSequence(root, {ned::ui::test::Ctrl('x'), ned::ui::test::Character("2")}); // SplitBelow in the focused pane
+    screen = ned::ui::Screen(81, 24);
+    RenderFullScreen(root, screen);
+    std::optional<ned::ui::Point> divider;
+    for (int y = 0; y < 24 && !divider; ++y) {
+        for (int x = 0; x < 81 && !divider; ++x) {
+            if (screen.PixelAt(x, y).character == "\xe2\x94\x80") { // '─'
+                divider = ned::ui::Point{.x = x, .y = y};
+            }
+        }
+    }
+    REQUIRE(divider.has_value());
+    REQUIRE(PointerAfter(root, Hover(divider->x, divider->y)) == PointerShape::RowResize);
+    REQUIRE(PointerAfter(root, Hover(divider->x, divider->y - 2)) == PointerShape::Default);
 }
 
 TEST_CASE("Dragging a SplitBelow divider resizes the split", "[WindowManager][SplitResize]") {

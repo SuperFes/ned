@@ -11,6 +11,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "PointerShapeTestSupport.h"
 #include "TestEvents.h"
 #include "UI/LeftDock.h"
 #include "UI/Widget.h"
@@ -361,6 +362,19 @@ TEST_CASE("A press on the right edge starts a resize that commits the new width 
     REQUIRE(f.dock.OnEvent(MouseRelease(kWidth - 1 + 5, 5)));
     REQUIRE_FALSE(f.dock.IsResizing());
     REQUIRE(committedWidth == kWidth + 5);
+}
+
+TEST_CASE("The right edge shows a column-resize pointer only while expanded", "[LeftDock][PointerShape]") {
+    using ned::ui::PointerShape;
+    using ned::ui::test::Hover;
+    using ned::ui::test::PointerAfter;
+    Fixture f;
+    f.dock.AddPanel(U'F', "Files", f.files);
+    f.dock.SetWidth(30);
+    REQUIRE(PointerAfter(f.dock, Hover(kWidth - 1, 5)) == PointerShape::ColumnResize);
+    REQUIRE(PointerAfter(f.dock, Hover(kWidth - 3, 5)) == PointerShape::Default);
+    f.dock.SetCollapsed(true);
+    REQUIRE(PointerAfter(f.dock, Hover(kWidth - 1, 5)) == PointerShape::Default);
 }
 
 TEST_CASE("A press-and-release with no movement never commits a width", "[LeftDock]") {

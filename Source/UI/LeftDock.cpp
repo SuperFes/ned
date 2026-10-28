@@ -6,6 +6,7 @@
 #include "Paint.h"
 #include "Text/Utf8.h"
 #include "ThemePaints.h"
+#include "UI/PointerShape.h"
 
 namespace ned::ui {
 
@@ -426,17 +427,24 @@ bool LeftDock::OnEvent(const Event& event) {
     // hit test below, since a fast drag can carry the cursor outside this
     // widget's own Box mid-session.
     if (rawMouse.motion == MouseEvent::Motion::Moved && resizing_) {
+        RequestPointerShape(PointerShape::ColumnResize);
         UpdateResize(rawMouse.at.x);
         return true;
     }
     if (rawMouse.motion == MouseEvent::Motion::Released && resizing_) {
         EndResize();
+        if (const std::optional<MouseEvent> mouse = LocalMouseEvent(event); mouse && mouse->at.x == size().width - 1) {
+            RequestPointerShape(PointerShape::ColumnResize);
+        }
         return true;
     }
 
     const std::optional<MouseEvent> mouse = LocalMouseEvent(event);
     if (!mouse) {
         return false;
+    }
+    if (!collapsed_ && mouse->at.x == size().width - 1) {
+        RequestPointerShape(PointerShape::ColumnResize);
     }
 
     if (mouse->at.x < kRailWidth) {

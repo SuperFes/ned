@@ -3,7 +3,7 @@
 Every `ned/*` function available to `init.janet`, a project's `.ned/init.janet`,
 or a plugin.
 
-254 bindings.
+255 bindings.
 
 ## `ned/add-tracker-panel`
 
@@ -702,6 +702,10 @@ Map a file extension (with or without a leading '.') to a mode name -- either a 
 ## `ned/set-mode-for-filename`
 
 Map an exact, full filename (e.g. "CMakeLists.txt", not a pattern/glob) to a mode name, the same way ned/set-mode-for-extension does for an extension -- checked first, before any extension mapping, for files identified by name rather than by a distinguishing extension. An empty mode name removes the mapping.
+
+## `ned/set-mouse-pointer-shapes`
+
+Enable or disable changing the mouse pointer's shape over resize dividers (default true), through OSC 22. A terminal without OSC 22 ignores it.
 
 ## `ned/set-multibuffer-auto-collapse-byte-threshold`
 

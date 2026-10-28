@@ -24,12 +24,13 @@
 #include "Editor/Acp/Config.h"
 #include "Editor/Acp/Manager.h"
 #include "Editor/Acp/PanelConfig.h"
-#include "Editor/Protocol/LineTransport.h"
 #include "Editor/Lsp/Client.h"
 #include "Editor/Lsp/Manager.h"
 #include "Editor/Lsp/ServerConfig.h"
 #include "Editor/Lsp/Transport.h"
 #include "Editor/Project/Root.h"
+#include "Editor/Protocol/LineTransport.h"
+#include "PointerShapeTestSupport.h"
 #include "TestEvents.h"
 #include "Text/Base64.h"
 #include "Text/BufferList.h"
@@ -1063,6 +1064,28 @@ TEST_CASE("A right-docked AcpPanel reserves its left edge column as the resize d
     // The caret moves with the content, one column right of where a bottom dock puts it.
     const ned::ui::Cell& caretCell = fixture.screen.PixelAt(1 + static_cast<int>(std::string("Prompt: h").size()), kHeight - 1);
     REQUIRE(caretCell.background_color == fixture.theme.echoArea.foreground);
+}
+
+TEST_CASE("AcpPanel's resize divider shows the pointer for its dock side", "[AcpPanel][PointerShape]") {
+    using ned::ui::PointerShape;
+    using ned::ui::test::Hover;
+    using ned::ui::test::PointerAfter;
+    {
+        Fixture fixture;
+        fixture.Paint();
+        REQUIRE(PointerAfter(fixture.panel, Hover(5, 0)) == PointerShape::RowResize); // bottom dock: the title row
+        REQUIRE(PointerAfter(fixture.panel, Hover(5, 3)) == PointerShape::Default);
+    }
+    ned::editor::acp::SetAcpPanelDock("right");
+    struct DockGuard {
+        ~DockGuard() {
+            ned::editor::acp::SetAcpPanelDock("bottom");
+        }
+    } dockGuard;
+    Fixture fixture;
+    fixture.Paint();
+    REQUIRE(PointerAfter(fixture.panel, Hover(0, 5)) == PointerShape::ColumnResize); // right dock: the left edge
+    REQUIRE(PointerAfter(fixture.panel, Hover(5, 5)) == PointerShape::Default);
 }
 
 TEST_CASE("AcpPanel dock-hosted mode ignores the standalone close/minimize/resize-divider hit-tests", "[AcpPanel]") {

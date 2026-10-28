@@ -386,10 +386,10 @@ bool CopyImageToSystemClipboard(std::string_view mimeType, std::string_view byte
 
 std::string BuildOsc52CopySequence(std::string_view text, bool wrapForTmux) {
     const std::string sequence = "\x1b]52;c;" + text::Base64Encode(text) + "\x07";
-    if (!wrapForTmux) {
-        return sequence;
-    }
+    return wrapForTmux ? WrapForTmuxPassthrough(sequence) : sequence;
+}
 
+std::string WrapForTmuxPassthrough(std::string_view sequence) {
     // tmux's DCS passthrough convention: wrap in \033Ptmux;...\033\\ with
     // every literal ESC byte inside doubled, or tmux's own parser strips
     // the sequence instead of forwarding it to the real terminal.

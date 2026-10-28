@@ -710,6 +710,10 @@ The popup is never one source: a language server's items, snippet triggers for t
 
 :   Map an exact, full filename (e.g. "CMakeLists.txt", not a pattern/glob) to a mode name, the same way ned/set-mode-for-extension does for an extension -- checked first, before any extension mapping, for files identified by name rather than by a distinguishing extension. An empty mode name removes the mapping.
 
+`ned/set-mouse-pointer-shapes`
+
+:   Enable or disable changing the mouse pointer's shape over resize dividers (default true), through OSC 22. A terminal without OSC 22 ignores it.
+
 `ned/set-multibuffer-auto-collapse-byte-threshold`
 
 :   Same as set-multibuffer-auto-collapse-line-threshold, but measured in bytes (default 2000) -- catches a single huge/minified line a line-count threshold alone would miss.

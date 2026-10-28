@@ -24,6 +24,7 @@
 #include "Text/DisplayWidth.h"
 #include "Text/FileUri.h"
 #include "Text/Utf8.h"
+#include "UI/PointerShape.h"
 
 namespace ned::ui {
 
@@ -2041,6 +2042,13 @@ void AcpPanel::PaintContent(Canvas canvas) {
     }
 }
 
+bool AcpPanel::ResizeDividerAt(Point local) const {
+    if (dockHosted_ || collapsed_ || CloseButtonAt(local) || MinimizeButtonAt(local)) {
+        return false;
+    }
+    return RightDockedStandalone() ? local.x == 0 : local.y == 0;
+}
+
 bool AcpPanel::OnEvent(const Event& event) {
     SyncSessionView();
     if (event.is_mouse()) {
@@ -2052,18 +2060,26 @@ bool AcpPanel::OnEvent(const Event& event) {
         // cursor outside this panel's own Box mid-session (BufferView
         // cooperates the same way once a sidebar drag crosses out of its
         // bounds -- see Widget.h's own header comment on this).
+        const PointerShape dividerShape = RightDockedStandalone() ? PointerShape::ColumnResize : PointerShape::RowResize;
         if (rawMouse.motion == MouseEvent::Motion::Moved && resizing_) {
+            RequestPointerShape(dividerShape);
             UpdateResize(rawMouse.at);
             return true;
         }
         if (rawMouse.motion == MouseEvent::Motion::Released && resizing_) {
             EndResize();
+            if (const std::optional<MouseEvent> mouse = LocalMouseEvent(event); mouse && ResizeDividerAt(mouse->at)) {
+                RequestPointerShape(dividerShape);
+            }
             return true;
         }
 
         const std::optional<MouseEvent> mouse = LocalMouseEvent(event);
         if (!mouse) {
             return false;
+        }
+        if (ResizeDividerAt(mouse->at)) {
+            RequestPointerShape(dividerShape);
         }
 
         if (!collapsed_ && acpManager_ && stripRow_ >= 0 && mouse->at.y == stripRow_ && mouse->motion == MouseEvent::Motion::Pressed &&
@@ -2117,7 +2133,7 @@ bool AcpPanel::OnEvent(const Event& event) {
                 // panel's own left edge column for a right dock (the
                 // boundary shared with BufferView beneath it --
                 // ProjectSidebar's own right-edge divider, mirrored).
-                if (RightDockedStandalone() ? mouse->at.x == 0 : mouse->at.y == 0) {
+                if (ResizeDividerAt(mouse->at)) {
                     // A second press within the double-click window
                     // collapses instead of starting a resize -- ProjectSidebar/
                     // VcsPanel's own divider convention, previously missing

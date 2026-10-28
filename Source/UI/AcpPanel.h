@@ -298,6 +298,9 @@ class AcpPanel : public Widget {
     [[nodiscard]] std::string                        PendingImagesLine() const;
     [[nodiscard]] bool                     CloseButtonAt(Point local) const;
     [[nodiscard]] bool                     MinimizeButtonAt(Point local) const;
+    // The standalone panel's resize divider (left edge docked right, title
+    // row otherwise), short of its buttons.
+    [[nodiscard]] bool                     ResizeDividerAt(Point local) const;
     void                                   PaintCollapsedStrip(Canvas& canvas, int width, int height) const;
 
     // Border-drag resize, mirroring ProjectSidebar::BeginResize/UpdateResize/

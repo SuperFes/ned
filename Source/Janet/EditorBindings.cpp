@@ -67,6 +67,7 @@
 #include "Editor/PageScroll.h"
 #include "Editor/PanelMode.h"
 #include "Editor/PersistentUndo.h"
+#include "Editor/PointerShapeSettings.h"
 #include "Editor/Process/ChildProcess.h"
 #include "Editor/ProcessTimeouts.h"
 #include "Editor/Project/Root.h"
@@ -1302,6 +1303,10 @@ namespace {
 
     void NedSetClipboardEnabled(bool enabled) {
         editor::SetClipboardEnabled(enabled);
+    }
+
+    void NedSetMousePointerShapes(bool enabled) {
+        editor::SetPointerShapesEnabled(enabled);
     }
 
     // syntax-theme-overrides follow-up: "each themeable entry" (Comment,
@@ -2897,6 +2902,10 @@ void InstallEditorBindings(Environment& env) {
         "ned", "set-clipboard-enabled",
         "Enable or disable system-clipboard integration as a whole (default true) -- both the shelled-out CLI "
         "tool and the OSC 52 write/read paths.");
+    env.Register<&NedSetMousePointerShapes>(
+        "ned", "set-mouse-pointer-shapes",
+        "Enable or disable changing the mouse pointer's shape over resize dividers (default true), through OSC 22. "
+        "A terminal without OSC 22 ignores it.");
 
     env.Register<&NedSetSyntaxForeground>(
         "ned", "set-syntax-foreground",
