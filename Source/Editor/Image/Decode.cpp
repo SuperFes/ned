@@ -36,26 +36,27 @@ namespace {
         return image;
     }
 
+    // TurboJPEG's 2.x API, which 3.x keeps: Debian and Ubuntu still ship 2.1.
     std::optional<RgbaImage> DecodeJpeg(std::string_view bytes) {
-        const std::unique_ptr<void, int (*)(tjhandle)> handle(tj3Init(TJINIT_DECOMPRESS), [](tjhandle h) {
-            tj3Destroy(h);
-            return 0;
-        });
+        const std::unique_ptr<void, int (*)(tjhandle)> handle(tjInitDecompress(), tjDestroy);
         if (!handle) {
             return std::nullopt;
         }
-        const auto* data = reinterpret_cast<const unsigned char*>(bytes.data());
-        if (tj3DecompressHeader(handle.get(), data, bytes.size()) != 0) {
+        const auto*         data       = reinterpret_cast<const unsigned char*>(bytes.data());
+        const unsigned long size       = bytes.size();
+        int                 width      = 0;
+        int                 height     = 0;
+        int                 subsamp    = 0;
+        int                 colorspace = 0;
+        if (tjDecompressHeader3(handle.get(), data, size, &width, &height, &subsamp, &colorspace) != 0) {
             return std::nullopt;
         }
-        const int width  = tj3Get(handle.get(), TJPARAM_JPEGWIDTH);
-        const int height = tj3Get(handle.get(), TJPARAM_JPEGHEIGHT);
         if (width <= 0 || height <= 0 || !Allowed(static_cast<std::uint64_t>(width), static_cast<std::uint64_t>(height))) {
             return std::nullopt;
         }
         RgbaImage image{.width = width, .height = height};
         image.pixels.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
-        if (tj3Decompress8(handle.get(), data, bytes.size(), image.pixels.data(), 0, TJPF_RGBA) != 0) {
+        if (tjDecompress2(handle.get(), data, size, image.pixels.data(), width, 0, height, TJPF_RGBA, 0) != 0) {
             return std::nullopt;
         }
         return image;
