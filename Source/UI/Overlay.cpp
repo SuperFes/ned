@@ -274,8 +274,29 @@ bool OverlayHost::OnMouseEvent(const Event& event) {
         return false;
     }
     const MouseEvent mouse = event.mouse();
+    if (captured_ != nullptr && !captured_->active) {
+        captured_ = nullptr; // hidden mid-drag
+    }
+    if (captured_ != nullptr && mouse.motion != MouseEvent::Motion::Pressed) {
+        Widget* owner = captured_;
+        if (mouse.motion == MouseEvent::Motion::Released) {
+            captured_ = nullptr;
+        }
+        owner->OnEvent(event);
+        // A drag can change what the overlay's placement computes (a dock's
+        // height), and nothing else re-places it short of a terminal resize.
+        if (Entry* entry = FindEntry(*owner); entry != nullptr && owner->active && entry->placement) {
+            owner->SetBox_(entry->placement(lastSize_));
+        }
+        return true;
+    }
     for (auto it = entries_.rbegin(); it != entries_.rend(); ++it) {
         if (it->widget->active && it->widget->Box_().Contain(mouse.at.x, mouse.at.y)) {
+            const bool button = mouse.button == MouseEvent::Button::Left || mouse.button == MouseEvent::Button::Middle ||
+                                mouse.button == MouseEvent::Button::Right;
+            if (button && mouse.motion == MouseEvent::Motion::Pressed) {
+                captured_ = it->widget;
+            }
             it->widget->OnEvent(event);
             return true;
         }

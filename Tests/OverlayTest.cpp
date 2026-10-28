@@ -37,6 +37,9 @@ class FakeOverlay : public Widget {
     }
 
     bool OnEvent(const Event& event) override {
+        if (event.is_mouse()) {
+            globalEvents.push_back(event.mouse());
+        }
         if (const auto mouse = LocalMouseEvent(event)) {
             localEvents.push_back(*mouse);
             return true;
@@ -50,6 +53,7 @@ class FakeOverlay : public Widget {
 
     int                     paintCount = 0;
     std::vector<MouseEvent> localEvents;
+    std::vector<MouseEvent> globalEvents; // everything delivered, inside the Box or not
 
   private:
     std::string fill_;
@@ -282,4 +286,62 @@ TEST_CASE("OverlayHost::CoversBox reports any overlap with an overlay painted ab
     REQUIRE_FALSE(host.CoversBox(Box{.x_min = 6, .x_max = 9, .y_min = 0, .y_max = 3}, &lower));
     REQUIRE_FALSE(host.CoversBox(around, &upper));
     REQUIRE(host.CoversBox(Box{.x_min = 0, .x_max = 0, .y_min = 0, .y_max = 0}, nullptr));
+}
+
+TEST_CASE("A press inside an overlay captures the drag until release, wherever the pointer goes", "[Overlay]") {
+    OverlayHost host;
+    FakeOverlay overlay("X");
+    host.Add(overlay, [](Size) { return Box{.x_min = 2, .x_max = 5, .y_min = 1, .y_max = 2}; });
+    host.Reflow(Size{.width = 10, .height = 4});
+    host.Show(overlay);
+
+    REQUIRE(host.OnMouseEvent(MousePress(3, 1)));
+    // Dragged up, off the overlay's top edge: still the overlay's.
+    REQUIRE(host.OnMouseEvent(ned::ui::test::Mouse(3, 0, MouseEvent::Button::None, MouseEvent::Motion::Moved)));
+    REQUIRE(host.OnMouseEvent(ned::ui::test::Mouse(3, 0, MouseEvent::Button::Left, MouseEvent::Motion::Released)));
+    REQUIRE(overlay.globalEvents.size() == 3);
+    REQUIRE(overlay.globalEvents[1].at.y == 0);
+
+    // Released: outside events are nobody's again.
+    REQUIRE_FALSE(host.OnMouseEvent(ned::ui::test::Mouse(3, 0, MouseEvent::Button::None, MouseEvent::Motion::Moved)));
+    REQUIRE(overlay.globalEvents.size() == 3);
+}
+
+TEST_CASE("Hovering over an overlay captures nothing", "[Overlay]") {
+    OverlayHost host;
+    FakeOverlay overlay("X");
+    host.Add(overlay, [](Size) { return Box{.x_min = 2, .x_max = 5, .y_min = 1, .y_max = 2}; });
+    host.Reflow(Size{.width = 10, .height = 4});
+    host.Show(overlay);
+
+    // A buttonless motion report decodes as None/Released.
+    REQUIRE(host.OnMouseEvent(ned::ui::test::Mouse(3, 1, MouseEvent::Button::None, MouseEvent::Motion::Released)));
+    REQUIRE_FALSE(host.OnMouseEvent(ned::ui::test::Mouse(8, 3, MouseEvent::Button::None, MouseEvent::Motion::Released)));
+}
+
+TEST_CASE("Hiding an overlay mid-drag drops its capture", "[Overlay]") {
+    OverlayHost host;
+    FakeOverlay overlay("X");
+    host.Add(overlay, [](Size) { return Box{.x_min = 2, .x_max = 5, .y_min = 1, .y_max = 2}; });
+    host.Reflow(Size{.width = 10, .height = 4});
+    host.Show(overlay);
+
+    REQUIRE(host.OnMouseEvent(MousePress(3, 1)));
+    host.Hide(overlay);
+    REQUIRE_FALSE(host.OnMouseEvent(ned::ui::test::Mouse(3, 0, MouseEvent::Button::None, MouseEvent::Motion::Moved)));
+}
+
+TEST_CASE("A captured drag re-places its overlay, so a resize edge follows the pointer", "[Overlay]") {
+    OverlayHost host;
+    FakeOverlay overlay("X");
+    int         height = 2;
+    host.Add(overlay, [&height](Size size) { return Box{.x_min = 0, .x_max = size.width - 1, .y_min = size.height - height, .y_max = size.height - 1}; });
+    host.Reflow(Size{.width = 10, .height = 8});
+    host.Show(overlay);
+    REQUIRE(overlay.Box_().y_min == 6);
+
+    REQUIRE(host.OnMouseEvent(MousePress(3, 6)));
+    height = 4; // what the overlay's own drag handling would have changed
+    REQUIRE(host.OnMouseEvent(ned::ui::test::Mouse(3, 4, MouseEvent::Button::None, MouseEvent::Motion::Moved)));
+    REQUIRE(overlay.Box_().y_min == 4);
 }

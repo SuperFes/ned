@@ -94,7 +94,11 @@ class OverlayHost {
     // Topmost-first containment test: a mouse event inside a visible
     // overlay's Box is delivered to that overlay alone and consumed (true).
     // Anything else -- keyboard, or mouse outside every overlay -- is left
-    // for the caller's normal dispatch (false).
+    // for the caller's normal dispatch (false). A button pressed inside an
+    // overlay captures the pointer: that overlay gets every move and the
+    // release, wherever they land, so a drag (a dock's resize edge) can
+    // leave its Box. Each captured event re-places that overlay, so a drag
+    // that changes its size takes effect at once.
     bool OnMouseEvent(const Event& event);
 
     // Whether a visible overlay painted *above* `painter` covers this
@@ -124,6 +128,7 @@ class OverlayHost {
     [[nodiscard]] const Entry* FindEntry(const Widget& widget) const;
 
     std::vector<Entry> entries_; // paint order -- back() is topmost
+    Widget*            captured_ = nullptr; // see OnMouseEvent
     Size               lastSize_{};
 };
 
