@@ -18,22 +18,9 @@ about features. Declaring it makes breaking any of them a major-version event. C
 
 ## Unverified Against Real Environments
 
-- [ ] The six capability-gated DAP requests added with the debug panel (`modules`,
-      `loadedSources`, `breakpointLocations`, `stepInTargets`, `setExpression`,
-      `completions`) are unit-tested against a fake adapter only. Exercise them against a
-      real lldb-dap and debugpy session. `breakpointLocations` must read an empty list as
-      "no opinion".
 - [ ] The GNOME Terminal handler in `TerminalTabLauncher` has never run live.
 - [ ] `C-Tab`/`C-S-Tab` in the modern keymap are untested on a legacy (non-kitty-protocol)
       terminal.
-
-## Editor & UI
-
-- [ ] **The Files, VCS and Debug panels onto panel modes.** Their keys are still raw
-      codepoint checks, so `ned/define-panel-key`, which-key and `describe-bindings`
-      can't see them. The Remote panel's `remote-panel-mode` (`Editor/PanelMode.h`,
-      `UI/PanelKeys.h`) is the pattern; the VCS panel's footer legend would read its
-      keys from the mode rather than from fixed strings.
 
 ## Janet Widget Surface
 
