@@ -16,3 +16,4 @@ __pycache__/
 # and deploys them to GitHub Pages, never committed.
 /Docs/book/
 /UserGuide/book/
+build-package/

@@ -639,8 +639,9 @@ add_dependencies(ned ned_data)
 # for `cmake --build build && ./build/ned` (this project's own documented
 # dev workflow), not fine for anything that needs a real `cmake --install`
 # (a system package, an ebuild, ...). Deliberately minimal: just the
-# executable, standard GNUInstallDirs layout, no desktop file or icon. Man
-# pages are opt-in and live in CMake/ManPages.cmake, not here.
+# executable, standard GNUInstallDirs layout. Man pages are opt-in and live
+# in CMake/ManPages.cmake; the desktop entry, icon and licenses in
+# CMake/Packaging.cmake.
 include(GNUInstallDirs)
 # NED_BUNDLE_LIBS links Notcurses and Janet statically, so nothing of theirs
 # is installed beside `ned`.

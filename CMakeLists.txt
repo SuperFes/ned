@@ -67,6 +67,10 @@ add_subdirectory(Tools)
 # header comment.
 include(CMake/ManPages.cmake)
 
+# DEB/RPM packages through CPack -- see CMake/Packaging.cmake's own header
+# comment.
+include(CMake/Packaging.cmake)
+
 if (NED_BUILD_TESTS)
     enable_testing()
     include(CTest)

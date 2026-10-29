@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Ned
+GenericName=Text Editor
+Comment=Terminal text editor scriptable in Janet
+Exec=ned %F
+Icon=ned
+Terminal=true
+Categories=Utility;TextEditor;
+MimeType=text/plain;
+Keywords=editor;text;code;janet;

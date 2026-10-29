@@ -3,9 +3,10 @@
 Ned (MIT-licensed, see `LICENSE`) is built on the open-source projects below.
 Everything in the first table is statically linked into the `ned` binary
 itself; everything in the second is a separate shared library ned loads at
-runtime, never bundled or statically embedded. Versions match whatever
-`CMakeLists.txt` currently pins — check there for the exact tag if a license
-determination ever depends on it.
+runtime, never bundled or statically embedded — except that a `NED_BUNDLE_LIBS`
+build, which the release packages are, links Notcurses and Janet statically.
+Versions match whatever `CMakeLists.txt` currently pins — check there for the
+exact tag if a license determination ever depends on it.
 
 ## Statically linked (embedded in the `ned` binary)
 
