@@ -327,7 +327,9 @@ SearchPattern::SearchPattern(SearchPattern&&) noexcept            = default;
 SearchPattern& SearchPattern::operator=(SearchPattern&&) noexcept = default;
 
 bool SearchPattern::Matches(std::string_view line) const {
-    return re2::RE2::PartialMatch(line, *regex_);
+    // Spelled out: Debian's Abseil has its own string_view rather than
+    // aliasing std's.
+    return re2::RE2::PartialMatch(absl::string_view(line.data(), line.size()), *regex_);
 }
 
 SearchOptions CurrentSearchOptions() {
