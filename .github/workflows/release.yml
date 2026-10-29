@@ -1,0 +1,161 @@
+name: Release
+
+# Binary packages for a version tag, attached to its GitHub release. Each is
+# built on the distribution it targets (Packaging/build-package.sh), with
+# patched Notcurses and Janet linked in and every architecture's static agent
+# shipped beside the editor.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  LINUXDEPLOY_URL: https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+  LINUXDEPLOY_SHA256: c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
+  LINUXDEPLOY_APPIMAGE_URL: https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-appimage-x86_64.AppImage
+  LINUXDEPLOY_APPIMAGE_SHA256: 992d502a248e14ab185448ddf6f6e7d25558cb84d4623c354c3af350c25fccb3
+
+jobs:
+  agents:
+    name: static agents
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Install a recent CMake
+        run: pip install --upgrade "cmake>=3.29"
+
+      - name: Build
+        run: |
+          for arch in x86_64 aarch64; do
+            cmake --preset agent-$arch
+            cmake --build --preset agent-$arch -j"$(nproc)"
+            mkdir -p agents/$arch
+            cp build-agent-$arch/ned-agent agents/$arch/
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agents
+          path: agents
+
+  package:
+    name: ${{ matrix.name }}
+    needs: agents
+    runs-on: ubuntu-latest
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ubuntu-26.04
+            image: ubuntu:26.04
+            kind: DEB
+          - name: debian-13
+            image: debian:13
+            kind: DEB
+          - name: fedora
+            image: fedora:latest
+            kind: RPM
+          - name: appimage
+            image: debian:13
+            kind: AppImage
+    steps:
+      - name: Install build dependencies (apt)
+        if: matrix.kind != 'RPM'
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends clang lld cmake make pkg-config ca-certificates file \
+            dpkg-dev pandoc curl libunistring-dev libdeflate-dev libncurses-dev libcli11-dev libre2-dev \
+            libpcre2-dev libvterm-dev libutf8proc-dev nlohmann-json3-dev libmagic-dev libzstd-dev libpng-dev \
+            libturbojpeg0-dev libwebp-dev libstdc++-14-dev
+
+      - name: Install build dependencies (dnf)
+        if: matrix.kind == 'RPM'
+        run: |
+          dnf -y install clang lld cmake make pkgconf-pkg-config file rpm-build pandoc libunistring-devel \
+            libdeflate-devel ncurses-devel cli11-devel re2-devel pcre2-devel libvterm-devel utf8proc-devel \
+            json-devel file-devel libzstd-devel libpng-devel turbojpeg-devel libwebp-devel
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: agents
+          path: agents
+
+      # Artifacts don't keep the executable bit, and the package installs
+      # the agents with the permissions they have here.
+      - name: Restore the agents' permissions
+        run: chmod 755 agents/*/ned-agent
+
+      - name: Fetch linuxdeploy
+        if: matrix.kind == 'AppImage'
+        run: |
+          mkdir -p tools
+          curl -fsSL -o tools/linuxdeploy "$LINUXDEPLOY_URL"
+          curl -fsSL -o tools/linuxdeploy-plugin-appimage "$LINUXDEPLOY_APPIMAGE_URL"
+          echo "$LINUXDEPLOY_SHA256  tools/linuxdeploy" | sha256sum -c
+          echo "$LINUXDEPLOY_APPIMAGE_SHA256  tools/linuxdeploy-plugin-appimage" | sha256sum -c
+          chmod +x tools/*
+          echo "$PWD/tools" >> "$GITHUB_PATH"
+
+      - name: Build the package
+        run: Packaging/build-package.sh ${{ matrix.kind }} agents dist
+
+      # Ubuntu's and Debian's packages would otherwise share one file name.
+      - name: Name the DEB after its distribution
+        if: matrix.kind == 'DEB'
+        run: |
+          for deb in dist/*.deb; do
+            mv "$deb" "${deb%_*}_${{ matrix.name }}_${deb##*_}"
+          done
+
+      - name: Install and run the package
+        run: |
+          case "${{ matrix.kind }}" in
+            DEB) apt-get install -y ./dist/*.deb ;;
+            RPM) dnf -y install ./dist/*.rpm ;;
+            AppImage) ln -s "$PWD"/dist/*.AppImage /usr/local/bin/ned ;;
+          esac
+          APPIMAGE_EXTRACT_AND_RUN=1 ned --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.name }}
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
+          if-no-files-found: error
+
+  release:
+    name: attach to the release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes
+          gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber dist/*

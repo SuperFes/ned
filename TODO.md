@@ -13,7 +13,9 @@ commit message or a source comment, not here.
 about features. Declaring it makes breaking any of them a major-version event. Criteria:
 - [ ] Janet API frozen.
 - [ ] No known data-loss paths.
-- [ ] Release artifacts.
+- [ ] Release artifacts. `.github/workflows/release.yml` builds x86_64 DEBs, an RPM and
+      an AppImage on a `v*` tag; done once a tag run attaches them, and aarch64 is built
+      on GitHub's ARM runners.
 - [ ] The mdBook site (`Docs/book.toml`) published.
 
 ## Janet Widget Surface
