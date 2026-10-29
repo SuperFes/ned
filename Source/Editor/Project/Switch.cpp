@@ -7,8 +7,9 @@
 
 #include "Editor/PendingReExec.h"
 #include "Editor/Process/ChildProcess.h"
-#include "Registry.h"
+#include "Editor/Process/SelfExecutable.h"
 #include "Editor/TerminalTabLauncher.h"
+#include "Registry.h"
 
 namespace ned::editor {
 
@@ -31,14 +32,12 @@ namespace {
     // resolvable, before ever being handed to execv() -- a switch that
     // can't complete must never begin quitting the current session.
     std::optional<std::filesystem::path> ResolveOwnExecutablePath() {
-        char          buffer[4096];
-        const ssize_t length = ::readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
-        if (length <= 0) {
+        const std::optional<std::filesystem::path> self = process::SelfExecutable();
+        if (!self) {
             return std::nullopt;
         }
-        buffer[length] = '\0';
 
-        const std::filesystem::path path(buffer);
+        const std::filesystem::path& path = *self;
         std::error_code             existsEc;
         if (!std::filesystem::exists(path, existsEc) || existsEc) {
             return std::nullopt;

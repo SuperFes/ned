@@ -16,6 +16,7 @@
 
 #include "BrokerSocketPath.h"
 #include "Editor/Process/ChildProcess.h"
+#include "Editor/Process/SelfExecutable.h"
 #include "Transport.h"
 
 // posix_spawn's envp argument needs the process's own environment -- POSIX
@@ -166,14 +167,13 @@ namespace {
         // stated reasoning for why PtyProcess pre-resolves before
         // forking), and more precise than one anyway: this guarantees the
         // daemon is the exact same build currently running, not whatever
-        // "ned" a stale $PATH entry might resolve to. /proc/self/exe first
-        // (exact, no ambiguity); process::ResolveExecutable("ned") as a
+        // "ned" a stale $PATH entry might resolve to. process::SelfExecutable
+        // first (exact, no ambiguity); process::ResolveExecutable("ned") as a
         // fallback for the unusual case /proc isn't readable.
-        char          exePathBuf[PATH_MAX];
-        const ssize_t exeLen = ::readlink("/proc/self/exe", exePathBuf, sizeof(exePathBuf) - 1);
-        std::string   exePath;
-        if (exeLen > 0) {
-            exePath.assign(exePathBuf, static_cast<std::size_t>(exeLen));
+        char        exePathBuf[PATH_MAX];
+        std::string exePath;
+        if (const std::optional<std::filesystem::path> self = process::SelfExecutable()) {
+            exePath = self->string();
         }
         else if (const std::optional<std::string> resolved = process::ResolveExecutable("ned")) {
             exePath = *resolved;

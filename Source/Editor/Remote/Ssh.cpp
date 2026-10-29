@@ -14,6 +14,7 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include "Editor/Process/SelfExecutable.h"
 #include "Editor/RuntimeDir.h"
 
 namespace ned::editor::remote {
@@ -109,12 +110,11 @@ namespace {
     }
 
     std::string OwnExecutable() {
-        std::error_code             ec;
-        const std::filesystem::path path = std::filesystem::read_symlink("/proc/self/exe", ec);
-        if (ec) {
-            throw SshError("cannot find the editor's own executable to answer ssh: " + ec.message());
+        const std::optional<std::filesystem::path> path = process::SelfExecutable();
+        if (!path) {
+            throw SshError("cannot find the editor's own executable to answer ssh");
         }
-        return path.string();
+        return path->string();
     }
 
     // A question the handler is answering on its own thread, so the login

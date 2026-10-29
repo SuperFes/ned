@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "BrokerSocketPath.h"
+#include "Editor/Process/SelfExecutable.h"
 #include "Editor/ProcessTimeouts.h"
 
 namespace ned::editor::lsp {
@@ -99,10 +100,9 @@ namespace {
     // missing/unstattable path is treated as "changed" too (rare, but more
     // likely a sign something's wrong than a reason to keep running
     // silently).
+    // Under an AppImage it's the image file, so replacing that counts too.
     std::optional<std::filesystem::path> ResolveOwnExecutablePath() {
-        std::error_code       ec;
-        std::filesystem::path path = std::filesystem::read_symlink("/proc/self/exe", ec);
-        return ec ? std::nullopt : std::make_optional(std::move(path));
+        return process::SelfExecutable();
     }
 
     struct stat StatOrZero(const std::filesystem::path& path, bool& ok) {

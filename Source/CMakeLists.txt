@@ -104,6 +104,7 @@ add_library(ned_lib STATIC
         Editor/LanguageDefinition.cpp
         Editor/LanguageFiles.cpp
         Editor/DataDir.cpp
+        Editor/Process/SelfExecutable.cpp
         Editor/LanguageParse.cpp
         Editor/LanguageRegistry.cpp
         Editor/CaptureClassifiers.cpp

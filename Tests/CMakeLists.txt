@@ -6,6 +6,7 @@
 add_executable(ned_tests
             ApplicationTest.cpp
             DataDirTest.cpp
+            SelfExecutableTest.cpp
             RopeTest.cpp
             MappedFileTest.cpp
             PieceTableTest.cpp

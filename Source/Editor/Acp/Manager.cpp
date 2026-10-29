@@ -19,6 +19,7 @@
 #include "Editor/Host/McpRelays.h"
 #include "Editor/Mcp/BridgeServer.h"
 #include "Editor/Mcp/BridgeSetting.h"
+#include "Editor/Process/SelfExecutable.h"
 #include "Editor/Project/Root.h"
 #include "Editor/Project/Settings.h"
 #include "Editor/Remote/Fs.h"
@@ -123,12 +124,11 @@ namespace {
     // unreadable (StartSession's own try/catch around this whole block
     // degrades to no MCP tools rather than propagating).
     std::filesystem::path SelfExecutablePath() {
-        std::error_code       ec;
-        std::filesystem::path path = std::filesystem::read_symlink("/proc/self/exe", ec);
-        if (ec || path.empty()) {
-            throw std::runtime_error("cannot resolve /proc/self/exe: " + ec.message());
+        std::optional<std::filesystem::path> path = process::SelfExecutable();
+        if (!path) {
+            throw std::runtime_error("cannot resolve /proc/self/exe");
         }
-        return path;
+        return std::move(*path);
     }
 
     // Mode-line spinner name for a prompt in flight -- see Manager::
